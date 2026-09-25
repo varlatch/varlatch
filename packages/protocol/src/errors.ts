@@ -58,6 +58,8 @@ export const CAPABILITIES = [
   "sync.targets",
   "installation.backups",
   "identity.lifecycle",
+  "retrieval.manifest",
+  "retrieval.strict",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

@@ -21,6 +21,7 @@ import {
   referencedNames,
 } from "./references.js";
 import type { ProjectRow } from "./projects.js";
+import type { CallerView } from "./manifest.js";
 import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
 
 interface ValueRow {
@@ -386,11 +387,11 @@ export async function effectiveConfiguration(
     requestId?: string;
     listener?: "ordinary" | "tailnet";
   },
-): Promise<EffectiveItem[]> {
+): Promise<{ items: EffectiveItem[]; unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env, items } = state;
   assertNotExpired(env, state.now);
   if (!opts.includeValues) {
-    return items.map((i) => ({
+    const metadataOnly = items.map((i) => ({
       name: i.name,
       sensitive: i.sensitive,
       source: i.source,
@@ -398,6 +399,7 @@ export async function effectiveConfiguration(
       value: null,
       ...(i.retiringVersionId ? { rotating: true } : {}),
     }));
+    return { items: metadataOnly, unexpanded: [] };
   }
 
   const disclosed = items.filter((i) => opts.mayReadValue(i.sensitive));
@@ -437,16 +439,19 @@ export async function effectiveConfiguration(
   const readable = new Map(
     result.filter((i) => i.value !== null).map((i) => [i.name, i.value as string]),
   );
+  const unexpanded: CallerView["unexpanded"] = [];
   for (const item of result) {
     if (item.value !== null) {
-      const expanded = expandReferences(item.value, (name) => readable.get(name));
+      const literal = new Set<string>();
+      const expanded = expandReferences(item.value, (name) => readable.get(name), false, (name) => literal.add(name));
+      if (literal.size > 0) unexpanded.push({ name: item.name, references: [...literal].sort() });
       if (expanded !== item.value) {
         item.rawValue = item.value;
         item.value = expanded;
       }
     }
   }
-  return result;
+  return { items: result, unexpanded };
 }
 
 /**
@@ -885,7 +890,7 @@ export async function discloseSecrets(
      */
     mayReadPlain?: boolean | undefined;
   },
-): Promise<DisclosureResult> {
+): Promise<DisclosureResult & { unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env } = state;
   assertNotExpired(env, state.now);
   const { selected, withheld } = selectDisclosure(state, request);
@@ -978,10 +983,13 @@ export async function discloseSecrets(
       }
     }
   }
+  const unexpanded: CallerView["unexpanded"] = [];
   for (const item of items) {
-    item.value = expandReferences(item.value, (name) => lookup.get(name));
+    const literal = new Set<string>();
+    item.value = expandReferences(item.value, (name) => lookup.get(name), false, (name) => literal.add(name));
+    if (literal.size > 0) unexpanded.push({ name: item.name, references: [...literal].sort() });
   }
-  return { items, withheld };
+  return { items, withheld, unexpanded };
 }
 
 /** Which Secrets a disclosure request selects; the rest are withheld. */

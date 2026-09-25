@@ -201,13 +201,36 @@ describe.skipIf(!url)("retrieval reads one snapshot (real PostgreSQL)", () => {
     expect(after.status).toBe(403);
   });
 
+  it("a strict retrieval's values, manifest, and verdicts all come from the snapshot", async () => {
+    const before = await call("POST", `${CHILD}/retrievals`, { mode: "strict" });
+    expect(before.status).toBe(200);
+    trap = {
+      when: /FROM env_values/,
+      nth: 2,
+      run: async () => {
+        expect((await call("PUT", `${CHILD}/values/A`, { value: "child-a2" })).status).toBe(200);
+        expect((await call("PUT", `${DEV}/values/B`, { value: "b2" })).status).toBe(200);
+      },
+    };
+    const during = await call("POST", `${CHILD}/retrievals`, { mode: "strict" });
+    expect(trap).toBeNull();
+    expect(during.body.stateDigest).toBe(before.body.stateDigest);
+    expect(during.body.items).toEqual(before.body.items);
+    expect(during.body.validation).toEqual(before.body.validation);
+    const after = await call("POST", `${CHILD}/retrievals`, { mode: "strict" });
+    expect(after.body.stateDigest).not.toBe(before.body.stateDigest);
+    expect(values(after.body)).toMatchObject({ A: "child-a2", B: "b2" });
+  });
+
   it("concurrent audit writes never abort a retrieval", async () => {
     const requests = Array.from({ length: 24 }, (_, i) =>
-      i % 3 === 0
+      i % 4 === 0
         ? call("POST", `${DEV}/disclosures`, { scope: "all-authorized-secrets" })
-        : i % 3 === 1
+        : i % 4 === 1
           ? call("GET", `${DEV}/effective-configuration?include=values`)
-          : call("POST", `${DEV}/validate`, {}),
+          : i % 4 === 2
+            ? call("POST", `${DEV}/validate`, {})
+            : call("POST", `${DEV}/retrievals`, { mode: "strict" }),
     );
     const statuses = (await Promise.all(requests)).map((r) => r.status);
     expect(statuses).toEqual(Array(24).fill(200));

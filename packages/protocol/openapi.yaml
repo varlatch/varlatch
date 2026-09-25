@@ -432,6 +432,42 @@ paths:
               schema: { $ref: "#/components/schemas/EffectiveConfiguration" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/projects/{project}/environments/{environment}/retrievals:
+    post:
+      tags: [values]
+      operationId: strictRetrieval
+      summary: >
+        Strict retrieval (capability retrieval.strict): the non-sensitive
+        values (config.value.read) and every Secret (secret.reveal) this
+        caller may receive, the state manifest and its digest, the caller
+        view, the active Contract (contract.read), and the validation of
+        exactly the values returned, all from one database snapshot, in one
+        response. Requires config.metadata.read. Each class is authorized
+        separately: a denied class is reported in callerView.withheld, not an
+        error. Every decryption follows an audit commit naming its version.
+        Any failure after the snapshot returns an error and no values. Never
+        cacheable.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [strict] }
+      responses:
+        "200":
+          description: The captured state and the values delivered from it (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StrictRetrieval" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/projects/{project}/environments/{environment}/disclosures:
     post:
       tags: [values]
@@ -498,6 +534,11 @@ paths:
                   withheld:
                     type: array
                     items: { type: string }
+                  manifest:
+                    $ref: "#/components/schemas/StateManifest"
+                    description: Present when the caller also holds config.metadata.read.
+                  stateDigest: { $ref: "#/components/schemas/StateDigest" }
+                  callerView: { $ref: "#/components/schemas/CallerView" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/capabilities:
@@ -2696,6 +2737,129 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/EffectiveConfigurationItem" }
+        manifest: { $ref: "#/components/schemas/StateManifest" }
+        stateDigest: { $ref: "#/components/schemas/StateDigest" }
+        callerView: { $ref: "#/components/schemas/CallerView" }
+
+    StateDigest:
+      type: string
+      pattern: "^sha256:[0-9a-f]{64}$"
+      description: >
+        SHA-256 over the canonical JSON encoding of the state manifest: a
+        digest of identifiers, never of values. Equal digests mean the same
+        captured state, whoever retrieved it.
+
+    StateManifest:
+      type: object
+      description: >
+        What the retrieval's database snapshot captured, independent of the
+        caller: identifiers and names only, never plaintext or anything
+        derived from it. Versions are immutable, so the listed versions also
+        determine every reference and what it resolves to.
+      required: [manifestVersion, projectId, environment, contract, items]
+      properties:
+        manifestVersion: { type: integer, enum: [1] }
+        projectId: { type: string }
+        environment:
+          type: object
+          required: [id, rootId, parentId, tier, expiresAt]
+          properties:
+            id: { type: string }
+            rootId: { type: string }
+            parentId: { type: [string, "null"] }
+            tier: { type: string, enum: [development, staging, production] }
+            expiresAt: { type: [string, "null"], format: date-time }
+        contract:
+          type: [object, "null"]
+          required: [revisionId, contentHash, semanticsVersion]
+          properties:
+            revisionId: { type: string }
+            contentHash: { type: string }
+            semanticsVersion: { type: integer }
+        items:
+          type: array
+          description: Every resolved item, sorted by name.
+          items:
+            type: object
+            required: [name, source, valueRowId, versionId]
+            properties:
+              name: { type: string }
+              source: { type: string, enum: [self, parent] }
+              valueRowId: { type: string }
+              versionId: { type: string }
+              retiringVersionId:
+                type: string
+                description: Present only while the rotation window is open at the snapshot's time.
+
+    CallerView:
+      type: object
+      description: >
+        What this caller was not given, and which references stayed literal
+        for it. A client cannot infer unexpanded references from values,
+        because $${NAME} legitimately delivers a literal ${NAME}.
+      required: [withheld, unexpanded]
+      properties:
+        withheld:
+          type: array
+          items:
+            type: object
+            required: [name, reason, requires]
+            properties:
+              name: { type: string }
+              reason: { type: string, enum: [permission, requirement] }
+              requires: { type: string, enum: [config.value.read, secret.reveal] }
+        unexpanded:
+          type: array
+          items:
+            type: object
+            required: [name, references]
+            properties:
+              name: { type: string }
+              references:
+                type: array
+                items: { type: string }
+        contractWithheld:
+          type: boolean
+          description: Strict retrieval only. True when the Contract exists but the caller lacks contract.read.
+
+    StrictRetrieval:
+      type: object
+      required: [environmentId, manifest, stateDigest, contract, items, callerView, validation]
+      properties:
+        environmentId: { type: string }
+        manifest: { $ref: "#/components/schemas/StateManifest" }
+        stateDigest: { $ref: "#/components/schemas/StateDigest" }
+        contract:
+          type: [object, "null"]
+          description: >
+            The snapshot's active Contract (canonical form), when one is
+            active and the caller holds contract.read.
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, sensitive, source, versionId, value]
+            properties:
+              name: { type: string }
+              sensitive: { type: boolean }
+              source: { type: string, enum: [self, parent] }
+              versionId: { type: string }
+              value:
+                type: [string, "null"]
+                description: The delivered value, references expanded; null when withheld.
+              rawValue:
+                type: string
+                description: The stored text, present only when expansion changed `value`.
+              retiring:
+                type: object
+                description: A Secret's previous version while its rotation window is open, unexpanded.
+                required: [versionId, value]
+                properties:
+                  versionId: { type: string }
+                  value: { type: string }
+              rotating: { type: boolean }
+        callerView: { $ref: "#/components/schemas/CallerView" }
+        validation: { $ref: "#/components/schemas/ValidationReport" }
 
     ValidationReport:
       type: object

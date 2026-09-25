@@ -26,6 +26,9 @@ import type {
   Project,
   Tier,
   ValidationReport,
+  StateManifest,
+  CallerView,
+  StrictRetrieval,
   ValueVersion,
   ValueRotation,
   Webhook,
@@ -339,11 +342,28 @@ export class VarlatchClient {
       retiring?: { versionId: string; value: string };
     }[];
     withheld: string[];
+    /** Present when the caller also holds config.metadata.read. */
+    manifest?: StateManifest;
+    stateDigest?: string;
+    callerView?: CallerView;
   }> {
     return this.request(
       "POST",
       `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/disclosures`,
       request,
+    );
+  }
+
+  /**
+   * Strict retrieval (capability retrieval.strict): every value this caller
+   * may receive, the state manifest, the caller view, the Contract, and the
+   * validation of exactly those values, from one snapshot, in one request.
+   */
+  strictRetrieval(org: string, project: string, environment: string): Promise<StrictRetrieval> {
+    return this.request(
+      "POST",
+      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/retrievals`,
+      { mode: "strict" },
     );
   }
 

@@ -93,6 +93,8 @@ import {
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import { captureState, inSnapshot } from "../domain/retrieval.js";
+import { manifestOf, type CallerView } from "../domain/manifest.js";
+import { strictRetrieval } from "../domain/strict.js";
 import { mintConvexToken, publicJwks } from "../auth/jwt.js";
 import { issueCredential, revokeCredential } from "../auth/credentials.js";
 import { ENROLL_HTML } from "../enroll/page.js";
@@ -217,6 +219,14 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
     );
   }
   return parsed.data;
+}
+
+/** How a withheld class is reported: an unmet Requirement, or a missing permission. */
+function accessOf(decision: Decision): ValidationAccess {
+  if (decision.allowed) return "allowed";
+  if (decision.error.code.startsWith("TAILNET_")) return "requirement";
+  if (decision.error.code === "PERMISSION_DENIED" || decision.error.code === "RESOURCE_NOT_FOUND") return "permission";
+  throw decision.error;
 }
 
 /**
@@ -1122,13 +1132,29 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await recordDenial(ctx, plain);
         if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-      const items = await effectiveConfiguration(ctx, state, {
+      const { items, unexpanded } = await effectiveConfiguration(ctx, state, {
         includeValues,
         mayReadValue: (sensitive) => !sensitive && plain?.allowed === true,
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
       });
-      return c.json({ environmentId: state.env.id, items });
+      // Non-sensitive values withheld from this caller; Secrets are never on this path.
+      const withheld: CallerView["withheld"] =
+        plain && !plain.allowed
+          ? state.items
+              .filter((i) => !i.sensitive)
+              .map((i) => ({
+                name: i.name,
+                requires: "config.value.read" as const,
+                reason: accessOf(plain) === "requirement" ? ("requirement" as const) : ("permission" as const),
+              }))
+          : [];
+      return c.json({
+        environmentId: state.env.id,
+        items,
+        ...manifestOf(state),
+        callerView: { withheld, unexpanded },
+      });
     },
   );
 
@@ -1155,23 +1181,71 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // Reference expansion may pull non-sensitive values into disclosed
         // Secrets only if this caller could read them directly anyway.
         const plain = await decide(sctx, c, principal, "config.value.read", resource);
+        // The manifest lists every item, so it goes only to a caller who may see them.
+        const metadata = await decide(sctx, c, principal, "config.metadata.read", resource);
         const requested = "items" in body ? new Set(body.items) : null;
         const state = await captureState(sctx, scope, now, (item) =>
           item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
         );
-        return { state, body, plain };
+        return { state, body, plain, metadata };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
-      const { state, body, plain } = phase;
+      const { state, body, plain, metadata } = phase;
       if (!plain.allowed) {
         await recordDenial(ctx, plain);
         if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-      const result = await discloseSecrets(ctx, state, body, {
+      const { unexpanded, ...result } = await discloseSecrets(ctx, state, body, {
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
         mayReadPlain: plain.allowed,
       });
+      c.header("Cache-Control", "no-store");
+      return c.json(
+        metadata.allowed
+          ? { ...result, ...manifestOf(state), callerView: { withheld: [], unexpanded } }
+          : result,
+      );
+    },
+  );
+
+  // Strict retrieval (ADR-0038 Decision 6): every value this caller may
+  // receive, the state manifest, the caller view, the Contract, and the
+  // validation of exactly the values returned, from one snapshot, in one
+  // response. Each class is authorized separately; a failure after the
+  // snapshot returns an error and no values. Never cacheable.
+  app.post(
+    "/v1/organizations/:org/projects/:project/environments/:environment/retrievals",
+    async (c) => {
+      const principal = c.get("principal");
+      const input = await readJson(c);
+      const phase = await inSnapshot(ctx, async (sctx, now) => {
+        const scope = await envScope(sctx, c);
+        const resource = envResource(scope.org, scope.project, scope.env);
+        const metadata = await decide(sctx, c, principal, "config.metadata.read", resource, { hideExistence: true });
+        if (!metadata.allowed) return { denied: metadata };
+        parseBody(z.object({ mode: z.literal("strict") }), input());
+        const plain = await decide(sctx, c, principal, "config.value.read", resource);
+        const secret = await decide(sctx, c, principal, "secret.reveal", resource);
+        const contract = await decide(sctx, c, principal, "contract.read", {
+          organizationId: scope.org.id,
+          projectId: scope.project.id,
+        });
+        const state = await captureState(sctx, scope, now, (item) => (item.sensitive ? secret : plain).allowed);
+        return { state, plain, secret, contract };
+      });
+      if ("denied" in phase) return reject(ctx, phase.denied);
+      for (const decision of [phase.plain, phase.secret, phase.contract]) await recordDenial(ctx, decision);
+      const result = await strictRetrieval(
+        ctx,
+        phase.state,
+        { plain: accessOf(phase.plain), secret: accessOf(phase.secret), contract: phase.contract.allowed },
+        {
+          actorIdentityId: principal.identity.id,
+          requestId: c.get("requestId"),
+          listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
+        },
+      );
       c.header("Cache-Control", "no-store");
       return c.json(result);
     },

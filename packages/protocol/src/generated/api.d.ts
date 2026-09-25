@@ -222,6 +222,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/projects/{project}/environments/{environment}/retrievals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Strict retrieval (capability retrieval.strict): the non-sensitive values (config.value.read) and every Secret (secret.reveal) this caller may receive, the state manifest and its digest, the caller view, the active Contract (contract.read), and the validation of exactly the values returned, all from one database snapshot, in one response. Requires config.metadata.read. Each class is authorized separately: a denied class is reported in callerView.withheld, not an error. Every decryption follows an audit commit naming its version. Any failure after the snapshot returns an error and no values. Never cacheable. */
+        post: operations["strictRetrieval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/projects/{project}/environments/{environment}/disclosures": {
         parameters: {
             query?: never;
@@ -1258,6 +1275,83 @@ export interface components {
         EffectiveConfiguration: {
             environmentId: string;
             items: components["schemas"]["EffectiveConfigurationItem"][];
+            manifest?: components["schemas"]["StateManifest"];
+            stateDigest?: components["schemas"]["StateDigest"];
+            callerView?: components["schemas"]["CallerView"];
+        };
+        /** @description SHA-256 over the canonical JSON encoding of the state manifest: a digest of identifiers, never of values. Equal digests mean the same captured state, whoever retrieved it. */
+        StateDigest: string;
+        /** @description What the retrieval's database snapshot captured, independent of the caller: identifiers and names only, never plaintext or anything derived from it. Versions are immutable, so the listed versions also determine every reference and what it resolves to. */
+        StateManifest: {
+            /** @enum {integer} */
+            manifestVersion: 1;
+            projectId: string;
+            environment: {
+                id: string;
+                rootId: string;
+                parentId: string | null;
+                /** @enum {string} */
+                tier: "development" | "staging" | "production";
+                /** Format: date-time */
+                expiresAt: string | null;
+            };
+            contract: {
+                revisionId: string;
+                contentHash: string;
+                semanticsVersion: number;
+            } | null;
+            /** @description Every resolved item, sorted by name. */
+            items: {
+                name: string;
+                /** @enum {string} */
+                source: "self" | "parent";
+                valueRowId: string;
+                versionId: string;
+                /** @description Present only while the rotation window is open at the snapshot's time. */
+                retiringVersionId?: string;
+            }[];
+        };
+        /** @description What this caller was not given, and which references stayed literal for it. A client cannot infer unexpanded references from values, because $${NAME} legitimately delivers a literal ${NAME}. */
+        CallerView: {
+            withheld: {
+                name: string;
+                /** @enum {string} */
+                reason: "permission" | "requirement";
+                /** @enum {string} */
+                requires: "config.value.read" | "secret.reveal";
+            }[];
+            unexpanded: {
+                name: string;
+                references: string[];
+            }[];
+            /** @description Strict retrieval only. True when the Contract exists but the caller lacks contract.read. */
+            contractWithheld?: boolean;
+        };
+        StrictRetrieval: {
+            environmentId: string;
+            manifest: components["schemas"]["StateManifest"];
+            stateDigest: components["schemas"]["StateDigest"];
+            /** @description The snapshot's active Contract (canonical form), when one is active and the caller holds contract.read. */
+            contract: Record<string, never> | null;
+            items: {
+                name: string;
+                sensitive: boolean;
+                /** @enum {string} */
+                source: "self" | "parent";
+                versionId: string;
+                /** @description The delivered value, references expanded; null when withheld. */
+                value: string | null;
+                /** @description The stored text, present only when expansion changed `value`. */
+                rawValue?: string;
+                /** @description A Secret's previous version while its rotation window is open, unexpanded. */
+                retiring?: {
+                    versionId: string;
+                    value: string;
+                };
+                rotating?: boolean;
+            }[];
+            callerView: components["schemas"]["CallerView"];
+            validation: components["schemas"]["ValidationReport"];
         };
         ValidationReport: {
             environmentId: string;
@@ -2257,6 +2351,41 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    strictRetrieval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                /** @description Environment name or ID (names may contain one slash for derived environments) */
+                environment: components["parameters"]["environment"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    mode: "strict";
+                };
+            };
+        };
+        responses: {
+            /** @description The captured state and the values delivered from it (Cache-Control no-store) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrictRetrieval"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     discloseSecrets: {
         parameters: {
             query?: never;
@@ -2300,6 +2429,10 @@ export interface operations {
                             };
                         }[];
                         withheld: string[];
+                        /** @description Present when the caller also holds config.metadata.read. */
+                        manifest?: components["schemas"]["StateManifest"];
+                        stateDigest?: components["schemas"]["StateDigest"];
+                        callerView?: components["schemas"]["CallerView"];
                     };
                 };
             };
