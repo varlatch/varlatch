@@ -7,7 +7,13 @@ import {
 import type { AuditEventInput } from "../audit/events.js";
 import { isExpired, rootIdOf } from "./environments.js";
 import { DomainError } from "./errors.js";
-import { manifestOf, type CallerView, type StateManifest } from "./manifest.js";
+import {
+  categoryDigests,
+  manifestOf,
+  type CallerView,
+  type StateCategory,
+  type StateManifest,
+} from "./manifest.js";
 import { expandReferences } from "./references.js";
 import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
 import type { ValidationAccess, ValidationResult } from "./values.js";
@@ -39,9 +45,13 @@ export interface StrictItem {
 }
 
 export interface StrictRetrieval {
+  /** "preflight" returns no Secret values: only their verdicts, for an operator with secret.reveal. */
+  mode: RetrievalMode;
   environmentId: string;
   manifest: StateManifest;
   stateDigest: `sha256:${string}`;
+  /** Per-category digests, so a later precondition mismatch can name what changed. */
+  stateDigests: Record<StateCategory, `sha256:${string}`>;
   /** The snapshot's active Contract, when the caller may read it. */
   contract: ConfigurationContract | null;
   items: StrictItem[];
@@ -49,6 +59,8 @@ export interface StrictRetrieval {
   /** Verdicts on exactly the values returned, at the revision's semantics version. */
   validation: ValidationResult;
 }
+
+export type RetrievalMode = "strict" | "preflight";
 
 export interface StrictAccess {
   plain: ValidationAccess;
@@ -60,8 +72,14 @@ export async function strictRetrieval(
   ctx: Parameters<typeof auditThenDecrypt>[0],
   state: CapturedState,
   access: StrictAccess,
-  opts: { actorIdentityId: string; requestId?: string | undefined; listener?: "ordinary" | "tailnet" | undefined },
+  opts: {
+    mode: RetrievalMode;
+    actorIdentityId: string;
+    requestId?: string | undefined;
+    listener?: "ordinary" | "tailnet" | undefined;
+  },
 ): Promise<StrictRetrieval> {
+  const preflight = opts.mode === "preflight";
   const { org, project, env, contract } = state;
   if (isExpired(env, state.now)) {
     throw new DomainError(
@@ -92,23 +110,36 @@ export async function strictRetrieval(
     });
   }
   if (secrets.length > 0) {
-    events.push({
-      ...base,
-      eventType: "secret.disclosed",
-      action: "secret.reveal",
-      metadata: {
-        mode: "strict-retrieval",
-        items: secrets
-          .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
-          .join(","),
-      },
-    });
+    // A preflight decrypts Secrets only to validate them in-process: the
+    // event records the attempt and purpose, never a verdict.
+    events.push(
+      preflight
+        ? {
+            ...base,
+            eventType: "secret.validated",
+            action: "secret.reveal",
+            metadata: { purpose: "preflight-validation", items: secrets.map((i) => `${i.name}@${i.versionId}`).join(",") },
+          }
+        : {
+            ...base,
+            eventType: "secret.disclosed",
+            action: "secret.reveal",
+            metadata: {
+              mode: "strict-retrieval",
+              items: secrets
+                .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
+                .join(","),
+            },
+          },
+    );
   }
   const plaintext = await auditThenDecrypt(
     ctx,
     state,
     events,
-    [...plain, ...secrets].flatMap((i) => (i.retiringVersionId && i.sensitive ? [i.versionId, i.retiringVersionId] : [i.versionId])),
+    [...plain, ...secrets].flatMap((i) =>
+      i.sensitive && i.retiringVersionId && !preflight ? [i.versionId, i.retiringVersionId] : [i.versionId],
+    ),
   );
 
   // Expansion follows delivery: a non-sensitive value expands from
@@ -123,6 +154,9 @@ export async function strictRetrieval(
   const items: StrictItem[] = [];
   const unexpanded: CallerView["unexpanded"] = [];
   const withheld: CallerView["withheld"] = [];
+  /** What each evaluable item delivers, expanded: the verdicts' input. */
+  const evaluable = new Map<string, string>();
+  const notEvaluable = new Map<string, { reason: "permission" | "requirement"; requires: "config.value.read" | "secret.reveal" }>();
   for (const item of state.items) {
     const entry: StrictItem = {
       name: item.name,
@@ -134,11 +168,14 @@ export async function strictRetrieval(
     };
     if (!delivers(item)) {
       const decision = item.sensitive ? access.secret : access.plain;
-      withheld.push({
-        name: item.name,
-        reason: decision === "requirement" ? "requirement" : "permission",
-        requires: item.sensitive ? "secret.reveal" : "config.value.read",
-      });
+      const denied = {
+        reason: decision === "requirement" ? ("requirement" as const) : ("permission" as const),
+        requires: item.sensitive ? ("secret.reveal" as const) : ("config.value.read" as const),
+      };
+      notEvaluable.set(item.name, denied);
+      // In a preflight no Secret is delivered to the operator by design, so
+      // only non-sensitive values count as withheld.
+      if (!(preflight && item.sensitive)) withheld.push({ name: item.name, ...denied });
       items.push(entry);
       continue;
     }
@@ -147,19 +184,29 @@ export async function strictRetrieval(
     const literal = new Set<string>();
     // Size and work limits throw: the whole retrieval fails, with no values.
     const value = expandReferences(raw, (name) => domain.get(name), false, (name) => literal.add(name));
+    evaluable.set(item.name, value);
+    if (literal.size > 0) unexpanded.push({ name: item.name, references: [...literal].sort() });
+    if (preflight && item.sensitive) {
+      // Validated in-process only; the plaintext is not returned.
+      items.push(entry);
+      continue;
+    }
     entry.value = value;
     if (value !== raw) entry.rawValue = raw;
     if (item.sensitive && item.retiringVersionId) {
       entry.retiring = { versionId: item.retiringVersionId, value: plaintext.get(item.retiringVersionId) as string };
     }
-    if (literal.size > 0) unexpanded.push({ name: item.name, references: [...literal].sort() });
     items.push(entry);
   }
 
-  const validation = validateDelivered(state, items, withheld, unexpanded, access);
+  const validation = validateDelivered(state, evaluable, notEvaluable, unexpanded, access);
+  const { manifest, stateDigest } = manifestOf(state);
   return {
+    mode: opts.mode,
     environmentId: env.id,
-    ...manifestOf(state),
+    manifest,
+    stateDigest,
+    stateDigests: categoryDigests(manifest),
     contract: access.contract ? contract : null,
     items,
     callerView: { withheld, unexpanded, contractWithheld: !access.contract && contract !== null },
@@ -173,8 +220,8 @@ export async function strictRetrieval(
  */
 function validateDelivered(
   state: CapturedState,
-  items: StrictItem[],
-  withheld: CallerView["withheld"],
+  evaluable: Map<string, string>,
+  notEvaluable: Map<string, { reason: "permission" | "requirement"; requires: "config.value.read" | "secret.reveal" }>,
   unexpanded: CallerView["unexpanded"],
   access: StrictAccess,
 ): ValidationResult {
@@ -192,16 +239,14 @@ function validateDelivered(
   if (!contract) return result;
   const semantics = semanticsFor(semanticsVersionOf(contract));
   const envCtx = { rootId: rootIdOf(env), tier: env.tier };
-  const byName = new Map(items.map((i) => [i.name, i]));
-  const withheldByName = new Map(withheld.map((w) => [w.name, w]));
+  const stored = new Map(state.items.map((i) => [i.name, i]));
   const literalByName = new Map(unexpanded.map((u) => [u.name, u.references]));
   for (const item of contract.items) {
-    const delivered = byName.get(item.name);
-    if (!delivered) {
+    if (!stored.has(item.name)) {
       if (semantics.missingWhenAbsent(item, envCtx)) result.missing.push(item.name);
       continue;
     }
-    const denied = withheldByName.get(item.name);
+    const denied = notEvaluable.get(item.name);
     if (denied) {
       result.notEvaluated.push({ name: item.name, reason: denied.reason, requires: denied.requires });
       continue;
@@ -213,11 +258,11 @@ function validateDelivered(
       const authority =
         item.sensitive &&
         access.plain !== "allowed" &&
-        literal.every((name) => byName.get(name)?.sensitive === false);
+        literal.every((name) => stored.get(name)?.sensitive === false);
       result.unresolved.push({ name: item.name, reason: authority ? "authority" : "reference" });
       continue;
     }
-    const problem = semantics.validate(item, delivered.value as string);
+    const problem = semantics.validate(item, evaluable.get(item.name) as string);
     if (problem) result.invalid.push({ name: item.name, reason: problem });
   }
   result.complete =

@@ -85,7 +85,9 @@ import {
 } from "../domain/oidc.js";
 import {
   captureExercise,
+  checkIssuancePrecondition,
   exerciseCapability,
+  type PreflightItem,
   issueCapability,
   listCapabilities,
   revokeCapability,
@@ -93,7 +95,7 @@ import {
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import { captureState, inSnapshot } from "../domain/retrieval.js";
-import { manifestOf, type CallerView } from "../domain/manifest.js";
+import { STATE_CATEGORIES, manifestOf, type CallerView } from "../domain/manifest.js";
 import { strictRetrieval } from "../domain/strict.js";
 import { mintConvexToken, publicJwks } from "../auth/jwt.js";
 import { issueCredential, revokeCredential } from "../auth/credentials.js";
@@ -1224,7 +1226,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const resource = envResource(scope.org, scope.project, scope.env);
         const metadata = await decide(sctx, c, principal, "config.metadata.read", resource, { hideExistence: true });
         if (!metadata.allowed) return { denied: metadata };
-        parseBody(z.object({ mode: z.literal("strict") }), input());
+        const { mode } = parseBody(z.object({ mode: z.enum(["strict", "preflight"]) }), input());
         const plain = await decide(sctx, c, principal, "config.value.read", resource);
         const secret = await decide(sctx, c, principal, "secret.reveal", resource);
         const contract = await decide(sctx, c, principal, "contract.read", {
@@ -1232,7 +1234,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           projectId: scope.project.id,
         });
         const state = await captureState(sctx, scope, now, (item) => (item.sensitive ? secret : plain).allowed);
-        return { state, plain, secret, contract };
+        return { state, plain, secret, contract, mode };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
       for (const decision of [phase.plain, phase.secret, phase.contract]) await recordDenial(ctx, decision);
@@ -1241,6 +1243,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         phase.state,
         { plain: accessOf(phase.plain), secret: accessOf(phase.secret), contract: phase.contract.allowed },
         {
+          mode: phase.mode,
           actorIdentityId: principal.identity.id,
           requestId: c.get("requestId"),
           listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
@@ -1268,6 +1271,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const principal = c.get("principal");
       const { org, project, env } = await envScope(ctx, c);
       requireBroker(principal, org);
+      const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
       const body = parseBody(
         z.object({
           agentIdentityId: z.string(),
@@ -1275,12 +1279,37 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           destinations: z.array(z.string().min(1)).min(1).max(50),
           ttlSeconds: z.number().int().positive(),
           runId: z.string().max(200).optional(),
+          // Agent-safe strict preflight (ADR-0038 Decision 7): the state the
+          // operator's preflight retrieval saw. Confers no authority.
+          precondition: z
+            .object({
+              projectId: z.string(),
+              environmentId: z.string(),
+              stateDigest: digest,
+              stateDigests: z.record(z.enum(STATE_CATEGORIES), digest),
+            })
+            .optional(),
         }),
         await c.req.json(),
       );
-      const issued = await issueCapability(ctx, org, project, env, principal.identity.id, body);
+      const { precondition, ...input } = body;
+      let preflight: PreflightItem[] | undefined;
+      if (precondition) {
+        const tailnetContext = (c.get("tailnetContext") as TailnetContext | undefined) ?? null;
+        const checked = await inSnapshot(ctx, async (sctx, now) =>
+          checkIssuancePrecondition(sctx, { org, project, env }, now, precondition, input, tailnetContext),
+        );
+        if (checked.changed) {
+          // Categories only, never identifiers: the client retries both requests once.
+          throw new DomainError("STATE_CHANGED", "The configuration changed since the preflight retrieval", {
+            categories: checked.changed,
+          });
+        }
+        preflight = checked.items;
+      }
+      const issued = await issueCapability(ctx, org, project, env, principal.identity.id, input);
       c.header("Cache-Control", "no-store");
-      return c.json(issued, 201);
+      return c.json(preflight ? { ...issued, preflightItems: preflight } : issued, 201);
     },
   );
 

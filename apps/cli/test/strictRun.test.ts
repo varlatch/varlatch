@@ -26,6 +26,7 @@ function retrieval(opts: {
   unexpanded?: StrictRetrieval["callerView"]["unexpanded"];
   contractWithheld?: boolean;
   tier?: "development" | "staging" | "production";
+  validation?: Partial<StrictRetrieval["validation"]>;
 }): StrictRetrieval {
   const items = (opts.items ?? []).map((i) => ({
     sensitive: false,
@@ -55,7 +56,7 @@ function retrieval(opts: {
       unexpanded: opts.unexpanded ?? [],
       contractWithheld: opts.contractWithheld ?? false,
     },
-    validation: {} as never,
+    validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [], ...opts.validation } as never,
   };
 }
 
@@ -250,6 +251,87 @@ describe("the run context", () => {
     );
     expect(env[RUN_CONTEXT]).toBeUndefined();
     expect(env.PATH).toBe("/bin");
+  });
+});
+
+describe("agent-safe strict startup", () => {
+  const facts = (entries: [string, { present: boolean; authorized: boolean; reason?: "permission" | "requirement" }][] = []) => ({
+    agent: new Map(entries),
+  });
+  const secret = (name: string, fields: Record<string, unknown> = {}) => contractItem(name, { sensitive: true, ...fields });
+
+  it("a stored Secret with a valid verdict reaches the Agent as a Placeholder, never a value", () => {
+    const p = planStrictRun(
+      retrieval({
+        contract: [secret("API_KEY"), contractItem("HOST")],
+        items: [{ name: "API_KEY", sensitive: true, value: null }, { name: "HOST", value: "db.internal" }],
+      }),
+      { API_KEY: "parent-copy" },
+      new Set(),
+      facts([["API_KEY", { present: true, authorized: true }]]),
+    );
+    expect(p.violations).toEqual([]);
+    expect(p.mediated).toEqual(["API_KEY"]);
+    expect(p.env.HOST).toBe("db.internal");
+    expect(p.context?.items.API_KEY).toEqual({ server: "delivered", delivery: "varlatch" });
+  });
+
+  it("fails closed when the operator cannot validate Secrets", () => {
+    const p = planStrictRun(
+      retrieval({
+        contract: [secret("API_KEY")],
+        items: [{ name: "API_KEY", sensitive: true, value: null }],
+        validation: { notEvaluated: [{ name: "API_KEY", reason: "permission", requires: "secret.reveal" }] },
+      }),
+      {},
+      new Set(),
+      facts(),
+    );
+    expect(kinds(p)).toEqual(["API_KEY:not-evaluated"]);
+    expect(p.violations[0]?.reason).toContain("secret.reveal");
+  });
+
+  it("reports the operator's verdicts: invalid and unresolved", () => {
+    const p = planStrictRun(
+      retrieval({
+        contract: [secret("A", { type: "url" }), secret("B")],
+        items: [
+          { name: "A", sensitive: true, value: null },
+          { name: "B", sensitive: true, value: null },
+        ],
+        validation: {
+          invalid: [{ name: "A", reason: "must be a valid URL" }],
+          unresolved: [{ name: "B", reason: "reference" }],
+        },
+      }),
+      {},
+      new Set(),
+      facts(),
+    );
+    expect(kinds(p)).toEqual(["A:invalid", "B:unresolved-reference"]);
+  });
+
+  it("an Agent without secret.use at issuance is a violation", () => {
+    const p = planStrictRun(
+      retrieval({ contract: [secret("API_KEY")], items: [{ name: "API_KEY", sensitive: true, value: null }] }),
+      {},
+      new Set(),
+      facts([["API_KEY", { present: true, authorized: false, reason: "requirement" }]]),
+    );
+    expect(kinds(p)).toEqual(["API_KEY:agent-unauthorized"]);
+    expect(p.violations[0]?.reason).toContain("Requirement");
+  });
+
+  it("a Contract Secret only in the parent environment would reach the Agent: a violation", () => {
+    const p = planStrictRun(retrieval({ contract: [secret("API_KEY")] }), { API_KEY: "plaintext" }, new Set(), facts());
+    expect(kinds(p)).toEqual(["API_KEY:inherited"]);
+    expect(p.mediated).toEqual([]);
+  });
+
+  it("--allow-inherited may not name a Secret in an agent-safe run", () => {
+    const contract = { schemaVersion: 1 as const, items: [secret("API_KEY") as never, contractItem("HOST") as never] };
+    expect(() => checkAllowances(contract, ["API_KEY"], { agentSafe: true })).toThrow(/cannot name a Secret/);
+    expect(() => checkAllowances(contract, ["HOST"], { agentSafe: true })).not.toThrow();
   });
 });
 

@@ -429,10 +429,35 @@ async function main(): Promise<void> {
         const ctx = context(preArgs);
         const api = client(ctx);
 
-        if (has(preArgs, "--strict")) {
-          if (has(preArgs, "--agent-safe")) {
-            fail("--strict with --agent-safe is not available yet: the agent-safe preflight ships separately. Nothing was started.");
+        if (has(preArgs, "--strict") && has(preArgs, "--agent-safe")) {
+          const { runAgentSafeStrict } = await import("./agentRun.js");
+          const { UsageError } = await import("./strictRun.js");
+          const agent = flag(preArgs, "--agent") ?? fail("Agent-safe runs need --agent <agent-identity name or id>");
+          const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
+          try {
+            const code = await runAgentSafeStrict(
+              ctx,
+              api,
+              {
+                agent,
+                brokerCredentialFile: flag(preArgs, "--broker-credential-file"),
+                allowHosts: flags(preArgs, "--allow-host"),
+                strict: flag(preArgs, "--agent-network") === "strict",
+                ttlSeconds: Number(flag(preArgs, "--ttl") ?? 3600),
+                metadataCredential: has(preArgs, "--agent-metadata"),
+                allowInherited: flags(preArgs, "--allow-inherited"),
+              },
+              cmd,
+              cmdArgs,
+            );
+            process.exit(code);
+          } catch (err) {
+            if (err instanceof UsageError) fail(`varlatch: ${err.message}. Nothing was started.`);
+            if (err instanceof VarlatchApiError) throw err;
+            fail(err instanceof Error ? err.message : String(err));
           }
+        }
+        if (has(preArgs, "--strict")) {
           const { runStrict, UsageError } = await import("./strictRun.js");
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
           try {
@@ -1033,7 +1058,8 @@ Usage:
   varlatch env <use <name>|list [--json]>
   varlatch run [-e <env>] -- <command> [args...]
   varlatch run --strict [--allow-inherited <NAME>]... -- <command> [args...]
-               (validate exactly what the command receives; exit 78 and start nothing on any violation)
+               (validate exactly what the command receives; exit 78 and start nothing on any violation;
+                combine with --agent-safe for the agent-safe preflight: Secrets stay placeholders)
   varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
                [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
                [--agent-metadata] -- <command>...

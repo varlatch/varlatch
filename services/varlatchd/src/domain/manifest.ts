@@ -74,6 +74,32 @@ export function stateDigest(manifest: StateManifest): `sha256:${string}` {
   return `sha256:${createHash("sha256").update(canonicalJson(manifest), "utf8").digest("hex")}`;
 }
 
+/** What a changed digest can be attributed to, without naming identifiers. */
+export const STATE_CATEGORIES = ["environment", "contract", "items", "rotation"] as const;
+export type StateCategory = (typeof STATE_CATEGORIES)[number];
+
+const sha256 = (value: unknown): `sha256:${string}` =>
+  `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
+
+/**
+ * One digest per category of the manifest, so a precondition mismatch can
+ * say which category changed: the Environment context, the Contract, item
+ * sources and versions, or rotation windows. Identifiers only, like the
+ * manifest itself.
+ */
+export function categoryDigests(manifest: StateManifest): Record<StateCategory, `sha256:${string}`> {
+  return {
+    environment: sha256({ projectId: manifest.projectId, environment: manifest.environment }),
+    contract: sha256(manifest.contract),
+    items: sha256(
+      manifest.items.map((i) => ({ name: i.name, source: i.source, valueRowId: i.valueRowId, versionId: i.versionId })),
+    ),
+    rotation: sha256(
+      manifest.items.flatMap((i) => (i.retiringVersionId ? [{ name: i.name, retiringVersionId: i.retiringVersionId }] : [])),
+    ),
+  };
+}
+
 /** The manifest and its digest, as responses carry them. */
 export function manifestOf(state: CapturedState): { manifest: StateManifest; stateDigest: `sha256:${string}` } {
   const manifest = stateManifest(state);

@@ -97,6 +97,18 @@ fixes.
   looking at the same state. The caller view lists what this caller was not
   given and which references stayed literal for it.
 
+### API
+
+- Strict retrieval takes `{"mode": "preflight"}` (capability
+  `retrieval.preflight`): the non-sensitive values and, for a caller with
+  `secret.reveal`, a verdict per Secret, never a Secret value. Its responses
+  carry `stateDigests`, one digest per category of the state.
+- Capability issuance accepts a `precondition` (the state a preflight saw).
+  When the state changed, it refuses with the new error code
+  `STATE_CHANGED` (HTTP 409), naming only the categories that changed; on a
+  match its response adds `preflightItems`: per item, whether it is stored
+  and whether the Agent holds `secret.use`.
+
 ### CLI
 
 - `varlatch run --strict` starts the command only if the environment it
@@ -110,8 +122,14 @@ fixes.
   starts nothing and exits 78, listing every violation by name, never by
   value. The command receives `VARLATCH_RUN_CONTEXT`, which records what the
   server did and how each item was delivered. See
-  [Strict startup](docs/reference/strict-startup.md). `--strict` cannot yet
-  be combined with `--agent-safe`.
+  [Strict startup](docs/reference/strict-startup.md).
+- `varlatch run --strict --agent-safe` applies the same checks while the
+  Agent receives Placeholders for Secrets. The operator's preflight
+  validates each Secret without returning it (it needs `secret.reveal`),
+  the Broker's Capability is issued against the state the preflight saw,
+  and the Agent starts only if the Agent holds `secret.use`, every Secret
+  is valid, and no Contract Secret would come from your shell.
+  `--allow-inherited` cannot name a Secret in an agent-safe run.
 
 ### Upgrading
 

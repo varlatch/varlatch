@@ -359,11 +359,16 @@ export class VarlatchClient {
    * may receive, the state manifest, the caller view, the Contract, and the
    * validation of exactly those values, from one snapshot, in one request.
    */
-  strictRetrieval(org: string, project: string, environment: string): Promise<StrictRetrieval> {
+  strictRetrieval(
+    org: string,
+    project: string,
+    environment: string,
+    mode: "strict" | "preflight" = "strict",
+  ): Promise<StrictRetrieval> {
     return this.request(
       "POST",
       `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/retrievals`,
-      { mode: "strict" },
+      { mode },
     );
   }
 
@@ -489,6 +494,13 @@ export class VarlatchClient {
       destinations: string[];
       ttlSeconds: number;
       runId?: string;
+      /** Agent-safe strict preflight: the state the preflight retrieval saw. */
+      precondition?: {
+        projectId: string;
+        environmentId: string;
+        stateDigest: string;
+        stateDigests: StrictRetrieval["stateDigests"];
+      };
     },
   ): Promise<IssuedCapability> {
     return this.request(

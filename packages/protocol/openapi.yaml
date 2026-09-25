@@ -459,7 +459,14 @@ paths:
               type: object
               required: [mode]
               properties:
-                mode: { type: string, enum: [strict] }
+                mode:
+                  type: string
+                  enum: [strict, preflight]
+                  description: >
+                    preflight (capability retrieval.preflight) returns the
+                    non-sensitive values and a verdict per Secret, never a
+                    Secret value. Each Secret decryption is audited first as
+                    secret.validated with purpose preflight-validation.
       responses:
         "200":
           description: The captured state and the values delivered from it (Cache-Control no-store)
@@ -575,6 +582,20 @@ paths:
                   items: { type: string }
                 ttlSeconds: { type: integer, minimum: 1 }
                 runId: { type: string, maxLength: 200 }
+                precondition:
+                  type: object
+                  description: >
+                    Agent-safe strict preflight (capability retrieval.preflight):
+                    the state a preflight strict retrieval saw. Issuance compares
+                    it in its own snapshot, without decrypting anything, and
+                    refuses with STATE_CHANGED (details.categories names only
+                    what changed) when it differs. It confers no authority.
+                  required: [projectId, environmentId, stateDigest, stateDigests]
+                  properties:
+                    projectId: { type: string }
+                    environmentId: { type: string }
+                    stateDigest: { $ref: "#/components/schemas/StateDigest" }
+                    stateDigests: { $ref: "#/components/schemas/StateDigests" }
       responses:
         "201":
           description: Issued Capability with its one-time secret
@@ -2591,6 +2612,7 @@ components:
         - RATE_LIMITED
         - MAINTENANCE
         - INTERNAL
+        - STATE_CHANGED
 
     NextCursor:
       type: [string, "null"]
@@ -2822,13 +2844,34 @@ components:
           type: boolean
           description: Strict retrieval only. True when the Contract exists but the caller lacks contract.read.
 
+    StateDigests:
+      type: object
+      description: >
+        One digest per category of the state manifest, so a precondition
+        mismatch can name the category that changed without naming any
+        identifier.
+      required: [environment, contract, items, rotation]
+      properties:
+        environment: { $ref: "#/components/schemas/StateDigest" }
+        contract: { $ref: "#/components/schemas/StateDigest" }
+        items: { $ref: "#/components/schemas/StateDigest" }
+        rotation: { $ref: "#/components/schemas/StateDigest" }
+
     StrictRetrieval:
       type: object
-      required: [environmentId, manifest, stateDigest, contract, items, callerView, validation]
+      required: [mode, environmentId, manifest, stateDigest, stateDigests, contract, items, callerView, validation]
       properties:
+        mode:
+          type: string
+          enum: [strict, preflight]
+          description: >
+            preflight returns no Secret values: Secrets are validated in-process
+            only for an operator holding secret.reveal, and their verdicts are in
+            validation.
         environmentId: { type: string }
         manifest: { $ref: "#/components/schemas/StateManifest" }
         stateDigest: { $ref: "#/components/schemas/StateDigest" }
+        stateDigests: { $ref: "#/components/schemas/StateDigests" }
         contract:
           type: [object, "null"]
           description: >
@@ -3063,6 +3106,23 @@ components:
           type: string
           enum: [ok, agent-lacks-secret-use]
           description: Advisory current-authority check; exercise re-evaluates regardless.
+        preflightItems:
+          type: array
+          description: >
+            Present when the request carried a precondition that matched. Per
+            item: whether it is a stored Secret, and whether the Agent holds
+            secret.use here with the Requirements evaluable at issuance. It
+            makes no claim that exercise can resolve the item's references for
+            the Agent: every exercise evaluates authorization again and
+            resolves every reference or denies.
+          items:
+            type: object
+            required: [name, present, authorized]
+            properties:
+              name: { type: string }
+              present: { type: boolean }
+              authorized: { type: boolean }
+              reason: { type: string, enum: [permission, requirement] }
 
     CapabilityExercise:
       type: object

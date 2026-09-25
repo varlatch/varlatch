@@ -28,6 +28,7 @@ export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   RATE_LIMITED: 429,
   MAINTENANCE: 503,
   INTERNAL: 500,
+  STATE_CHANGED: 409,
 };
 
 export function requestId(): string {
