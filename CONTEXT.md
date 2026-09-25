@@ -95,6 +95,9 @@ _Avoid_: schema (overloaded with schema files and database schemas)
 **Contract Revision**:
 An immutable, content-hashed, normalized snapshot of a Contract with provenance metadata. A Project points at one active revision; activation is an audited security-relevant operation.
 
+**Contract Semantics**:
+How a Contract applies to a Value: whether an item is required in an Environment, when an absent item counts as missing, and whether a Value is valid for the item's type. Defined once in the shared contract package so the server and clients apply the same rules. The rules are versioned, and a released version never changes. Every Contract Revision currently uses version 1, which validates Values but does not convert them to typed values.
+
 **Contract Drift**:
 The state where a repository's local `.env.schema` no longer matches the active Contract Revision. Warns by default; strictness is opt-in. The server's active revision remains authoritative until another revision is explicitly accepted.
 

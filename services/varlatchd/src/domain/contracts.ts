@@ -5,8 +5,6 @@ import {
   diffContracts,
   normalizeContract,
   type ConfigurationContract,
-  type ContractItem,
-  type Tier,
 } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
 import { newId } from "../db/ids.js";
@@ -189,45 +187,4 @@ export function rotationGraceOf(
 ): number {
   const item = contract?.items.find((i) => i.name === itemName);
   return item?.rotationGraceSeconds ?? DEFAULT_ROTATION_GRACE_SECONDS;
-}
-
-export function requiredApplies(
-  item: ContractItem,
-  env: { rootId: string; tier: Tier },
-): boolean {
-  switch (item.required.kind) {
-    case "always":
-      return true;
-    case "never":
-      return false;
-    case "selector": {
-      const sel = item.required.selector;
-      if (sel.kind === "tier") return sel.tier === env.tier;
-      return sel.environmentIds.includes(env.rootId);
-    }
-  }
-}
-
-export function typeCheck(item: ContractItem, value: string): string | null {
-  switch (item.type) {
-    case "string":
-      return null;
-    case "number":
-      return /^-?\d+(\.\d+)?$/.test(value) ? null : "must be a number";
-    case "boolean":
-      return /^(true|false|1|0)$/i.test(value) ? null : "must be a boolean";
-    case "url":
-      try {
-        new URL(value);
-        return null;
-      } catch {
-        return "must be a valid URL";
-      }
-    case "email":
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? null : "must be an email address";
-    case "enum":
-      return item.enumValues?.includes(value)
-        ? null
-        : `must be one of: ${item.enumValues?.join(", ")}`;
-  }
 }

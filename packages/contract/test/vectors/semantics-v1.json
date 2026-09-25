@@ -1,0 +1,722 @@
+{
+  "semanticsVersion": 1,
+  "description": "Golden vectors for Contract Semantics version 1. Generated from the server rules as released in 0.10.0; a version never changes, so neither does this file.",
+  "validate": [
+    {
+      "type": "string",
+      "value": "",
+      "valid": true
+    },
+    {
+      "type": "string",
+      "value": " ",
+      "valid": true
+    },
+    {
+      "type": "string",
+      "value": "any text\nwith a newline",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "0",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "42",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "-7",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "3.14",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "1.5",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "-2.25",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "-0",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "007",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "-0.5",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "9007199254740993",
+      "valid": true,
+      "note": "no magnitude bound in version 1"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740993.0",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991.5",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "0.1000000000000000055511151231257827",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": true
+    },
+    {
+      "type": "number",
+      "value": "",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1e5",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1E3",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "+1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": ".5",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "80abc",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "0x1F",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "0x50",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "443;rm",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1.",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": " 1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1 ",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "42\n",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "the pattern anchors at the very end: a trailing newline is invalid"
+    },
+    {
+      "type": "number",
+      "value": "0x10",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "NaN",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "Infinity",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "-",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1,000",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1_000",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "--1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "١٢",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "only ASCII digits"
+    },
+    {
+      "type": "number",
+      "value": "１",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "boolean",
+      "value": "true",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "false",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "TRUE",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "FALSE",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "False",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "tRuE",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "1",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "0",
+      "valid": true
+    },
+    {
+      "type": "boolean",
+      "value": "yes",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "no",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "on",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "off",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": " true",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "true\n",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "2",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "t",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "01",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "url",
+      "value": "https://example.com",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "http://localhost:3000/path?q=1",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "localhost:3000",
+      "valid": true,
+      "note": "parses with scheme localhost:"
+    },
+    {
+      "type": "url",
+      "value": "mailto:a@example.com",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "mailto:x",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "postgres://u:p@db:5432/app",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "  https://example.com  ",
+      "valid": true,
+      "note": "the URL parser strips leading and trailing spaces"
+    },
+    {
+      "type": "url",
+      "value": "https://exa\tmple.com",
+      "valid": true,
+      "note": "the URL parser removes tabs and newlines"
+    },
+    {
+      "type": "url",
+      "value": "x:",
+      "valid": true
+    },
+    {
+      "type": "url",
+      "value": "",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "example.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "/relative/path",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://exa mple.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://[::1",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "email",
+      "value": "a@b.co",
+      "valid": true
+    },
+    {
+      "type": "email",
+      "value": "first.last@sub.example.com",
+      "valid": true
+    },
+    {
+      "type": "email",
+      "value": "a@b.c.d",
+      "valid": true
+    },
+    {
+      "type": "email",
+      "value": "a@..c",
+      "valid": true,
+      "note": "a pattern check, not an address parser"
+    },
+    {
+      "type": "email",
+      "value": "",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a b@c.d",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "@b.c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b.c ",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@@b.c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a.b@c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b.c\n",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "debug",
+      "valid": true
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "info",
+      "valid": true
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "INFO",
+      "valid": false,
+      "reason": "must be one of: debug, info",
+      "note": "membership is case-sensitive"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": " info",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "warn",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    }
+  ],
+  "required": [
+    {
+      "required": {
+        "kind": "always"
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true
+    },
+    {
+      "required": {
+        "kind": "always"
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "never"
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "never"
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "production"
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "production"
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "staging"
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "staging"
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_a",
+            "env_b"
+          ]
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true,
+      "note": "a derived Environment is matched by its root's ID"
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_a",
+            "env_b"
+          ]
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false,
+      "note": "a derived Environment is matched by its root's ID"
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_b"
+          ]
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_b"
+          ]
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    }
+  ]
+}

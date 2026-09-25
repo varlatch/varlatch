@@ -11,8 +11,8 @@ import { Button, Card, InfoTip, Input, Mono, Select, cn } from "../../components
     InfoTip echoing the selected type's meaning. */
 const TYPE_HELP: Record<string, string> = {
   string: "Any text value; no validation beyond presence.",
-  number: "Must parse as a number (integer or decimal).",
-  boolean: "Must be true/false (also accepts 1/0, yes/no).",
+  number: "Must be an integer or decimal written in digits, e.g. -12 or 3.5 (no exponent, no leading +).",
+  boolean: "Must be true or false in any case, or 1/0.",
   url: "Must be an absolute URL including its scheme, e.g. https://…",
   email: "Must look like an email address.",
   enum: "Must be one of a fixed set of allowed values.",
