@@ -5,6 +5,34 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## 0.10.1 (2026-09-25)
+
+### Fixed
+
+- A restore now leaves the whole installation running. Before, it started
+  only the database, varlatchd, and Convex, so after restoring onto a stopped
+  or new host the dashboard and the ingress proxy stayed down until you ran
+  `docker compose up -d`, and `varlatch doctor --gate` failed. When restore
+  finishes it now points you to `varlatch doctor` and a fresh archive.
+- Installations that use the tailnet ingress with secrets in files no longer
+  print `The "VARLATCH_RUNTIME_PASSWORD" variable is not set` on every
+  Compose command.
+- `varlatch upgrade --release-dir` no longer says it is fetching the release
+  from GitHub. It reads only the files in that directory.
+
+### Upgrading
+
+No database migration: 0.10.1 uses migration 20, like 0.10.0.
+
+- From 0.10.0: download `varlatch-cli-0.10.1.cjs` from the `v0.10.1`
+  release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.10.1.cjs upgrade 0.10.1 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.10.1.cjs`.
+- From 0.8.0 or 0.9.0: follow the 0.10.0 instructions below with the 0.10.1
+  CLI and version.
+- 0.10.1 restores everything 0.10.0 restores, and archives from 0.10.0.
+
 ## 0.10.0 (2026-09-25)
 
 **Before upgrading:** validation changed. `varlatch validate` and the
