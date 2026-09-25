@@ -97,7 +97,28 @@ fixes.
   looking at the same state. The caller view lists what this caller was not
   given and which references stayed literal for it.
 
+### CLI
+
+- `varlatch run --strict` starts the command only if the environment it
+  would receive satisfies the active Contract. It retrieves everything in
+  one request, applies Contract defaults only to items with no stored value
+  (never to withheld ones), takes values from your shell only for names
+  given with `--allow-inherited NAME`, and validates every value exactly as
+  the command will receive it. Any violation (missing, withheld,
+  parent-only, invalid, or a `${NAME}` reference left literal, and also no
+  active Contract, no `contract.read`, or an unsupported semantics version)
+  starts nothing and exits 78, listing every violation by name, never by
+  value. The command receives `VARLATCH_RUN_CONTEXT`, which records what the
+  server did and how each item was delivered. See
+  [Strict startup](docs/reference/strict-startup.md). `--strict` cannot yet
+  be combined with `--agent-safe`.
+
 ### Upgrading
+
+- Every `varlatch run`, including a default one, now removes a
+  `VARLATCH_RUN_CONTEXT` inherited from an outer run. This is the one change
+  to a default run. The name is reserved: the server refuses a Contract item
+  or a stored value called `VARLATCH_RUN_CONTEXT`.
 
 - A disclosure or Capability exercise whose references are nested now
   records one `value.disclosed` event with `mode: "reference-expansion"` per

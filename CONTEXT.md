@@ -88,6 +88,16 @@ _Avoid_: interpolation, templating (suggests a general expression language; it i
 The fully resolved set of Values for an Environment after applying its allowed inheritance (child overrides over parent values). Contract validation evaluates the Effective Configuration, not a child's overrides alone.
 _Avoid_: merged config, resolved env
 
+**Delivered Configuration**:
+What a command started by `varlatch run` actually receives: the Values Varlatch delivered to this caller (after authorization and reference expansion) and any variables inherited from the parent environment, plus, under strict startup, applied Contract defaults. It can differ from the Effective Configuration: withheld Secrets are absent, inherited variables fill gaps, and references to values the caller may not read stay literal.
+_Avoid_: runtime env (ambiguous about which of these layers is meant)
+
+**Strict Startup**:
+`varlatch run --strict`: validate the Delivered Configuration against the active Contract Revision of one strict retrieval before starting the command, and refuse to start it on any violation (exit 78). Contract defaults fill only items with no stored value, never withheld ones, and inherited values are used only for names allowed with `--allow-inherited`. A default run never blocks on the Contract.
+
+**Run Context**:
+The one reserved variable, `VARLATCH_RUN_CONTEXT`, that a strict run gives the command: JSON naming the Contract Revision, content hash, semantics version, and Environment, and recording for each Contract item the server's status (`delivered`, `withheld`, `notStored`) and how it was delivered (`varlatch`, `inherited`, `default`, `absent`). Names and identifiers only. Every run removes an inherited one.
+
 **Retrieval Snapshot**:
 The one read-only database snapshot a retrieval (Effective Configuration, disclosure, validation, Capability exercise) reads everything from: scope rows, authorization inputs, the Contract Revision, values, and the ciphertext it may decrypt. Each decryption then follows an audit commit naming its version. Authorization is effective at the snapshot boundary: a revocation that commits after a request's snapshot began does not affect that request.
 

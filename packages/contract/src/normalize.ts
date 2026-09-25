@@ -5,6 +5,7 @@ import {
   CONTRACT_SCHEMA_VERSION,
   ITEM_TYPES,
   TIERS,
+  isReservedItemName,
   type ConfigurationContract,
   type ContractItem,
 } from "./types.js";
@@ -92,6 +93,9 @@ export function normalizeContract(input: unknown): ConfigurationContract {
   }
   const seen = new Set<string>();
   for (const item of parsed.data.items) {
+    if (isReservedItemName(item.name)) {
+      issues.push(`${item.name} is reserved for launcher metadata and cannot be a Config Item`);
+    }
     if (seen.has(item.name)) issues.push(`duplicate Config Item name ${item.name}`);
     seen.add(item.name);
     if (item.type === "enum" && !item.enumValues) {

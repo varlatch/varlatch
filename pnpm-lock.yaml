@@ -126,6 +126,9 @@ importers:
       '@varlatch/context':
         specifier: workspace:*
         version: link:../../packages/context
+      '@varlatch/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@varlatch/env-schema':
         specifier: workspace:*
         version: link:../../packages/env-schema

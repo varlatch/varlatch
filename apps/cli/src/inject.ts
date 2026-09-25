@@ -8,12 +8,21 @@ import type { EffectiveConfiguration } from "@varlatch/protocol";
  * output redaction.
  */
 
+/**
+ * Reserved launcher metadata. Only strict runs set it; every run removes an
+ * inherited one, so a context left by an outer run never describes an inner
+ * run's Environment, and no stored value is ever injected under this name.
+ */
+export const RUN_CONTEXT = "VARLATCH_RUN_CONTEXT";
+
 export function buildEnv(
   base: NodeJS.ProcessEnv,
   effective: EffectiveConfiguration,
 ): NodeJS.ProcessEnv {
   const env = { ...base };
+  delete env[RUN_CONTEXT];
   for (const item of effective.items ?? []) {
+    if (item.name === RUN_CONTEXT) continue;
     if (item.value !== null && item.value !== undefined) {
       env[item.name] = item.value;
     }

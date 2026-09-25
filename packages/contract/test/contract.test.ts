@@ -181,6 +181,17 @@ describe("contractHash", () => {
   });
 });
 
+describe("reserved names", () => {
+  it("rejects the run-context name as a Config Item", () => {
+    expect(() =>
+      normalizeContract({
+        schemaVersion: 1,
+        items: [{ name: "VARLATCH_RUN_CONTEXT", required: { kind: "never" }, sensitive: false, type: "string" }],
+      }),
+    ).toThrow("VARLATCH_RUN_CONTEXT is reserved for launcher metadata and cannot be a Config Item");
+  });
+});
+
 describe("semanticsVersion", () => {
   it("version 1 is encoded by omission: existing hashes never change", () => {
     const explicit = normalizeContract({ ...sample, semanticsVersion: 1 });
