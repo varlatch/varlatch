@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * A byte-level Aho-Corasick automaton. Besides the usual goto, failure, and
- * output links, each state records `hold`: the length of the longest suffix
- * of the input so far that is a proper prefix of some pattern (the deepest
- * state on its failure chain that still has children). ADR-0039 Decision 19
+ * A byte-level Aho-Corasick automaton. Besides the usual goto and failure
+ * links and outputs, each state records `hold`: the length of the longest
+ * suffix of the input so far that is a proper prefix of some pattern (the
+ * deepest state on its failure chain that still has children). ADR-0039 Decision 19
  * proves that no future match can include a byte more than `hold` bytes
  * before the current end.
  */
@@ -21,8 +21,10 @@ export class Automaton {
   private readonly depth: number[] = [0];
   /** Patterns ending exactly at a state. */
   private readonly own: PatternRef[][] = [[]];
-  /** The nearest state on the failure chain (excluding itself) that ends a pattern. */
-  private readonly outputLink: number[] = [-1];
+  /** Every pattern ending at a state (its own and its failure chain's), precomputed. */
+  private readonly outputs: PatternRef[][] = [[]];
+  /** The root's transitions as a dense table: most input bytes fail at the root. */
+  private readonly rootNext = new Int32Array(256);
   private readonly holdDepth: number[] = [0];
   /** Some pattern id reachable below a state with children (for diagnostics). */
   private readonly below: number[] = [-1];
@@ -38,7 +40,7 @@ export class Automaton {
           this.fail.push(0);
           this.depth.push(this.depth[state]! + 1);
           this.own.push([]);
-          this.outputLink.push(-1);
+          this.outputs.push([]);
           this.holdDepth.push(0);
           this.below.push(-1);
           this.next[state]!.set(byte, to);
@@ -48,13 +50,15 @@ export class Automaton {
       }
       this.own[state]!.push({ id, length: pattern.length });
     });
-    // Breadth-first: failure links, output links, and hold depths.
+    for (const [byte, child] of this.next[0]!) this.rootNext[byte] = child;
+    // Breadth-first: failure links, outputs, and hold depths.
     const queue: number[] = [];
     for (const child of this.next[0]!.values()) queue.push(child);
     for (let i = 0; i < queue.length; i++) {
       const state = queue[i]!;
       const f = this.fail[state]!;
-      this.outputLink[state] = this.own[f]!.length > 0 ? f : this.outputLink[f]!;
+      // The failure state is shallower, so its outputs are already complete.
+      this.outputs[state] = [...this.own[state]!, ...(this.outputs[f] ?? [])];
       this.holdDepth[state] = this.next[state]!.size > 0 ? this.depth[state]! : this.holdDepth[f]!;
       for (const [byte, child] of this.next[state]!) {
         let g = f;
@@ -70,18 +74,16 @@ export class Automaton {
   step(state: number, byte: number): number {
     let s = state;
     for (;;) {
+      if (s === 0) return this.rootNext[byte]!;
       const to = this.next[s]!.get(byte);
       if (to !== undefined) return to;
-      if (s === 0) return 0;
       s = this.fail[s]!;
     }
   }
 
-  /** Every pattern that ends at `state`. */
-  matches(state: number): PatternRef[] {
-    const found: PatternRef[] = [...this.own[state]!];
-    for (let s = this.outputLink[state]!; s > 0; s = this.outputLink[s]!) found.push(...this.own[s]!);
-    return found;
+  /** Every pattern that ends at `state`; shared, never to be modified. */
+  matches(state: number): readonly PatternRef[] {
+    return this.outputs[state]!;
   }
 
   hold(state: number): number {
