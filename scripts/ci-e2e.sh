@@ -135,6 +135,9 @@ echo "--- CLI browser-handoff login E2E"
 GRANT2=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-cli-login.mjs "$GRANT2"
 
+echo "--- strict startup E2E (varlatch run --strict, bundled CLI)"
+node "$REPO_ROOT"/services/varlatchd/scripts/e2e-strict-run.mjs "$WEB_ORIGIN" "$TOKEN"
+
 echo "--- read-only doctor (ADR-0035 D8)"
 # The host CLI resolves the project the way plain `docker compose` does in
 # --dir; point it at this disposable project through Compose's own env vars.

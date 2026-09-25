@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONFIG_ITEM_NAME_PATTERN, semanticsFor, semanticsVersionOf } from "@varlatch/contract";
+import { CONFIG_ITEM_NAME_PATTERN, isReservedItemName, semanticsFor, semanticsVersionOf } from "@varlatch/contract";
 import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import { encryptValue } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
@@ -34,6 +34,15 @@ interface ValueRow {
   rotation_deadline?: string | null;
 }
 
+function assertItemName(name: string): void {
+  if (!CONFIG_ITEM_NAME_PATTERN.test(name)) {
+    throw new DomainError("VALIDATION_FAILED", `Invalid Config Item name: ${name}`);
+  }
+  if (isReservedItemName(name)) {
+    throw new DomainError("VALIDATION_FAILED", `${name} is reserved for launcher metadata and cannot be stored`);
+  }
+}
+
 function assertNotExpired(env: EnvironmentRow, now = new Date()): void {
   if (isExpired(env, now)) {
     throw new DomainError(
@@ -60,9 +69,7 @@ export async function setValue(
   input: { value: string; expectedVersionId?: string | undefined },
   actorIdentityId: string,
 ): Promise<SetValueResult> {
-  if (!CONFIG_ITEM_NAME_PATTERN.test(itemName)) {
-    throw new DomainError("VALIDATION_FAILED", "Invalid Config Item name");
-  }
+  assertItemName(itemName);
   assertNotExpired(env);
   const orgKek = orgKekOf(ctx, org);
   const contract = await activeContractOf(ctx, project);
@@ -205,9 +212,7 @@ export async function beginRotation(
   input: { value: string; expectedVersionId?: string | undefined; graceSeconds?: number | undefined },
   actorIdentityId: string,
 ): Promise<RotationResult> {
-  if (!CONFIG_ITEM_NAME_PATTERN.test(itemName)) {
-    throw new DomainError("VALIDATION_FAILED", "Invalid Config Item name");
-  }
+  assertItemName(itemName);
   assertNotExpired(env);
   const orgKek = orgKekOf(ctx, org);
   const contract = await activeContractOf(ctx, project);
@@ -736,9 +741,7 @@ export async function applyChangeSet(
   }
   const seen = new Set<string>();
   for (const change of changes) {
-    if (!CONFIG_ITEM_NAME_PATTERN.test(change.item)) {
-      throw new DomainError("VALIDATION_FAILED", `Invalid Config Item name: ${change.item}`);
-    }
+    assertItemName(change.item);
     if (seen.has(change.item)) {
       throw new DomainError("VALIDATION_FAILED", `Duplicate Config Item in change set: ${change.item}`);
     }

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@varlatch/backup": "workspace:*",
+    "@varlatch/contract": "workspace:*",
     "@varlatch/context": "workspace:*",
     "@varlatch/protocol": "workspace:*",
     "@varlatch/sdk": "workspace:*",

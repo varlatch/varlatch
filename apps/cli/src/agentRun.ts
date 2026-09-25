@@ -6,7 +6,7 @@ import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import { generatePlaceholder, startBroker } from "./broker.js";
-import { runChild } from "./inject.js";
+import { RUN_CONTEXT, runChild } from "./inject.js";
 
 /**
  * `varlatch run --agent-safe` (ADR-0022 §8): the trusted parent resolves
@@ -43,11 +43,13 @@ export function buildAgentEnv(
   // neither is the parent's own bearer (VARLATCH_TOKEN).
   delete env[BROKER_CREDENTIAL_ENV];
   delete env.VARLATCH_TOKEN;
+  delete env[RUN_CONTEXT];
   if (agentCredential) {
     env.VARLATCH_SERVER = agentCredential.server;
     env.VARLATCH_TOKEN = agentCredential.token;
   }
   for (const item of effective.items ?? []) {
+    if (item.name === RUN_CONTEXT) continue;
     const placeholder = placeholdersByItem.get(item.name);
     if (placeholder !== undefined) env[item.name] = placeholder;
     else if (item.value !== null && item.value !== undefined) env[item.name] = item.value;

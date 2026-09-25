@@ -72,3 +72,13 @@ export interface ConfigurationContract {
 export type ContractHash = `sha256:${string}`;
 
 export const CONFIG_ITEM_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+
+/**
+ * Names reserved for launcher metadata. `VARLATCH_RUN_CONTEXT` is set by
+ * `varlatch run` itself, so no Contract item or stored value may use it.
+ */
+export const RESERVED_ITEM_NAMES: readonly string[] = ["VARLATCH_RUN_CONTEXT"];
+
+export function isReservedItemName(name: string): boolean {
+  return RESERVED_ITEM_NAMES.includes(name);
+}
