@@ -183,7 +183,9 @@ const cliVersion = execFileSync(process.execPath, [cliBundle, "--version"], { en
 if (!cliVersion.startsWith(`varlatch ${version} `)) fail(`CLI bundle reports "${cliVersion}", expected ${version}`);
 const cliAsset = `varlatch-cli-${version}.cjs`;
 cpSync(cliBundle, join(outDir, cliAsset));
-cpSync(join(repoRoot, "THIRD-PARTY-NOTICES.md"), join(outDir, "THIRD-PARTY-NOTICES.md"));
+// The release workflow writes into the repository root, where the file
+// already is; copying it onto itself would fail.
+if (resolve(outDir) !== repoRoot) cpSync(join(repoRoot, "THIRD-PARTY-NOTICES.md"), join(outDir, "THIRD-PARTY-NOTICES.md"));
 
 const assets = ["varlatch-release.json", "docker-compose.release.yml", "convex-supervisor.cjs", ...OVERLAYS, `varlatch-compose-${version}.tar.gz`, cliAsset, "THIRD-PARTY-NOTICES.md"];
 const sums = assets.map(name => `${createHash("sha256").update(readFileSync(join(outDir, name))).digest("hex")}  ${name}\n`).join("");
