@@ -26,6 +26,7 @@
     "@electric-sql/pglite": "0.3.14",
     "@types/node": "26.5.0",
     "@types/pg": "8.15.5",
+    "@varlatch/env-schema": "workspace:*",
     "@varlatch/sdk": "workspace:*",
     "esbuild": "0.28.2",
     "playwright": "1.61.0",

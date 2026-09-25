@@ -5,7 +5,9 @@
  *
  * Supported:
  *   Root decorators:  @defaultSensitive=true|false   @defaultRequired=true|false|infer
- *   Item decorators:  @required  @optional  @required=forEnv(a,b)
+ *   Item decorators:  @required  @optional
+ *                     @required=env(name, ...)   root Environments, by name
+ *                     @required=tier(development|staging|production)
  *                     @sensitive  @sensitive=false  @public
  *                     @type=string|number|boolean|url|email|enum(a,b,...)
  *                     @example=... / @example="..."
@@ -13,15 +15,21 @@
  *                     NAME=literal     (defaultValue)
  *                     NAME=fn(...)     (dynamic resolver; no defaultValue)
  *   Plain `# text` comment lines above an item become its description.
+ *   After a value, whitespace followed by `#` (outside quotes) starts a
+ *   comment; a `#` with no whitespace before it is part of the value.
  *
  * Anything decorator-shaped but unrecognized fails loudly (ADR-0013 §12):
  * never discarded, never approximated.
  */
 
+import { TIERS, type Tier } from "@varlatch/contract";
+
 export type DraftRequired =
   | { kind: "always" }
   | { kind: "never" }
-  | { kind: "forEnv"; varlockNames: string[] };
+  /** Root Environment names; the CLI resolves them to IDs when it pushes. */
+  | { kind: "environments"; names: string[] }
+  | { kind: "tier"; tier: Tier };
 
 export interface DraftItem {
   name: string;
@@ -37,8 +45,8 @@ export interface DraftItem {
 export interface ContractDraft {
   defaults: { sensitive: boolean; required: DraftRequired };
   items: DraftItem[];
-  /** Every distinct forEnv name referenced, for mapping resolution. */
-  varlockEnvNames: string[];
+  /** Every distinct Environment name referenced by env(...), sorted. */
+  environmentNames: string[];
 }
 
 export class EnvSchemaParseError extends Error {
@@ -50,7 +58,7 @@ export class EnvSchemaParseError extends Error {
   }
 }
 
-const ITEM_LINE = /^([A-Z][A-Z0-9_]*)\s*=\s*(.*)$/;
+const ITEM_LINE = /^([A-Z][A-Z0-9_]*)\s*=(.*)$/;
 // Matches @name, @name=value, and @name(args) — anything decorator-shaped.
 const DECORATOR = /^@([A-Za-z][A-Za-z0-9]*)(?:=(.*)|(\(.*\)))?$/;
 const FUNCTION_VALUE = /^[A-Za-z_][A-Za-z0-9_]*\(.*\)$/;
@@ -61,6 +69,56 @@ function stripQuotes(v: string): string {
     return t.slice(1, -1);
   }
   return t;
+}
+
+const FOR_ENV_REMOVED =
+  "forEnv(...) is not supported. Name this project's Varlatch environments instead, " +
+  "for example @required=env(production, staging), or name a tier: @required=tier(production)";
+
+/**
+ * Split an item's right-hand side into its value and an optional trailing
+ * comment. A comment starts at `#` preceded by whitespace, outside quotes. A
+ * trailing decorator is an error: decorators go on their own line.
+ */
+function valueOf(rhs: string, line: number): string {
+  const start = rhs.length - rhs.trimStart().length;
+  const t = rhs.trimStart();
+  if (t.startsWith('"') || t.startsWith("'")) {
+    const quote = t[0] as string;
+    let close = -1;
+    for (let i = 1; i < t.length; i++) {
+      if (t[i] === "\\" && quote === '"') {
+        i++; // escapes are kept verbatim, but an escaped quote does not close
+        continue;
+      }
+      if (t[i] === quote) {
+        close = i;
+        break;
+      }
+    }
+    if (close < 0) throw new EnvSchemaParseError(line, "Unterminated quoted value");
+    trailing(t.slice(close + 1), line);
+    return t.slice(0, close + 1);
+  }
+  const comment = /\s#/.exec(rhs.slice(start > 0 ? start - 1 : 0));
+  if (!comment) return t.trimEnd();
+  const at = (start > 0 ? start - 1 : 0) + comment.index;
+  trailing(rhs.slice(at), line);
+  return rhs.slice(0, at).trim();
+}
+
+function trailing(rest: string, line: number): void {
+  const t = rest.trim();
+  if (t === "") return;
+  if (!t.startsWith("#")) {
+    throw new EnvSchemaParseError(line, `Unexpected text after the value: ${t.slice(0, 40)}`);
+  }
+  if (t.replace(/^#+\s?/, "").trim().startsWith("@")) {
+    throw new EnvSchemaParseError(
+      line,
+      "A decorator must be on its own comment line above the item, not after its value",
+    );
+  }
 }
 
 function parseList(inner: string): string[] {
@@ -76,7 +134,7 @@ export function parseEnvSchema(source: string): ContractDraft {
     required: { kind: "never" },
   };
   const items: DraftItem[] = [];
-  const envNames = new Set<string>();
+  const environmentNames = new Set<string>();
 
   let pendingDecorators: { name: string; value: string | undefined; line: number }[] = [];
   let pendingDescription: string[] = [];
@@ -118,13 +176,19 @@ export function parseEnvSchema(source: string): ContractDraft {
     }
     sawItem = true;
     items.push(
-      buildItem(item[1] as string, item[2] ?? "", pendingDecorators, pendingDescription, envNames),
+      buildItem(
+        item[1] as string,
+        valueOf(item[2] ?? "", lineNo),
+        pendingDecorators,
+        pendingDescription,
+        environmentNames,
+      ),
     );
     pendingDecorators = [];
     pendingDescription = [];
   }
 
-  return { defaults, items, varlockEnvNames: [...envNames].sort() };
+  return { defaults, items, environmentNames: [...environmentNames].sort() };
 }
 
 function applyRootDecorator(
@@ -148,15 +212,14 @@ function applyRootDecorator(
 
 function buildItem(
   name: string,
-  rhs: string,
+  value: string,
   decorators: { name: string; value: string | undefined; line: number }[],
   description: string[],
-  envNames: Set<string>,
+  environmentNames: Set<string>,
 ): DraftItem {
   const item: DraftItem = { name, required: null, sensitive: null, type: "string" };
   if (description.length > 0) item.description = description.join(" ");
 
-  const value = rhs.trim();
   if (value !== "" && !FUNCTION_VALUE.test(value)) {
     item.defaultValue = stripQuotes(value);
   }
@@ -164,15 +227,25 @@ function buildItem(
   for (const d of decorators) {
     switch (d.name) {
       case "required": {
-        if (d.value === undefined || d.value === "true") item.required = { kind: "always" };
-        else if (d.value === "false") item.required = { kind: "never" };
-        else {
-          const m = /^forEnv\((.*)\)$/.exec(d.value.trim());
-          if (!m) throw new EnvSchemaParseError(d.line, `Unsupported @required form: ${d.value}`);
-          const names = parseList(m[1] as string);
-          if (names.length === 0) throw new EnvSchemaParseError(d.line, "forEnv() needs at least one environment");
-          for (const n of names) envNames.add(n);
-          item.required = { kind: "forEnv", varlockNames: names };
+        const v = d.value?.trim();
+        if (v === undefined || v === "true") item.required = { kind: "always" };
+        else if (v === "false") item.required = { kind: "never" };
+        else if (/^forEnv\s*\(/.test(v)) throw new EnvSchemaParseError(d.line, FOR_ENV_REMOVED);
+        else if (/^env\(.*\)$/.test(v)) {
+          const names = [...new Set(parseList(v.slice(4, -1)))];
+          if (names.length === 0) {
+            throw new EnvSchemaParseError(d.line, "env() needs at least one environment name");
+          }
+          for (const n of names) environmentNames.add(n);
+          item.required = { kind: "environments", names };
+        } else if (/^tier\(.*\)$/.test(v)) {
+          const tier = v.slice(5, -1).trim();
+          if (!(TIERS as readonly string[]).includes(tier)) {
+            throw new EnvSchemaParseError(d.line, `tier() takes one of: ${TIERS.join(", ")}`);
+          }
+          item.required = { kind: "tier", tier: tier as Tier };
+        } else {
+          throw new EnvSchemaParseError(d.line, `Unsupported @required form: ${v}`);
         }
         break;
       }
@@ -209,12 +282,12 @@ function buildItem(
       case "docs":
       case "icon":
       case "tag":
-        // Presentation-only Varlock decorators: not part of the Contract.
+        // Presentation-only decorators: not part of the Contract.
         break;
       default:
         throw new EnvSchemaParseError(
           d.line,
-          `Unsupported decorator @${d.name} — the adapter fails loudly rather than dropping semantics (ADR-0013)`,
+          `Unsupported decorator @${d.name}: unknown decorators fail loudly rather than being dropped`,
         );
     }
   }

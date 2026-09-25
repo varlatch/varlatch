@@ -148,12 +148,9 @@ export function OnboardingChecklist({ org, projects }: { org: string; projects: 
                 ]}
               />
               <p className="text-muted text-sm">
-                Push prints the revision to pass to <Mono>varlatch contract activate</Mono>. If it
-                reports unmapped <Mono>forEnv</Mono> names, map them under{" "}
-                <Link className="text-accent hover:underline" to={`/o/${org}/p/${slug}/contract`}>
-                  Contract
-                </Link>{" "}
-                → Varlock mapping first.
+                Push prints the revision to pass to <Mono>varlatch contract activate</Mono>. A
+                condition such as <Mono>@required=env(production)</Mono> names this project's
+                environments; an unknown name fails the push and lists the names that exist.
               </p>
             </>
           ) : (

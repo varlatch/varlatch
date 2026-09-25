@@ -5,6 +5,35 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.11.0)
+
+### Contracts
+
+- `.env.schema` conditions name your Varlatch environments directly:
+  `@required=env(production, staging)` requires an item in those
+  environments, and `@required=tier(production)` in every environment of a
+  tier. Names are resolved to environment IDs when you push, and an unknown
+  name fails the push and lists the environments that exist. A pushed
+  revision keeps the IDs: renaming or deleting an environment later never
+  changes it. A later push resolves the names again, so if a name was reused
+  by a new environment, that push selects the new one.
+- `forEnv(...)` is no longer accepted in `.env.schema`. The parse error names
+  the replacement: `@required=forEnv(prod)` becomes
+  `@required=env(production)`, using the project's environment names, or
+  `@required=tier(production)`.
+- A comment after a value is now a comment: `PORT=8080 # listen port` gives
+  the default `8080`. Before, the comment became part of the default. A
+  decorator after a value, text after a quoted value, and an unterminated
+  quote are now errors instead of being read into the default. A `#` with no
+  whitespace before it, or inside quotes, is still part of the value.
+
+### Upgrading
+
+- A `.env.schema` with comments after values gives different defaults when
+  pushed with this release's CLI. Review the activation's changes before
+  activating. A file that uses `forEnv(...)` must switch to `env(...)` or
+  `tier(...)` first.
+
 ## 0.10.0 (2026-09-25)
 
 **Before upgrading:** validation changed. `varlatch validate` and the
