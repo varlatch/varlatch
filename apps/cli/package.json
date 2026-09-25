@@ -20,7 +20,7 @@
     "@varlatch/protocol": "workspace:*",
     "@varlatch/sdk": "workspace:*",
     "@varlatch/sync": "workspace:*",
-    "@varlatch/varlock-plugin": "workspace:*",
+    "@varlatch/env-schema": "workspace:*",
     "tar": "^7.5.22"
   },
   "devDependencies": {

@@ -2,7 +2,7 @@
   "name": "@varlatch/context",
   "version": "0.10.0",
   "private": true,
-  "description": "Deterministic Varlatch context resolution shared by the CLI and the Varlock plugin (ADR-0017)",
+  "description": "Deterministic Varlatch context resolution (server, organization, project, environment) shared by the CLI",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

@@ -19,7 +19,7 @@ import {
   type ResolvedContext,
 } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
-import { parseEnvSchema, resolveDraft } from "@varlatch/varlock-plugin";
+import { parseEnvSchema, resolveDraft } from "@varlatch/env-schema";
 import { buildEnv, runChild, withheldItems } from "./inject.js";
 import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
