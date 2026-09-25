@@ -45,7 +45,7 @@ function less(a: Key, b: Key): boolean {
 }
 
 type Segment =
-  | { kind: "raw"; start: number; bytes: number[] }
+  | { kind: "raw"; start: number; bytes: Buffer }
   | { kind: "region"; start: number; end: number; key: Key };
 
 export interface EndReport {
@@ -100,34 +100,48 @@ export class StreamMatcher {
     return this.automaton.hold(this.state);
   }
 
-  /** Consume a chunk; returns the bytes that are final. */
+  /**
+   * Consume a chunk; returns the bytes that are final. Matches are found
+   * byte by byte and merged afterwards: the merge is order-independent, and
+   * `now - hold` never decreases, so emitting once per chunk gives the same
+   * bytes as emitting after every byte.
+   */
   push(chunk: Uint8Array): Uint8Array {
     if (this.closed) throw new Error("matcher already closed");
-    const out: number[] = [];
-    for (const byte of chunk) {
-      this.appendRaw(byte);
-      this.now++;
-      this.state = this.automaton.step(this.state, byte);
-      for (const ref of this.automaton.matches(this.state)) {
-        const pattern = this.patterns[ref.id]!;
-        this.addMatch({ start: this.now - pattern.length, length: pattern.length, item: pattern.item });
+    const data = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    const base = this.now;
+    const found: Key[] = [];
+    let state = this.state;
+    for (let i = 0; i < data.length; i++) {
+      state = this.automaton.step(state, data[i]!);
+      const refs = this.automaton.matches(state);
+      for (let r = 0; r < refs.length; r++) {
+        const pattern = this.patterns[refs[r]!.id]!;
+        found.push({ start: base + i + 1 - pattern.length, length: pattern.length, item: pattern.item });
       }
-      this.emitFinal(this.now - this.automaton.hold(this.state), out);
     }
-    return Uint8Array.from(out);
+    this.state = state;
+    this.now = base + data.length;
+    if (data.length > 0) this.segments.push({ kind: "raw", start: base, bytes: data });
+    for (const match of found) this.addMatch(match);
+    const out: Buffer[] = [];
+    this.emitFinal(this.now - this.automaton.hold(state), out);
+    // What is still held is at most `hold` bytes: copy it, never keep the caller's buffer.
+    this.segments = this.segments.map((s) => (s.kind === "raw" ? { ...s, bytes: Buffer.from(s.bytes) } : s));
+    return Buffer.concat(out);
   }
 
   /** A clean end: no match can complete any more. */
   end(): EndReport {
     if (this.closed) throw new Error("matcher already closed");
     this.closed = true;
-    const out: number[] = [];
+    const out: Buffer[] = [];
     for (const segment of this.segments) this.emitSegment(segment, out);
     this.segments = [];
     const heldPattern = this.automaton.heldPrefixOf(this.state);
     const hold = this.automaton.hold(this.state);
     return {
-      output: Uint8Array.from(out),
+      output: Buffer.concat(out),
       incompletePrefix: heldPattern >= 0 && hold > 0 ? { item: this.patterns[heldPattern]!.item, length: hold } : null,
     };
   }
@@ -138,16 +152,10 @@ export class StreamMatcher {
     this.segments = [];
   }
 
-  private appendRaw(byte: number): void {
-    const last = this.segments[this.segments.length - 1];
-    if (last?.kind === "raw" && last.start + last.bytes.length === this.now) last.bytes.push(byte);
-    else this.segments.push({ kind: "raw", start: this.now, bytes: [byte] });
-  }
-
-  /** Merge the match [start, now) into the pending segments. */
+  /** Merge a match into the pending segments. */
   private addMatch(match: Key): void {
     const start = match.start;
-    const end = this.now;
+    const end = match.start + match.length;
     let merged: { start: number; end: number; key: Key } = { start, end, key: match };
     const kept: Segment[] = [];
     for (const segment of this.segments) {
@@ -171,10 +179,10 @@ export class StreamMatcher {
         continue;
       }
       if (segment.start < start) {
-        kept.push({ kind: "raw", start: segment.start, bytes: segment.bytes.slice(0, start - segment.start) });
+        kept.push({ kind: "raw", start: segment.start, bytes: segment.bytes.subarray(0, start - segment.start) });
       }
       if (rawEnd > end) {
-        kept.push({ kind: "raw", start: end, bytes: segment.bytes.slice(end - segment.start) });
+        kept.push({ kind: "raw", start: end, bytes: segment.bytes.subarray(end - segment.start) });
       }
     }
     const region: Segment = { kind: "region", start: merged.start, end: merged.end, key: merged.key };
@@ -186,7 +194,7 @@ export class StreamMatcher {
   }
 
   /** Emit every segment that ends before `boundary`, in order. */
-  private emitFinal(boundary: number, out: number[]): void {
+  private emitFinal(boundary: number, out: Buffer[]): void {
     while (this.segments.length > 0) {
       const first = this.segments[0]!;
       if (first.kind === "region") {
@@ -197,22 +205,23 @@ export class StreamMatcher {
       }
       const finalCount = Math.min(first.bytes.length, boundary - first.start);
       if (finalCount <= 0) return;
-      for (let i = 0; i < finalCount; i++) out.push(first.bytes[i]!);
+      out.push(first.bytes.subarray(0, finalCount));
       if (finalCount === first.bytes.length) this.segments.shift();
       else {
-        this.segments[0] = { kind: "raw", start: first.start + finalCount, bytes: first.bytes.slice(finalCount) };
+        this.segments[0] = { kind: "raw", start: first.start + finalCount, bytes: first.bytes.subarray(finalCount) };
         return;
       }
     }
   }
 
-  private emitSegment(segment: Segment, out: number[]): void {
+  private emitSegment(segment: Segment, out: Buffer[]): void {
     if (segment.kind === "raw") {
-      for (const b of segment.bytes) out.push(b);
+      out.push(segment.bytes);
       return;
     }
     const item = segment.key.item;
     this.replaced.set(item, (this.replaced.get(item) ?? 0) + 1);
-    for (const b of this.replacement(item)) out.push(b);
+    const replacement = this.replacement(item);
+    out.push(Buffer.from(replacement.buffer, replacement.byteOffset, replacement.byteLength));
   }
 }
