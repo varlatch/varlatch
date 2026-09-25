@@ -8,6 +8,8 @@ export {
   semanticsFor,
   UnsupportedSemanticsVersionError,
   type ContractSemantics,
+  type ConvertedValue,
+  type ParseResult,
   type SemanticsEnvironment,
   type SemanticsVersion,
 } from "./semantics.js";

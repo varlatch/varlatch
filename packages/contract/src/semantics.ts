@@ -12,7 +12,7 @@ import type { ContractItem, Tier } from "./types.js";
  * `test/vectors/` pin every version.
  */
 
-export const SEMANTICS_VERSIONS = [1] as const;
+export const SEMANTICS_VERSIONS = [1, 2] as const;
 export type SemanticsVersion = (typeof SEMANTICS_VERSIONS)[number];
 
 /** The Environment facts requiredness depends on. */
@@ -22,8 +22,21 @@ export interface SemanticsEnvironment {
   tier: Tier;
 }
 
+/** A converted value: `process.env` strings become these typed values. */
+export type ConvertedValue = string | number | boolean;
+
+export type ParseResult =
+  | { ok: true; value: ConvertedValue }
+  | { ok: false; reason: string };
+
 export interface ContractSemantics {
   readonly version: SemanticsVersion;
+  /**
+   * Validation and conversion as one step, from version 2: every string
+   * that validates converts, the same way everywhere. Undefined for a
+   * version that defines no conversion.
+   */
+  readonly parse?: (item: ContractItem, value: string) => ParseResult;
   /** Whether the item is required in this Environment. */
   requiredApplies(item: ContractItem, env: SemanticsEnvironment): boolean;
   /** Whether an item with no value in this Environment is reported missing. */
@@ -94,7 +107,60 @@ const V1: ContractSemantics = {
   },
 };
 
-const BY_VERSION = new Map<unknown, ContractSemantics>([[1, V1]]);
+/** The largest integer a JavaScript number represents exactly: 2^53 - 1. */
+const MAX_EXACT = "9007199254740991";
+const NUMBER_V2 = /^-?(\d+)(?:\.(\d+))?$/;
+
+/**
+ * Version 2 numbers: the version 1 lexical form, and an exact decimal
+ * magnitude of at most 2^53 - 1, checked on the digits before any rounding.
+ * Within that range a fraction converts to the nearest double.
+ */
+function parseNumberV2(value: string): ParseResult {
+  const match = NUMBER_V2.exec(value);
+  if (!match) return { ok: false, reason: "must be a number" };
+  const integer = (match[1] as string).replace(/^0+(?=\d)/, "");
+  const fractionNonZero = match[2] !== undefined && /[1-9]/.test(match[2]);
+  const tooLarge =
+    integer.length > MAX_EXACT.length ||
+    (integer.length === MAX_EXACT.length &&
+      (integer > MAX_EXACT || (integer === MAX_EXACT && fractionNonZero)));
+  if (tooLarge) {
+    return { ok: false, reason: "must be a number no larger in magnitude than 2^53 - 1" };
+  }
+  return { ok: true, value: Number(value) };
+}
+
+/**
+ * Version 2: version 1's rules with conversion, and a magnitude bound on
+ * numbers so that every valid number converts exactly or to the nearest
+ * double, never to a different integer or to Infinity. Booleans convert
+ * `true`/`1` to true and `false`/`0` to false; every other type converts to
+ * the validated string.
+ */
+function parseV2(item: ContractItem, value: string): ParseResult {
+  if (item.type === "number") return parseNumberV2(value);
+  const reason = V1.validate(item, value);
+  if (reason !== null) return { ok: false, reason };
+  if (item.type === "boolean") return { ok: true, value: /^(true|1)$/i.test(value) };
+  return { ok: true, value };
+}
+
+const V2: ContractSemantics = {
+  version: 2,
+  requiredApplies,
+  missingWhenAbsent: V1.missingWhenAbsent,
+  parse: parseV2,
+  validate(item, value) {
+    const result = parseV2(item, value);
+    return result.ok ? null : result.reason;
+  },
+};
+
+const BY_VERSION = new Map<unknown, ContractSemantics>([
+  [1, V1],
+  [2, V2],
+]);
 
 /** The rules of one semantics version. Unknown versions fail closed. */
 export function semanticsFor(version: number): ContractSemantics {

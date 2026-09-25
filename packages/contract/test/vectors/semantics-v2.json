@@ -1,0 +1,912 @@
+{
+  "semanticsVersion": 2,
+  "description": "Golden vectors for Contract Semantics version 2: version 1's rules with conversion, and numbers bounded to an exact decimal magnitude of at most 2^53 - 1. A converted number is written as a string so negative zero and exact digits survive JSON. A version never changes, so neither does this file.",
+  "validate": [
+    {
+      "type": "string",
+      "value": "",
+      "valid": true,
+      "converted": {
+        "string": ""
+      }
+    },
+    {
+      "type": "string",
+      "value": " ",
+      "valid": true,
+      "converted": {
+        "string": " "
+      }
+    },
+    {
+      "type": "string",
+      "value": "any text\nwith a newline",
+      "valid": true,
+      "converted": {
+        "string": "any text\nwith a newline"
+      }
+    },
+    {
+      "type": "number",
+      "value": "0",
+      "valid": true,
+      "converted": {
+        "number": "0"
+      }
+    },
+    {
+      "type": "number",
+      "value": "42",
+      "valid": true,
+      "converted": {
+        "number": "42"
+      }
+    },
+    {
+      "type": "number",
+      "value": "-7",
+      "valid": true,
+      "converted": {
+        "number": "-7"
+      }
+    },
+    {
+      "type": "number",
+      "value": "3.14",
+      "valid": true,
+      "converted": {
+        "number": "3.14"
+      }
+    },
+    {
+      "type": "number",
+      "value": "1.5",
+      "valid": true,
+      "converted": {
+        "number": "1.5"
+      }
+    },
+    {
+      "type": "number",
+      "value": "-2.25",
+      "valid": true,
+      "converted": {
+        "number": "-2.25"
+      }
+    },
+    {
+      "type": "number",
+      "value": "-0",
+      "valid": true,
+      "converted": {
+        "number": "-0"
+      },
+      "note": "converts to negative zero"
+    },
+    {
+      "type": "number",
+      "value": "007",
+      "valid": true,
+      "converted": {
+        "number": "7"
+      }
+    },
+    {
+      "type": "number",
+      "value": "-0.5",
+      "valid": true,
+      "converted": {
+        "number": "-0.5"
+      }
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991",
+      "valid": true,
+      "converted": {
+        "number": "9007199254740991"
+      },
+      "note": "2^53 - 1, the largest valid magnitude"
+    },
+    {
+      "type": "number",
+      "value": "-9007199254740991",
+      "valid": true,
+      "converted": {
+        "number": "-9007199254740991"
+      }
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991.0",
+      "valid": true,
+      "converted": {
+        "number": "9007199254740991"
+      },
+      "note": "a zero fraction does not raise the magnitude"
+    },
+    {
+      "type": "number",
+      "value": "000000000000000000009007199254740991",
+      "valid": true,
+      "converted": {
+        "number": "9007199254740991"
+      },
+      "note": "leading zeros do not count"
+    },
+    {
+      "type": "number",
+      "value": "0.1000000000000000055511151231257827",
+      "valid": true,
+      "converted": {
+        "number": "0.1"
+      },
+      "note": "within the bound a fraction converts to the nearest double"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740990.9",
+      "valid": true,
+      "converted": {
+        "number": "9007199254740991"
+      },
+      "note": "within the bound, so it converts to the nearest double"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740992",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1",
+      "note": "2^53 is above the bound"
+    },
+    {
+      "type": "number",
+      "value": "-9007199254740992",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740993",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1",
+      "note": "valid in version 1, where it converted to a different integer"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740993.0",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1"
+    },
+    {
+      "type": "number",
+      "value": "-9007199254740993.0",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991.5",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1",
+      "note": "the exact decimal is checked before any rounding"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991.4",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1",
+      "note": "invalid even though it rounds to a valid double"
+    },
+    {
+      "type": "number",
+      "value": "9007199254740991.0000000000000000001",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1"
+    },
+    {
+      "type": "number",
+      "value": "10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false,
+      "reason": "must be a number no larger in magnitude than 2^53 - 1",
+      "note": "valid in version 1, where it converted to Infinity"
+    },
+    {
+      "type": "number",
+      "value": "",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1e5",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1E3",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "+1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": ".5",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1.",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": " 1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1 ",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "42\n",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "80abc",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "0x10",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "0x1F",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "0x50",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "443;rm",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "NaN",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "Infinity",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "-",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1,000",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "1_000",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "--1",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "١٢",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "１",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "boolean",
+      "value": "true",
+      "valid": true,
+      "converted": {
+        "boolean": true
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "false",
+      "valid": true,
+      "converted": {
+        "boolean": false
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "TRUE",
+      "valid": true,
+      "converted": {
+        "boolean": true
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "FALSE",
+      "valid": true,
+      "converted": {
+        "boolean": false
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "False",
+      "valid": true,
+      "converted": {
+        "boolean": false
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "tRuE",
+      "valid": true,
+      "converted": {
+        "boolean": true
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "1",
+      "valid": true,
+      "converted": {
+        "boolean": true
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "0",
+      "valid": true,
+      "converted": {
+        "boolean": false
+      }
+    },
+    {
+      "type": "boolean",
+      "value": "yes",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "no",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "on",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "off",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": " true",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "true\n",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "2",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "t",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "boolean",
+      "value": "01",
+      "valid": false,
+      "reason": "must be a boolean"
+    },
+    {
+      "type": "url",
+      "value": "https://example.com",
+      "valid": true,
+      "converted": {
+        "string": "https://example.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://localhost:3000/path?q=1",
+      "valid": true,
+      "converted": {
+        "string": "http://localhost:3000/path?q=1"
+      }
+    },
+    {
+      "type": "url",
+      "value": "localhost:3000",
+      "valid": true,
+      "note": "parses with scheme localhost:",
+      "converted": {
+        "string": "localhost:3000"
+      }
+    },
+    {
+      "type": "url",
+      "value": "mailto:a@example.com",
+      "valid": true,
+      "converted": {
+        "string": "mailto:a@example.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "mailto:x",
+      "valid": true,
+      "converted": {
+        "string": "mailto:x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "postgres://u:p@db:5432/app",
+      "valid": true,
+      "converted": {
+        "string": "postgres://u:p@db:5432/app"
+      }
+    },
+    {
+      "type": "url",
+      "value": "  https://example.com  ",
+      "valid": true,
+      "note": "the URL parser strips leading and trailing spaces",
+      "converted": {
+        "string": "  https://example.com  "
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://exa\tmple.com",
+      "valid": true,
+      "note": "the URL parser removes tabs and newlines",
+      "converted": {
+        "string": "https://exa\tmple.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "x:",
+      "valid": true,
+      "converted": {
+        "string": "x:"
+      }
+    },
+    {
+      "type": "url",
+      "value": "",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "example.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "/relative/path",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://exa mple.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://[::1",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "email",
+      "value": "a@b.co",
+      "valid": true,
+      "converted": {
+        "string": "a@b.co"
+      }
+    },
+    {
+      "type": "email",
+      "value": "first.last@sub.example.com",
+      "valid": true,
+      "converted": {
+        "string": "first.last@sub.example.com"
+      }
+    },
+    {
+      "type": "email",
+      "value": "a@b.c.d",
+      "valid": true,
+      "converted": {
+        "string": "a@b.c.d"
+      }
+    },
+    {
+      "type": "email",
+      "value": "a@..c",
+      "valid": true,
+      "note": "a pattern check, not an address parser",
+      "converted": {
+        "string": "a@..c"
+      }
+    },
+    {
+      "type": "email",
+      "value": "",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a b@c.d",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "@b.c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b.c ",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@@b.c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a.b@c",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "email",
+      "value": "a@b.c\n",
+      "valid": false,
+      "reason": "must be an email address"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "debug",
+      "valid": true,
+      "converted": {
+        "string": "debug"
+      }
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "info",
+      "valid": true,
+      "converted": {
+        "string": "info"
+      }
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "INFO",
+      "valid": false,
+      "reason": "must be one of: debug, info",
+      "note": "membership is case-sensitive"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": " info",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug",
+        "info"
+      ],
+      "value": "warn",
+      "valid": false,
+      "reason": "must be one of: debug, info"
+    }
+  ],
+  "required": [
+    {
+      "required": {
+        "kind": "always"
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true
+    },
+    {
+      "required": {
+        "kind": "always"
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "never"
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "never"
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "production"
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "production"
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "staging"
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "tier",
+          "tier": "staging"
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_a",
+            "env_b"
+          ]
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": true,
+      "note": "a derived Environment is matched by its root's ID"
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_a",
+            "env_b"
+          ]
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": true,
+      "missingWhenAbsent": false,
+      "note": "a derived Environment is matched by its root's ID"
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_b"
+          ]
+        }
+      },
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    },
+    {
+      "required": {
+        "kind": "selector",
+        "selector": {
+          "kind": "environments",
+          "environmentIds": [
+            "env_b"
+          ]
+        }
+      },
+      "defaultValue": "fallback",
+      "environment": {
+        "rootId": "env_a",
+        "tier": "production"
+      },
+      "requiredApplies": false,
+      "missingWhenAbsent": false
+    }
+  ]
+}
