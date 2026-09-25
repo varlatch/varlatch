@@ -319,7 +319,7 @@ export interface paths {
         put?: never;
         /**
          * Validate the Effective Configuration against the active Contract
-         * @description Requires environment.read. Verdicts are value-derived, so each item is evaluated only if the caller may read what the verdict describes: presence of stored values needs config.metadata.read, verdicts on non-sensitive values need config.value.read, and verdicts on Secrets need secret.reveal including its Requirements (e.g. Tailnet Constraints). Anything else is reported in notEvaluated with an authorization-derived reason and never affects valid, missing, or invalid. valid is true only when complete is true. Every decryption for validation is audited before it happens (secret.validated / value.validated, naming item versions); verdicts are never audited. Responses are never cacheable.
+         * @description Requires environment.read. Verdicts are value-derived, so each item is evaluated only if the caller may read what the verdict describes: presence of stored values needs config.metadata.read, verdicts on non-sensitive values need config.value.read, and verdicts on Secrets need secret.reveal including its Requirements (e.g. Tailnet Constraints). Anything else is reported in notEvaluated with an authorization-derived reason and never affects valid, missing, or invalid. valid is true only when complete is true. Values are validated in the form `varlatch run` delivers them to this caller, with references expanded; a value that would keep a reference literal gets no type verdict and is reported in unresolved. Every decryption for validation, including values read only to expand references, is audited before it happens (secret.validated / value.validated, naming item versions); verdicts are never audited. Responses are never cacheable.
          */
         post: operations["validateEnvironment"];
         delete?: never;
@@ -1264,7 +1264,7 @@ export interface components {
             contractRevisionId?: string | null;
             /** @description True only when every Contract item was evaluated (complete) and none is missing or invalid. A partial evaluation is never valid. */
             valid: boolean;
-            /** @description False when any item is in notEvaluated. */
+            /** @description False when any item is in notEvaluated, or is unresolved because of this caller's access (reason authority). */
             complete: boolean;
             missing: string[];
             /** @description Evaluated items only; reasons never contain the value. */
@@ -1279,6 +1279,12 @@ export interface components {
                 reason: "permission" | "requirement";
                 /** @enum {string} */
                 requires: "config.metadata.read" | "config.value.read" | "secret.reveal";
+            }[];
+            /** @description Evaluated items whose delivered value would keep a reference literal, so no type verdict is given. authority: a Secret references non-sensitive values this caller may not read, and a caller who may read them gets it expanded. reference: anything else, such as a reference to an item with no value, a non-sensitive value referencing a Secret (never expanded), or a cycle. Absent on servers older than 0.11.0. */
+            unresolved: {
+                name: string;
+                /** @enum {string} */
+                reason: "authority" | "reference";
             }[];
         };
         ContractRevision: {

@@ -13,9 +13,19 @@ export type ValidationSummary =
 
 export function validationSummary(report: ValidationReport): ValidationSummary {
   // Servers before this field existed evaluated everything.
-  const notEvaluated = (report.notEvaluated ?? []).map((i) => i.name);
+  // An item unresolved only because of this caller's access counts as not
+  // evaluated; any other unresolved reference is a failure.
+  const unresolved = report.unresolved ?? [];
+  const notEvaluated = [
+    ...(report.notEvaluated ?? []).map((i) => i.name),
+    ...unresolved.filter((u) => u.reason === "authority").map((u) => u.name),
+  ];
   const complete = report.complete ?? notEvaluated.length === 0;
-  const failing = [...(report.missing ?? []), ...(report.invalid ?? []).map((i) => i.name)];
+  const failing = [
+    ...(report.missing ?? []),
+    ...(report.invalid ?? []).map((i) => i.name),
+    ...unresolved.filter((u) => u.reason === "reference").map((u) => u.name),
+  ];
   if (report.valid && complete) return { state: "valid" };
   if (failing.length > 0) return { state: "invalid", failing, notEvaluated };
   return { state: "incomplete", notEvaluated };

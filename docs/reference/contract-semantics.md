@@ -75,7 +75,30 @@ different integer or to infinity:
   `0.1000000000000000055511151231257827` converts to `0.1`.
 - `-0` converts to negative zero.
 
-## Validation reasons
+## Validation reports
+
+Validation checks each value in the form `varlatch run` delivers it to
+the caller, with references expanded:
+
+- A non-sensitive value expands references to non-sensitive values only.
+- A Secret expands references to Secrets and, when the caller may read
+  them, to non-sensitive values.
+
+A value that would keep a reference literal gets no type verdict. It is
+listed in the report's `unresolved` list:
+
+- `authority`: a Secret references non-sensitive values the caller may not
+  read. A caller who may read them gets it expanded, so the report is
+  incomplete, and `varlatch validate` exits 2.
+- `reference`: anything else, such as a reference to an item with no
+  value, a non-sensitive value that references a Secret (never expanded),
+  or a cycle. The report is invalid, and `varlatch validate` exits 1.
+
+`$${NAME}` is an escaped reference: it is delivered as the literal text
+`${NAME}` and validated as such.
+
+Values read only to expand a reference are audited before they are
+decrypted, like the values being validated.
 
 A validation reason never contains the value or any part of it, for any
 item. An enum reason lists the contract's allowed values, never the

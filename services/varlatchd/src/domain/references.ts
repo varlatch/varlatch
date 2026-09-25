@@ -29,7 +29,12 @@ export function referencedNames(raw: string): string[] {
 export const MAX_EXPANDED_BYTES = 1024 * 1024;
 
 export class ReferenceExpansionError extends DomainError {
-  constructor(message: string) { super("VALIDATION_FAILED", message); }
+  /** True when a reference would stay literal; false for a size or work limit. */
+  readonly unresolved: boolean;
+  constructor(message: string, unresolved = false) {
+    super("VALIDATION_FAILED", message);
+    this.unresolved = unresolved;
+  }
 }
 
 /** Resolve chains without ever reinterpreting escaped references. Strict
@@ -58,7 +63,7 @@ export function expandReferences(
       const name = match[2]!;
       const value = lookup(name);
       if (value === undefined || path.has(name) || path.size >= MAX_REFERENCE_DEPTH) {
-        if (strict) throw new ReferenceExpansionError(value === undefined ? `references outside the disclosure set (${name})` : `cyclic or too-deep reference (${name})`);
+        if (strict) throw new ReferenceExpansionError(value === undefined ? `references outside the disclosure set (${name})` : `cyclic or too-deep reference (${name})`, true);
         append(match[0]);
       } else {
         visit(value, new Set([...path, name]));
