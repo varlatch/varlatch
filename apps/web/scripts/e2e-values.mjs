@@ -116,17 +116,22 @@ await page.waitForFunction(
 );
 check("change set committed (dev, no confirmation needed)", true);
 
-// 5. Conflict: stale draft is rejected atomically.
+// 5. Conflict: a change made after review is rejected atomically, even once
+// the dashboard's live update has refreshed the data behind the dialog.
 await page.click('[data-testid="edit-PORT"]');
 await page.fill('[data-row="PORT"] textarea', "5000");
-// Concurrent writer bumps PORT via the API while the draft is open.
+await page.click('[data-testid="review-save"]');
+const refreshed = page
+  .waitForResponse((r) => r.url().includes("/effective-configuration"), { timeout: 30000 })
+  .catch(() => null);
+// Concurrent writer bumps PORT via the API while the review is open.
 const bump = await fetch(`${base}/v1/organizations/acme/projects/api/environments/development/values/PORT`, {
   method: "PUT",
   headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
   body: JSON.stringify({ value: "9999" }),
 });
 check("concurrent writer succeeded", bump.ok);
-await page.click('[data-testid="review-save"]');
+check("the live update reached the open review", (await refreshed) !== null);
 await page.click('[data-testid="commit-changes"]');
 await page.waitForSelector('[data-testid="editor-error"]', { timeout: 10000 });
 const conflictText = await page.textContent('[data-testid="editor-error"]');

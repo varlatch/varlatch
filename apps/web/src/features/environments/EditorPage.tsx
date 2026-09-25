@@ -133,6 +133,23 @@ export function EditorPage() {
 
   const serverItems = itemsQuery.data ?? [];
   const serverByName = useMemo(() => new Map(serverItems.map((i) => [i.name, i])), [serverItems]);
+  // What the review dialog showed, frozen when it opened. The server data
+  // refreshes live, so reading it at commit time would let a change another
+  // client made during review be overwritten without a conflict.
+  const [reviewed, setReviewed] = useState<Map<string, ServerItem> | null>(null);
+  const openReview = useCallback(() => {
+    const snapshot = new Map<string, ServerItem>();
+    for (const name of drafts.keys()) {
+      const server = serverByName.get(name);
+      if (server) snapshot.set(name, server);
+    }
+    setReviewed(snapshot);
+    setReviewOpen(true);
+  }, [drafts, serverByName]);
+  const closeReview = () => {
+    setReviewOpen(false);
+    setReviewed(null);
+  };
   const addedNames = [...drafts.keys()].filter((n) => !serverByName.has(n));
   const dirty = drafts.size > 0;
 
@@ -156,12 +173,12 @@ export function EditorPage() {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        if (dirty) setReviewOpen(true);
+        if (dirty) openReview();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [dirty]);
+  }, [dirty, openReview]);
 
   const handlePaste = (text: string): boolean => {
     const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith("#"));
@@ -189,8 +206,10 @@ export function EditorPage() {
   };
 
   const commit = async () => {
+    // Expected versions are the reviewed ones, never the live ones.
+    const baseline = reviewed ?? serverByName;
     const changes = [...drafts.entries()].map(([item, draft]) => {
-      const server = serverByName.get(item);
+      const server = baseline.get(item);
       if (draft.op === "delete") {
         return {
           op: "delete" as const,
@@ -212,7 +231,7 @@ export function EditorPage() {
         idempotencyKey: crypto.randomUUID(),
       });
       setDrafts(new Map());
-      setReviewOpen(false);
+      closeReview();
       maskAll();
       await qc.invalidateQueries({ queryKey: ["effective-values", org, project, envName] });
       await qc.invalidateQueries({ queryKey: ["effective-meta", org, project] });
@@ -227,7 +246,7 @@ export function EditorPage() {
       } else {
         setError(err instanceof VarlatchApiError ? `${err.code}: ${err.message}` : String(err));
       }
-      setReviewOpen(false);
+      closeReview();
     }
   };
 
@@ -369,7 +388,7 @@ export function EditorPage() {
           </span>
           <div className="flex-1" />
           <Button variant="ghost" onClick={() => setDrafts(new Map())}>Discard</Button>
-          <Button data-testid="review-save" onClick={() => setReviewOpen(true)}>Review &amp; Save</Button>
+          <Button data-testid="review-save" onClick={openReview}>Review &amp; Save</Button>
         </div>
       )}
 
@@ -378,9 +397,9 @@ export function EditorPage() {
           envName={envName}
           tier={tier}
           drafts={drafts}
-          serverByName={serverByName}
+          serverByName={reviewed ?? serverByName}
           disclosed={disclosed}
-          onCancel={() => setReviewOpen(false)}
+          onCancel={closeReview}
           onCommit={() => void commit()}
         />
       )}

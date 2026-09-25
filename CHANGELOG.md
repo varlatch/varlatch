@@ -73,6 +73,14 @@ fixes.
   deploy image installs only runtime dependencies.
 - `pnpm dev:up` runs the whole stack from a checkout, with synthetic data.
 
+### Fixed
+
+- The values editor commits against the versions you reviewed. Before, when
+  another client changed a value while the review dialog was open, the
+  dashboard's live update made your commit overwrite that change without a
+  conflict. Now it is rejected as changed since review, and your draft is
+  kept.
+
 ### Upgrading
 
 Upgrade with this release's CLI, as for 0.9.0 below. Releases now come from
