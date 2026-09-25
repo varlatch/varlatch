@@ -431,6 +431,9 @@ importers:
       '@types/pg':
         specifier: 8.15.5
         version: 8.15.5
+      '@varlatch/env-schema':
+        specifier: workspace:*
+        version: link:../../packages/env-schema
       '@varlatch/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk

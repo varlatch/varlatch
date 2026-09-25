@@ -6,4 +6,4 @@ export {
   type DraftItem,
   type DraftRequired,
 } from "./parse.js";
-export { resolveDraft, UnmappedVarlockEnvironmentError } from "./resolve.js";
+export { resolveDraft, UnknownEnvironmentNameError, type EnvironmentRef } from "./resolve.js";

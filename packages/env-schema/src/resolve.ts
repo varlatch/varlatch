@@ -8,54 +8,79 @@ import {
 import type { ContractDraft, DraftItem } from "./parse.js";
 
 /**
- * Resolve a Contract draft into the canonical Contract using the Project's
- * Varlock Environment Mapping (varlock name -> root Environment ID, fetched
- * from varlatchd). Unmapped forEnv names fail loudly (ADR-0013 §12) — never
- * approximated, broadened, or dropped.
+ * Resolve a Contract draft into the canonical Contract. `env(...)` names are
+ * resolved against the project's live Environments at push time: each must
+ * name a root Environment, and an unknown or derived name fails loudly
+ * (ADR-0013 §12), never approximated, broadened, or dropped.
+ *
+ * The stored revision keeps the IDs resolved here. A later push resolves the
+ * names again, so a renamed Environment's old name fails, and a name reused
+ * by a different Environment selects that Environment.
  */
 
-export class UnmappedVarlockEnvironmentError extends Error {
-  override name = "UnmappedVarlockEnvironmentError";
-  readonly names: string[];
-  constructor(names: string[]) {
+/** The fields of an Environment that name resolution needs. */
+export interface EnvironmentRef {
+  id: string;
+  name: string;
+  parentEnvironmentId: string | null;
+}
+
+export class UnknownEnvironmentNameError extends Error {
+  override name = "UnknownEnvironmentNameError";
+  readonly unknown: string[];
+  readonly derived: string[];
+  constructor(unknown: string[], derived: string[], roots: string[]) {
+    const parts: string[] = [];
+    if (unknown.length > 0) parts.push(`unknown environment name(s) in env(...): ${unknown.join(", ")}`);
+    if (derived.length > 0) {
+      parts.push(`derived environment(s) in env(...): ${derived.join(", ")}; env(...) names root environments`);
+    }
     super(
-      `Unmapped Varlock environment name(s): ${names.join(", ")}. ` +
-        "Set the Project's Varlock Environment Mapping first " +
-        "(varlatch varlock-mapping set <name> <environment>).",
+      `${parts.join("; ")}. This project's root environments: ${roots.length > 0 ? roots.join(", ") : "(none)"}.`,
     );
-    this.names = names;
+    this.unknown = unknown;
+    this.derived = derived;
   }
 }
 
 function resolveRequired(
   item: DraftItem,
   defaults: ContractDraft["defaults"],
-  mapping: Record<string, string>,
-  unmapped: Set<string>,
+  byName: Map<string, EnvironmentRef>,
+  unknown: Set<string>,
+  derived: Set<string>,
 ): Requiredness {
   const required = item.required ?? defaults.required;
-  if (required.kind === "always" || required.kind === "never") return required;
-  if (required.kind === "forEnv") {
-    const ids: string[] = [];
-    for (const name of required.varlockNames) {
-      const id = mapping[name];
-      if (!id) unmapped.add(name);
-      else ids.push(id);
+  switch (required.kind) {
+    case "always":
+    case "never":
+      return required;
+    case "tier":
+      return { kind: "selector", selector: { kind: "tier", tier: required.tier } };
+    case "environments": {
+      const ids: string[] = [];
+      for (const name of required.names) {
+        const env = byName.get(name);
+        if (!env) unknown.add(name);
+        else if (env.parentEnvironmentId !== null) derived.add(name);
+        else ids.push(env.id);
+      }
+      return { kind: "selector", selector: { kind: "environments", environmentIds: ids } };
     }
-    return { kind: "selector", selector: { kind: "environments", environmentIds: ids } };
   }
-  return required;
 }
 
 export function resolveDraft(
   draft: ContractDraft,
-  mapping: Record<string, string>,
+  environments: EnvironmentRef[],
 ): ConfigurationContract {
-  const unmapped = new Set<string>();
+  const byName = new Map(environments.map((e) => [e.name, e]));
+  const unknown = new Set<string>();
+  const derived = new Set<string>();
   const items: ContractItem[] = draft.items.map((item) => {
     const resolved: ContractItem = {
       name: item.name,
-      required: resolveRequired(item, draft.defaults, mapping, unmapped),
+      required: resolveRequired(item, draft.defaults, byName, unknown, derived),
       sensitive: item.sensitive ?? draft.defaults.sensitive,
       type: item.type,
     };
@@ -65,8 +90,12 @@ export function resolveDraft(
     if (item.example !== undefined) resolved.example = item.example;
     return resolved;
   });
-  if (unmapped.size > 0) {
-    throw new UnmappedVarlockEnvironmentError([...unmapped].sort());
+  if (unknown.size > 0 || derived.size > 0) {
+    const roots = environments
+      .filter((e) => e.parentEnvironmentId === null)
+      .map((e) => e.name)
+      .sort();
+    throw new UnknownEnvironmentNameError([...unknown].sort(), [...derived].sort(), roots);
   }
   return normalizeContract({ schemaVersion: 1, items });
 }

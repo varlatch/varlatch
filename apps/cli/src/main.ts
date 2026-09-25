@@ -19,7 +19,7 @@ import {
   type ResolvedContext,
 } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
-import { parseEnvSchema, resolveDraft } from "@varlatch/env-schema";
+import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { buildEnv, runChild, withheldItems } from "./inject.js";
 import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
@@ -578,14 +578,21 @@ async function main(): Promise<void> {
           let contract: unknown;
           let provenance: Record<string, string> | undefined;
           if (schemaFile) {
-            // Canonical Varlock path (ADR-0013): parse .env.schema, resolve
-            // forEnv names through the Project's authoritative mapping —
-            // unmapped names fail loudly here, never approximated.
+            // .env.schema: parse, then resolve env(...) names against the
+            // project's live root Environments. Unknown names fail loudly
+            // here, never approximated. The revision stores the IDs.
             if (!existsSync(schemaFile)) fail(`No such file: ${schemaFile}`);
             const draft = parseEnvSchema(readFileSync(schemaFile, "utf8"));
-            const { mapping } = await api.getVarlockMapping(ctx.organization, ctx.project);
-            contract = resolveDraft(draft, mapping);
-            provenance = { schemaPath: schemaFile, adapter: "varlatch-envspec-subset" };
+            const environments =
+              draft.environmentNames.length > 0
+                ? (await api.listEnvironments(ctx.organization, ctx.project)).items.map((e) => ({
+                    id: e.id,
+                    name: e.name,
+                    parentEnvironmentId: e.parentEnvironmentId ?? null,
+                  }))
+                : [];
+            contract = resolveDraft(draft, environments);
+            provenance = { schemaPath: schemaFile, adapter: "varlatch-env-schema" };
           } else if (jsonFile) {
             if (!existsSync(jsonFile)) fail(`No such file: ${jsonFile}`);
             contract = JSON.parse(readFileSync(jsonFile, "utf8")) as unknown;
@@ -1058,6 +1065,7 @@ Usage:
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
     if (err instanceof ContextError) fail(err.message);
+    if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {
       fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`);
     }
