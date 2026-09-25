@@ -1,8 +1,8 @@
 {
-  "name": "@varlatch/varlock-plugin",
+  "name": "@varlatch/env-schema",
   "version": "0.10.0",
   "private": true,
-  "description": "The canonical Varlock adapter: .env.schema (env-spec subset) -> Varlatch Configuration Contract draft, resolved via the Varlock Environment Mapping (ADR-0002/0013/0017)",
+  "description": "The .env.schema parser: the contract file format pushed with `varlatch contract push --schema`, parsed into a Contract draft",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
