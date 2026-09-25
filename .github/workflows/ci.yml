@@ -57,6 +57,13 @@ jobs:
       - name: Every file and package matches the license map
         run: pnpm license:check
 
+      # The release notes are the changelog section of the version being
+      # released; a release without one fails at tag time, so fail here.
+      - name: The changelog has a section for the current version
+        run: |
+          VERSION=$(node -p "require('./packages/backup/src/release.json').version")
+          grep -q "^## ${VERSION} (" CHANGELOG.md || { echo "CHANGELOG.md has no section for ${VERSION}" >&2; exit 1; }
+
       - name: Build
         run: pnpm build
 

@@ -224,6 +224,20 @@ jobs:
         if: env.SIGN == 'true'
         run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
 
+      # The release notes are this version's CHANGELOG.md section, so what
+      # changed and how to upgrade is written once and reviewed in the PR.
+      - name: Release notes from the changelog
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          awk -v v="$VERSION" 'index($0, "## " v " (") == 1 { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+          {
+            echo
+            echo "---"
+            echo
+            echo "Digest-pinned release set for linux/amd64 and linux/arm64. Check every asset against \`SHA256SUMS\`; [verifying a release](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/operations/verify-release.md) also covers signatures, provenance, and SBOMs. The operator CLI, \`varlatch-cli-${VERSION}.cjs\` (Node 22+), is version-coupled to the installation: replace the host CLI before anything else. First installs: unpack \`varlatch-compose-${VERSION}.tar.gz\` and follow its README."
+          } >> notes.md
+
       - name: Create GitHub release with the deployment unit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -242,4 +256,4 @@ jobs:
             THIRD-PARTY-NOTICES.md \
             SHA256SUMS "${SIGNATURE[@]}" \
             --title "Varlatch $GITHUB_REF_NAME" \
-            --notes "Digest-pinned release set for linux/amd64 and linux/arm64. Verify SHA256SUMS against its Sigstore signature (SHA256SUMS.sigstore.json), then every asset against SHA256SUMS; images are signed the same way and carry provenance and SBOM attestations: see docs/operations/verify-release.md. Operator CLI: download varlatch-cli-${VERSION}.cjs (Node 22+) and replace the host CLI before anything else — it is version-coupled to the installation. Upgrade existing installations with \`node varlatch-cli-${VERSION}.cjs upgrade ${VERSION}\`; first installs: unpack varlatch-compose-${VERSION}.tar.gz and follow its README."
+            --notes-file notes.md

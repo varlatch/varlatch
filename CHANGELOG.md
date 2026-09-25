@@ -5,7 +5,15 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.10.0)
+## 0.10.0 (2026-09-25)
+
+**Before upgrading:** validation changed. `varlatch validate` and the
+dashboard now evaluate only the items the caller may read, and report the
+rest as not evaluated. The CLI then prints `INCOMPLETE` and exits with a new
+code, `2`, where it used to report a verdict. CI jobs that validate with an
+identity lacking `secret.reveal` or `config.value.read` need those actions
+granted, or must treat exit code `2` as incomplete. See Security and
+Upgrading below.
 
 ### Project
 
@@ -83,8 +91,26 @@ fixes.
 
 ### Upgrading
 
-Upgrade with this release's CLI, as for 0.9.0 below. Releases now come from
-`varlatch/varlatch` on GitHub.
+Releases now come from `varlatch/varlatch` on GitHub. Database schema:
+migration 20.
+
+- From 0.8.0 or 0.9.0: download `varlatch-cli-0.10.0.cjs` from the `v0.10.0`
+  release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.10.0.cjs upgrade 0.10.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. The upgrade captures and
+  verifies an archive before applying migration 20, and completes only once
+  the new release passes its health gate. That archive is still taken the
+  old way, with the installation briefly paused, because online capture
+  needs 0.10.0 to be running; plan a short maintenance window.
+- From the published 0.7.0: the offline path described under 0.8.0 still
+  applies with this CLI.
+- Then replace the host CLI with `varlatch-cli-0.10.0.cjs`.
+- Installations set up by hand keep working as they are. `varlatch doctor`
+  lists them as not adopted, and `varlatch adopt` moves them to managed
+  configuration one reversible step at a time.
+- 0.10.0 restores archives from 0.7.0 (migrations 16 and 18), 0.8.0
+  (migrations 18 and 19), 0.9.0 (migration 19), and builds made between
+  0.9.0 and 0.10.0 (migration 20).
 
 CI jobs that run `varlatch validate` with an identity that lacks
 `secret.reveal` or `config.value.read` on the environment now get exit code
