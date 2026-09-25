@@ -43,6 +43,9 @@ Item decorators, on comment lines directly above an item, one per line:
 | `@type=enum(a, b, ...)` | enum type with these values |
 | `@example=...` | example (quotes stripped) |
 
+What each type accepts, and which version of the rules a pushed revision
+uses, is described in [Contract Semantics](contract-semantics.md).
+
 Items:
 
 - `NAME=` declares an item with no default.
