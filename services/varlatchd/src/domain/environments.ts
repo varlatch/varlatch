@@ -197,18 +197,6 @@ export async function deleteEnvironment(
   }
 
   await withTx(ctx.db, async (db) => {
-    const mappings = await db.query(
-      "SELECT varlock_name FROM varlock_env_mappings WHERE project_id = $1 AND environment_id = $2",
-      [project.id, env.id],
-    );
-    if (mappings.rows.length > 0) {
-      const names = (mappings.rows as { varlock_name: string }[]).map((r) => r.varlock_name);
-      throw new DomainError(
-        "VALIDATION_FAILED",
-        `The Varlock Environment Mapping references this environment (${names.join(", ")}); remap or remove the name(s) first`,
-        { varlockNames: names },
-      );
-    }
     const children = await db.query(
       "SELECT name FROM environments WHERE parent_environment_id = $1 AND deleted_at IS NULL",
       [env.id],

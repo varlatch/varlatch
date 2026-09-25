@@ -447,33 +447,6 @@ export class VarlatchClient {
     );
   }
 
-  getVarlockMapping(org: string, project: string): Promise<{ projectId: string; mapping: Record<string, string> }> {
-    return this.request(
-      "GET",
-      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/varlock-mapping`,
-    );
-  }
-
-  setVarlockMapping(
-    org: string,
-    project: string,
-    varlockName: string,
-    environmentId: string,
-  ): Promise<{ varlockName: string; environmentId: string }> {
-    return this.request(
-      "PUT",
-      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/varlock-mapping/${encodeURIComponent(varlockName)}`,
-      { environmentId },
-    );
-  }
-
-  removeVarlockMapping(org: string, project: string, varlockName: string): Promise<void> {
-    return this.request(
-      "DELETE",
-      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/varlock-mapping/${encodeURIComponent(varlockName)}`,
-    );
-  }
-
   createIdentity(
     org: string,
     input: {

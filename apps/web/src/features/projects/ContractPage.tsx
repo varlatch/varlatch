@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ContractRevision, Environment } from "@varlatch/protocol";
+import type { ContractRevision } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Button, Card, InfoTip, Input, Mono, Select, cn } from "../../components/ui";
@@ -23,8 +23,7 @@ const TYPE_HELP: Record<string, string> = {
  * it depends on the project's contract authority. Git-authority projects get
  * a read-only view ("edit in your repository, push with the CLI"); managed
  * projects get the editor, where publishing pushes and activates a new
- * revision. The Varlock mapping (varlock env name -> Environment) is editable
- * for both.
+ * revision.
  */
 
 type Item = {
@@ -52,7 +51,6 @@ export function ContractPage() {
     [
       ["project", org, project],
       ["contract", org, project],
-      ["varlock-mapping", org, project],
       ["environments", org, project],
     ],
   );
@@ -166,8 +164,6 @@ export function ContractPage() {
           design.
         </p>
       )}
-
-      <VarlockMapping org={org as string} project={project as string} />
     </div>
   );
 }
@@ -277,75 +273,6 @@ function ManagedEditor({
         </p>
       )}
       {publish.error && <p className="text-deny text-sm">{String(publish.error)}</p>}
-    </Card>
-  );
-}
-
-function VarlockMapping({ org, project }: { org: string; project: string }) {
-  const { api } = useSession();
-  const qc = useQueryClient();
-  const mapping = useQuery({
-    queryKey: ["varlock-mapping", org, project],
-    queryFn: () => api.getVarlockMapping(org, project),
-  });
-  const envs = useQuery({
-    queryKey: ["environments", org, project],
-    queryFn: () => api.listEnvironments(org, project),
-  });
-  const [varlockName, setVarlockName] = useState("");
-  const [envId, setEnvId] = useState("");
-  const set = useMutation({
-    mutationFn: () => api.setVarlockMapping(org, project, varlockName, envId),
-    onSuccess: () => {
-      setVarlockName("");
-      void qc.invalidateQueries({ queryKey: ["varlock-mapping", org, project] });
-    },
-  });
-  const envName = (id: string) =>
-    (envs.data?.items as Environment[] | undefined)?.find((e) => e.id === id)?.name ?? id;
-
-  return (
-    <Card data-testid="varlock-mapping">
-      <h2 className="font-medium mb-1">Varlock mapping</h2>
-      <p className="text-muted text-sm mb-2">
-        Maps varlock environment names used by tooling onto Varlatch Environments.
-      </p>
-      <div className="flex gap-2 items-center mb-2">
-        <Input
-          data-testid="varlock-name"
-          placeholder="varlock env name"
-          value={varlockName}
-          onChange={(e) => setVarlockName(e.target.value)}
-        />
-        <span className="text-muted text-sm">→</span>
-        <Select
-          data-testid="varlock-env"
-          value={envId}
-          onChange={(v) => setEnvId(v)}
-          options={[
-            { value: "", label: "Choose environment…" },
-            ...((envs.data?.items as Environment[] | undefined)?.map((e) => ({
-              value: e.id,
-              label: e.name,
-            })) ?? []),
-          ]}
-        />
-        <Button data-testid="varlock-set" disabled={!varlockName || !envId || set.isPending} onClick={() => set.mutate()}>
-          Map
-        </Button>
-      </div>
-      {set.error && <p className="text-deny text-sm mb-1">{String(set.error)}</p>}
-      {mapping.data && Object.keys(mapping.data.mapping).length === 0 && (
-        <p className="text-muted text-sm">No mappings yet.</p>
-      )}
-      {mapping.data &&
-        Object.entries(mapping.data.mapping).map(([k, v]) => (
-          <div key={k} data-varlock={k} className="flex gap-2 items-center border-t border-bd py-1.5 text-sm">
-            <Mono>{k}</Mono>
-            <span className="text-muted">→</span>
-            <span>{envName(v)}</span>
-          </div>
-        ))}
     </Card>
   );
 }

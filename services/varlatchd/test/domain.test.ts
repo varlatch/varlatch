@@ -233,17 +233,6 @@ describe("environment removal (ADR-0025)", () => {
     });
   });
 
-  it("blocks while a Varlock mapping references the environment", async () => {
-    const { org, project, dev } = await setup();
-    await ctx.db.query(
-      "INSERT INTO varlock_env_mappings (project_id, varlock_name, environment_id) VALUES ($1,'dev',$2)",
-      [project.id, dev.id],
-    );
-    await expect(deleteEnvironment(ctx, org.id, project, dev, actor)).rejects.toMatchObject({
-      code: "VALIDATION_FAILED",
-    });
-  });
-
   it("soft-deletes values and revokes outstanding capabilities transactionally", async () => {
     const { org, project, dev } = await setup();
     await setValue(ctx, org, project, dev, "API_KEY", { value: "s3cret" }, actor);

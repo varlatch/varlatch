@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * P4 E2E: audit timeline (authoritative /v1 history, filters, provenance
- * drawer), contract tab (git read-only vs managed editor, varlock mapping),
+ * drawer), contract tab (git read-only vs managed editor),
  * command palette, settings.
  * Usage: e2e-p4.mjs <enroll-url> <api-token>
  */
@@ -146,12 +146,8 @@ await page.click('[data-testid="contract-publish"]');
 await page.waitForSelector('[data-contract-item="FEATURE_FLAG"]', { timeout: 10000 });
 check("managed publish activates a revision with the new item", true);
 
-// 4. Varlock mapping.
-await page.fill('[data-testid="varlock-name"]', "dev");
-await page.selectOption('[data-testid="varlock-env"]', { label: "development" });
-await page.click('[data-testid="varlock-set"]');
-await page.waitForSelector('[data-varlock="dev"]', { timeout: 10000 });
-check("varlock mapping saved and listed", (await page.textContent('[data-varlock="dev"]')).includes("development"));
+// 4. The environment-name mapping was removed: no card on the contract tab.
+check("contract tab has no environment-name mapping card", (await page.$('[data-testid="varlock-mapping"]')) === null);
 
 // 5. Command palette.
 await page.keyboard.press("ControlOrMeta+k");

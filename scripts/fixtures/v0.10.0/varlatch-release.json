@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "version": "0.10.0",
+  "apiMajor": 1,
+  "migrationVersion": 20,
+  "supportedRestoreSources": [
+    {
+      "version": "0.7.0",
+      "migrationVersion": 16
+    },
+    {
+      "version": "0.7.0",
+      "migrationVersion": 18
+    },
+    {
+      "version": "0.8.0",
+      "migrationVersion": 18
+    },
+    {
+      "version": "0.8.0",
+      "migrationVersion": 19
+    },
+    {
+      "version": "0.9.0",
+      "migrationVersion": 19
+    },
+    {
+      "version": "0.9.0",
+      "migrationVersion": 20
+    }
+  ],
+  "generatedAt": "2026-09-25T13:51:17.407Z",
+  "supportedPostgresMajor": 17,
+  "images": {
+    "varlatchd": {
+      "tag": "ghcr.io/varlatch/varlatchd:0.10.0",
+      "digest": "ghcr.io/varlatch/varlatchd@sha256:7325d469951551162c3cba95d9282efbef4e453d42ec50f79f9d0ee2602c52bf"
+    },
+    "varlatch-web": {
+      "tag": "ghcr.io/varlatch/varlatch-web:0.10.0",
+      "digest": "ghcr.io/varlatch/varlatch-web@sha256:87af89df9ccb78ebb79e6a4c3ac97b8b67b79a6f474ffccbe978fcb56e3dc912"
+    },
+    "convex-deploy": {
+      "tag": "ghcr.io/varlatch/varlatch-convex-deploy:0.10.0",
+      "digest": "ghcr.io/varlatch/varlatch-convex-deploy@sha256:8d9e3285914c160e4495baf84a7fb4c91dd67437b1be37224b071c336712bd72"
+    },
+    "convex-backend": {
+      "tag": null,
+      "digest": "ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98"
+    },
+    "postgres": {
+      "tag": "docker.io/library/postgres:17.6",
+      "digest": "docker.io/library/postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
+    },
+    "caddy": {
+      "tag": "docker.io/library/caddy:2.10.2",
+      "digest": "docker.io/library/caddy@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb"
+    },
+    "tailscale": {
+      "tag": "docker.io/tailscale/tailscale:v1.102.3",
+      "digest": "docker.io/tailscale/tailscale@sha256:8c42c4574ab066384fcb72f69e086a2ff1dd3652eb6f56856cee34bcf0d2f680"
+    }
+  }
+}
