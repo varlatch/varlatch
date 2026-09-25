@@ -136,6 +136,44 @@ and counts failures by rule when the run ends.
   the Broker is not proxied a second time.
 - No reusable Varlatch credential, unless you pass `--agent-metadata`.
 
+## Responses
+
+The Broker scrubs the response to every request it substituted into: each
+value fetched for that request, and a rotating Secret's previous value, is
+replaced with the Secret's Placeholder in the status line, every header,
+and every body byte. It finds the value as written, JSON-escaped (with or
+without `\/`), percent-encoded, and in base64 or base64url at any
+alignment, so `user:secret` inside a Basic credential is found too. When two
+Secrets overlap, one Placeholder replaces both.
+
+- A substituted request asks the destination for `Accept-Encoding:
+  identity`, and `Range` and `If-Range` are removed.
+- A response of at most 2 MiB with no content coding is read whole. If
+  nothing matched it is relayed exactly as sent; if something matched,
+  `Content-Length` is recomputed and `ETag`, `Content-MD5`, `Digest`,
+  `Content-Digest`, and `Repr-Digest` are removed.
+- Any other response is streamed: `gzip`, `deflate`, and `br` are decoded,
+  and the Agent receives uncoded content in chunked framing, without
+  `Content-Length`, `Accept-Ranges`, `Content-Encoding`, validators, or
+  digests. A response in any other coding gets `502`.
+- A substituted response is limited to 64 MiB of decoded content and to
+  120 seconds without a byte from the destination, counted from the moment
+  the request is sent. A server-sent events or long-polling response must
+  send data more often than that, and a larger download is cut off. A
+  failure once the response has started ends it without a final chunk, so
+  the Agent sees an incomplete response, never a shortened one that looks
+  complete.
+- While part of a value may still be arriving, the Broker holds those bytes
+  back, for as long as it takes; it never releases them on a timer. If the
+  response ends partway through a value, the bytes are released unchanged
+  and the run reports the length, not the bytes.
+- Responses to requests the Broker did not substitute into are relayed
+  unchanged, and a value is scrubbed only from the response to the request
+  that used it.
+
+The run reports, when it ends, how many replacements it made per Secret,
+and names a Secret too short to scrub (under 8 bytes).
+
 ## Sending requests through the Broker
 
 Send plain HTTP requests with an absolute `https://` URL to the Broker, with
@@ -173,5 +211,9 @@ destinations passes through unchanged, Placeholders intact, unless you pass
   destination that it permits. Destinations are host and port.
 - A destination that logs or echoes the target header, or logs URLs with a
   query target, sees the value.
-- Responses are relayed unchanged: a destination that returns the Secret, or
-  data derived from it, returns it to the Agent.
+- Scrubbing is a second line of defense, not a guarantee. It does not catch
+  a value shorter than 8 bytes, a value in hex, arbitrary `\uXXXX`
+  escapes, another character set, compression inside a body, a value split
+  across fields, or anything derived from it, and it does not apply to
+  responses to requests that did not carry the value. While a response is
+  streaming, the Broker keeps the values it fetched for it in memory.

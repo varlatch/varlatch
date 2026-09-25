@@ -4,7 +4,9 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { parseTarget, type Target } from "@varlatch/protocol";
+import type { SecretEntry } from "@varlatch/matcher";
 import { BODY_LIMIT, planPlacement, type Placement, type PlacementRule, type Surface } from "./placement.js";
+import { BeforeHeaders, Cutoff, SCRUB_LIMITS, Scrubber, Watchdog, relayScrubbed, type ScrubEvent, type ScrubLimits } from "./scrub.js";
 
 /**
  * The local Broker (ADR-0022, amended by ADR-0039): a loopback-only forward
@@ -83,13 +85,16 @@ export interface Exercised {
   targets: Record<string, string[]>;
   /** Placed items the server did not return (no longer stored). */
   withheld?: string[];
+  /** A rotating item's retiring value, scrubbed from responses like the current one. */
+  retiring?: Map<string, string>;
 }
 
 /** What the run's diagnostics hear about; never a value. */
 export type BrokerEvent =
   | { kind: "blocked"; status: number; rule: PlacementRule; message: string }
   | { kind: "failed"; rule: PlacementRule | "exercise-mismatch"; message: string }
-  | { kind: "stray"; item: string; surface: Surface };
+  | { kind: "stray"; item: string; surface: Surface }
+  | ScrubEvent;
 
 export interface BrokerOptions {
   /** placeholder token -> Config Item name */
@@ -103,6 +108,8 @@ export interface BrokerOptions {
   /** Block non-allowlisted traffic instead of passing it through. */
   strict?: boolean;
   report?: (event: BrokerEvent) => void;
+  /** Response scrubbing bounds; the defaults are 64 MiB decoded and 120 seconds idle. */
+  limits?: Partial<ScrubLimits>;
 }
 
 export interface RunningBroker {
@@ -137,6 +144,16 @@ function deny(res: http.ServerResponse, status: number, message: string, headers
  */
 function isMaintenance(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "MAINTENANCE";
+}
+
+/**
+ * A substituted request asks for identity content and a whole
+ * representation, so its response never needs decoding past what the
+ * scrubber supports, and is never a partial one (ADR-0039 Decision 16).
+ */
+function adjustForScrubbing<T extends { headers: [string, string][] }>(request: T): T {
+  const dropped = new Set(["accept-encoding", "range", "if-range"]);
+  return { ...request, headers: [...request.headers.filter(([n]) => !dropped.has(n.toLowerCase())), ["Accept-Encoding", "identity"]] };
 }
 
 /** A failure after exercise: the request is dropped with its plaintext. */
@@ -199,9 +216,12 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
   );
   const held = new Set<Map<string, string>>();
   const report = options.report ?? (() => {});
+  const limits: ScrubLimits = { ...SCRUB_LIMITS, ...options.limits };
+  const placeholderOf = new Map([...options.placeholders].map(([token, item]) => [item, Buffer.from(token)]));
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res).catch((err: unknown) => {
+      if (err instanceof BeforeHeaders || err instanceof Cutoff) report({ kind: "aborted", reason: err.message });
       if (res.headersSent) res.destroy();
       else if (isMaintenance(err)) deny(res, 503, "the Varlatch installation is in maintenance (restore or upgrade); retry later", { "Retry-After": "15" });
       else deny(res, 502, err instanceof Error ? err.message : "internal error");
@@ -310,45 +330,57 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
       return;
     }
     const exercised = await options.exercise({ host, port }, plan.placements);
+    // Exercised values live for this request and its response only.
     held.add(exercised.values);
-    let built: typeof parts;
     try {
-      const placed = new Set(plan.placements.map((p) => p.item));
-      const returned = [...exercised.values.keys()];
-      if (!sameTargets(exercised.targets, options.targets)) {
-        throw new AfterExercise("exercise-mismatch", "the exercise response carries different targets than the Capability was issued with");
+      let built: typeof parts;
+      try {
+        const placed = new Set(plan.placements.map((p) => p.item));
+        const returned = [...exercised.values.keys()];
+        if (!sameTargets(exercised.targets, options.targets)) {
+          throw new AfterExercise("exercise-mismatch", "the exercise response carries different targets than the Capability was issued with");
+        }
+        if (exercised.withheld && exercised.withheld.length > 0) {
+          throw new AfterExercise("missing-value", `${[...exercised.withheld].sort().join(", ")}: no longer stored in this environment`);
+        }
+        if (returned.length !== placed.size || returned.some((item) => !placed.has(item))) {
+          throw new AfterExercise("exercise-mismatch", "the exercise response carries different items than the request places");
+        }
+        const applied = plan.apply(exercised.values);
+        if (!applied.ok) throw new AfterExercise(applied.rule, applied.message);
+        built = applied;
+      } catch (err) {
+        if (!(err instanceof AfterExercise)) throw err;
+        report({ kind: "failed", rule: err.rule, message: err.message });
+        deny(res, 502, err.message);
+        return;
       }
-      if (exercised.withheld && exercised.withheld.length > 0) {
-        throw new AfterExercise("missing-value", `${[...exercised.withheld].sort().join(", ")}: no longer stored in this environment`);
-      }
-      if (returned.length !== placed.size || returned.some((item) => !placed.has(item))) {
-        throw new AfterExercise("exercise-mismatch", "the exercise response carries different items than the request places");
-      }
-      const applied = plan.apply(exercised.values);
-      if (!applied.ok) throw new AfterExercise(applied.rule, applied.message);
-      built = applied;
-    } catch (err) {
-      if (!(err instanceof AfterExercise)) throw err;
-      report({ kind: "failed", rule: err.rule, message: err.message });
-      deny(res, 502, err.message);
-      return;
+      // The response is scrubbed of exactly the values exercised for it.
+      const entries: SecretEntry[] = [
+        ...[...exercised.values].map(([item, value]) => ({ item, value })),
+        ...[...(exercised.retiring ?? [])].map(([item, value]) => ({ item, value })),
+      ];
+      const scrubber = new Scrubber(entries, (item) => placeholderOf.get(item) ?? Buffer.from("vlch_ph_v1_unknown"), report);
+      await forward(adjustForScrubbing(built), hadLength, scrubber);
     } finally {
       // Nothing is cached across requests.
       exercised.values.clear();
+      exercised.retiring?.clear();
       held.delete(exercised.values);
     }
-    return forward(built, hadLength);
+    return;
 
     // Redirects are relayed, never followed: each subsequent request re-enters
     // these checks from scratch (ADR-0022 §10). TLS verification is stock.
     // The upstream connection opens only here, once the request is complete.
-    async function forward(request: typeof parts, lengthWasSent: boolean): Promise<void> {
+    async function forward(request: typeof parts, lengthWasSent: boolean, scrubber?: Scrubber): Promise<void> {
       // Request authority comes from the authorized URL, never the caller's
       // Host header (which could select a different virtual host).
       const headers: [string, string][] = [["host", target.host], ...request.headers];
       if (request.body.length > 0 || lengthWasSent) headers.push(["content-length", String(request.body.length)]);
       const transport = target.protocol === "https:" ? https : http;
       await new Promise<void>((resolve, reject) => {
+        let response: http.IncomingMessage | undefined;
         const upstream = transport.request(
           {
             host,
@@ -359,13 +391,44 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
             headers: headers.flat(),
           },
           (upstreamRes) => {
-            res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
-            upstreamRes.pipe(res);
-            upstreamRes.on("end", resolve);
-            upstreamRes.on("error", reject);
+            if (!scrubber) {
+              res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+              upstreamRes.pipe(res);
+              upstreamRes.on("end", resolve);
+              upstreamRes.on("error", reject);
+              return;
+            }
+            response = upstreamRes;
+            watchdog?.touch();
+            relayScrubbed({ method: req.method ?? "GET", upstream: upstreamRes, res, scrubber, limits, watchdog: watchdog!, report }).then(
+              resolve,
+              reject,
+            );
           },
         );
-        upstream.on("error", reject);
+        // A substituted request's response is bounded by an idle timeout
+        // from the moment the request is sent, headers included.
+        const watchdog = scrubber
+          ? new Watchdog(limits.idleMs, () =>
+              (response ?? upstream).destroy(new Cutoff(`no data from the destination for ${limits.idleMs / 1000} seconds`)),
+            )
+          : undefined;
+        if (scrubber) {
+          // No protocol switch on a substituted request: the rest could not be scrubbed.
+          upstream.on("upgrade", (_upgradeRes, socket) => {
+            socket.destroy();
+            watchdog?.stop();
+            reject(new BeforeHeaders("the destination switched protocols; not relayed on a substituted request"));
+          });
+          // The Agent going away cancels the upstream request and discards held bytes.
+          res.on("close", () => {
+            if (!res.writableFinished) (response ?? upstream).destroy(new Cutoff("the Agent disconnected"));
+          });
+        }
+        upstream.on("error", (err) => {
+          watchdog?.stop();
+          reject(err);
+        });
         upstream.end(request.body);
       });
     }
