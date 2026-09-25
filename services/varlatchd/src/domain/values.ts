@@ -543,36 +543,97 @@ export async function effectiveConfiguration(
   return result;
 }
 
+/**
+ * Whether the caller may learn one class of fact during validation. A
+ * denial is "permission"; an unmet Tailnet Requirement is "requirement".
+ */
+export type ValidationAccess = "allowed" | "permission" | "requirement";
+
+/**
+ * Validation verdicts are value-derived: an enum verdict says whether a
+ * value is in a list, and repeated Contract changes turn that into a guessing
+ * oracle. So each verdict needs the right to read what it describes. Checks
+ * are lazy: a class with nothing to evaluate is never authorized (and never
+ * records a denial).
+ */
+export interface ValidationAccessCheck {
+  /** Presence of stored values: `config.metadata.read`. */
+  metadata: () => Promise<ValidationAccess>;
+  /** Verdicts on non-sensitive values: `config.value.read`. */
+  plain: () => Promise<ValidationAccess>;
+  /** Verdicts on Secrets: `secret.reveal`, including its Requirements. */
+  secret: () => Promise<ValidationAccess>;
+}
+
+export interface NotEvaluatedItem {
+  name: string;
+  /** Why, from authorization only; never from the value. */
+  reason: "permission" | "requirement";
+  requires: "config.metadata.read" | "config.value.read" | "secret.reveal";
+}
+
 export interface ValidationResult {
   environmentId: string;
   contractRevisionId: string | null;
+  /** True only when every item was evaluated and none is missing or invalid. */
   valid: boolean;
+  /** False when any item was not evaluated; `valid` is then false too. */
+  complete: boolean;
   missing: string[];
   invalid: { name: string; reason: string }[];
+  notEvaluated: NotEvaluatedItem[];
 }
 
-/** Continuous validation (ADR-0013): reported, never blocking retrieval. */
+/**
+ * Continuous validation (ADR-0013): reported, never blocking retrieval.
+ *
+ * Only items the caller may read are evaluated; the rest are reported as not
+ * evaluated with an authorization-derived reason, and never influence
+ * `valid`, `missing`, or `invalid`. Every decryption is audited before it
+ * happens (autocommitted, as capability exercise does), naming the exact
+ * item versions; verdicts themselves are never audited or logged.
+ */
 export async function validateEnvironment(
   ctx: AppCtx,
   org: OrgRow,
   project: ProjectRow,
   env: EnvironmentRow,
+  opts: {
+    access: ValidationAccessCheck;
+    actorIdentityId: string;
+    requestId?: string;
+  },
 ): Promise<ValidationResult> {
   const contract = await activeContractOf(ctx, project);
   const result: ValidationResult = {
     environmentId: env.id,
     contractRevisionId: project.active_contract_revision_id,
     valid: true,
+    complete: true,
     missing: [],
     invalid: [],
+    notEvaluated: [],
   };
   if (!contract) return result;
 
+  const metadata = await opts.access.metadata();
+  if (metadata !== "allowed") {
+    result.notEvaluated = contract.items.map((item) => ({
+      name: item.name,
+      reason: metadata,
+      requires: "config.metadata.read",
+    }));
+    result.complete = false;
+    result.valid = false;
+    return result;
+  }
+
   const items = await resolveItems(ctx, org, project, env);
   const present = new Map(items.map((i) => [i.name, i]));
-  const orgKek = orgKekOf(ctx, org);
   const envCtx = { rootId: rootIdOf(env), tier: env.tier };
 
+  const toCheck: { item: (typeof contract.items)[number]; resolved: ResolvedItem }[] = [];
+  const access: Partial<Record<"plain" | "secret", ValidationAccess>> = {};
   for (const item of contract.items) {
     const resolved = present.get(item.name);
     if (!resolved) {
@@ -581,7 +642,44 @@ export async function validateEnvironment(
       }
       continue;
     }
-    // Type checks decrypt in-process; nothing is disclosed.
+    const kind = item.sensitive ? "secret" : "plain";
+    access[kind] ??= await opts.access[kind]();
+    const decision = access[kind];
+    if (decision === "allowed") {
+      toCheck.push({ item, resolved });
+    } else {
+      result.notEvaluated.push({
+        name: item.name,
+        reason: decision,
+        requires: item.sensitive ? "secret.reveal" : "config.value.read",
+      });
+    }
+  }
+
+  // Audit before decryption: one event per authorization action, naming the
+  // exact versions about to be decrypted. No verdicts are recorded.
+  for (const sensitive of [true, false]) {
+    const batch = toCheck.filter((c) => c.item.sensitive === sensitive);
+    if (batch.length === 0) continue;
+    await recordAuditEvent(ctx.db, {
+      eventType: sensitive ? "secret.validated" : "value.validated",
+      decision: "allow",
+      actorIdentityId: opts.actorIdentityId,
+      organizationId: org.id,
+      action: sensitive ? "secret.reveal" : "config.value.read",
+      resource: { projectId: project.id, environmentId: env.id },
+      requestId: opts.requestId ?? null,
+      metadata: {
+        purpose: "validation",
+        contractRevisionId: project.active_contract_revision_id,
+        items: batch.map((c) => `${c.item.name}@${c.resolved.versionId}`).join(","),
+      },
+    });
+  }
+
+  const orgKek = orgKekOf(ctx, org);
+  for (const { item, resolved } of toCheck) {
+    // Type checks decrypt in-process; no plaintext leaves this function.
     const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [
       resolved.versionId,
     ]);
@@ -594,7 +692,8 @@ export async function validateEnvironment(
     const problem = typeCheck(item, value);
     if (problem) result.invalid.push({ name: item.name, reason: problem });
   }
-  result.valid = result.missing.length === 0 && result.invalid.length === 0;
+  result.complete = result.notEvaluated.length === 0;
+  result.valid = result.complete && result.missing.length === 0 && result.invalid.length === 0;
   return result;
 }
 

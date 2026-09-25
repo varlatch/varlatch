@@ -28,6 +28,15 @@ import { testDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 const actor = newId("identity");
+// Domain tests exercise the rules, not authorization: every class allowed.
+const fullValidation = {
+  access: {
+    metadata: async () => "allowed" as const,
+    plain: async () => "allowed" as const,
+    secret: async () => "allowed" as const,
+  },
+  actorIdentityId: actor,
+};
 
 beforeEach(async () => {
   const db = await testDb();
@@ -444,21 +453,21 @@ describe("contracts", () => {
     projectRow = await getProject(ctx, org.id, project.id);
 
     // dev: DATABASE_URL missing (required always); PORT has default; STRIPE only for production.
-    let report = await validateEnvironment(ctx, org, projectRow, dev);
+    let report = await validateEnvironment(ctx, org, projectRow, dev, fullValidation);
     expect(report.valid).toBe(false);
     expect(report.missing).toEqual(["DATABASE_URL"]);
 
     await setValue(ctx, org, projectRow, dev, "DATABASE_URL", { value: "not a url" }, actor);
-    report = await validateEnvironment(ctx, org, projectRow, dev);
+    report = await validateEnvironment(ctx, org, projectRow, dev, fullValidation);
     expect(report.missing).toEqual([]);
     expect(report.invalid).toEqual([{ name: "DATABASE_URL", reason: "must be a valid URL" }]);
 
     await setValue(ctx, org, projectRow, dev, "DATABASE_URL", { value: "postgres://ok" }, actor);
-    report = await validateEnvironment(ctx, org, projectRow, dev);
+    report = await validateEnvironment(ctx, org, projectRow, dev, fullValidation);
     expect(report.valid).toBe(true);
 
     // production additionally requires STRIPE_SECRET_KEY.
-    report = await validateEnvironment(ctx, org, projectRow, prod);
+    report = await validateEnvironment(ctx, org, projectRow, prod, fullValidation);
     expect(report.missing.sort()).toEqual(["DATABASE_URL", "STRIPE_SECRET_KEY"]);
 
     // Activating a security-relevant change records the diff.

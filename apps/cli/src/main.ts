@@ -21,6 +21,7 @@ import {
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { parseEnvSchema, resolveDraft } from "@varlatch/varlock-plugin";
 import { buildEnv, runChild, withheldItems } from "./inject.js";
+import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
 import {
@@ -490,14 +491,10 @@ async function main(): Promise<void> {
       case "validate": {
         const ctx = context(args);
         const report = await client(ctx).validateEnvironment(ctx.organization, ctx.project, ctx.environment);
-        if (report.valid) {
-          console.log(`${ctx.environment}: valid`);
-          return;
-        }
-        console.error(`${ctx.environment}: INVALID`);
-        for (const name of report.missing ?? []) console.error(`  missing: ${name}`);
-        for (const item of report.invalid ?? []) console.error(`  invalid: ${item.name} — ${item.reason}`);
-        process.exit(1);
+        const outcome = validationOutcome(ctx.environment, report);
+        for (const line of outcome.stdout) console.log(line);
+        for (const line of outcome.stderr) console.error(line);
+        if (outcome.exitCode !== 0) process.exit(outcome.exitCode);
         return;
       }
 
@@ -1024,7 +1021,7 @@ Usage:
   varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
                [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
                [--agent-metadata] -- <command>...
-  varlatch validate [-e <env>]
+  varlatch validate [-e <env>]        (exit 1 invalid; 2 incomplete: items this identity may not read)
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
