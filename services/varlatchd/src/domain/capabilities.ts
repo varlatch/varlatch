@@ -24,6 +24,13 @@ import {
   expandReferences,
   referencedNames,
 } from "./references.js";
+import {
+  STATE_CATEGORIES,
+  categoryDigests,
+  stateDigest,
+  stateManifest,
+  type StateCategory,
+} from "./manifest.js";
 import { auditThenDecrypt, captureState, type CapturedState, type ResolvedItem } from "./retrieval.js";
 
 /**
@@ -105,6 +112,76 @@ export interface IssuedCapability {
   expiresAt: string;
   /** Advisory current-authority preflight; exercise re-checks regardless. */
   preflight: "ok" | "agent-lacks-secret-use";
+}
+
+/**
+ * An issuance precondition (ADR-0038 Decision 7): the state the operator's
+ * preflight retrieval saw. It confers no authority; it only lets issuance
+ * refuse when the configuration changed in between.
+ */
+export interface IssuancePrecondition {
+  projectId: string;
+  environmentId: string;
+  stateDigest: string;
+  stateDigests: Partial<Record<StateCategory, string>>;
+}
+
+/** Per Capability item, what issuance established. It makes no claim about reference resolvability. */
+export interface PreflightItem {
+  name: string;
+  /** A stored Secret in this Environment. */
+  present: boolean;
+  /** The Agent's secret.use here, with the Requirements evaluable at issuance. */
+  authorized: boolean;
+  reason?: "permission" | "requirement";
+}
+
+/**
+ * Check a precondition inside a read-only snapshot, without decrypting
+ * anything: the state must be the one the preflight saw. On a match, report
+ * each item's presence and the Agent's authorization at issuance, with the
+ * Requirements the Broker's own connection can satisfy. Whether exercise
+ * can resolve each reference for the Agent is not decided here: exercise
+ * resolves or denies (ADR-0026).
+ */
+export async function checkIssuancePrecondition(
+  sctx: AppCtx,
+  scope: { org: OrgRow; project: ProjectRow; env: EnvironmentRow },
+  now: Date,
+  precondition: IssuancePrecondition,
+  input: { agentIdentityId: string; items: string[] },
+  tailnetContext: TailnetContext | null,
+): Promise<{ changed: StateCategory[] } | { changed: null; items: PreflightItem[] }> {
+  const { org, project, env } = scope;
+  if (precondition.projectId !== project.id || precondition.environmentId !== env.id) {
+    throw new DomainError("VALIDATION_FAILED", "The precondition names another project or Environment");
+  }
+  const state = await captureState(sctx, scope, now, () => false);
+  const manifest = stateManifest(state);
+  if (stateDigest(manifest) !== precondition.stateDigest) {
+    const current = categoryDigests(manifest);
+    const changed = STATE_CATEGORIES.filter((c) => current[c] !== precondition.stateDigests[c]);
+    return { changed: changed.length > 0 ? changed : [...STATE_CATEGORIES] };
+  }
+  const evaluation = await evaluateAgentSecretUse(
+    sctx,
+    org,
+    input.agentIdentityId,
+    { projectId: project.id, environment: env },
+    tailnetContext,
+  );
+  const secrets = new Set(state.items.filter((i) => i.sensitive).map((i) => i.name));
+  return {
+    changed: null,
+    items: input.items.map((name) => ({
+      name,
+      present: secrets.has(name),
+      authorized: evaluation.allowed,
+      ...(evaluation.allowed
+        ? {}
+        : { reason: evaluation.denial === "requirement-failed" ? ("requirement" as const) : ("permission" as const) }),
+    })),
+  };
 }
 
 export async function issueCapability(

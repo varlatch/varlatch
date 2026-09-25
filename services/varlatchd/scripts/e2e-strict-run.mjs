@@ -203,6 +203,52 @@ await contract(base);
   check("without contract.read, strict startup does not start the child", r.code === 78 && r.received === null && /contract\.read/.test(r.out), r.out);
 }
 
+// --- agent-safe strict: the operator's preflight, then the Broker's issuance ------------
+{
+  const broker = await api("POST", "/v1/organizations/acme/identities", { name: "strict broker", kind: "broker" });
+  const agent = await api("POST", "/v1/organizations/acme/identities", { name: "strict agent", kind: "agent" });
+  await api("POST", "/v1/organizations/acme/identities", { name: "strict agent without use", kind: "agent" });
+  await api("POST", "/v1/organizations/acme/grants", {
+    subjectIdentityId: agent.id,
+    scope: { kind: "project", projectId },
+    actions: ["secret.use"],
+  });
+  const agentSafe = (name) => ["--strict", "--agent-safe", "--agent", name, "--allow-host", "api.example.com"];
+  const brokerEnv = { VARLATCH_BROKER_CREDENTIAL: broker.credential };
+
+  const ok = await run(admin, agentSafe("strict agent"), { ...brokerEnv, DATABASE_URL: "postgres://parent.internal/app" });
+  check("agent-safe strict starts the Agent when the preflight passes", ok.code === 0 && ok.received !== null, ok.out);
+  check("the Agent receives a Placeholder, never the Secret or the parent's copy", /^vlch_ph_v1_[0-9a-f]{32}$/.test(ok.received?.DATABASE_URL ?? ""), ok.received?.DATABASE_URL);
+  check("non-sensitive values and defaults still arrive", ok.received?.LEVEL === "info" && ok.received?.PORT === "3000");
+  const context = ok.received?.context ? JSON.parse(ok.received.context) : null;
+  check("the run context records the Secret as delivered by Varlatch", JSON.stringify(context?.items?.DATABASE_URL) === JSON.stringify({ server: "delivered", delivery: "varlatch" }));
+  check("no Secret value appears in the Agent's environment or the output", !JSON.stringify(ok.received).includes("strict-db") && !ok.out.includes("strict-db"));
+
+  const noUse = await run(admin, agentSafe("strict agent without use"), brokerEnv);
+  check("an Agent without secret.use at issuance does not start", noUse.code === 78 && noUse.received === null && /DATABASE_URL: agent-unauthorized/.test(noUse.out), noUse.out);
+
+  // An operator who may read everything but Secrets (and may look up the Agent).
+  const operatorToken = await identity(
+    "strict operator without reveal",
+    ["environment.read", "config.metadata.read", "config.value.read"],
+    ["contract.read"],
+  );
+  const operator = (await api("GET", "/v1/organizations/acme/identities")).items.find((i) => i.name === "strict operator without reveal");
+  await api("POST", "/v1/organizations/acme/grants", {
+    subjectIdentityId: operator.id,
+    scope: { kind: "organization" },
+    actions: ["identity.read"],
+  });
+  const noReveal = await run(await workspace(operatorToken), agentSafe("strict agent"), brokerEnv);
+  check("an operator who cannot validate Secrets does not start the Agent", noReveal.code === 78 && noReveal.received === null && /DATABASE_URL: not-evaluated/.test(noReveal.out), noReveal.out);
+
+  const allowSecret = await run(admin, [...agentSafe("strict agent"), "--allow-inherited", "DATABASE_URL"], brokerEnv);
+  check("--allow-inherited may not name a Secret in an agent-safe run", allowSecret.code !== 0 && allowSecret.received === null && /cannot name a Secret/.test(allowSecret.out), allowSecret.out);
+
+  const revoked = await api("GET", `${E}/capabilities`);
+  check("a refused run leaves no live Capability behind", revoked.items.every((c) => c.revokedAt !== null), JSON.stringify(revoked.items.map((c) => c.revokedAt)));
+}
+
 // --- default runs are unchanged, except for the run context ----------------------------
 {
   const r = await run(admin, [], { VARLATCH_RUN_CONTEXT: '{"stale":true}' });

@@ -48,7 +48,9 @@ export type ViolationKind =
   | "inherited"
   | "missing"
   | "invalid"
-  | "context";
+  | "context"
+  | "not-evaluated"
+  | "agent-unauthorized";
 
 export interface Violation {
   /** The Contract item, or "(contract)" / "(run context)" for global problems. */
@@ -71,9 +73,21 @@ export interface RunContext {
   items: Record<string, { server: ServerStatus; delivery: Delivery }>;
 }
 
+/**
+ * Agent-safe strict startup: the retrieval is a preflight (no Secret values;
+ * verdicts for an operator with secret.reveal), and each stored Secret
+ * reaches the Agent as a Placeholder. `agent` is the Broker issuance's
+ * per-item report, once issuance has run.
+ */
+export interface AgentSafeFacts {
+  agent: Map<string, { present: boolean; authorized: boolean; reason?: "permission" | "requirement" }> | null;
+}
+
 export interface StrictPlan {
   /** The exact environment the child receives; meaningful only without violations. */
   env: NodeJS.ProcessEnv;
+  /** Agent-safe only: stored Secrets that reach the Agent as Placeholders. */
+  mediated: string[];
   violations: Violation[];
   context: RunContext | null;
   /** Delivered items that are not in the Contract, delivered as usual. */
@@ -84,13 +98,26 @@ export class UsageError extends Error {
   override name = "UsageError";
 }
 
-/** `--allow-inherited` names must be Contract items: a typo is an error, never ignored. */
-export function checkAllowances(contract: ConfigurationContract, allowInherited: Iterable<string>): void {
-  const names = new Set(contract.items.map((i) => i.name));
-  const unknown = [...allowInherited].filter((n) => !names.has(n));
+/**
+ * `--allow-inherited` names must be Contract items: a typo is an error, never
+ * ignored. In an agent-safe run it may not name a Secret, which would put
+ * plaintext into the Agent's environment.
+ */
+export function checkAllowances(
+  contract: ConfigurationContract,
+  allowInherited: Iterable<string>,
+  opts: { agentSafe?: boolean } = {},
+): void {
+  const byName = new Map(contract.items.map((i) => [i.name, i]));
+  const names = [...new Set(allowInherited)];
+  const unknown = names.filter((n) => !byName.has(n));
   if (unknown.length > 0) {
+    throw new UsageError(`--allow-inherited names must be Contract items; not in the Contract: ${unknown.sort().join(", ")}`);
+  }
+  const secrets = names.filter((n) => byName.get(n)?.sensitive);
+  if (opts.agentSafe && secrets.length > 0) {
     throw new UsageError(
-      `--allow-inherited names must be Contract items; not in the Contract: ${[...new Set(unknown)].sort().join(", ")}`,
+      `--allow-inherited cannot name a Secret in an agent-safe run, which would put plaintext into the Agent's environment: ${secrets.sort().join(", ")}`,
     );
   }
 }
@@ -105,13 +132,16 @@ export function planStrictRun(
   retrieval: StrictRetrieval,
   parent: NodeJS.ProcessEnv,
   allowInherited: ReadonlySet<string>,
+  agentSafe?: AgentSafeFacts,
 ): StrictPlan {
   const violations: Violation[] = [];
+  const mediated: string[] = [];
   const env: NodeJS.ProcessEnv = { ...parent };
   // Reserved launcher metadata: never inherited from an outer run.
   delete env[RUN_CONTEXT];
   const plan = (context: RunContext | null, outsideContract = 0): StrictPlan => ({
     env,
+    mediated,
     violations,
     context,
     outsideContract,
@@ -160,15 +190,26 @@ export function planStrictRun(
   const unexpanded = new Map(retrieval.callerView.unexpanded.map((u) => [u.name, u.references]));
   const contracted = new Map(contract.items.map((i) => [i.name, i]));
 
-  // Items outside the Contract are delivered as a default run delivers them.
+  // Items outside the Contract are delivered as a default run delivers them
+  // (in an agent-safe run, a stored Secret as a Placeholder).
   let outsideContract = 0;
   for (const item of retrieval.items) {
     if (contracted.has(item.name) || RESERVED_ITEM_NAMES.includes(item.name)) continue;
-    if (item.value !== null) {
+    if (agentSafe && item.sensitive) {
+      mediated.push(item.name);
+      outsideContract++;
+    } else if (item.value !== null) {
       env[item.name] = item.value;
       outsideContract++;
     }
   }
+  // The server's verdicts matter only for Secrets in an agent-safe run, the
+  // one case where the CLI cannot see the value it would validate.
+  const verdicts = {
+    invalid: new Map((retrieval.validation?.invalid ?? []).map((v) => [v.name, v.reason])),
+    unresolved: new Set((retrieval.validation?.unresolved ?? []).map((v) => v.name)),
+    notEvaluated: new Map((retrieval.validation?.notEvaluated ?? []).map((v) => [v.name, v])),
+  };
 
   const contextItems: RunContext["items"] = {};
   const validate = (item: ContractItem, value: string, source: string) => {
@@ -178,6 +219,10 @@ export function planStrictRun(
 
   for (const item of contract.items) {
     if (RESERVED_ITEM_NAMES.includes(item.name)) continue;
+    if (agentSafe && item.sensitive) {
+      contextItems[item.name] = planAgentSecret(item, semantics.requiredApplies(item, envCtx));
+      continue;
+    }
     const got = items.get(item.name);
     const denied = withheld.get(item.name);
     const server: ServerStatus = !got ? "notStored" : denied || got.value === null ? "withheld" : "delivered";
@@ -238,6 +283,67 @@ export function planStrictRun(
     contextItems[item.name] = { server, delivery };
   }
 
+  /**
+   * A Contract Secret in an agent-safe run. Stored: it reaches the Agent as a
+   * Placeholder, but only if the operator's verdict is valid and the Agent
+   * is authorized at issuance. Not stored: a parent value would put
+   * plaintext into the Agent's environment, so it is a violation.
+   */
+  function planAgentSecret(item: ContractItem, required: boolean): RunContext["items"][string] {
+    if (!items.has(item.name)) {
+      if (parent[item.name] !== undefined) {
+        violations.push({
+          name: item.name,
+          kind: "inherited",
+          reason: "a Secret set only in the parent environment would reach the Agent as plaintext; store it in Varlatch",
+        });
+        return { server: "notStored", delivery: "absent" };
+      }
+      if (item.defaultValue !== undefined) {
+        env[item.name] = item.defaultValue;
+        validate(item, item.defaultValue, "the Contract default");
+        return { server: "notStored", delivery: "default" };
+      }
+      if (required) violations.push({ name: item.name, kind: "missing", reason: "required in this environment and not stored" });
+      return { server: "notStored", delivery: "absent" };
+    }
+    const notEvaluated = verdicts.notEvaluated.get(item.name);
+    const invalid = verdicts.invalid.get(item.name);
+    if (notEvaluated) {
+      violations.push({
+        name: item.name,
+        kind: "not-evaluated",
+        reason:
+          notEvaluated.reason === "requirement"
+            ? "validating Secrets needs secret.reveal, and a Requirement (such as a Tailnet Constraint) is not met"
+            : "validating Secrets in an agent-safe strict run needs secret.reveal for the operator",
+      });
+    } else if (invalid) {
+      violations.push({ name: item.name, kind: "invalid", reason: `the stored value ${invalid}` });
+    } else if (verdicts.unresolved.has(item.name)) {
+      violations.push({
+        name: item.name,
+        kind: "unresolved-reference",
+        reason: "a reference stays literal for the operator",
+      });
+    }
+    const agent = agentSafe?.agent?.get(item.name);
+    if (agent && !agent.present) {
+      violations.push({ name: item.name, kind: "missing", reason: "no longer stored when the Capability was issued" });
+    } else if (agent && !agent.authorized) {
+      violations.push({
+        name: item.name,
+        kind: "agent-unauthorized",
+        reason:
+          agent.reason === "requirement"
+            ? "the Agent's secret.use Requirement (such as a Tailnet Constraint) is not met at issuance"
+            : "the Agent lacks secret.use here",
+      });
+    }
+    mediated.push(item.name);
+    return { server: "delivered", delivery: "varlatch" };
+  }
+
   const context: RunContext = {
     v: 1,
     mode: "strict",
@@ -292,6 +398,16 @@ function retryable(err: unknown): boolean {
   return typeof status === "number" ? status >= 500 : err instanceof TypeError;
 }
 
+/** Retry once on a server-side failure or a lost connection; nothing was returned. */
+export async function retryOnce<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (err) {
+    if (!retryable(err)) throw err;
+    return request();
+  }
+}
+
 export async function runStrict(api: StrictClient, opts: StrictRunOptions): Promise<number> {
   const meta = await api.meta();
   if (!meta.capabilities.includes("retrieval.strict")) {
@@ -300,13 +416,7 @@ export async function runStrict(api: StrictClient, opts: StrictRunOptions): Prom
     );
     return STRICT_EXIT;
   }
-  let retrieval: StrictRetrieval;
-  try {
-    retrieval = await api.strictRetrieval(opts.organization, opts.project, opts.environment);
-  } catch (err) {
-    if (!retryable(err)) throw err;
-    retrieval = await api.strictRetrieval(opts.organization, opts.project, opts.environment);
-  }
+  const retrieval = await retryOnce(() => api.strictRetrieval(opts.organization, opts.project, opts.environment));
   if (retrieval.contract) checkAllowances(retrieval.contract as unknown as ConfigurationContract, opts.allowInherited);
   const plan = planStrictRun(retrieval, opts.parent, new Set(opts.allowInherited));
   if (plan.violations.length > 0) {

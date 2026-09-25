@@ -22,6 +22,7 @@ export const ERROR_CODES = [
   "RATE_LIMITED",
   "MAINTENANCE",
   "INTERNAL",
+  "STATE_CHANGED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -60,6 +61,7 @@ export const CAPABILITIES = [
   "identity.lifecycle",
   "retrieval.manifest",
   "retrieval.strict",
+  "retrieval.preflight",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

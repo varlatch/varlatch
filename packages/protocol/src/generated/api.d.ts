@@ -1186,7 +1186,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -1327,10 +1327,23 @@ export interface components {
             /** @description Strict retrieval only. True when the Contract exists but the caller lacks contract.read. */
             contractWithheld?: boolean;
         };
+        /** @description One digest per category of the state manifest, so a precondition mismatch can name the category that changed without naming any identifier. */
+        StateDigests: {
+            environment: components["schemas"]["StateDigest"];
+            contract: components["schemas"]["StateDigest"];
+            items: components["schemas"]["StateDigest"];
+            rotation: components["schemas"]["StateDigest"];
+        };
         StrictRetrieval: {
+            /**
+             * @description preflight returns no Secret values: Secrets are validated in-process only for an operator holding secret.reveal, and their verdicts are in validation.
+             * @enum {string}
+             */
+            mode: "strict" | "preflight";
             environmentId: string;
             manifest: components["schemas"]["StateManifest"];
             stateDigest: components["schemas"]["StateDigest"];
+            stateDigests: components["schemas"]["StateDigests"];
             /** @description The snapshot's active Contract (canonical form), when one is active and the caller holds contract.read. */
             contract: Record<string, never> | null;
             items: {
@@ -1482,6 +1495,14 @@ export interface components {
              * @enum {string}
              */
             preflight: "ok" | "agent-lacks-secret-use";
+            /** @description Present when the request carried a precondition that matched. Per item: whether it is a stored Secret, and whether the Agent holds secret.use here with the Requirements evaluable at issuance. It makes no claim that exercise can resolve the item's references for the Agent: every exercise evaluates authorization again and resolves every reference or denies. */
+            preflightItems?: {
+                name: string;
+                present: boolean;
+                authorized: boolean;
+                /** @enum {string} */
+                reason?: "permission" | "requirement";
+            }[];
         };
         CapabilityExercise: {
             items: {
@@ -2368,8 +2389,11 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @enum {string} */
-                    mode: "strict";
+                    /**
+                     * @description preflight (capability retrieval.preflight) returns the non-sensitive values and a verdict per Secret, never a Secret value. Each Secret decryption is audited first as secret.validated with purpose preflight-validation.
+                     * @enum {string}
+                     */
+                    mode: "strict" | "preflight";
                 };
             };
         };
@@ -2492,6 +2516,13 @@ export interface operations {
                     destinations: string[];
                     ttlSeconds: number;
                     runId?: string;
+                    /** @description Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority. */
+                    precondition?: {
+                        projectId: string;
+                        environmentId: string;
+                        stateDigest: components["schemas"]["StateDigest"];
+                        stateDigests: components["schemas"]["StateDigests"];
+                    };
                 };
             };
         };

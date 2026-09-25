@@ -93,7 +93,7 @@ What a command started by `varlatch run` actually receives: the Values Varlatch 
 _Avoid_: runtime env (ambiguous about which of these layers is meant)
 
 **Strict Startup**:
-`varlatch run --strict`: validate the Delivered Configuration against the active Contract Revision of one strict retrieval before starting the command, and refuse to start it on any violation (exit 78). Contract defaults fill only items with no stored value, never withheld ones, and inherited values are used only for names allowed with `--allow-inherited`. A default run never blocks on the Contract.
+`varlatch run --strict`: validate the Delivered Configuration against the active Contract Revision of one strict retrieval before starting the command, and refuse to start it on any violation (exit 78). Contract defaults fill only items with no stored value, never withheld ones, and inherited values are used only for names allowed with `--allow-inherited`. A default run never blocks on the Contract. With `--agent-safe`, the operator's preflight validates Secrets without returning them (it needs `secret.reveal`), and the Broker's Capability is issued against the state the preflight saw; the Agent still receives only Placeholders.
 
 **Run Context**:
 The one reserved variable, `VARLATCH_RUN_CONTEXT`, that a strict run gives the command: JSON naming the Contract Revision, content hash, semantics version, and Environment, and recording for each Contract item the server's status (`delivered`, `withheld`, `notStored`) and how it was delivered (`varlatch`, `inherited`, `default`, `absent`). Names and identifiers only. Every run removes an inherited one.

@@ -90,11 +90,51 @@ The name is reserved: no Contract item or stored value may use it, and every
 `varlatch run`, strict or not, removes a `VARLATCH_RUN_CONTEXT` inherited
 from an outer run, so it never describes the wrong Environment.
 
+## Agent-safe strict startup
+
+With `--agent-safe`, the Agent never receives Secret plaintext: each stored
+Secret reaches it as a Placeholder that the local Broker substitutes on the
+way out. `--strict --agent-safe` adds the strict checks without the operator
+ever seeing a Secret either:
+
+1. **The operator's preflight.** One request returns the non-sensitive
+   values and, when the operator holds `secret.reveal`, a verdict for each
+   Secret, never its value. The server decrypts each Secret only to
+   validate it, after an audit event that records the attempt and its
+   purpose.
+2. **The Broker's issuance.** The Capability is issued against the state
+   the preflight saw. If the configuration changed in between, issuance
+   refuses and names only what kind of thing changed (the Environment, the
+   Contract, item versions, or a rotation window); both requests are
+   retried once. On a match, issuance reports for each Secret whether it is
+   stored and whether the Agent holds `secret.use` here. It decrypts
+   nothing.
+
+The Agent starts only if nothing is wrong. In addition to the ordinary
+strict checks, these are violations:
+
+- the operator lacks `secret.reveal`, so the Secrets cannot be validated
+  (`not-evaluated`);
+- a Secret's stored value is invalid, or one of its references stays literal
+  for the operator;
+- the Agent lacks `secret.use`, or a Requirement on it is not met
+  (`agent-unauthorized`);
+- a Contract Secret is set only in your shell: it would reach the Agent as
+  plaintext.
+
+`--allow-inherited` may not name a Secret in an agent-safe run.
+
+**What this does not show.** Matching state means the same configuration,
+not the same permissions: the operator and the Agent may hold different
+Grants. A Secret whose references the operator can expand may reference
+something the Agent may not read. Every request the Agent makes through the
+Broker is authorized again, and resolves every reference or is denied.
+
 ## Limits
 
 Strict startup checks what the command receives when it starts. Values the
 command reads later, or changes itself, are outside it. It is a correctness
 check, not a confidentiality control: once a value is in the command's
-environment, the command can do anything with it.
-
-`--strict` cannot yet be combined with `--agent-safe`.
+environment, the command can do anything with it. In an agent-safe run,
+rotation, revocation, and Grant changes still apply at every exercise, and a
+later exercise may use a newer version than the one the preflight checked.
