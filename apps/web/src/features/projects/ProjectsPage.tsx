@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Search } from "lucide-react";
 import type { Environment, Project, Tier, ValidationReport } from "@varlatch/protocol";
+import { validationSummary } from "./validationSummary";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Button, Card, InfoTip, Input, Menu, Mono, Select, TierChip } from "../../components/ui";
@@ -304,13 +305,7 @@ function ProjectCard({
                 <td className="py-1.5 text-muted">{env.kind}</td>
                 <td className="py-1.5">
                   {report ? (
-                    report.valid ? (
-                      <span className="allow text-allow">valid</span>
-                    ) : (
-                      <span className="deny text-deny">
-                        invalid: {[...(report.missing ?? []), ...(report.invalid ?? []).map((i) => i.name)].join(", ")}
-                      </span>
-                    )
+                    <ValidationCell report={report} />
                   ) : (
                     <Button variant="ghost" onClick={() => void validate(env)}>validate</Button>
                   )}
@@ -361,5 +356,34 @@ function ProjectCard({
         </tbody>
       </table>
     </Card>
+  );
+}
+
+function ValidationCell({ report }: { report: ValidationReport }) {
+  const summary = validationSummary(report);
+  if (summary.state === "valid") return <span className="allow text-allow">valid</span>;
+  const notEvaluated =
+    summary.notEvaluated.length > 0 ? (
+      <span
+        className="text-muted"
+        title="Your access does not cover these values (Secrets need secret.reveal), so they were not checked."
+      >
+        {" "}
+        · not evaluated: {summary.notEvaluated.join(", ")}
+      </span>
+    ) : null;
+  if (summary.state === "invalid") {
+    return (
+      <span>
+        <span className="deny text-deny">invalid: {summary.failing.join(", ")}</span>
+        {notEvaluated}
+      </span>
+    );
+  }
+  return (
+    <span>
+      <span className="text-muted">incomplete</span>
+      {notEvaluated}
+    </span>
   );
 }

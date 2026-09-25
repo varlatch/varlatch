@@ -15,6 +15,24 @@ fixes.
 - Vulnerabilities are reported privately, as [`SECURITY.md`](SECURITY.md)
   describes.
 
+### Security
+
+- Validation no longer reveals anything about values you cannot read. Before,
+  anyone who could see an environment could validate it and learn whether
+  each value, Secrets included, passed its contract checks. Now each check
+  needs the right to read what it describes: `secret.reveal` for Secrets
+  (including any Tailnet Requirement), `config.value.read` for other values,
+  and `config.metadata.read` to report missing items. `secret.use` alone is
+  not enough.
+- Items you cannot read are listed as not evaluated, with the permission they
+  need, and an environment is reported as valid only when every item was
+  checked. `varlatch validate` prints `INCOMPLETE` and exits with a new code,
+  `2`, in that case; `1` still means invalid. The dashboard shows
+  valid, invalid, or incomplete.
+- Every decryption for validation is recorded in the audit log first
+  (`secret.validated` and `value.validated`, naming the item versions). The
+  results themselves are never logged.
+
 ### Self-hosting
 
 - `varlatch setup` creates an installation interactively or from flags:
@@ -59,6 +77,11 @@ fixes.
 
 Upgrade with this release's CLI, as for 0.9.0 below. Releases now come from
 `varlatch/varlatch` on GitHub.
+
+CI jobs that run `varlatch validate` with an identity that lacks
+`secret.reveal` or `config.value.read` on the environment now get exit code
+`2` (incomplete) instead of a verdict. Grant the identity those actions if it
+should validate every item.
 
 ## 0.9.0 (2026-09-23)
 

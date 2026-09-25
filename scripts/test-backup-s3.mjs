@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Isolated S3 compatibility check. Uses an already available MinIO image;
-// never accesses an operator's configured destination or existing container.
+// Isolated S3 compatibility check against a throwaway S3 server (the Versity
+// S3 gateway, which enforces SigV4 authentication and supports multipart
+// uploads); never accesses an operator's configured destination or existing
+// container. VARLATCH_TEST_S3_IMAGE substitutes another versitygw image.
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
@@ -12,15 +14,16 @@ import assert from 'node:assert/strict';
 import { uploadArchive, downloadArchive } from '../packages/backup/dist/s3.js';
 const require = createRequire(new URL('../packages/backup/package.json', import.meta.url));
 const { S3Client, CreateBucketCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-const image = process.env.VARLATCH_TEST_MINIO_IMAGE ?? 'quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e';
+const image = process.env.VARLATCH_TEST_S3_IMAGE ?? 'docker.io/versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499';
 const name = `vlt-backup-s3-${randomBytes(5).toString('hex')}`;
 const dir = mkdtempSync(join(tmpdir(), name));
 const credentials = { accessKeyId: 'backup-test', secretAccessKey: randomBytes(24).toString('hex') };
 let s3;
 try {
-  execFileSync('docker', ['run','-d','--name',name,'-p','127.0.0.1::9000','-e',`MINIO_ROOT_USER=${credentials.accessKeyId}`,'-e',`MINIO_ROOT_PASSWORD=${credentials.secretAccessKey}`,image,'server','/data'], {stdio:'pipe'});
-  const endpoint=`http://${execFileSync('docker',['port',name,'9000/tcp'],{encoding:'utf8'}).trim()}`;
-  for(let i=0;i<100;i++) { try { if((await fetch(`${endpoint}/minio/health/ready`)).ok) break; } catch {} await new Promise(r=>setTimeout(r,100)); }
+  execFileSync('docker', ['run','-d','--name',name,'-p','127.0.0.1::7070','-e',`ROOT_ACCESS_KEY=${credentials.accessKeyId}`,'-e',`ROOT_SECRET_KEY=${credentials.secretAccessKey}`,image,'posix','/tmp'], {stdio:'pipe'});
+  const endpoint=`http://${execFileSync('docker',['port',name,'7070/tcp'],{encoding:'utf8'}).trim()}`;
+  // Any HTTP answer, even an authentication error, means it is listening.
+  for(let i=0;i<100;i++) { try { await fetch(endpoint); break; } catch {} await new Promise(r=>setTimeout(r,100)); }
   s3=new S3Client({endpoint,region:'us-east-1',forcePathStyle:true,credentials});
   await s3.send(new CreateBucketCommand({Bucket:'backups'}));
   const destination={endpoint,region:'us-east-1',bucket:'backups',prefix:'installation/',forcePathStyle:true,writeCredentialsFile:'unused'};

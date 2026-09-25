@@ -145,7 +145,10 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
     "varlatch_validate_environment",
     {
       title: "Validate environment",
-      description: "Validate an environment against its active contract and return the validation report.",
+      description:
+        "Validate an environment against its active contract and return the validation report. " +
+        "Items this credential may not read (Secrets need secret.reveal) are listed in notEvaluated; " +
+        "valid is true only when every item was evaluated.",
       inputSchema: envArg,
     },
     (args) =>

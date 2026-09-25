@@ -409,8 +409,11 @@ check("dashboard revocation denies the next exercise", postRevoke.status === 403
 // 8. My credentials: current session visible and marked.
 await page.goto(`${base}/credentials`);
 await page.waitForSelector('[data-testid="credentials-list"]', { timeout: 20000 });
-const credText = await page.textContent('[data-testid="credentials-list"]');
-check("own credential listed with session marker", credText.includes("this session"));
+// The list renders before its rows load; wait for the marker, not the box.
+const marked = await page
+  .waitForFunction(() => document.querySelector('[data-testid="credentials-list"]')?.textContent?.includes("this session"), null, { timeout: 20000 })
+  .then(() => true, () => false);
+check("own credential listed with session marker", marked);
 
 await browser.close();
 process.exit(failed ? 1 : 0);
