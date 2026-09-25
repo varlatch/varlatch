@@ -190,16 +190,20 @@ describe("reference expansion over the API", () => {
     expect(url.value).toBe("postgres://app:hunter2@db.internal:5432/app");
   });
 
-  it("audits the plain values pulled in by expansion", async () => {
+  it("audits the plain values pulled in by expansion, one reference level at a time", async () => {
     await post(`${ENV_PATH}/disclosures`, { scope: "all-authorized-secrets" });
     const res = await ctx.db.query(
-      "SELECT metadata FROM audit_events WHERE event_type = 'value.disclosed' AND metadata::jsonb->>'mode' = 'reference-expansion'",
+      "SELECT metadata FROM audit_events WHERE event_type = 'value.disclosed' AND metadata::jsonb->>'mode' = 'reference-expansion' ORDER BY event_order",
     );
-    expect(res.rows).toHaveLength(1);
-    const meta = res.rows[0] as { metadata: string | Record<string, unknown> };
-    const parsed = typeof meta.metadata === "string" ? JSON.parse(meta.metadata) : meta.metadata;
-    expect(String(parsed.items)).toContain("DB_HOST@");
-    expect(String(parsed.items)).toContain("DB_ADDR@");
+    // Each level is known only once the previous one is decrypted, so each
+    // is audited, and the audit committed, before it is decrypted.
+    const levels = (res.rows as { metadata: string | Record<string, unknown> }[]).map((r) =>
+      String((typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata).items)
+        .split(",")
+        .map((i) => i.split("@")[0])
+        .sort(),
+    );
+    expect(levels).toEqual([["DB_ADDR"], ["DB_HOST", "DB_PORT"]]);
   });
 
   it("requested-items disclosure does not expand references to unrequested Secrets", async () => {

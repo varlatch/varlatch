@@ -88,6 +88,9 @@ _Avoid_: interpolation, templating (suggests a general expression language; it i
 The fully resolved set of Values for an Environment after applying its allowed inheritance (child overrides over parent values). Contract validation evaluates the Effective Configuration, not a child's overrides alone.
 _Avoid_: merged config, resolved env
 
+**Retrieval Snapshot**:
+The one read-only database snapshot a retrieval (Effective Configuration, disclosure, validation, Capability exercise) reads everything from: scope rows, authorization inputs, the Contract Revision, values, and the ciphertext it may decrypt. Each decryption then follows an audit commit naming its version. Authorization is effective at the snapshot boundary: a revocation that commits after a request's snapshot began does not affect that request.
+
 **Configuration Contract**:
 Varlatch's internal model of what an application's configuration must look like: which Config Items exist, which are required (possibly per Environment Selector), which are sensitive, their types, defaults, and validation rules. Authoritative in the Secret Plane, and populated either from a schema file or through the dashboard and API. Each Project declares exactly one authority mode: `git`, where the repository's `.env.schema` file is the human-authored source and the dashboard is read-only, or `managed`, where the dashboard and API are the authoring surface. There is never a sync or merge between the two.
 _Avoid_: schema (overloaded with schema files and database schemas)

@@ -59,8 +59,28 @@ fixes.
   it literal. Values read only to expand a reference are audited before
   they are decrypted.
 
+### Security
+
+- Every retrieval (effective configuration, disclosure, validation, and
+  Capability exercise) reads everything from one read-only database
+  snapshot: the organization, project, and environment, authorization
+  inputs, the active contract revision, values, and the ciphertext it may
+  decrypt. A write, rotation, contract activation, or Grant change that
+  commits while a request is in flight is invisible to that request, never
+  half-applied.
+- Each decryption follows an audit commit that names its exact version, and
+  a failed commit stops the request. Values decrypted only to expand
+  `${NAME}` references used to be audited after they were decrypted. They
+  are now audited before, one reference level at a time.
+- Authorization is effective at the snapshot boundary: a revocation that
+  commits after a request's snapshot began does not affect that request.
+  The next request sees it.
+
 ### Upgrading
 
+- A disclosure or Capability exercise whose references are nested now
+  records one `value.disclosed` event with `mode: "reference-expansion"` per
+  reference level, instead of one for all levels.
 - The upgrade drops existing environment-name mapping entries (a new schema
   migration). Contract revisions are unchanged: they store environment IDs,
   not names. Audit history keeps its `contract.varlock_mapping_set` and

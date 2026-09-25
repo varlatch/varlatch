@@ -2,7 +2,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
-import type { TailnetContext } from "../authz/evaluate.js";
+import type { Evaluation, TailnetContext } from "../authz/evaluate.js";
 import { evaluate } from "../authz/evaluate.js";
 import {
   destinationMatches,
@@ -18,8 +18,13 @@ import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
 import type { OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
-import { expandReferences, referencedNames, ReferenceExpansionError } from "./references.js";
-import { decryptVersion, resolveItems, type ResolvedItem } from "./values.js";
+import {
+  MAX_REFERENCE_DEPTH,
+  ReferenceExpansionError,
+  expandReferences,
+  referencedNames,
+} from "./references.js";
+import { auditThenDecrypt, captureState, type CapturedState, type ResolvedItem } from "./retrieval.js";
 
 /**
  * Capabilities (ADR-0022): a Capability narrows potential future use and
@@ -298,11 +303,50 @@ type DenyReason =
   | "requirement-failed"
   | "unresolved-reference";
 
+/**
+ * Everything an exercise reads, from the retrieval snapshot (ADR-0038
+ * Decision 6): the Capability row, the Agent's authorization evaluated on
+ * the snapshot's Grants and Requirements, and the captured values, including
+ * the ciphertext of every value a reference could reach for the Agent.
+ */
+export interface CapturedExercise {
+  state: CapturedState;
+  row: CapabilityRow | undefined;
+  /** The Agent's secret.use, and its config.value.read for reference expansion. */
+  use: Evaluation | null;
+  plainRead: Evaluation | null;
+}
+
+export async function captureExercise(
+  sctx: AppCtx,
+  scope: { org: OrgRow; project: ProjectRow; env: EnvironmentRow },
+  now: Date,
+  capabilityId: string,
+  tailnetContext: TailnetContext | null,
+): Promise<CapturedExercise> {
+  const { org, project, env } = scope;
+  const row = (
+    await sctx.db.query(
+      "SELECT * FROM capabilities WHERE id = $1 AND organization_id = $2 AND environment_id = $3",
+      [capabilityId, org.id, env.id],
+    )
+  ).rows[0] as CapabilityRow | undefined;
+  const resource = { projectId: project.id, environment: env };
+  const use = row
+    ? await evaluateAgentSecretUse(sctx, org, row.agent_identity_id, resource, tailnetContext)
+    : null;
+  const plainRead = row
+    ? await evaluateAgentSecretUse(sctx, org, row.agent_identity_id, resource, tailnetContext, "config.value.read")
+    : null;
+  const state = await captureState(sctx, scope, now, (item) =>
+    item.sensitive ? (row?.items.includes(item.name) ?? false) : plainRead?.allowed === true,
+  );
+  return { state, row, use, plainRead };
+}
+
 export async function exerciseCapability(
   ctx: AppCtx,
-  org: OrgRow,
-  project: ProjectRow,
-  env: EnvironmentRow,
+  captured: CapturedExercise,
   brokerIdentityId: string,
   input: ExerciseInput,
   opts: {
@@ -311,12 +355,8 @@ export async function exerciseCapability(
     listener?: "ordinary" | "tailnet" | undefined;
   },
 ): Promise<ExerciseResult> {
-  const row = (
-    await ctx.db.query(
-      "SELECT * FROM capabilities WHERE id = $1 AND organization_id = $2 AND environment_id = $3",
-      [input.capabilityId, org.id, env.id],
-    )
-  ).rows[0] as CapabilityRow | undefined;
+  const { state, row } = captured;
+  const { org, project, env } = state;
 
   const deny = async (
     reason: DenyReason,
@@ -382,17 +422,16 @@ export async function exerciseCapability(
     return deny("bad-secret");
   }
   if (row.revoked_at) return deny("revoked");
-  if (new Date(row.expires_at).getTime() <= Date.now()) return deny("expired");
+  if (new Date(row.expires_at).getTime() <= state.now.getTime()) return deny("expired");
 
   const selectors = row.destinations.map((raw) => parseDestinationSelector(raw));
   const matched = selectors.some((sel) => sel && destinationMatches(sel, input.destination));
   if (!matched) return deny("destination-mismatch");
 
-  // Model B: resolve current effective versions, then evaluate the AGENT's
-  // secret.use against current Grants and Requirements.
-  const resolved = await resolveItems(ctx, org, project, env);
-  const secretsByName = new Map(resolved.filter((i) => i.sensitive).map((i) => [i.name, i]));
-  const selected = [];
+  // Model B: the effective versions and the AGENT's secret.use, both as the
+  // snapshot saw them.
+  const secretsByName = new Map(state.items.filter((i) => i.sensitive).map((i) => [i.name, i]));
+  const selected: ResolvedItem[] = [];
   const withheld: string[] = [];
   for (const name of row.items) {
     const item = secretsByName.get(name);
@@ -400,69 +439,61 @@ export async function exerciseCapability(
     else withheld.push(name);
   }
 
-  const evaluation = await evaluateAgentSecretUse(
-    ctx,
-    org,
-    row.agent_identity_id,
-    { projectId: project.id, environment: env },
-    opts.tailnetContext,
-  );
+  const evaluation = captured.use as Evaluation;
   if (!evaluation.allowed) {
     return deny(evaluation.denial === "requirement-failed" ? "requirement-failed" : "authz-denied");
   }
 
   // Audit commits before anything is decrypted (ADR-0016/0022 §17); records
   // the exact versions exercised and the canonical destination, never a URL.
-  await recordAuditEvent(ctx.db, {
-    eventType: "capability.exercised",
-    decision: "allow",
-    actorIdentityId: brokerIdentityId,
-    organizationId: org.id,
-    action: "secret.use",
-    resource: {
-      capabilityId: row.id,
-      agentIdentityId: row.agent_identity_id,
-      projectId: project.id,
-      environmentId: env.id,
-    },
-    // Decision-time facts (ADR-0029 §6): Roles are editable and membership
-    // unversioned, so the snapshot records what the evaluator actually saw.
-    authz: {
-      grantIds: evaluation.provenance.grantIds,
-      ...(evaluation.provenance.applied ? { applied: evaluation.provenance.applied } : {}),
-      requirements: evaluation.requirements,
-    },
-    requestId: opts.requestId ?? null,
-    listener: opts.listener ?? null,
-    metadata: {
-      destination: `${input.destination.host}:${input.destination.port}`,
-      items: selected
-        .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
-        .join(","),
-      withheld: withheld.length,
-      runId: row.run_id,
-    },
-  });
+  const plaintext = await auditThenDecrypt(
+    ctx,
+    state,
+    [
+      {
+        eventType: "capability.exercised",
+        decision: "allow",
+        actorIdentityId: brokerIdentityId,
+        organizationId: org.id,
+        action: "secret.use",
+        resource: {
+          capabilityId: row.id,
+          agentIdentityId: row.agent_identity_id,
+          projectId: project.id,
+          environmentId: env.id,
+        },
+        // Decision-time facts (ADR-0029 §6): Roles are editable and membership
+        // unversioned, so the snapshot records what the evaluator actually saw.
+        authz: {
+          grantIds: evaluation.provenance.grantIds,
+          ...(evaluation.provenance.applied ? { applied: evaluation.provenance.applied } : {}),
+          requirements: evaluation.requirements,
+        },
+        requestId: opts.requestId ?? null,
+        listener: opts.listener ?? null,
+        metadata: {
+          destination: `${input.destination.host}:${input.destination.port}`,
+          items: selected
+            .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
+            .join(","),
+          withheld: withheld.length,
+          runId: row.run_id,
+        },
+      },
+    ],
+    selected.flatMap((i) => (i.retiringVersionId ? [i.versionId, i.retiringVersionId] : [i.versionId])),
+  );
 
   const items: ExerciseResult["items"] = [];
   const lookup = new Map<string, string>();
   for (const item of selected) {
-    const value = await decryptVersion(ctx, org, {
-      valueRowId: item.valueRowId,
-      versionId: item.versionId,
-    });
+    const value = plaintext.get(item.versionId) as string;
     lookup.set(item.name, value);
     // Rotation: also inject the retiring version so the agent's upstream can
     // accept either during the window. References resolve to primaries only
     // (ADR-0027 §2), so the retiring copy is passed through unexpanded.
     const retiring = item.retiringVersionId
-      ? {
-          versionId: item.retiringVersionId,
-          value: await decryptVersion(ctx, org, {
-            valueRowId: item.valueRowId,
-            versionId: item.retiringVersionId,
-          }),
-        }
+      ? { versionId: item.retiringVersionId, value: plaintext.get(item.retiringVersionId) as string }
       : undefined;
     items.push({ name: item.name, versionId: item.versionId, value, ...(retiring ? { retiring } : {}) });
   }
@@ -471,36 +502,29 @@ export async function exerciseCapability(
   // the consumer is an upstream API that cannot react to a literal ${NAME}.
   // Referenced Secrets must be bound in this Capability (already selected
   // above); non-sensitive items may be pulled in only when the Agent's
-  // Grants allow config.value.read here, audited before their plaintext is
-  // used (same closure-and-audit shape as the disclosure path).
-  const plainByName = new Map(resolved.filter((i) => !i.sensitive).map((i) => [i.name, i]));
-  const needed: { item: ResolvedItem; referencedBy: string }[] = [];
+  // Grants allow config.value.read here. They are found one reference level
+  // at a time, and each level's audit commits before it is decrypted.
+  const plainByName = new Map(state.items.filter((i) => !i.sensitive).map((i) => [i.name, i]));
   const queued = new Set<string>();
-  const enqueueRefs = async (referencedBy: string, raw: string): Promise<void> => {
-    for (const reference of referencedNames(raw)) {
-      if (lookup.has(reference) || queued.has(reference)) continue;
-      if (secretsByName.has(reference)) {
-        return deny("unresolved-reference", { reference, referencedBy, cause: "secret-not-bound" });
+  let frontier: { referencedBy: string; raw: string }[] = items.map((i) => ({ referencedBy: i.name, raw: i.value }));
+  for (let depth = 0; frontier.length > 0 && depth < MAX_REFERENCE_DEPTH; depth++) {
+    const needed: { item: ResolvedItem; referencedBy: string }[] = [];
+    for (const { referencedBy, raw } of frontier) {
+      for (const reference of referencedNames(raw)) {
+        if (lookup.has(reference) || queued.has(reference)) continue;
+        if (secretsByName.has(reference)) {
+          return deny("unresolved-reference", { reference, referencedBy, cause: "secret-not-bound" });
+        }
+        const plain = plainByName.get(reference);
+        if (!plain) {
+          return deny("unresolved-reference", { reference, referencedBy, cause: "unknown-item" });
+        }
+        queued.add(reference);
+        needed.push({ item: plain, referencedBy });
       }
-      const plain = plainByName.get(reference);
-      if (!plain) {
-        return deny("unresolved-reference", { reference, referencedBy, cause: "unknown-item" });
-      }
-      queued.add(reference);
-      needed.push({ item: plain, referencedBy });
     }
-  };
-  for (const item of items) await enqueueRefs(item.name, item.value);
-  if (needed.length > 0) {
-    const plainEvaluation = await evaluateAgentSecretUse(
-      ctx,
-      org,
-      row.agent_identity_id,
-      { projectId: project.id, environment: env },
-      opts.tailnetContext,
-      "config.value.read",
-    );
-    if (!plainEvaluation.allowed) {
+    if (needed.length === 0) break;
+    if (!captured.plainRead?.allowed) {
       const first = needed[0]!;
       return deny("unresolved-reference", {
         reference: first.item.name,
@@ -508,37 +532,39 @@ export async function exerciseCapability(
         cause: "plain-read-denied",
       });
     }
-    const sources: { item: ResolvedItem; value: string }[] = [];
-    for (let i = 0; i < needed.length; i++) {
-      const { item } = needed[i]!;
-      const value = await decryptVersion(ctx, org, {
-        valueRowId: item.valueRowId,
-        versionId: item.versionId,
-      });
-      sources.push({ item, value });
-      await enqueueRefs(item.name, value);
+    const decrypted = await auditThenDecrypt(
+      ctx,
+      state,
+      [
+        {
+          eventType: "value.disclosed",
+          decision: "allow",
+          actorIdentityId: brokerIdentityId,
+          organizationId: org.id,
+          action: "config.value.read",
+          resource: {
+            capabilityId: row.id,
+            agentIdentityId: row.agent_identity_id,
+            projectId: project.id,
+            environmentId: env.id,
+          },
+          requestId: opts.requestId ?? null,
+          listener: opts.listener ?? null,
+          metadata: {
+            mode: "reference-expansion",
+            items: needed.map((n) => `${n.item.name}@${n.item.versionId}`).join(","),
+            runId: row.run_id,
+          },
+        },
+      ],
+      needed.map((n) => n.item.versionId),
+    );
+    frontier = [];
+    for (const { item } of needed) {
+      const value = decrypted.get(item.versionId) as string;
+      lookup.set(item.name, value);
+      frontier.push({ referencedBy: item.name, raw: value });
     }
-    await recordAuditEvent(ctx.db, {
-      eventType: "value.disclosed",
-      decision: "allow",
-      actorIdentityId: brokerIdentityId,
-      organizationId: org.id,
-      action: "config.value.read",
-      resource: {
-        capabilityId: row.id,
-        agentIdentityId: row.agent_identity_id,
-        projectId: project.id,
-        environmentId: env.id,
-      },
-      requestId: opts.requestId ?? null,
-      listener: opts.listener ?? null,
-      metadata: {
-        mode: "reference-expansion",
-        items: sources.map((s) => `${s.item.name}@${s.item.versionId}`).join(","),
-        runId: row.run_id,
-      },
-    });
-    for (const s of sources) lookup.set(s.item.name, s.value);
   }
   for (const item of items) {
     try {

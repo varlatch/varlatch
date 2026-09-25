@@ -4,7 +4,7 @@ import type { Context } from "hono";
 import type { ErrorCode } from "@varlatch/protocol";
 import type { Action, Evaluation, GrantRecord, TailnetRequirementRecord } from "../authz/evaluate.js";
 import { evaluate, type ResourceContext, type TailnetContext } from "../authz/evaluate.js";
-import { recordAuditEvent } from "../audit/events.js";
+import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import type { CredentialRow, IdentityRow } from "../auth/credentials.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError } from "../domain/errors.js";
@@ -154,22 +154,24 @@ export interface AuthorizeOptions {
   hideExistence?: boolean;
 }
 
+/** One authorization decision. A denial carries its audit event unrecorded. */
+export type Decision =
+  | { allowed: true; evaluation: Evaluation }
+  | { allowed: false; error: DomainError; denialEvent: AuditEventInput | null };
+
 /**
- * Full authorization for one action (ADR-0015/0018): loads role, grants, and
- * requirements, evaluates, audits denials, and maps denial classes:
- * no visibility -> 404-equivalent; visible but denied -> PERMISSION_DENIED;
- * requirement failed -> distinct diagnosable TAILNET_* code.
- * Returns the Evaluation so allow-path callers can persist decision-time
- * provenance (ADR-0029 §6) — e.g. the Sync Target disclosure gate.
+ * Evaluate one action without writing anything, so it can run inside a
+ * read-only retrieval snapshot (ADR-0038 Decision 6). A denial is returned
+ * with its audit event and error; {@link enforce} records and throws them.
  */
-export async function authorize(
+export async function decide(
   ctx: AppCtx,
   c: Context,
   principal: Principal,
   action: Action,
   resource: ResourceContext,
   opts: AuthorizeOptions = {},
-): Promise<Evaluation> {
+): Promise<Decision> {
   const role =
     principal.identity.kind === "human"
       ? await getOrgRole(ctx, resource.organizationId, principal.identity.id)
@@ -179,16 +181,20 @@ export async function authorize(
     principal.identity.kind !== "human" &&
     principal.identity.organization_id !== resource.organizationId
   ) {
-    throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+    return {
+      allowed: false,
+      error: new DomainError("RESOURCE_NOT_FOUND", "Organization not found"),
+      denialEvent: null,
+    };
   }
   const grants = await loadGrants(ctx, resource.organizationId, principal.identity.id);
   const requirements = await loadTailnetRequirements(ctx, resource.organizationId);
   const tailnetContext = (c.get("tailnetContext") as TailnetContext | undefined) ?? null;
 
   const result = evaluate({ action, resource, orgRole: role, grants, requirements, tailnetContext });
-  if (result.allowed) return result;
+  if (result.allowed) return { allowed: true, evaluation: result };
 
-  await recordAuditEvent(ctx.db, {
+  const denialEvent: AuditEventInput = {
     eventType: "authorization.denied",
     decision: "deny",
     actorIdentityId: principal.identity.id,
@@ -205,18 +211,22 @@ export async function authorize(
       requirements: result.requirements,
     },
     requestId: c.get("requestId") as string,
-  });
+  };
 
   if (result.denial === "requirement-failed") {
     const missingContext = result.requirements.some(
       (r) => !r.satisfied && r.reason === "no-tailnet-context",
     );
-    throw new DomainError(
-      missingContext ? "TAILNET_CONTEXT_REQUIRED" : "TAILNET_CONTEXT_UNAVAILABLE",
-      missingContext
-        ? "This operation requires trusted Tailnet Context"
-        : "Tailnet Context does not satisfy the required selector",
-    );
+    return {
+      allowed: false,
+      denialEvent,
+      error: new DomainError(
+        missingContext ? "TAILNET_CONTEXT_REQUIRED" : "TAILNET_CONTEXT_UNAVAILABLE",
+        missingContext
+          ? "This operation requires trusted Tailnet Context"
+          : "Tailnet Context does not satisfy the required selector",
+      ),
+    };
   }
   // No applicable grant. Callers with zero visibility get not-found-equivalent;
   // a machine identity is inherently aware of its own organization.
@@ -226,9 +236,52 @@ export async function authorize(
     (principal.identity.kind !== "human" &&
       principal.identity.organization_id === resource.organizationId) ||
     !opts.hideExistence;
-  throw visible
-    ? new DomainError("PERMISSION_DENIED", "Not authorized for this action")
-    : new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+  return {
+    allowed: false,
+    denialEvent,
+    error: visible
+      ? new DomainError("PERMISSION_DENIED", "Not authorized for this action")
+      : new DomainError("RESOURCE_NOT_FOUND", "Organization not found"),
+  };
+}
+
+/** Record a denial's audit event, if it has one. Allowed decisions record nothing. */
+export async function recordDenial(ctx: AppCtx, decision: Decision): Promise<void> {
+  if (!decision.allowed && decision.denialEvent) await recordAuditEvent(ctx.db, decision.denialEvent);
+}
+
+export type Denied = Extract<Decision, { allowed: false }>;
+
+/** Record a denial's audit event, then throw its error. */
+export async function reject(ctx: AppCtx, decision: Denied): Promise<never> {
+  await recordDenial(ctx, decision);
+  throw decision.error;
+}
+
+/** An allowed decision's evaluation; a denial is recorded, then thrown. */
+export async function enforce(ctx: AppCtx, decision: Decision): Promise<Evaluation> {
+  if (decision.allowed) return decision.evaluation;
+  await recordDenial(ctx, decision);
+  throw decision.error;
+}
+
+/**
+ * Full authorization for one action (ADR-0015/0018): loads role, grants, and
+ * requirements, evaluates, audits denials, and maps denial classes:
+ * no visibility -> 404-equivalent; visible but denied -> PERMISSION_DENIED;
+ * requirement failed -> distinct diagnosable TAILNET_* code.
+ * Returns the Evaluation so allow-path callers can persist decision-time
+ * provenance (ADR-0029 §6) — e.g. the Sync Target disclosure gate.
+ */
+export async function authorize(
+  ctx: AppCtx,
+  c: Context,
+  principal: Principal,
+  action: Action,
+  resource: ResourceContext,
+  opts: AuthorizeOptions = {},
+): Promise<Evaluation> {
+  return enforce(ctx, await decide(ctx, c, principal, action, resource, opts));
 }
 
 /** Cursor helpers: opaque base64 of (occurredAt,id) or (createdAt,id). */

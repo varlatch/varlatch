@@ -3,14 +3,16 @@ import { createHmac } from "node:crypto";
 import { getAdapter, type NameOutcome, type SyncItem } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
-import { decryptPlatformCredential, syncFingerprintKey } from "../crypto/hierarchy.js";
+import { decryptPlatformCredential, decryptValue, syncFingerprintKey } from "../crypto/hierarchy.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { isExpired, type EnvironmentRow } from "./environments.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 import { ReferenceExpansionError, expandReferences } from "./references.js";
-import { decryptVersion, resolveItems } from "./values.js";
+import { activeContractOf } from "./contracts.js";
+import { DomainError } from "./errors.js";
+import { envelope, resolveItems } from "./retrieval.js";
 import {
   describeDestination,
   matchesExclusion,
@@ -525,6 +527,28 @@ interface RenderedItem {
   versionId: string;
 }
 
+/**
+ * Sync delivery is a server-side convergence loop, not a caller's retrieval:
+ * it decrypts to fingerprint values and decide what changed, and audits
+ * before any value leaves the process (ADR-0031 §7). A missed or mixed read
+ * is repaired by the next reconcile. Caller-facing retrievals use the
+ * snapshot and audit-before-decryption path in retrieval.ts instead.
+ */
+async function decryptForSync(
+  ctx: AppCtx,
+  org: OrgRow,
+  valueRowId: string,
+  versionId: string,
+): Promise<string> {
+  const res = await ctx.db.query("SELECT payload, wrapped_dek FROM value_versions WHERE id = $1", [versionId]);
+  const version = res.rows[0] as { payload: string; wrapped_dek: string } | undefined;
+  if (!version) throw new DomainError("INTERNAL", "Missing value version");
+  return decryptValue(orgKekOf(ctx, org), org.id, valueRowId, versionId, {
+    payload: envelope(version.payload),
+    wrappedDek: envelope(version.wrapped_dek),
+  }).toString("utf8");
+}
+
 export async function renderEffectiveOutput(
   ctx: AppCtx,
   org: OrgRow,
@@ -534,7 +558,7 @@ export async function renderEffectiveOutput(
   platform: string,
 ): Promise<{ items: RenderedItem[]; flags: string[] }> {
   const adapter = getAdapter(platform);
-  const resolved = await resolveItems(ctx, org, project, env);
+  const resolved = await resolveItems(ctx, org, env, await activeContractOf(ctx, project), new Date());
   const flags: string[] = [];
 
   const mapping: SyncMapping = target.mapping;
@@ -588,7 +612,7 @@ export async function renderEffectiveOutput(
   for (const item of selected) {
     plaintext.set(
       item.name,
-      await decryptVersion(ctx, org, { valueRowId: item.valueRowId, versionId: item.versionId }),
+      await decryptForSync(ctx, org, item.valueRowId, item.versionId),
     );
   }
 
