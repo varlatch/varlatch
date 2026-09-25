@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import {
   ContractValidationError,
+  LATEST_SEMANTICS_VERSION,
   contractHash,
   diffContracts,
   normalizeContract,
+  semanticsVersionOf,
   type ConfigurationContract,
 } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
@@ -29,10 +31,35 @@ function parseContract(row: ContractRevisionRow): ConfigurationContract {
     : row.contract;
 }
 
+function normalizeOrReject(input: unknown): ConfigurationContract {
+  try {
+    return normalizeContract(input);
+  } catch (err) {
+    if (err instanceof ContractValidationError) {
+      throw new DomainError("CONTRACT_INVALID", err.message, { issues: err.issues });
+    }
+    throw err;
+  }
+}
+
+/** Whether the pushed Contract names its semantics version (a pin). */
+function pinsSemanticsVersion(input: unknown): boolean {
+  return (
+    typeof input === "object" &&
+    input !== null &&
+    (input as { semanticsVersion?: unknown }).semanticsVersion !== undefined
+  );
+}
+
 /**
  * Store a candidate revision (ADR-0013): server-side re-normalization and
  * hashing (client hashes are never trusted), content-hash deduplication,
  * never activates implicitly.
+ *
+ * Semantics version (ADR-0038 Decision 3): a Contract that names one pins
+ * it. Otherwise the revision keeps the active revision's version, so an
+ * edit never migrates validation rules, and a project with no active
+ * revision gets the newest version.
  */
 export async function pushRevision(
   ctx: AppCtx,
@@ -42,17 +69,24 @@ export async function pushRevision(
   provenance: Record<string, string> | undefined,
   actorIdentityId: string,
 ): Promise<ContractRevisionRow> {
-  let contract: ConfigurationContract;
-  try {
-    contract = normalizeContract(contractInput);
-  } catch (err) {
-    if (err instanceof ContractValidationError) {
-      throw new DomainError("CONTRACT_INVALID", err.message, { issues: err.issues });
-    }
-    throw err;
-  }
-  const hash = contractHash(contract);
+  const pushed = normalizeOrReject(contractInput);
+  const pinned = pinsSemanticsVersion(contractInput);
   return withTx(ctx.db, async (db) => {
+    let contract = pushed;
+    if (!pinned) {
+      const active = await db.query(
+        `SELECT r.contract FROM projects p
+         JOIN contract_revisions r ON r.id = p.active_contract_revision_id
+         WHERE p.id = $1`,
+        [projectId],
+      );
+      const activeRow = active.rows[0] as Pick<ContractRevisionRow, "contract"> | undefined;
+      const version = activeRow
+        ? semanticsVersionOf(parseContract(activeRow as ContractRevisionRow))
+        : LATEST_SEMANTICS_VERSION;
+      contract = normalizeOrReject({ ...pushed, semanticsVersion: version });
+    }
+    const hash = contractHash(contract);
     const existing = await db.query(
       "SELECT * FROM contract_revisions WHERE project_id = $1 AND content_hash = $2",
       [projectId, hash],
@@ -78,7 +112,11 @@ export async function pushRevision(
       organizationId,
       action: "contract.submit",
       resource: { projectId, contractRevisionId: id },
-      metadata: { contentHash: hash, itemCount: contract.items.length },
+      metadata: {
+        contentHash: hash,
+        itemCount: contract.items.length,
+        semanticsVersion: semanticsVersionOf(contract),
+      },
     });
     const res = await db.query("SELECT * FROM contract_revisions WHERE id = $1", [id]);
     return res.rows[0] as ContractRevisionRow;
@@ -116,6 +154,12 @@ export async function activateRevision(
           itemsRemoved: diff.itemsRemoved.length,
           sensitivityChanged: diff.sensitivityChanged.map((c) => c.name).join(","),
           requirednessChanged: diff.requirednessChanged.map((c) => c.name).join(","),
+          ...(diff.semanticsVersionChanged
+            ? {
+                semanticsVersionFrom: diff.semanticsVersionChanged.from,
+                semanticsVersionTo: diff.semanticsVersionChanged.to,
+              }
+            : {}),
         };
       }
     }

@@ -4,8 +4,10 @@ export { canonicalJson, canonicalContractBytes, contractHash } from "./canonical
 export { normalizeContract, ContractValidationError } from "./normalize.js";
 export { diffContracts, type ContractDiff } from "./diff.js";
 export {
+  LATEST_SEMANTICS_VERSION,
   SEMANTICS_VERSIONS,
   semanticsFor,
+  semanticsVersionOf,
   UnsupportedSemanticsVersionError,
   type ContractSemantics,
   type ConvertedValue,

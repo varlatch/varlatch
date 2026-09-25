@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONFIG_ITEM_NAME_PATTERN, semanticsFor } from "@varlatch/contract";
+import { CONFIG_ITEM_NAME_PATTERN, semanticsFor, semanticsVersionOf } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptValue, encryptValue } from "../crypto/hierarchy.js";
@@ -629,8 +629,7 @@ export async function validateEnvironment(
   const items = await resolveItems(ctx, org, project, env);
   const present = new Map(items.map((i) => [i.name, i]));
   const envCtx = { rootId: rootIdOf(env), tier: env.tier };
-  // Every stored revision is semantics version 1 until revisions carry one.
-  const semantics = semanticsFor(1);
+  const semantics = semanticsFor(semanticsVersionOf(contract));
 
   const toCheck: { item: (typeof contract.items)[number]; resolved: ResolvedItem }[] = [];
   const access: Partial<Record<"plain" | "secret", ValidationAccess>> = {};

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { ContractItem, Tier } from "./types.js";
+import type { ConfigurationContract, ContractItem, Tier } from "./types.js";
 
 /**
  * Contract Semantics: what a Contract item means for a value in an
@@ -161,6 +161,14 @@ const BY_VERSION = new Map<unknown, ContractSemantics>([
   [1, V1],
   [2, V2],
 ]);
+
+/** The newest version: what a project's first revision gets. */
+export const LATEST_SEMANTICS_VERSION: SemanticsVersion = 2;
+
+/** A Contract's semantics version: absent means 1. */
+export function semanticsVersionOf(contract: Pick<ConfigurationContract, "semanticsVersion">): number {
+  return contract.semanticsVersion ?? 1;
+}
 
 /** The rules of one semantics version. Unknown versions fail closed. */
 export function semanticsFor(version: number): ContractSemantics {

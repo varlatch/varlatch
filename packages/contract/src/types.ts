@@ -58,6 +58,12 @@ export interface ContractItem {
 
 export interface ConfigurationContract {
   schemaVersion: typeof CONTRACT_SCHEMA_VERSION;
+  /**
+   * The Contract Semantics version this revision is evaluated with. Absent
+   * means 1: canonical form omits it then, so every revision created before
+   * versions existed keeps its content hash.
+   */
+  semanticsVersion?: number;
   /** Canonical form: sorted by name (code-point order), names unique. */
   items: ContractItem[];
 }

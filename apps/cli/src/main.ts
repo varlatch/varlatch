@@ -597,13 +597,26 @@ async function main(): Promise<void> {
             if (!existsSync(jsonFile)) fail(`No such file: ${jsonFile}`);
             contract = JSON.parse(readFileSync(jsonFile, "utf8")) as unknown;
           } else {
-            fail("Usage: varlatch contract push --schema <.env.schema> | --file <contract.json>");
+            fail("Usage: varlatch contract push --schema <.env.schema> | --file <contract.json> [--semantics <version|latest>]");
+          }
+          const semantics = flag(args, "--semantics");
+          if (semantics !== undefined) {
+            // An explicit pin; without one the server keeps the active
+            // revision's version (the newest for a project's first revision).
+            const supported = (await api.meta()).semanticsVersions;
+            if (!supported) fail("This server does not support Contract Semantics versions; it needs 0.11.0 or later.");
+            const version = semantics === "latest" ? Math.max(...supported) : Number(semantics);
+            if (!supported.includes(version)) {
+              fail(`--semantics must be latest or one of this server's versions: ${supported.join(", ")}`);
+            }
+            contract = { ...(contract as object), semanticsVersion: version };
           }
           const revision = await api.pushContractRevision(ctx.organization, ctx.project, {
             contract,
             ...(provenance ? { provenance } : {}),
           });
           console.log(`Revision ${revision.id} (${revision.contentHash})${revision.active ? " [active]" : ""}`);
+          console.log(`Contract Semantics version ${revision.semanticsVersion}`);
           if (!revision.active) console.log(`Activate with: varlatch contract activate ${revision.id}`);
           return;
         }
@@ -1001,6 +1014,7 @@ Usage:
   varlatch validate [-e <env>]        (exit 1 invalid; 2 incomplete: items this identity may not read)
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
+                   push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
                       | nothing for convex: --base is the deployment URL)

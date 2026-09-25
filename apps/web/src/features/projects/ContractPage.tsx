@@ -11,7 +11,7 @@ import { Button, Card, InfoTip, Input, Mono, Select, cn } from "../../components
     InfoTip echoing the selected type's meaning. */
 const TYPE_HELP: Record<string, string> = {
   string: "Any text value; no validation beyond presence.",
-  number: "Must be an integer or decimal written in digits, e.g. -12 or 3.5 (no exponent, no leading +).",
+  number: "Must be an integer or decimal written in digits, e.g. -12 or 3.5 (no exponent, no leading +). From semantics version 2, at most 2^53 - 1 in magnitude.",
   boolean: "Must be true or false in any case, or 1/0.",
   url: "Must be an absolute URL including its scheme, e.g. https://…",
   email: "Must look like an email address.",
@@ -113,8 +113,12 @@ export function ContractPage() {
       {contract.data && (
         <Card className="p-0 overflow-hidden">
           <div className="px-3 py-2 border-b border-bd flex items-center justify-between text-xs text-muted">
-            <span>
+            <span className="flex items-center gap-1">
               Active revision <Mono>{contract.data.id}</Mono>
+              <span className="ml-2" data-testid="semantics-version">
+                Semantics version {contract.data.semanticsVersion ?? 1}
+              </span>
+              <InfoTip text="The validation rules this revision is evaluated with. Edits keep the version; push with --semantics latest to move to the newest rules." />
             </span>
             <Mono>{contract.data.contentHash}</Mono>
           </div>
