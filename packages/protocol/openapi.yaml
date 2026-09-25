@@ -706,8 +706,12 @@ paths:
         need secret.reveal including its Requirements (e.g. Tailnet
         Constraints). Anything else is reported in notEvaluated with an
         authorization-derived reason and never affects valid, missing, or
-        invalid. valid is true only when complete is true. Every decryption
-        for validation is audited before it happens (secret.validated /
+        invalid. valid is true only when complete is true. Values are
+        validated in the form `varlatch run` delivers them to this caller,
+        with references expanded; a value that would keep a reference
+        literal gets no type verdict and is reported in unresolved. Every
+        decryption for validation, including values read only to expand
+        references, is audited before it happens (secret.validated /
         value.validated, naming item versions); verdicts are never audited.
         Responses are never cacheable.
       parameters:
@@ -2695,7 +2699,7 @@ components:
 
     ValidationReport:
       type: object
-      required: [environmentId, valid, complete, missing, invalid, notEvaluated]
+      required: [environmentId, valid, complete, missing, invalid, notEvaluated, unresolved]
       properties:
         environmentId: { type: string }
         contractRevisionId: { type: [string, "null"] }
@@ -2706,7 +2710,9 @@ components:
             none is missing or invalid. A partial evaluation is never valid.
         complete:
           type: boolean
-          description: False when any item is in notEvaluated.
+          description: >
+            False when any item is in notEvaluated, or is unresolved because
+            of this caller's access (reason authority).
         missing:
           type: array
           items: { type: string }
@@ -2735,6 +2741,24 @@ components:
               requires:
                 type: string
                 enum: [config.metadata.read, config.value.read, secret.reveal]
+        unresolved:
+          type: array
+          description: >
+            Evaluated items whose delivered value would keep a reference
+            literal, so no type verdict is given. authority: a Secret
+            references non-sensitive values this caller may not read, and a
+            caller who may read them gets it expanded. reference: anything
+            else, such as a reference to an item with no value, a
+            non-sensitive value referencing a Secret (never expanded), or a
+            cycle. Absent on servers older than 0.11.0.
+          items:
+            type: object
+            required: [name, reason]
+            properties:
+              name: { type: string }
+              reason:
+                type: string
+                enum: [authority, reference]
 
     ContractRevision:
       type: object

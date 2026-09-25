@@ -15,7 +15,12 @@ import {
 import { isExpired, rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
-import { expandReferences, referencedNames } from "./references.js";
+import {
+  MAX_REFERENCE_DEPTH,
+  ReferenceExpansionError,
+  expandReferences,
+  referencedNames,
+} from "./references.js";
 import type { ProjectRow } from "./projects.js";
 
 interface ValueRow {
@@ -580,6 +585,20 @@ export interface ValidationResult {
   missing: string[];
   invalid: { name: string; reason: string }[];
   notEvaluated: NotEvaluatedItem[];
+  /**
+   * Evaluated items whose value, as delivered to this caller, would keep a
+   * reference literal, so no type verdict is given. `authority`: a Secret
+   * references non-sensitive values this caller may not read; a caller who
+   * may read them gets it expanded. `reference`: anything else, such as a
+   * reference to an item with no value, a non-sensitive value referencing a
+   * Secret (never expanded), or a cycle.
+   */
+  unresolved: UnresolvedItem[];
+}
+
+export interface UnresolvedItem {
+  name: string;
+  reason: "authority" | "reference";
 }
 
 /**
@@ -590,6 +609,12 @@ export interface ValidationResult {
  * `valid`, `missing`, or `invalid`. Every decryption is audited before it
  * happens (autocommitted, as capability exercise does), naming the exact
  * item versions; verdicts themselves are never audited or logged.
+ *
+ * Values are evaluated in their delivered form: references are expanded
+ * exactly as `varlatch run` receives them. A non-sensitive value expands
+ * from non-sensitive values only; a Secret from Secrets and, when the
+ * caller may read them, non-sensitive values. Expansion inputs are
+ * decrypted one reference level at a time, each level audited first.
  */
 export async function validateEnvironment(
   ctx: AppCtx,
@@ -611,6 +636,7 @@ export async function validateEnvironment(
     missing: [],
     invalid: [],
     notEvaluated: [],
+    unresolved: [],
   };
   if (!contract) return result;
 
@@ -655,44 +681,131 @@ export async function validateEnvironment(
     }
   }
 
-  // Audit before decryption: one event per authorization action, naming the
-  // exact versions about to be decrypted. No verdicts are recorded.
-  for (const sensitive of [true, false]) {
-    const batch = toCheck.filter((c) => c.item.sensitive === sensitive);
-    if (batch.length === 0) continue;
-    await recordAuditEvent(ctx.db, {
-      eventType: sensitive ? "secret.validated" : "value.validated",
-      decision: "allow",
-      actorIdentityId: opts.actorIdentityId,
-      organizationId: org.id,
-      action: sensitive ? "secret.reveal" : "config.value.read",
-      resource: { projectId: project.id, environmentId: env.id },
-      requestId: opts.requestId ?? null,
-      metadata: {
-        purpose: "validation",
-        contractRevisionId: project.active_contract_revision_id,
-        items: batch.map((c) => `${c.item.name}@${c.resolved.versionId}`).join(","),
-      },
-    });
+  const orgKek = orgKekOf(ctx, org);
+  const raw = new Map<string, string>();
+  // Audit before decryption: one event per authorization action and level,
+  // naming the exact versions about to be decrypted. No verdicts are recorded.
+  const auditThenDecrypt = async (batch: ResolvedItem[], mode: "evaluated" | "reference-expansion") => {
+    for (const sensitive of [true, false]) {
+      const group = batch.filter((r) => r.sensitive === sensitive);
+      if (group.length === 0) continue;
+      await recordAuditEvent(ctx.db, {
+        eventType: sensitive ? "secret.validated" : "value.validated",
+        decision: "allow",
+        actorIdentityId: opts.actorIdentityId,
+        organizationId: org.id,
+        action: sensitive ? "secret.reveal" : "config.value.read",
+        resource: { projectId: project.id, environmentId: env.id },
+        requestId: opts.requestId ?? null,
+        metadata: {
+          purpose: "validation",
+          ...(mode === "reference-expansion" ? { mode } : {}),
+          contractRevisionId: project.active_contract_revision_id,
+          items: group.map((r) => `${r.name}@${r.versionId}`).join(","),
+        },
+      });
+    }
+    // Decryption happens in-process; no plaintext leaves this function.
+    for (const resolved of batch) {
+      const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [resolved.versionId]);
+      const version = res.rows[0] as VersionRow | undefined;
+      if (!version) continue;
+      raw.set(
+        resolved.name,
+        decryptValue(orgKek, org.id, resolved.valueRowId, resolved.versionId, {
+          payload: envelope(version.payload),
+          wrappedDek: envelope(version.wrapped_dek),
+        }).toString("utf8"),
+      );
+    }
+  };
+  await auditThenDecrypt(toCheck.map((c) => c.resolved), "evaluated");
+
+  // What a delivery may expand from, by the kind of value being expanded.
+  // Secrets may pull in non-sensitive values only if the caller may read
+  // them; the check is lazy, so it runs only when a Secret references one.
+  const mayReadPlain = async () => {
+    access.plain ??= await opts.access.plain();
+    return access.plain === "allowed";
+  };
+  const inDomain = async (origin: "secret" | "plain", name: string): Promise<boolean> => {
+    const item = present.get(name);
+    if (!item) return false;
+    if (origin === "plain") return !item.sensitive;
+    return item.sensitive || (await mayReadPlain());
+  };
+
+  // Expansion inputs, one reference level at a time. A value reached while
+  // expanding a Secret is scanned with the Secret's domain.
+  let frontier: { origin: "secret" | "plain"; name: string }[] = toCheck.map((c) => ({
+    origin: c.item.sensitive ? "secret" : "plain",
+    name: c.item.name,
+  }));
+  const scanned = new Set<string>();
+  // Expansion resolves at most MAX_REFERENCE_DEPTH levels; nothing deeper is decrypted.
+  for (let depth = 0; frontier.length > 0 && depth < MAX_REFERENCE_DEPTH; depth++) {
+    const next: { origin: "secret" | "plain"; name: string }[] = [];
+    const toDecrypt = new Map<string, ResolvedItem>();
+    for (const { origin, name } of frontier) {
+      if (scanned.has(`${origin}:${name}`)) continue;
+      scanned.add(`${origin}:${name}`);
+      const value = raw.get(name);
+      if (value === undefined) continue;
+      for (const ref of referencedNames(value)) {
+        if (!(await inDomain(origin, ref))) continue;
+        next.push({ origin, name: ref });
+        const item = present.get(ref) as ResolvedItem;
+        if (!raw.has(ref)) toDecrypt.set(ref, item);
+      }
+    }
+    if (toDecrypt.size > 0) await auditThenDecrypt([...toDecrypt.values()], "reference-expansion");
+    frontier = next;
   }
 
-  const orgKek = orgKekOf(ctx, org);
-  for (const { item, resolved } of toCheck) {
-    // Type checks decrypt in-process; no plaintext leaves this function.
-    const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [
-      resolved.versionId,
-    ]);
-    const version = res.rows[0] as VersionRow | undefined;
-    if (!version) continue;
-    const value = decryptValue(orgKek, org.id, resolved.valueRowId, resolved.versionId, {
-      payload: envelope(version.payload),
-      wrappedDek: envelope(version.wrapped_dek),
-    }).toString("utf8");
-    const problem = semantics.validate(item, value);
+  const plainReadable = access.plain === "allowed";
+  for (const { item } of toCheck) {
+    const value = raw.get(item.name);
+    if (value === undefined) continue;
+    const origin = item.sensitive ? "secret" : "plain";
+    // Why a reference stays literal: only the caller's missing read access
+    // to non-sensitive values ("authority"), or anything else ("reference").
+    let blocked = false;
+    let other = false;
+    const lookup = (name: string): string | undefined => {
+      const ref = present.get(name);
+      const readable =
+        ref !== undefined &&
+        (origin === "secret" ? ref.sensitive || plainReadable : !ref.sensitive);
+      if (ref && !readable && origin === "secret") blocked = true;
+      const value = readable ? raw.get(name) : undefined;
+      if (value === undefined && !(ref && !readable && origin === "secret")) other = true;
+      return value;
+    };
+    let delivered: string;
+    try {
+      // A lenient pass sees every reference; a strict one then catches cycles.
+      delivered = expandReferences(value, lookup);
+      if (!blocked && !other) expandReferences(value, lookup, true);
+    } catch (err) {
+      if (!(err instanceof ReferenceExpansionError)) throw err;
+      if (err.unresolved) result.unresolved.push({ name: item.name, reason: "reference" });
+      else result.invalid.push({ name: item.name, reason: "expands beyond the delivery size limit" });
+      continue;
+    }
+    if (blocked || other) {
+      result.unresolved.push({ name: item.name, reason: blocked && !other ? "authority" : "reference" });
+      continue;
+    }
+    const problem = semantics.validate(item, delivered);
     if (problem) result.invalid.push({ name: item.name, reason: problem });
   }
-  result.complete = result.notEvaluated.length === 0;
-  result.valid = result.complete && result.missing.length === 0 && result.invalid.length === 0;
+  result.complete =
+    result.notEvaluated.length === 0 && !result.unresolved.some((u) => u.reason === "authority");
+  result.valid =
+    result.complete &&
+    result.missing.length === 0 &&
+    result.invalid.length === 0 &&
+    result.unresolved.length === 0;
   return result;
 }
 

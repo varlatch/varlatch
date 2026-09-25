@@ -50,6 +50,14 @@ fixes.
   [Contract Semantics](docs/reference/contract-semantics.md).
 - The dashboard's type help now matches the rules. It said booleans accept
   `yes` and `no`, which validation never accepted.
+- Validation checks values as `varlatch run` delivers them, with `${NAME}`
+  references expanded. Before, it checked the stored text: `${BASE}0` was
+  reported as an invalid number although it is delivered as `8080`, and a
+  value whose reference stays literal when delivered passed. Such a value
+  is now reported as `unresolved`, and `varlatch validate` exits 1, or 2
+  when only the caller's missing read access to non-sensitive values keeps
+  it literal. Values read only to expand a reference are audited before
+  they are decrypted.
 
 ### Upgrading
 
@@ -61,6 +69,9 @@ fixes.
 - Existing projects keep version 1 rules. To adopt version 2, push with
   `varlatch contract push --semantics latest` and review the activation,
   which shows the version change.
+- Validation results can change for values that contain references: they
+  are now checked as delivered, and a reference that stays literal makes the
+  report invalid. The validation report gains an `unresolved` list.
 - A `.env.schema` with comments after values gives different defaults when
   pushed with this release's CLI. Review the activation's changes before
   activating. A file that uses `forEnv(...)` must switch to `env(...)` or

@@ -27,12 +27,14 @@ export function validationOutcome(environment: string, report: ValidationReport)
   const complete = report.complete ?? notEvaluated.length === 0;
   const missing = report.missing ?? [];
   const invalid = report.invalid ?? [];
+  const unresolved = report.unresolved ?? [];
 
   if (report.valid && complete) {
     return { stdout: [`${environment}: valid`], stderr: [], exitCode: VALIDATE_EXIT.valid };
   }
 
-  const failed = missing.length > 0 || invalid.length > 0;
+  const failed =
+    missing.length > 0 || invalid.length > 0 || unresolved.some((u) => u.reason === "reference");
   const stderr: string[] = [];
   stderr.push(
     failed
@@ -41,6 +43,13 @@ export function validationOutcome(environment: string, report: ValidationReport)
   );
   for (const name of missing) stderr.push(`  missing: ${name}`);
   for (const item of invalid) stderr.push(`  invalid: ${item.name} — ${item.reason}`);
+  for (const item of unresolved) {
+    stderr.push(
+      item.reason === "authority"
+        ? `  unresolved: ${item.name} (references non-sensitive values; needs config.value.read)`
+        : `  unresolved: ${item.name} (a reference stays literal when delivered)`,
+    );
+  }
   for (const item of notEvaluated) {
     const why =
       item.reason === "requirement"

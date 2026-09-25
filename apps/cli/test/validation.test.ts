@@ -9,6 +9,7 @@ const base = {
   missing: [],
   invalid: [],
   notEvaluated: [],
+  unresolved: [],
 } satisfies Partial<ValidationReport>;
 
 describe("varlatch validate outcome", () => {
@@ -66,6 +67,30 @@ describe("varlatch validate outcome", () => {
     expect(out.exitCode).toBe(VALIDATE_EXIT.invalid);
     expect(out.stderr[0]).toBe("production: INVALID (some items not evaluated)");
     expect(out.stderr).toContain("  not evaluated: API_TOKEN (needs secret.reveal)");
+  });
+
+  it("a reference that stays literal is INVALID (exit 1)", () => {
+    const out = validationOutcome("production", {
+      ...base,
+      valid: false,
+      complete: true,
+      unresolved: [{ name: "LEAK", reason: "reference" }],
+    });
+    expect(out.exitCode).toBe(VALIDATE_EXIT.invalid);
+    expect(out.stderr).toEqual(["production: INVALID", "  unresolved: LEAK (a reference stays literal when delivered)"]);
+  });
+
+  it("unresolved only for this identity's access is INCOMPLETE (exit 2)", () => {
+    const out = validationOutcome("production", {
+      ...base,
+      valid: false,
+      complete: false,
+      unresolved: [{ name: "DATABASE_URL", reason: "authority" }],
+    });
+    expect(out.exitCode).toBe(VALIDATE_EXIT.incomplete);
+    expect(out.stderr).toContain(
+      "  unresolved: DATABASE_URL (references non-sensitive values; needs config.value.read)",
+    );
   });
 
   it("a server without the new fields is treated as a full evaluation", () => {
