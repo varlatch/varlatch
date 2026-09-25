@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { CONFIG_ITEM_NAME_PATTERN, semanticsFor, semanticsVersionOf } from "@varlatch/contract";
-import { recordAuditEvent } from "../audit/events.js";
-import type { Envelope } from "../crypto/aead.js";
-import { decryptValue, encryptValue } from "../crypto/hierarchy.js";
+import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
+import { encryptValue } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
@@ -22,6 +21,7 @@ import {
   referencedNames,
 } from "./references.js";
 import type { ProjectRow } from "./projects.js";
+import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
 
 interface ValueRow {
   id: string;
@@ -33,37 +33,8 @@ interface ValueRow {
   rotation_deadline?: string | null;
 }
 
-interface VersionRow {
-  id: string;
-  value_id: string;
-  payload: Envelope | string;
-  wrapped_dek: Envelope | string;
-  previous_version_id: string | null;
-}
-
-export function decryptVersion(
-  ctx: AppCtx,
-  org: OrgRow,
-  item: { valueRowId: string; versionId: string },
-): Promise<string> {
-  return ctx.db
-    .query("SELECT * FROM value_versions WHERE id = $1", [item.versionId])
-    .then((res) => {
-      const version = res.rows[0] as VersionRow | undefined;
-      if (!version) throw new DomainError("INTERNAL", "Missing value version");
-      return decryptValue(orgKekOf(ctx, org), org.id, item.valueRowId, item.versionId, {
-        payload: envelope(version.payload),
-        wrappedDek: envelope(version.wrapped_dek),
-      }).toString("utf8");
-    });
-}
-
-function envelope(v: Envelope | string): Envelope {
-  return typeof v === "string" ? (JSON.parse(v) as Envelope) : v;
-}
-
-function assertNotExpired(env: EnvironmentRow): void {
-  if (isExpired(env)) {
+function assertNotExpired(env: EnvironmentRow, now = new Date()): void {
+  if (isExpired(env, now)) {
     throw new DomainError(
       "ENVIRONMENT_EXPIRED",
       "This environment has expired; retrieval and mutation are disabled until it is deleted or its expiry is changed",
@@ -380,64 +351,7 @@ export async function completeRotation(
   });
 }
 
-export interface ResolvedItem {
-  name: string;
-  sensitive: boolean;
-  source: "self" | "parent";
-  valueRowId: string;
-  versionId: string;
-  organizationId: string;
-  /**
-   * Present only while a dual-phase rotation (ADR-0027) is active and its
-   * deadline is still in the future: the previous version, still valid.
-   */
-  retiringVersionId?: string;
-}
-
-export async function resolveItems(
-  ctx: AppCtx,
-  org: OrgRow,
-  project: ProjectRow,
-  env: EnvironmentRow,
-): Promise<ResolvedItem[]> {
-  const contract = await activeContractOf(ctx, project);
-  const byName = new Map<string, ResolvedItem>();
-  const load = async (environmentId: string, source: "self" | "parent") => {
-    const res = await ctx.db.query(
-      `SELECT id, item_name, current_version_id, retiring_version_id, rotation_deadline
-       FROM env_values
-       WHERE environment_id = $1 AND deleted_at IS NULL AND current_version_id IS NOT NULL`,
-      [environmentId],
-    );
-    for (const r of res.rows as {
-      id: string;
-      item_name: string;
-      current_version_id: string;
-      retiring_version_id: string | null;
-      rotation_deadline: string | null;
-    }[]) {
-      if (source === "parent" && byName.has(r.item_name)) continue;
-      // Lazy fail-safe expiry (ADR-0027 §4): an elapsed deadline drops the
-      // retiring version from every read without a cleanup worker.
-      const rotating =
-        r.retiring_version_id !== null &&
-        r.rotation_deadline !== null &&
-        new Date(r.rotation_deadline).getTime() > Date.now();
-      byName.set(r.item_name, {
-        name: r.item_name,
-        sensitive: sensitivityOf(contract, r.item_name),
-        source,
-        valueRowId: r.id,
-        versionId: r.current_version_id,
-        organizationId: org.id,
-        ...(rotating ? { retiringVersionId: r.retiring_version_id as string } : {}),
-      });
-    }
-  };
-  await load(env.id, "self");
-  if (env.parent_environment_id) await load(env.parent_environment_id, "parent");
-  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
-}
+export type { ResolvedItem } from "./retrieval.js";
 
 export interface EffectiveItem {
   name: string;
@@ -456,15 +370,14 @@ export interface EffectiveItem {
 }
 
 /**
- * Bulk Effective Configuration (ADR-0012/0017). When values are included, the
- * disclosure audit event commits before plaintext is returned (ADR-0016) and
- * records exactly which item versions were disclosed.
+ * Bulk Effective Configuration (ADR-0012/0017), from a captured retrieval
+ * snapshot (ADR-0038 Decision 6). When values are included, the disclosure
+ * audit event naming exactly the disclosed versions commits before any of
+ * them is decrypted (ADR-0016).
  */
 export async function effectiveConfiguration(
   ctx: AppCtx,
-  org: OrgRow,
-  project: ProjectRow,
-  env: EnvironmentRow,
+  state: CapturedState,
   opts: {
     includeValues: boolean;
     /** Per-item authorization decided by the caller's evaluator results. */
@@ -474,8 +387,8 @@ export async function effectiveConfiguration(
     listener?: "ordinary" | "tailnet";
   },
 ): Promise<EffectiveItem[]> {
-  assertNotExpired(env);
-  const items = await resolveItems(ctx, org, project, env);
+  const { org, project, env, items } = state;
+  assertNotExpired(env, state.now);
   if (!opts.includeValues) {
     return items.map((i) => ({
       name: i.name,
@@ -488,46 +401,36 @@ export async function effectiveConfiguration(
   }
 
   const disclosed = items.filter((i) => opts.mayReadValue(i.sensitive));
-  // Audit commits before material leaves the process; failure fails disclosure.
-  await recordAuditEvent(ctx.db, {
-    eventType: "value.disclosed",
-    decision: "allow",
-    actorIdentityId: opts.actorIdentityId,
-    organizationId: org.id,
-    action: "config.value.read",
-    resource: { projectId: project.id, environmentId: env.id },
-    requestId: opts.requestId ?? null,
-    listener: opts.listener ?? null,
-    metadata: {
-      items: disclosed.map((i) => `${i.name}@${i.versionId}`).join(","),
-      withheld: items.length - disclosed.length,
-    },
-  });
+  const plaintext = await auditThenDecrypt(
+    ctx,
+    state,
+    [
+      {
+        eventType: "value.disclosed",
+        decision: "allow",
+        actorIdentityId: opts.actorIdentityId,
+        organizationId: org.id,
+        action: "config.value.read",
+        resource: { projectId: project.id, environmentId: env.id },
+        requestId: opts.requestId ?? null,
+        listener: opts.listener ?? null,
+        metadata: {
+          items: disclosed.map((i) => `${i.name}@${i.versionId}`).join(","),
+          withheld: items.length - disclosed.length,
+        },
+      },
+    ],
+    disclosed.map((i) => i.versionId),
+  );
 
-  const orgKek = orgKekOf(ctx, org);
-  const result: EffectiveItem[] = [];
-  for (const item of items) {
-    let value: string | null = null;
-    if (opts.mayReadValue(item.sensitive)) {
-      const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [
-        item.versionId,
-      ]);
-      const version = res.rows[0] as VersionRow | undefined;
-      if (!version) throw new DomainError("INTERNAL", "Missing value version");
-      value = decryptValue(orgKek, org.id, item.valueRowId, item.versionId, {
-        payload: envelope(version.payload),
-        wrappedDek: envelope(version.wrapped_dek),
-      }).toString("utf8");
-    }
-    result.push({
-      name: item.name,
-      sensitive: item.sensitive,
-      source: item.source,
-      versionId: item.versionId,
-      value,
-      ...(item.retiringVersionId ? { rotating: true } : {}),
-    });
-  }
+  const result: EffectiveItem[] = items.map((item) => ({
+    name: item.name,
+    sensitive: item.sensitive,
+    source: item.source,
+    versionId: item.versionId,
+    value: plaintext.get(item.versionId) ?? null,
+    ...(item.retiringVersionId ? { rotating: true } : {}),
+  }));
   // Reference expansion never expands authority: the lookup set is exactly
   // the plaintext this caller receives in this response; anything else
   // (withheld items, Secrets on this path) stays a literal ${NAME}.
@@ -618,16 +521,14 @@ export interface UnresolvedItem {
  */
 export async function validateEnvironment(
   ctx: AppCtx,
-  org: OrgRow,
-  project: ProjectRow,
-  env: EnvironmentRow,
+  state: CapturedState,
   opts: {
     access: ValidationAccessCheck;
     actorIdentityId: string;
     requestId?: string;
   },
 ): Promise<ValidationResult> {
-  const contract = await activeContractOf(ctx, project);
+  const { org, project, env, contract } = state;
   const result: ValidationResult = {
     environmentId: env.id,
     contractRevisionId: project.active_contract_revision_id,
@@ -652,8 +553,7 @@ export async function validateEnvironment(
     return result;
   }
 
-  const items = await resolveItems(ctx, org, project, env);
-  const present = new Map(items.map((i) => [i.name, i]));
+  const present = new Map(state.items.map((i) => [i.name, i]));
   const envCtx = { rootId: rootIdOf(env), tier: env.tier };
   const semantics = semanticsFor(semanticsVersionOf(contract));
 
@@ -681,15 +581,16 @@ export async function validateEnvironment(
     }
   }
 
-  const orgKek = orgKekOf(ctx, org);
   const raw = new Map<string, string>();
   // Audit before decryption: one event per authorization action and level,
-  // naming the exact versions about to be decrypted. No verdicts are recorded.
-  const auditThenDecrypt = async (batch: ResolvedItem[], mode: "evaluated" | "reference-expansion") => {
+  // naming the exact versions about to be decrypted, committed before any of
+  // them is decrypted. No verdicts are recorded.
+  const auditAndDecrypt = async (batch: ResolvedItem[], mode: "evaluated" | "reference-expansion") => {
+    const events: AuditEventInput[] = [];
     for (const sensitive of [true, false]) {
       const group = batch.filter((r) => r.sensitive === sensitive);
       if (group.length === 0) continue;
-      await recordAuditEvent(ctx.db, {
+      events.push({
         eventType: sensitive ? "secret.validated" : "value.validated",
         decision: "allow",
         actorIdentityId: opts.actorIdentityId,
@@ -706,20 +607,10 @@ export async function validateEnvironment(
       });
     }
     // Decryption happens in-process; no plaintext leaves this function.
-    for (const resolved of batch) {
-      const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [resolved.versionId]);
-      const version = res.rows[0] as VersionRow | undefined;
-      if (!version) continue;
-      raw.set(
-        resolved.name,
-        decryptValue(orgKek, org.id, resolved.valueRowId, resolved.versionId, {
-          payload: envelope(version.payload),
-          wrappedDek: envelope(version.wrapped_dek),
-        }).toString("utf8"),
-      );
-    }
+    const plaintext = await auditThenDecrypt(ctx, state, events, batch.map((r) => r.versionId));
+    for (const resolved of batch) raw.set(resolved.name, plaintext.get(resolved.versionId) as string);
   };
-  await auditThenDecrypt(toCheck.map((c) => c.resolved), "evaluated");
+  await auditAndDecrypt(toCheck.map((c) => c.resolved), "evaluated");
 
   // What a delivery may expand from, by the kind of value being expanded.
   // Secrets may pull in non-sensitive values only if the caller may read
@@ -758,7 +649,7 @@ export async function validateEnvironment(
         if (!raw.has(ref)) toDecrypt.set(ref, item);
       }
     }
-    if (toDecrypt.size > 0) await auditThenDecrypt([...toDecrypt.values()], "reference-expansion");
+    if (toDecrypt.size > 0) await auditAndDecrypt([...toDecrypt.values()], "reference-expansion");
     frontier = next;
   }
 
@@ -982,9 +873,7 @@ export interface DisclosureResult {
 
 export async function discloseSecrets(
   ctx: AppCtx,
-  org: OrgRow,
-  project: ProjectRow,
-  env: EnvironmentRow,
+  state: CapturedState,
   request: DisclosureRequest,
   opts: {
     actorIdentityId: string;
@@ -997,126 +886,124 @@ export async function discloseSecrets(
     mayReadPlain?: boolean | undefined;
   },
 ): Promise<DisclosureResult> {
-  assertNotExpired(env);
-  if (!request.scope && (!request.items || request.items.length === 0)) {
-    throw new DomainError(
-      "VALIDATION_FAILED",
-      'Declare requested "items" or scope "all-authorized-secrets" explicitly',
-    );
-  }
-  const resolved = await resolveItems(ctx, org, project, env);
-  const secrets = resolved.filter((i) => i.sensitive);
-  const byName = new Map(secrets.map((i) => [i.name, i]));
+  const { org, project, env } = state;
+  assertNotExpired(env, state.now);
+  const { selected, withheld } = selectDisclosure(state, request);
 
-  let selected: ResolvedItem[];
-  let withheld: string[] = [];
-  if (request.scope === "all-authorized-secrets") {
-    selected = secrets;
-  } else {
-    selected = [];
-    for (const name of request.items as string[]) {
-      const item = byName.get(name);
-      if (item) selected.push(item);
-      else withheld.push(name);
-    }
-  }
-
-  // Audit commits before plaintext is returned; enumerates exact versions.
-  await recordAuditEvent(ctx.db, {
-    eventType: "secret.disclosed",
-    decision: "allow",
-    actorIdentityId: opts.actorIdentityId,
-    organizationId: org.id,
-    action: "secret.reveal",
-    resource: { projectId: project.id, environmentId: env.id },
-    requestId: opts.requestId ?? null,
-    listener: opts.listener ?? null,
-    metadata: {
-      mode: request.scope ?? "requested",
-      items: selected
-        .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
-        .join(","),
-      withheld: withheld.length,
-    },
-  });
-
-  const orgKek = orgKekOf(ctx, org);
-  const decryptOne = async (valueRowId: string, versionId: string): Promise<string> => {
-    const res = await ctx.db.query("SELECT * FROM value_versions WHERE id = $1", [versionId]);
-    const version = res.rows[0] as VersionRow | undefined;
-    if (!version) throw new DomainError("INTERNAL", "Missing value version");
-    return decryptValue(orgKek, org.id, valueRowId, versionId, {
-      payload: envelope(version.payload),
-      wrappedDek: envelope(version.wrapped_dek),
-    }).toString("utf8");
-  };
-  const decrypt = (item: ResolvedItem): Promise<string> =>
-    decryptOne(item.valueRowId, item.versionId);
+  // Audit commits before anything is decrypted; it enumerates exact versions.
+  const plaintext = await auditThenDecrypt(
+    ctx,
+    state,
+    [
+      {
+        eventType: "secret.disclosed",
+        decision: "allow",
+        actorIdentityId: opts.actorIdentityId,
+        organizationId: org.id,
+        action: "secret.reveal",
+        resource: { projectId: project.id, environmentId: env.id },
+        requestId: opts.requestId ?? null,
+        listener: opts.listener ?? null,
+        metadata: {
+          mode: request.scope ?? "requested",
+          items: selected
+            .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
+            .join(","),
+          withheld: withheld.length,
+        },
+      },
+    ],
+    selected.flatMap((i) => (i.retiringVersionId ? [i.versionId, i.retiringVersionId] : [i.versionId])),
+  );
 
   const items: DisclosureResult["items"] = [];
   const lookup = new Map<string, string>();
   for (const item of selected) {
-    const value = await decrypt(item);
+    const value = plaintext.get(item.versionId) as string;
     lookup.set(item.name, value);
     // Rotation: expose the retiring version so consumers accept both during
     // the window. References always resolve to primaries (ADR-0027 §2), so
     // the retiring copy is returned literal (unexpanded).
     const retiring = item.retiringVersionId
-      ? {
-          versionId: item.retiringVersionId,
-          value: await decryptOne(item.valueRowId, item.retiringVersionId),
-        }
+      ? { versionId: item.retiringVersionId, value: plaintext.get(item.retiringVersionId) as string }
       : undefined;
     items.push({ name: item.name, versionId: item.versionId, value, ...(retiring ? { retiring } : {}) });
   }
 
   // Reference expansion (never authority expansion): disclosed Secrets may
-  // reference each other, and — only when the caller also holds
-  // config.value.read — non-sensitive items of the same environment.
-  // Anything else stays a literal ${NAME}. The plain sources are resolved
-  // as a closure (a referenced plain value may itself reference further
-  // plain values) and audited before their plaintext is used (ADR-0016).
+  // reference each other, and, only when the caller also holds
+  // config.value.read, non-sensitive items of the same environment.
+  // Anything else stays a literal ${NAME}. The non-sensitive inputs are
+  // found one reference level at a time; each level is audited, and the
+  // audit committed, before it is decrypted from the captured ciphertext.
   if (opts.mayReadPlain) {
-    const plainByName = new Map(resolved.filter((i) => !i.sensitive).map((i) => [i.name, i]));
-    const needed: ResolvedItem[] = [];
-    const queued = new Set<string>();
-    const enqueue = (raw: string) => {
-      for (const name of referencedNames(raw)) {
-        const plain = plainByName.get(name);
-        if (plain && !lookup.has(name) && !queued.has(name)) {
-          queued.add(name);
-          needed.push(plain);
+    const plainByName = new Map(state.items.filter((i) => !i.sensitive).map((i) => [i.name, i]));
+    let frontier = [...lookup.values()];
+    for (let depth = 0; frontier.length > 0 && depth < MAX_REFERENCE_DEPTH; depth++) {
+      const needed = new Map<string, ResolvedItem>();
+      for (const raw of frontier) {
+        for (const name of referencedNames(raw)) {
+          const plain = plainByName.get(name);
+          if (plain && !lookup.has(name)) needed.set(name, plain);
         }
       }
-    };
-    for (const value of lookup.values()) enqueue(value);
-    if (needed.length > 0) {
-      const sources: { item: ResolvedItem; value: string }[] = [];
-      for (let i = 0; i < needed.length; i++) {
-        const item = needed[i] as ResolvedItem;
-        const value = await decrypt(item);
-        sources.push({ item, value });
-        enqueue(value);
+      if (needed.size === 0) break;
+      const sources = [...needed.values()];
+      const decrypted = await auditThenDecrypt(
+        ctx,
+        state,
+        [
+          {
+            eventType: "value.disclosed",
+            decision: "allow",
+            actorIdentityId: opts.actorIdentityId,
+            organizationId: org.id,
+            action: "config.value.read",
+            resource: { projectId: project.id, environmentId: env.id },
+            requestId: opts.requestId ?? null,
+            listener: opts.listener ?? null,
+            metadata: {
+              mode: "reference-expansion",
+              items: sources.map((i) => `${i.name}@${i.versionId}`).join(","),
+            },
+          },
+        ],
+        sources.map((i) => i.versionId),
+      );
+      frontier = [];
+      for (const source of sources) {
+        const value = decrypted.get(source.versionId) as string;
+        lookup.set(source.name, value);
+        frontier.push(value);
       }
-      await recordAuditEvent(ctx.db, {
-        eventType: "value.disclosed",
-        decision: "allow",
-        actorIdentityId: opts.actorIdentityId,
-        organizationId: org.id,
-        action: "config.value.read",
-        resource: { projectId: project.id, environmentId: env.id },
-        requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
-        metadata: {
-          mode: "reference-expansion",
-          items: sources.map((s) => `${s.item.name}@${s.item.versionId}`).join(","),
-        },
-      });
-      for (const s of sources) lookup.set(s.item.name, s.value);
     }
   }
   for (const item of items) {
     item.value = expandReferences(item.value, (name) => lookup.get(name));
   }
   return { items, withheld };
+}
+
+/** Which Secrets a disclosure request selects; the rest are withheld. */
+export function selectDisclosure(
+  state: CapturedState,
+  request: DisclosureRequest,
+): { selected: ResolvedItem[]; withheld: string[] } {
+  if (!request.scope && (!request.items || request.items.length === 0)) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      'Declare requested "items" or scope "all-authorized-secrets" explicitly',
+    );
+  }
+  const secrets = state.items.filter((i) => i.sensitive);
+  if (request.scope === "all-authorized-secrets") return { selected: secrets, withheld: [] };
+  const byName = new Map(secrets.map((i) => [i.name, i]));
+  const selected: ResolvedItem[] = [];
+  const withheld: string[] = [];
+  for (const name of request.items as string[]) {
+    const item = byName.get(name);
+    if (item) selected.push(item);
+    else withheld.push(name);
+  }
+  return { selected, withheld };
 }

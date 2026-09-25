@@ -84,6 +84,7 @@ import {
   type OidcBindingRow,
 } from "../domain/oidc.js";
 import {
+  captureExercise,
   exerciseCapability,
   issueCapability,
   listCapabilities,
@@ -91,6 +92,7 @@ import {
 } from "../domain/capabilities.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
+import { captureState, inSnapshot } from "../domain/retrieval.js";
 import { mintConvexToken, publicJwks } from "../auth/jwt.js";
 import { issueCredential, revokeCredential } from "../auth/credentials.js";
 import { ENROLL_HTML } from "../enroll/page.js";
@@ -98,6 +100,10 @@ import {
   STATUS_BY_CODE,
   authorize,
   bodyHash,
+  decide,
+  recordDenial,
+  reject,
+  type Decision,
   decodeCursor,
   encodeCursor,
   errorBody,
@@ -211,6 +217,21 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
     );
   }
   return parsed.data;
+}
+
+/**
+ * Read a JSON body before a retrieval snapshot starts, but surface a
+ * malformed body only when it is used, after authorization has decided.
+ */
+async function readJson(c: Context): Promise<() => unknown> {
+  const read = await c.req.json().then(
+    (value: unknown) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  return () => {
+    if (!read.ok) throw read.error;
+    return read.value;
+  };
 }
 
 function routeParam(c: Context, name: string): string {
@@ -942,33 +963,46 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/validate",
     async (c) => {
       const principal = c.get("principal");
-      const { org, project, env } = await envScope(ctx, c);
-      const resource = envResource(org, project, env);
-      await authorize(ctx, c, principal, "environment.read", resource, { hideExistence: true });
-      // Verdicts are value-derived, so each class needs the right to read
-      // what it describes (secret.reveal for Secrets, with its Requirements).
-      // Without it the item is "not evaluated"; nothing is decrypted.
-      const check = (action: "config.metadata.read" | "config.value.read" | "secret.reveal") => {
-        let decided: Promise<ValidationAccess> | undefined;
+      // Snapshot phase (ADR-0038 Decision 6): every read, and authorization
+      // evaluated on the snapshot's inputs, writing nothing.
+      const phase = await inSnapshot(ctx, async (sctx, now) => {
+        const scope = await envScope(sctx, c);
+        const resource = envResource(scope.org, scope.project, scope.env);
+        const read = await decide(sctx, c, principal, "environment.read", resource, { hideExistence: true });
+        if (!read.allowed) return { denied: read };
+        // Verdicts are value-derived, so each class needs the right to read
+        // what it describes (secret.reveal for Secrets, with its Requirements).
+        const decisions = {
+          metadata: await decide(sctx, c, principal, "config.metadata.read", resource),
+          plain: await decide(sctx, c, principal, "config.value.read", resource),
+          secret: await decide(sctx, c, principal, "secret.reveal", resource),
+        };
+        const state = await captureState(sctx, scope, now, (item) =>
+          decisions.metadata.allowed && (item.sensitive ? decisions.secret.allowed : decisions.plain.allowed),
+        );
+        return { state, decisions };
+      });
+      if ("denied" in phase) return reject(ctx, phase.denied);
+      // Without the right the item is "not evaluated"; nothing is decrypted.
+      // A class's denial is recorded only if validation consults it.
+      const consult = (decision: Decision) => {
+        let consulted: Promise<ValidationAccess> | undefined;
         return () =>
-          (decided ??= authorize(ctx, c, principal, action, resource).then(
-            () => "allowed" as const,
-            (err: unknown) => {
-              if (err instanceof DomainError) {
-                if (err.code.startsWith("TAILNET_")) return "requirement" as const;
-                if (err.code === "PERMISSION_DENIED" || err.code === "RESOURCE_NOT_FOUND") {
-                  return "permission" as const;
-                }
-              }
-              throw err;
-            },
-          ));
+          (consulted ??= (async (): Promise<ValidationAccess> => {
+            if (decision.allowed) return "allowed";
+            await recordDenial(ctx, decision);
+            if (decision.error.code.startsWith("TAILNET_")) return "requirement";
+            if (decision.error.code === "PERMISSION_DENIED" || decision.error.code === "RESOURCE_NOT_FOUND") {
+              return "permission";
+            }
+            throw decision.error;
+          })());
       };
-      const report = await validateEnvironment(ctx, org, project, env, {
+      const report = await validateEnvironment(ctx, phase.state, {
         access: {
-          metadata: check("config.metadata.read"),
-          plain: check("config.value.read"),
-          secret: check("secret.reveal"),
+          metadata: consult(phase.decisions.metadata),
+          plain: consult(phase.decisions.plain),
+          secret: consult(phase.decisions.secret),
         },
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
@@ -1070,31 +1104,31 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/effective-configuration",
     async (c) => {
       const principal = c.get("principal");
-      const { org, project, env } = await envScope(ctx, c);
-      const resource = envResource(org, project, env);
       const includeValues = c.req.query("include") === "values";
-
-      await authorize(ctx, c, principal, "config.metadata.read", resource, { hideExistence: true });
-
-      // include=values returns NON-SENSITIVE plaintext only (design R2):
-      // Secrets always require the explicit POST disclosure operation.
-      let mayReadPlain = false;
-      if (includeValues) {
-        try {
-          await authorize(ctx, c, principal, "config.value.read", resource);
-          mayReadPlain = true;
-        } catch (err) {
-          if (err instanceof DomainError && err.code.startsWith("TAILNET_")) throw err;
-        }
+      const phase = await inSnapshot(ctx, async (sctx, now) => {
+        const scope = await envScope(sctx, c);
+        const resource = envResource(scope.org, scope.project, scope.env);
+        const metadata = await decide(sctx, c, principal, "config.metadata.read", resource, { hideExistence: true });
+        if (!metadata.allowed) return { denied: metadata };
+        // include=values returns NON-SENSITIVE plaintext only (design R2):
+        // Secrets always require the explicit POST disclosure operation.
+        const plain = includeValues ? await decide(sctx, c, principal, "config.value.read", resource) : null;
+        const state = await captureState(sctx, scope, now, (item) => !item.sensitive && plain?.allowed === true);
+        return { state, plain };
+      });
+      if ("denied" in phase) return reject(ctx, phase.denied);
+      const { state, plain } = phase;
+      if (plain && !plain.allowed) {
+        await recordDenial(ctx, plain);
+        if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-
-      const items = await effectiveConfiguration(ctx, org, project, env, {
+      const items = await effectiveConfiguration(ctx, state, {
         includeValues,
-        mayReadValue: (sensitive) => !sensitive && mayReadPlain,
+        mayReadValue: (sensitive) => !sensitive && plain?.allowed === true,
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
       });
-      return c.json({ environmentId: env.id, items });
+      return c.json({ environmentId: state.env.id, items });
     },
   );
 
@@ -1105,29 +1139,38 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/disclosures",
     async (c) => {
       const principal = c.get("principal");
-      const { org, project, env } = await envScope(ctx, c);
-      const resource = envResource(org, project, env);
-      await authorize(ctx, c, principal, "secret.reveal", resource, { hideExistence: true });
-      const body = parseBody(
-        z.union([
-          z.object({ items: z.array(z.string().min(1)).min(1) }),
-          z.object({ scope: z.literal("all-authorized-secrets") }),
-        ]),
-        await c.req.json(),
-      );
-      // Reference expansion may pull non-sensitive values into disclosed
-      // Secrets only if this caller could read them directly anyway.
-      let mayReadPlain = false;
-      try {
-        await authorize(ctx, c, principal, "config.value.read", resource);
-        mayReadPlain = true;
-      } catch (err) {
-        if (err instanceof DomainError && err.code.startsWith("TAILNET_")) throw err;
+      const input = await readJson(c);
+      const phase = await inSnapshot(ctx, async (sctx, now) => {
+        const scope = await envScope(sctx, c);
+        const resource = envResource(scope.org, scope.project, scope.env);
+        const reveal = await decide(sctx, c, principal, "secret.reveal", resource, { hideExistence: true });
+        if (!reveal.allowed) return { denied: reveal };
+        const body = parseBody(
+          z.union([
+            z.object({ items: z.array(z.string().min(1)).min(1) }),
+            z.object({ scope: z.literal("all-authorized-secrets") }),
+          ]),
+          input(),
+        );
+        // Reference expansion may pull non-sensitive values into disclosed
+        // Secrets only if this caller could read them directly anyway.
+        const plain = await decide(sctx, c, principal, "config.value.read", resource);
+        const requested = "items" in body ? new Set(body.items) : null;
+        const state = await captureState(sctx, scope, now, (item) =>
+          item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
+        );
+        return { state, body, plain };
+      });
+      if ("denied" in phase) return reject(ctx, phase.denied);
+      const { state, body, plain } = phase;
+      if (!plain.allowed) {
+        await recordDenial(ctx, plain);
+        if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-      const result = await discloseSecrets(ctx, org, project, env, body, {
+      const result = await discloseSecrets(ctx, state, body, {
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
-        mayReadPlain,
+        mayReadPlain: plain.allowed,
       });
       c.header("Cache-Control", "no-store");
       return c.json(result);
@@ -1221,27 +1264,31 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises",
     async (c) => {
       const principal = c.get("principal");
-      const { org, project, env } = await envScope(ctx, c);
-      requireBroker(principal, org);
-      const body = parseBody(
-        z.object({
-          capabilitySecret: z.string().min(1),
-          destination: z.object({
-            host: z.string().min(1),
-            port: z.number().int().min(1).max(65535),
+      const input = await readJson(c);
+      const tailnetContext = (c.get("tailnetContext") as TailnetContext | undefined) ?? null;
+      const phase = await inSnapshot(ctx, async (sctx, now) => {
+        const scope = await envScope(sctx, c);
+        requireBroker(principal, scope.org);
+        const body = parseBody(
+          z.object({
+            capabilitySecret: z.string().min(1),
+            destination: z.object({
+              host: z.string().min(1),
+              port: z.number().int().min(1).max(65535),
+            }),
           }),
-        }),
-        await c.req.json(),
-      );
+          input(),
+        );
+        const captured = await captureExercise(sctx, scope, now, c.req.param("capability"), tailnetContext);
+        return { captured, body };
+      });
       const result = await exerciseCapability(
         ctx,
-        org,
-        project,
-        env,
+        phase.captured,
         principal.identity.id,
-        { capabilityId: c.req.param("capability"), ...body },
+        { capabilityId: c.req.param("capability"), ...phase.body },
         {
-          tailnetContext: (c.get("tailnetContext") as TailnetContext | undefined) ?? null,
+          tailnetContext,
           requestId: c.get("requestId"),
           listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
         },

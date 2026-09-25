@@ -18,15 +18,34 @@ import {
   beginRotation,
   completeRotation,
   deleteValue,
-  discloseSecrets,
-  effectiveConfiguration,
-  resolveItems,
   setValue,
-  validateEnvironment,
 } from "../src/domain/values.js";
+import * as values from "../src/domain/values.js";
+import type { EnvironmentRow } from "../src/domain/environments.js";
+import type { OrgRow } from "../src/domain/orgs.js";
+import type { ProjectRow } from "../src/domain/projects.js";
+import { captureState, inSnapshot } from "../src/domain/retrieval.js";
 import { testDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
+
+/** Capture the whole Environment in one snapshot, as the HTTP handlers do. */
+const capture = (org: OrgRow, project: ProjectRow, env: EnvironmentRow) =>
+  inSnapshot(ctx, (sctx, now) => captureState(sctx, { org, project, env }, now, () => true));
+const resolveItems = async (_: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow) =>
+  (await capture(org, project, env)).items;
+const effectiveConfiguration = async (
+  _: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow,
+  opts: Parameters<typeof values.effectiveConfiguration>[2],
+) => values.effectiveConfiguration(ctx, await capture(org, project, env), opts);
+const discloseSecrets = async (
+  _: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow,
+  request: values.DisclosureRequest, opts: Parameters<typeof values.discloseSecrets>[3],
+) => values.discloseSecrets(ctx, await capture(org, project, env), request, opts);
+const validateEnvironment = async (
+  _: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow,
+  opts: Parameters<typeof values.validateEnvironment>[2],
+) => values.validateEnvironment(ctx, await capture(org, project, env), opts);
 const actor = newId("identity");
 // Domain tests exercise the rules, not authorization: every class allowed.
 const fullValidation = {

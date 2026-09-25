@@ -40,3 +40,38 @@ export async function withTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): P
     inTx.delete(db);
   }
 }
+
+/**
+ * A read-only REPEATABLE READ transaction: every read in `fn` sees one
+ * snapshot, taken by its first statement, and any write fails. `now` is the
+ * transaction time, the one clock a retrieval uses. A read-only snapshot
+ * never fails with a serialization conflict, whatever commits concurrently.
+ * Nothing is written, so ending it with COMMIT or ROLLBACK is the same.
+ */
+export async function withSnapshot<T>(
+  db: Querier,
+  fn: (db: Querier, now: Date) => Promise<T>,
+): Promise<T> {
+  if (isPool(db)) {
+    const client = await db.connect();
+    try {
+      return await withSnapshot(client, fn);
+    } finally {
+      client.release();
+    }
+  }
+  if (inTx.has(db)) throw new Error("A snapshot cannot start inside a transaction");
+  await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  inTx.add(db);
+  try {
+    const row = (await db.query("SELECT now() AS now")).rows[0] as { now: Date | string };
+    const result = await fn(db, new Date(row.now));
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  } finally {
+    inTx.delete(db);
+  }
+}
