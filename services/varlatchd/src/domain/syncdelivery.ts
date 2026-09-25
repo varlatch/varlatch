@@ -304,7 +304,23 @@ async function reconcileUnderLease(
   if (!project || !env) return { ok: false, result: "environment-gone" };
   if (isExpired(env)) return { ok: false, result: "environment-expired" };
 
-  const rendered = await renderEffectiveOutput(ctx, org, project, env, target, adapter.platform);
+  // Audit before decryption, even when nothing will be pushed: the event
+  // names the exact versions this reconcile is about to decrypt, and
+  // commits first. Its sync.* type keeps it out of the trigger scan.
+  const rendered = await renderEffectiveOutput(ctx, org, project, env, target, adapter.platform, (versions) =>
+    recordAuditEvent(ctx.db, {
+      eventType: "sync.values_decrypted",
+      decision: "info",
+      organizationId: target.organization_id,
+      action: "config.sync.manage",
+      resource: { targetId: target.id, environmentId: target.environment_id },
+      metadata: {
+        purpose: "sync-reconcile",
+        items: versions.map((v) => `${v.name}@${v.versionId}`).join(","),
+        generation,
+      },
+    }).then(() => undefined),
+  );
 
   // Ledger read; invalidate names a lapsed run had begun writing (§4).
   const ledgerRes = await ctx.db.query(
@@ -529,10 +545,11 @@ interface RenderedItem {
 
 /**
  * Sync delivery is a server-side convergence loop, not a caller's retrieval:
- * it decrypts to fingerprint values and decide what changed, and audits
- * before any value leaves the process (ADR-0031 §7). A missed or mixed read
- * is repaired by the next reconcile. Caller-facing retrievals use the
- * snapshot and audit-before-decryption path in retrieval.ts instead.
+ * it decrypts to fingerprint values and decide what changed. Like every
+ * retrieval it audits before it decrypts (sync.values_decrypted, committed
+ * by the caller of renderEffectiveOutput), and again before any value leaves
+ * the process (sync.push_attempted, ADR-0031 §7). A missed or mixed read is
+ * repaired by the next reconcile.
  */
 async function decryptForSync(
   ctx: AppCtx,
@@ -556,6 +573,8 @@ export async function renderEffectiveOutput(
   env: EnvironmentRow,
   target: Pick<SyncTargetRow, "mapping">,
   platform: string,
+  /** Commits the audit event for exactly these versions; decryption follows only if it succeeds. */
+  beforeDecrypt: (versions: { name: string; versionId: string }[]) => Promise<void>,
 ): Promise<{ items: RenderedItem[]; flags: string[] }> {
   const adapter = getAdapter(platform);
   const resolved = await resolveItems(ctx, org, env, await activeContractOf(ctx, project), new Date());
@@ -608,6 +627,7 @@ export async function renderEffectiveOutput(
   }
 
   // Decrypt the disclosure set; the reference lookup is exactly this set.
+  if (selected.length > 0) await beforeDecrypt(selected.map((i) => ({ name: i.name, versionId: i.versionId })));
   const plaintext = new Map<string, string>();
   for (const item of selected) {
     plaintext.set(

@@ -75,6 +75,11 @@ fixes.
 - Authorization is effective at the snapshot boundary: a revocation that
   commits after a request's snapshot began does not affect that request.
   The next request sees it.
+- Server-side sync delivery audits before it decrypts. Each reconcile that
+  decrypts values (on a trigger, or the six-hourly repair pass) first
+  commits a new `sync.values_decrypted` event naming the exact versions,
+  even when it then pushes nothing, and stops if that commit fails. The
+  existing `sync.push_attempted` event still precedes every push.
 
 ### Retrieval
 
