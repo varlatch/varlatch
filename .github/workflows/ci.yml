@@ -67,6 +67,18 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The release workflow builds its files in the repository root; do the
+      # same here, with placeholder digests, so it cannot first fail at tag time.
+      - name: Release files build from the repository root
+        run: |
+          VERSION=$(node -p "require('./packages/backup/src/release.json').version")
+          D=$(printf 'a%.0s' $(seq 64))
+          node infra/release/build-release-artifacts.mjs "$VERSION" \
+            --image "varlatchd=ghcr.io/ci/varlatchd:${VERSION}@sha256:${D}" \
+            --image "varlatch-web=ghcr.io/ci/varlatch-web:${VERSION}@sha256:${D}" \
+            --image "convex-deploy=ghcr.io/ci/varlatch-convex-deploy:${VERSION}@sha256:${D}"
+          sha256sum -c SHA256SUMS
+
       # The release ships apps/cli/dist/varlatch.cjs as the operator CLI; a
       # dependency that stops bundling cleanly must fail here, not at tag time.
       - name: CLI bundle smoke
