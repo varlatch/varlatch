@@ -681,36 +681,6 @@ async function main(): Promise<void> {
         return;
       }
 
-      case "varlock-mapping": {
-        const sub = args[0];
-        const ctx = context(args);
-        const api = client(ctx);
-        if (sub === "set") {
-          const name = args[1] ?? fail("Usage: varlatch varlock-mapping set <varlockName> <environment>");
-          const environment = args[2] ?? fail("Provide the target root environment name or ID");
-          const envs = await api.listEnvironments(ctx.organization, ctx.project);
-          const target = envs.items.find((e) => e.name === environment || e.id === environment);
-          if (!target) fail(`No such environment: ${environment}`);
-          await api.setVarlockMapping(ctx.organization, ctx.project, name, target.id);
-          console.log(`Mapped Varlock "${name}" -> ${target.name} (${target.id}).`);
-          return;
-        }
-        if (sub === "show") {
-          const { mapping } = await api.getVarlockMapping(ctx.organization, ctx.project);
-          for (const [name, id] of Object.entries(mapping)) console.log(`${name} -> ${id}`);
-          if (Object.keys(mapping).length === 0) console.log("(no mappings)");
-          return;
-        }
-        if (sub === "remove") {
-          const name = args[1] ?? fail("Usage: varlatch varlock-mapping remove <varlockName>");
-          await api.removeVarlockMapping(ctx.organization, ctx.project, name);
-          console.log(`Removed Varlock mapping "${name}".`);
-          return;
-        }
-        fail("Usage: varlatch varlock-mapping <set|show|remove>");
-        return;
-      }
-
       case "audit": {
         const sub = args[0];
         const ctx = context(args);
@@ -1036,7 +1006,6 @@ Usage:
                       | nothing for convex: --base is the deployment URL)
                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
                      # client-side push for installations without server egress (ADR-0031)
-  varlatch varlock-mapping <set <name> <environment>|show|remove <name>>
   varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
   varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
                  [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]

@@ -102,10 +102,7 @@ How a Contract applies to a Value: whether an item is required in an Environment
 The state where a repository's local `.env.schema` no longer matches the active Contract Revision. Warns by default; strictness is opt-in. The server's active revision remains authoritative until another revision is explicitly accepted.
 
 **Environment Selector**:
-The small internal construct a Contract condition resolves against: specific root Environment identities or a Tier. Deliberately not an expression language.
-
-**Environment Name Mapping**:
-The explicit, audited, Project-level mapping from the environment names a schema file uses (`prod`) to stable Varlatch root Environment identities. A condition that cannot be mapped fails ingestion loudly. It is never approximated, broadened, or discarded.
+The small internal construct a Contract condition resolves against: specific root Environment identities or a Tier. Deliberately not an expression language. In a schema file, `env(...)` names root Environments, which are resolved to their identities when the Contract is pushed (an unknown name fails loudly), and `tier(...)` names a Tier.
 
 **Secret Metadata**:
 Everything about a secret except its material: name, contract linkage, sensitivity, version history, policy references. Any metadata field whose modification could change who may access, reveal, use, decrypt, enroll for, or administer a secret is authoritative in the Secret Plane; purely descriptive fields are non-authoritative, yet user-authored ones must still survive restore.

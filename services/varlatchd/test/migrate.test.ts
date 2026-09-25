@@ -140,9 +140,38 @@ it("upgrades existing audit history and removes legacy idempotency hashes", asyn
   await db.query("INSERT INTO idempotency_keys(identity_id,endpoint,idempotency_key,body_hash,response) VALUES ('legacy','write','key','guessable','{}')");
   await db.query(`INSERT INTO audit_events(id,event_type,decision,occurred_at) VALUES
     ('older','test','info','2026-01-01T00:00:00.123455Z'), ('newer','test','info','2026-01-01T00:00:00.123456Z')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20, 21]);
   expect((await db.query("SELECT id FROM audit_events ORDER BY event_order")).rows).toEqual([{ id: "older" }, { id: "newer" }]);
   expect((await db.query("SELECT * FROM idempotency_keys")).rows).toEqual([]);
   await db.query("INSERT INTO audit_events(id,event_type,decision) VALUES ('latest','test','info')");
   expect((await db.query("SELECT id FROM audit_events ORDER BY event_order DESC LIMIT 1")).rows).toEqual([{ id: "latest" }]);
 });
+
+it("drops the environment-name mapping, leaving contract revisions and audit history unchanged", async () => {
+  await db.exec!("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL)");
+  for (const migration of MIGRATIONS.filter(m => m.id <= 20)) {
+    await db.exec!(migration.sql);
+    await db.query("INSERT INTO varlatch_migrations VALUES ($1,$2)", [migration.id, migration.name]);
+  }
+  await db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_admin','human','Admin')");
+  await db.query("INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{}')");
+  await db.query("INSERT INTO projects(id,organization_id,slug,name,contract_authority) VALUES ('prj_a','org_a','api','API','git')");
+  await db.query("INSERT INTO environments(id,project_id,name,kind,tier) VALUES ('env_prod','prj_a','production','shared','production')");
+  const contract = { schemaVersion: 1, items: [{ name: "KEY", required: { kind: "selector", selector: { kind: "environments", environmentIds: ["env_prod"] } }, sensitive: true, type: "string" }] };
+  await db.query("INSERT INTO contract_revisions(id,project_id,content_hash,contract) VALUES ('rev_1','prj_a','sha256:abc',$1)", [JSON.stringify(contract)]);
+  await db.query("INSERT INTO varlock_env_mappings(project_id,varlock_name,environment_id) VALUES ('prj_a','prod','env_prod'),('prj_a','production','env_prod')");
+  await db.query(`INSERT INTO audit_events(id,event_type,decision,organization_id,action,metadata) VALUES
+    ('evt_set','contract.varlock_mapping_set','allow','org_a','contract.activate','{"varlockName":"prod"}'),
+    ('evt_removed','contract.varlock_mapping_removed','allow','org_a','contract.activate','{"varlockName":"old"}')`);
+  const revisions = async () => (await db.query("SELECT id, content_hash, contract FROM contract_revisions ORDER BY id")).rows;
+  const audit = async () => (await db.query("SELECT id, event_type, decision, organization_id, action, metadata, occurred_at, event_order FROM audit_events ORDER BY event_order")).rows;
+  const beforeRevisions = await revisions();
+  const beforeAudit = await audit();
+
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([21]);
+  expect((await db.query("SELECT to_regclass('varlock_env_mappings') AS t")).rows).toEqual([{ t: null }]);
+  expect(await revisions()).toEqual(beforeRevisions);
+  expect(await audit()).toEqual(beforeAudit);
+  expect((await runMigrations(db)).applied).toEqual([]);
+});
+

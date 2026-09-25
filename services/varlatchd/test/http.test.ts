@@ -352,50 +352,21 @@ describe("authorization over HTTP", () => {
   });
 });
 
-describe("varlock environment mapping (ADR-0013 §10/13)", () => {
-  it("sets, reads, audits, and restricts mapping to root environments", async () => {
+describe("environment-name mapping endpoints (removed)", () => {
+  it("are gone: every method answers 404", async () => {
     await setupOrgProject();
-    const empty = await app.request("/v1/organizations/acme/projects/api/varlock-mapping", {
-      headers: auth(),
-    });
-    expect((await empty.json()).mapping).toEqual({});
-
-    const devId = (
-      await (
-        await app.request("/v1/organizations/acme/projects/api/environments/development", {
-          headers: auth(),
-        })
-      ).json()
-    ).id;
-    const set = await app.request("/v1/organizations/acme/projects/api/varlock-mapping/dev", {
-      method: "PUT",
-      headers: auth(),
-      body: JSON.stringify({ environmentId: devId }),
-    });
-    expect(set.status).toBe(200);
-    const mapping = await (
-      await app.request("/v1/organizations/acme/projects/api/varlock-mapping", { headers: auth() })
-    ).json();
-    expect(mapping.mapping).toEqual({ dev: devId });
-
-    // Derived environments are not valid mapping targets.
-    const child = await post("/v1/organizations/acme/projects/api/environments", {
-      name: "development/jeremy",
-      parentEnvironmentId: devId,
-      kind: "personal",
-    });
-    const childId = (await child.json()).id;
-    const bad = await app.request("/v1/organizations/acme/projects/api/varlock-mapping/x", {
-      method: "PUT",
-      headers: auth(),
-      body: JSON.stringify({ environmentId: childId }),
-    });
-    expect(bad.status).toBe(422);
-
-    const audit = await ctx.db.query(
-      "SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'contract.varlock_mapping_set'",
-    );
-    expect((audit.rows[0] as { n: number }).n).toBe(1);
+    for (const [method, path] of [
+      ["GET", "/v1/organizations/acme/projects/api/varlock-mapping"],
+      ["PUT", "/v1/organizations/acme/projects/api/varlock-mapping/dev"],
+      ["DELETE", "/v1/organizations/acme/projects/api/varlock-mapping/dev"],
+    ] as const) {
+      const res = await app.request(path, {
+        method,
+        headers: auth(),
+        ...(method === "PUT" ? { body: JSON.stringify({ environmentId: "env_x" }) } : {}),
+      });
+      expect(res.status, `${method} ${path}`).toBe(404);
+    }
   });
 });
 

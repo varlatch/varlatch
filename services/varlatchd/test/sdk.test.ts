@@ -137,13 +137,6 @@ describe("SDK against the real app", () => {
     expect((blocked as VarlatchApiError).code).toBe("VALIDATION_FAILED");
     await client.deleteEnvironment("acme", "api", preview.name as string);
 
-    // A Varlock mapping blocks deletion until removed.
-    await client.setVarlockMapping("acme", "api", "dev", dev.id as string);
-    const mapped = await client
-      .deleteEnvironment("acme", "api", "development")
-      .catch((e: unknown) => e);
-    expect((mapped as VarlatchApiError).code).toBe("VALIDATION_FAILED");
-    await client.removeVarlockMapping("acme", "api", "dev");
     await client.deleteEnvironment("acme", "api", "development");
     expect((await client.listEnvironments("acme", "api")).items).toEqual([]);
 

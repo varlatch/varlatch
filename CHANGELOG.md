@@ -26,9 +26,26 @@ fixes.
   decorator after a value, text after a quoted value, and an unterminated
   quote are now errors instead of being read into the default. A `#` with no
   whitespace before it, or inside quotes, is still part of the value.
+- The environment-name mapping is removed. It only translated `forEnv(...)`
+  names, which schemas no longer use. Removed with it:
+  - the `varlatch varlock-mapping` command;
+  - the mapping card on the dashboard's contract page;
+  - the `GET`, `PUT`, and `DELETE` endpoints under
+    `/v1/organizations/{org}/projects/{project}/varlock-mapping`, which now
+    answer `404`;
+  - the SDK methods `getVarlockMapping`, `setVarlockMapping`, and
+    `removeVarlockMapping`.
+
+  Deleting an environment is no longer blocked by a mapping entry. It is
+  still blocked while the active contract references the environment.
 
 ### Upgrading
 
+- The upgrade drops existing environment-name mapping entries (a new schema
+  migration). Contract revisions are unchanged: they store environment IDs,
+  not names. Audit history keeps its `contract.varlock_mapping_set` and
+  `contract.varlock_mapping_removed` events. Backups taken with 0.10.0
+  restore into this release and are migrated forward.
 - A `.env.schema` with comments after values gives different defaults when
   pushed with this release's CLI. Review the activation's changes before
   activating. A file that uses `forEnv(...)` must switch to `env(...)` or

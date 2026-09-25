@@ -14,7 +14,7 @@ the property cannot be enforced. Claims carry one of three statuses:
 Plaintext configuration Values and Secrets; the Root KEK; Organization KEKs
 and per-version DEKs; Varlatch credentials (service/CLI/browser bearers,
 setup/invite grants, Better Auth sessions and passkeys); authorization state
-(identities, memberships, Grants, Requirements, Contracts, environment name mappings);
+(identities, memberships, Grants, Requirements, Contracts);
 the Security Audit history; the JWT signing key.
 
 ## 2. Principals and trust zones
@@ -61,7 +61,7 @@ authenticator).
 | Break-glass is narrow: recovery targets a named Installation Admin; disabled admins need explicit `--enable`; `--new-admin` only when zero enabled admins exist; every issuance/consumption is audited | **SHIPPED GUARANTEE** | `test/bootstrap-auth.test.ts` |
 | Opaque credentials are hashed at rest, shown once, individually revocable with immediate effect; expiry and disabled-identity checks apply on every request | **SHIPPED GUARANTEE** | `test/bootstrap-auth.test.ts` credentials cases |
 | Expired preview environments fail closed for retrieval and mutation, synchronously, with no dependence on a cleanup worker | **SHIPPED GUARANTEE** | `test/domain.test.ts` expiry case |
-| Contract authority is server-side: revisions are content-hashed server-side (client hashes untrusted), activation is a separate audited action with a semantic diff; unmapped environment names in a schema file fail loudly | **SHIPPED GUARANTEE** | `test/domain.test.ts`, `test/http.test.ts`, adapter tests |
+| Contract authority is server-side: revisions are content-hashed server-side (client hashes untrusted), activation is a separate audited action with a semantic diff; unknown environment names in a schema file's `env(...)` fail loudly before anything is pushed | **SHIPPED GUARANTEE** | `test/domain.test.ts`, `test/http.test.ts`, `test/env-schema-conditions.test.ts`, `packages/env-schema` tests |
 | `secret.use` is distinct from `secret.reveal`, never in the Member bundle, arrives only via explicit Grants, and is tailnet-constrained | **SHIPPED GUARANTEE** | `test/authz.test.ts` secret.use cases |
 | Capability issuance never expands authority: exercise re-evaluates the Agent's `secret.use` (incl. Tailnet Requirements against the exercise request) against current state; Grant revocation, Capability revocation, and expiry all deny the very next exercise; rotation resolves at exercise (Model B) | **SHIPPED GUARANTEE** | `test/capabilities.test.ts`; clean-room `e2e-broker.mjs` |
 | Capabilities are unforgeable handles: exercise needs the ID, the hash-at-rest capability secret, and the bound Broker's bearer, all agreeing; mismatches are existence-hidden | **SHIPPED GUARANTEE** | `test/capabilities.test.ts` |

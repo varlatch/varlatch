@@ -236,6 +236,8 @@ jobs:
         run: node scripts/test-backup-s3.mjs
       - name: Published v0.7.0 upgrade (D11 gate, stale supervisor) and pre-upgrade archive recovery
         run: node scripts/test-backup-upgrade.mjs
+      - name: Published v0.10.0 archive restores across the mapping removal (migration 21)
+        run: node scripts/test-backup-v0100-restore.mjs
       # ADR-0035: an installation shaped like a reference production one (Coolify/
       # Tailscale file, Coolify's every-variable environment, admin key in the
       # environment, legacy JWKS URL) upgraded without adoption, then its
