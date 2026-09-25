@@ -317,7 +317,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validate the Effective Configuration against the active Contract */
+        /**
+         * Validate the Effective Configuration against the active Contract
+         * @description Requires environment.read. Verdicts are value-derived, so each item is evaluated only if the caller may read what the verdict describes: presence of stored values needs config.metadata.read, verdicts on non-sensitive values need config.value.read, and verdicts on Secrets need secret.reveal including its Requirements (e.g. Tailnet Constraints). Anything else is reported in notEvaluated with an authorization-derived reason and never affects valid, missing, or invalid. valid is true only when complete is true. Every decryption for validation is audited before it happens (secret.validated / value.validated, naming item versions); verdicts are never audited. Responses are never cacheable.
+         */
         post: operations["validateEnvironment"];
         delete?: never;
         options?: never;
@@ -1292,11 +1295,23 @@ export interface components {
         ValidationReport: {
             environmentId: string;
             contractRevisionId?: string | null;
+            /** @description True only when every Contract item was evaluated (complete) and none is missing or invalid. A partial evaluation is never valid. */
             valid: boolean;
+            /** @description False when any item is in notEvaluated. */
+            complete: boolean;
             missing: string[];
+            /** @description Evaluated items only; reasons never contain the value. */
             invalid: {
                 name: string;
                 reason: string;
+            }[];
+            /** @description Items this caller may not evaluate. The reason is derived from authorization only, never from the value. */
+            notEvaluated: {
+                name: string;
+                /** @enum {string} */
+                reason: "permission" | "requirement";
+                /** @enum {string} */
+                requires: "config.metadata.read" | "config.value.read" | "secret.reveal";
             }[];
         };
         ContractRevision: {

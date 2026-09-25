@@ -698,6 +698,18 @@ paths:
       tags: [environments]
       operationId: validateEnvironment
       summary: Validate the Effective Configuration against the active Contract
+      description: >
+        Requires environment.read. Verdicts are value-derived, so each item is
+        evaluated only if the caller may read what the verdict describes:
+        presence of stored values needs config.metadata.read, verdicts on
+        non-sensitive values need config.value.read, and verdicts on Secrets
+        need secret.reveal including its Requirements (e.g. Tailnet
+        Constraints). Anything else is reported in notEvaluated with an
+        authorization-derived reason and never affects valid, missing, or
+        invalid. valid is true only when complete is true. Every decryption
+        for validation is audited before it happens (secret.validated /
+        value.validated, naming item versions); verdicts are never audited.
+        Responses are never cacheable.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -2748,22 +2760,46 @@ components:
 
     ValidationReport:
       type: object
-      required: [environmentId, valid, missing, invalid]
+      required: [environmentId, valid, complete, missing, invalid, notEvaluated]
       properties:
         environmentId: { type: string }
         contractRevisionId: { type: [string, "null"] }
-        valid: { type: boolean }
+        valid:
+          type: boolean
+          description: >
+            True only when every Contract item was evaluated (complete) and
+            none is missing or invalid. A partial evaluation is never valid.
+        complete:
+          type: boolean
+          description: False when any item is in notEvaluated.
         missing:
           type: array
           items: { type: string }
         invalid:
           type: array
+          description: Evaluated items only; reasons never contain the value.
           items:
             type: object
             required: [name, reason]
             properties:
               name: { type: string }
               reason: { type: string }
+        notEvaluated:
+          type: array
+          description: >
+            Items this caller may not evaluate. The reason is derived from
+            authorization only, never from the value.
+          items:
+            type: object
+            required: [name, reason, requires]
+            properties:
+              name: { type: string }
+              reason:
+                type: string
+                enum: [permission, requirement]
+              requires:
+                type: string
+                enum: [config.metadata.read, config.value.read, secret.reveal]
 
     ContractRevision:
       type: object

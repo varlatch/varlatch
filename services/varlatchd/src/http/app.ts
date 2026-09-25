@@ -40,6 +40,7 @@ import {
   effectiveConfiguration,
   setValue,
   validateEnvironment,
+  type ValidationAccess,
 } from "../domain/values.js";
 import {
   createMachineIdentity,
@@ -929,8 +930,37 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     async (c) => {
       const principal = c.get("principal");
       const { org, project, env } = await envScope(ctx, c);
-      await authorize(ctx, c, principal, "environment.read", envResource(org, project, env), { hideExistence: true });
-      const report = await validateEnvironment(ctx, org, project, env);
+      const resource = envResource(org, project, env);
+      await authorize(ctx, c, principal, "environment.read", resource, { hideExistence: true });
+      // Verdicts are value-derived, so each class needs the right to read
+      // what it describes (secret.reveal for Secrets, with its Requirements).
+      // Without it the item is "not evaluated"; nothing is decrypted.
+      const check = (action: "config.metadata.read" | "config.value.read" | "secret.reveal") => {
+        let decided: Promise<ValidationAccess> | undefined;
+        return () =>
+          (decided ??= authorize(ctx, c, principal, action, resource).then(
+            () => "allowed" as const,
+            (err: unknown) => {
+              if (err instanceof DomainError) {
+                if (err.code.startsWith("TAILNET_")) return "requirement" as const;
+                if (err.code === "PERMISSION_DENIED" || err.code === "RESOURCE_NOT_FOUND") {
+                  return "permission" as const;
+                }
+              }
+              throw err;
+            },
+          ));
+      };
+      const report = await validateEnvironment(ctx, org, project, env, {
+        access: {
+          metadata: check("config.metadata.read"),
+          plain: check("config.value.read"),
+          secret: check("secret.reveal"),
+        },
+        actorIdentityId: principal.identity.id,
+        requestId: c.get("requestId"),
+      });
+      c.header("Cache-Control", "no-store");
       return c.json(report);
     },
   );
