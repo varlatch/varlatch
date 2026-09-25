@@ -17,6 +17,8 @@ interface ValidateVector {
   value: string;
   valid: boolean;
   reason?: string;
+  /** Present from version 2. A number is written as a string: `-0` and exact digits survive JSON. */
+  converted?: { string: string } | { number: string } | { boolean: boolean };
 }
 
 interface RequiredVector {
@@ -59,6 +61,33 @@ describe.each(SEMANTICS_VERSIONS.map((v) => [v]))("semantics version %i golden v
         v.value,
       );
       expect(reason).toBe(v.valid ? null : v.reason);
+    },
+  );
+
+  it.each(vectors.validate.map((v) => [`${v.type} ${JSON.stringify(v.value)}`, v] as const))(
+    "parse %s",
+    (_, v) => {
+      const subject = item({ type: v.type, ...(v.enumValues ? { enumValues: v.enumValues } : {}) });
+      if (!semantics.parse) {
+        expect(v.converted, "a version without conversion has no converted vectors").toBeUndefined();
+        return;
+      }
+      const result = semantics.parse(subject, v.value);
+      if (!v.valid) {
+        expect(result).toEqual({ ok: false, reason: v.reason });
+        return;
+      }
+      // Every string that validates converts.
+      expect(result.ok).toBe(true);
+      const value = result.ok ? result.value : undefined;
+      const expected = v.converted;
+      expect(expected, "every valid vector names its conversion").toBeDefined();
+      if (expected && "number" in expected) {
+        expect(typeof value).toBe("number");
+        expect(Object.is(value, Number(expected.number)), `${String(value)} is ${expected.number}`).toBe(true);
+      } else {
+        expect(value).toStrictEqual(expected && ("boolean" in expected ? expected.boolean : expected.string));
+      }
     },
   );
 
@@ -105,11 +134,16 @@ describe.each(SEMANTICS_VERSIONS.map((v) => [v]))("semantics version %i golden v
 });
 
 describe("semanticsFor", () => {
+  it("defines conversion from version 2", () => {
+    expect(semanticsFor(1).parse).toBeUndefined();
+    expect(semanticsFor(2).parse).toBeTypeOf("function");
+  });
+
   it("fails closed on a version it does not implement, naming it", () => {
-    for (const version of [0, 2, 1.5, Number.NaN]) {
+    for (const version of [0, 3, 1.5, Number.NaN]) {
       expect(() => semanticsFor(version)).toThrow(UnsupportedSemanticsVersionError);
     }
-    expect(() => semanticsFor(7)).toThrow("Contract semantics version 7 is not supported (supported: 1)");
+    expect(() => semanticsFor(7)).toThrow("Contract semantics version 7 is not supported (supported: 1, 2)");
     expect(() => semanticsFor("__proto__" as unknown as number)).toThrow(UnsupportedSemanticsVersionError);
   });
 });
