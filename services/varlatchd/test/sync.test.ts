@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { runMigrations } from "../src/db/migrate.js";
@@ -13,12 +13,28 @@ import { ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../sr
 import { mappingWidens } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { testDb } from "./helpers/pglite.js";
+import { traceLog, traced, type TraceLog } from "./helpers/trace.js";
 
 /**
  * Sync Targets (ADR-0031): opt-in, audited, converge-to-current delivery of
  * an Environment's Effective Configuration to external platforms.
  */
 
+// Decryptions are recorded in order with the SQL, so tests can show the
+// audit event naming a version commits before that version is decrypted.
+const hooks = vi.hoisted(() => ({ log: null as TraceLog | null }));
+vi.mock("../src/crypto/hierarchy.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/crypto/hierarchy.js")>();
+  return {
+    ...actual,
+    decryptValue: (...args: Parameters<typeof actual.decryptValue>) => {
+      hooks.log?.decrypt(args[3]);
+      return actual.decryptValue(...args);
+    },
+  };
+});
+
+let log: TraceLog;
 let ctx: AppCtx & { close: () => Promise<void> };
 let app: ReturnType<typeof buildApp>;
 let adminToken: string;
@@ -26,7 +42,9 @@ let adminToken: string;
 const ENV_PATH = "/v1/organizations/acme/projects/api/environments/development";
 
 beforeEach(async () => {
-  const db = await testDb();
+  log = traceLog();
+  hooks.log = log;
+  const db = traced(await testDb(), log);
   await runMigrations(db);
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
@@ -292,6 +310,73 @@ describe("convergence", () => {
     expect(metadata.destination).toBe("coolify:app1");
     // Never plaintext values in audit.
     expect(JSON.stringify(attempted.metadata)).not.toContain("postgres://dev-db");
+  });
+
+  /** Versions named by committed sync.values_decrypted inserts, and every version decrypted, in order. */
+  function decryptionAudit() {
+    const audited = new Set<string>();
+    const unaudited: string[] = [];
+    const decrypted: string[] = [];
+    for (const entry of log.entries) {
+      if (entry.kind === "decrypt") {
+        decrypted.push(entry.versionId);
+        if (!audited.has(entry.versionId)) unaudited.push(entry.versionId);
+      } else if (/INSERT INTO audit_events/.test(entry.text) && entry.params[1] === "sync.values_decrypted") {
+        const items = String(asJson<{ items: string }>(entry.params[13]).items);
+        for (const item of items.split(",")) audited.add(item.split("@")[1] as string);
+      }
+    }
+    return { audited, unaudited, decrypted };
+  }
+
+  it("audit precedes decryption, even when nothing is pushed, and never triggers a sync", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    log.reset();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const first = decryptionAudit();
+    expect(first.decrypted.length).toBeGreaterThan(0);
+    expect(first.unaudited).toEqual([]);
+
+    // A repair pass that finds everything converged still decrypts, so it
+    // still audits first, although no value leaves the process.
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    coolify.calls.length = 0;
+    log.reset();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.calls.filter((c) => c.method !== "GET")).toHaveLength(0);
+    const repair = decryptionAudit();
+    expect(repair.decrypted.length).toBeGreaterThan(0);
+    expect(repair.unaudited).toEqual([]);
+    const events = await ctx.db.query(
+      "SELECT metadata FROM audit_events WHERE event_type = 'sync.values_decrypted' ORDER BY event_order",
+    );
+    expect(events.rows).toHaveLength(2);
+    const metadata = asJson<Record<string, unknown>>((events.rows[1] as { metadata: unknown }).metadata);
+    expect(metadata).toMatchObject({ purpose: "sync-reconcile", items: expect.stringMatching(/DATABASE_URL@ver_/) });
+    expect(JSON.stringify(events.rows)).not.toContain("postgres://dev-db");
+
+    // The decryption audit is a sync.* event: the trigger scan skips it.
+    await scanSyncTriggers(ctx);
+    expect((await targetRowFromDb()).needs_sync).toBe(false);
+  });
+
+  it("an audit failure stops the reconcile before anything is decrypted or pushed", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    await ctx.db.query(`
+      CREATE FUNCTION refuse_sync_decryption() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.event_type = 'sync.values_decrypted' THEN RAISE EXCEPTION 'audit unavailable'; END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await ctx.db.query(`
+      CREATE TRIGGER refuse_sync_decryption BEFORE INSERT ON audit_events
+        FOR EACH ROW EXECUTE FUNCTION refuse_sync_decryption()`);
+    log.reset();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(log.entries.filter((e) => e.kind === "decrypt")).toHaveLength(0);
+    expect(coolify.values().size).toBe(0);
   });
 
   it("value writes trigger reconvergence through the audit cursor scan", async () => {
