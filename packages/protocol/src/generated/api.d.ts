@@ -1189,6 +1189,8 @@ export interface components {
             installationId?: string;
             /** @description Platform adapters this Installation allows for outbound sync (ADR-0031); absent when the installation switch is off. */
             syncAdapters?: components["schemas"]["SyncPlatform"][];
+            /** @description Contract Semantics versions this server evaluates. Absent on servers older than 0.11.0, which evaluate only version 1. */
+            semanticsVersions?: number[];
         };
         Organization: {
             id: string;
@@ -1283,6 +1285,8 @@ export interface components {
             id: string;
             projectId: string;
             contentHash: string;
+            /** @description The Contract Semantics version this revision is evaluated with. Fixed when the revision is created, and part of its content hash unless it is 1. */
+            semanticsVersion: number;
             active: boolean;
             contract?: Record<string, never>;
             provenance?: Record<string, never>;
@@ -2556,7 +2560,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Canonical Configuration Contract (see @varlatch/contract). */
+                    /** @description Canonical Configuration Contract (see @varlatch/contract). A `semanticsVersion` in it pins that version, which must be one the server lists in `/v1/meta`. Without one, the revision keeps the active revision's version, or gets the newest version when the project has no active revision. */
                     contract: Record<string, never>;
                     provenance?: {
                         repository?: string;

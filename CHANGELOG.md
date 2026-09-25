@@ -38,6 +38,18 @@ fixes.
 
   Deleting an environment is no longer blocked by a mapping entry. It is
   still blocked while the active contract references the environment.
+- Contract revisions record their Contract Semantics version: the rules for
+  requiredness, validation, and conversion they are evaluated with. Every
+  existing revision is version 1 and keeps its content hash. A new project's
+  first revision gets version 2, which adds conversion to typed values and
+  bounds numbers: a number whose magnitude exceeds 9007199254740991
+  (2^53 - 1) is invalid. A push or edit keeps the active revision's version,
+  and `varlatch contract push --semantics latest` moves to the newest.
+  Contract revisions in the API carry `semanticsVersion`, and `/v1/meta`
+  lists `semanticsVersions`. See
+  [Contract Semantics](docs/reference/contract-semantics.md).
+- The dashboard's type help now matches the rules. It said booleans accept
+  `yes` and `no`, which validation never accepted.
 
 ### Upgrading
 
@@ -46,6 +58,9 @@ fixes.
   not names. Audit history keeps its `contract.varlock_mapping_set` and
   `contract.varlock_mapping_removed` events. Backups taken with 0.10.0
   restore into this release and are migrated forward.
+- Existing projects keep version 1 rules. To adopt version 2, push with
+  `varlatch contract push --semantics latest` and review the activation,
+  which shows the version change.
 - A `.env.schema` with comments after values gives different defaults when
   pushed with this release's CLI. Review the activation's changes before
   activating. A file that uses `forEnv(...)` must switch to `env(...)` or

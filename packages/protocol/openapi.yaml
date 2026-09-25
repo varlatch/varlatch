@@ -754,7 +754,12 @@ paths:
               required: [contract]
               properties:
                 contract:
-                  description: Canonical Configuration Contract (see @varlatch/contract).
+                  description: >
+                    Canonical Configuration Contract (see @varlatch/contract).
+                    A `semanticsVersion` in it pins that version, which must
+                    be one the server lists in `/v1/meta`. Without one, the
+                    revision keeps the active revision's version, or gets the
+                    newest version when the project has no active revision.
                   type: object
                 provenance:
                   type: object
@@ -2584,6 +2589,12 @@ components:
           description: >
             Platform adapters this Installation allows for outbound sync
             (ADR-0031); absent when the installation switch is off.
+        semanticsVersions:
+          type: array
+          items: { type: integer }
+          description: >
+            Contract Semantics versions this server evaluates. Absent on
+            servers older than 0.11.0, which evaluate only version 1.
 
     Organization:
       type: object
@@ -2727,11 +2738,17 @@ components:
 
     ContractRevision:
       type: object
-      required: [id, projectId, contentHash, active, createdAt]
+      required: [id, projectId, contentHash, semanticsVersion, active, createdAt]
       properties:
         id: { type: string }
         projectId: { type: string }
         contentHash: { type: string }
+        semanticsVersion:
+          type: integer
+          description: >
+            The Contract Semantics version this revision is evaluated with.
+            Fixed when the revision is created, and part of its content hash
+            unless it is 1.
         active: { type: boolean }
         contract: { type: object }
         provenance: { type: object }

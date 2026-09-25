@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { canonicalJson } from "./canonical.js";
+import { semanticsVersionOf } from "./semantics.js";
 import type {
   ConfigurationContract,
   ContractItem,
@@ -20,6 +21,8 @@ export interface ContractDiff {
   typeChanged: { name: string; from: ItemType; to: ItemType }[];
   /** description/default/example/enum value edits — cosmetic. */
   otherChanged: string[];
+  /** Set when the revisions are evaluated with different Contract Semantics. */
+  semanticsVersionChanged: { from: number; to: number } | null;
   /** True when the diff includes authorization-relevant changes. */
   securityRelevant: boolean;
 }
@@ -48,8 +51,12 @@ export function diffContracts(
     requirednessChanged: [],
     typeChanged: [],
     otherChanged: [],
+    semanticsVersionChanged: null,
     securityRelevant: false,
   };
+  const fromVersion = semanticsVersionOf(from);
+  const toVersion = semanticsVersionOf(to);
+  if (fromVersion !== toVersion) diff.semanticsVersionChanged = { from: fromVersion, to: toVersion };
 
   for (const name of toByName.keys()) {
     if (!fromByName.has(name)) diff.itemsAdded.push(name);

@@ -2,10 +2,13 @@
 import { describe, expect, it } from "vitest";
 import {
   ContractValidationError,
+  LATEST_SEMANTICS_VERSION,
+  SEMANTICS_VERSIONS,
   canonicalJson,
   contractHash,
   diffContracts,
   normalizeContract,
+  semanticsVersionOf,
 } from "../src/index.js";
 
 const sample = {
@@ -178,6 +181,45 @@ describe("contractHash", () => {
   });
 });
 
+describe("semanticsVersion", () => {
+  it("version 1 is encoded by omission: existing hashes never change", () => {
+    const explicit = normalizeContract({ ...sample, semanticsVersion: 1 });
+    expect(explicit).not.toHaveProperty("semanticsVersion");
+    expect(contractHash(explicit)).toBe(GOLDEN_SAMPLE_HASH);
+    expect(semanticsVersionOf(explicit)).toBe(1);
+  });
+
+  it("any other version is part of the content: the same items hash differently", () => {
+    const v1 = normalizeContract(sample);
+    const v2 = normalizeContract({ ...sample, semanticsVersion: 2 });
+    expect(v2.semanticsVersion).toBe(2);
+    expect(semanticsVersionOf(v2)).toBe(2);
+    // Keys are sorted: the version follows schemaVersion, before the closing brace.
+    expect(canonicalJson(v2)).toBe(`${canonicalJson(v1).slice(0, -1)},"semanticsVersion":2}`);
+    expect(contractHash(v2)).toBe(GOLDEN_SAMPLE_V2_HASH);
+    expect(normalizeContract(v2)).toEqual(v2);
+  });
+
+  it("rejects a version it does not implement, naming it", () => {
+    for (const semanticsVersion of [0, 3, 1.5, "2"]) {
+      expect(() => normalizeContract({ ...sample, semanticsVersion })).toThrow(ContractValidationError);
+    }
+    expect(() => normalizeContract({ ...sample, semanticsVersion: 9 })).toThrow(
+      "semanticsVersion: version 9 is not supported (supported: 1, 2)",
+    );
+    expect(LATEST_SEMANTICS_VERSION).toBe(Math.max(...SEMANTICS_VERSIONS));
+  });
+
+  it("the diff reports a version change, and only then", () => {
+    const v1 = normalizeContract(sample);
+    const v2 = normalizeContract({ ...sample, semanticsVersion: 2 });
+    expect(diffContracts(v1, v2).semanticsVersionChanged).toEqual({ from: 1, to: 2 });
+    expect(diffContracts(v2, v1).semanticsVersionChanged).toEqual({ from: 2, to: 1 });
+    expect(diffContracts(v1, v1).semanticsVersionChanged).toBeNull();
+    expect(diffContracts(v2, v2).semanticsVersionChanged).toBeNull();
+  });
+});
+
 describe("diffContracts", () => {
   const from = normalizeContract(sample);
 
@@ -244,3 +286,5 @@ const GOLDEN_SAMPLE_HASH =
   "sha256:ed1548fa21ba06ec251f40443cc8335ef93e79513c24c45c49f23408ac897070";
 const GOLDEN_EMPTY_HASH =
   "sha256:8aec8887eb1a0f7eb74d40e98c4283c5801214cac1e8a2031473e6084d289db0";
+const GOLDEN_SAMPLE_V2_HASH =
+  "sha256:b6113a514cf12d0da43dd4fe2dd2d025f3b9d4aa96e8ce9e5c41aa171b5955c9";

@@ -8,6 +8,7 @@ import {
   type ConfigurationContract,
   type ContractItem,
 } from "./types.js";
+import { SEMANTICS_VERSIONS } from "./semantics.js";
 
 const environmentSelectorSchema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -47,6 +48,7 @@ const contractItemSchema = z.strictObject({
 
 const contractSchema = z.strictObject({
   schemaVersion: z.literal(CONTRACT_SCHEMA_VERSION),
+  semanticsVersion: z.number().int().optional(),
   items: z.array(contractItemSchema),
 });
 
@@ -82,6 +84,12 @@ export function normalizeContract(input: unknown): ConfigurationContract {
   }
 
   const issues: string[] = [];
+  const version = parsed.data.semanticsVersion;
+  if (version !== undefined && !(SEMANTICS_VERSIONS as readonly number[]).includes(version)) {
+    issues.push(
+      `semanticsVersion: version ${version} is not supported (supported: ${SEMANTICS_VERSIONS.join(", ")})`,
+    );
+  }
   const seen = new Set<string>();
   for (const item of parsed.data.items) {
     if (seen.has(item.name)) issues.push(`duplicate Config Item name ${item.name}`);
@@ -136,5 +144,8 @@ export function normalizeContract(input: unknown): ConfigurationContract {
     })
     .sort((a, b) => codePointCompare(a.name, b.name));
 
-  return { schemaVersion: CONTRACT_SCHEMA_VERSION, items };
+  // Version 1 is encoded by omission, so pre-existing hashes never change.
+  return version === undefined || version === 1
+    ? { schemaVersion: CONTRACT_SCHEMA_VERSION, items }
+    : { schemaVersion: CONTRACT_SCHEMA_VERSION, semanticsVersion: version, items };
 }

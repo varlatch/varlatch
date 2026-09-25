@@ -3,7 +3,12 @@ import { backupStatus } from "@varlatch/backup";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { TIERS } from "@varlatch/contract";
+import {
+  SEMANTICS_VERSIONS,
+  TIERS,
+  semanticsVersionOf,
+  type ConfigurationContract,
+} from "@varlatch/contract";
 import { CAPABILITIES } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
@@ -179,16 +184,22 @@ const serialize = {
     expiresAt: e.expires_at ? iso(e.expires_at) : null,
     createdAt: iso(e.created_at),
   }),
-  revision: (r: ContractRevisionRow, activeId: string | null) => ({
-    id: r.id,
-    projectId: r.project_id,
-    contentHash: r.content_hash,
-    active: r.id === activeId,
-    contract: typeof r.contract === "string" ? JSON.parse(r.contract) : r.contract,
-    provenance:
-      typeof r.provenance === "string" ? JSON.parse(r.provenance) : r.provenance ?? undefined,
-    createdAt: iso(r.created_at),
-  }),
+  revision: (r: ContractRevisionRow, activeId: string | null) => {
+    const contract = (
+      typeof r.contract === "string" ? JSON.parse(r.contract) : r.contract
+    ) as ConfigurationContract;
+    return {
+      id: r.id,
+      projectId: r.project_id,
+      contentHash: r.content_hash,
+      semanticsVersion: semanticsVersionOf(contract),
+      active: r.id === activeId,
+      contract,
+      provenance:
+        typeof r.provenance === "string" ? JSON.parse(r.provenance) : r.provenance ?? undefined,
+      createdAt: iso(r.created_at),
+    };
+  },
 };
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
@@ -400,6 +411,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json({
       apiMajor: 1,
       serverVersion: SERVER_VERSION,
+      // Contract Semantics versions this server evaluates (ADR-0038).
+      semanticsVersions: [...SEMANTICS_VERSIONS],
       capabilities: syncOn ? [...CAPABILITIES] : CAPABILITIES.filter((cap) => cap !== "sync.targets"),
       ...(syncOn
         ? { syncAdapters: options.sync?.adapters ?? [...SYNC_PLATFORMS] }
