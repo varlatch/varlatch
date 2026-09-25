@@ -44,6 +44,8 @@ export function expandReferences(
   raw: string,
   lookup: (name: string) => string | undefined,
   strict = false,
+  /** Called with the name of every reference left literal (lenient mode). */
+  onUnexpanded?: (name: string) => void,
 ): string {
   let remaining = MAX_EXPANDED_BYTES;
   const chunks: string[] = [];
@@ -64,6 +66,7 @@ export function expandReferences(
       const value = lookup(name);
       if (value === undefined || path.has(name) || path.size >= MAX_REFERENCE_DEPTH) {
         if (strict) throw new ReferenceExpansionError(value === undefined ? `references outside the disclosure set (${name})` : `cyclic or too-deep reference (${name})`, true);
+        onUnexpanded?.(name);
         append(match[0]);
       } else {
         visit(value, new Set([...path, name]));

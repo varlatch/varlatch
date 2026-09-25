@@ -37,7 +37,7 @@ const resolveItems = async (_: AppCtx, org: OrgRow, project: ProjectRow, env: En
 const effectiveConfiguration = async (
   _: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow,
   opts: Parameters<typeof values.effectiveConfiguration>[2],
-) => values.effectiveConfiguration(ctx, await capture(org, project, env), opts);
+) => (await values.effectiveConfiguration(ctx, await capture(org, project, env), opts)).items;
 const discloseSecrets = async (
   _: AppCtx, org: OrgRow, project: ProjectRow, env: EnvironmentRow,
   request: values.DisclosureRequest, opts: Parameters<typeof values.discloseSecrets>[3],

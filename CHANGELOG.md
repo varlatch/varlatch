@@ -76,6 +76,27 @@ fixes.
   commits after a request's snapshot began does not affect that request.
   The next request sees it.
 
+### Retrieval
+
+- Strict retrieval: `POST
+  /v1/organizations/{org}/projects/{project}/environments/{environment}/retrievals`
+  with `{"mode": "strict"}` returns, from one snapshot and in one request,
+  every value the caller may receive, the state manifest and its
+  `stateDigest`, the caller view, the active contract (with
+  `contract.read`), and the validation of exactly the values returned. Each
+  class of value is authorized separately: without `secret.reveal`, the
+  non-sensitive values still arrive and the Secrets are reported as
+  withheld. A failure after the snapshot returns an error and no values.
+  SDK: `strictRetrieval()`. `/v1/meta` lists `retrieval.strict`.
+- Effective configuration responses, and disclosure responses for callers
+  who can read metadata, carry the state manifest, `stateDigest`, and a
+  caller view (`retrieval.manifest`). The manifest lists the environment,
+  the active contract revision and its semantics version, and every item's
+  source and version IDs. It holds identifiers only, never values or
+  anything derived from them, and its digest is the same for every caller
+  looking at the same state. The caller view lists what this caller was not
+  given and which references stayed literal for it.
+
 ### Upgrading
 
 - A disclosure or Capability exercise whose references are nested now
