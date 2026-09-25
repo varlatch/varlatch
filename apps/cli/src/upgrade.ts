@@ -265,7 +265,9 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
     ? parseManifest(readFileSync(currentManifestPath, "utf8"), currentManifestPath)
     : undefined;
 
-  console.log(`Fetching ${opts.version ? `release v${opts.version}` : "latest release"} from ${opts.repo}...`);
+  console.log(opts.releaseDir
+    ? `Reading the release from ${opts.releaseDir}...`
+    : `Fetching ${opts.version ? `release v${opts.version}` : "latest release"} from ${opts.repo}...`);
   const release = opts.releaseDir
     ? { tag_name: opts.version ?? "local", html_url: opts.releaseDir, assets: [] }
     : await fetchRelease(opts.repo, opts.version);

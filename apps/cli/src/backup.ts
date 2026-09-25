@@ -350,9 +350,25 @@ async function restoreInstallation(args: string[], dir: string): Promise<void> {
       await control(dir, 'restore-reconcile', { id: gate.id, installationId: manifest.installationId, manifestIdentity: createHash('sha256').update(JSON.stringify(manifest)).digest('hex') });
       await control(dir, 'restore-complete', { id: gate.id });
       console.log(`Restore completed for ${manifest.installationId}: Secret Plane restored and its canary verified; rebuilding the Application Plane.`);
+      // Before reconciliation, so the dashboard serves from /v1 even when the
+      // deploy job then fails.
+      const started = await startRemainingServices(dir).then(() => true, () => false);
       await reconcileApplicationPlane(dir);
+      if (!started) throw new BackupError('The data is restored, but not every service started: run `docker compose up -d`, then `varlatch doctor`.');
+      console.log('Next: run `varlatch doctor`, then create and verify a fresh archive (`varlatch admin backup create`).');
     }, option(args, '--scratch-dir'));
   } finally { bek.material.fill(0); }
+}
+/**
+ * Restore brings up only what it needs: the database, varlatchd, Convex and a
+ * network sidecar. Once isolation has cleared, start everything else the
+ * installation runs (the dashboard, an ingress proxy) without touching the
+ * running services. The deploy job belongs to reconciliation.
+ */
+async function startRemainingServices(dir: string): Promise<void> {
+  const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy');
+  await compose(dir, ['up', '-d', '--no-recreate', ...services]);
+  console.log('Remaining services started.');
 }
 /**
  * The archive brings the Application Plane functions and trust configuration

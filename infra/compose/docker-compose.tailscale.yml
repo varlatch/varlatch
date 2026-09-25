@@ -75,7 +75,7 @@ services:
     # `!reset` removes the base mapping — a plain `[]` would merge with it.
     ports: !reset []
     environment:
-      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD}@postgres:5432/varlatch
+      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD:-}@postgres:5432/varlatch
       VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
       VARLATCH_PORT: "8686"
       VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
