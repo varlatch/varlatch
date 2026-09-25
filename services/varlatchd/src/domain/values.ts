@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
+import { CONFIG_ITEM_NAME_PATTERN, semanticsFor } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptValue, encryptValue } from "../crypto/hierarchy.js";
@@ -9,10 +9,8 @@ import type { AppCtx } from "./ctx.js";
 import {
   activeContractOf,
   MAX_ROTATION_GRACE_SECONDS,
-  requiredApplies,
   rotationGraceOf,
   sensitivityOf,
-  typeCheck,
 } from "./contracts.js";
 import { isExpired, rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
@@ -631,13 +629,15 @@ export async function validateEnvironment(
   const items = await resolveItems(ctx, org, project, env);
   const present = new Map(items.map((i) => [i.name, i]));
   const envCtx = { rootId: rootIdOf(env), tier: env.tier };
+  // Every stored revision is semantics version 1 until revisions carry one.
+  const semantics = semanticsFor(1);
 
   const toCheck: { item: (typeof contract.items)[number]; resolved: ResolvedItem }[] = [];
   const access: Partial<Record<"plain" | "secret", ValidationAccess>> = {};
   for (const item of contract.items) {
     const resolved = present.get(item.name);
     if (!resolved) {
-      if (requiredApplies(item, envCtx) && item.defaultValue === undefined) {
+      if (semantics.missingWhenAbsent(item, envCtx)) {
         result.missing.push(item.name);
       }
       continue;
@@ -689,7 +689,7 @@ export async function validateEnvironment(
       payload: envelope(version.payload),
       wrappedDek: envelope(version.wrapped_dek),
     }).toString("utf8");
-    const problem = typeCheck(item, value);
+    const problem = semantics.validate(item, value);
     if (problem) result.invalid.push({ name: item.name, reason: problem });
   }
   result.complete = result.notEvaluated.length === 0;
