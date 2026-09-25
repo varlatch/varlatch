@@ -143,6 +143,8 @@ placeholder values only. State lives in `.dev/`.
   recovery
 - [`docs/operations/verify-release.md`](docs/operations/verify-release.md):
   verifying a release's signatures and provenance
+- [`docs/reference/env-schema.md`](docs/reference/env-schema.md): the
+  `.env.schema` contract file format
 
 ## Security, support, and contributing
 

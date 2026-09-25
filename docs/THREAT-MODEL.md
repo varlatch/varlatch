@@ -127,6 +127,18 @@ And the honest limits, stated with the same discipline:
 - **Body substitution is bounded and textual** (JSON/form/`text/*`); the
   Broker cannot repair application signatures computed over
   placeholder-bearing payloads.
+- **Substitution is not tied to a location.** A placeholder is replaced
+  wherever it appears in the headers or textual body of a request to an
+  allowlisted destination, including fields that destination stores or
+  publishes. An agent that may call an API host can therefore have the
+  Broker write a Secret into content on that host. Keep allowlists narrow
+  and upstream credentials narrowly scoped.
+- **The Agent inherits the operator's environment.** The agent-safe child
+  receives a copy of the parent's environment, minus Varlatch's own
+  credentials, with placeholders and non-sensitive values overlaid. Any
+  plaintext secret already in the operator's shell, including a contract
+  Secret that has no value stored in Varlatch, reaches the Agent. Start
+  agent-safe runs from a clean environment.
 - **Plain `varlatch run` (without `--agent-safe`) still injects plaintext**
   into the child environment (§5); agent safety is opt-in per run.
 

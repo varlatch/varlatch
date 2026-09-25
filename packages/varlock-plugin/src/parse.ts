@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Interim env-spec parser: a documented SUBSET of Varlock's .env.schema
- * decorator language, sufficient for Contract ingestion. This module is the
- * ADR-0002 adapter boundary — when we wire the real Varlock parser (its
- * plugin API is the flagship integration path), this file is what gets
- * replaced; nothing downstream changes.
+ * Varlatch's .env.schema parser for the format documented in
+ * docs/reference/env-schema.md, including its known limitations.
  *
  * Supported:
  *   Root decorators:  @defaultSensitive=true|false   @defaultRequired=true|false|infer
