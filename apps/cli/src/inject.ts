@@ -3,9 +3,9 @@ import { spawn } from "node:child_process";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 
 /**
- * `varlatch run` is an environment injector, not a configuration framework
- * (ADR-0017 §6): fetch, inject, forward signals, return the child's exit code.
- * No schema semantics, no coercion, no redaction engine — Varlock owns those.
+ * Default `varlatch run`: fetch, inject, forward signals, return the child's
+ * exit code. This path applies no contract validation, type conversion, or
+ * output redaction.
  */
 
 export function buildEnv(
