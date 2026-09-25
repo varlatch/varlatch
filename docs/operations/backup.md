@@ -383,12 +383,20 @@ restore event is recorded; only then does isolation clear.
 The Application Plane is **rebuilt, not restored**: its database
 and storage are reset to empty. That holds for format-1 archives too, whose Convex
 components `verify` still checks but restore ignores. Once isolation has
-cleared, restore runs the `convex-deploy` job, which deploys
+cleared, restore starts the rest of the installation (the dashboard, and the
+ingress proxy where one is configured) without touching the services already
+running. It then runs the `convex-deploy` job, which deploys
 this release's functions and sets `VARLATCH_ISSUER`/`VARLATCH_JWKS_URL` to
 this host's configuration, then publishes every Mirror from the restored
 Secret Plane. Until then the dashboard works from `/v1` without live updates.
 If the deploy job fails, the data is restored but the dashboard has no live
 updates: run `docker compose run --rm convex-deploy`, then `varlatch doctor`.
+If a service did not start, restore says so: run `docker compose up -d`, then
+`varlatch doctor`.
+
+After a restore, run `varlatch doctor`, then create and verify a fresh archive.
+The backup history lives on the `varlatch-state` volume, so after a restore
+onto a fresh host doctor reports no recent archive until you do.
 
 A failed restore is incomplete. Ordinary requests and both planes'
 workers stay blocked across process/host restart. Re-run the same restore with

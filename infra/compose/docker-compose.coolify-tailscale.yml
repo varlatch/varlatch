@@ -96,7 +96,7 @@ services:
       VARLATCH_STATE_DIR: /var/lib/varlatch
       VARLATCH_SYNC: ${VARLATCH_SYNC:-on}
       VARLATCH_SYNC_ADAPTERS: ${VARLATCH_SYNC_ADAPTERS:-}
-      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD}@postgres:5432/varlatch
+      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD:-}@postgres:5432/varlatch
       VARLATCH_DATABASE_PASSWORD_FILE: /run/secrets/varlatch-runtime-password
       VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
       VARLATCH_PORT: "8686"

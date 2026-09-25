@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -133,5 +133,18 @@ describe("ingress (ADR-0035 D6, Q6)", () => {
     expect(() => tailnetUrl({ ...joined, CertDomains: null })).toThrow(/enable HTTPS certificates/);
     expect(TAILNET_MACHINE.test("varlatch")).toBe(true);
     expect(TAILNET_MACHINE.test("Varlatch_1")).toBe(false);
+  });
+});
+
+describe("shipped Compose files", () => {
+  // Setup keeps passwords in secret files and leaves their variables unset on
+  // purpose; a reference without a default makes Compose warn on every command.
+  it("give every interpolated variable a default", () => {
+    const dir = new URL("../../../infra/compose/", import.meta.url);
+    const files = readdirSync(dir).filter((f) => f.endsWith(".yml"));
+    expect(files).toContain("docker-compose.tailscale.yml");
+    for (const file of files) {
+      expect(readFileSync(new URL(file, dir), "utf8").match(/(?<!\$)\$\{[A-Za-z_][A-Za-z0-9_]*\}/g) ?? [], file).toEqual([]);
+    }
   });
 });
