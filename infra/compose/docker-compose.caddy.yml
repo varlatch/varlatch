@@ -1,0 +1,42 @@
+# Public ingress (ADR-0035 D6): a bundled Caddy terminates HTTPS for the
+# public URL's host with an automatic certificate, and forwards everything to
+# the dashboard (which serves /v1 and /convex same-origin, D5).
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml   (setup writes this)
+#
+# Requires in .env (setup writes it):
+#   VARLATCH_PUBLIC_HOST     the public URL's host name, e.g. vault.example.com
+#
+# The host name must resolve to this machine in public DNS, and ports 80 and
+# 443 must be reachable from the internet: Let's Encrypt validates over them
+# (HTTP-01 / TLS-ALPN-01). Private installations use the tailnet ingress or
+# their own reverse proxy instead (design note, Q6).
+
+services:
+  caddy:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    ports:
+      - "${VARLATCH_HTTP_PORT:-80}:80"
+      - "${VARLATCH_HTTPS_PORT:-443}:443"
+      - "${VARLATCH_HTTPS_PORT:-443}:443/udp"
+    environment:
+      VARLATCH_PUBLIC_HOST: ${VARLATCH_PUBLIC_HOST:?set by varlatch setup}
+      # Let's Encrypt unless overridden (tests point this at a local ACME server).
+      VARLATCH_ACME_CA: ${VARLATCH_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account: keep this volume with the others.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - varlatch-web
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  caddy-data:
+  caddy-config:

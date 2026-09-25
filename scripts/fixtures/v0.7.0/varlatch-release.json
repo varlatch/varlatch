@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "version": "0.7.0",
+  "apiMajor": 1,
+  "generatedAt": "2026-09-17T16:17:36.567Z",
+  "supportedPostgresMajor": 17,
+  "images": {
+    "varlatchd": {
+      "tag": "ghcr.io/varlatch/varlatchd:0.7.0",
+      "digest": "ghcr.io/varlatch/varlatchd@sha256:03d42753681460df1e94d1a15c066d4851232c9c0f725cab81f1e645c2d7c1f6"
+    },
+    "varlatch-web": {
+      "tag": "ghcr.io/varlatch/varlatch-web:0.7.0",
+      "digest": "ghcr.io/varlatch/varlatch-web@sha256:63a99f745c86dfc768f5b897bfe294d36be68fc36abad420d3b0c86032c47b37"
+    },
+    "convex-deploy": {
+      "tag": "ghcr.io/varlatch/varlatch-convex-deploy:0.7.0",
+      "digest": "ghcr.io/varlatch/varlatch-convex-deploy@sha256:d22f301d6a93a9108e5e151b2f1626c0039c67c90cc36dade44421c2beae6433"
+    },
+    "convex-backend": {
+      "tag": null,
+      "digest": "ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98"
+    },
+    "postgres": {
+      "tag": "docker.io/library/postgres:17.6",
+      "digest": "docker.io/library/postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
+    }
+  }
+}

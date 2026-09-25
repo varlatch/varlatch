@@ -1,0 +1,245 @@
+name: Release
+
+# Digest-pinned release sets (ADR-0019 §26): pushing a v* tag builds and
+# publishes the images and attaches the deployment unit self-hosters consume —
+# varlatch-release.json (manifest), docker-compose.release.yml (upgrades, used
+# by `varlatch upgrade`), varlatch-compose-<version>.tar.gz (first
+# installs), varlatch-cli-<version>.cjs (operator CLI), THIRD-PARTY-NOTICES.md,
+# and SHA256SUMS. Tags are for humans; digests are the canonical runtime pin.
+#
+# Provenance (ADR-0037 D4/D5): images are built for linux/amd64 and
+# linux/arm64 with build-provenance and SBOM attestations, and each image and
+# SHA256SUMS is signed keyless with Sigstore from this workflow's own OIDC
+# identity. The release itself is only published once an end-to-end suite has
+# passed on arm64 hardware. docs/operations/verify-release.md shows how to
+# check all of it.
+#
+# Keyless signatures are recorded in Sigstore's public transparency log with
+# the repository, tag, and digests they cover. A private repository's
+# releases are therefore not signed unless the SIGN_PRIVATE_RELEASES
+# repository variable is "true".
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  SIGN: ${{ !github.event.repository.private || vars.SIGN_PRIVATE_RELEASES == 'true' }}
+
+jobs:
+  validation:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      packages: read
+
+  images:
+    needs: validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless signing
+    outputs:
+      varlatchd: ${{ steps.refs.outputs.varlatchd }}
+      web: ${{ steps.refs.outputs.web }}
+      convex_deploy: ${{ steps.refs.outputs.convex_deploy }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image names
+        id: names
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "varlatchd=ghcr.io/${OWNER}/varlatchd"
+            echo "web=ghcr.io/${OWNER}/varlatch-web"
+            echo "convex_deploy=ghcr.io/${OWNER}/varlatch-convex-deploy"
+            echo "version=${GITHUB_REF_NAME#v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The build stages run natively; only the final stages' few RUN steps
+      # execute under emulation for arm64.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Build and push varlatchd
+        id: varlatchd
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: services/varlatchd/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: ${{ steps.names.outputs.varlatchd }}:${{ steps.names.outputs.version }}
+
+      - name: Build and push varlatch-web
+        id: web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: ${{ steps.names.outputs.web }}:${{ steps.names.outputs.version }}
+
+      # Image-only installs must be able to (re)deploy the Application Plane
+      # functions on upgrade — the deployer ships as part of the release set.
+      - name: Build and push convex-deploy
+        id: convex_deploy
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/compose/convex-deploy.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          provenance: mode=max
+          sbom: true
+          push: true
+          tags: ${{ steps.names.outputs.convex_deploy }}:${{ steps.names.outputs.version }}
+
+      - name: Sign the images
+        id: refs
+        run: |
+          set -euo pipefail
+          version=${{ steps.names.outputs.version }}
+          varlatchd="${{ steps.names.outputs.varlatchd }}:${version}@${{ steps.varlatchd.outputs.digest }}"
+          web="${{ steps.names.outputs.web }}:${version}@${{ steps.web.outputs.digest }}"
+          convex_deploy="${{ steps.names.outputs.convex_deploy }}:${version}@${{ steps.convex_deploy.outputs.digest }}"
+          for ref in "$varlatchd" "$web" "$convex_deploy"; do
+            # Sign the multi-platform index the release manifest pins.
+            if [ "$SIGN" = true ]; then cosign sign --yes "${ref%%:*}@${ref##*@}"; fi
+          done
+          {
+            echo "varlatchd=$varlatchd"
+            echo "web=$web"
+            echo "convex_deploy=$convex_deploy"
+          } >> "$GITHUB_OUTPUT"
+
+  # ADR-0037 D5: the release images themselves, pulled for arm64 and run on
+  # arm64 hardware, pass backup, restore, and recovery before publication.
+  arm64-e2e:
+    needs: images
+    # GitHub's hosted arm64 runner; the ARM64_RUNNER repository variable
+    # selects another label (for example a self-hosted arm64 runner).
+    runs-on: ${{ vars.ARM64_RUNNER || 'ubuntu-24.04-arm' }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Take the release images for this architecture
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          take() {
+            docker pull "$1"
+            docker tag "$1" "$2"
+            test "$(docker image inspect "$2" --format '{{.Architecture}}')" = arm64
+          }
+          take "${{ needs.images.outputs.varlatchd }}" varlatch-backup-test:local
+          take "${{ needs.images.outputs.web }}" varlatch-backup-web-test:local
+          take "${{ needs.images.outputs.convex_deploy }}" varlatch-backup-convex-deploy-test:local
+      - name: Backup, restore, and recovery on arm64
+        run: node scripts/test-backup-e2e.mjs
+
+  release:
+    needs: [images, arm64-e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # keyless signing of SHA256SUMS
+    steps:
+      - uses: actions/checkout@v4
+
+      # The operator CLI ships as a single-file bundle built from this tag.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build workspace (produces the CLI bundle)
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Resolve postgres digest
+        id: postgres
+        run: |
+          DIGEST=$(docker buildx imagetools inspect docker.io/library/postgres:17.6 --format '{{println .Manifest.Digest}}' | head -1)
+          echo "ref=docker.io/library/postgres:17.6@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve ingress overlay image digests
+        id: overlays
+        run: |
+          # Tags come from the overlays themselves; the release pins their digests.
+          CADDY=docker.io/library/$(grep -m1 -oP 'image: \Kcaddy:\S+' infra/compose/docker-compose.caddy.yml)
+          TAILSCALE=docker.io/$(grep -m1 -oP 'image: \Ktailscale/tailscale:\S+' infra/compose/docker-compose.tailscale.yml)
+          echo "caddy=${CADDY}@$(docker buildx imagetools inspect "$CADDY" --format '{{println .Manifest.Digest}}' | head -1)" >> "$GITHUB_OUTPUT"
+          echo "tailscale=${TAILSCALE}@$(docker buildx imagetools inspect "$TAILSCALE" --format '{{println .Manifest.Digest}}' | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build release artifacts
+        run: |
+          node infra/release/build-release-artifacts.mjs "${GITHUB_REF_NAME#v}" \
+            --caddy "${{ steps.overlays.outputs.caddy }}" \
+            --tailscale "${{ steps.overlays.outputs.tailscale }}" \
+            --image "varlatchd=${{ needs.images.outputs.varlatchd }}" \
+            --image "varlatch-web=${{ needs.images.outputs.web }}" \
+            --image "convex-deploy=${{ needs.images.outputs.convex_deploy }}" \
+            --postgres "${{ steps.postgres.outputs.ref }}"
+
+      # One signature covers every asset: SHA256SUMS lists them all.
+      - name: Sign SHA256SUMS
+        if: env.SIGN == 'true'
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+
+      - name: Create GitHub release with the deployment unit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          SIGNATURE=()
+          if [ "$SIGN" = true ]; then SIGNATURE=(SHA256SUMS.sigstore.json); fi
+          gh release create "$GITHUB_REF_NAME" \
+            varlatch-release.json \
+            docker-compose.release.yml \
+            convex-supervisor.cjs \
+            docker-compose.tailscale.yml docker-compose.tailnet-https.yml tailscale-serve.json \
+            docker-compose.caddy.yml Caddyfile \
+            "varlatch-compose-${VERSION}.tar.gz" \
+            "varlatch-cli-${VERSION}.cjs" \
+            THIRD-PARTY-NOTICES.md \
+            SHA256SUMS "${SIGNATURE[@]}" \
+            --title "Varlatch $GITHUB_REF_NAME" \
+            --notes "Digest-pinned release set for linux/amd64 and linux/arm64. Verify SHA256SUMS against its Sigstore signature (SHA256SUMS.sigstore.json), then every asset against SHA256SUMS; images are signed the same way and carry provenance and SBOM attestations: see docs/operations/verify-release.md. Operator CLI: download varlatch-cli-${VERSION}.cjs (Node 22+) and replace the host CLI before anything else — it is version-coupled to the installation. Upgrade existing installations with \`node varlatch-cli-${VERSION}.cjs upgrade ${VERSION}\`; first installs: unpack varlatch-compose-${VERSION}.tar.gz and follow its README."

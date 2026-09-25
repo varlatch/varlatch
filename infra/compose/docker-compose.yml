@@ -1,0 +1,249 @@
+# Canonical Varlatch deployment (ADR-0019). This file is the deployment
+# contract; Coolify deploys this same file rather than a second architecture.
+#
+# Release pinning: development builds from source; releases replace `build:`
+# with digest-pinned images via infra/release tooling. `latest` never appears.
+#
+# Includes both planes and their shared backup/restore isolation state.
+# The Tailscale sidecar is available through the optional overlay.
+
+name: varlatch
+
+services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    # Each password arrives either as a variable (.env) or as a per-service
+    # secret file (#28; see `secrets:` below). A set variable wins; a
+    # non-empty file fills an unset one. Only initdb needs them — role
+    # creation fails closed in postgres-init/ if one is missing.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        load() { [ -z "$$(printenv "$$1")" ] && [ -s "$$2" ] && export "$$1=$$(cat "$$2")"; return 0; }
+        load POSTGRES_PASSWORD /run/secrets/postgres-superuser-password
+        load VARLATCH_MIGRATE_PASSWORD /run/secrets/varlatch-migrate-password
+        load VARLATCH_RUNTIME_PASSWORD /run/secrets/varlatch-runtime-password
+        load CONVEX_DB_PASSWORD /run/secrets/convex-db-password
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command: ["postgres"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:-}
+      VARLATCH_MIGRATE_PASSWORD: ${VARLATCH_MIGRATE_PASSWORD:-}
+      VARLATCH_RUNTIME_PASSWORD: ${VARLATCH_RUNTIME_PASSWORD:-}
+      CONVEX_DB_PASSWORD: ${CONVEX_DB_PASSWORD:-}
+    secrets:
+      - postgres-superuser-password
+      - varlatch-migrate-password
+      - varlatch-runtime-password
+      - convex-db-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Over TCP on purpose: during first-boot initdb the entrypoint runs a
+      # temporary socket-only server, and a socket probe would report ready
+      # before postgres-init/ has created the roles and databases.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Stateful upgrades use `varlatch upgrade`: encrypted full-installation
+  # capture + verification precede applying this deployment contract.
+  # Do not enable unattended schema-changing deployments in Coolify.
+  # One-shot elevated migration job. Holds the migrate credentials and no KEK
+  # (ADR-0019 §23: no container receives every installation secret).
+  varlatch-migrate:
+    build:
+      context: ../..
+      dockerfile: services/varlatchd/Dockerfile
+    volumes:
+      - varlatch-state:/var/lib/varlatch
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      VARLATCH_DATABASE_URL: postgres://varlatchd_migrate:${VARLATCH_MIGRATE_PASSWORD:-}@postgres:5432/varlatch
+      VARLATCH_DATABASE_PASSWORD_FILE: /run/secrets/varlatch-migrate-password
+    secrets:
+      - varlatch-migrate-password
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # The Secret Plane daemon: runtime DB role + the root KEK, nothing more.
+  varlatchd:
+    build:
+      context: ../..
+      dockerfile: services/varlatchd/Dockerfile
+    restart: unless-stopped
+    environment:
+      VARLATCH_STATE_DIR: /var/lib/varlatch
+      VARLATCH_SYNC: ${VARLATCH_SYNC:-on}
+      VARLATCH_SYNC_ADAPTERS: ${VARLATCH_SYNC_ADAPTERS:-}
+      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD:-}@postgres:5432/varlatch
+      VARLATCH_DATABASE_PASSWORD_FILE: /run/secrets/varlatch-runtime-password
+      VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
+      VARLATCH_PORT: "8686"
+      VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:-}
+      VARLATCH_CONVEX_URL: ${VARLATCH_CONVEX_URL:-http://convex-backend:3210}
+    volumes:
+      - varlatch-state:/var/lib/varlatch
+      - ./backups:/backups
+    secrets:
+      - varlatch-kek
+      - varlatch-runtime-password
+    networks:
+      default:
+        # Legacy compatibility (ADR-0035 Q10): archives taken on the Tailscale
+        # topology carry Convex trust configuration naming
+        # http://tailscale:8686. Restored onto this topology, that name must
+        # still reach varlatchd, or Mirror reconciliation fails with 401.
+        aliases:
+          - tailscale
+    ports:
+      # Loopback by default: behind a reverse proxy (Coolify/Traefik) raw
+      # container ports must not be published on public interfaces. Set
+      # BIND_ADDRESS=0.0.0.0 for direct LAN access.
+      - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCHD_PORT:-8686}:8686"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      varlatch-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8686/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  # The dashboard (ADR-0005): static app + same-origin proxy to varlatchd's
+  # ordinary listener. Reverse-proxy this behind TLS as app.<your-domain>.
+  varlatch-web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Browser-facing Convex origin — runtime config (varlatch-config.js),
+      # not a build arg, so digest-pinned release images work unmodified.
+      CONVEX_URL: ${CONVEX_CLOUD_ORIGIN:-}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCH_WEB_PORT:-8787}:80"
+    # Static probe, never /readyz through the proxy: web must stay routable
+    # (and show varlatchd's own errors) while varlatchd is gated or restarting.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/varlatch-config.js"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      varlatchd:
+        condition: service_healthy
+
+  # Application Plane backend (ADR-0005): non-authoritative; its admin key is
+  # Infrastructure Operator authority and never enters runtime varlatchd.
+  convex-backend:
+    # Digest-pinned (ADR-0019 §26): this is the tested Convex backend for the
+    # release set. Update deliberately alongside an e2e run, never `latest`.
+    image: ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
+    restart: unless-stopped
+    volumes:
+      # Module bundles and file storage live on disk even with POSTGRES_URL
+      # set; without this volume every container recreation orphans the
+      # modules the database references and all functions 500.
+      - convex-data:/convex/data
+      - varlatch-state:/var/lib/varlatch
+      - ./convex-supervisor.cjs:/convex/varlatch-supervisor.cjs:ro
+    entrypoint: ["node", "/convex/varlatch-supervisor.cjs"]
+    secrets:
+      - convex-instance-secret
+      - convex-db-password
+    environment:
+      INSTANCE_NAME: convex-self-hosted
+      # Or the files below: the supervisor applies them (#28).
+      INSTANCE_SECRET: ${CONVEX_INSTANCE_SECRET:-}
+      POSTGRES_URL: postgres://convex:${CONVEX_DB_PASSWORD:-}@postgres:5432
+      DO_NOT_REQUIRE_SSL: "1"
+      CONVEX_CLOUD_ORIGIN: ${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      CONVEX_SITE_ORIGIN: ${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
+      DISABLE_BEACON: "1"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CONVEX_PORT:-3210}:3210"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3210/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # One-shot Application Plane reconciliation (ADR-0035 D3/D4): deploys the
+  # functions and applies Convex's trust configuration only where they differ
+  # from this release. Deployment authority lives only here (ADR-0019 §6):
+  # it derives the admin key from the instance secret inside the job, or uses
+  # CONVEX_ADMIN_KEY where an existing installation still sets one.
+  # Runs on first boot, upgrade, and repair: docker compose run --rm convex-deploy
+  convex-deploy:
+    build:
+      context: ../..
+      dockerfile: infra/compose/convex-deploy.Dockerfile
+    profiles: [deploy]
+    environment:
+      CONVEX_SELF_HOSTED_URL: http://convex-backend:3210
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_ADMIN_KEY:-}
+      CONVEX_INSTANCE_SECRET: ${CONVEX_INSTANCE_SECRET:-}
+      CONVEX_INSTANCE_SECRET_FILE: /run/secrets/convex-instance-secret
+      VARLATCH_ISSUER: ${VARLATCH_PUBLIC_URL:-http://varlatchd:8686}
+      VARLATCH_JWKS_URL: ${VARLATCH_JWKS_URL:-http://varlatchd:8686/.well-known/jwks.json}
+    secrets:
+      - convex-instance-secret
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+
+secrets:
+  # Generate with: openssl rand -hex 32 > secrets/varlatch-kek
+  # Back it up OFF this host and verify with: varlatchd admin kek verify
+  # Recovery also requires the archive BEK and compatible release/configuration.
+  #
+  # secrets/ is gitignored on purpose, so deployments that clone this repo
+  # (e.g. Coolify) must point VARLATCH_KEK_HOST_PATH at a persistent host
+  # file OUTSIDE the checkout — never a Coolify env var (ADR-0011 §1).
+  varlatch-kek:
+    file: ${VARLATCH_KEK_HOST_PATH:-./secrets/varlatch-kek}
+
+  # Per-service secret files (#28). Each is mounted only into the services
+  # that need it, so a secret can stay out of every other container — which
+  # environment variables cannot do on Coolify (it passes every variable to
+  # every service). Point a *_HOST_PATH at a host file readable by the
+  # container user; leave it unset to keep using the variable of the same
+  # name: /dev/null mounts as an empty file, and an empty file is ignored.
+  postgres-superuser-password:
+    file: ${POSTGRES_SUPERUSER_PASSWORD_HOST_PATH:-/dev/null}
+  varlatch-migrate-password:
+    file: ${VARLATCH_MIGRATE_PASSWORD_HOST_PATH:-/dev/null}
+  varlatch-runtime-password:
+    file: ${VARLATCH_RUNTIME_PASSWORD_HOST_PATH:-/dev/null}
+  convex-db-password:
+    file: ${CONVEX_DB_PASSWORD_HOST_PATH:-/dev/null}
+  convex-instance-secret:
+    file: ${CONVEX_INSTANCE_SECRET_HOST_PATH:-/dev/null}
+
+volumes:
+  postgres-data:
+  convex-data:
+  varlatch-state:

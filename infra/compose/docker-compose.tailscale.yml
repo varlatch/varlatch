@@ -1,0 +1,103 @@
+# Optional Tailscale integration overlay (ADR-0014/0019).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
+#
+# Topology: the tailscale sidecar owns the network namespace; varlatchd joins
+# it (network_mode) so connections to the tailnet listener arrive with their
+# TRUE tailnet socket peer address, and WhoIs runs over the shared LocalAPI
+# socket. This is what makes Tailnet Context sound — never reverse-proxy the
+# tailnet listener or forward identity headers into it.
+#
+# Requires in .env:
+#   TS_AUTHKEY               a tailnet auth key (tag the node, e.g. tag:varlatch),
+#                            or TS_AUTHKEY_HOST_PATH pointing at a file with it
+#   VARLATCH_TAILNET_NAME    your tailnet, e.g. example.ts.net
+#
+# The ordinary listener (8686) stays reachable through the host port mapping
+# on the sidecar; the tailnet listener (8687) is reachable only via Tailscale.
+#
+# Requires Docker Compose 2.24+ (`!reset`). This file is also an input of the
+# generated Coolify file (infra/coolify/generate-compose.mjs): edit here, then
+# run `pnpm compose:generate`.
+
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.102.3
+    restart: unless-stopped
+    # The machine name; with the tailnet ingress the dashboard is at
+    # https://<this name>.<tailnet>.ts.net.
+    hostname: ${VARLATCH_TAILNET_MACHINE:-varlatch}
+    # The auth key arrives as TS_AUTHKEY or as the tailscale-authkey secret
+    # file (#28); a set variable wins. Only an unenrolled node needs it.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        load() { [ -z "$$(printenv "$$1")" ] && [ -s "$$2" ] && export "$$1=$$(cat "$$2")"; return 0; }
+        load TS_AUTHKEY /run/secrets/tailscale-authkey
+        exec /usr/local/bin/containerboot
+    secrets:
+      - tailscale-authkey
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      # /healthz is 200 only once the node holds a tailnet address.
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-socket:/var/run/tailscale
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCHD_PORT:-8686}:8686"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    # varlatchd gives up its own network identity (network_mode below), so the
+    # sidecar answers to its name: the dashboard's same-origin proxy
+    # (proxy_pass http://varlatchd:8686) and Convex's JWKS URL keep resolving.
+    networks:
+      default:
+        aliases:
+          - varlatchd
+
+  varlatchd:
+    network_mode: service:tailscale
+    # The sidecar owns the network identity here (and the name `tailscale`);
+    # drop the canonical file's legacy alias, which network_mode excludes.
+    networks: !reset {}
+    # A container sharing another's network namespace cannot publish ports
+    # (Docker refuses the combination); the sidecar publishes 8686 instead.
+    # `!reset` removes the base mapping — a plain `[]` would merge with it.
+    ports: !reset []
+    environment:
+      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD}@postgres:5432/varlatch
+      VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
+      VARLATCH_PORT: "8686"
+      VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
+      VARLATCH_TAILSCALE_TAILNET: ${VARLATCH_TAILNET_NAME:?set in .env}
+      VARLATCH_TAILNET_PORT: "8687"
+    volumes:
+      - tailscale-socket:/var/run/tailscale:ro
+    depends_on:
+      # Deliberately not service_healthy: a tailnet auth problem must not
+      # keep the ordinary listener down. The sidecar healthcheck is for
+      # visibility (docker ps / Coolify), not ordering.
+      # restart: varlatchd lives in the sidecar's network namespace, which a
+      # sidecar restart replaces — restart varlatchd with it. Restarts by the
+      # container runtime (a crash) are caught by varlatchd's own watchdog.
+      tailscale:
+        condition: service_started
+        restart: true
+
+secrets:
+  tailscale-authkey:
+    file: ${TS_AUTHKEY_HOST_PATH:-/dev/null}
+
+volumes:
+  tailscale-state:
+  tailscale-socket:

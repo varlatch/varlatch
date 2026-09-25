@@ -1,0 +1,24 @@
+# Coolify-specific deltas, applied on top of infra/compose/docker-compose.yml
+# and infra/compose/docker-compose.tailscale.yml by
+# infra/coolify/generate-compose.mjs to produce
+# infra/compose/docker-compose.coolify-tailscale.yml. Coolify deploys exactly
+# one Compose file (no -f overlay chaining), which is why that file exists.
+# Edit this file, never the generated one, then run `pnpm compose:generate`.
+
+services:
+  varlatch-web:
+    # Explicit default-network membership: Coolify swaps the implicit default
+    # network for its own on services without a networks key, which separates
+    # web from the sidecar's `varlatchd` alias (nginx: host not found).
+    networks:
+      - default
+
+  convex-deploy:
+    profiles: !reset []
+    # Deliberate divergence from the canonical file: no `profiles: [deploy]`,
+    # so every Coolify redeploy rebuilds and runs this one-shot and the
+    # Application Plane functions can never go stale against the web bundle
+    # (the v0.6.0 `mirror:listMine` incident). Nothing depends_on it: a failed
+    # function push must not take the already-running stack down — it
+    # surfaces in the deploy log instead.
+    restart: "no"

@@ -1,0 +1,241 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.6
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      VARLATCH_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate protocol types from OpenAPI
+        run: pnpm --filter @varlatch/protocol generate
+
+      - name: Verify generated types are committed and current
+        run: git diff --exit-code packages/protocol/src/generated
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level moderate
+
+      # docker-compose.coolify-tailscale.yml is generated (ADR-0035 design
+      # note); a hand edit or a stale regeneration must fail here, and Docker
+      # Compose must read it exactly as it reads the -f overlay chain.
+      - name: Coolify Compose file is generated and current
+        run: pnpm compose:check
+
+      # THIRD-PARTY-NOTICES.md ships in every image and release (ADR-0037
+      # D1); a dependency or image change without regeneration fails here.
+      - name: Third-party notices are generated and current
+        run: pnpm notices:check
+
+      # ADR-0021's split: SPDX headers, package.json fields, LICENSE files.
+      - name: Every file and package matches the license map
+        run: pnpm license:check
+
+      - name: Build
+        run: pnpm build
+
+      # The release ships apps/cli/dist/varlatch.cjs as the operator CLI; a
+      # dependency that stops bundling cleanly must fail here, not at tag time.
+      - name: CLI bundle smoke
+        run: |
+          node apps/cli/dist/varlatch.cjs --version
+          grep -q "varlatch admin backup" <<< "$(node apps/cli/dist/varlatch.cjs)"
+          # Loads the backup + S3 modules; fails on argument validation.
+          set +e; output=$(node apps/cli/dist/varlatch.cjs admin backup verify 2>&1); set -e
+          grep -q -- "--bek-file" <<< "$output"
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+  # Every commit this workflow sees is scanned, not just the diff: a secret
+  # in history is published with the repository (ADR-0037 D6). Values are
+  # redacted from the log.
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan the full history for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git /repo --log-opts=--all --redact=100 --no-banner
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build varlatchd image
+        run: docker build -f services/varlatchd/Dockerfile -t varlatchd:ci .
+      - name: Image smoke — entrypoint help paths
+        run: |
+          set +e
+          output=$(docker run --rm varlatchd:ci unknown-command 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q "Commands:" <<< "$output"
+          docker run --rm --entrypoint node varlatchd:ci -e "console.log('node ok')"
+      - name: Image smoke — shipped operator CLI (host backups extract it)
+        run: |
+          docker run --rm --entrypoint node varlatchd:ci /opt/varlatch/varlatch.cjs --version
+          for f in varlatch.cjs host-backup/run.sh host-backup/verify-remote.sh; do
+            test "$(docker run --rm --entrypoint stat varlatchd:ci -c '%U %a' /opt/varlatch/$f)" = "root 644"
+          done
+      - name: Host backup scripts lint
+        run: shellcheck -x infra/host-backup/*.sh
+
+  # Release images are built for linux/amd64 and linux/arm64 (ADR-0037 D5).
+  # A change that breaks either architecture fails here, not at tag time; the
+  # arm64 smoke runs under emulation (the release runs a full suite on arm64
+  # hardware).
+  multi-arch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build every image for both architectures
+        run: |
+          for dockerfile in services/varlatchd/Dockerfile apps/web/Dockerfile infra/compose/convex-deploy.Dockerfile; do
+            docker buildx build --platform linux/amd64,linux/arm64 -f "$dockerfile" .
+          done
+      - name: arm64 smoke
+        run: |
+          docker buildx build --platform linux/arm64 --load -t varlatchd:arm64 -f services/varlatchd/Dockerfile .
+          test "$(docker image inspect varlatchd:arm64 --format '{{.Architecture}}')" = arm64
+          set +e
+          output=$(docker run --rm --platform linux/arm64 varlatchd:arm64 unknown-command 2>&1)
+          status=$?
+          set -e
+          test "$status" -eq 1
+          grep -q "Commands:" <<< "$output"
+          docker run --rm --platform linux/arm64 --entrypoint node varlatchd:arm64 /opt/varlatch/varlatch.cjs --version
+
+  # The contributor setup (ADR-0037 D7) is only documented if it works:
+  # `pnpm dev:up` from a clean checkout, sign-in, CLI, restart, and reset.
+  contributor-setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - name: Install Chromium
+        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+      - name: Contributor setup end to end
+        run: ./scripts/test-dev-setup.sh
+
+  # Clean-room browser E2E: fresh canonical stack, passkey bootstrap with a
+  # virtual authenticator, dashboard, and CLI browser-handoff login.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - name: Install Chromium
+        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+      - name: Run clean-room E2E suites
+        run: ./scripts/ci-e2e.sh
+
+  backup-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @varlatch/protocol generate && pnpm build
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build candidate release images
+        run: |
+          node scripts/test-backup-compose.mjs
+          docker build -f services/varlatchd/Dockerfile -t varlatch-backup-test:local .
+          docker build -f apps/web/Dockerfile -t varlatch-backup-web-test:local .
+          docker build -f infra/compose/convex-deploy.Dockerfile -t varlatch-backup-convex-deploy-test:local .
+      - name: Backup and interrupted-restore recovery
+        run: node scripts/test-backup-e2e.mjs
+      - name: S3 single and multipart transfers
+        run: node scripts/test-backup-s3.mjs
+      - name: Published v0.7.0 upgrade (D11 gate, stale supervisor) and pre-upgrade archive recovery
+        run: node scripts/test-backup-upgrade.mjs
+      # ADR-0035: an installation shaped like a reference production one (Coolify/
+      # Tailscale file, Coolify's every-variable environment, admin key in the
+      # environment, legacy JWKS URL) upgraded without adoption, then its
+      # pre-upgrade archive restored on fresh hosts.
+      # ...and then adopted the Coolify way (D13): adopt's printed env changes
+      # applied and redeployed until it reports the installation adopted.
+      - name: Prod-shaped v0.9.0 upgrade, adoption and recovery
+        run: node scripts/test-prod-shape.mjs
+      # ADR-0035 D13: a hand-configured plain Compose installation adopted.
+      - name: varlatch adopt end to end
+        run: node scripts/test-adopt.mjs
+      # ADR-0014 topology: a sidecar restart must never strand varlatchd.
+      - name: Tailscale sidecar restarts
+        run: node scripts/test-sidecar-restart.mjs
+      # ADR-0035 D6: public ingress — setup, Caddy and a real ACME exchange (Pebble).
+      - name: Public ingress with an ACME certificate
+        run: node scripts/test-ingress-public.mjs
+      - name: Install Chromium for the setup enrollment
+        run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
+      # ADR-0035 D7: one command from an empty directory, resumable.
+      - name: varlatch setup end to end
+        run: node scripts/test-setup.mjs

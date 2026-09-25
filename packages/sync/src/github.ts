@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: Apache-2.0
+import { sealedBox } from "./sealedbox.js";
+import {
+  AdapterError,
+  DEFAULT_TIMEOUT_MS,
+  type AdapterRequest,
+  type NameOutcome,
+  type PlatformAdapter,
+  type SyncItem,
+} from "./types.js";
+
+/**
+ * GitHub Actions secrets adapter. Base identity is the repository owner;
+ * the destination is one repository, optionally narrowed to a repository
+ * environment (the platform-side namespace). Values are encrypted client-side
+ * with the destination's public key (libsodium sealed box) — GitHub never
+ * returns secret values, so this platform cannot verify-and-fix; the repair
+ * pass force-writes instead.
+ */
+
+const API = "https://api.github.com";
+const OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37})$/;
+const REPO_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
+/** GitHub stores secret names uppercased; GITHUB_ is reserved. */
+const NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+interface PublicKey {
+  key_id: string;
+  key: string;
+}
+
+function headers(credential: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${credential}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "varlatch-sync",
+    "Content-Type": "application/json",
+  };
+}
+
+function secretsBase(req: AdapterRequest): string {
+  const { repo, environment } = req.destination;
+  const repoPath = `${API}/repos/${req.baseIdentity}/${repo}`;
+  return environment
+    ? `${repoPath}/environments/${encodeURIComponent(environment)}/secrets`
+    : `${repoPath}/actions/secrets`;
+}
+
+async function request(
+  req: AdapterRequest,
+  method: string,
+  url: string,
+  body?: unknown,
+): Promise<Response> {
+  const fetchImpl = req.fetchImpl ?? fetch;
+  try {
+    return await fetchImpl(url, {
+      method,
+      headers: headers(req.credential),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      redirect: "error",
+      signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new AdapterError(err instanceof Error ? err.name : "fetch failed");
+  }
+}
+
+export const githubActionsAdapter: PlatformAdapter = {
+  platform: "github-actions",
+  credentialScopeUnit: "destination",
+  supportsReadBack: false,
+  supportsRedeploy: false,
+
+  canonicalizeBaseIdentity(raw: string): string {
+    const owner = raw.trim().replace(/^@/, "");
+    if (!OWNER_PATTERN.test(owner)) {
+      throw new AdapterError("Invalid GitHub owner (user or organization login)", false);
+    }
+    return owner.toLowerCase();
+  },
+
+  canonicalizeDestination(raw: Record<string, unknown>) {
+    const repo = typeof raw.repo === "string" ? raw.repo.trim() : "";
+    if (!REPO_PATTERN.test(repo)) {
+      throw new AdapterError("Invalid GitHub repository name", false);
+    }
+    const environment =
+      typeof raw.environment === "string" && raw.environment.trim() !== ""
+        ? raw.environment.trim()
+        : undefined;
+    if (environment !== undefined && environment.length > 255) {
+      throw new AdapterError("Invalid GitHub environment name", false);
+    }
+    const destination = {
+      repo: repo.toLowerCase(),
+      ...(environment !== undefined ? { environment } : {}),
+    };
+    return {
+      destination,
+      key: environment !== undefined ? `${destination.repo}#${environment}` : destination.repo,
+    };
+  },
+
+  validateName(name: string): string | null {
+    const canonical = name.toUpperCase();
+    if (!NAME_PATTERN.test(canonical)) {
+      return "GitHub secret names allow only letters, digits, and _, not starting with a digit";
+    }
+    if (canonical.startsWith("GITHUB_")) return "GITHUB_-prefixed secret names are reserved";
+    if (canonical.length > 200) return "GitHub secret names are limited to 200 characters";
+    return null;
+  },
+
+  canonicalizeName(name: string): string {
+    return name.toUpperCase();
+  },
+
+  async writeValues(req: AdapterRequest, items: SyncItem[]): Promise<NameOutcome[]> {
+    const base = secretsBase(req);
+    const keyRes = await request(req, "GET", `${base}/public-key`);
+    if (!keyRes.ok) {
+      throw new AdapterError(
+        `GitHub public key fetch failed (${keyRes.status})`,
+        keyRes.status !== 401 && keyRes.status !== 403 && keyRes.status !== 404,
+      );
+    }
+    const publicKey = (await keyRes.json()) as PublicKey;
+    const recipient = new Uint8Array(Buffer.from(publicKey.key, "base64"));
+
+    const outcomes: NameOutcome[] = [];
+    for (const item of items) {
+      if (req.shouldAbort && (await req.shouldAbort())) break;
+      const sealed = sealedBox(new Uint8Array(Buffer.from(item.value, "utf8")), recipient);
+      const res = await request(req, "PUT", `${base}/${encodeURIComponent(item.name)}`, {
+        encrypted_value: Buffer.from(sealed).toString("base64"),
+        key_id: publicKey.key_id,
+      });
+      outcomes.push(
+        res.ok ? { name: item.name, ok: true } : { name: item.name, ok: false, error: `HTTP ${res.status}` },
+      );
+    }
+    return outcomes;
+  },
+
+  async deleteNames(req: AdapterRequest, names: string[]): Promise<NameOutcome[]> {
+    const base = secretsBase(req);
+    const outcomes: NameOutcome[] = [];
+    for (const name of names) {
+      if (req.shouldAbort && (await req.shouldAbort())) break;
+      const res = await request(req, "DELETE", `${base}/${encodeURIComponent(name)}`);
+      // A 404 is converged: the name is already absent.
+      outcomes.push(
+        res.ok || res.status === 404
+          ? { name, ok: true }
+          : { name, ok: false, error: `HTTP ${res.status}` },
+      );
+    }
+    return outcomes;
+  },
+};

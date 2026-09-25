@@ -1,0 +1,33 @@
+{
+  "name": "@varlatch/sync",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Platform Adapters for Sync Targets (ADR-0031): the closed allowlist of platforms varlatchd and the CLI can push Values to",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "blakejs": "1.2.1",
+    "tweetnacl": "1.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

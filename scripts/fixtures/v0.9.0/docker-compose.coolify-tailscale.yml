@@ -1,0 +1,221 @@
+# Coolify deployment WITH the Tailscale sidecar (ADR-0014/0019): the canonical
+# docker-compose.yml merged with docker-compose.tailscale.yml into one file,
+# because Coolify deploys exactly one compose file (no overlay -f chaining).
+# Keep in sync with both parents when they change.
+#
+# Topology (ADR-0014): the tailscale sidecar owns the network namespace and
+# varlatchd joins it, so connections to the tailnet listener (8687) arrive
+# with their TRUE tailnet socket peer address and WhoIs runs over the shared
+# LocalAPI socket. The sidecar carries the network alias `varlatchd` so the
+# dashboard's same-origin nginx proxy (proxy_pass http://varlatchd:8686)
+# keeps resolving after varlatchd gives up its own network identity.
+#
+# Requires in .env (Coolify env settings):
+#   TS_AUTHKEY               tailnet auth key for the sidecar node
+#   VARLATCH_TAILNET_NAME    the tailnet, e.g. example.ts.net
+
+name: varlatch
+
+services:
+  postgres:
+    image: postgres:17.6
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set in .env}
+      VARLATCH_MIGRATE_PASSWORD: ${VARLATCH_MIGRATE_PASSWORD:?set in .env}
+      VARLATCH_RUNTIME_PASSWORD: ${VARLATCH_RUNTIME_PASSWORD:?set in .env}
+      CONVEX_DB_PASSWORD: ${CONVEX_DB_PASSWORD:?set in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Over TCP on purpose: during first-boot initdb the entrypoint runs a
+      # temporary socket-only server, and a socket probe would report ready
+      # before postgres-init/ has created the roles and databases.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Disable unattended upgrades; create and verify an encrypted installation
+  # archive before deploying schema changes (docs/operations/backup.md).
+  varlatch-migrate:
+    build:
+      context: ../..
+      dockerfile: services/varlatchd/Dockerfile
+    volumes:
+      - varlatch-state:/var/lib/varlatch
+    command: ["migrate"]
+    restart: "no"
+    environment:
+      VARLATCH_DATABASE_URL: postgres://varlatchd_migrate:${VARLATCH_MIGRATE_PASSWORD}@postgres:5432/varlatch
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tailscale:
+    image: tailscale/tailscale:v1.102.3
+    restart: unless-stopped
+    hostname: varlatch
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set in .env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SOCKET: /var/run/tailscale/tailscaled.sock
+      # /healthz is 200 only once the node holds a tailnet address.
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - tailscale-socket:/var/run/tailscale
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCHD_PORT:-8686}:8686"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9002/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    networks:
+      default:
+        aliases:
+          - varlatchd
+
+  varlatchd:
+    build:
+      context: ../..
+      dockerfile: services/varlatchd/Dockerfile
+    restart: unless-stopped
+    network_mode: service:tailscale
+    environment:
+      VARLATCH_DATABASE_URL: postgres://varlatchd_runtime:${VARLATCH_RUNTIME_PASSWORD}@postgres:5432/varlatch
+      VARLATCH_STATE_DIR: /var/lib/varlatch
+      VARLATCH_SYNC: ${VARLATCH_SYNC:-on}
+      VARLATCH_SYNC_ADAPTERS: ${VARLATCH_SYNC_ADAPTERS:-}
+      VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
+      VARLATCH_PORT: "8686"
+      VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:-}
+      VARLATCH_CONVEX_URL: ${VARLATCH_CONVEX_URL:-http://convex-backend:3210}
+      VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
+      VARLATCH_TAILSCALE_TAILNET: ${VARLATCH_TAILNET_NAME:?set in .env}
+      VARLATCH_TAILNET_PORT: "8687"
+    secrets:
+      - varlatch-kek
+    volumes:
+      - tailscale-socket:/var/run/tailscale:ro
+      - varlatch-state:/var/lib/varlatch
+      - ./backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+      varlatch-migrate:
+        condition: service_completed_successfully
+      # Deliberately not service_healthy: a tailnet auth problem must not
+      # keep the ordinary listener down. The sidecar healthcheck is for
+      # visibility (docker ps / Coolify), not ordering.
+      tailscale:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8686/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  varlatch-web:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    environment:
+      # Browser-facing Convex origin — runtime config (varlatch-config.js),
+      # not a build arg, so digest-pinned release images work unmodified.
+      CONVEX_URL: ${CONVEX_CLOUD_ORIGIN:-}
+    # Explicit default-network membership: Coolify swaps the implicit default
+    # network for its own on services without a networks key, which separates
+    # web from the sidecar's `varlatchd` alias (nginx: host not found).
+    networks:
+      - default
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCH_WEB_PORT:-8787}:80"
+    # Static probe, never /readyz through the proxy: web must stay routable
+    # (and show varlatchd's own errors) while varlatchd is gated or restarting.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/varlatch-config.js"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      varlatchd:
+        condition: service_healthy
+
+  convex-backend:
+    # Digest-pinned (ADR-0019 §26) — keep in sync with docker-compose.yml.
+    image: ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
+    restart: unless-stopped
+    volumes:
+      # Module bundles and file storage live on disk even with POSTGRES_URL
+      # set; without this volume every container recreation orphans the
+      # modules the database references and all functions 500.
+      - convex-data:/convex/data
+      - varlatch-state:/var/lib/varlatch
+      - ./convex-supervisor.cjs:/convex/varlatch-supervisor.cjs:ro
+    entrypoint: ["node", "/convex/varlatch-supervisor.cjs"]
+    environment:
+      INSTANCE_NAME: convex-self-hosted
+      INSTANCE_SECRET: ${CONVEX_INSTANCE_SECRET:?set in .env}
+      POSTGRES_URL: postgres://convex:${CONVEX_DB_PASSWORD}@postgres:5432
+      DO_NOT_REQUIRE_SSL: "1"
+      CONVEX_CLOUD_ORIGIN: ${CONVEX_CLOUD_ORIGIN:-http://127.0.0.1:3210}
+      CONVEX_SITE_ORIGIN: ${CONVEX_SITE_ORIGIN:-http://127.0.0.1:3211}
+      DISABLE_BEACON: "1"
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CONVEX_PORT:-3210}:3210"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3210/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  convex-deploy:
+    build:
+      context: ../..
+      dockerfile: infra/compose/convex-deploy.Dockerfile
+    # Deliberate divergence from the parent compose file: no `profiles:
+    # [deploy]` here, so every Coolify redeploy rebuilds and runs this
+    # one-shot and the Application Plane functions can never go stale
+    # against the web bundle (the v0.6.0 `mirror:listMine` incident).
+    # Nothing depends_on it: a failed function push must not take the
+    # already-running stack down — it surfaces in the deploy log instead.
+    restart: "no"
+    environment:
+      CONVEX_SELF_HOSTED_URL: http://convex-backend:3210
+      CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_ADMIN_KEY:-}
+      VARLATCH_ISSUER: ${VARLATCH_PUBLIC_URL:-http://varlatchd:8686}
+      VARLATCH_JWKS_URL: ${VARLATCH_JWKS_URL:-http://varlatchd:8686/.well-known/jwks.json}
+    depends_on:
+      convex-backend:
+        condition: service_healthy
+
+secrets:
+  varlatch-kek:
+    file: ${VARLATCH_KEK_HOST_PATH:-./secrets/varlatch-kek}
+
+volumes:
+  postgres-data:
+  convex-data:
+  varlatch-state:
+  tailscale-state:
+  tailscale-socket:

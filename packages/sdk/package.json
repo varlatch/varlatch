@@ -1,0 +1,29 @@
+{
+  "name": "@varlatch/sdk",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Typed client for the Varlatch /v1 public API (ADR-0018): the same surface official and third-party clients use",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@varlatch/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

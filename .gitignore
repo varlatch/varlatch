@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+!.env.schema
+!.env.example
+.varlatch/
+# The contributor setup's state (scripts/dev.sh)
+.dev/
+coverage/
+.DS_Store
+
+# Installation backup outputs and operational secrets
+*.vltbak
+*.vltbak.*.partial
+infra/compose/backups/

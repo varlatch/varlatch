@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0d0f14" />
+    <meta name="application-name" content="Varlatch" />
+    <meta name="description" content="Self-host-first secrets and configuration." />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/brand/icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <title>Varlatch</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Runtime config, rewritten by the container entrypoint; must load
+         before the bundle so app.tsx sees it at module evaluation. -->
+    <script src="/varlatch-config.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

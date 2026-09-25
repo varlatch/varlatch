@@ -1,0 +1,21 @@
+{
+  "name": "@varlatch/application-plane",
+  "version": "0.9.0",
+  "private": true,
+  "description": "The Convex Application Plane (ADR-0005): non-authoritative mirrors and dashboard product state. Contains no security authority.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "convex": "1.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

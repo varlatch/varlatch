@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "version": "0.9.0",
+  "apiMajor": 1,
+  "migrationVersion": 19,
+  "supportedRestoreSources": [
+    {
+      "version": "0.7.0",
+      "migrationVersion": 16
+    },
+    {
+      "version": "0.7.0",
+      "migrationVersion": 18
+    },
+    {
+      "version": "0.8.0",
+      "migrationVersion": 18
+    },
+    {
+      "version": "0.8.0",
+      "migrationVersion": 19
+    }
+  ],
+  "generatedAt": "2026-09-23T16:14:49.312Z",
+  "supportedPostgresMajor": 17,
+  "images": {
+    "varlatchd": {
+      "tag": "ghcr.io/varlatch/varlatchd:0.9.0",
+      "digest": "ghcr.io/varlatch/varlatchd@sha256:b13b0520b84d1b7ad578e09d43ffb76fefb95523a339c71eeeaae328d1501cc4"
+    },
+    "varlatch-web": {
+      "tag": "ghcr.io/varlatch/varlatch-web:0.9.0",
+      "digest": "ghcr.io/varlatch/varlatch-web@sha256:b52f0415e9089614e1f4672da12e51839c8599ab522387d7a976163e99a7e262"
+    },
+    "convex-deploy": {
+      "tag": "ghcr.io/varlatch/varlatch-convex-deploy:0.9.0",
+      "digest": "ghcr.io/varlatch/varlatch-convex-deploy@sha256:5f130de5ff74af13a6ed0c4fc6e6549ea161314383e6a00b4c9e58a7b806c842"
+    },
+    "convex-backend": {
+      "tag": null,
+      "digest": "ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98"
+    },
+    "postgres": {
+      "tag": "docker.io/library/postgres:17.6",
+      "digest": "docker.io/library/postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929"
+    }
+  }
+}

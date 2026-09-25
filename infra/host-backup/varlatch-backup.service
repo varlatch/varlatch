@@ -1,0 +1,23 @@
+[Unit]
+Description=Varlatch installation backup (ADR-0033): capture, off-host delivery, verification
+Documentation=https://github.com/varlatch/varlatch/blob/main/docs/operations/backup.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+# Optional: point at a notify unit of your choice.
+# OnFailure=varlatch-backup-notify-failure.service
+
+[Service]
+Type=oneshot
+User=root
+# The whole run must succeed for the unit to succeed: a capture whose
+# destination push fails is a FAILED run, never a quiet local-only success.
+ExecStart=/usr/local/lib/varlatch-backup/run.sh
+# Capture window + upload can be slow on a large database.
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# Keys and credentials are read from /etc/varlatch-backup (root:root 0700).
+ProtectHome=read-only
+PrivateTmp=yes

@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: Apache-2.0
+import { z } from "zod";
+import {
+  CONFIG_ITEM_NAME_PATTERN,
+  CONTRACT_SCHEMA_VERSION,
+  ITEM_TYPES,
+  TIERS,
+  type ConfigurationContract,
+  type ContractItem,
+} from "./types.js";
+
+const environmentSelectorSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("environments"),
+    environmentIds: z.array(z.string().min(1)).min(1),
+  }),
+  z.strictObject({ kind: z.literal("tier"), tier: z.enum(TIERS) }),
+]);
+
+const requirednessSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("always") }),
+  z.strictObject({ kind: z.literal("never") }),
+  z.strictObject({
+    kind: z.literal("selector"),
+    selector: environmentSelectorSchema,
+  }),
+]);
+
+const contractItemSchema = z.strictObject({
+  name: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(
+      CONFIG_ITEM_NAME_PATTERN,
+      "Config Item names must match ^[A-Z][A-Z0-9_]*$",
+    ),
+  required: requirednessSchema,
+  sensitive: z.boolean(),
+  type: z.enum(ITEM_TYPES),
+  enumValues: z.array(z.string().min(1)).min(1).optional(),
+  defaultValue: z.string().optional(),
+  description: z.string().max(4096).optional(),
+  example: z.string().max(4096).optional(),
+  rotationGraceSeconds: z.number().int().min(1).max(2_592_000).optional(),
+});
+
+const contractSchema = z.strictObject({
+  schemaVersion: z.literal(CONTRACT_SCHEMA_VERSION),
+  items: z.array(contractItemSchema),
+});
+
+export class ContractValidationError extends Error {
+  readonly issues: string[];
+  constructor(issues: string[]) {
+    super(`Invalid Configuration Contract: ${issues.join("; ")}`);
+    this.name = "ContractValidationError";
+    this.issues = issues;
+  }
+}
+
+function codePointCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * Validate an untrusted input and produce the canonical Contract form:
+ * items sorted by name, enum values and selector environment IDs sorted and
+ * de-duplicated, optional fields omitted when absent. Idempotent.
+ *
+ * Throws {@link ContractValidationError} on structurally or semantically
+ * invalid input (unknown fields, duplicate names, enum constraint violations).
+ */
+export function normalizeContract(input: unknown): ConfigurationContract {
+  const parsed = contractSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ContractValidationError(
+      parsed.error.issues.map(
+        (i) => `${i.path.join(".") || "(root)"}: ${i.message}`,
+      ),
+    );
+  }
+
+  const issues: string[] = [];
+  const seen = new Set<string>();
+  for (const item of parsed.data.items) {
+    if (seen.has(item.name)) issues.push(`duplicate Config Item name ${item.name}`);
+    seen.add(item.name);
+    if (item.type === "enum" && !item.enumValues) {
+      issues.push(`${item.name}: enum type requires enumValues`);
+    }
+    if (item.type !== "enum" && item.enumValues) {
+      issues.push(`${item.name}: enumValues is only valid for enum type`);
+    }
+    if (
+      item.type === "enum" &&
+      item.enumValues &&
+      item.defaultValue !== undefined &&
+      !item.enumValues.includes(item.defaultValue)
+    ) {
+      issues.push(`${item.name}: defaultValue is not one of enumValues`);
+    }
+  }
+  if (issues.length > 0) throw new ContractValidationError(issues);
+
+  const items: ContractItem[] = parsed.data.items
+    .map((item) => {
+      const normalized: ContractItem = {
+        name: item.name,
+        required:
+          item.required.kind === "selector" &&
+          item.required.selector.kind === "environments"
+            ? {
+                kind: "selector",
+                selector: {
+                  kind: "environments",
+                  environmentIds: [...new Set(item.required.selector.environmentIds)].sort(
+                    codePointCompare,
+                  ),
+                },
+              }
+            : item.required,
+        sensitive: item.sensitive,
+        type: item.type,
+      };
+      if (item.enumValues) {
+        normalized.enumValues = [...new Set(item.enumValues)].sort(codePointCompare);
+      }
+      if (item.defaultValue !== undefined) normalized.defaultValue = item.defaultValue;
+      if (item.description !== undefined) normalized.description = item.description;
+      if (item.example !== undefined) normalized.example = item.example;
+      if (item.rotationGraceSeconds !== undefined) {
+        normalized.rotationGraceSeconds = item.rotationGraceSeconds;
+      }
+      return normalized;
+    })
+    .sort((a, b) => codePointCompare(a.name, b.name));
+
+  return { schemaVersion: CONTRACT_SCHEMA_VERSION, items };
+}

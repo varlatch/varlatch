@@ -1,0 +1,32 @@
+{
+  "name": "@varlatch/cli",
+  "version": "0.9.0",
+  "private": true,
+  "description": "The varlatch CLI (ADR-0017/0020): login, context, run, values, contracts, validation, audit",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "varlatch": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && pnpm run bundle",
+    "bundle": "esbuild dist/main.js --bundle --platform=node --target=node22 --format=cjs --outfile=dist/varlatch.cjs '--banner:js=/*! Varlatch CLI. Copyright 2026 Robotsson. SPDX-License-Identifier: Apache-2.0. Bundled third-party licenses: THIRD-PARTY-NOTICES.md */'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@varlatch/backup": "workspace:*",
+    "@varlatch/context": "workspace:*",
+    "@varlatch/protocol": "workspace:*",
+    "@varlatch/sdk": "workspace:*",
+    "@varlatch/sync": "workspace:*",
+    "@varlatch/varlock-plugin": "workspace:*",
+    "tar": "^7.5.22"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

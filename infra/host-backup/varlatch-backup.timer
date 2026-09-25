@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Varlatch installation backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=15m
+# Run after boot if the scheduled time was missed (host was down overnight).
+Persistent=true
+
+[Install]
+WantedBy=timers.target

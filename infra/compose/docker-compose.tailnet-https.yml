@@ -1,0 +1,21 @@
+# Tailnet ingress (ADR-0035 D6; design note Q6, option B): the Tailscale
+# sidecar terminates HTTPS for https://<machine>.<tailnet>.ts.net and forwards
+# to the dashboard. Use together with docker-compose.tailscale.yml:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.tailscale.yml:docker-compose.tailnet-https.yml
+#
+# Prerequisites in the Tailscale admin console: MagicDNS and HTTPS
+# certificates enabled. The certificate covers only the machine's full name
+# and is published in Certificate Transparency logs. Funnel stays off: only
+# tailnet members can reach it.
+#
+# This path reaches varlatchd's ORDINARY listener through the dashboard: it
+# never establishes Tailnet Context (ADR-0014). Tailnet-constrained secrets
+# still require the tailnet listener.
+
+services:
+  tailscale:
+    environment:
+      TS_SERVE_CONFIG: /serve/serve.json
+    volumes:
+      - ./tailscale-serve.json:/serve/serve.json:ro

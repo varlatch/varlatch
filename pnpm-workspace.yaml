@@ -1,0 +1,14 @@
+packages:
+  - "packages/*"
+  - "services/*"
+  - "apps/*"
+  - "convex"
+allowBuilds:
+  '@tailwindcss/oxide': true
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@types/node@26.5.0'
+
+overrides:
+  # Patch the OpenAPI generator's transitive YAML parser.
+  js-yaml@>=4.0.0 <4.3.2: 4.3.2

@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { ConfigError, loadConfig, withPasswordFile } from "../src/config.js";
+
+const base = { VARLATCH_DATABASE_URL: "postgres://x/varlatch" };
+
+describe("loadConfig", () => {
+  it("requires a KEK source", () => {
+    expect(() => loadConfig({ ...base })).toThrow(ConfigError);
+  });
+
+  it("loads a hex KEK from a file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "varlatch-test-"));
+    const path = join(dir, "kek");
+    writeFileSync(path, "a".repeat(64) + "\n");
+    const cfg = loadConfig({ ...base, VARLATCH_KEK_FILE: path });
+    const kek = cfg.loadRootKek();
+    expect(kek.length).toBe(32);
+  });
+
+  it("loads a base64 KEK from the environment fallback", () => {
+    const cfg = loadConfig({
+      ...base,
+      VARLATCH_KEK: Buffer.alloc(32, 7).toString("base64"),
+    });
+    expect(cfg.loadRootKek().length).toBe(32);
+  });
+
+  it("rejects wrong-length key material", () => {
+    const cfg = loadConfig({ ...base, VARLATCH_KEK: Buffer.alloc(16).toString("base64") });
+    expect(() => cfg.loadRootKek()).toThrow(ConfigError);
+  });
+
+  it("rejects a missing KEK file at load time, not at parse time", () => {
+    const cfg = loadConfig({ ...base, VARLATCH_KEK_FILE: "/nonexistent/kek" });
+    expect(() => cfg.loadRootKek()).toThrow(ConfigError);
+  });
+
+  it("defaults the port and validates ranges", () => {
+    const cfg = loadConfig({ ...base, VARLATCH_KEK: Buffer.alloc(32).toString("base64") });
+    expect(cfg.port).toBe(8686);
+    expect(() =>
+      loadConfig({ ...base, VARLATCH_KEK: "x", VARLATCH_PORT: "70000" }),
+    ).toThrow(ConfigError);
+  });
+});
+
+describe("database password file (#28)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-dbpw-"));
+  const file = (name: string, content: string) => { const p = join(dir, name); writeFileSync(p, content); return p; };
+  const bare = "postgres://varlatchd_runtime:@postgres:5432/varlatch";
+  it("fills a password-less URL from a non-empty file, trailing newline stripped", () => {
+    expect(withPasswordFile(bare, file("pw", "s3cret\n"))).toBe("postgres://varlatchd_runtime:s3cret@postgres:5432/varlatch");
+  });
+  it("lets a password already in the URL win (environment-based installations)", () => {
+    const url = "postgres://varlatchd_runtime:from-env@postgres:5432/varlatch";
+    expect(withPasswordFile(url, file("pw2", "from-file"))).toBe(url);
+  });
+  it("ignores unset, missing, and empty files (the /dev/null default)", () => {
+    expect(withPasswordFile(bare, undefined)).toBe(bare);
+    expect(withPasswordFile(bare, join(dir, "missing"))).toBe(bare);
+    expect(withPasswordFile(bare, file("empty", ""))).toBe(bare);
+    expect(withPasswordFile(bare, "/dev/null")).toBe(bare);
+  });
+  it("URL-encodes the password", () => {
+    expect(withPasswordFile(bare, file("pw3", "a@b:c/d"))).toBe("postgres://varlatchd_runtime:a%40b%3Ac%2Fd@postgres:5432/varlatch");
+  });
+  it("is applied by loadConfig", () => {
+    const cfg = loadConfig({ VARLATCH_DATABASE_URL: bare, VARLATCH_DATABASE_PASSWORD_FILE: file("pw4", "x"), VARLATCH_KEK: "a".repeat(64) });
+    expect(cfg.databaseUrl).toBe("postgres://varlatchd_runtime:x@postgres:5432/varlatch");
+  });
+});

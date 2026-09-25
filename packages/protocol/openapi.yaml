@@ -1,0 +1,3363 @@
+openapi: 3.1.0
+info:
+  title: Varlatch Public API
+  description: >
+    The sole stable Varlatch public API, served by varlatchd (ADR-0018).
+    Bearer-only authentication; additive-only evolution within /v1; error codes,
+    pagination, idempotency semantics and the audit NDJSON schema are part of
+    the compatibility contract. Pre-product-1.0 releases may still contain
+    breaking changes while the contract is being established.
+  version: 0.9.0
+servers:
+  - url: /v1
+security:
+  - bearerAuth: []
+tags:
+  - name: meta
+  - name: organizations
+  - name: projects
+  - name: environments
+  - name: values
+  - name: contracts
+  - name: identities
+  - name: grants
+  - name: search
+  - name: audit
+  - name: sync
+
+paths:
+  /installation/backups:
+    get:
+      tags: [meta]
+      operationId: getInstallationBackups
+      summary: Installation Admin only, per-archive backup checks and delivery status
+      responses:
+        "200":
+          description: Backup status, without destination credentials or key material
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallationBackups" }
+        "403":
+          description: Installation Admin authority required
+
+  /meta:
+    get:
+      tags: [meta]
+      operationId: getMeta
+      summary: Discovery endpoint for version-skew handling and capability detection
+      security: []
+      responses:
+        "200":
+          description: Server/API compatibility information
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meta" }
+
+  /organizations:
+    get:
+      tags: [organizations]
+      operationId: listOrganizations
+      summary: List organizations the caller belongs to
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Organization" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [organizations]
+      operationId: createOrganization
+      summary: Create an organization (caller becomes its Organization Admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                slug: { $ref: "#/components/schemas/Slug" }
+      responses:
+        "201":
+          description: Created organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}:
+    get:
+      tags: [organizations]
+      operationId: getOrganization
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/config-items:
+    get:
+      tags: [search]
+      operationId: searchConfigItems
+      summary: >
+        Search Config Item names across the organization (capability
+        search.items, ADR-0030). Matches names only — Values, value-derived
+        hashes, and Secret Material never participate in matching. Candidate
+        Environments are established from the caller's config.metadata.read
+        entitlement before matching; a hit the caller may not see is
+        indistinguishable from no hit, and hidden candidates never affect
+        counts, page boundaries, or cursors. Matching is case-insensitive
+        literal substring; %, _, whitespace, and every other character are
+        literal. Results group by (project, exact item name), ordered by
+        Project slug, item name, Project ID. Pagination is a live view:
+        every page re-evaluates current permissions.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: q
+          in: query
+          required: true
+          description: Literal substring to match; empty queries are rejected, never list-all.
+          schema: { type: string, minLength: 1, maxLength: 256 }
+        - name: limit
+          in: query
+          description: Counts grouped (project, item name) results.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Matching Config Items visible to the caller
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConfigItemSearchResult" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Project" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [projects]
+      operationId: createProject
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, slug, contractAuthority]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                slug: { $ref: "#/components/schemas/Slug" }
+                contractAuthority: { $ref: "#/components/schemas/ContractAuthority" }
+      responses:
+        "201":
+          description: Created project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}:
+    get:
+      tags: [projects]
+      operationId: getProject
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+      responses:
+        "200":
+          description: Project
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Project" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments:
+    get:
+      tags: [environments]
+      operationId: listEnvironments
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Environments
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Environment" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [environments]
+      operationId: createEnvironment
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { $ref: "#/components/schemas/EnvironmentName" }
+                tier:
+                  description: Required for root environments; forbidden for derived (inherited).
+                  $ref: "#/components/schemas/Tier"
+                kind:
+                  $ref: "#/components/schemas/EnvironmentKind"
+                parentEnvironmentId:
+                  description: Present for derived environments (one level only).
+                  type: string
+                expiresAt:
+                  description: Preview environments only.
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Created environment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}:
+    get:
+      tags: [environments]
+      operationId: getEnvironment
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: Environment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Environment" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [environments]
+      operationId: deleteEnvironment
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/values/{item}:
+    put:
+      tags: [values]
+      operationId: setValue
+      summary: Create a new immutable Value version for a Config Item in this environment
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: string }
+                expectedVersionId:
+                  description: Optimistic concurrency; rejects stale writes with VERSION_CONFLICT.
+                  type: string
+      responses:
+        "200":
+          description: New version metadata (never echoes the value)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValueVersion" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [values]
+      operationId: deleteValue
+      summary: Remove the Config Item's value from this environment (versions retained per audit rules)
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations:
+    post:
+      tags: [values]
+      operationId: beginRotation
+      summary: >
+        Begin a dual-phase rotation (capability values.rotation, ADR-0027):
+        write a new primary version and keep the prior value retrievable
+        alongside it for a bounded grace window, so running consumers migrate
+        without an outage. Reads resolve the primary; the retiring value is
+        exposed only through explicit disclosure and capability exercise.
+        Rejected with ROTATION_IN_PROGRESS if one is already active.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: string }
+                expectedVersionId:
+                  description: Optimistic concurrency against the current primary.
+                  type: string
+                graceSeconds:
+                  description: >
+                    Overlap window; clamped to [1, 2592000] and defaulted from
+                    the contract's per-item rotationGraceSeconds, else 24h.
+                  type: integer
+                  minimum: 1
+                  maximum: 2592000
+      responses:
+        "201":
+          description: Rotation started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValueRotation" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/values/{item}/rotations/complete:
+    post:
+      tags: [values]
+      operationId: completeRotation
+      summary: >
+        Complete a rotation early (ADR-0027): drop the retiring value so the
+        old upstream credential can be revoked. Idempotent — a no-op success
+        when the item is not rotating (an elapsed deadline already retired it).
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/item"
+      responses:
+        "200":
+          description: Rotation completed (or already stable)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValueRotation" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/effective-configuration:
+    get:
+      tags: [values]
+      operationId: getEffectiveConfiguration
+      summary: >
+        Bulk-resolve the Effective Configuration (child overrides over parent
+        values). With include=values, plaintext is returned for items the caller
+        is authorized for (config.value.read for non-sensitive, secret.reveal
+        for Secrets) and every disclosure is audited before material is
+        returned. Values may reference sibling items as ${NAME} (capability
+        values.references): references are expanded server-side using only
+        values the caller receives in the same response; anything else stays
+        a literal ${NAME}. $${NAME} escapes to a literal ${NAME}.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - name: include
+          in: query
+          schema: { type: string, enum: [metadata, values] }
+      responses:
+        "200":
+          description: Effective configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EffectiveConfiguration" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/disclosures:
+    post:
+      tags: [values]
+      operationId: discloseSecrets
+      summary: >
+        Explicit Secret disclosure (capability secrets.requested-disclosure).
+        The request declares its items or an intentional all-authorized scope;
+        one audit event enumerates exactly what was returned. Responses are
+        never cacheable. ${NAME} references inside disclosed Secrets are
+        expanded server-side (capability values.references) from other
+        Secrets disclosed in the same call and — only when the caller also
+        holds config.value.read — from the environment's non-sensitive
+        values, each such expansion audited; unauthorized or unknown
+        references stay literal.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [items]
+                  properties:
+                    items:
+                      type: array
+                      minItems: 1
+                      items: { type: string }
+                - type: object
+                  required: [scope]
+                  properties:
+                    scope: { type: string, enum: [all-authorized-secrets] }
+      responses:
+        "200":
+          description: Disclosed Secret values (Cache-Control no-store)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, withheld]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, versionId, value]
+                      properties:
+                        name: { type: string }
+                        versionId: { type: string }
+                        value: { type: string }
+                        retiring:
+                          description: >
+                            The previous value during a dual-phase rotation
+                            (ADR-0027), still valid — accept either during the
+                            window. Absent when the item is stable.
+                          type: object
+                          required: [versionId, value]
+                          properties:
+                            versionId: { type: string }
+                            value: { type: string }
+                  withheld:
+                    type: array
+                    items: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/capabilities:
+    post:
+      tags: [capabilities]
+      operationId: issueCapability
+      summary: >
+        Issue a Capability (capability capabilities.broker, ADR-0022). Broker
+        identities only. Issuance narrows potential future use and never
+        expands the Agent's Grants; the capability secret is returned exactly
+        once. Responses are never cacheable.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agentIdentityId, items, destinations, ttlSeconds]
+              properties:
+                agentIdentityId: { type: string }
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items: { type: string }
+                destinations:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items: { type: string }
+                ttlSeconds: { type: integer, minimum: 1 }
+                runId: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: Issued Capability with its one-time secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedCapability" }
+        default: { $ref: "#/components/responses/Error" }
+    get:
+      tags: [capabilities]
+      operationId: listCapabilities
+      summary: >
+        List Capabilities for this environment. Brokers see their own;
+        callers with policy.read see all.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: Capabilities
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Capability" }
+                  nextCursor: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}:
+    delete:
+      tags: [capabilities]
+      operationId: revokeCapability
+      summary: >
+        Revoke a Capability. The issuing Broker may revoke its own; callers
+        with policy.manage may revoke any. Takes effect on the next exercise.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - name: capability
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/capabilities/{capability}/exercises:
+    post:
+      tags: [capabilities]
+      operationId: exerciseCapability
+      summary: >
+        Exercise a Capability (ADR-0022). Requires the issuing Broker's
+        bearer plus the capability secret; the Agent's secret.use is
+        evaluated against current state (including Tailnet Requirements on
+        this request), current Value versions are resolved, and the exercise
+        is audited before decryption. ${NAME} references inside exercised
+        material are expanded strictly (ADR-0026): referenced Secrets must
+        be named in the Capability, non-sensitive references require the
+        Agent's config.value.read (audited), and any unresolvable reference
+        denies the exercise (reason unresolved-reference) rather than
+        injecting literal ${NAME} upstream — $${NAME} escapes. Responses
+        are never cacheable and go to the Broker only.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - name: capability
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [capabilitySecret, destination]
+              properties:
+                capabilitySecret: { type: string }
+                destination:
+                  type: object
+                  required: [host, port]
+                  properties:
+                    host: { type: string }
+                    port: { type: integer, minimum: 1, maximum: 65535 }
+      responses:
+        "200":
+          description: Exercised secret material (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CapabilityExercise" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/changes:
+    post:
+      tags: [values]
+      operationId: applyChangeSet
+      summary: >
+        Atomic value change set (capability values.changeset): all
+        expected-version guards validate before mutation; any conflict rejects
+        the entire set with VERSION_CONFLICT. Supports Idempotency-Key.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [changes]
+              properties:
+                changes:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    oneOf:
+                      - type: object
+                        required: [op, item, value]
+                        properties:
+                          op: { type: string, enum: [set] }
+                          item: { type: string }
+                          value: { type: string }
+                          expectedVersionId: { type: string }
+                      - type: object
+                        required: [op, item]
+                        properties:
+                          op: { type: string, enum: [delete] }
+                          item: { type: string }
+                          expectedVersionId: { type: string }
+      responses:
+        "200":
+          description: Applied change set
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changeSetId, results]
+                properties:
+                  changeSetId: { type: string }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [item, op, versionId]
+                      properties:
+                        item: { type: string }
+                        op: { type: string, enum: [set, delete] }
+                        versionId: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/validate:
+    post:
+      tags: [environments]
+      operationId: validateEnvironment
+      summary: Validate the Effective Configuration against the active Contract
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: Validation report (validity is reported, never blocks retrieval by default)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ValidationReport" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/contract:
+    get:
+      tags: [contracts]
+      operationId: getActiveContract
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+      responses:
+        "200":
+          description: The active Contract revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContractRevision" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/contract/revisions:
+    post:
+      tags: [contracts]
+      operationId: pushContractRevision
+      summary: Submit a candidate Contract revision (content-hash idempotent; never activates implicitly)
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contract]
+              properties:
+                contract:
+                  description: Canonical Configuration Contract (see @varlatch/contract).
+                  type: object
+                provenance:
+                  type: object
+                  properties:
+                    repository: { type: string }
+                    commitSha: { type: string }
+                    schemaPath: { type: string }
+                    adapterVersion: { type: string }
+      responses:
+        "201":
+          description: Stored (or deduplicated) revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContractRevision" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/contract/revisions/{revision}/activate:
+    post:
+      tags: [contracts]
+      operationId: activateContractRevision
+      summary: Activate a stored revision (distinct authorization from push; audited with semantic diff)
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - name: revision
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Now-active revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContractRevision" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities:
+    get:
+      tags: [identities]
+      operationId: listIdentities
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Identities in the organization
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Identity" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [identities]
+      operationId: createServiceIdentity
+      summary: Create a machine identity (starts with zero Grants)
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, kind]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                kind:
+                  type: string
+                  enum: [service, workload, ci, broker, agent]
+                credentialTtlSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 315360000
+                  description: >
+                    Optional wall-clock lifetime for the issued service
+                    credential. Absent means no expiry (revocation only).
+                credentialMaxUses:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000000
+                  description: >
+                    Optional use budget for the issued service credential;
+                    each authenticated request consumes one use and the
+                    credential stops authenticating once spent. 1 yields a
+                    one-shot token. Absent means unlimited.
+      responses:
+        "201":
+          description: >
+            Created identity. If a service credential was issued it is returned
+            exactly once and never retrievable again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedIdentity" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/credentials:
+    get:
+      tags: [identities]
+      operationId: listIdentityCredentials
+      summary: >
+        List a machine identity's credentials — metadata only (capability
+        identity.lifecycle, ADR-0034). Token material is unrecoverable by
+        construction and never returned. Requires identity.manage;
+        existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Credential metadata for the identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CredentialMetadata" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [identities]
+      operationId: issueAgentCredential
+      summary: >
+        Mint a short-lived read-only agent-run credential for an Agent
+        Identity (capability credentials.agent, ADR-0023). Broker-only;
+        callers that are not an in-org Broker receive existence-hidden
+        responses. The token is returned exactly once. Requests
+        authenticated with an agent-run credential are refused for every
+        non-read operation at the HTTP layer.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          description: Agent Identity ID
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ttlSeconds]
+              properties:
+                ttlSeconds: { type: integer, minimum: 1, maximum: 3600 }
+                runId: { type: string, maxLength: 200 }
+      responses:
+        "201":
+          description: Issued agent-run credential (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedAgentCredential" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/credentials/{credential}:
+    delete:
+      tags: [identities]
+      operationId: revokeIdentityCredential
+      summary: >
+        Revoke a machine identity's credential. Two disjoint authorization
+        paths: an in-org Broker may revoke agent-run credentials of in-org
+        agents (ADR-0023); a principal with identity.manage may revoke
+        service/oidc credentials of in-org machine identities (ADR-0034 §1,
+        capability identity.lifecycle). cli/browser credentials are managed
+        under /me/credentials only. A principal may revoke the credential it
+        is currently authenticated with. Existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          description: Agent Identity ID
+          schema: { type: string }
+        - name: credential
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}:
+    patch:
+      tags: [identities]
+      operationId: renameIdentity
+      summary: >
+        Rename a machine identity (capability identity.lifecycle, ADR-0034
+        §4). Display-plane only: grants, credentials, OIDC bindings, and
+        tailnet requirements reference the identity id and are unaffected.
+        The audit event records both the previous and the new name. Requires
+        identity.manage; machine kinds only; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Renamed identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name]
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/retire:
+    post:
+      tags: [identities]
+      operationId: retireIdentity
+      summary: >
+        Retire a machine identity (capability identity.lifecycle, ADR-0034
+        §3): sets disabled and revokes every unrevoked credential in the same
+        transaction. There is deliberately no DELETE — identities are audit
+        actors and remain listable forever. Requires identity.manage; machine
+        kinds only; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Retired identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, disabled]
+                properties:
+                  id: { type: string }
+                  disabled: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/reactivate:
+    post:
+      tags: [identities]
+      operationId: reactivateIdentity
+      summary: >
+        Reactivate a retired machine identity (ADR-0034 §3). Clears the
+        disabled flag only — a reactivated identity has zero working
+        credentials until an admin deliberately issues one. Requires
+        identity.manage; machine kinds only; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Reactivated identity
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, disabled]
+                properties:
+                  id: { type: string }
+                  disabled: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/oidc-bindings:
+    get:
+      tags: [identities]
+      operationId: listOidcBindings
+      summary: List a machine identity's active OIDC bindings
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Active bindings
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OidcBinding" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [identities]
+      operationId: createOidcBinding
+      summary: >
+        Bind an external OIDC issuer + audience + subject (and optional
+        exact-match claims) to a machine identity (capability auth.oidc).
+        A binding is an Authentication Method: exchanging a matching
+        verified token establishes identity only — authority remains the
+        identity's Grants, evaluated per request. Subject matches exactly,
+        or by prefix when it ends with '*'.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [issuer, audience, subject]
+              properties:
+                issuer: { type: string, minLength: 1, maxLength: 2000 }
+                audience: { type: string, minLength: 1, maxLength: 2000 }
+                subject: { type: string, minLength: 1, maxLength: 2000 }
+                claims:
+                  type: object
+                  additionalProperties: { type: string, maxLength: 2000 }
+                  description: Additional token claims that must match exactly.
+      responses:
+        "201":
+          description: Created binding
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OidcBinding" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/oidc-bindings/{binding}:
+    delete:
+      tags: [identities]
+      operationId: revokeOidcBinding
+      summary: Revoke an OIDC binding; matching tokens stop exchanging immediately
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+        - name: binding
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /oidc/token:
+    post:
+      tags: [identities]
+      operationId: exchangeOidcToken
+      security: []
+      summary: >
+        Exchange a platform-issued OIDC token (e.g. GitHub Actions) for a
+        short-lived Varlatch credential (capability auth.oidc). The token is
+        verified against the issuer's published JWKS and matched to a
+        registered binding; all failures collapse to INVALID_CREDENTIAL.
+        The minted credential is returned exactly once; TTL defaults to 600
+        and is capped at 3600 seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, organization]
+              properties:
+                organization: { type: string, minLength: 1, description: Target organization ID or slug }
+                token: { type: string, minLength: 1 }
+                ttlSeconds: { type: integer, minimum: 1, maximum: 3600 }
+      responses:
+        "201":
+          description: Issued oidc credential (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedOidcCredential" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/invitations:
+    post:
+      tags: [identities]
+      operationId: createInvitation
+      summary: >
+        Mint a one-time human enrollment invitation. The caller composes the
+        browser URL as <dashboard-origin>/enroll#<token>; the invitee enrolls
+        a passkey on their own device — no shared secret ever exists.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                role: { type: string, enum: [admin, member] }
+      responses:
+        "201":
+          description: One-time invitation token (shown exactly once)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expiresAt]
+                properties:
+                  token: { type: string }
+                  expiresAt: { type: string, format: date-time }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/varlock-mapping:
+    get:
+      tags: [contracts]
+      operationId: getVarlockMapping
+      summary: >
+        The Project's Varlock Environment Mapping (ADR-0013): explicit,
+        audited mapping from Varlock environment names to root Environment
+        ids.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+      responses:
+        "200":
+          description: Current mapping
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, mapping]
+                properties:
+                  projectId: { type: string }
+                  mapping:
+                    type: object
+                    additionalProperties: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/varlock-mapping/{name}:
+    put:
+      tags: [contracts]
+      operationId: setVarlockMapping
+      summary: >
+        Map a Varlock environment name to a root Environment. Remapping
+        changes validation/requiredness semantics, so it requires
+        contract.activate and is audited.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - { name: name, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [environmentId]
+              properties:
+                environmentId:
+                  type: string
+                  description: Root Environment id or name; derived environments are rejected.
+      responses:
+        "200":
+          description: Saved mapping entry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [varlockName, environmentId]
+                properties:
+                  varlockName: { type: string }
+                  environmentId: { type: string }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [contracts]
+      operationId: removeVarlockMapping
+      summary: >
+        Remove a Varlock name's mapping — the only way to retire a name whose
+        target Environment is being deleted (ADR-0025). Audited like
+        remapping.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - { name: name, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/profile:
+    get:
+      tags: [identities]
+      operationId: getMyProfile
+      summary: >
+        The caller's own profile: display name plus the Better Auth email and
+        avatar image linked to the human identity. Machine identities have no
+        profile and receive RESOURCE_NOT_FOUND.
+      responses:
+        "200":
+          description: The caller's profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [identities]
+      operationId: updateMyProfile
+      summary: >
+        Update the caller's display name and/or avatar image. The name is
+        written to both the linked Better Auth user and the Varlatch identity
+        so org listings show the new name. The image must be a data:image/…
+        URL or an https:// URL of at most 100KB; null clears it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                image:
+                  type: [string, "null"]
+                  maxLength: 102400
+      responses:
+        "200":
+          description: The updated profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/credentials:
+    get:
+      tags: [identities]
+      operationId: listMyCredentials
+      summary: >
+        List the caller's own credentials (ADR-0007's individually revocable
+        credentials made visible). The credential authenticating this request
+        is flagged current.
+      responses:
+        "200":
+          description: The caller's credentials, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OwnCredential" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/credentials/{credential}:
+    delete:
+      tags: [identities]
+      operationId: revokeMyCredential
+      summary: Revoke one of the caller's own credentials; takes effect immediately
+      parameters:
+        - { name: credential, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/credentials/cli:
+    post:
+      tags: [identities]
+      operationId: exchangeCliCredential
+      summary: >
+        Trade the short-lived browser-handoff bearer (ADR-0024) for a
+        longer-lived CLI credential. Restricted to browser session bearers —
+        a leaked CLI credential cannot mint successors — and one-shot: the
+        presenting bearer is revoked by the exchange.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttlSeconds: { type: integer, minimum: 60, maximum: 86400, default: 43200 }
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Issued CLI credential (token shown exactly once; Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedCliCredential" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/grants:
+    get:
+      tags: [grants]
+      operationId: listGrants
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Grants
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Grant" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: createGrant
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              description: >
+                Subject is exactly one of subjectIdentityId or subjectGroupId
+                (ADR-0028); permission is exactly one of actions or roleId.
+              properties:
+                subjectIdentityId: { type: string }
+                subjectGroupId: { type: string }
+                scope: { $ref: "#/components/schemas/GrantScope" }
+                actions:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/Action" }
+                roleId: { type: string }
+      responses:
+        "201":
+          description: Created grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Grant" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/roles:
+    get:
+      tags: [grants]
+      operationId: listRoles
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Roles
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Role" } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: createRole
+      summary: Create a reusable Role — a named Action bundle (ADR-0028).
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, actions]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+                actions:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/Action" }
+      responses:
+        "201":
+          description: Created role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/roles/{role}:
+    patch:
+      tags: [grants]
+      operationId: updateRole
+      summary: >
+        Update a Role in place (capability access.update, ADR-0029). Takes
+        effect on the next authorization decision — every Grant citing the
+        Role re-points with no revoke/recreate gap. Omitted fields are
+        unchanged; a supplied actions array replaces the whole set.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: role, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                name: { type: string, minLength: 1, maxLength: 200 }
+                actions:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/Action" }
+      responses:
+        "200":
+          description: Updated role
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Role" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [grants]
+      operationId: deleteRole
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: role, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/groups:
+    get:
+      tags: [grants]
+      operationId: listGroups
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Groups
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Group" } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: createGroup
+      summary: Create a Group — an identity set usable as a Grant subject (ADR-0028).
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Created group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/groups/{group}:
+    patch:
+      tags: [grants]
+      operationId: updateGroup
+      summary: >
+        Rename a Group in place (capability access.update, ADR-0029).
+        Membership has its own add/remove endpoints and does not bump the
+        version.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: group, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [grants]
+      operationId: deleteGroup
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: group, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/groups/{group}/members:
+    get:
+      tags: [grants]
+      operationId: listGroupMembers
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: group, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [identityId]
+                      properties: { identityId: { type: string } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: addGroupMember
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: group, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identityId]
+              properties: { identityId: { type: string } }
+      responses:
+        "204": { description: Added }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/groups/{group}/members/{identity}:
+    delete:
+      tags: [grants]
+      operationId: removeGroupMember
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: group, in: path, required: true, schema: { type: string } }
+        - { name: identity, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams:
+    get:
+      tags: [grants]
+      operationId: listTeams
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Teams
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Group" } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: createTeam
+      summary: Create a Team — a Group that owns Projects, targetable by a team scope (ADR-0028).
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Created team
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams/{team}:
+    patch:
+      tags: [grants]
+      operationId: updateTeam
+      summary: >
+        Rename a Team in place (capability access.update, ADR-0029).
+        Membership and project ownership have their own add/remove endpoints
+        and do not bump the version.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Updated team
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Group" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [grants]
+      operationId: deleteTeam
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams/{team}/members:
+    get:
+      tags: [grants]
+      operationId: listTeamMembers
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Team members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [identityId]
+                      properties: { identityId: { type: string } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: addTeamMember
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identityId]
+              properties: { identityId: { type: string } }
+      responses:
+        "204": { description: Added }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams/{team}/members/{identity}:
+    delete:
+      tags: [grants]
+      operationId: removeTeamMember
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+        - { name: identity, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams/{team}/projects:
+    get:
+      tags: [grants]
+      operationId: listTeamProjects
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Owned projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [projectId]
+                      properties: { projectId: { type: string } }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: addTeamProject
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [projectId]
+              properties: { projectId: { type: string } }
+      responses:
+        "204": { description: Added }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/teams/{team}/projects/{project}:
+    delete:
+      tags: [grants]
+      operationId: removeTeamProject
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: team, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/project"
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/grants/{grant}:
+    delete:
+      tags: [grants]
+      operationId: deleteGrant
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: grant
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/grants/{grant}/replace:
+    post:
+      tags: [grants]
+      operationId: replaceGrant
+      summary: >
+        Atomically revoke a Grant and create its replacement (capability
+        grants.replace, ADR-0029). Grant declarations are immutable — this
+        is the only edit path. The new declaration is validated, the active
+        original revoked, and the replacement created in one transaction
+        with linked audit events; failure rolls back everything. Replacing
+        an already-revoked Grant fails with VERSION_CONFLICT, so concurrent
+        replacements cannot create multiple successors.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: grant
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              description: >
+                Complete replacement declaration, same shape as grant
+                creation: subject is exactly one of subjectIdentityId or
+                subjectGroupId; permission is exactly one of actions or
+                roleId.
+              properties:
+                subjectIdentityId: { type: string }
+                subjectGroupId: { type: string }
+                scope: { $ref: "#/components/schemas/GrantScope" }
+                actions:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/Action" }
+                roleId: { type: string }
+      responses:
+        "201":
+          description: Replacement created; original revoked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GrantReplacement" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/requirements:
+    get:
+      tags: [grants]
+      operationId: listRequirements
+      summary: List the organization's active Requirements
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Requirements
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Requirement" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [grants]
+      operationId: createRequirement
+      summary: >
+        Create a Requirement (capability tailnet.constraints). Requirements
+        are restrictive: evaluated after Grants, they may only reduce the
+        set of successful operations, never create permission. The selector
+        must name at least one tag, user, or node.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, target, selector]
+              properties:
+                kind: { type: string, enum: [tailnet] }
+                target: { $ref: "#/components/schemas/RequirementTarget" }
+                selector: { $ref: "#/components/schemas/TailnetSelector" }
+      responses:
+        "201":
+          description: Created requirement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Requirement" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/requirements/{requirement}:
+    patch:
+      tags: [grants]
+      operationId: updateRequirement
+      summary: >
+        Update a Requirement's target or selector in place (capability
+        access.update, ADR-0029). Kind is immutable. Loosening and
+        tightening are equally audited with the old/new diff.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: requirement, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                target: { $ref: "#/components/schemas/RequirementTarget" }
+                selector: { $ref: "#/components/schemas/TailnetSelector" }
+      responses:
+        "200":
+          description: Updated requirement
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Requirement" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [grants]
+      operationId: deleteRequirement
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: requirement, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-events:
+    get:
+      tags: [audit]
+      operationId: listAuditEvents
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Security Audit Events, newest first (deterministic occurredAt+eventId ordering)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditEvent" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-events/export:
+    get:
+      tags: [audit]
+      operationId: exportAuditEvents
+      summary: Stream the organization's Security Audit Events as NDJSON
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: One versioned AuditEvent JSON document per line
+          content:
+            application/x-ndjson:
+              schema: { $ref: "#/components/schemas/AuditEvent" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/webhooks:
+    get:
+      tags: [audit]
+      operationId: listWebhooks
+      summary: List the organization's active audit webhooks
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Active webhooks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Webhook" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [audit]
+      operationId: createWebhook
+      summary: >
+        Register an audit webhook (capability webhooks.audit). The endpoint
+        receives POSTed batches of the organization's audit events, ordered,
+        at-least-once, starting from registration (never history). Each
+        delivery is signed: the X-Varlatch-Signature header carries
+        "t=<unix-seconds>,v1=<hex>" where v1 is HMAC-SHA256(secret,
+        "<t>.<raw-body>"); receivers should verify the signature and reject
+        stale timestamps. The signing secret is returned exactly once.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string, minLength: 1, maxLength: 2000 }
+                eventTypes:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, minLength: 1, maxLength: 200 }
+                  description: Optional event-type filter; absent means all events.
+      responses:
+        "201":
+          description: Created webhook with its one-time signing secret (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatedWebhook" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/webhooks/{webhook}:
+    patch:
+      tags: [audit]
+      operationId: updateWebhook
+      summary: >
+        Update a webhook's URL or event-type filter in place (capability
+        access.update, ADR-0029). Delivery identity and progress are
+        preserved: the signing secret and delivery cursor are unchanged
+        (secret rotation is not part of this operation), and undelivered
+        events — including backlog — go to the new URL/filter on subsequent
+        attempts; an already-started attempt may finish against the previous
+        configuration. URLs containing userinfo are rejected. A supplied
+        eventTypes array replaces the whole filter; null clears it (all
+        events).
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: webhook, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/idempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                url: { type: string, minLength: 1, maxLength: 2000 }
+                eventTypes:
+                  type: [array, "null"]
+                  minItems: 1
+                  maxItems: 100
+                  items: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "200":
+          description: Updated webhook (never includes the signing secret)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Webhook" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [audit]
+      operationId: revokeWebhook
+      summary: Revoke an audit webhook; delivery stops immediately
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: webhook
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/platform-connections:
+    get:
+      tags: [sync]
+      operationId: listPlatformConnections
+      summary: List the organization's Platform Connections (ADR-0031)
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Active Platform Connections with referencing-target counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/PlatformConnection" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [sync]
+      operationId: createPlatformConnection
+      summary: >
+        Create a Platform Connection (capability sync.targets): platform
+        type, immutable base identity (GitHub owner, Coolify instance
+        origin), and the Platform Credential — encrypted under the
+        Organization KEK, never displayed again after entry. A Connection
+        alone discloses nothing; disclosure authority lives on the Sync
+        Targets that use it.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform, baseIdentity, name, credential]
+              properties:
+                platform: { $ref: "#/components/schemas/SyncPlatform" }
+                baseIdentity: { type: string, minLength: 1, maxLength: 500 }
+                name: { type: string, minLength: 1, maxLength: 200 }
+                credential: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        "201":
+          description: Created Connection (the credential is never returned; Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformConnection" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/platform-connections/{connection}:
+    get:
+      tags: [sync]
+      operationId: getPlatformConnection
+      summary: >
+        One Connection with every referencing Sync Target — the dependency
+        list an actor reviews before credential replacement, which must
+        re-authorize all of them atomically.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: connection, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Connection detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PlatformConnection"
+                  - type: object
+                    required: [targets]
+                    properties:
+                      targets:
+                        type: array
+                        items: { $ref: "#/components/schemas/SyncTarget" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [sync]
+      operationId: revokePlatformConnection
+      summary: Revoke a Connection; every referencing Sync Target is disabled
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: connection, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/platform-connections/{connection}/credential:
+    post:
+      tags: [sync]
+      operationId: replacePlatformCredential
+      summary: >
+        Replace the Platform Credential (ADR-0031): a new disclosure grant
+        for every non-revoked referencing Sync Target at once. The actor
+        must pass each Target's write-time disclosure gate at this moment;
+        otherwise the whole replacement is refused — never a partial split
+        across old and new credentials.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: connection, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential, expectedVersion]
+              properties:
+                credential: { type: string, minLength: 1, maxLength: 10000 }
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+      responses:
+        "200":
+          description: Updated Connection (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlatformConnection" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/sync-targets:
+    get:
+      tags: [sync]
+      operationId: listOrgSyncTargets
+      summary: Organization-wide Sync Target list (Connections view, rotation status)
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: Non-revoked Sync Targets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SyncTarget" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/sync-targets:
+    get:
+      tags: [sync]
+      operationId: listSyncTargets
+      summary: List the Environment's Sync Targets
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      responses:
+        "200":
+          description: Non-revoked Sync Targets of this Environment
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SyncTarget" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [sync]
+      operationId: createSyncTarget
+      summary: >
+        Create a Sync Target (capability sync.targets): standing disclosure
+        authority binding this Environment to one destination on a Platform
+        Connection. Requires config.sync.manage plus the write-time
+        disclosure gate — secret.reveal for mapped Secrets and
+        config.value.read for mapped non-sensitive items; a wildcard mapping
+        (every current and future item) requires both on the Environment's
+        scope. Decision-time provenance is recorded. A destination has
+        exactly one writer per Installation.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connectionId, destination, mapping]
+              properties:
+                connectionId: { type: string }
+                destination:
+                  type: object
+                  additionalProperties: true
+                  description: >
+                    Adapter-specific canonical destination. github-actions:
+                    repo [+ environment]. coolify: applicationUuid, plus
+                    per-target options that never enter the destination
+                    identity — buildTime ("true"|"false": mark the keys
+                    Varlatch manages as available at build time; absent keeps
+                    Coolify's default for new keys and each existing key's
+                    own flag) and deployAction ("deploy" (default): forced
+                    rebuild, the only action that re-bakes build-time values;
+                    "restart": recreate the container with the current runtime
+                    env only). convex: no fields — the Connection's deployment
+                    URL is the destination.
+                mapping: { $ref: "#/components/schemas/SyncMappingInput" }
+                removeOrphans:
+                  type: boolean
+                  description: >
+                    Per-target removal opt-in — only then does a name leaving
+                    the effective output get deleted at the destination
+                    (bounded by the ledger; tombstones re-apply deletions).
+                redeploy:
+                  type: boolean
+                  description: Best-effort platform redeploy after changed pushes, where supported.
+      responses:
+        "201":
+          description: Created Sync Target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncTarget" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}:
+    get:
+      tags: [sync]
+      operationId: getSyncTarget
+      summary: Sync Target detail with per-destination-name delivery state
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Target detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SyncTarget"
+                  - type: object
+                    required: [names]
+                    properties:
+                      names:
+                        type: array
+                        items: { $ref: "#/components/schemas/SyncLedgerName" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [sync]
+      operationId: updateSyncTarget
+      summary: >
+        Mutate a Sync Target. Widening the mapping, changing the destination,
+        or re-pointing to a different Connection is a NEW disclosure grant:
+        it re-runs the full write-time gate and is audited as such. A
+        destination-identity change atomically swaps the exclusivity claim
+        and resets the ledger; the old destination's copy is deliberately
+        abandoned. Re-pointing across platform types is rejected.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expectedVersion]
+              properties:
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+                connectionId: { type: string }
+                destination:
+                  type: object
+                  additionalProperties: true
+                mapping: { $ref: "#/components/schemas/SyncMappingInput" }
+                removeOrphans: { type: boolean }
+                redeploy: { type: boolean }
+      responses:
+        "200":
+          description: Updated Sync Target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncTarget" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [sync]
+      operationId: revokeSyncTarget
+      summary: >
+        Revoke a Sync Target — the only lifecycle event (besides a
+        destination change) that releases its destination claim. The
+        destination's copy is not cleaned up.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/push:
+    post:
+      tags: [sync]
+      operationId: pushSyncTarget
+      summary: >
+        Schedule an immediate converge ("push now"). Idempotent: pushes
+        converge the destination to current state, never replay deltas.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          description: Converge scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scheduled]
+                properties:
+                  scheduled: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/pause:
+    post:
+      tags: [sync]
+      operationId: pauseSyncTarget
+      summary: Pause delivery; the Target keeps its destination claim
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Paused Target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncTarget" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/projects/{project}/environments/{environment}/sync-targets/{target}/resume:
+    post:
+      tags: [sync]
+      operationId: resumeSyncTarget
+      summary: >
+        Resume a paused or auto-disabled Target (audited); triggers an
+        immediate converge. A Target disabled by Connection revocation must
+        be re-pointed first.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/environment"
+        - { name: target, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Resumed Target
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncTarget" }
+        default: { $ref: "#/components/responses/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Opaque Varlatch credential (session-derived browser bearer, CLI
+        credential, or service credential). Cookies never authenticate /v1.
+
+  parameters:
+    org:
+      name: org
+      in: path
+      required: true
+      description: Organization slug or ID
+      schema: { type: string }
+    project:
+      name: project
+      in: path
+      required: true
+      description: Project slug or ID
+      schema: { type: string }
+    environment:
+      name: environment
+      in: path
+      required: true
+      description: Environment name or ID (names may contain one slash for derived environments)
+      schema: { type: string }
+    item:
+      name: item
+      in: path
+      required: true
+      description: Config Item name
+      schema: { type: string, pattern: "^[A-Z][A-Z0-9_]*$" }
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from a previous response; never parse.
+      schema: { type: string }
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: >
+        Optional. Retrying with the same key and identical body returns the
+        original result; the same key with a materially different body fails
+        with IDEMPOTENCY_CONFLICT.
+      schema: { type: string, maxLength: 255 }
+
+  responses:
+    Error:
+      description: Error envelope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
+
+  schemas:
+    BackupVerification:
+      type: object
+      required: [integrity, compatibility, keyMatch, targetRelease, checkedAt]
+      properties:
+        integrity: { type: boolean }
+        compatibility: { type: boolean }
+        keyMatch: { type: boolean }
+        targetRelease: { type: string }
+        checkedAt: { type: string, format: date-time }
+    BackupArchiveStatus:
+      type: object
+      required: [archiveId, installationId, createdAt, release, requiredKeyVersions]
+      properties:
+        archiveId: { type: string, format: uuid }
+        installationId: { type: string }
+        createdAt: { type: string, format: date-time }
+        release: { type: string }
+        requiredKeyVersions:
+          type: array
+          items: { type: integer }
+        verification: { $ref: "#/components/schemas/BackupVerification" }
+        delivery:
+          type: object
+          required: [destination, uploadedAt]
+          properties:
+            destination: { type: string }
+            uploadedAt: { type: string, format: date-time }
+            remoteVerification: { $ref: "#/components/schemas/BackupVerification" }
+    InstallationBackups:
+      type: object
+      required: [archives, warnings]
+      properties:
+        archives:
+          type: array
+          items: { $ref: "#/components/schemas/BackupArchiveStatus" }
+        warnings:
+          type: array
+          items: { type: string }
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+            requestId: { type: string }
+            details: { type: object }
+
+    ErrorCode:
+      type: string
+      enum:
+        - AUTHENTICATION_REQUIRED
+        - INVALID_CREDENTIAL
+        - PERMISSION_DENIED
+        - RESOURCE_NOT_FOUND
+        - VALIDATION_FAILED
+        - VERSION_CONFLICT
+        - ROTATION_IN_PROGRESS
+        - IDEMPOTENCY_CONFLICT
+        - CONTRACT_INVALID
+        - CONTRACT_DRIFT
+        - CONTRACT_MAPPING_UNRESOLVED
+        - ENVIRONMENT_EXPIRED
+        - TAILNET_CONTEXT_REQUIRED
+        - TAILNET_CONTEXT_UNAVAILABLE
+        - RATE_LIMITED
+        - MAINTENANCE
+        - INTERNAL
+
+    NextCursor:
+      type: [string, "null"]
+      description: Opaque; null when no further pages exist.
+
+    Slug:
+      type: string
+      pattern: "^[a-z0-9][a-z0-9-]{0,62}$"
+
+    EnvironmentName:
+      type: string
+      description: Free-form; derived environments use parent/suffix form (e.g. development/jeremy).
+      pattern: "^[a-z0-9][a-z0-9._-]{0,62}(/[a-z0-9][a-z0-9._-]{0,62})?$"
+
+    Tier:
+      type: string
+      enum: [development, staging, production]
+
+    EnvironmentKind:
+      type: string
+      enum: [shared, personal, preview]
+
+    ContractAuthority:
+      type: string
+      enum: [git, managed]
+
+    Meta:
+      type: object
+      required: [apiMajor, serverVersion, capabilities]
+      properties:
+        apiMajor: { type: integer }
+        serverVersion: { type: string }
+        minSupportedCliVersion: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        installationId: { type: string }
+        syncAdapters:
+          type: array
+          items: { $ref: "#/components/schemas/SyncPlatform" }
+          description: >
+            Platform adapters this Installation allows for outbound sync
+            (ADR-0031); absent when the installation switch is off.
+
+    Organization:
+      type: object
+      required: [id, slug, name, createdAt]
+      properties:
+        id: { type: string }
+        slug: { $ref: "#/components/schemas/Slug" }
+        name: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    Project:
+      type: object
+      required: [id, organizationId, slug, name, contractAuthority, createdAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        slug: { $ref: "#/components/schemas/Slug" }
+        name: { type: string }
+        contractAuthority: { $ref: "#/components/schemas/ContractAuthority" }
+        activeContractRevisionId: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    Environment:
+      type: object
+      required: [id, projectId, name, kind, tier, createdAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { $ref: "#/components/schemas/EnvironmentName" }
+        kind: { $ref: "#/components/schemas/EnvironmentKind" }
+        tier: { $ref: "#/components/schemas/Tier" }
+        parentEnvironmentId: { type: [string, "null"] }
+        ownerIdentityId: { type: [string, "null"] }
+        expiresAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+
+    ValueVersion:
+      type: object
+      required: [versionId, itemName, environmentId, sensitive, createdAt]
+      description: Value metadata only — plaintext is never echoed by mutations.
+      properties:
+        versionId: { type: string }
+        itemName: { type: string }
+        environmentId: { type: string }
+        sensitive: { type: boolean }
+        previousVersionId: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    EffectiveConfigurationItem:
+      type: object
+      required: [name, sensitive, source]
+      properties:
+        name: { type: string }
+        sensitive: { type: boolean }
+        source:
+          type: string
+          enum: [self, parent]
+        versionId: { type: string }
+        value:
+          type: [string, "null"]
+          description: >
+            Present only when include=values and the caller is authorized;
+            null for items the caller may know exist but not read.
+        rawValue:
+          type: string
+          description: >
+            Present only when the stored value contains ${NAME} references
+            that were expanded in `value` (capability values.references):
+            the literal stored text. Editors must write this back — writing
+            the expanded `value` would destroy the reference.
+        rotating:
+          type: boolean
+          description: >
+            True while a dual-phase rotation (ADR-0027) is active for this
+            item. Metadata only — the retiring plaintext is exposed solely
+            through explicit disclosure and capability exercise.
+
+    ValueRotation:
+      type: object
+      required: [itemName, environmentId, primaryVersionId, sensitive]
+      description: Rotation state after a begin/complete operation (no plaintext).
+      properties:
+        itemName: { type: string }
+        environmentId: { type: string }
+        primaryVersionId: { type: string }
+        retiringVersionId: { type: [string, "null"] }
+        rotationDeadline: { type: [string, "null"], format: date-time }
+        sensitive: { type: boolean }
+
+    EffectiveConfiguration:
+      type: object
+      required: [environmentId, items]
+      properties:
+        environmentId: { type: string }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EffectiveConfigurationItem" }
+
+    ValidationReport:
+      type: object
+      required: [environmentId, valid, missing, invalid]
+      properties:
+        environmentId: { type: string }
+        contractRevisionId: { type: [string, "null"] }
+        valid: { type: boolean }
+        missing:
+          type: array
+          items: { type: string }
+        invalid:
+          type: array
+          items:
+            type: object
+            required: [name, reason]
+            properties:
+              name: { type: string }
+              reason: { type: string }
+
+    ContractRevision:
+      type: object
+      required: [id, projectId, contentHash, active, createdAt]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        contentHash: { type: string }
+        active: { type: boolean }
+        contract: { type: object }
+        provenance: { type: object }
+        createdAt: { type: string, format: date-time }
+
+    Identity:
+      type: object
+      required: [id, name, kind, createdAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind:
+          type: string
+          enum: [human, service, workload, ci, broker, agent]
+        disabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Most recent successful authentication by any of the identity's
+            credentials, throttled to ~60s granularity (ADR-0034 §5). An
+            operational signal, not an audit record. Null when never seen.
+        email:
+          type: [string, "null"]
+          description: Better Auth account email for human identities; null for machines.
+        image:
+          type: [string, "null"]
+          description: Avatar image (data or https URL) for human identities; null for machines.
+
+    Profile:
+      type: object
+      required: [identityId, name, email, image]
+      properties:
+        identityId: { type: string }
+        name: { type: string }
+        email: { type: [string, "null"] }
+        image: { type: [string, "null"] }
+
+    CreatedIdentity:
+      allOf:
+        - $ref: "#/components/schemas/Identity"
+        - type: object
+          properties:
+            credential:
+              type: [string, "null"]
+              description: Shown exactly once at creation; stored hashed; never retrievable.
+            credentialExpiresAt:
+              type: [string, "null"]
+              format: date-time
+              description: Expiry of the issued credential when credentialTtlSeconds was given.
+
+    Capability:
+      type: object
+      required:
+        [id, brokerIdentityId, agentIdentityId, environmentId, items, destinations, runId, expiresAt, revokedAt, createdAt]
+      properties:
+        id: { type: string }
+        brokerIdentityId: { type: string }
+        agentIdentityId: { type: string }
+        environmentId: { type: string }
+        items:
+          type: array
+          items: { type: string }
+        destinations:
+          type: array
+          items: { type: string }
+        runId: { type: [string, "null"] }
+        expiresAt: { type: string, format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
+        createdAt: { type: string, format: date-time }
+
+    CredentialMetadata:
+      type: object
+      required: [id, kind, name, createdAt, expiresAt, revokedAt, lastUsedAt]
+      description: >
+        Credential metadata (ADR-0034 §2). Never includes token material —
+        tokens are stored hashed and unrecoverable (ADR-0007).
+      properties:
+        id: { type: string }
+        kind:
+          type: string
+          enum: [service, cli, browser, agent-run, oidc]
+        name: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
+        lastUsedAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Last successful authentication, throttled to ~60s granularity.
+            An operational signal, never evidence of what was accessed.
+    IssuedAgentCredential:
+      type: object
+      required: [id, token, expiresAt]
+      properties:
+        id: { type: string }
+        token:
+          type: string
+          description: Returned exactly once; never retrievable again.
+        expiresAt: { type: string, format: date-time }
+
+    IssuedCapability:
+      type: object
+      required:
+        [id, secret, agentIdentityId, environmentId, items, destinations, runId, expiresAt, preflight]
+      properties:
+        id: { type: string }
+        secret:
+          type: string
+          description: Returned exactly once; stored hashed; required to exercise.
+        agentIdentityId: { type: string }
+        environmentId: { type: string }
+        items:
+          type: array
+          items: { type: string }
+        destinations:
+          type: array
+          items: { type: string }
+        runId: { type: [string, "null"] }
+        expiresAt: { type: string, format: date-time }
+        preflight:
+          type: string
+          enum: [ok, agent-lacks-secret-use]
+          description: Advisory current-authority check; exercise re-evaluates regardless.
+
+    CapabilityExercise:
+      type: object
+      required: [items, withheld]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, versionId, value]
+            properties:
+              name: { type: string }
+              versionId: { type: string }
+              value: { type: string }
+              retiring:
+                description: >
+                  The previous value during a dual-phase rotation (ADR-0027),
+                  injected as-is so the consumer accepts either during the
+                  window. Absent when the item is stable.
+                type: object
+                required: [versionId, value]
+                properties:
+                  versionId: { type: string }
+                  value: { type: string }
+        withheld:
+          type: array
+          items: { type: string }
+
+    Action:
+      type: string
+      enum:
+        - organization.read
+        - organization.manage
+        - project.read
+        - project.manage
+        - environment.read
+        - environment.manage
+        - config.metadata.read
+        - config.value.read
+        - config.value.write
+        - secret.reveal
+        - secret.use
+        - contract.read
+        - contract.submit
+        - contract.activate
+        - identity.read
+        - identity.manage
+        - policy.read
+        - policy.manage
+        - audit.read
+        - config.sync.manage
+
+    GrantScope:
+      oneOf:
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [organization] }
+        - type: object
+          required: [kind, projectId]
+          properties:
+            kind: { type: string, enum: [project] }
+            projectId: { type: string }
+        - type: object
+          required: [kind, projectId, selector]
+          properties:
+            kind: { type: string, enum: [environments] }
+            projectId: { type: string }
+            selector:
+              oneOf:
+                - type: object
+                  required: [kind, environmentIds]
+                  properties:
+                    kind: { type: string, enum: [environments] }
+                    environmentIds:
+                      type: array
+                      minItems: 1
+                      items: { type: string }
+                - type: object
+                  required: [kind, tier]
+                  properties:
+                    kind: { type: string, enum: [tier] }
+                    tier: { $ref: "#/components/schemas/Tier" }
+        - type: object
+          required: [kind, teamId]
+          description: All Projects the Team owns (ADR-0028).
+          properties:
+            kind: { type: string, enum: [team] }
+            teamId: { type: string }
+
+    Grant:
+      type: object
+      required: [id, organizationId, scope, createdAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        subjectIdentityId: { type: [string, "null"] }
+        subjectGroupId: { type: [string, "null"] }
+        scope: { $ref: "#/components/schemas/GrantScope" }
+        actions:
+          type: [array, "null"]
+          items: { $ref: "#/components/schemas/Action" }
+        roleId: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+
+    EntityVersion:
+      type: integer
+      minimum: 1
+      description: >
+        Monotonic version of an editable entity's configuration (ADR-0029);
+        starts at 1. Join mutations (membership, project ownership) and
+        delivery progress never increment it. Supplied back as
+        expectedVersion on PATCH; a stale value fails with VERSION_CONFLICT.
+
+    Role:
+      type: object
+      required: [id, name, actions, version, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        actions:
+          type: array
+          items: { $ref: "#/components/schemas/Action" }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    Group:
+      type: object
+      required: [id, name, kind, version, updatedAt]
+      description: An identity set (kind=group) or a project-owning Team (kind=team).
+      properties:
+        id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [group, team] }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    GrantReplacement:
+      type: object
+      required: [replacedGrantId, grant]
+      description: >
+        Result of an atomic Grant replacement (ADR-0029): the revoked
+        original's ID and the successor Grant, linked in the audit trail.
+      properties:
+        replacedGrantId: { type: string }
+        grant: { $ref: "#/components/schemas/Grant" }
+
+    RequirementTarget:
+      oneOf:
+        - type: object
+          required: [kind, tier]
+          properties:
+            kind: { type: string, enum: [tier] }
+            tier: { $ref: "#/components/schemas/Tier" }
+        - type: object
+          required: [kind, environmentIds]
+          properties:
+            kind: { type: string, enum: [environments] }
+            environmentIds:
+              type: array
+              minItems: 1
+              items: { type: string }
+
+    TailnetSelector:
+      type: object
+      required: [tailnet]
+      description: >
+        Varlatch-owned predicate over trusted Tailnet Context; must name at
+        least one tag, user, or node.
+      properties:
+        tailnet: { type: string, minLength: 1 }
+        tags:
+          type: array
+          items: { type: string }
+        users:
+          type: array
+          items: { type: string }
+        nodes:
+          type: array
+          items: { type: string }
+
+    Requirement:
+      type: object
+      required: [id, kind, target, selector, version, updatedAt]
+      description: >
+        A restrictive authorization object evaluated after Grants; may only
+        reduce the set of successful operations, never create permission.
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [tailnet] }
+        target: { $ref: "#/components/schemas/RequirementTarget" }
+        selector: { $ref: "#/components/schemas/TailnetSelector" }
+        createdAt: { type: string, format: date-time }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    ConfigItemSearchResult:
+      type: object
+      required: [project, name, sensitive, environments]
+      description: >
+        One (project, item name) search hit (ADR-0030). Metadata only —
+        never Values, version history, or value-derived fields. The
+        environments list contains only authorized, navigable Environments
+        in which the name is effectively present; it is bounded and its
+        truncation flag never reveals hidden-candidate counts.
+      properties:
+        project:
+          type: object
+          required: [id, slug, name]
+          properties:
+            id: { type: string }
+            slug: { $ref: "#/components/schemas/Slug" }
+            name: { type: string }
+        name: { type: string }
+        sensitive:
+          type: boolean
+          description: >
+            From the active Contract's effective metadata; items absent from
+            the Contract default to sensitive.
+        environments:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [id, name, tier]
+            properties:
+              id: { type: string }
+              name: { $ref: "#/components/schemas/EnvironmentName" }
+              tier: { $ref: "#/components/schemas/Tier" }
+        environmentsTruncated:
+          type: boolean
+          description: True when authorized matches beyond maxItems were omitted.
+
+    OwnCredential:
+      type: object
+      required: [id, kind, name, createdAt, expiresAt, revokedAt, maxUses, useCount, current]
+      description: One of the caller's own credentials; never contains the token itself.
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        name: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
+        maxUses: { type: [integer, "null"] }
+        useCount: { type: integer }
+        current:
+          type: boolean
+          description: True for the credential authenticating this request.
+
+    IssuedCliCredential:
+      type: object
+      required: [id, token, expiresAt]
+      properties:
+        id: { type: string }
+        token:
+          type: string
+          description: Returned exactly once; never retrievable again.
+        expiresAt: { type: string, format: date-time }
+
+    OidcBinding:
+      type: object
+      required: [id, identityId, issuer, audience, subject, claims, createdAt]
+      properties:
+        id: { type: string }
+        identityId: { type: string }
+        issuer: { type: string }
+        audience: { type: string }
+        subject: { type: string }
+        claims:
+          type: [object, "null"]
+          additionalProperties: { type: string }
+        createdAt: { type: string, format: date-time }
+
+    IssuedOidcCredential:
+      type: object
+      required: [id, token, expiresAt, identityId]
+      properties:
+        id: { type: string }
+        token:
+          type: string
+          description: Returned exactly once; never retrievable again.
+        expiresAt: { type: string, format: date-time }
+        identityId: { type: string }
+
+    Webhook:
+      type: object
+      required: [id, url, eventTypes, createdAt, failureCount, version, updatedAt]
+      properties:
+        id: { type: string }
+        url: { type: string }
+        eventTypes:
+          type: [array, "null"]
+          items: { type: string }
+        createdAt: { type: string, format: date-time }
+        failureCount: { type: integer }
+        lastAttemptAt: { type: [string, "null"], format: date-time }
+        lastStatus: { type: [string, "null"] }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    CreatedWebhook:
+      allOf:
+        - $ref: "#/components/schemas/Webhook"
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: >
+                HMAC-SHA256 signing secret, returned exactly once; stored
+                encrypted server-side and never retrievable.
+
+    SyncPlatform:
+      type: string
+      enum: [github-actions, coolify, convex]
+      description: >
+        Platform Adapters are a closed allowlist bundled with releases
+        (ADR-0031); there is deliberately no generic push-to-URL adapter.
+
+    PlatformConnection:
+      type: object
+      required: [id, organizationId, platform, baseIdentity, name, createdAt, version, updatedAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        platform: { $ref: "#/components/schemas/SyncPlatform" }
+        baseIdentity:
+          type: string
+          description: Immutable; a different instance or account is a new Connection.
+        name: { type: string }
+        targetCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    SyncMappingInput:
+      description: >
+        Item mapping: wildcard (every current AND future item of the
+        Environment, optionally minus an exclusion list of exact names or
+        trailing-* prefixes) or an explicit list with optional destination
+        renames. A wildcard with exclusions gates exactly like a plain
+        wildcard: the remainder still covers unknown future items.
+      oneOf:
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [wildcard] }
+            exclude:
+              type: array
+              maxItems: 200
+              items: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          required: [kind, items]
+          properties:
+            kind: { type: string, enum: [explicit] }
+            items:
+              type: array
+              minItems: 1
+              maxItems: 500
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string, minLength: 1, maxLength: 200 }
+                  rename: { type: string, minLength: 1, maxLength: 200 }
+
+    SyncMapping:
+      description: >
+        Stored mapping. secretAffirmed records whether disclosure of the
+        item as a Secret is authorized; a mapped item that later becomes a
+        Secret leaves the disclosure set until re-affirmed. A wildcard may
+        carry a sorted exclusion list (exact names or trailing-* prefixes).
+      oneOf:
+        - type: object
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [wildcard] }
+            exclude:
+              type: array
+              maxItems: 200
+              items: { type: string, minLength: 1, maxLength: 200 }
+        - type: object
+          required: [kind, items]
+          properties:
+            kind: { type: string, enum: [explicit] }
+            items:
+              type: array
+              items:
+                type: object
+                required: [name, secretAffirmed]
+                properties:
+                  name: { type: string }
+                  rename: { type: string }
+                  secretAffirmed: { type: boolean }
+
+    SyncTarget:
+      type: object
+      required:
+        [id, organizationId, projectId, environmentId, connectionId,
+         destination, mapping, removeOrphans, redeploy, state,
+         disabledReason, failureCount, needsSync, lastAttemptAt, lastResult,
+         createdAt, version, updatedAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        projectId: { type: string }
+        environmentId: { type: string }
+        connectionId: { type: string }
+        destination:
+          type: object
+          additionalProperties: { type: string }
+        mapping: { $ref: "#/components/schemas/SyncMapping" }
+        removeOrphans: { type: boolean }
+        redeploy: { type: boolean }
+        state: { type: string, enum: [active, paused, disabled] }
+        disabledReason: { type: [string, "null"] }
+        failureCount: { type: integer }
+        needsSync: { type: boolean }
+        lastAttemptAt: { type: [string, "null"], format: date-time }
+        lastResult: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    SyncLedgerName:
+      type: object
+      required: [name, state, updatedAt, error]
+      properties:
+        name: { type: string, description: Destination name (renames applied) }
+        state:
+          type: string
+          enum: [intent-write, written, failed-write, intent-delete, tombstone, failed-delete]
+        updatedAt: { type: string, format: date-time }
+        error: { type: [string, "null"] }
+
+    AuditEvent:
+      type: object
+      required: [schemaVersion, eventId, eventType, occurredAt, decision]
+      description: >
+        Versioned Security Audit Event (ADR-0016). Never contains plaintext
+        Values, key/credential material, or value-derived hashes.
+      properties:
+        schemaVersion: { type: integer }
+        eventId: { type: string }
+        eventType: { type: string }
+        occurredAt: { type: string, format: date-time }
+        actorIdentityId: { type: [string, "null"] }
+        authenticationMethodId: { type: [string, "null"] }
+        credentialId: { type: [string, "null"] }
+        organizationId: { type: [string, "null"] }
+        action: { type: [string, "null"] }
+        resource: { type: object }
+        decision:
+          type: string
+          enum: [allow, deny, info]
+        authorization: { type: object }
+        tailnetContext: { type: object }
+        listener:
+          type: [string, "null"]
+          enum: [ordinary, tailnet, null]
+        requestId: { type: [string, "null"] }
+        metadata: { type: object }

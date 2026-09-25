@@ -1,0 +1,22 @@
+Varlatch
+Copyright © 2026 Robotsson
+
+Varlatch is licensed by directory:
+
+  AGPL-3.0-or-later
+    services/varlatchd/   the Secret Plane daemon
+    apps/web/             the dashboard
+    convex/               the Application Plane functions
+
+  Apache-2.0
+    everything else, including apps/cli/, packages/, infra/, scripts/,
+    and docs/
+
+Every source file names its license in an SPDX-License-Identifier header,
+and every package directory has a LICENSE file with the full text. Both
+full texts are also in LICENSES/.
+
+A Varlatch release also contains and runs third-party components under
+their own licenses. THIRD-PARTY-NOTICES.md lists them. Among them, the
+Convex backend is source-available under FSL-1.1-Apache-2.0, not open
+source.

@@ -1,0 +1,32 @@
+{
+  "name": "@varlatch/protocol",
+  "version": "0.9.0",
+  "private": true,
+  "description": "The Varlatch public API contract: OpenAPI source of truth, stable error codes, generated types (ADR-0018)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "openapi.yaml"
+  ],
+  "scripts": {
+    "generate": "openapi-typescript openapi.yaml -o src/generated/api.d.ts",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/generated && cp src/generated/api.d.ts dist/generated/api.d.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.0",
+    "openapi-typescript": "7.10.1",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}

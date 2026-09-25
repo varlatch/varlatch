@@ -1,0 +1,29 @@
+{
+  "name": "varlatch-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Varlatch: open-source, self-host-first secrets and environment configuration platform",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.3.4",
+  "scripts": {
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "compose:generate": "node infra/coolify/generate-compose.mjs",
+    "compose:check": "node infra/coolify/generate-compose.mjs --check --verify-docker",
+    "notices:generate": "node scripts/generate-third-party-notices.mjs",
+    "notices:check": "node scripts/generate-third-party-notices.mjs --check",
+    "license:check": "node scripts/check-licenses.mjs",
+    "license:fix": "node scripts/check-licenses.mjs --fix",
+    "dev:up": "scripts/dev.sh up",
+    "dev:link": "scripts/dev.sh link",
+    "dev:down": "scripts/dev.sh down",
+    "dev:reset": "scripts/dev.sh reset"
+  },
+  "devDependencies": {
+    "yaml": "^2.9.1"
+  }
+}

@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/* Varlatch design tokens — dark is the default theme (design R1).
+   Tier colors are never the sole carrier of tier information. */
+:root {
+  --bg: #0d0f14;
+  --bg-raised: #151821;
+  --bg-inset: #0a0c10;
+  --border: #262b38;
+  --text: #e6e8ee;
+  --text-muted: #8b91a3;
+  --accent: #7bd88f;
+  --accent-dim: #2c4534;
+  --tier-development: #6ea8fe;
+  --tier-staging: #e8b339;
+  --tier-production: #f27d72;
+  --deny: #ff5c74;
+  --allow: #4ade80;
+}
+[data-theme="light"] {
+  --bg: #f7f8fa;
+  --bg-raised: #ffffff;
+  --bg-inset: #eef0f4;
+  --border: #d8dce5;
+  --text: #16181f;
+  --text-muted: #5d6373;
+  --accent: #1a7f37;
+  --accent-dim: #d2ecd9;
+  --tier-development: #1f6feb;
+  --tier-staging: #9a6700;
+  --tier-production: #c93c37;
+  --deny: #d1244a;
+  --allow: #1a7f37;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-raised: var(--bg-raised);
+  --color-inset: var(--bg-inset);
+  --color-bd: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-tier-development: var(--tier-development);
+  --color-tier-staging: var(--tier-staging);
+  --color-tier-production: var(--tier-production);
+  --color-deny: var(--deny);
+  --color-allow: var(--allow);
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+body { font: 14px/1.5 system-ui, -apple-system, sans-serif; margin: 0; }
+
+/* Clickable affordance: navigational links carry an underline at rest, not
+   only on hover; keyboard focus is always visible. Nav/sidebar opts out via
+   the `no-underline` utility. */
+a { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-underline-offset: 3px; }
+a:hover { text-decoration-color: var(--accent); }
+:is(a, button, select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
+
+.brand-mark {
+  display: inline-block;
+  flex: none;
+  border-radius: 22%;
+  object-fit: contain;
+}
+
+.text-center > .brand-mark { margin-inline: auto; }

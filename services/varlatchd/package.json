@@ -1,0 +1,35 @@
+{
+  "name": "@varlatch/varlatchd",
+  "version": "0.9.0",
+  "private": true,
+  "description": "The Varlatch Secret Plane daemon: authentication, identity, authorization, contracts, secret material, crypto, audit (ADR-0001/0005/0009)",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/enroll/client.ts --bundle --minify --format=iife --outfile=dist/enroll.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@better-auth/passkey": "1.7.3",
+    "@hono/node-server": "1.19.17",
+    "@varlatch/contract": "workspace:*",
+    "@varlatch/protocol": "workspace:*",
+    "@varlatch/sync": "workspace:*",
+    "better-auth": "1.7.3",
+    "hono": "4.13.8",
+    "pg": "8.16.3",
+    "zod": "4.1.5",
+    "@varlatch/backup": "workspace:*"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@types/node": "26.5.0",
+    "@types/pg": "8.15.5",
+    "@varlatch/sdk": "workspace:*",
+    "esbuild": "0.28.2",
+    "playwright": "1.61.0",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}
