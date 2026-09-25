@@ -49,7 +49,7 @@ for (const [i, where] of dirs.entries()) {
     .replace(/build:\n\s+context: \.\.\/\.\.\n\s+dockerfile: infra\/compose\/convex-deploy\.Dockerfile\n/g, 'image: varlatch-backup-convex-deploy-test:local\n')
     .replace(/build:\n\s+context: \.\.\/\.\.\n\s+dockerfile: apps\/web\/Dockerfile\n/g, 'image: varlatch-backup-web-test:local\n');
   writeFileSync(join(where, 'docker-compose.yml'), compose);
-  writeFileSync(join(where, '.env'), `POSTGRES_SUPERUSER_PASSWORD=test-superuser\nVARLATCH_MIGRATE_PASSWORD=test-migrate\nVARLATCH_RUNTIME_PASSWORD=test-runtime\nCONVEX_DB_PASSWORD=test-convex\nCONVEX_INSTANCE_SECRET=${randomBytes(32).toString('hex')}\nVARLATCHD_PORT=0\nCONVEX_PORT=0\nCONVEX_SITE_PORT=0\nVARLATCH_KEK_HOST_PATH=./secrets/root\nVARLATCH_PUBLIC_URL=http://varlatchd:8686\n`);
+  writeFileSync(join(where, '.env'), `POSTGRES_SUPERUSER_PASSWORD=test-superuser\nVARLATCH_MIGRATE_PASSWORD=test-migrate\nVARLATCH_RUNTIME_PASSWORD=test-runtime\nCONVEX_DB_PASSWORD=test-convex\nCONVEX_INSTANCE_SECRET=${randomBytes(32).toString('hex')}\nVARLATCHD_PORT=0\nVARLATCH_WEB_PORT=0\nCONVEX_PORT=0\nCONVEX_SITE_PORT=0\nVARLATCH_KEK_HOST_PATH=./secrets/root\nVARLATCH_PUBLIC_URL=http://varlatchd:8686\n`);
 
 }
 try {
@@ -117,6 +117,11 @@ try {
   // The Application Plane is rebuilt, not restored (ADR-0036 D3).
   assert.match(firstRestore, /Application Plane reconciled with this release/);
   assert.match(firstRestore, /Mirrors published from the restored Secret Plane/);
+  // A restore leaves the whole installation running, dashboard included,
+  // not only the services it needed for the restore itself.
+  assert.match(firstRestore, /Remaining services started/);
+  const running = docker(target, ['ps', '--status', 'running', '--services']).split('\n');
+  for (const service of ['postgres', 'varlatchd', 'convex-backend', 'varlatch-web']) assert(running.includes(service), `${service} runs after restore: ${running.join(', ')}`);
   const targetApiUrl=base(target,'varlatchd',8686);
   await ready(`${targetApiUrl}/readyz`);
   const restored = new VarlatchClient({server:targetApiUrl,token,fetch:fresh});
