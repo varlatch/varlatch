@@ -10,7 +10,7 @@ You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
 2.x or later, `docker buildx`, `jq`, and the GitHub CLI.
 
 ```sh
-V=0.10.0                                      # the release to verify
+V=0.10.1                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com

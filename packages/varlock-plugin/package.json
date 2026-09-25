@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/varlock-plugin",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "private": true,
   "description": "The canonical Varlock adapter: .env.schema (env-spec subset) -> Varlatch Configuration Contract draft, resolved via the Varlock Environment Mapping (ADR-0002/0013/0017)",
   "license": "Apache-2.0",
