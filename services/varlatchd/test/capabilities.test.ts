@@ -82,13 +82,19 @@ async function projectId(): Promise<string> {
   return (await res.json()).id;
 }
 
+/** The items of the last issuance: exercise places each at its header target by default. */
+let lastItems: string[] = ["STRIPE_KEY"];
+
 async function issue(overrides: Record<string, unknown> = {}, token = brokerToken) {
+  const items = (overrides.items as string[] | undefined) ?? ["STRIPE_KEY"];
+  lastItems = items;
   return post(
     `${ENV_PATH}/capabilities`,
     {
       agentIdentityId: agentId,
-      items: ["STRIPE_KEY"],
+      items,
       destinations: ["api.stripe.com"],
+      targets: Object.fromEntries(items.map((item) => [item, ["header:authorization"]])),
       ttlSeconds: 600,
       runId: "run_test",
       ...overrides,
@@ -97,13 +103,16 @@ async function issue(overrides: Record<string, unknown> = {}, token = brokerToke
   );
 }
 
+const placed = (...items: string[]) => items.map((item) => ({ item, target: "header:authorization" }));
+
 async function exercise(
   capabilityId: string,
   secret: string,
   destination = { host: "api.stripe.com", port: 443 },
   token = brokerToken,
+  placements: { item: string; target: string }[] = placed(...lastItems),
 ) {
-  return post(`${ENV_PATH}/capabilities/${capabilityId}/exercises`, { capabilitySecret: secret, destination }, token);
+  return post(`${ENV_PATH}/capabilities/${capabilityId}/exercises`, { capabilitySecret: secret, destination, placements }, token);
 }
 
 async function auditCount(eventType: string, reason?: string): Promise<number> {
@@ -271,9 +280,133 @@ describe("tailnet Requirements at exercise (ADR-0022 §18)", () => {
     const ok = await tailnetApp.request(`${ENV_PATH}/capabilities/${cap.id}/exercises`, {
       method: "POST",
       headers: auth(brokerToken),
-      body: JSON.stringify({ capabilitySecret: cap.secret, destination: { host: "api.stripe.com", port: 443 } }),
+      body: JSON.stringify({
+        capabilitySecret: cap.secret,
+        destination: { host: "api.stripe.com", port: 443 },
+        placements: placed("STRIPE_KEY"),
+      }),
     });
     expect(ok.status).toBe(200);
+  });
+});
+
+describe("substitution targets (ADR-0039)", () => {
+  const errorOf = async (res: Response) => ((await res.json()) as { error: { code: string; message: string } }).error;
+
+  it("meta advertises capabilities.targets", async () => {
+    const meta = await (await app.request("/v1/meta")).json();
+    expect(meta.capabilities).toContain("capabilities.targets");
+  });
+
+  it("issuance validates targets: required, known kinds, never transport-owned, at most four, only for items (test 5)", async () => {
+    const missing = await issue({ targets: undefined });
+    expect(missing.status).toBe(422);
+    expect((await errorOf(missing)).message).toContain("0.11.0");
+    const cases: [Record<string, unknown>, string][] = [
+      [{ targets: { STRIPE_KEY: ["path:/x"] } }, "not a target kind"],
+      [{ targets: { STRIPE_KEY: [] } }, "STRIPE_KEY has no substitution target"],
+      [{ targets: {} }, "STRIPE_KEY has no substitution target"],
+      [{ targets: { STRIPE_KEY: ["header:a", "header:b", "header:c", "header:d", "header:e"] } }, "at most 4"],
+      [{ targets: { STRIPE_KEY: ["header:a", "header:A"] } }, "repeats a target"],
+      [{ targets: { STRIPE_KEY: ["header:authorization"], OTHER: ["header:x"] } }, "not an item of this Capability"],
+      [{ targets: { STRIPE_KEY: ["json:no-slash"] } }, "JSON Pointer"],
+      [{ targets: { STRIPE_KEY: ["header:bad name"] } }, "not a valid header name"],
+    ];
+    const transportOwned = [
+      "Host", "Content-Length", "Transfer-Encoding", "Expect", "Connection", "Keep-Alive", "Upgrade", "TE", "Trailer",
+      "Proxy-Authorization", "Proxy-Authenticate", "Proxy-Connection", "Via", "Forwarded", "X-Forwarded-For",
+      "X-Forwarded-Host", "Content-Type", "Content-Encoding", "Accept-Encoding", "Range", "If-Range",
+    ];
+    for (const header of transportOwned) cases.push([{ targets: { STRIPE_KEY: [`header:${header}`] } }, "transport-owned"]);
+    for (const [overrides, fragment] of cases) {
+      const res = await issue(overrides);
+      expect(res.status, JSON.stringify(overrides)).toBe(422);
+      expect((await errorOf(res)).message).toContain(fragment);
+    }
+    expect(await auditCount("capability.issued")).toBe(0);
+  });
+
+  it("records canonical targets immutably, returns them, and audits names and locations only (tests 5 and 15)", async () => {
+    const res = await issue({ targets: { STRIPE_KEY: ["query:key", "header:X-Api-Key"] } });
+    expect(res.status).toBe(201);
+    const cap = await res.json();
+    expect(cap.targets).toEqual({ STRIPE_KEY: ["header:x-api-key", "query:key"] });
+    const audit = await ctx.db.query(
+      "SELECT metadata::jsonb->>'targets' AS targets FROM audit_events WHERE event_type = 'capability.issued'",
+    );
+    expect(audit.rows).toEqual([{ targets: "STRIPE_KEY=header:x-api-key;STRIPE_KEY=query:key" }]);
+    // There is no route that changes a Capability's targets.
+    for (const method of ["PATCH", "PUT"]) {
+      const change = await app.request(`${ENV_PATH}/capabilities/${cap.id}`, {
+        method,
+        headers: auth(brokerToken),
+        body: JSON.stringify({ targets: { STRIPE_KEY: ["header:x"] } }),
+      });
+      expect(change.status).toBe(404);
+    }
+    await grantUse();
+    const ex = await exercise(cap.id, cap.secret, undefined, undefined, [{ item: "STRIPE_KEY", target: "query:key" }]);
+    expect(ex.status).toBe(200);
+    expect((await ex.json()).targets).toEqual({ STRIPE_KEY: ["header:x-api-key", "query:key"] });
+  });
+
+  it("exercise names placements, returns only placed items, and refuses one not on the Capability (test 19)", async () => {
+    await put(`${ENV_PATH}/values/DB_PASSWORD`, { value: "hunter2" });
+    await grantUse();
+    const cap = await (await issue({ items: ["STRIPE_KEY", "DB_PASSWORD"] })).json();
+
+    const one = await exercise(cap.id, cap.secret, undefined, undefined, placed("DB_PASSWORD"));
+    expect(one.status).toBe(200);
+    const body = await one.json();
+    expect(body.items.map((i: { name: string }) => i.name)).toEqual(["DB_PASSWORD"]);
+    expect(JSON.stringify(body)).not.toContain("sk_live_1");
+    const exercised = await ctx.db.query(
+      "SELECT metadata::jsonb AS m FROM audit_events WHERE event_type = 'capability.exercised'",
+    );
+    const meta = (exercised.rows[0] as { m: Record<string, string> }).m;
+    expect(meta.placements).toBe("DB_PASSWORD=header:authorization");
+    expect(meta.items).toMatch(/^DB_PASSWORD@ver_/);
+
+    for (const placements of [
+      [{ item: "DB_PASSWORD", target: "header:x-api-key" }],
+      [{ item: "UNBOUND", target: "header:authorization" }],
+      [],
+    ]) {
+      const denied = await exercise(cap.id, cap.secret, undefined, undefined, placements);
+      expect(denied.status).toBe(403);
+      expect((await denied.json()).error.details.reason).toBe("placement-not-targeted");
+    }
+    expect(await auditCount("capability.denied", "placement-not-targeted")).toBe(3);
+    expect(await auditCount("capability.exercised")).toBe(1);
+  });
+
+  it("a Capability issued before the migration is refused at exercise; revocation and expiry still work (test 7)", async () => {
+    await grantUse();
+    const legacy = await (await issue()).json();
+    const expiring = await (await issue()).json();
+    const revocable = await (await issue()).json();
+    // Upgrade in place: these rows existed before migration 22 ran.
+    await ctx.db.query("ALTER TABLE capabilities DROP COLUMN targets");
+    await ctx.db.query("DELETE FROM varlatch_migrations WHERE id = 22");
+    expect((await runMigrations(ctx.db)).applied.map((m) => m.id)).toEqual([22]);
+    const rows = await ctx.db.query("SELECT targets FROM capabilities");
+    expect(rows.rows.every((r) => (r as { targets: unknown }).targets === null)).toBe(true);
+
+    const res = await exercise(legacy.id, legacy.secret);
+    expect(res.status).toBe(403);
+    const error = (await res.json()).error;
+    expect(error.details.reason).toBe("capability-without-targets");
+    expect(error.message).toBe(
+      "This Capability was issued before substitution targets were required. Restart the agent-safe run with Varlatch CLI 0.11.0 or later.",
+    );
+    expect(await auditCount("capability.denied", "capability-without-targets")).toBe(1);
+    expect(await auditCount("capability.exercised")).toBe(0);
+
+    const del = await app.request(`${ENV_PATH}/capabilities/${revocable.id}`, { method: "DELETE", headers: auth(brokerToken) });
+    expect(del.status).toBe(204);
+    expect((await (await exercise(revocable.id, revocable.secret)).json()).error.details.reason).toBe("revoked");
+    await ctx.db.query("UPDATE capabilities SET expires_at = now() - interval '1 second' WHERE id = $1", [expiring.id]);
+    expect((await (await exercise(expiring.id, expiring.secret)).json()).error.details.reason).toBe("expired");
   });
 });
 

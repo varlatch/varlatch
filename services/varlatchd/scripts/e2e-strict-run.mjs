@@ -213,7 +213,10 @@ await contract(base);
     scope: { kind: "project", projectId },
     actions: ["secret.use"],
   });
-  const agentSafe = (name) => ["--strict", "--agent-safe", "--agent", name, "--allow-host", "api.example.com"];
+  const agentSafe = (name) => [
+    "--strict", "--agent-safe", "--agent", name, "--allow-host", "api.example.com",
+    "--target", "DATABASE_URL=header:authorization",
+  ];
   const brokerEnv = { VARLATCH_BROKER_CREDENTIAL: broker.credential };
 
   const ok = await run(admin, agentSafe("strict agent"), { ...brokerEnv, DATABASE_URL: "postgres://parent.internal/app" });
@@ -241,6 +244,15 @@ await contract(base);
   });
   const noReveal = await run(await workspace(operatorToken), agentSafe("strict agent"), brokerEnv);
   check("an operator who cannot validate Secrets does not start the Agent", noReveal.code === 78 && noReveal.received === null && /DATABASE_URL: not-evaluated/.test(noReveal.out), noReveal.out);
+
+  const untargeted = await run(admin, ["--strict", "--agent-safe", "--agent", "strict agent", "--allow-host", "api.example.com"], brokerEnv);
+  check("an agent-safe strict run with an untargeted Secret does not start", untargeted.code !== 0 && untargeted.received === null && /DATABASE_URL has no substitution target/.test(untargeted.out), untargeted.out);
+
+  const omitRequired = await run(admin, ["--strict", "--agent-safe", "--agent", "strict agent", "--allow-host", "api.example.com", "--omit", "DATABASE_URL"], {
+    ...brokerEnv,
+    DATABASE_URL: "postgres://parent.internal/app",
+  });
+  check("omitting a required Secret is a startup violation", omitRequired.code === 78 && omitRequired.received === null && /DATABASE_URL: omitted/.test(omitRequired.out), omitRequired.out);
 
   const allowSecret = await run(admin, [...agentSafe("strict agent"), "--allow-inherited", "DATABASE_URL"], brokerEnv);
   check("--allow-inherited may not name a Secret in an agent-safe run", allowSecret.code !== 0 && allowSecret.received === null && /cannot name a Secret/.test(allowSecret.out), allowSecret.out);

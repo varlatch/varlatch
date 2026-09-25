@@ -4,12 +4,13 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
-import type { EffectiveConfiguration } from "@varlatch/protocol";
-import { generatePlaceholder, startBroker } from "./broker.js";
+import { canonicalTargets, type EffectiveConfiguration } from "@varlatch/protocol";
+import { generatePlaceholder, sameTargets, startBroker, type BrokerEvent } from "./broker.js";
 import type { ConfigurationContract } from "@varlatch/contract";
 import { RUN_CONTEXT, runChild } from "./inject.js";
 import {
   STRICT_EXIT,
+  UsageError,
   checkAllowances,
   formatViolations,
   planStrictRun,
@@ -38,6 +39,81 @@ export interface AgentRunOptions {
    * Never the default.
    */
   metadataCredential: boolean;
+  /** `--target NAME=kind:location`, by item (ADR-0039 Decision 6). */
+  targets: Record<string, string[]>;
+  /** `--omit NAME`: stored Secrets left out of the run entirely. */
+  omit: string[];
+}
+
+/** The minimum server for agent-safe runs: it records targets and reports the active Contract. */
+const TARGETS_SERVER = "0.11.0";
+
+/**
+ * Every stored Secret is either targeted or omitted; a flag naming anything
+ * else is a typo, never ignored. Returns the Secrets the run mediates and
+ * their targets.
+ */
+export function checkTargetFlags(
+  storedSecrets: string[],
+  opts: Pick<AgentRunOptions, "targets" | "omit">,
+): { mediated: string[]; targets: Record<string, string[]> } {
+  const stored = new Set(storedSecrets);
+  const omitted = new Set(opts.omit);
+  const named = [...new Set([...Object.keys(opts.targets), ...omitted])];
+  const unknown = named.filter((n) => !stored.has(n)).sort();
+  if (unknown.length > 0) {
+    throw new UsageError(`--target and --omit must name Secrets stored in this environment; not stored here: ${unknown.join(", ")}`);
+  }
+  const both = Object.keys(opts.targets).filter((n) => omitted.has(n)).sort();
+  if (both.length > 0) throw new UsageError(`an item cannot be both targeted and omitted: ${both.join(", ")}`);
+  const untargeted = [...stored].filter((n) => !omitted.has(n) && !opts.targets[n]).sort();
+  if (untargeted.length > 0) {
+    throw new UsageError(
+      untargeted
+        .map(
+          (n) =>
+            `${n} has no substitution target: add --target ${n}=header:authorization\n` +
+            `          (or query:, json:, form:), or --omit ${n} to leave it out of this run`,
+        )
+        .join("\nvarlatch: "),
+    );
+  }
+  const mediated = [...stored].filter((n) => !omitted.has(n)).sort();
+  return { mediated, targets: Object.fromEntries(mediated.map((n) => [n, opts.targets[n]!])) };
+}
+
+/** Refuse a server that cannot record targets; never fall back to substituting anywhere. */
+export async function requireTargetsServer(api: VarlatchClient): Promise<void> {
+  const meta = await api.meta();
+  if (!meta.capabilities.includes("capabilities.targets")) {
+    throw new Error(
+      `varlatch: agent-safe runs need Varlatch ${TARGETS_SERVER} or later on the server, which records substitution targets; ` +
+        `this server is ${meta.serverVersion}. Nothing was started.`,
+    );
+  }
+}
+
+/**
+ * The Contract's Secret names, so inherited copies can be stripped (ADR-0039
+ * Decision 10). With an active Contract the run needs contract.read: it
+ * never proceeds with stripping it could not complete.
+ */
+export async function contractSecrets(api: VarlatchClient, ctx: ResolvedContext, effective: EffectiveConfiguration): Promise<string[]> {
+  if (!effective.manifest) {
+    throw new Error(`varlatch: agent-safe runs need Varlatch ${TARGETS_SERVER} or later on the server. Nothing was started.`);
+  }
+  if (!effective.manifest.contract) return [];
+  try {
+    const revision = await api.getActiveContract(ctx.organization, ctx.project);
+    const contract = revision.contract as unknown as ConfigurationContract | undefined;
+    return (contract?.items ?? []).filter((i) => i.sensitive).map((i) => i.name);
+  } catch (err) {
+    if (!(err instanceof VarlatchApiError) || (err.status !== 403 && err.status !== 404)) throw err;
+    throw new Error(
+      "varlatch: this environment has an active Contract, and an agent-safe run needs contract.read to know which " +
+        "inherited names are Secrets and remove them from the Agent's environment. Nothing was started.",
+    );
+  }
 }
 
 export function buildAgentEnv(
@@ -46,6 +122,7 @@ export function buildAgentEnv(
   placeholdersByItem: Map<string, string>,
   proxyUrl: string,
   agentCredential?: { server: string; token: string },
+  strip: Iterable<string> = [],
 ): NodeJS.ProcessEnv {
   const env = { ...base };
   // The Broker credential is the parent's secret, never the child's — and
@@ -53,6 +130,9 @@ export function buildAgentEnv(
   delete env[BROKER_CREDENTIAL_ENV];
   delete env.VARLATCH_TOKEN;
   delete env[RUN_CONTEXT];
+  // Stored and Contract Secrets inherited from the operator's shell never
+  // reach the Agent; the ones the run carries come back as Placeholders.
+  for (const name of strip) delete env[name];
   if (agentCredential) {
     env.VARLATCH_SERVER = agentCredential.server;
     env.VARLATCH_TOKEN = agentCredential.token;
@@ -61,13 +141,51 @@ export function buildAgentEnv(
     if (item.name === RUN_CONTEXT) continue;
     const placeholder = placeholdersByItem.get(item.name);
     if (placeholder !== undefined) env[item.name] = placeholder;
+    else if (item.sensitive) delete env[item.name];
     else if (item.value !== null && item.value !== undefined) env[item.name] = item.value;
   }
+  if (proxyUrl) setProxy(env, proxyUrl);
+  return env;
+}
+
+function setProxy(env: NodeJS.ProcessEnv, proxyUrl: string): void {
   env.HTTP_PROXY = proxyUrl;
   env.HTTPS_PROXY = proxyUrl;
   env.http_proxy = proxyUrl;
   env.https_proxy = proxyUrl;
-  return env;
+  // Node's fetch (and, from Node 24, its http module) honours the proxy
+  // variables only with this set (ADR-0039 Decision 11).
+  env.NODE_USE_ENV_PROXY = "1";
+  // With it set, Node would also proxy a request addressed to the Broker
+  // itself and reject the absolute-URI form substitution needs; exempt
+  // exactly the Broker's own address, keeping any existing entries.
+  const broker = new URL(proxyUrl).host;
+  const existing = (env.NO_PROXY ?? env.no_proxy ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+  const noProxy = [...new Set([...existing, broker])].join(",");
+  env.NO_PROXY = noProxy;
+  env.no_proxy = noProxy;
+}
+
+/** Name the inherited Secrets a run removed, never their values. */
+function reportStripped(base: NodeJS.ProcessEnv, names: Iterable<string>, carried: Set<string>): void {
+  const stripped = [...new Set(names)].filter((n) => base[n] !== undefined && !carried.has(n)).sort();
+  if (stripped.length > 0) {
+    console.error(`varlatch: removed Secrets inherited from this shell from the Agent's environment: ${stripped.join(", ")}`);
+  }
+}
+
+/** Issue with targets, and refuse unless varlatchd recorded exactly those. */
+export async function issueWithTargets(
+  brokerApi: VarlatchClient,
+  ctx: ResolvedContext,
+  input: Parameters<VarlatchClient["issueCapability"]>[3],
+): Promise<Awaited<ReturnType<VarlatchClient["issueCapability"]>>> {
+  const cap = await brokerApi.issueCapability(ctx.organization, ctx.project, ctx.environment, input);
+  if (!cap.targets || !sameTargets(cap.targets, canonicalTargets(input.items, input.targets))) {
+    await revokeQuietly(brokerApi, ctx, cap.id);
+    throw new Error("varlatch: the server recorded different substitution targets than this run requested. Nothing was started.");
+  }
+  return cap;
 }
 
 function loadBrokerCredential(opts: AgentRunOptions): string {
@@ -88,10 +206,14 @@ export async function runAgentSafe(
   command: string,
   commandArgs: string[],
 ): Promise<number> {
+  await requireTargetsServer(api);
   const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment, {
     includeValues: true,
   });
-  const secretItems = (effective.items ?? []).filter((i) => i.sensitive).map((i) => i.name);
+  const storedSecrets = (effective.items ?? []).filter((i) => i.sensitive && i.name !== RUN_CONTEXT).map((i) => i.name);
+  const { mediated: secretItems, targets } = checkTargetFlags(storedSecrets, opts);
+  const strip = [...storedSecrets, ...(await contractSecrets(api, ctx, effective))];
+  reportStripped(process.env, strip, new Set(secretItems));
 
   const agent = await findAgent(api, ctx, opts.agent);
   const runId = `run_${randomBytes(8).toString("hex")}`;
@@ -99,11 +221,11 @@ export async function runAgentSafe(
 
   if (secretItems.length === 0) {
     // Nothing to mediate: run with non-sensitive values and no broker.
-    console.error("varlatch: no Secrets in this environment; running without a broker");
+    console.error("varlatch: no Secrets to mediate in this run; running without a broker");
     const minted = opts.metadataCredential
       ? await mintAgentCredential(new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts) }))
       : undefined;
-    const env = buildAgentEnv(process.env, effective, new Map(), "", minted?.credential);
+    const env = buildAgentEnv(process.env, effective, new Map(), "", minted?.credential, strip);
     delete env.HTTP_PROXY;
     delete env.HTTPS_PROXY;
     delete env.http_proxy;
@@ -122,10 +244,11 @@ export async function runAgentSafe(
   }
 
   const brokerApi = new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts) });
-  const cap = await brokerApi.issueCapability(ctx.organization, ctx.project, ctx.environment, {
+  const cap = await issueWithTargets(brokerApi, ctx, {
     agentIdentityId: agent.id,
     items: secretItems,
     destinations: opts.allowHosts,
+    targets,
     ttlSeconds: opts.ttlSeconds,
     runId,
   });
@@ -146,7 +269,7 @@ export async function runAgentSafe(
     commandArgs,
     mint: opts.metadataCredential ? () => mintAgentCredential(brokerApi) : undefined,
     childEnv: (placeholdersByItem, proxyUrl, credential) =>
-      buildAgentEnv(process.env, effective, placeholdersByItem, proxyUrl, credential),
+      buildAgentEnv(process.env, effective, placeholdersByItem, proxyUrl, credential, strip),
   });
 }
 
@@ -164,7 +287,7 @@ async function runMediated(run: {
   ctx: ResolvedContext;
   opts: AgentRunOptions;
   brokerApi: VarlatchClient;
-  cap: { id: string; secret: string; destinations: string[] };
+  cap: { id: string; secret: string; destinations: string[]; targets: Record<string, string[]> };
   secretItems: string[];
   runId: string;
   command: string;
@@ -188,19 +311,26 @@ async function runMediated(run: {
   // An agent's request is waiting on each exercise: during isolating
   // maintenance give up quickly and let the broker answer 503 + Retry-After.
   const exerciseApi = new VarlatchClient({ server: ctx.server, token: loadBrokerCredential(opts), maintenanceRetryMs: 15_000 });
+  const diagnostics = brokerDiagnostics();
   const broker = await startBroker({
     placeholders,
     destinations: cap.destinations,
+    targets: cap.targets,
     strict: opts.strict,
-    exercise: async (destination) => {
+    report: diagnostics.report,
+    exercise: async (destination, placements) => {
       const result = await exerciseApi.exerciseCapability(
         ctx.organization,
         ctx.project,
         ctx.environment,
         cap.id,
-        { capabilitySecret: cap.secret, destination },
+        { capabilitySecret: cap.secret, destination, placements },
       );
-      return new Map(result.items.map((i) => [i.name, i.value]));
+      return {
+        values: new Map(result.items.map((i) => [i.name, i.value])),
+        targets: result.targets,
+        withheld: result.withheld,
+      };
     },
   });
 
@@ -216,9 +346,42 @@ async function runMediated(run: {
     return await runChild(run.command, run.commandArgs, run.childEnv(placeholdersByItem, broker.proxyUrl, minted?.credential));
   } finally {
     await broker.close();
+    diagnostics.summarize();
     await minted?.revoke();
     await revokeQuietly(brokerApi, ctx, cap.id);
   }
+}
+
+/**
+ * The run's Broker diagnostics (ADR-0039 Decision 14): each blocked or
+ * failed request as it happens, each stray Placeholder once, and a count by
+ * rule at the end. Names, rules, and locations only, never a value.
+ */
+function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize: () => void } {
+  const counts = new Map<string, number>();
+  const strays = new Set<string>();
+  return {
+    report: (event) => {
+      if (event.kind === "stray") {
+        const key = `${event.item} in the ${event.surface}`;
+        if (strays.has(key)) return;
+        strays.add(key);
+        console.error(`varlatch-broker: ${event.item} placeholder forwarded unchanged in the ${event.surface}, which is not a target`);
+        return;
+      }
+      counts.set(event.rule, (counts.get(event.rule) ?? 0) + 1);
+      console.error(
+        event.kind === "blocked"
+          ? `varlatch-broker: blocked a request (${event.status}): ${event.message}`
+          : `varlatch-broker: dropped a request after exercise (502): ${event.message}`,
+      );
+    },
+    summarize: () => {
+      if (counts.size === 0) return;
+      const byRule = [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([rule, n]) => `${rule} ${n}`);
+      console.error(`varlatch: the broker refused ${[...counts.values()].reduce((a, b) => a + b, 0)} request(s): ${byRule.join(", ")}`);
+    },
+  };
 }
 
 /** Best-effort revoke; the Capability's TTL is the fail-safe. */
@@ -288,12 +451,7 @@ function agentEnvFrom(
     env.VARLATCH_TOKEN = credential.token;
   }
   for (const [name, placeholder] of placeholdersByItem) env[name] = placeholder;
-  if (proxyUrl) {
-    env.HTTP_PROXY = proxyUrl;
-    env.HTTPS_PROXY = proxyUrl;
-    env.http_proxy = proxyUrl;
-    env.https_proxy = proxyUrl;
-  }
+  if (proxyUrl) setProxy(env, proxyUrl);
   return env;
 }
 
@@ -315,9 +473,9 @@ export async function runAgentSafeStrict(
 ): Promise<number> {
   const log = (line: string) => console.error(line);
   const meta = await api.meta();
-  if (!meta.capabilities.includes("retrieval.preflight")) {
+  if (!meta.capabilities.includes("retrieval.preflight") || !meta.capabilities.includes("capabilities.targets")) {
     log(
-      `varlatch: --agent-safe --strict needs the agent-safe preflight, which this server (${meta.serverVersion}) does not offer; it needs Varlatch 0.11.0 or later. Nothing was started.`,
+      `varlatch: --agent-safe --strict needs the agent-safe preflight and substitution targets, which this server (${meta.serverVersion}) does not offer; it needs Varlatch ${TARGETS_SERVER} or later. Nothing was started.`,
     );
     return STRICT_EXIT;
   }
@@ -338,7 +496,10 @@ export async function runAgentSafeStrict(
     if (retrieval.contract) {
       checkAllowances(retrieval.contract as unknown as ConfigurationContract, opts.allowInherited, { agentSafe: true });
     }
-    const preliminary = planStrictRun(retrieval, process.env, allow, { agent: null });
+    const storedSecrets = retrieval.items.filter((i) => i.sensitive && i.name !== RUN_CONTEXT).map((i) => i.name);
+    const { targets } = checkTargetFlags(storedSecrets, opts);
+    const omitted = new Set(opts.omit);
+    const preliminary = planStrictRun(retrieval, process.env, allow, { agent: null, omitted });
     const global = preliminary.violations.some((v) => v.kind === "contract" || v.kind === "semantics");
     if (global) return refuse(preliminary.violations);
 
@@ -360,10 +521,11 @@ export async function runAgentSafeStrict(
 
     let cap: Awaited<ReturnType<VarlatchClient["issueCapability"]>>;
     try {
-      cap = await brokerApi.issueCapability(ctx.organization, ctx.project, ctx.environment, {
+      cap = await issueWithTargets(brokerApi, ctx, {
         agentIdentityId: agent.id,
         items: preliminary.mediated,
         destinations: opts.allowHosts,
+        targets: Object.fromEntries(preliminary.mediated.map((n) => [n, targets[n]!])),
         ttlSeconds: opts.ttlSeconds,
         runId,
         precondition: {
@@ -382,7 +544,7 @@ export async function runAgentSafeStrict(
     }
 
     const agentFacts = new Map((cap.preflightItems ?? []).map((i) => [i.name, i]));
-    const plan = planStrictRun(retrieval, process.env, allow, { agent: agentFacts });
+    const plan = planStrictRun(retrieval, process.env, allow, { agent: agentFacts, omitted });
     if (plan.violations.length > 0) {
       await revokeQuietly(brokerApi, ctx, cap.id);
       return refuse(plan.violations);
@@ -390,6 +552,7 @@ export async function runAgentSafeStrict(
     if (plan.outsideContract > 0) {
       log(`varlatch: ${plan.outsideContract} delivered item(s) are not in the Contract; delivered as usual`);
     }
+    reportStripped(process.env, storedSecrets, new Set(plan.mediated));
     return runMediated({
       ctx,
       opts,

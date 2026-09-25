@@ -3,11 +3,15 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
+import { parseTarget, type Target } from "@varlatch/protocol";
+import { BODY_LIMIT, planPlacement, type Placement, type PlacementRule, type Surface } from "./placement.js";
 
 /**
- * The local Broker (ADR-0022): a loopback-only forward proxy that substitutes
- * per-run Placeholders with real secret material only in requests it
- * originates itself over verified TLS to allowlisted destinations. It is
+ * The local Broker (ADR-0022, amended by ADR-0039): a loopback-only forward
+ * proxy that substitutes per-run Placeholders with real secret material only
+ * at the Substitution Targets varlatchd recorded on the Capability, in
+ * requests it originates itself over verified TLS to allowlisted
+ * destinations. It is
  * credential mediation, not a network sandbox: non-allowlisted traffic passes
  * through unchanged (placeholders intact, useless) unless strict mode blocks
  * it. Opaque CONNECT tunnels cannot be inspected without MITM, which Varlatch
@@ -15,26 +19,11 @@ import net from "node:net";
  * with a precise diagnostic. No secret is cached across requests.
  */
 
-const BODY_LIMIT = 2 * 1024 * 1024;
-
 // ---------------------------------------------------------------------------
 // Placeholders: opaque per-run tokens; no item name or metadata encoded.
 
 export function generatePlaceholder(): string {
   return `vlch_ph_v1_${randomBytes(16).toString("hex")}`;
-}
-
-const PLACEHOLDER_PATTERN = /vlch_ph_v1_[0-9a-f]{32}/g;
-
-export function containsPlaceholder(text: string): boolean {
-  PLACEHOLDER_PATTERN.lastIndex = 0;
-  return PLACEHOLDER_PATTERN.test(text);
-}
-
-/** Exact-token replacement only; partial tokens are never substituted. */
-export function substituteExact(text: string, values: Map<string, string>): string {
-  PLACEHOLDER_PATTERN.lastIndex = 0;
-  return text.replace(PLACEHOLDER_PATTERN, (token) => values.get(token) ?? token);
 }
 
 // ---------------------------------------------------------------------------
@@ -86,29 +75,34 @@ export function matchesSelectors(selectors: Selector[], host: string, port: numb
 }
 
 // ---------------------------------------------------------------------------
-// Body substitution policy (ADR-0022 §14): bounded inspectable text only.
 
-export function isTextualContentType(contentType: string | undefined): boolean {
-  if (!contentType) return false;
-  const mime = contentType.split(";")[0]!.trim().toLowerCase();
-  return (
-    mime === "application/json" ||
-    mime === "application/x-www-form-urlencoded" ||
-    mime.startsWith("text/")
-  );
+export interface Exercised {
+  /** Config Item name -> value, for the placed items only. */
+  values: Map<string, string>;
+  /** The targets varlatchd holds for the Capability, as it returned them. */
+  targets: Record<string, string[]>;
+  /** Placed items the server did not return (no longer stored). */
+  withheld?: string[];
 }
 
-// ---------------------------------------------------------------------------
+/** What the run's diagnostics hear about; never a value. */
+export type BrokerEvent =
+  | { kind: "blocked"; status: number; rule: PlacementRule; message: string }
+  | { kind: "failed"; rule: PlacementRule | "exercise-mismatch"; message: string }
+  | { kind: "stray"; item: string; surface: Surface };
 
 export interface BrokerOptions {
   /** placeholder token -> Config Item name */
   placeholders: Map<string, string>;
   /** Canonical destination selectors from the issued Capability. */
   destinations: string[];
-  /** Exercise the Capability for one destination; returns item name -> value. */
-  exercise: (destination: { host: string; port: number }) => Promise<Map<string, string>>;
+  /** The targets varlatchd recorded on the Capability, from the issuance response. */
+  targets: Record<string, string[]>;
+  /** Exercise the Capability for one destination and the placements the request needs. */
+  exercise: (destination: { host: string; port: number }, placements: Placement[]) => Promise<Exercised>;
   /** Block non-allowlisted traffic instead of passing it through. */
   strict?: boolean;
+  report?: (event: BrokerEvent) => void;
 }
 
 export interface RunningBroker {
@@ -116,7 +110,20 @@ export interface RunningBroker {
   /** Per-run proxy credential; embed as http://vlt:<token>@127.0.0.1:port. */
   token: string;
   proxyUrl: string;
+  /** Exercised value sets held right now (0 between requests: nothing is cached). */
+  heldValues: () => number;
   close: () => Promise<void>;
+}
+
+/** Equal target sets, whatever the order. */
+export function sameTargets(a: Record<string, string[]>, b: Record<string, string[]>): boolean {
+  const canonical = (t: Record<string, string[]>) =>
+    JSON.stringify(
+      Object.keys(t)
+        .sort()
+        .map((item) => [item, [...(t[item] ?? [])].sort()]),
+    );
+  return canonical(a) === canonical(b);
 }
 
 function deny(res: http.ServerResponse, status: number, message: string, headers: Record<string, string> = {}): void {
@@ -130,6 +137,22 @@ function deny(res: http.ServerResponse, status: number, message: string, headers
  */
 function isMaintenance(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "MAINTENANCE";
+}
+
+/** A failure after exercise: the request is dropped with its plaintext. */
+class AfterExercise extends Error {
+  constructor(
+    readonly rule: PlacementRule | "exercise-mismatch",
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function pairs(raw: string[]): [string, string][] {
+  const out: [string, string][] = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) out.push([raw[i]!, raw[i + 1]!]);
+  return out;
 }
 
 function checkProxyAuth(headers: http.IncomingHttpHeaders, token: string): boolean {
@@ -150,8 +173,10 @@ const CONNECT_DIAGNOSTIC = (host: string) =>
   `which Varlatch intentionally does not MITM. Send plain HTTP requests with ` +
   `absolute URIs through the proxy instead.`;
 
-// Hop-by-hop headers the broker owns on the connection it originates.
-const HOP_BY_HOP = new Set([
+// Headers the broker owns on the connection it originates: hop-by-hop and
+// proxy headers are dropped; Host and Content-Length are set from the
+// authorized URL and the body actually sent.
+const BROKER_OWNED = new Set([
   "proxy-authorization",
   "proxy-connection",
   "connection",
@@ -160,11 +185,20 @@ const HOP_BY_HOP = new Set([
   "te",
   "trailer",
   "upgrade",
+  "host",
+  "content-length",
 ]);
 
-export function startBroker(options: BrokerOptions): Promise<RunningBroker> {
+export async function startBroker(options: BrokerOptions): Promise<RunningBroker> {
   const token = randomBytes(24).toString("base64url");
   const selectors = parseSelectors(options.destinations);
+  // The Broker re-checks what varlatchd recorded (transport-owned headers
+  // included); a target it cannot parse stops the run before it starts.
+  const targets = new Map<string, Target[]>(
+    Object.entries(options.targets).map(([item, list]) => [item, list.map((t) => parseTarget(t))]),
+  );
+  const held = new Set<Map<string, string>>();
+  const report = options.report ?? (() => {});
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res).catch((err: unknown) => {
@@ -227,6 +261,12 @@ export function startBroker(options: BrokerOptions): Promise<RunningBroker> {
       return;
     }
 
+    // A declared length over the bound is refused before any byte is read.
+    const declared = Number(req.headers["content-length"] ?? 0);
+    if (declared > BODY_LIMIT) {
+      deny(res, 413, `request body exceeds the ${BODY_LIMIT}-byte broker limit`);
+      return;
+    }
     const chunks: Buffer[] = [];
     let size = 0;
     let overLimit = false;
@@ -240,88 +280,95 @@ export function startBroker(options: BrokerOptions): Promise<RunningBroker> {
     }
     if (overLimit) {
       // Never forward a partially read (and potentially partially substituted)
-      // request; bounded bodies are an explicit MVP limit.
+      // request; bounded bodies are an explicit limit.
       deny(res, 413, `request body exceeds the ${BODY_LIMIT}-byte broker limit`);
       req.destroy();
       return;
     }
-    let body = Buffer.concat(chunks);
 
-    const headers: Record<string, string | string[]> = {};
-    for (const [name, value] of Object.entries(req.headers)) {
-      if (!HOP_BY_HOP.has(name) && value !== undefined) headers[name] = value;
-    }
+    const parts = {
+      headers: pairs(req.rawHeaders).filter(([name]) => !BROKER_OWNED.has(name.toLowerCase())),
+      query: target.search ? target.search.slice(1) : null,
+      body: Buffer.concat(chunks) as Buffer,
+    };
+    const hadLength = req.headers["content-length"] !== undefined;
 
-    const headerText = JSON.stringify(headers);
-    const bodyText = body.toString("utf8");
-    const bodyHasPlaceholder = containsPlaceholder(bodyText);
-    const needsSubstitution = allowed && (containsPlaceholder(headerText) || bodyHasPlaceholder);
+    // Non-allowlisted traffic passes through unchanged, Placeholders inert.
+    if (!allowed) return forward(parts, hadLength);
 
-    if (needsSubstitution) {
-      if (target.protocol !== "https:") {
-        deny(res, 502, "secret substitution requires an HTTPS destination with verified TLS");
-        return;
-      }
-      const contentType = req.headers["content-type"];
-      if (bodyHasPlaceholder && !isTextualContentType(Array.isArray(contentType) ? contentType[0] : contentType)) {
-        deny(res, 502, "placeholders found in a non-textual request body; refusing to substitute");
-        return;
-      }
-      const items = await options.exercise({ host, port });
-      const values = new Map<string, string>();
-      for (const [placeholder, itemName] of options.placeholders) {
-        const value = items.get(itemName);
-        if (value !== undefined) values.set(placeholder, value);
-      }
-      for (const [name, value] of Object.entries(headers)) {
-        headers[name] = Array.isArray(value)
-          ? value.map((v) => substituteExact(v, values))
-          : substituteExact(value, values);
-      }
-      if (bodyHasPlaceholder) {
-        const substituted = substituteExact(bodyText, values);
-        if (containsPlaceholder(substituted)) {
-          deny(res, 502, "a placeholder could not be resolved for this destination");
-          return;
-        }
-        body = Buffer.from(substituted, "utf8");
-      }
-    }
-    // Request authority comes from the authorized URL, never the caller's
-    // Host header (which could select a different virtual host).
-    headers.host = target.host;
-    if (needsSubstitution && containsPlaceholder(JSON.stringify(headers))) {
-      deny(res, 502, "a header placeholder could not be resolved for this destination");
+    const plan = planPlacement(parts, options.placeholders, targets);
+    if (plan.kind !== "block") for (const stray of plan.strays) report({ kind: "stray", ...stray });
+    if (plan.kind === "block") {
+      report({ kind: "blocked", status: plan.status, rule: plan.rule, message: plan.message });
+      deny(res, plan.status, plan.message);
       return;
     }
-    // The broker owns transport framing on the connection it originates.
-    if (body.length > 0 || req.headers["content-length"] !== undefined) {
-      headers["content-length"] = String(body.length);
+    if (plan.kind === "pass") return forward(parts, hadLength);
+
+    if (target.protocol !== "https:") {
+      deny(res, 502, "secret substitution requires an HTTPS destination with verified TLS");
+      return;
     }
+    const exercised = await options.exercise({ host, port }, plan.placements);
+    held.add(exercised.values);
+    let built: typeof parts;
+    try {
+      const placed = new Set(plan.placements.map((p) => p.item));
+      const returned = [...exercised.values.keys()];
+      if (!sameTargets(exercised.targets, options.targets)) {
+        throw new AfterExercise("exercise-mismatch", "the exercise response carries different targets than the Capability was issued with");
+      }
+      if (exercised.withheld && exercised.withheld.length > 0) {
+        throw new AfterExercise("missing-value", `${[...exercised.withheld].sort().join(", ")}: no longer stored in this environment`);
+      }
+      if (returned.length !== placed.size || returned.some((item) => !placed.has(item))) {
+        throw new AfterExercise("exercise-mismatch", "the exercise response carries different items than the request places");
+      }
+      const applied = plan.apply(exercised.values);
+      if (!applied.ok) throw new AfterExercise(applied.rule, applied.message);
+      built = applied;
+    } catch (err) {
+      if (!(err instanceof AfterExercise)) throw err;
+      report({ kind: "failed", rule: err.rule, message: err.message });
+      deny(res, 502, err.message);
+      return;
+    } finally {
+      // Nothing is cached across requests.
+      exercised.values.clear();
+      held.delete(exercised.values);
+    }
+    return forward(built, hadLength);
 
     // Redirects are relayed, never followed: each subsequent request re-enters
     // these checks from scratch (ADR-0022 §10). TLS verification is stock.
-    const transport = target.protocol === "https:" ? https : http;
-    await new Promise<void>((resolve, reject) => {
-      const upstream = transport.request(
-        {
-          host,
-          port,
-          servername: net.isIP(host) ? undefined : host,
-          method: req.method,
-          path: `${target.pathname}${target.search}`,
-          headers,
-        },
-        (upstreamRes) => {
-          res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
-          upstreamRes.pipe(res);
-          upstreamRes.on("end", resolve);
-          upstreamRes.on("error", reject);
-        },
-      );
-      upstream.on("error", reject);
-      upstream.end(body);
-    });
+    // The upstream connection opens only here, once the request is complete.
+    async function forward(request: typeof parts, lengthWasSent: boolean): Promise<void> {
+      // Request authority comes from the authorized URL, never the caller's
+      // Host header (which could select a different virtual host).
+      const headers: [string, string][] = [["host", target.host], ...request.headers];
+      if (request.body.length > 0 || lengthWasSent) headers.push(["content-length", String(request.body.length)]);
+      const transport = target.protocol === "https:" ? https : http;
+      await new Promise<void>((resolve, reject) => {
+        const upstream = transport.request(
+          {
+            host,
+            port,
+            servername: net.isIP(host) ? undefined : host,
+            method: req.method,
+            path: `${target.pathname}${request.query === null ? "" : `?${request.query}`}`,
+            headers: headers.flat(),
+          },
+          (upstreamRes) => {
+            res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+            upstreamRes.pipe(res);
+            upstreamRes.on("end", resolve);
+            upstreamRes.on("error", reject);
+          },
+        );
+        upstream.on("error", reject);
+        upstream.end(request.body);
+      });
+    }
   }
 
   return new Promise((resolve, reject) => {
@@ -333,6 +380,7 @@ export function startBroker(options: BrokerOptions): Promise<RunningBroker> {
         port,
         token,
         proxyUrl: `http://vlt:${token}@127.0.0.1:${port}`,
+        heldValues: () => held.size,
         close: () =>
           new Promise<void>((res2) => {
             server.closeAllConnections();

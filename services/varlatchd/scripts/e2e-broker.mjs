@@ -127,6 +127,19 @@ const effective = (await api(
 )).json;
 const portValue = effective.items.find((i) => i.name === "PORT")?.value;
 
+// Every stored Secret needs a target or an omit (ADR-0039 Decision 8). This
+// run targets DATABASE_URL and omits the rest, including one stored here
+// with a stale copy in the operator's shell that must not reach the Agent.
+await api("PUT", "/v1/organizations/acme/projects/api/environments/development/values/E2E_OMITTED", { value: "omitted-e2e-secret" });
+const omitted = [
+  ...new Set([...effective.items.filter((i) => i.sensitive && i.name !== "DATABASE_URL").map((i) => i.name), "E2E_OMITTED"]),
+];
+const targetArgs = [
+  "--target", "DATABASE_URL=header:authorization",
+  "--target", "DATABASE_URL=json:/dsn",
+  ...omitted.flatMap((name) => ["--omit", name]),
+];
+
 // The agent process: asserts its own environment, then exercises the proxy.
 const agentScript = join(repoDir, "agent.mjs");
 writeFileSync(agentScript, `
@@ -137,6 +150,8 @@ results.noPlaintext = !envText.includes(${JSON.stringify(SECRET)});
 results.noBearer = !/vlt_(svc|cli|web|agr)_/.test(envText.replace(process.env.VARLATCH_E2E ?? "", ""));
 results.placeholder = /^vlch_ph_v1_[0-9a-f]{32}$/.test(process.env.DATABASE_URL ?? "");
 results.plainValue = process.env.PORT === ${JSON.stringify(portValue)};
+results.omittedAbsent = process.env.E2E_OMITTED === undefined && !envText.includes("omitted-e2e-secret") && !envText.includes("shell-copy");
+results.nodeProxy = process.env.NODE_USE_ENV_PROXY === "1";
 const proxy = new URL(process.env.HTTPS_PROXY);
 const proxyAuth = "Basic " + Buffer.from(decodeURIComponent(proxy.username) + ":" + decodeURIComponent(proxy.password)).toString("base64");
 const ph = process.env.DATABASE_URL;
@@ -160,6 +175,16 @@ const ok = await viaProxy("https://localhost:${tlsPort}/charge", {
   body: JSON.stringify({ dsn: ph }),
 });
 results.allowedStatus = ok.status;
+
+// 1b. A Placeholder outside its targets in a targeted surface blocks, before exercise.
+const outside = await viaProxy("https://localhost:${tlsPort}/outside", {
+  headers: { Authorization: "Bearer " + ph, "X-Debug": ph },
+});
+results.outside = outside.status + ":" + outside.body;
+
+// 1c. A stray in an untargeted surface (the query) is forwarded unchanged.
+const stray = await viaProxy("https://localhost:${tlsPort}/stray?note=" + ph, { headers: { Authorization: "Bearer " + ph } });
+results.strayStatus = stray.status;
 
 // 2. Placeholder (never the secret) to a non-allowlisted host.
 await viaProxy("http://127.0.0.1:${decoyPort}/exfil", { headers: { Authorization: "Bearer " + ph } });
@@ -185,10 +210,20 @@ results.noAuthStatus = (await viaProxy("http://127.0.0.1:${decoyPort}/x", { auth
 console.log("AGENT_RESULTS " + JSON.stringify(results));
 `);
 
+// Without a target or an omit for every stored Secret, nothing starts and nothing is issued.
+const CAPS = "/v1/organizations/acme/projects/api/environments/development/capabilities";
+const capsBefore = (await api("GET", CAPS, null, broker.credential)).json.items.length;
+const untargeted = await run(["run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`, "--", "node", "-e", "console.log('STARTED')"]);
+check("a run with an untargeted Secret refuses to start, naming the item and the flags",
+  untargeted.code !== 0 && !untargeted.out.includes("STARTED") &&
+    untargeted.out.includes("DATABASE_URL has no substitution target: add --target DATABASE_URL=header:authorization"),
+  untargeted.out);
+check("the refused run issued no Capability", (await api("GET", CAPS, null, broker.credential)).json.items.length === capsBefore);
+
 const agentRun = await run([
-  "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`,
+  "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`, ...targetArgs,
   "--", "node", agentScript,
-]);
+], { env: { ...cliEnv, DATABASE_URL: "shell-copy", E2E_OMITTED: "shell-copy" } });
 const resultsLine = agentRun.out.split("\n").find((l) => l.startsWith("AGENT_RESULTS "));
 if (!resultsLine) {
   console.error(`FAIL  agent-safe run produced no results (exit ${agentRun.code}):\n${agentRun.out}`);
@@ -199,6 +234,14 @@ check("agent env contains no stored Secret plaintext", r.noPlaintext);
 check("agent holds no reusable Varlatch credential", r.noBearer);
 check("Secret injected as an opaque placeholder", r.placeholder);
 check("non-sensitive value injected as plaintext", r.plainValue);
+check("an omitted Secret and the shell's stale copies never reach the Agent", r.omittedAbsent);
+check("the run names the inherited Secrets it removed", /removed Secrets inherited from this shell[^\n]*E2E_OMITTED/.test(agentRun.out), agentRun.out);
+check("Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)", r.nodeProxy);
+check("a Placeholder outside its targets blocks with a diagnostic naming item and location",
+  r.outside.startsWith("403:") && r.outside.includes('DATABASE_URL: placeholder at header "x-debug", which is not a target'), r.outside);
+check("the blocked request never reached the destination", !tlsRequests.some((q) => q.url === "/outside"));
+check("a stray Placeholder in an untargeted surface is forwarded unchanged",
+  r.strayStatus === 200 && tlsRequests.some((q) => q.url.startsWith("/stray?note=vlch_ph_v1_") && q.auth === `Bearer ${SECRET}`));
 check("allowed inspectable request succeeded through the broker", r.allowedStatus === 200, `status ${r.allowedStatus}`);
 check("proxy requires the per-run token", r.noAuthStatus === 407, `status ${r.noAuthStatus}`);
 check("redirect relayed to the agent, not followed", r.redirectRelayed);
@@ -242,7 +285,7 @@ console.log("META_RESULTS " + JSON.stringify(results));
 `);
 
 const metaRun = await run([
-  "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`,
+  "run", "--agent-safe", "--agent", "e2e agent", "--allow-host", `localhost:${tlsPort}`, ...targetArgs,
   "--agent-metadata", "--", "node", metaScript,
 ]);
 const metaLine = metaRun.out.split("\n").find((l) => l.startsWith("META_RESULTS "));
@@ -263,21 +306,33 @@ check("agent-run credential is revoked when the run exits", afterRun.status === 
 
 // --- exercise-time semantics via the API (broker credential) ----------------
 
-const CAP_BASE = "/v1/organizations/acme/projects/api/environments/development/capabilities";
+const CAP_BASE = CAPS;
 const issue = () =>
   api("POST", CAP_BASE, {
     agentIdentityId: agent.id,
     items: ["DATABASE_URL"],
     destinations: [`localhost:${tlsPort}`],
+    targets: { DATABASE_URL: ["header:authorization"] },
     ttlSeconds: 600,
   }, broker.credential);
-const exercise = (cap) =>
+const exercise = (cap, placements = [{ item: "DATABASE_URL", target: "header:authorization" }]) =>
   api("POST", `${CAP_BASE}/${cap.id}/exercises`, {
     capabilitySecret: cap.secret,
     destination: { host: "localhost", port: tlsPort },
+    placements,
   }, broker.credential);
 
+const targetless = await api("POST", CAP_BASE, {
+  agentIdentityId: agent.id, items: ["DATABASE_URL"], destinations: [`localhost:${tlsPort}`], ttlSeconds: 600,
+}, broker.credential);
+check("issuance without targets is refused, naming the minimum CLI version",
+  targetless.status === 422 && String(targetless.json?.error?.message).includes("0.11.0"), JSON.stringify(targetless.json));
+
 const runCap = (await issue()).json;
+check("issuance records and returns the targets", JSON.stringify(runCap.targets) === JSON.stringify({ DATABASE_URL: ["header:authorization"] }));
+const unplaced = await exercise(runCap, [{ item: "DATABASE_URL", target: "json:/dsn" }]);
+check("an exercise naming a target the Capability does not hold is denied",
+  unplaced.status === 403 && unplaced.json?.error?.details?.reason === "placement-not-targeted");
 check("exercise succeeds while the Grant stands", (await exercise(runCap)).status === 200);
 
 await api("DELETE", `/v1/organizations/acme/grants/${grant.id}`);
@@ -290,7 +345,8 @@ await api("DELETE", `${CAP_BASE}/${runCap.id}`, null, broker.credential);
 check("revoking the Capability denies the next exercise", (await exercise(runCap)).status === 403);
 
 const shortCap = (await api("POST", CAP_BASE, {
-  agentIdentityId: agent.id, items: ["DATABASE_URL"], destinations: [`localhost:${tlsPort}`], ttlSeconds: 1,
+  agentIdentityId: agent.id, items: ["DATABASE_URL"], destinations: [`localhost:${tlsPort}`],
+  targets: { DATABASE_URL: ["header:authorization"] }, ttlSeconds: 1,
 }, broker.credential)).json;
 await new Promise((r2) => setTimeout(r2, 1500));
 check("expired Capability fails closed", (await exercise(shortCap)).status === 403);
@@ -321,6 +377,7 @@ const boundIssue = () => api("POST", CAP_BASE, {
   agentIdentityId: agent.id,
   items: ["DATABASE_URL", "API_KEY"],
   destinations: [`localhost:${tlsPort}`],
+  targets: { DATABASE_URL: ["header:authorization"], API_KEY: ["header:x-api-key"] },
   ttlSeconds: 600,
 }, broker.credential);
 const noPlainCap = (await boundIssue()).json;
@@ -341,8 +398,11 @@ check("bound-secret and authorized plain references expand at exercise",
   expanded.items?.find((i) => i.name === "DATABASE_URL")?.value ===
     `postgres://app:ak_e2e@host:${refPort}/app`,
   expanded.items?.find((i) => i.name === "DATABASE_URL")?.value);
+check("only the placed Secret is returned; the bound dependency is not",
+  JSON.stringify(expanded.items?.map((i) => i.name)) === JSON.stringify(["DATABASE_URL"]));
 
 await api("PUT", `${VALUES}/DATABASE_URL`, { value: SECRET }); // restore for later suites
+await api("DELETE", `${VALUES}/E2E_OMITTED`);
 
 // --- audit ------------------------------------------------------------------
 
@@ -360,8 +420,13 @@ check("exercise audit identifies agent, broker, destination, item@version",
     good.metadata?.destination === `localhost:${tlsPort}`);
 check("denial audit records the internal reason",
   events.some((e) => e.eventType === "capability.denied" && e.metadata?.reason === "authz-denied"));
+check("issuance audit records the targets, exercise audit the placements",
+  events.some((e) => e.eventType === "capability.issued" && e.metadata?.targets === "DATABASE_URL=header:authorization;DATABASE_URL=json:/dsn") &&
+    exercised.some((e) => e.metadata?.placements === "DATABASE_URL=header:authorization;DATABASE_URL=json:/dsn"));
+check("a bound dependency is audited as a reference expansion before it is decrypted",
+  events.some((e) => e.eventType === "secret.disclosed" && e.metadata?.mode === "reference-expansion" && String(e.metadata?.items).startsWith("API_KEY@ver_")));
 check("audit export contains no secret plaintext",
-  !ndjson.includes(SECRET) && !ndjson.includes("dev-db-rotated"));
+  !ndjson.includes(SECRET) && !ndjson.includes("dev-db-rotated") && !ndjson.includes("omitted-e2e-secret"));
 
 tlsUpstream.close();
 decoyUpstream.close();

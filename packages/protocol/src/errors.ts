@@ -62,6 +62,7 @@ export const CAPABILITIES = [
   "retrieval.manifest",
   "retrieval.strict",
   "retrieval.preflight",
+  "capabilities.targets",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

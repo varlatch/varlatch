@@ -66,13 +66,15 @@ async function grant(subject: string, actions: string[], scope: unknown = { kind
 }
 
 async function issue(retrieval: Record<string, any>, overrides: Record<string, unknown> = {}) {
+  const items = (overrides.items as string[] | undefined) ?? ["DB_PASS", "STRIPE_KEY", "DATABASE_URL"];
   return call(
     "POST",
     `${E}/capabilities`,
     {
       agentIdentityId: agentId,
-      items: ["DB_PASS", "STRIPE_KEY", "DATABASE_URL"],
+      items,
       destinations: ["api.example.com"],
+      targets: Object.fromEntries(items.map((item) => [item, [`json:/${item.toLowerCase()}`]])),
       ttlSeconds: 600,
       precondition: {
         projectId: retrieval.manifest.projectId,
@@ -261,7 +263,11 @@ describe("the Broker's issuance with a precondition", () => {
     const exercise = await call(
       "POST",
       `${E}/capabilities/${issued.body.id}/exercises`,
-      { capabilitySecret: issued.body.secret, destination: { host: "api.example.com", port: 443 } },
+      {
+        capabilitySecret: issued.body.secret,
+        destination: { host: "api.example.com", port: 443 },
+        placements: [{ item: "DATABASE_URL", target: "json:/database_url" }],
+      },
       brokerToken,
     );
     expect(exercise.status).toBe(403);
