@@ -14,8 +14,10 @@ varlatch run --agent-safe --agent "coding agent" \
   -- my-agent
 ```
 
-Agent-safe runs need a Varlatch 0.11.0 server or later. The CLI refuses an
-older server and names the version it needs.
+Every agent-safe run needs a Varlatch 0.11.0 server or later, even one with
+no Secrets to mediate: removing Secrets inherited from your shell relies on
+the server's account of the active Contract. The CLI refuses an older server,
+names the version it needs, and starts nothing.
 
 ## Substitution targets
 
@@ -57,8 +59,10 @@ Capability, and its name is removed from the Agent's environment. In a
 Targets come only from your command line. varlatchd records them on the
 Capability when it issues it, and the Broker enforces the targets varlatchd
 returned. The Agent cannot add or change a target, and nothing in its
-requests is read as policy. A target naming anything other than a stored
-Secret is an error.
+requests is read as policy. `--target` and `--omit` must name Secrets
+stored in the environment: a name that is unknown, not stored there, or not
+a Secret is a usage error, and so is a name given both a target and an
+omit. Nothing starts.
 
 ## What the Broker does with a request
 
@@ -88,6 +92,12 @@ Anything unclear in a targeted surface blocks the request:
 - a targeted body whose `Content-Type` is missing, does not match the
   target, or declares a charset other than UTF-8, or that has a
   `Content-Encoding` other than `identity`.
+
+A Secret's targets constrain every request that carries its Placeholder.
+When the Secret has a `json:` or `form:` target, the request's body is a
+targeted surface even if the Placeholder is only in a header: a body that
+is not a valid body of that kind, as above, blocks the request, although
+nothing in it would be substituted.
 
 Only this run's Placeholders count: text that merely looks like one is left
 alone. The Broker changes nothing else: every other header, the rest of the
@@ -131,9 +141,13 @@ and counts failures by rule when the run ends.
   inherited Secret it removed. A name Varlatch does not know to be secret
   still passes through.
 - `HTTP_PROXY` and `HTTPS_PROXY` (and their lower-case forms) point at the
-  Broker. `NODE_USE_ENV_PROXY=1` makes Node's built-in `fetch` use them, and
-  `NO_PROXY` gains the Broker's own address, so a Node request addressed to
-  the Broker is not proxied a second time.
+  Broker. `NODE_USE_ENV_PROXY=1` makes Node's built-in `fetch` use them.
+- `NO_PROXY` and `no_proxy` each keep the entries inherited from your shell
+  and gain exactly the Broker's own address, so a Node request addressed to
+  the Broker is not proxied a second time. A spelling that was not set
+  becomes the Broker's address alone. Clients disagree about which spelling
+  wins when both are set (Node reads `no_proxy` first), so neither is copied
+  into the other.
 - No reusable Varlatch credential, unless you pass `--agent-metadata`.
 
 ## Responses
@@ -217,3 +231,10 @@ destinations passes through unchanged, Placeholders intact, unless you pass
   across fields, or anything derived from it, and it does not apply to
   responses to requests that did not carry the value. While a response is
   streaming, the Broker keeps the values it fetched for it in memory.
+- An exemption inherited in `NO_PROXY` or `no_proxy` still sends matching
+  requests around the Broker, even with `--agent-network strict`, for every
+  client that reads that spelling. Node, curl, and Python treat `*` as a
+  wildcard only when it is the whole value, so the appended Broker address
+  disables an inherited `*` for them; a client that honours `*` anywhere in
+  the list still bypasses the Broker entirely. Start agent-safe runs without
+  exemptions you do not need.
