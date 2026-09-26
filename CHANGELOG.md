@@ -89,6 +89,12 @@ fixes.
   widen one. Anything unclear where a Secret may go blocks the request, and
   a failed request sends the destination nothing. See
   [Agent-safe runs](docs/reference/agent-safe-runs.md).
+- The Broker scrubs responses to the requests it substituted into: a Secret
+  the destination echoes back, in its status line, headers, or body, as
+  written, JSON-escaped, percent-encoded, or base64-encoded, reaches the
+  Agent as its Placeholder. `gzip`, `deflate`, and `br` responses are
+  decoded to do so. This is a second line of defense with stated gaps, not
+  a guarantee; see [Agent-safe runs](docs/reference/agent-safe-runs.md).
 - An agent-safe run removes stored Secrets and Contract Secrets from the
   environment the Agent inherits from your shell. Before, a Secret already
   set in your shell reached the Agent as plaintext.
@@ -203,6 +209,13 @@ fixes.
   Agent sends in bodies.
 - With an active Contract, an agent-safe run needs `contract.read`, to know
   which inherited names are Secrets. Without it the run does not start.
+- Responses to substituted requests change on the wire: the request asks
+  for identity content without `Range`; a response that is coded, has no
+  length, or is over 2 MiB arrives chunked and uncoded, without validators
+  or digests; a coding other than `gzip`, `deflate`, or `br` is a `502`. A
+  substituted response is cut off after 64 MiB of decoded content or 120
+  seconds without data from the destination, so long-polling and
+  server-sent events streams need a heartbeat more often than that.
 - A Node Agent that set `HTTPS_PROXY` and used `fetch` for an allowed
   destination now gets the Broker's `CONNECT` refusal instead of reaching
   the destination directly with the Placeholder. Send absolute-URI requests

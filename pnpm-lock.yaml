@@ -132,6 +132,9 @@ importers:
       '@varlatch/env-schema':
         specifier: workspace:*
         version: link:../../packages/env-schema
+      '@varlatch/matcher':
+        specifier: workspace:*
+        version: link:../../packages/matcher
       '@varlatch/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

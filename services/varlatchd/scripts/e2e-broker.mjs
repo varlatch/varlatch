@@ -15,6 +15,7 @@ import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import https from "node:https";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import zlib from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -73,6 +74,12 @@ const tlsUpstream = https.createServer(
       tlsRequests.push({ url: req.url, auth: req.headers.authorization, body });
       if (req.url === "/redirect") {
         res.writeHead(302, { Location: `http://127.0.0.1:${decoyPort}/stolen` }).end();
+      } else if (req.url === "/echo") {
+        // A destination that reflects the credential it received.
+        const echoed = JSON.stringify({ auth: req.headers.authorization });
+        res.writeHead(200, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(echoed), "X-Echo": req.headers.authorization }).end(echoed);
+      } else if (req.url === "/echo-gzip") {
+        res.writeHead(200, { "Content-Type": "text/plain", "Content-Encoding": "gzip" }).end(zlib.gzipSync(`seen ${req.headers.authorization}`));
       } else {
         res.writeHead(200, { "Content-Type": "application/json" }).end('{"ok":true}');
       }
@@ -161,7 +168,7 @@ function viaProxy(target, { method = "GET", headers = {}, body, auth = true } = 
     const req = http.request(
       { host: proxy.hostname, port: proxy.port, method, path: target,
         headers: { ...(auth ? { "Proxy-Authorization": proxyAuth } : {}), ...headers } },
-      (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => resolve({ status: res.statusCode, body: b, location: res.headers.location })); },
+      (res) => { let b = ""; res.on("data", (c) => (b += c)); res.on("end", () => resolve({ status: res.statusCode, body: b, location: res.headers.location, headers: res.headers })); },
     );
     req.on("error", reject);
     req.end(body);
@@ -175,6 +182,13 @@ const ok = await viaProxy("https://localhost:${tlsPort}/charge", {
   body: JSON.stringify({ dsn: ph }),
 });
 results.allowedStatus = ok.status;
+
+// 1a. A destination that reflects the credential: the response is scrubbed.
+const echo = await viaProxy("https://localhost:${tlsPort}/echo", { headers: { Authorization: "Bearer " + ph } });
+const echoGzip = await viaProxy("https://localhost:${tlsPort}/echo-gzip", { headers: { Authorization: "Bearer " + ph } });
+results.echo = echo.status === 200 && JSON.parse(echo.body).auth === "Bearer " + ph && echo.headers["x-echo"] === "Bearer " + ph;
+results.echoGzip = echoGzip.status === 200 && echoGzip.body === "seen Bearer " + ph && echoGzip.headers["content-encoding"] === undefined;
+results.echoLeak = [echo.body, echoGzip.body, JSON.stringify(echo.headers)].some((t) => t.includes(${JSON.stringify(SECRET)}));
 
 // 1b. A Placeholder outside its targets in a targeted surface blocks, before exercise.
 const outside = await viaProxy("https://localhost:${tlsPort}/outside", {
@@ -237,6 +251,12 @@ check("non-sensitive value injected as plaintext", r.plainValue);
 check("an omitted Secret and the shell's stale copies never reach the Agent", r.omittedAbsent);
 check("the run names the inherited Secrets it removed", /removed Secrets inherited from this shell[^\n]*E2E_OMITTED/.test(agentRun.out), agentRun.out);
 check("Node's fetch is pointed at the Broker (NODE_USE_ENV_PROXY=1)", r.nodeProxy);
+check("a reflected credential comes back as the Placeholder (body and header)", r.echo);
+check("a gzip-coded reflection is decoded and scrubbed", r.echoGzip);
+check("no response to the Agent carries the Secret", r.echoLeak === false);
+check("the destination still received the real credential when asked to echo it",
+  tlsRequests.filter((q) => q.url.startsWith("/echo")).every((q) => q.auth === `Bearer ${SECRET}`));
+check("the run reports what it scrubbed, by item and count", /replaced Secrets reflected in responses: DATABASE_URL \d+/.test(agentRun.out), agentRun.out);
 check("a Placeholder outside its targets blocks with a diagnostic naming item and location",
   r.outside.startsWith("403:") && r.outside.includes('DATABASE_URL: placeholder at header "x-debug", which is not a target'), r.outside);
 check("the blocked request never reached the destination", !tlsRequests.some((q) => q.url === "/outside"));

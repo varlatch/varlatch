@@ -341,6 +341,7 @@ async function runMediated(run: {
       );
       return {
         values: new Map(result.items.map((i) => [i.name, i.value])),
+        retiring: new Map(result.items.flatMap((i) => (i.retiring ? [[i.name, i.retiring.value] as const] : []))),
         targets: result.targets,
         withheld: result.withheld,
       };
@@ -366,33 +367,65 @@ async function runMediated(run: {
 }
 
 /**
- * The run's Broker diagnostics (ADR-0039 Decision 14): each blocked or
- * failed request as it happens, each stray Placeholder once, and a count by
- * rule at the end. Names, rules, and locations only, never a value.
+ * The run's Broker diagnostics (ADR-0039 Decisions 14 and 23): each blocked
+ * or failed request and aborted response as it happens, each stray
+ * Placeholder and unscrubbable Secret once, and counts by rule and by
+ * scrubbed item at the end. Names, rules, and locations only, never a value.
  */
 function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize: () => void } {
   const counts = new Map<string, number>();
-  const strays = new Set<string>();
+  const scrubbed = new Map<string, number>();
+  const once = new Set<string>();
+  const say = (key: string, line: string) => {
+    if (once.has(key)) return;
+    once.add(key);
+    console.error(line);
+  };
   return {
     report: (event) => {
-      if (event.kind === "stray") {
-        const key = `${event.item} in the ${event.surface}`;
-        if (strays.has(key)) return;
-        strays.add(key);
-        console.error(`varlatch-broker: ${event.item} placeholder forwarded unchanged in the ${event.surface}, which is not a target`);
-        return;
+      switch (event.kind) {
+        case "stray":
+          say(
+            `stray ${event.item} ${event.surface}`,
+            `varlatch-broker: ${event.item} placeholder forwarded unchanged in the ${event.surface}, which is not a target`,
+          );
+          return;
+        case "scrubbed":
+          scrubbed.set(event.item, (scrubbed.get(event.item) ?? 0) + event.count);
+          return;
+        case "unscrubbable":
+          say(
+            `short ${event.item}`,
+            `varlatch-broker: ${event.item} is shorter than 8 bytes and is not scrubbed from responses`,
+          );
+          return;
+        case "incomplete-prefix":
+          console.error(
+            `varlatch-broker: a response ended in the first ${event.length} bytes of ${event.item}, relayed unchanged (only complete values are scrubbed)`,
+          );
+          return;
+        case "aborted":
+          console.error(`varlatch-broker: aborted a response: ${event.reason}`);
+          return;
+        case "blocked":
+        case "failed":
+          counts.set(event.rule, (counts.get(event.rule) ?? 0) + 1);
+          console.error(
+            event.kind === "blocked"
+              ? `varlatch-broker: blocked a request (${event.status}): ${event.message}`
+              : `varlatch-broker: dropped a request after exercise (502): ${event.message}`,
+          );
       }
-      counts.set(event.rule, (counts.get(event.rule) ?? 0) + 1);
-      console.error(
-        event.kind === "blocked"
-          ? `varlatch-broker: blocked a request (${event.status}): ${event.message}`
-          : `varlatch-broker: dropped a request after exercise (502): ${event.message}`,
-      );
     },
     summarize: () => {
-      if (counts.size === 0) return;
-      const byRule = [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([rule, n]) => `${rule} ${n}`);
-      console.error(`varlatch: the broker refused ${[...counts.values()].reduce((a, b) => a + b, 0)} request(s): ${byRule.join(", ")}`);
+      if (counts.size > 0) {
+        const byRule = [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([rule, n]) => `${rule} ${n}`);
+        console.error(`varlatch: the broker refused ${[...counts.values()].reduce((a, b) => a + b, 0)} request(s): ${byRule.join(", ")}`);
+      }
+      if (scrubbed.size > 0) {
+        const byItem = [...scrubbed].sort(([a], [b]) => a.localeCompare(b)).map(([item, n]) => `${item} ${n}`);
+        console.error(`varlatch: the broker replaced Secrets reflected in responses: ${byItem.join(", ")}`);
+      }
     },
   };
 }

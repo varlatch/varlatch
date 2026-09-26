@@ -32,7 +32,8 @@ each release added.
 - **Safe for AI agents.** Using a secret and revealing it are separate
   permissions. `varlatch run --agent-safe` gives an agent placeholders instead
   of secrets, and a local broker substitutes the real values only in requests
-  to destinations you allow, at the headers or fields you name. Every use is
+  to destinations you allow, at the headers or fields you name, and replaces
+  a secret the destination echoes back in its response. Every use is
   authorized and audited. An MCP
   server, read-only by default, lets agents inspect configuration metadata.
 - **A complete audit log.** Every security-relevant action is recorded

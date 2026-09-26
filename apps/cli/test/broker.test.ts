@@ -395,7 +395,10 @@ describe("broker proxy", () => {
     for (let i = 0; i < got.rawHeaders.length; i += 2) {
       if (!["host", "content-length", "connection"].includes(got.rawHeaders[i]!.toLowerCase())) pairs.push(got.rawHeaders[i]!, got.rawHeaders[i + 1]!);
     }
-    expect(pairs).toEqual(["Authorization", "Bearer sk live/1", "X-Dup", "1", "x-dup", "2", "Content-Type", "application/json"]);
+    // A substituted request also asks for identity content (scrubbing).
+    expect(pairs).toEqual([
+      "Authorization", "Bearer sk live/1", "X-Dup", "1", "x-dup", "2", "Content-Type", "application/json", "Accept-Encoding", "identity",
+    ]);
     // The exercise named exactly the placements.
     expect(exercises).toEqual([
       [

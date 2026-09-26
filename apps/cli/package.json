@@ -22,6 +22,7 @@
     "@varlatch/sdk": "workspace:*",
     "@varlatch/sync": "workspace:*",
     "@varlatch/env-schema": "workspace:*",
+    "@varlatch/matcher": "workspace:*",
     "tar": "^7.5.22"
   },
   "devDependencies": {
