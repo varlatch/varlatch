@@ -26,7 +26,12 @@ const rootKey=randomBytes(32).toString('hex'),bek=randomBytes(32).toString('hex'
 const imageNames={varlatchd:'varlatch-backup-test:local','varlatch-web':'varlatch-backup-web-test:local','convex-deploy':'varlatch-backup-convex-deploy-test:local'};
 function docker(where,args,input) { return execFileSync('docker',['compose','--project-directory',where,...args],{input,encoding:'utf8',maxBuffer:2*1024*1024,stdio:['pipe','pipe','pipe']}).trim(); }
 function base(where,service,port) { return `http://${docker(where,['port',service,String(port)])}`; }
-async function ready(url) { for(let n=0;n<120;n++){try{if((await fetch(url)).ok)return;}catch{} await new Promise(r=>setTimeout(r,500));} throw Error('Readiness timeout'); }
+// Every request on its own connection: this script blocks its event loop in
+// execFileSync/spawnSync for longer than varlatchd's keep-alive timeout, and a
+// pooled connection the server closed meanwhile fails the next request
+// ("other side closed").
+function fresh(url,init={}) { const headers=new Headers(init.headers);headers.set('connection','close');return fetch(url,{...init,headers}); }
+async function ready(url) { for(let n=0;n<120;n++){try{if((await fresh(url)).ok)return;}catch{} await new Promise(r=>setTimeout(r,500));} throw Error('Readiness timeout'); }
 function cli(where,args,success=true) {
  const result=spawnSync('node',[join(root,'apps/cli/dist/varlatch.cjs'),...args,'--dir',where,'--bek-file',join(where,'secrets/bek'),'--kek-file',join(where,'secrets/root')],{encoding:'utf8',timeout:600_000,maxBuffer:64*1024*1024});
  if(success) assert.equal(result.status,0,result.stderr || result.stdout); else assert.notEqual(result.status,0,result.stdout);
@@ -67,7 +72,7 @@ try {
  for(const [name,value] of [['VARLATCH_ISSUER','http://varlatchd:8686'],['VARLATCH_JWKS_URL','http://varlatchd:8686/.well-known/jwks.json']])execFileSync('pnpm',['exec','convex','env','set',name,value],{cwd:join(root,'convex'),env,stdio:'pipe'});
  execFileSync('pnpm',['exec','convex','deploy','-y'],{cwd:join(root,'convex'),env,stdio:'pipe'});
  const token=docker(source,['exec','-T','varlatchd','node','dist/cli.js','admin','bootstrap','--cli-credential']).match(/vlt_cli_\S+/)?.[0];assert(token);
- const api=new VarlatchClient({server:sourceUrl,token});
+ const api=new VarlatchClient({server:sourceUrl,token,fetch:fresh});
  await api.createOrganization({slug:'upgrade',name:'Upgrade'});
  await api.createProject('upgrade',{slug:'app',name:'App',contractAuthority:'managed'});
  await api.createEnvironment('upgrade','app',{name:'dev',tier:'development'});
@@ -98,7 +103,7 @@ try {
  assert.equal(readFileSync(join(source,`backup.pre-${release.version}.json`),'utf8'),firstReceipt,'resumed without a new backup');
  console.log('PASS  fixed and rerun, the upgrade completes on the same verified archive, recreating a stale convex-backend');
  const upgradedUrl=base(source,'varlatchd',8686);await ready(`${upgradedUrl}/readyz`);
- const upgraded=new VarlatchClient({server:upgradedUrl,token});
+ const upgraded=new VarlatchClient({server:upgradedUrl,token,fetch:fresh});
  assert.equal((await upgraded.meta()).serverVersion,release.version);
  const doctor=spawnSync('node',[join(root,'apps/cli/dist/varlatch.cjs'),'doctor','--gate','--dir',source],{encoding:'utf8',timeout:300_000});
  assert.equal(doctor.status,0,doctor.stdout);
@@ -111,7 +116,7 @@ try {
  console.log('Restoring the pre-upgrade migration-16 archive on a fresh candidate installation');
  cli(target,['admin','backup','restore','--in',receipt.archive]);
  const restoredUrl=base(target,'varlatchd',8686);await ready(`${restoredUrl}/readyz`);
- const restored=new VarlatchClient({server:restoredUrl,token});
+ const restored=new VarlatchClient({server:restoredUrl,token,fetch:fresh});
  assert.equal((await restored.discloseSecrets('upgrade','app','dev',{items:['SECRET']})).items[0].value,'release-transition-secret');
  console.log('PASS: v0.7.0 offline capture, verified upgrade, migrations, preserved credentials/secrets, and fresh-host recovery of the pre-upgrade archive');
 } catch(error) {
