@@ -362,6 +362,7 @@ const capRes = await fetch(
       agentIdentityId: agentId,
       items: ["DATABASE_URL"],
       destinations: ["api.example.com"],
+      targets: { DATABASE_URL: ["header:authorization"] },
       ttlSeconds: 600,
       runId: "run_ui_e2e",
     }),
@@ -401,6 +402,7 @@ const postRevoke = await fetch(
     body: JSON.stringify({
       capabilitySecret: cap.secret,
       destination: { host: "api.example.com", port: 443 },
+      placements: [{ item: "DATABASE_URL", target: "header:authorization" }],
     }),
   },
 );
