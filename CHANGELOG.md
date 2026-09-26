@@ -19,6 +19,12 @@ fixes.
   Compose command.
 - `varlatch upgrade --release-dir` no longer says it is fetching the release
   from GitHub. It reads only the files in that directory.
+- `varlatch upgrade` now runs the new release's own upgrade gate when Docker
+  runs in a user namespace, as rootless Docker does. It copied that
+  release's CLI out of the running varlatchd container, which fails there
+  because Docker cannot remount the container's read-only secret files, and
+  quietly used the gate of the CLI you ran instead. It now copies the CLI
+  from varlatchd's image.
 
 ### Upgrading
 
