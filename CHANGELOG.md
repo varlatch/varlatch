@@ -163,9 +163,9 @@ fixes.
 - `varlatch run --agent-safe` takes `--target NAME=kind:location`
   (repeatable) and `--omit NAME`. Every stored Secret needs one or the
   other. The Agent's environment gains `NODE_USE_ENV_PROXY=1`, so Node's
-  `fetch` goes through the Broker, and `NO_PROXY` gains the Broker's own
-  address. The run reports blocked requests, stray Placeholders, and the
-  inherited Secrets it removed, never values.
+  `fetch` goes through the Broker, and `NO_PROXY` and `no_proxy` each gain
+  the Broker's own address. The run reports blocked requests, stray
+  Placeholders, and the inherited Secrets it removed, never values.
 
 ### Upgrading
 
@@ -180,14 +180,28 @@ fixes.
   CLI refuses an older server. A Capability issued before the upgrade has no
   targets and is refused at its next exercise with the reason
   `capability-without-targets`; restart the agent-safe run with the new
-  CLI. Revocation and expiry work as before.
+  CLI. Revocation and expiry work as before. The CLI refuses an older server
+  for every agent-safe run, including one with no Secrets, because removing
+  inherited Secrets relies on the server's account of the active Contract.
+- `--target` and `--omit` must name Secrets stored in the environment. A
+  name that is unknown, not stored there, or not a Secret is a usage error,
+  and nothing starts.
+- A Secret with a `json:` or `form:` target constrains every request that
+  carries its Placeholder: if such a request has a body, it must be a valid
+  body of that kind (a matching `Content-Type`, UTF-8, no
+  `Content-Encoding`), even when the Placeholder is only in a header.
+  Otherwise the Broker answers `403`. Give body targets only to Secrets the
+  Agent sends in bodies.
 - With an active Contract, an agent-safe run needs `contract.read`, to know
   which inherited names are Secrets. Without it the run does not start.
 - A Node Agent that set `HTTPS_PROXY` and used `fetch` for an allowed
   destination now gets the Broker's `CONNECT` refusal instead of reaching
   the destination directly with the Placeholder. Send absolute-URI requests
   to the Broker instead. With `--agent-network strict`, Node's `fetch` to
-  other destinations is now blocked like other traffic.
+  other destinations is now blocked like other traffic, except for hosts
+  your shell's `NO_PROXY` or `no_proxy` exempts: those exemptions are kept
+  and still bypass the Broker. The run adds only the Broker's own address,
+  and a spelling your shell did not set becomes that address alone.
 - Every `varlatch run`, including a default one, now removes a
   `VARLATCH_RUN_CONTEXT` inherited from an outer run. This is the one change
   to a default run. The name is reserved: the server refuses a Contract item

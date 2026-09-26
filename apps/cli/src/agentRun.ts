@@ -157,13 +157,26 @@ function setProxy(env: NodeJS.ProcessEnv, proxyUrl: string): void {
   // variables only with this set (ADR-0039 Decision 11).
   env.NODE_USE_ENV_PROXY = "1";
   // With it set, Node would also proxy a request addressed to the Broker
-  // itself and reject the absolute-URI form substitution needs; exempt
-  // exactly the Broker's own address, keeping any existing entries.
-  const broker = new URL(proxyUrl).host;
-  const existing = (env.NO_PROXY ?? env.no_proxy ?? "").split(",").map((e) => e.trim()).filter(Boolean);
-  const noProxy = [...new Set([...existing, broker])].join(",");
-  env.NO_PROXY = noProxy;
-  env.no_proxy = noProxy;
+  // itself and reject the absolute-URI form substitution needs.
+  Object.assign(env, agentNoProxy(env, new URL(proxyUrl).host));
+}
+
+/**
+ * The Agent's NO_PROXY and no_proxy: each spelling keeps the entries it
+ * inherited and gains exactly the Broker's own address; a spelling that was
+ * unset becomes that address alone. Clients disagree about which spelling
+ * wins when both are set (Node 26 reads no_proxy first), so this is the only
+ * rule under which, whatever spelling a client reads, the run adds no
+ * exemption but the Broker's address. It can narrow an inherited exemption
+ * (a client that fell back to the other spelling no longer sees it), never
+ * widen one. Inherited entries, `*` included, still bypass the Broker for
+ * clients that read their spelling: a stated limit, even with
+ * --agent-network strict.
+ */
+export function agentNoProxy(base: NodeJS.ProcessEnv, broker: string): { NO_PROXY: string; no_proxy: string } {
+  const withBroker = (value: string | undefined) =>
+    [...new Set([...(value ?? "").split(",").map((e) => e.trim()).filter(Boolean), broker])].join(",");
+  return { NO_PROXY: withBroker(base.NO_PROXY), no_proxy: withBroker(base.no_proxy) };
 }
 
 /** Name the inherited Secrets a run removed, never their values. */

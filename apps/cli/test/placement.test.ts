@@ -246,6 +246,29 @@ describe("parser differentials block (test 15)", () => {
   });
 });
 
+describe("a body target constrains every request carrying the Placeholder", () => {
+  const t = targets({ API_KEY: ["header:authorization", "json:/key"] });
+  const header: [string, string][] = [["Authorization", `Bearer ${A}`]];
+
+  it("blocks a malformed or mismatched body even when the Placeholder is only in a header", () => {
+    blocked(planPlacement(request({ headers: header, json: "{not json" }), placeholders, t), "invalid-body");
+    blocked(planPlacement(request({ headers: header, body: Buffer.from("plain"), type: "text/plain" }), placeholders, t), "content-type");
+    blocked(planPlacement(request({ headers: [...header, ["Content-Encoding", "gzip"]], json: { other: 1 } }), placeholders, t), "content-encoding");
+  });
+
+  it("substitutes the header when the body is valid for the target, or absent", () => {
+    expect(planPlacement(request({ headers: header, json: { other: 1 } }), placeholders, t)).toMatchObject({ kind: "substitute" });
+    expect(planPlacement(request({ headers: header }), placeholders, t)).toMatchObject({ kind: "substitute" });
+  });
+
+  it("leaves bodies alone for a Secret without a body target", () => {
+    const headerOnly = targets({ API_KEY: ["header:authorization"] });
+    expect(planPlacement(request({ headers: header, body: Buffer.from("{not json"), type: "application/json" }), placeholders, headerOnly)).toMatchObject({
+      kind: "substitute",
+    });
+  });
+});
+
 describe("after exercise (test 17)", () => {
   it("a value that cannot be carried in a header fails, as does a missing value", () => {
     const plan = planPlacement(request({ headers: [["Authorization", A]] }), placeholders, targets({ API_KEY: ["header:authorization"] }));

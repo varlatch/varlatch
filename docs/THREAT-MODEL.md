@@ -124,7 +124,10 @@ And the honest limits, stated with the same discipline:
 - **Mediation, not a network sandbox.** Non-allowlisted traffic passes
   through unchanged by default (placeholders intact, useless);
   `--agent-network=strict` blocks it. An agent can still make arbitrary
-  outbound requests unless separately sandboxed.
+  outbound requests unless separately sandboxed, and a `NO_PROXY` or
+  `no_proxy` exemption inherited from the operator's shell sends matching
+  requests around the Broker even in strict mode (the run adds only the
+  Broker's own address to each spelling).
 - **Opaque CONNECT tunnels cannot carry substitution** without MITM, which
   Varlatch deliberately does not do (no local CA). Clients must send
   inspectable absolute-URI HTTP requests to the Broker; CONNECT to a

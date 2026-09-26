@@ -12,6 +12,7 @@ import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import type { ResolvedContext } from "@varlatch/context";
 import {
+  agentNoProxy,
   buildAgentEnv,
   BROKER_CREDENTIAL_ENV,
   checkTargetFlags,
@@ -124,6 +125,43 @@ describe("agent child environment", () => {
     expect(env.VARLATCH_TOKEN).toBe("vlt_agr_child");
     expect(env.VARLATCH_SERVER).toBe("https://varlatch.example");
     expect(JSON.stringify(env)).not.toContain("vlt_cli_parent");
+  });
+});
+
+describe("the Agent's NO_PROXY: exactly the Broker's address is added", () => {
+  const broker = "127.0.0.1:41000";
+  const entries = (v: string) => new Set(v.split(",").map((e) => e.trim()).filter(Boolean));
+  const added = (before: string | undefined, after: string) =>
+    [...entries(after)].filter((e) => !entries(before ?? "").has(e));
+
+  const cases: [string, NodeJS.ProcessEnv][] = [
+    ["nothing inherited", {}],
+    ["only NO_PROXY", { NO_PROXY: "internal.example, .corp" }],
+    ["only no_proxy", { no_proxy: "internal.example" }],
+    ["conflicting spellings", { NO_PROXY: "a.example", no_proxy: "b.example" }],
+    ["a wildcard", { NO_PROXY: "*", no_proxy: "*" }],
+    ["the Broker's address already", { NO_PROXY: `${broker},x.example` }],
+    ["empty values", { NO_PROXY: "", no_proxy: " , " }],
+  ];
+  for (const [name, base] of cases) {
+    it(`${name}: each spelling keeps its entries and gains only ${broker}`, () => {
+      const out = agentNoProxy(base, broker);
+      for (const spelling of ["NO_PROXY", "no_proxy"] as const) {
+        expect(entries(out[spelling]).has(broker)).toBe(true);
+        expect(added(base[spelling], out[spelling]).filter((e) => e !== broker)).toEqual([]);
+        for (const e of (base[spelling] ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+          expect(entries(out[spelling]).has(e)).toBe(true);
+        }
+      }
+    });
+  }
+
+  it("never copies one spelling's entries into the other", () => {
+    expect(agentNoProxy({ NO_PROXY: "*" }, broker)).toEqual({ NO_PROXY: `*,${broker}`, no_proxy: broker });
+    expect(agentNoProxy({ NO_PROXY: "a.example", no_proxy: "b.example" }, broker)).toEqual({
+      NO_PROXY: `a.example,${broker}`,
+      no_proxy: `b.example,${broker}`,
+    });
   });
 });
 
@@ -667,5 +705,33 @@ describe("broker proxy", () => {
     expect(out).toContain("manual 200");
     expect(decoy.connections()).toBe(0);
     expect(up.received.map((r) => [r.url, r.headers.authorization])).toEqual([["/manual", "Bearer sk_live_1"]]);
+  });
+
+  it("inherited NO_PROXY entries still bypass the Broker, even in strict mode (the stated limit)", async () => {
+    const decoy = await upstream(undefined, false);
+    cleanups.push(decoy.close);
+    const { broker } = await liveBroker(["api.example.com:443"], { strict: true });
+    const fetchDecoy = async (inherited: NodeJS.ProcessEnv) => {
+      const env = buildAgentEnv({ PATH: process.env.PATH, ...inherited }, { environmentId: "e", items: [] }, new Map(), broker.proxyUrl);
+      const script = `const r = await fetch("http://127.0.0.1:${decoy.port}/x"); console.log("status", r.status);`;
+      return new Promise<string>((resolve) => {
+        const child = spawn(process.execPath, ["--input-type=module", "-e", script], { env, stdio: ["ignore", "pipe", "pipe"] });
+        let text = "";
+        child.stdout.on("data", (c: Buffer) => (text += c.toString()));
+        child.on("exit", () => resolve(text.trim()));
+      });
+    };
+    // An inherited entry for a host bypasses the Broker for clients that read
+    // its spelling. With conflicting spellings Node follows no_proxy.
+    expect(await fetchDecoy({ NO_PROXY: "other.example", no_proxy: `127.0.0.1:${decoy.port}` })).toBe("status 200");
+    expect(decoy.connections()).toBe(1);
+    expect(await fetchDecoy({ NO_PROXY: `127.0.0.1:${decoy.port}`, no_proxy: "other.example" })).toBe("status 403");
+    // Node (like curl and Python) treats `*` as a wildcard only as the whole
+    // value, so once the Broker's address is appended an inherited `*` exempts
+    // nothing for it, in either spelling. A client that honours `*` anywhere
+    // in the list would still bypass everything.
+    expect(await fetchDecoy({ no_proxy: "*" })).toBe("status 403");
+    expect(await fetchDecoy({ NO_PROXY: "*" })).toBe("status 403");
+    expect(decoy.connections()).toBe(1);
   });
 });
