@@ -136,6 +136,15 @@ fixes.
   is valid, and no Contract Secret would come from your shell.
   `--allow-inherited` cannot name a Secret in an agent-safe run.
 
+### Fixed
+
+- `varlatch upgrade` now runs the new release's own upgrade gate when Docker
+  runs in a user namespace, as rootless Docker does. It copied that
+  release's CLI out of the running varlatchd container, which fails there
+  because Docker cannot remount the container's read-only secret files, and
+  quietly used the gate of the CLI you ran instead. It now copies the CLI
+  from varlatchd's image.
+
 ### Upgrading
 
 - Every `varlatch run`, including a default one, now removes a
