@@ -218,7 +218,11 @@ export async function relayScrubbed(opts: {
   const matcher = scrubber.matcher();
   const source: Readable = coding ? pipeline(upstream, DECODERS[coding]!(), () => {}) : upstream;
   upstream.on("data", () => watchdog.touch());
+  // Sent now, not with the first body byte: a failure before any decoded
+  // byte (a corrupt gzip trailer read in one piece) must still reach the
+  // Agent as a started, unterminated response, not as an empty reply.
   res.writeHead(status, statusMessage, headers.flat());
+  res.flushHeaders();
   let decoded = 0;
   try {
     for await (const chunk of source) {

@@ -139,11 +139,13 @@ function agent(
 
 function parse(raw: Buffer, head = false): AgentResponse {
   const split = raw.indexOf("\r\n\r\n");
-  const lines = raw.subarray(0, split < 0 ? raw.length : split).toString("latin1").split("\r\n");
+  // No complete header block (an empty reply included) is never a complete response.
+  if (split < 0) return { status: 0, headers: [], body: Buffer.alloc(0), complete: false, chunked: false, raw };
+  const lines = raw.subarray(0, split).toString("latin1").split("\r\n");
   const status = Number(lines[0]?.split(" ")[1] ?? 0);
   const headers = lines.slice(1).map((l) => [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 1).trim()] as [string, string]);
   const get = (n: string) => headers.find(([k]) => k.toLowerCase() === n)?.[1];
-  const rest = split < 0 ? Buffer.alloc(0) : raw.subarray(split + 4);
+  const rest = raw.subarray(split + 4);
   const chunked = get("transfer-encoding")?.toLowerCase() === "chunked";
   if (head || status === 204 || status === 304) return { status, headers, body: rest, complete: true, chunked, raw };
   if (!chunked) {
@@ -395,15 +397,23 @@ describe("limits at their boundaries (tests 25 and 26)", () => {
 
   it("a decoder error or an upstream reset after headers aborts without a terminating chunk, and releases no held byte", async () => {
     const prefix = SECRET.slice(0, 12);
-    const corrupt = await upstream((_req, res) => {
-      res.writeHead(200, { "Content-Encoding": "gzip" });
-      const good = zlib.gzipSync(Buffer.from(`data ${prefix}`));
-      res.write(good.subarray(0, good.length - 8));
-      res.end(Buffer.from("garbage!garbage!"));
-    });
-    const r1 = await agent((await broker(corrupt.port)).broker, `https://127.0.0.1:${corrupt.port}/`);
-    expect(r1.complete).toBe(false);
-    expect(r1.raw.includes(Buffer.from(prefix))).toBe(false);
+    // Sent in one piece, the decoder fails before it yields a byte; in two, usually after "data ".
+    for (const pieces of [1, 2]) {
+      const corrupt = await upstream((_req, res) => {
+        res.writeHead(200, { "Content-Encoding": "gzip" });
+        const good = zlib.gzipSync(Buffer.from(`data ${prefix}`));
+        const body = Buffer.concat([good.subarray(0, good.length - 8), Buffer.from("garbage!garbage!")]);
+        if (pieces === 1) res.end(body);
+        else {
+          res.write(body.subarray(0, good.length - 8));
+          res.end(body.subarray(good.length - 8));
+        }
+      });
+      const r1 = await agent((await broker(corrupt.port)).broker, `https://127.0.0.1:${corrupt.port}/`);
+      expect(r1.status).toBe(200);
+      expect(r1.complete).toBe(false);
+      expect(r1.raw.includes(Buffer.from(prefix))).toBe(false);
+    }
 
     const reset = await upstream((_req, res) => {
       res.writeHead(200, { "Content-Type": "text/plain" });
