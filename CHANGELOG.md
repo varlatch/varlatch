@@ -167,6 +167,15 @@ fixes.
   the Broker's own address. The run reports blocked requests, stray
   Placeholders, and the inherited Secrets it removed, never values.
 
+### Fixed
+
+- `varlatch upgrade` now runs the new release's own upgrade gate when Docker
+  runs in a user namespace, as rootless Docker does. It copied that
+  release's CLI out of the running varlatchd container, which fails there
+  because Docker cannot remount the container's read-only secret files, and
+  quietly used the gate of the CLI you ran instead. It now copies the CLI
+  from varlatchd's image.
+
 ### Upgrading
 
 - **Agent-safe runs need targets.** A run in which a stored Secret has
