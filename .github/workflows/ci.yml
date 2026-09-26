@@ -210,7 +210,37 @@ jobs:
       - name: Run clean-room E2E suites
         run: ./scripts/ci-e2e.sh
 
+  # Whether a pull request touches what backup-recovery guards: the server
+  # and its migrations, the CLI, the packages, the images and their build
+  # inputs, the Convex functions, infra, and the recovery scripts. Docs, the
+  # web UI alone, and tests do not. Pushes to main and releases always run it.
+  changes:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      recovery: ${{ steps.filter.outputs.recovery }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Recovery-relevant changes
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "recovery=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          relevant=$(git diff --name-only "$BASE" HEAD \
+            | grep -E '^(services/varlatchd/|apps/cli/|packages/|infra/|scripts/|convex/|apps/web/Dockerfile$|\.github/workflows/ci\.yml$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|\.pnpmfile\.cjs$|tsconfig\.base\.json$)' \
+            | grep -vE '^(services/varlatchd|apps/cli|packages/[^/]+)/test/' || true)
+          if [ -n "$relevant" ]; then echo "recovery=true"; else echo "recovery=false"; fi >> "$GITHUB_OUTPUT"
+          printf 'Recovery-relevant changes:\n%s\n' "${relevant:-(none)}"
+
   backup-recovery:
+    needs: changes
+    if: needs.changes.outputs.recovery == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # The self-hosted runner is much smaller than a hosted one.
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 45 }}
