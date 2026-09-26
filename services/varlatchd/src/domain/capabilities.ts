@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
-import { recordAuditEvent } from "../audit/events.js";
+import { TargetError, canonicalTargets, describeTargets } from "@varlatch/protocol";
+import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import type { Evaluation, TailnetContext } from "../authz/evaluate.js";
 import { evaluate } from "../authz/evaluate.js";
 import {
@@ -51,11 +52,18 @@ export interface CapabilityRow {
   environment_id: string;
   items: string[];
   destinations: string[];
+  /** Per item, its canonical substitution targets (ADR-0039); NULL for Capabilities issued before targets. */
+  targets: Record<string, string[]> | string | null;
   secret_hash: string;
   run_id: string | null;
   expires_at: string;
   revoked_at: string | null;
   created_at: string;
+}
+
+function targetsOf(row: CapabilityRow): Record<string, string[]> | null {
+  if (row.targets === null) return null;
+  return typeof row.targets === "string" ? (JSON.parse(row.targets) as Record<string, string[]>) : row.targets;
 }
 
 const MAX_TTL_SECONDS = 24 * 60 * 60;
@@ -96,6 +104,11 @@ export interface IssueCapabilityInput {
   agentIdentityId: string;
   items: string[];
   destinations: string[];
+  /**
+   * Per item, where its Placeholder may be substituted (ADR-0039). Required:
+   * absent only from CLIs older than 0.11.0, which issuance refuses.
+   */
+  targets?: Record<string, string[]> | undefined;
   ttlSeconds: number;
   runId?: string | undefined;
 }
@@ -108,6 +121,8 @@ export interface IssuedCapability {
   environmentId: string;
   items: string[];
   destinations: string[];
+  /** The targets as recorded: the only ones the Broker may enforce. */
+  targets: Record<string, string[]>;
   runId: string | null;
   expiresAt: string;
   /** Advisory current-authority preflight; exercise re-checks regardless. */
@@ -208,6 +223,21 @@ export async function issueCapability(
     if (!sel) throw new DomainError("VALIDATION_FAILED", `Invalid destination selector: ${raw}`);
     return formatSelector(sel);
   });
+  // Targets are required and validated here (ADR-0039 Decision 6): kinds,
+  // transport-owned headers, at most four per item, every item covered.
+  if (!input.targets) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "Capabilities need substitution targets for every item; issue them with Varlatch CLI 0.11.0 or later (--target NAME=kind:location)",
+    );
+  }
+  let targets: Record<string, string[]>;
+  try {
+    targets = canonicalTargets(input.items, input.targets);
+  } catch (err) {
+    if (err instanceof TargetError) throw new DomainError("VALIDATION_FAILED", err.message);
+    throw err;
+  }
   if (input.ttlSeconds < 1 || input.ttlSeconds > MAX_TTL_SECONDS) {
     throw new DomainError("VALIDATION_FAILED", `ttlSeconds must be 1..${MAX_TTL_SECONDS}`);
   }
@@ -249,8 +279,8 @@ export async function issueCapability(
     await db.query(
       `INSERT INTO capabilities
          (id, organization_id, broker_identity_id, agent_identity_id, project_id,
-          environment_id, items, destinations, secret_hash, run_id, expires_at, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$3)`,
+          environment_id, items, destinations, targets, secret_hash, run_id, expires_at, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$3)`,
       [
         id,
         org.id,
@@ -260,6 +290,7 @@ export async function issueCapability(
         env.id,
         input.items,
         selectors,
+        JSON.stringify(targets),
         hashCapabilitySecret(secret),
         input.runId ?? null,
         expiresAt,
@@ -280,6 +311,7 @@ export async function issueCapability(
       metadata: {
         items: input.items.join(","),
         destinations: selectors.join(","),
+        targets: describeTargets(targets),
         runId: input.runId ?? null,
         expiresAt,
         preflight: preflightEval.allowed ? "ok" : "agent-lacks-secret-use",
@@ -294,6 +326,7 @@ export async function issueCapability(
     environmentId: env.id,
     items: input.items,
     destinations: selectors,
+    targets,
     runId: input.runId ?? null,
     expiresAt,
     preflight: preflightEval.allowed ? "ok" : "agent-lacks-secret-use",
@@ -352,6 +385,8 @@ export interface ExerciseInput {
   capabilityId: string;
   capabilitySecret: string;
   destination: Destination;
+  /** Each substitution the Broker will make (ADR-0039 Decision 7). */
+  placements?: { item: string; target: string }[] | undefined;
 }
 
 export interface ExerciseResult {
@@ -365,8 +400,10 @@ export interface ExerciseResult {
      */
     retiring?: { versionId: string; value: string };
   }[];
-  /** Named by the Capability but not currently resolvable as Secrets. */
+  /** Placed but not currently resolvable as Secrets. */
   withheld: string[];
+  /** The Capability's targets as recorded, for the Broker to compare with its own. */
+  targets: Record<string, string[]>;
 }
 
 type DenyReason =
@@ -378,7 +415,9 @@ type DenyReason =
   | "destination-mismatch"
   | "authz-denied"
   | "requirement-failed"
-  | "unresolved-reference";
+  | "unresolved-reference"
+  | "capability-without-targets"
+  | "placement-not-targeted";
 
 /**
  * Everything an exercise reads, from the retrieval snapshot (ADR-0038
@@ -472,6 +511,20 @@ export async function exerciseCapability(
           : "This exercise requires trusted Tailnet Context",
       );
     }
+    if (reason === "capability-without-targets") {
+      throw new DomainError(
+        "PERMISSION_DENIED",
+        "This Capability was issued before substitution targets were required. Restart the agent-safe run with Varlatch CLI 0.11.0 or later.",
+        { reason },
+      );
+    }
+    if (reason === "placement-not-targeted") {
+      throw new DomainError(
+        "PERMISSION_DENIED",
+        `The Broker named a placement this Capability does not hold${detail?.item ? ` (${detail.item} at ${detail.target})` : ""}`,
+        { reason, ...detail },
+      );
+    }
     if (reason === "unresolved-reference") {
       throw new DomainError(
         "PERMISSION_DENIED",
@@ -505,12 +558,26 @@ export async function exerciseCapability(
   const matched = selectors.some((sel) => sel && destinationMatches(sel, input.destination));
   if (!matched) return deny("destination-mismatch");
 
+  // Substitution targets (ADR-0039 Decisions 7 and 9): a Capability issued
+  // before targets is never exercised, and the Broker must name each
+  // substitution it will make; only those items are returned.
+  const targets = targetsOf(row);
+  if (!targets) return deny("capability-without-targets");
+  const placements = input.placements ?? [];
+  if (placements.length === 0) return deny("placement-not-targeted");
+  for (const placement of placements) {
+    if (!targets[placement.item]?.includes(placement.target)) {
+      return deny("placement-not-targeted", { item: placement.item, target: placement.target });
+    }
+  }
+  const placedNames = [...new Set(placements.map((p) => p.item))].sort();
+
   // Model B: the effective versions and the AGENT's secret.use, both as the
   // snapshot saw them.
   const secretsByName = new Map(state.items.filter((i) => i.sensitive).map((i) => [i.name, i]));
   const selected: ResolvedItem[] = [];
   const withheld: string[] = [];
-  for (const name of row.items) {
+  for (const name of placedNames) {
     const item = secretsByName.get(name);
     if (item) selected.push(item);
     else withheld.push(name);
@@ -553,6 +620,7 @@ export async function exerciseCapability(
           items: selected
             .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
             .join(","),
+          placements: placements.map((p) => `${p.item}=${p.target}`).join(";"),
           withheld: withheld.length,
           runId: row.run_id,
         },
@@ -575,69 +643,97 @@ export async function exerciseCapability(
     items.push({ name: item.name, versionId: item.versionId, value, ...(retiring ? { retiring } : {}) });
   }
 
-  // Reference expansion at exercise (ADR-0026): strict resolve-or-deny —
-  // the consumer is an upstream API that cannot react to a literal ${NAME}.
-  // Referenced Secrets must be bound in this Capability (already selected
-  // above); non-sensitive items may be pulled in only when the Agent's
-  // Grants allow config.value.read here. They are found one reference level
-  // at a time, and each level's audit commits before it is decrypted.
+  // Reference expansion at exercise (ADR-0026): strict resolve-or-deny,
+  // since the consumer is an upstream API that cannot react to a literal
+  // ${NAME}. A referenced Secret must be bound in this Capability; a
+  // non-sensitive item may be pulled in only when the Agent's Grants allow
+  // config.value.read here. Only placed items are returned, so a bound
+  // Secret that is referenced but not placed is a dependency: decrypted to
+  // expand the placed value, never returned separately. Dependencies are
+  // found one reference level at a time, and every version of a level is
+  // named by a committed audit event before it is decrypted (ADR-0039
+  // Decision 7).
+  const bound = new Set(row.items);
   const plainByName = new Map(state.items.filter((i) => !i.sensitive).map((i) => [i.name, i]));
   const queued = new Set<string>();
   let frontier: { referencedBy: string; raw: string }[] = items.map((i) => ({ referencedBy: i.name, raw: i.value }));
   for (let depth = 0; frontier.length > 0 && depth < MAX_REFERENCE_DEPTH; depth++) {
-    const needed: { item: ResolvedItem; referencedBy: string }[] = [];
+    const secretNeeded: ResolvedItem[] = [];
+    const plainNeeded: { item: ResolvedItem; referencedBy: string }[] = [];
     for (const { referencedBy, raw } of frontier) {
       for (const reference of referencedNames(raw)) {
         if (lookup.has(reference) || queued.has(reference)) continue;
-        if (secretsByName.has(reference)) {
-          return deny("unresolved-reference", { reference, referencedBy, cause: "secret-not-bound" });
+        const secret = secretsByName.get(reference);
+        if (secret) {
+          if (!bound.has(reference)) {
+            return deny("unresolved-reference", { reference, referencedBy, cause: "secret-not-bound" });
+          }
+          queued.add(reference);
+          secretNeeded.push(secret);
+          continue;
         }
         const plain = plainByName.get(reference);
         if (!plain) {
           return deny("unresolved-reference", { reference, referencedBy, cause: "unknown-item" });
         }
         queued.add(reference);
-        needed.push({ item: plain, referencedBy });
+        plainNeeded.push({ item: plain, referencedBy });
       }
     }
-    if (needed.length === 0) break;
-    if (!captured.plainRead?.allowed) {
-      const first = needed[0]!;
+    if (secretNeeded.length === 0 && plainNeeded.length === 0) break;
+    if (plainNeeded.length > 0 && !captured.plainRead?.allowed) {
+      const first = plainNeeded[0]!;
       return deny("unresolved-reference", {
         reference: first.item.name,
         referencedBy: first.referencedBy,
         cause: "plain-read-denied",
       });
     }
-    const decrypted = await auditThenDecrypt(
-      ctx,
-      state,
-      [
-        {
-          eventType: "value.disclosed",
-          decision: "allow",
-          actorIdentityId: brokerIdentityId,
-          organizationId: org.id,
-          action: "config.value.read",
-          resource: {
-            capabilityId: row.id,
-            agentIdentityId: row.agent_identity_id,
-            projectId: project.id,
-            environmentId: env.id,
-          },
-          requestId: opts.requestId ?? null,
-          listener: opts.listener ?? null,
-          metadata: {
-            mode: "reference-expansion",
-            items: needed.map((n) => `${n.item.name}@${n.item.versionId}`).join(","),
-            runId: row.run_id,
-          },
+    const resource = {
+      capabilityId: row.id,
+      agentIdentityId: row.agent_identity_id,
+      projectId: project.id,
+      environmentId: env.id,
+    };
+    const events: AuditEventInput[] = [];
+    if (secretNeeded.length > 0) {
+      events.push({
+        eventType: "secret.disclosed",
+        decision: "allow",
+        actorIdentityId: brokerIdentityId,
+        organizationId: org.id,
+        action: "secret.use",
+        resource,
+        requestId: opts.requestId ?? null,
+        listener: opts.listener ?? null,
+        metadata: {
+          mode: "reference-expansion",
+          items: secretNeeded.map((i) => `${i.name}@${i.versionId}`).join(","),
+          runId: row.run_id,
         },
-      ],
-      needed.map((n) => n.item.versionId),
-    );
+      });
+    }
+    if (plainNeeded.length > 0) {
+      events.push({
+        eventType: "value.disclosed",
+        decision: "allow",
+        actorIdentityId: brokerIdentityId,
+        organizationId: org.id,
+        action: "config.value.read",
+        resource,
+        requestId: opts.requestId ?? null,
+        listener: opts.listener ?? null,
+        metadata: {
+          mode: "reference-expansion",
+          items: plainNeeded.map((n) => `${n.item.name}@${n.item.versionId}`).join(","),
+          runId: row.run_id,
+        },
+      });
+    }
+    const level = [...secretNeeded, ...plainNeeded.map((n) => n.item)];
+    const decrypted = await auditThenDecrypt(ctx, state, events, level.map((i) => i.versionId));
     frontier = [];
-    for (const { item } of needed) {
+    for (const item of level) {
       const value = decrypted.get(item.versionId) as string;
       lookup.set(item.name, value);
       frontier.push({ referencedBy: item.name, raw: value });
@@ -651,5 +747,5 @@ export async function exerciseCapability(
       return deny("unresolved-reference", { referencedBy: item.name, cause: "incomplete-or-excessive-expansion" });
     }
   }
-  return { items, withheld };
+  return { items, withheld, targets };
 }

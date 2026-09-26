@@ -19,6 +19,7 @@ import {
   type ResolvedContext,
 } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
+import { TargetError, formatTarget, parseTarget } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { buildEnv, runChild, withheldItems } from "./inject.js";
 import { validationOutcome } from "./validation.js";
@@ -73,6 +74,26 @@ function flags(args: string[], name: string): string[] {
     if (args[i] === name && args[i + 1] !== undefined) values.push(args[i + 1] as string);
   }
   return values;
+}
+
+/**
+ * `--target NAME=kind:location`, repeatable (ADR-0039 Decision 6). Targets
+ * come only from the operator's command line, never from the repository.
+ */
+function targetFlags(args: string[]): Record<string, string[]> {
+  const targets: Record<string, string[]> = {};
+  for (const raw of flags(args, "--target")) {
+    const eq = raw.indexOf("=");
+    const name = eq < 0 ? "" : raw.slice(0, eq);
+    if (!name) fail(`--target expects NAME=kind:location (for example API_KEY=header:authorization), got "${raw}"`);
+    try {
+      (targets[name] ??= []).push(formatTarget(parseTarget(raw.slice(eq + 1))));
+    } catch (err) {
+      if (!(err instanceof TargetError)) throw err;
+      fail(`--target ${raw}: ${err.message}`);
+    }
+  }
+  return targets;
 }
 
 function context(args: string[]): ResolvedContext {
@@ -422,10 +443,13 @@ async function main(): Promise<void> {
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) {
           fail(
-            "Usage: varlatch run [--environment <name>] [--strict [--allow-inherited <NAME>]...] [--agent-safe --agent <identity> --allow-host <host[:port]>...] -- <command> [args...]",
+            "Usage: varlatch run [--environment <name>] [--strict [--allow-inherited <NAME>]...] [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
           );
         }
         const preArgs = args.slice(0, sep);
+        if (!has(preArgs, "--agent-safe") && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
+          fail("--target and --omit apply only to --agent-safe runs.");
+        }
         const ctx = context(preArgs);
         const api = client(ctx);
 
@@ -445,6 +469,8 @@ async function main(): Promise<void> {
                 strict: flag(preArgs, "--agent-network") === "strict",
                 ttlSeconds: Number(flag(preArgs, "--ttl") ?? 3600),
                 metadataCredential: has(preArgs, "--agent-metadata"),
+                targets: targetFlags(preArgs),
+                omit: flags(preArgs, "--omit"),
                 allowInherited: flags(preArgs, "--allow-inherited"),
               },
               cmd,
@@ -494,6 +520,8 @@ async function main(): Promise<void> {
                 strict: flag(preArgs, "--agent-network") === "strict",
                 ttlSeconds: Number(flag(preArgs, "--ttl") ?? 3600),
                 metadataCredential: has(preArgs, "--agent-metadata"),
+                targets: targetFlags(preArgs),
+                omit: flags(preArgs, "--omit"),
               },
               cmd,
               cmdArgs,
@@ -501,6 +529,8 @@ async function main(): Promise<void> {
             process.exit(code);
           } catch (err) {
             if (err instanceof VarlatchApiError) throw err;
+            const { UsageError } = await import("./strictRun.js");
+            if (err instanceof UsageError) fail(`varlatch: ${err.message}. Nothing was started.`);
             fail(err instanceof Error ? err.message : String(err));
           }
         }
@@ -1061,8 +1091,10 @@ Usage:
                (validate exactly what the command receives; exit 78 and start nothing on any violation;
                 combine with --agent-safe for the agent-safe preflight: Secrets stay placeholders)
   varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
+               --target <NAME=header:<name>|query:<name>|json:<pointer>|form:<name>>... --omit <NAME>...
                [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
                [--agent-metadata] -- <command>...
+               (every stored Secret needs a --target or an --omit; it is substituted only there)
   varlatch validate [-e <env>]        (exit 1 invalid; 2 incomplete: items this identity may not read)
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>

@@ -328,6 +328,27 @@ describe("agent-safe strict startup", () => {
     expect(p.mediated).toEqual([]);
   });
 
+  it("--omit leaves a stored Secret out and removes the shell's copy; omitting a required one is a violation", () => {
+    const r = retrieval({
+      contract: [secret("API_KEY", { required: { kind: "never" } }), secret("DB_PASSWORD")],
+      items: [
+        { name: "API_KEY", sensitive: true, value: null },
+        { name: "DB_PASSWORD", sensitive: true, value: null },
+        { name: "EXTRA_TOKEN", sensitive: true, value: null },
+      ],
+    });
+    const parent = { API_KEY: "shell", DB_PASSWORD: "shell", EXTRA_TOKEN: "shell" };
+    const optional = planStrictRun(r, parent, new Set(), { ...facts(), omitted: new Set(["API_KEY", "EXTRA_TOKEN"]) });
+    expect(optional.violations).toEqual([]);
+    expect(optional.mediated).toEqual(["DB_PASSWORD"]);
+    expect(optional.env.API_KEY).toBeUndefined();
+    expect(optional.env.EXTRA_TOKEN).toBeUndefined();
+    expect(optional.context?.items.API_KEY).toEqual({ server: "delivered", delivery: "absent" });
+    const required = planStrictRun(r, parent, new Set(), { ...facts(), omitted: new Set(["DB_PASSWORD"]) });
+    expect(kinds(required)).toEqual(["DB_PASSWORD:omitted"]);
+    expect(required.env.DB_PASSWORD).toBeUndefined();
+  });
+
   it("--allow-inherited may not name a Secret in an agent-safe run", () => {
     const contract = { schemaVersion: 1 as const, items: [secret("API_KEY") as never, contractItem("HOST") as never] };
     expect(() => checkAllowances(contract, ["API_KEY"], { agentSafe: true })).toThrow(/cannot name a Secret/);

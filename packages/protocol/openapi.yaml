@@ -567,7 +567,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [agentIdentityId, items, destinations, ttlSeconds]
+              required: [agentIdentityId, items, destinations, targets, ttlSeconds]
               properties:
                 agentIdentityId: { type: string }
                 items:
@@ -580,6 +580,21 @@ paths:
                   minItems: 1
                   maxItems: 50
                   items: { type: string }
+                targets:
+                  type: object
+                  description: >
+                    Required (capability capabilities.targets). For every item,
+                    1 to 4 substitution targets: header:<name> (never a
+                    transport-owned header such as Host, Content-Length,
+                    Transfer-Encoding, Content-Type, or connection and proxy
+                    headers), query:<name>, json:<RFC 6901 pointer>, or
+                    form:<name>. Recorded immutably on the Capability; the
+                    Broker substitutes a Placeholder only at its targets.
+                  additionalProperties:
+                    type: array
+                    minItems: 1
+                    maxItems: 4
+                    items: { type: string }
                 ttlSeconds: { type: integer, minimum: 1 }
                 runId: { type: string, maxLength: 200 }
                 precondition:
@@ -686,6 +701,23 @@ paths:
                   properties:
                     host: { type: string }
                     port: { type: integer, minimum: 1, maximum: 65535 }
+                placements:
+                  type: array
+                  description: >
+                    Each substitution the Broker will make, as an item and one
+                    of its recorded targets. Only these items are returned;
+                    references inside them still resolve against the other
+                    Secrets on the Capability, each dependency audited before
+                    it is decrypted. A Capability without targets (issued
+                    before they were required) is refused with reason
+                    capability-without-targets; a placement the Capability
+                    does not hold with placement-not-targeted.
+                  items:
+                    type: object
+                    required: [item, target]
+                    properties:
+                      item: { type: string }
+                      target: { type: string }
       responses:
         "200":
           description: Exercised secret material (Cache-Control no-store)
@@ -3086,7 +3118,7 @@ components:
     IssuedCapability:
       type: object
       required:
-        [id, secret, agentIdentityId, environmentId, items, destinations, runId, expiresAt, preflight]
+        [id, secret, agentIdentityId, environmentId, items, destinations, targets, runId, expiresAt, preflight]
       properties:
         id: { type: string }
         secret:
@@ -3100,6 +3132,12 @@ components:
         destinations:
           type: array
           items: { type: string }
+        targets:
+          type: object
+          description: The substitution targets as recorded, canonical and sorted; the only ones the Broker may enforce.
+          additionalProperties:
+            type: array
+            items: { type: string }
         runId: { type: [string, "null"] }
         expiresAt: { type: string, format: date-time }
         preflight:
@@ -3126,7 +3164,7 @@ components:
 
     CapabilityExercise:
       type: object
-      required: [items, withheld]
+      required: [items, withheld, targets]
       properties:
         items:
           type: array
@@ -3150,6 +3188,12 @@ components:
         withheld:
           type: array
           items: { type: string }
+        targets:
+          type: object
+          description: The Capability's targets as recorded; the Broker refuses to substitute if they differ from its own.
+          additionalProperties:
+            type: array
+            items: { type: string }
 
     Action:
       type: string

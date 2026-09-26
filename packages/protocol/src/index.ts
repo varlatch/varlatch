@@ -54,3 +54,16 @@ export type SyncMappingInput = components["schemas"]["SyncMappingInput"];
 export type SyncLedgerName = components["schemas"]["SyncLedgerName"];
 
 export type InstallationBackups = components["schemas"]["InstallationBackups"];
+export {
+  MAX_TARGETS_PER_ITEM,
+  TRANSPORT_OWNED_HEADERS,
+  TargetError,
+  canonicalTargets,
+  describeTargets,
+  formatTarget,
+  isTransportOwnedHeader,
+  jsonPointerTokens,
+  parseTarget,
+  type Target,
+  type TargetKind,
+} from "./targets.js";

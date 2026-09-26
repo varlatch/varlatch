@@ -32,7 +32,8 @@ each release added.
 - **Safe for AI agents.** Using a secret and revealing it are separate
   permissions. `varlatch run --agent-safe` gives an agent placeholders instead
   of secrets, and a local broker substitutes the real values only in requests
-  to destinations you allow. Every use is authorized and audited. An MCP
+  to destinations you allow, at the headers or fields you name. Every use is
+  authorized and audited. An MCP
   server, read-only by default, lets agents inspect configuration metadata.
 - **A complete audit log.** Every security-relevant action is recorded
   synchronously in an append-only log, exportable as NDJSON and deliverable to
@@ -145,6 +146,8 @@ placeholder values only. State lives in `.dev/`.
   verifying a release's signatures and provenance
 - [`docs/reference/env-schema.md`](docs/reference/env-schema.md): the
   `.env.schema` contract file format
+- [`docs/reference/agent-safe-runs.md`](docs/reference/agent-safe-runs.md):
+  running an agent with placeholders, and where the broker substitutes
 
 ## Security, support, and contributing
 

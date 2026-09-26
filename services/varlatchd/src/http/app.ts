@@ -1277,6 +1277,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           agentIdentityId: z.string(),
           items: z.array(z.string().min(1)).min(1).max(200),
           destinations: z.array(z.string().min(1)).min(1).max(50),
+          // Substitution targets per item (ADR-0039): required, but checked
+          // in the domain so the error names the item, the rule, or the
+          // minimum CLI version when an older CLI sends none.
+          targets: z.record(z.string(), z.array(z.string()).max(8)).optional(),
           ttlSeconds: z.number().int().positive(),
           runId: z.string().max(200).optional(),
           // Agent-safe strict preflight (ADR-0038 Decision 7): the state the
@@ -1379,6 +1383,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
               host: z.string().min(1),
               port: z.number().int().min(1).max(65535),
             }),
+            // Each substitution the Broker will make (ADR-0039 Decision 7).
+            placements: z.array(z.object({ item: z.string().min(1), target: z.string().min(1) })).max(200).optional(),
           }),
           input(),
         );

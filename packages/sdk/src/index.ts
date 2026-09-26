@@ -492,6 +492,8 @@ export class VarlatchClient {
       agentIdentityId: string;
       items: string[];
       destinations: string[];
+      /** Per item, 1 to 4 substitution targets (header:, query:, json:, form:). */
+      targets: Record<string, string[]>;
       ttlSeconds: number;
       runId?: string;
       /** Agent-safe strict preflight: the state the preflight retrieval saw. */
@@ -529,7 +531,12 @@ export class VarlatchClient {
     project: string,
     environment: string,
     capabilityId: string,
-    input: { capabilitySecret: string; destination: { host: string; port: number } },
+    input: {
+      capabilitySecret: string;
+      destination: { host: string; port: number };
+      /** Each substitution the Broker will make: an item and one of its recorded targets. */
+      placements: { item: string; target: string }[];
+    },
   ): Promise<CapabilityExercise> {
     return this.request(
       "POST",

@@ -80,6 +80,21 @@ fixes.
   commits a new `sync.values_decrypted` event naming the exact versions,
   even when it then pushes nothing, and stops if that commit fails. The
   existing `sync.push_attempted` event still precedes every push.
+- The agent-safe Broker substitutes a Secret only at the targets you name,
+  and only there. Before, it replaced a Placeholder wherever it appeared in
+  the headers or a text body sent to an allowed destination, so an Agent
+  could have it write a Secret into a field that destination stores or
+  publishes. varlatchd records the targets on the Capability when it issues
+  it, and the Broker enforces the recorded ones, so the Agent cannot add or
+  widen one. Anything unclear where a Secret may go blocks the request, and
+  a failed request sends the destination nothing. See
+  [Agent-safe runs](docs/reference/agent-safe-runs.md).
+- An agent-safe run removes stored Secrets and Contract Secrets from the
+  environment the Agent inherits from your shell. Before, a Secret already
+  set in your shell reached the Agent as plaintext.
+- A Capability exercise returns only the Secrets the request places. A
+  Secret it references is decrypted to expand the placed value, after an
+  audit event naming its version, and is not returned.
 
 ### Retrieval
 
@@ -113,6 +128,16 @@ fixes.
   `STATE_CHANGED` (HTTP 409), naming only the categories that changed; on a
   match its response adds `preflightItems`: per item, whether it is stored
   and whether the Agent holds `secret.use`.
+- Capability issuance requires `targets`: per item, one to four of
+  `header:<name>`, `query:<name>`, `json:<pointer>`, and `form:<name>`.
+  Transport-owned headers such as `Host`, `Content-Length`, and
+  `Content-Type` are refused. The issuance response, every exercise
+  response, and the `capability.issued` audit event carry the targets.
+- A Capability exercise requires `placements`, the item and target of each
+  substitution the Broker makes, and returns only those items. A placement
+  the Capability does not hold is denied with the reason
+  `placement-not-targeted`, and `capability.exercised` records the
+  placements. `/v1/meta` lists `capabilities.targets`.
 
 ### CLI
 
@@ -135,6 +160,12 @@ fixes.
   and the Agent starts only if the Agent holds `secret.use`, every Secret
   is valid, and no Contract Secret would come from your shell.
   `--allow-inherited` cannot name a Secret in an agent-safe run.
+- `varlatch run --agent-safe` takes `--target NAME=kind:location`
+  (repeatable) and `--omit NAME`. Every stored Secret needs one or the
+  other. The Agent's environment gains `NODE_USE_ENV_PROXY=1`, so Node's
+  `fetch` goes through the Broker, and `NO_PROXY` and `no_proxy` each gain
+  the Broker's own address. The run reports blocked requests, stray
+  Placeholders, and the inherited Secrets it removed, never values.
 
 ### Fixed
 
@@ -147,6 +178,39 @@ fixes.
 
 ### Upgrading
 
+- **Agent-safe runs need targets.** A run in which a stored Secret has
+  neither `--target` nor `--omit` does not start; add
+  `--target NAME=header:authorization` (or `query:`, `json:`, `form:`) for
+  each Secret the Agent uses, and `--omit NAME` for the rest. Requests that
+  relied on substitution into a `text/*` body, or into a header not known in
+  advance, have no replacement.
+- Agent-safe runs need a 0.11.0 server and CLI together. varlatchd refuses
+  to issue a Capability without targets, naming CLI 0.11.0, and a 0.11.0
+  CLI refuses an older server. A Capability issued before the upgrade has no
+  targets and is refused at its next exercise with the reason
+  `capability-without-targets`; restart the agent-safe run with the new
+  CLI. Revocation and expiry work as before. The CLI refuses an older server
+  for every agent-safe run, including one with no Secrets, because removing
+  inherited Secrets relies on the server's account of the active Contract.
+- `--target` and `--omit` must name Secrets stored in the environment. A
+  name that is unknown, not stored there, or not a Secret is a usage error,
+  and nothing starts.
+- A Secret with a `json:` or `form:` target constrains every request that
+  carries its Placeholder: if such a request has a body, it must be a valid
+  body of that kind (a matching `Content-Type`, UTF-8, no
+  `Content-Encoding`), even when the Placeholder is only in a header.
+  Otherwise the Broker answers `403`. Give body targets only to Secrets the
+  Agent sends in bodies.
+- With an active Contract, an agent-safe run needs `contract.read`, to know
+  which inherited names are Secrets. Without it the run does not start.
+- A Node Agent that set `HTTPS_PROXY` and used `fetch` for an allowed
+  destination now gets the Broker's `CONNECT` refusal instead of reaching
+  the destination directly with the Placeholder. Send absolute-URI requests
+  to the Broker instead. With `--agent-network strict`, Node's `fetch` to
+  other destinations is now blocked like other traffic, except for hosts
+  your shell's `NO_PROXY` or `no_proxy` exempts: those exemptions are kept
+  and still bypass the Broker. The run adds only the Broker's own address,
+  and a spelling your shell did not set becomes that address alone.
 - Every `varlatch run`, including a default one, now removes a
   `VARLATCH_RUN_CONTEXT` inherited from an outer run. This is the one change
   to a default run. The name is reserved: the server refuses a Contract item

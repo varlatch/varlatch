@@ -265,7 +265,11 @@ A short-lived (≤1h), read-only bearer a Broker mints for an Agent Identity so 
 _Avoid_: agent token (ambiguous with the per-run proxy token)
 
 **Placeholder**:
-A per-run, cryptographically random opaque token (`vlch_ph_v1_<random>`) injected into an Agent Run's environment in place of a Secret's plaintext. Carries no Config Item name or other metadata; the Broker alone maps Placeholders to Config Items and substitutes by exact-token match only.
+A per-run, cryptographically random opaque token (`vlch_ph_v1_<random>`) injected into an Agent Run's environment in place of a Secret's plaintext. Carries no Config Item name or other metadata; the Broker alone maps Placeholders to Config Items and substitutes by exact-token match only, and only at the Secret's Substitution Targets.
+
+**Substitution Target**:
+A declared location in an outbound request where the Broker may substitute a given Secret's Placeholder: a named header, query parameter, JSON pointer, or form field, never a transport-owned header. At most once per target per request. Every Secret an agent-safe run carries has at least one, with no default; the operator gives them on the command line (`--target`), varlatchd records them on the Capability, and the Broker enforces the recorded ones. A Placeholder is never substituted outside its targets.
+_Avoid_: injection point, slot
 
 **Destination Selector**:
 A Capability's constraint on where secret-bearing traffic may go: canonical lowercase host (exact, or `*.suffix` wildcard matching subdomains but never the apex) plus port. Every outbound hop, including each redirect, is independently checked against it.

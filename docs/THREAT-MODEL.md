@@ -73,7 +73,8 @@ authenticator).
 | Capabilities are unforgeable handles: exercise needs the ID, the hash-at-rest capability secret, and the bound Broker's bearer, all agreeing; mismatches are existence-hidden | **SHIPPED GUARANTEE** | `test/capabilities.test.ts` |
 | Reference expansion at exercise is strict and capability-bound: referenced Secrets must be named in the Capability, non-sensitive pull-ins require the Agent's `config.value.read` and are audited before use, and any unresolvable reference denies the exercise rather than sending literal `${NAME}` upstream | **SHIPPED GUARANTEE** | `test/capabilities.test.ts` reference-expansion cases |
 | Destination constraints are canonical host+port; wildcards never match the apex; every hop is independently checked and successful exercise is audited (host+port + `item@versionId`) before decryption | **SHIPPED GUARANTEE** | `test/destination.test.ts`, `test/capabilities.test.ts` |
-| In agent-safe runs the Agent Run's environment holds opaque placeholders and no reusable Varlatch credential; substitution happens only in broker-originated, TLS-verified requests to allowlisted destinations; redirects are relayed, never followed with substituted material; CONNECT to secret-using destinations is refused (no MITM) | **SHIPPED GUARANTEE** | `apps/cli/test/broker.test.ts`; clean-room `e2e-broker.mjs` (real TLS upstream, redirect/decoy targets, log scan) |
+| In agent-safe runs the Agent Run's environment holds opaque placeholders and no reusable Varlatch credential; substitution happens only in broker-originated, TLS-verified requests to allowlisted destinations, at the Substitution Targets recorded on the Capability; redirects are relayed, never followed with substituted material; CONNECT to secret-using destinations is refused (no MITM) | **SHIPPED GUARANTEE** | `apps/cli/test/broker.test.ts`; clean-room `e2e-broker.mjs` (real TLS upstream, redirect/decoy targets, log scan) |
+| Substitution targets: a Placeholder is substituted only at a target the operator gave on the command line and varlatchd recorded on the Capability (a named header, query parameter, JSON pointer, or form field; never a transport-owned header), at most once per target; the Agent cannot add or widen a target. A secret-bearing agent-safe run without a target or `--omit` for every stored Secret does not start, and varlatchd refuses both issuance and exercise of a Capability without targets, including one issued before the upgrade. Ambiguity in a targeted surface blocks the request (stray or repeated Placeholders, repeated or folded headers, repeated names under any spelling, encoded Placeholders, duplicate JSON keys, mismatched content types, coded bodies). A failed substituted request sends zero bytes to the destination: before exercise nothing is decrypted, after exercise the value is dropped. Exercise returns only the placed Secrets, and every version it decrypts, reference dependencies included, is named by a committed audit event first. Stored and Contract Secrets inherited from the operator's shell never reach the Agent, and with an active Contract the run needs `contract.read` | **SHIPPED GUARANTEE** | `apps/cli/test/placement.test.ts`, `apps/cli/test/broker.test.ts` (fake upstream counts connections), `test/capabilities.test.ts` (issuance validation, placements, pre-migration Capability), `test/retrieval-audit-order.test.ts` (traced dependency audit); clean-room `e2e-broker.mjs`, `e2e-strict-run.mjs` |
 | Sync Targets are opt-in standing disclosures: creation/widening passes a write-time gate (`secret.reveal`/`config.value.read`, decision-time provenance recorded); every push commits `sync.push_attempted` before material leaves; a destination has exactly one writer; Platform Adapters are a closed allowlist (no generic push-to-URL); Platform Credentials rest KEK-wrapped and are never redisplayed; credential replacement re-authorizes every referencing Target atomically | **SHIPPED GUARANTEE** | `test/sync.test.ts` (gate denial, exclusivity, audit-before-wire, atomic replacement refusal, ciphertext-at-rest); `packages/sync` adapter tests (sealed-box encryption, https/origin pinning) |
 | Sync ledger content identity is a keyed fingerprint (HKDF from the Org KEK, per Target), never a bare hash; fingerprints appear in no audit event or log | **DESIGNED INVARIANT** | Enforced by `syncFingerprintKey` + audit input shape; reviewed, not schema-proven |
 | Validation verdicts are value-derived, so `POST …/validate` evaluates an item only if the caller may read what the verdict describes: presence needs `config.metadata.read`, non-sensitive verdicts `config.value.read`, Secret verdicts `secret.reveal` including its Requirements (`secret.use` alone is not enough). Everything else is reported as not evaluated, with an authorization-derived reason only, and a partial evaluation is never valid. Validation decryption is audited before it happens (`secret.validated`/`value.validated`, `item@versionId`, no verdicts). Residual: a `secret.reveal` holder who can also change the Contract can probe by repeated activation, but can already read the value, and each probe is audited | **SHIPPED GUARANTEE** | `test/validation-access.test.ts` (permission, Tailnet Requirement, audit failure, enum-probe cases); `apps/cli/test/validation.test.ts`; `apps/web/test/validationSummary.test.ts` |
@@ -123,7 +124,10 @@ And the honest limits, stated with the same discipline:
 - **Mediation, not a network sandbox.** Non-allowlisted traffic passes
   through unchanged by default (placeholders intact, useless);
   `--agent-network=strict` blocks it. An agent can still make arbitrary
-  outbound requests unless separately sandboxed.
+  outbound requests unless separately sandboxed, and a `NO_PROXY` or
+  `no_proxy` exemption inherited from the operator's shell sends matching
+  requests around the Broker even in strict mode (the run adds only the
+  Broker's own address to each spelling).
 - **Opaque CONNECT tunnels cannot carry substitution** without MITM, which
   Varlatch deliberately does not do (no local CA). Clients must send
   inspectable absolute-URI HTTP requests to the Broker; CONNECT to a
@@ -134,21 +138,23 @@ And the honest limits, stated with the same discipline:
   guarantee that an authorized destination will never return secret-derived
   or plaintext data to the Agent.
 - **Destination granularity is host+port**, not path or method.
-- **Body substitution is bounded and textual** (JSON/form/`text/*`); the
-  Broker cannot repair application signatures computed over
-  placeholder-bearing payloads.
-- **Substitution is not tied to a location.** A placeholder is replaced
-  wherever it appears in the headers or textual body of a request to an
-  allowlisted destination, including fields that destination stores or
-  publishes. An agent that may call an API host can therefore have the
-  Broker write a Secret into content on that host. Keep allowlists narrow
-  and upstream credentials narrowly scoped.
-- **The Agent inherits the operator's environment.** The agent-safe child
-  receives a copy of the parent's environment, minus Varlatch's own
-  credentials, with placeholders and non-sensitive values overlaid. Any
-  plaintext secret already in the operator's shell, including a contract
-  Secret that has no value stored in Varlatch, reaches the Agent. Start
-  agent-safe runs from a clean environment.
+- **Substitution targets bound where a Secret goes, not what it does.** A
+  Placeholder is substituted only at the targets recorded on the
+  Capability, but a correctly placed credential can still call any endpoint
+  and method the destination permits, and a destination that logs or echoes
+  the target header, or logs URLs with a query target, sees the value. Only
+  the local Broker sees outbound requests, so varlatchd records what was
+  authorized but cannot verify where a value was placed. Keep allowlists
+  narrow and upstream credentials narrowly scoped.
+- **Body targets are JSON and form bodies** of at most 2 MiB; the Broker
+  cannot repair application signatures computed over placeholder-bearing
+  payloads, the body, or its length.
+- **A stray Placeholder is forwarded inert.** A Placeholder outside a
+  targeted surface is sent unchanged and reported, not blocked.
+- **The Agent inherits the rest of the operator's environment.** Stored
+  Secrets and Contract Secrets are removed from it, but a secret Varlatch
+  does not know about (not stored, not in the Contract) still reaches the
+  Agent. Start agent-safe runs from a clean environment.
 - **Plain `varlatch run` (without `--agent-safe`) still injects plaintext**
   into the child environment (§5); agent safety is opt-in per run.
 

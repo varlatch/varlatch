@@ -1487,6 +1487,10 @@ export interface components {
             environmentId: string;
             items: string[];
             destinations: string[];
+            /** @description The substitution targets as recorded, canonical and sorted; the only ones the Broker may enforce. */
+            targets: {
+                [key: string]: string[];
+            };
             runId: string | null;
             /** Format: date-time */
             expiresAt: string;
@@ -1516,6 +1520,10 @@ export interface components {
                 };
             }[];
             withheld: string[];
+            /** @description The Capability's targets as recorded; the Broker refuses to substitute if they differ from its own. */
+            targets: {
+                [key: string]: string[];
+            };
         };
         /** @enum {string} */
         Action: "organization.read" | "organization.manage" | "project.read" | "project.manage" | "environment.read" | "environment.manage" | "config.metadata.read" | "config.value.read" | "config.value.write" | "secret.reveal" | "secret.use" | "contract.read" | "contract.submit" | "contract.activate" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read" | "config.sync.manage";
@@ -2514,6 +2522,10 @@ export interface operations {
                     agentIdentityId: string;
                     items: string[];
                     destinations: string[];
+                    /** @description Required (capability capabilities.targets). For every item, 1 to 4 substitution targets: header:<name> (never a transport-owned header such as Host, Content-Length, Transfer-Encoding, Content-Type, or connection and proxy headers), query:<name>, json:<RFC 6901 pointer>, or form:<name>. Recorded immutably on the Capability; the Broker substitutes a Placeholder only at its targets. */
+                    targets: {
+                        [key: string]: string[];
+                    };
                     ttlSeconds: number;
                     runId?: string;
                     /** @description Agent-safe strict preflight (capability retrieval.preflight): the state a preflight strict retrieval saw. Issuance compares it in its own snapshot, without decrypting anything, and refuses with STATE_CHANGED (details.categories names only what changed) when it differs. It confers no authority. */
@@ -2589,6 +2601,11 @@ export interface operations {
                         host: string;
                         port: number;
                     };
+                    /** @description Each substitution the Broker will make, as an item and one of its recorded targets. Only these items are returned; references inside them still resolve against the other Secrets on the Capability, each dependency audited before it is decrypted. A Capability without targets (issued before they were required) is refused with reason capability-without-targets; a placement the Capability does not hold with placement-not-targeted. */
+                    placements?: {
+                        item: string;
+                        target: string;
+                    }[];
                 };
             };
         };

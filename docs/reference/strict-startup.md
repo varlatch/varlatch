@@ -94,7 +94,8 @@ from an outer run, so it never describes the wrong Environment.
 
 With `--agent-safe`, the Agent never receives Secret plaintext: each stored
 Secret reaches it as a Placeholder that the local Broker substitutes on the
-way out. `--strict --agent-safe` adds the strict checks without the operator
+way out, only at the targets you give with `--target`, or is left out with
+`--omit`. See [Agent-safe runs](agent-safe-runs.md). `--strict --agent-safe` adds the strict checks without the operator
 ever seeing a Secret either:
 
 1. **The operator's preflight.** One request returns the non-sensitive
@@ -120,7 +121,8 @@ strict checks, these are violations:
 - the Agent lacks `secret.use`, or a Requirement on it is not met
   (`agent-unauthorized`);
 - a Contract Secret is set only in your shell: it would reach the Agent as
-  plaintext.
+  plaintext;
+- a Secret required here is left out with `--omit` (`omitted`).
 
 `--allow-inherited` may not name a Secret in an agent-safe run.
 

@@ -50,7 +50,8 @@ export type ViolationKind =
   | "invalid"
   | "context"
   | "not-evaluated"
-  | "agent-unauthorized";
+  | "agent-unauthorized"
+  | "omitted";
 
 export interface Violation {
   /** The Contract item, or "(contract)" / "(run context)" for global problems. */
@@ -81,6 +82,8 @@ export interface RunContext {
  */
 export interface AgentSafeFacts {
   agent: Map<string, { present: boolean; authorized: boolean; reason?: "permission" | "requirement" }> | null;
+  /** `--omit`: stored Secrets left out of the run and removed from the Agent's environment. */
+  omitted?: ReadonlySet<string>;
 }
 
 export interface StrictPlan {
@@ -193,9 +196,12 @@ export function planStrictRun(
   // Items outside the Contract are delivered as a default run delivers them
   // (in an agent-safe run, a stored Secret as a Placeholder).
   let outsideContract = 0;
+  const omitted = agentSafe?.omitted ?? new Set<string>();
   for (const item of retrieval.items) {
     if (contracted.has(item.name) || RESERVED_ITEM_NAMES.includes(item.name)) continue;
-    if (agentSafe && item.sensitive) {
+    if (agentSafe && item.sensitive && omitted.has(item.name)) {
+      delete env[item.name];
+    } else if (agentSafe && item.sensitive) {
       mediated.push(item.name);
       outsideContract++;
     } else if (item.value !== null) {
@@ -290,6 +296,13 @@ export function planStrictRun(
    * plaintext into the Agent's environment, so it is a violation.
    */
   function planAgentSecret(item: ContractItem, required: boolean): RunContext["items"][string] {
+    if (items.has(item.name) && omitted.has(item.name)) {
+      delete env[item.name];
+      if (required) {
+        violations.push({ name: item.name, kind: "omitted", reason: "required in this environment, and --omit leaves it out of the run" });
+      }
+      return { server: "delivered", delivery: "absent" };
+    }
     if (!items.has(item.name)) {
       if (parent[item.name] !== undefined) {
         violations.push({

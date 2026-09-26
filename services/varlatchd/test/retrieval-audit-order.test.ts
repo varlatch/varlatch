@@ -140,7 +140,13 @@ async function issueCapability() {
   const res = await call(
     "POST",
     `${E}/capabilities`,
-    { agentIdentityId: agentId, items: ["DATABASE_URL", "DB_PASS"], destinations: ["db.example.com"], ttlSeconds: 600 },
+    {
+      agentIdentityId: agentId,
+      items: ["DATABASE_URL", "DB_PASS"],
+      destinations: ["db.example.com"],
+      targets: { DATABASE_URL: ["json:/dsn"], DB_PASS: ["json:/password"] },
+      ttlSeconds: 600,
+    },
     brokerToken,
   );
   expect(res.status).toBe(201);
@@ -151,7 +157,13 @@ const exercise = (cap: { id: string; secret: string }) =>
   call(
     "POST",
     `${E}/capabilities/${cap.id}/exercises`,
-    { capabilitySecret: cap.secret, destination: { host: "db.example.com", port: 443 } },
+    // Only DATABASE_URL is placed: DB_PASS is a bound dependency, decrypted to
+    // expand it and never returned (ADR-0039 Decision 7).
+    {
+      capabilitySecret: cap.secret,
+      destination: { host: "db.example.com", port: 443 },
+      placements: [{ item: "DATABASE_URL", target: "json:/dsn" }],
+    },
     brokerToken,
   );
 
@@ -195,12 +207,21 @@ describe("every decryption follows the audit commit that names it, and nothing i
     expect(audited).toEqual(decrypted);
   });
 
-  it("capability exercise, with reference expansion", async () => {
+  it("capability exercise, with a bound dependency and reference expansion (ADR-0039 test 20)", async () => {
     const cap = await issueCapability();
+    const dbPass = await versionOf("DB_PASS");
     const res = await traceRequest(() => exercise(cap));
     expect(res.status).toBe(200);
-    expect(res.text).toContain("postgres://app:hunter2-hunter2@db.internal:5432/app");
+    const body = JSON.parse(res.text) as { items: { name: string; value: string }[] };
+    expect(body.items.map((i) => i.name)).toEqual(["DATABASE_URL"]);
+    expect(body.items[0]!.value).toBe("postgres://app:hunter2-hunter2@db.internal:5432/app");
     const { decrypted, audited } = checkAuditBeforeDecryption(log);
+    const dependency = (
+      await ctx.db.query(
+        "SELECT metadata::jsonb->>'items' AS items FROM audit_events WHERE event_type = 'secret.disclosed' AND metadata::jsonb->>'mode' = 'reference-expansion'",
+      )
+    ).rows as { items: string }[];
+    expect(dependency).toEqual([{ items: `DB_PASS@${dbPass}` }]);
     expect(decrypted).toEqual(
       [
         await versionOf("DATABASE_URL"),
@@ -266,6 +287,17 @@ describe("a failed audit commit stops the request before the decryption it cover
     expect(res.status).toBe(500);
     noPlaintext(await res.text());
     expect(decryptions()).toBe(0);
+  });
+
+  it("capability exercise: a bound dependency's reference-expansion level", async () => {
+    const cap = await issueCapability();
+    log.reset();
+    log.failAudit = (type, metadata) => type === "secret.disclosed" && metadata.includes("reference-expansion");
+    const res = await exercise(cap);
+    expect(res.status).toBe(500);
+    noPlaintext(await res.text());
+    const decrypted = log.entries.flatMap((e) => (e.kind === "decrypt" ? [e.versionId] : []));
+    expect(decrypted).toEqual([await versionOf("DATABASE_URL")]);
   });
 });
 
