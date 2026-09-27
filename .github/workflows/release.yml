@@ -24,8 +24,11 @@ name: Release
 # label; point it only at a runner that is clean for every job, since these
 # jobs publish. (The validation jobs follow CI_RUNNER in ci.yml; they ship
 # nothing.) The arm64 suite then runs under emulation unless ARM64_RUNNER names
-# an arm64 runner, and the release notes say so. Third-party actions are pinned
-# to commits because a self-hosted runner executes them on its host.
+# an arm64 runner, and the release notes say so. BuildKit's SBOM scan cannot
+# mount the image inside the self-hosted runner's sandbox (sysbox), so images
+# built there carry provenance but no SBOM attestation, and the release notes
+# say so too. Third-party actions are pinned to commits because a self-hosted
+# runner executes them on its host.
 on:
   push:
     tags: ["v*"]
@@ -88,7 +91,7 @@ jobs:
           file: services/varlatchd/Dockerfile
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
-          sbom: true
+          sbom: ${{ !vars.RELEASE_RUNNER }}
           push: true
           tags: ${{ steps.names.outputs.varlatchd }}:${{ steps.names.outputs.version }}
 
@@ -100,7 +103,7 @@ jobs:
           file: apps/web/Dockerfile
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
-          sbom: true
+          sbom: ${{ !vars.RELEASE_RUNNER }}
           push: true
           tags: ${{ steps.names.outputs.web }}:${{ steps.names.outputs.version }}
 
@@ -114,7 +117,7 @@ jobs:
           file: infra/compose/convex-deploy.Dockerfile
           platforms: linux/amd64,linux/arm64
           provenance: mode=max
-          sbom: true
+          sbom: ${{ !vars.RELEASE_RUNNER }}
           push: true
           tags: ${{ steps.names.outputs.convex_deploy }}:${{ steps.names.outputs.version }}
 
@@ -274,6 +277,7 @@ jobs:
       - name: Release notes from the changelog
         env:
           ARM64_MODE: ${{ needs.arm64-e2e.outputs.mode }}
+          SBOM: ${{ !vars.RELEASE_RUNNER }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           awk -v v="$VERSION" 'index($0, "## " v " (") == 1 { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
@@ -284,6 +288,10 @@ jobs:
             echo
             if [ "$ARM64_MODE" = emulated ]; then
               echo "The arm64 images passed the backup, restore, and recovery suite under emulation for this release, not on arm64 hardware."
+              echo
+            fi
+            if [ "$SBOM" != true ]; then
+              echo "The images of this release were built on a self-hosted runner, where BuildKit cannot generate SBOMs: they carry provenance attestations but no SBOM attestation."
               echo
             fi
             echo "Digest-pinned release set for linux/amd64 and linux/arm64. Check every asset against \`SHA256SUMS\`; [verifying a release](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/operations/verify-release.md) also covers signatures, provenance, and SBOMs. The operator CLI, \`varlatch-cli-${VERSION}.cjs\` (Node 22+), is version-coupled to the installation: replace the host CLI before anything else. First installs: unpack \`varlatch-compose-${VERSION}.tar.gz\` and follow its README."
