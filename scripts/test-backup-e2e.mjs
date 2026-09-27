@@ -103,8 +103,9 @@ try {
   // Lease expiry really resumes both services; stale ownership is rejected.
   console.log('Testing capture lease expiry');
   // The lease must outlast starting a CLI process in the container, which
-  // takes several seconds on slow or emulated runners.
-  const leaseMs = 10_000;
+  // takes several seconds on slow runners and far longer under emulation
+  // (release.yml's arm64-e2e sets VARLATCH_TEST_LEASE_MS there).
+  const leaseMs = Number(process.env.VARLATCH_TEST_LEASE_MS || 10_000);
   const lease = JSON.parse(docker(source,['exec','-T','varlatchd','node','dist/cli.js','admin','backup-control','capture-begin'],JSON.stringify({ttlMs:leaseMs})));
   docker(source,['exec','-T','varlatchd','node','dist/cli.js','admin','backup-control','capture-pause'],JSON.stringify({id:lease.id}));
   assert.equal(await status(`${apiUrl}/readyz`),503);

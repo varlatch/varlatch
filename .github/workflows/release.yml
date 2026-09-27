@@ -146,7 +146,10 @@ jobs:
     needs: images
     # GitHub's hosted arm64 runner; ARM64_RUNNER selects another arm64 label.
     # On an x64 RELEASE_RUNNER the same suite runs the arm64 images under
-    # emulation, which is slower, and the release notes say so.
+    # emulation, which is slower, and the release notes say so. Only
+    # Varlatch's own images run emulated there: PostgreSQL and the Convex
+    # backend (third-party, pinned by digest) run natively, because Convex's
+    # function time limits do not hold under emulation on a small host.
     runs-on: ${{ vars.ARM64_RUNNER || vars.RELEASE_RUNNER || 'ubuntu-24.04-arm' }}
     timeout-minutes: ${{ (vars.ARM64_RUNNER || vars.RELEASE_RUNNER) && 240 || 45 }}
     permissions:
@@ -211,15 +214,13 @@ jobs:
         if: steps.mode.outputs.mode == 'emulated' && steps.binfmt.outputs.ready != 'true'
         with:
           platforms: arm64
-      # Only from here on: before QEMU is registered, the default platform
-      # would make setup-qemu pull an arm64 binfmt image it cannot run.
       - name: arm64 images run here
         if: steps.mode.outputs.mode == 'emulated'
-        run: |
-          test "$(docker run --rm --entrypoint uname varlatch-backup-test:local -m)" = aarch64
-          # Everything the suite starts, databases included, runs as arm64.
-          echo "DOCKER_DEFAULT_PLATFORM=linux/arm64" >> "$GITHUB_ENV"
+        run: test "$(docker run --rm --entrypoint uname varlatch-backup-test:local -m)" = aarch64
       - name: Backup, restore, and recovery on arm64
+        env:
+          # A CLI process in the emulated varlatchd takes far longer to start.
+          VARLATCH_TEST_LEASE_MS: ${{ steps.mode.outputs.mode == 'emulated' && '60000' || '' }}
         run: node scripts/test-backup-e2e.mjs
 
   release:
