@@ -3,11 +3,13 @@ name: CI
 # Tiers: every pull request runs the fast checks (test, secret-scan, docker,
 # e2e). The slow suites (multi-arch, contributor-setup, and the recovery and
 # install-lifecycle steps of backup-recovery) run on a pull request only when
-# it touches what they guard. Everything runs nightly on main when main has
-# new commits, on manual dispatch, and before every release (release.yml
-# calls this workflow). Pushes to main do not run CI: the pull request
-# already did.
+# it touches what they guard. A push to main (a merge) runs the fast checks,
+# so every merge commit has a recorded pass. Everything runs nightly on main
+# when main has new commits, on manual dispatch, and before every release
+# (release.yml calls this workflow).
 on:
+  push:
+    branches: [main]
   pull_request:
   workflow_call:
   workflow_dispatch:
@@ -232,8 +234,9 @@ jobs:
 
   # Which tiers run. A pull request always runs the fast checks, and each
   # slow suite only when the pull request touches what it guards; tests
-  # (*/test/) never trigger one. A scheduled run skips everything when main
-  # has no commits since the last one; any other event runs everything.
+  # (*/test/) never trigger one. A push to main runs only the fast checks. A
+  # scheduled run skips everything when main has no commits since the last
+  # one; any other event runs everything.
   changes:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
@@ -256,6 +259,11 @@ jobs:
           if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
             echo "No commits on main since the last nightly run; skipping."
             for t in run $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT" = push ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$EVENT" != pull_request ]; then
