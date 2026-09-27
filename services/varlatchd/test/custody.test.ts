@@ -1,17 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateKey } from "../src/crypto/aead.js";
-import { runMigrations } from "../src/db/migrate.js";
 import { ensureInstallation } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { attestCustody, custodyStatus } from "../src/domain/custody.js";
 import { checkCustody, CUSTODY_MAX_AGE_DAYS } from "../src/doctor.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 beforeEach(async () => {
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
 });

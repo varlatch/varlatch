@@ -7,15 +7,14 @@ import { randomUUID } from 'node:crypto';
 import { Maintenance, prepareRestore } from '@varlatch/backup';
 import { archiveMetadata } from '../src/backup/control.js';
 import { generateKey } from '../src/crypto/aead.js';
-import { runMigrations } from '../src/db/migrate.js';
 import { ensureInstallation } from '../src/domain/bootstrap.js';
 import { issueCredential } from '../src/auth/credentials.js';
 import { buildApp } from '../src/http/app.js';
-import { testDb } from './helpers/pglite.js';
+import { migratedTestDb } from './helpers/pglite.js';
 import type { AppCtx } from '../src/domain/ctx.js';
 let ctx: AppCtx, close: () => Promise<void>, dir: string;
 beforeEach(async () => {
-  const db = await testDb(); await runMigrations(db);
+  const db = await migratedTestDb();
   dir = mkdtempSync(join(tmpdir(), 'varlatch-maintenance-'));
   ctx = { db, rootKek: generateKey(), maintenance: new Maintenance(dir) }; close = db.close;
   await ensureInstallation(ctx);

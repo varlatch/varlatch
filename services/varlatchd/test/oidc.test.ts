@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { clearJwksCache } from "../src/auth/oidc.js";
 import { generateKey } from "../src/crypto/aead.js";
-import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import {
   consumeSetupGrant,
@@ -12,7 +11,7 @@ import {
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
  * OIDC machine authentication: a binding maps issuer+audience+subject to a
@@ -58,8 +57,7 @@ const ENV_PATH = "/v1/organizations/acme/projects/api/environments/development";
 
 beforeEach(async () => {
   clearJwksCache();
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
   const grant = await issueBootstrapGrant(ctx);

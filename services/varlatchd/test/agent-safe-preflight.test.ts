@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
-import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import {
   consumeSetupGrant,
@@ -10,7 +9,7 @@ import {
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 import { checkAuditBeforeDecryption, traceLog, traced, type TraceLog } from "./helpers/trace.js";
 
 /**
@@ -91,8 +90,7 @@ async function issue(retrieval: Record<string, any>, overrides: Record<string, u
 beforeEach(async () => {
   log = traceLog();
   hooks.log = log;
-  const db = traced(await testDb(), log);
-  await runMigrations(db);
+  const db = traced(await migratedTestDb(), log);
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
   const setup = await issueBootstrapGrant(ctx);

@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { authenticateBearer, issueCredential, revokeCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
-import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import {
   adminsWithoutPasskey,
@@ -17,12 +16,11 @@ import {
 import { completeEnrollment, enrollmentUser } from "../src/auth/humanauth.js";
 import { createOrganization } from "../src/domain/orgs.js";
 import { createMachineIdentity } from "../src/domain/identities.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 beforeEach(async () => {
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
 });
 afterEach(async () => {
