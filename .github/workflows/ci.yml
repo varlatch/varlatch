@@ -1,10 +1,20 @@
 name: CI
 
+# Tiers: every pull request runs the fast checks (test, secret-scan, docker,
+# e2e). The slow suites (multi-arch, contributor-setup, and the recovery and
+# install-lifecycle steps of backup-recovery) run on a pull request only when
+# it touches what they guard. A push to main (a merge) runs the fast checks,
+# so every merge commit has a recorded pass. Everything runs nightly on main
+# when main has new commits, on manual dispatch, and before every release
+# (release.yml calls this workflow).
 on:
   push:
     branches: [main]
   pull_request:
   workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 2 * * *"
 
 # CI_RUNNER (a repository variable) sends every job to a self-hosted runner
 # label; unset, jobs run on GitHub-hosted runners. Third-party actions are
@@ -17,6 +27,8 @@ concurrency:
 
 jobs:
   test:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     services:
       postgres:
@@ -107,6 +119,8 @@ jobs:
   # in history is published with the repository (ADR-0037 D6). Values are
   # redacted from the log.
   secret-scan:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -120,6 +134,8 @@ jobs:
             git /repo --log-opts=--all --redact=100 --no-banner
 
   docker:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -148,6 +164,8 @@ jobs:
   # arm64 smoke runs under emulation (the release runs a full suite on arm64
   # hardware).
   multi-arch:
+    needs: changes
+    if: needs.changes.outputs.multiarch == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -173,6 +191,8 @@ jobs:
   # The contributor setup (ADR-0037 D7) is only documented if it works:
   # `pnpm dev:up` from a clean checkout, sign-in, CLI, restart, and reset.
   contributor-setup:
+    needs: changes
+    if: needs.changes.outputs.contributor == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -193,6 +213,8 @@ jobs:
   # Clean-room browser E2E: fresh canonical stack, passkey bootstrap with a
   # virtual authenticator, dashboard, and CLI browser-handoff login.
   e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -210,37 +232,70 @@ jobs:
       - name: Run clean-room E2E suites
         run: ./scripts/ci-e2e.sh
 
-  # Whether a pull request touches what backup-recovery guards: the server
-  # and its migrations, the CLI, the packages, the images and their build
-  # inputs, the Convex functions, infra, and the recovery scripts. Docs, the
-  # web UI alone, and tests do not. Pushes to main and releases always run it.
+  # Which tiers run. A pull request always runs the fast checks, and each
+  # slow suite only when the pull request touches what it guards; tests
+  # (*/test/) never trigger one. A push to main runs only the fast checks. A
+  # scheduled run skips everything when main has no commits since the last
+  # one; any other event runs everything.
   changes:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
+      run: ${{ steps.filter.outputs.run }}
+      multiarch: ${{ steps.filter.outputs.multiarch }}
+      contributor: ${{ steps.filter.outputs.contributor }}
       recovery: ${{ steps.filter.outputs.recovery }}
+      lifecycle: ${{ steps.filter.outputs.lifecycle }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: Recovery-relevant changes
+      - name: Select tiers
         id: filter
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if [ "$EVENT" != pull_request ]; then
-            echo "recovery=true" >> "$GITHUB_OUTPUT"
+          tiers="multiarch contributor recovery lifecycle"
+          if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
+            echo "No commits on main since the last nightly run; skipping."
+            for t in run $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          relevant=$(git diff --name-only "$BASE" HEAD \
-            | grep -E '^(services/varlatchd/|apps/cli/|packages/|infra/|scripts/|convex/|apps/web/Dockerfile$|\.github/workflows/ci\.yml$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|\.pnpmfile\.cjs$|tsconfig\.base\.json$)' \
-            | grep -vE '^(services/varlatchd|apps/cli|packages/[^/]+)/test/' || true)
-          if [ -n "$relevant" ]; then echo "recovery=true"; else echo "recovery=false"; fi >> "$GITHUB_OUTPUT"
-          printf 'Recovery-relevant changes:\n%s\n' "${relevant:-(none)}"
+          if [ "$EVENT" = push ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT" != pull_request ]; then
+            for t in run $tiers; do echo "$t=true"; done >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only "$BASE" HEAD | grep -vE '^(services/[^/]+|apps/[^/]+|packages/[^/]+|convex)/test/' || true)
+          # Image build inputs and CI itself. Dependency changes only select
+          # multi-arch here; the other suites see them nightly.
+          shared='^\.github/workflows/ci\.yml$|^\.dockerignore$|(^|/)Dockerfile$|\.Dockerfile$'
+          deps='(^|/)package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^\.npmrc$|^\.pnpmfile\.cjs$'
+          declare -A guards=(
+            [multiarch]="$shared|$deps"
+            [contributor]="$shared|^scripts/(dev|test-dev-setup)\.sh$|^infra/compose/"
+            # Backup, restore and the data they carry: migrations, crypto, the
+            # Convex mirror, the backup CLI.
+            [recovery]="$shared|^services/varlatchd/src/(backup|db|crypto|mirror)/|^services/varlatchd/src/(cli|control-entry|config)\.ts$|^packages/backup/|^apps/cli/src/(backup|legacyBackup|maintenance)\.ts$|^convex/convex/(schema|mirror)\.ts$|^infra/|^scripts/(test-backup|fixtures/)"
+            # Installing, upgrading and adopting an installation, and its ingress.
+            [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|fixtures/)"
+          )
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          for t in $tiers; do
+            hits=$(grep -E "${guards[$t]}" <<< "$files" || true)
+            if [ -n "$hits" ]; then echo "$t=true"; else echo "$t=false"; fi >> "$GITHUB_OUTPUT"
+            printf '%s:\n%s\n' "$t" "${hits:-(none)}"
+          done
 
+  # Recovery steps guard backup and restore; lifecycle steps guard installing,
+  # upgrading and adopting. Each runs when its tier does.
   backup-recovery:
     needs: changes
-    if: needs.changes.outputs.recovery == 'true'
+    if: needs.changes.outputs.recovery == 'true' || needs.changes.outputs.lifecycle == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     # The self-hosted runner is much smaller than a hosted one.
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 45 }}
@@ -270,12 +325,16 @@ jobs:
           docker build -f apps/web/Dockerfile -t varlatch-backup-web-test:local .
           docker build -f infra/compose/convex-deploy.Dockerfile -t varlatch-backup-convex-deploy-test:local .
       - name: Backup and interrupted-restore recovery
+        if: needs.changes.outputs.recovery == 'true'
         run: node scripts/test-backup-e2e.mjs
       - name: S3 single and multipart transfers
+        if: needs.changes.outputs.recovery == 'true'
         run: node scripts/test-backup-s3.mjs
       - name: Published v0.7.0 upgrade (D11 gate, stale supervisor) and pre-upgrade archive recovery
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-backup-upgrade.mjs
       - name: Published v0.10.0 archive restores across the mapping removal (migration 21)
+        if: needs.changes.outputs.recovery == 'true'
         run: node scripts/test-backup-v0100-restore.mjs
       # ADR-0035: an installation shaped like a reference production one (Coolify/
       # Tailscale file, Coolify's every-variable environment, admin key in the
@@ -284,18 +343,24 @@ jobs:
       # ...and then adopted the Coolify way (D13): adopt's printed env changes
       # applied and redeployed until it reports the installation adopted.
       - name: Prod-shaped v0.9.0 upgrade, adoption and recovery
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-prod-shape.mjs
       # ADR-0035 D13: a hand-configured plain Compose installation adopted.
       - name: varlatch adopt end to end
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-adopt.mjs
       # ADR-0014 topology: a sidecar restart must never strand varlatchd.
       - name: Tailscale sidecar restarts
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-sidecar-restart.mjs
       # ADR-0035 D6: public ingress — setup, Caddy and a real ACME exchange (Pebble).
       - name: Public ingress with an ACME certificate
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-ingress-public.mjs
       - name: Install Chromium for the setup enrollment
+        if: needs.changes.outputs.lifecycle == 'true'
         run: pnpm --filter @varlatch/varlatchd exec playwright install --with-deps chromium
       # ADR-0035 D7: one command from an empty directory, resumable.
       - name: varlatch setup end to end
+        if: needs.changes.outputs.lifecycle == 'true'
         run: node scripts/test-setup.mjs
