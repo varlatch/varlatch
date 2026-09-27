@@ -13,7 +13,9 @@ fixes.
   only the database, varlatchd, and Convex, so after restoring onto a stopped
   or new host the dashboard and the ingress proxy stayed down until you ran
   `docker compose up -d`, and `varlatch doctor --gate` failed. When restore
-  finishes it now points you to `varlatch doctor` and a fresh archive.
+  finishes it now points you to `varlatch doctor` and a fresh archive. On a
+  slow host it first waits for varlatchd's health check to recover from the
+  restore, rather than reporting that not every service started.
 - Installations that use the tailnet ingress with secrets in files no longer
   print `The "VARLATCH_RUNTIME_PASSWORD" variable is not set` on every
   Compose command.

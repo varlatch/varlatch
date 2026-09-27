@@ -366,6 +366,14 @@ async function restoreInstallation(args: string[], dir: string): Promise<void> {
  * running services. The deploy job belongs to reconciliation.
  */
 async function startRemainingServices(dir: string): Promise<void> {
+  // The services left to start depend on a healthy varlatchd, and Compose
+  // gives up at once on a dependency that is unhealthy right now. Its health
+  // check fails while the restore holds it, which on a slow host lasts long
+  // enough to mark it unhealthy; it recovers once the restore gate lifts.
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline && await compose(dir, ['ps', '--format', '{{.Health}}', 'varlatchd']).catch(() => '') === 'unhealthy') {
+    await new Promise(r => setTimeout(r, 5000));
+  }
   const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy');
   await compose(dir, ['up', '-d', '--no-recreate', ...services]);
   console.log('Remaining services started.');
