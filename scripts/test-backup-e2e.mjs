@@ -22,8 +22,11 @@ const dirs = [source, target];
 function docker(where, args, input) {
   return execFileSync('docker', ['compose', '--project-directory', where, ...args], { input, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024, stdio: ['pipe','pipe','pipe'] }).trim();
 }
+// Emulated runs (release.yml's arm64-e2e: arm64 images on an x64 host) are
+// several times slower; VARLATCH_TEST_SLOWDOWN stretches every wait here.
+const slowdown = Number(process.env.VARLATCH_TEST_SLOWDOWN || 1);
 function cli(where, args, ok = true) {
-  const result = spawnSync('node', [join(root, 'apps/cli/dist/varlatch.cjs'), 'admin', 'backup', ...args, '--dir', where, '--bek-file', join(where, 'secrets/bek'), '--kek-file', join(where, 'secrets/root')], { encoding: 'utf8', timeout: 180_000 });
+  const result = spawnSync('node', [join(root, 'apps/cli/dist/varlatch.cjs'), 'admin', 'backup', ...args, '--dir', where, '--bek-file', join(where, 'secrets/bek'), '--kek-file', join(where, 'secrets/root')], { encoding: 'utf8', timeout: 180_000 * slowdown });
   if (ok) assert.equal(result.status, 0, result.stderr || result.stdout);
   else assert.notEqual(result.status, 0, 'Expected failure');
   return result.stdout;
@@ -33,8 +36,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // when one outlasts varlatchd's keep-alive (5 s, as under arm64 emulation), a
 // pooled connection's close goes unnoticed and the next request dies on it.
 const fresh = (url, init = {}) => fetch(url, { ...init, headers: { ...Object.fromEntries(new Headers(init.headers)), connection: 'close' } });
-async function status(url) { for(let n=0;n<60;n++) { try { return (await fresh(url)).status; } catch(e) { if(n===59) throw e; await sleep(500); } } }
-async function ready(url) { for(let n=0;n<120;n++) { try { if ((await fresh(url)).ok) return; } catch {} await sleep(500); } throw Error('Service did not become ready'); }
+async function status(url) { const tries = 60 * slowdown; for(let n=0;n<tries;n++) { try { return (await fresh(url)).status; } catch(e) { if(n===tries-1) throw e; await sleep(500); } } }
+async function ready(url) { for(let n=0;n<120*slowdown;n++) { try { if ((await fresh(url)).ok) return; } catch {} await sleep(500); } throw Error('Service did not become ready'); }
 function base(where, service, port) { return `http://${docker(where, ['port', service, String(port)])}`; }
 const rootKey = randomBytes(32).toString('hex'), bek = randomBytes(32).toString('hex');
 for (const [i, where] of dirs.entries()) {
@@ -95,7 +98,7 @@ try {
   const format = await openArchive(archive, { kind: 'key', material: parseKey(bek) }, async m => ({ version: m.formatVersion, components: m.components.map(c => c.name) }));
   assert.deepEqual(format, { version: 2, components: ['secret-plane.dump'] }, 'format 2: the Secret Plane only');
   console.log(`PASS  online capture: ${during.length} requests during it, none gated; format-2 archive`);
-  await sleep(3000); // let the Mirror publisher catch up before the frozen-protocol lease test
+  await sleep(3000 * slowdown); // let the Mirror publisher catch up before the frozen-protocol lease test
   cli(source,['verify','--in',archive,'--record']);
   const metadata = JSON.parse(cli(source,['status']));
   assert.equal(metadata.archives.length,1); assert.equal(metadata.archives[0].verification.keyMatch,true);
@@ -103,9 +106,8 @@ try {
   // Lease expiry really resumes both services; stale ownership is rejected.
   console.log('Testing capture lease expiry');
   // The lease must outlast starting a CLI process in the container, which
-  // takes several seconds on slow runners and far longer under emulation
-  // (release.yml's arm64-e2e sets VARLATCH_TEST_LEASE_MS there).
-  const leaseMs = Number(process.env.VARLATCH_TEST_LEASE_MS || 10_000);
+  // takes several seconds on slow runners and far longer under emulation.
+  const leaseMs = 10_000 * slowdown;
   const lease = JSON.parse(docker(source,['exec','-T','varlatchd','node','dist/cli.js','admin','backup-control','capture-begin'],JSON.stringify({ttlMs:leaseMs})));
   docker(source,['exec','-T','varlatchd','node','dist/cli.js','admin','backup-control','capture-pause'],JSON.stringify({id:lease.id}));
   assert.equal(await status(`${apiUrl}/readyz`),503);
@@ -139,7 +141,7 @@ try {
   console.log('Injecting a restore failure and restarting both services');
   cli(target,['restore','--in',damaged],false);
   assert.equal(await status(`${targetApiUrl}/readyz`),503);
-  docker(target,['restart','varlatchd','convex-backend']); await sleep(2000);
+  docker(target,['restart','varlatchd','convex-backend']); await sleep(2000 * slowdown);
   // Ephemeral published ports are re-randomized by `docker restart`.
   const restartedApiUrl=base(target,'varlatchd',8686);
   assert.equal(await status(`${restartedApiUrl}/v1/meta`),503);
