@@ -219,8 +219,9 @@ jobs:
         run: test "$(docker run --rm --entrypoint uname varlatch-backup-test:local -m)" = aarch64
       - name: Backup, restore, and recovery on arm64
         env:
-          # A CLI process in the emulated varlatchd takes far longer to start.
-          VARLATCH_TEST_LEASE_MS: ${{ steps.mode.outputs.mode == 'emulated' && '60000' || '' }}
+          # Emulated, the suite's leases, CLI runs, and readiness waits take
+          # several times longer.
+          VARLATCH_TEST_SLOWDOWN: ${{ steps.mode.outputs.mode == 'emulated' && '6' || '' }}
         run: node scripts/test-backup-e2e.mjs
 
   release:
