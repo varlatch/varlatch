@@ -176,9 +176,7 @@ jobs:
           if [ "$(uname -m)" = aarch64 ]; then
             echo "mode=hardware" >> "$GITHUB_OUTPUT"
           else
-            # Everything the suite starts, databases included, runs as arm64.
             echo "mode=emulated" >> "$GITHUB_OUTPUT"
-            echo "DOCKER_DEFAULT_PLATFORM=linux/arm64" >> "$GITHUB_ENV"
           fi
       - name: Take the release images for arm64
         run: |
@@ -213,9 +211,14 @@ jobs:
         if: steps.mode.outputs.mode == 'emulated' && steps.binfmt.outputs.ready != 'true'
         with:
           platforms: arm64
+      # Only from here on: before QEMU is registered, the default platform
+      # would make setup-qemu pull an arm64 binfmt image it cannot run.
       - name: arm64 images run here
         if: steps.mode.outputs.mode == 'emulated'
-        run: test "$(docker run --rm --entrypoint uname varlatch-backup-test:local -m)" = aarch64
+        run: |
+          test "$(docker run --rm --entrypoint uname varlatch-backup-test:local -m)" = aarch64
+          # Everything the suite starts, databases included, runs as arm64.
+          echo "DOCKER_DEFAULT_PLATFORM=linux/arm64" >> "$GITHUB_ENV"
       - name: Backup, restore, and recovery on arm64
         run: node scripts/test-backup-e2e.mjs
 
