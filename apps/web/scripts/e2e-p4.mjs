@@ -183,11 +183,17 @@ await page.waitForSelector('[data-testid="settings-server"]', { timeout: 20000 }
 // Compare against what the server actually reports, so the assertion
 // survives version bumps instead of pinning a released number.
 const { serverVersion } = await (await fetch(`${base}/v1/meta`)).json();
+// The card renders before its own meta query returns: wait for the version
+// instead of reading the first paint.
+const versionShown = await page
+  .locator('[data-testid="settings-server"]', { hasText: serverVersion })
+  .waitFor({ timeout: 20000 })
+  .then(() => true, () => false);
 const settingsText = await page.textContent('[data-testid="settings-server"]');
 check(
   "settings shows the server's reported version",
-  settingsText.includes(serverVersion),
-  `ui="${settingsText.trim().slice(0, 40)}" meta=${serverVersion}`,
+  versionShown,
+  `ui="${settingsText.trim().slice(0, 120)}" meta=${serverVersion}`,
 );
 
 // 7. Me-scoped realtime: /credentials refreshes on the identitySignal when
