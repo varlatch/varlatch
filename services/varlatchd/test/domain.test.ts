@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generateKey } from "../src/crypto/aead.js";
 import { newId } from "../src/db/ids.js";
-import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { DomainError } from "../src/domain/errors.js";
 import { createOrganization, getOrganization } from "../src/domain/orgs.js";
@@ -25,7 +24,7 @@ import type { EnvironmentRow } from "../src/domain/environments.js";
 import type { OrgRow } from "../src/domain/orgs.js";
 import type { ProjectRow } from "../src/domain/projects.js";
 import { captureState, inSnapshot } from "../src/domain/retrieval.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 
@@ -58,8 +57,7 @@ const fullValidation = {
 };
 
 beforeEach(async () => {
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   await db.query("INSERT INTO identities (id, kind, name) VALUES ($1,'human','Jeremy')", [actor]);
   ctx = { db, rootKek: generateKey(), close: db.close };
 });

@@ -5,19 +5,17 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Maintenance } from "@varlatch/backup";
 import { generateKey } from "../src/crypto/aead.js";
-import { runMigrations } from "../src/db/migrate.js";
 import { ensureInstallation } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { checkFunctions, checkPublicUrl, serverDoctor } from "../src/doctor.js";
 import { recordAuditEvent } from "../src/audit/events.js";
 import { evaluateMirror, MirrorStatusReporter, readMirrorStatus, type MirrorStatus } from "../src/mirror/status.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 let stateDir: string;
 beforeEach(async () => {
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   stateDir = mkdtempSync(join(tmpdir(), "doctor-state-"));
 });

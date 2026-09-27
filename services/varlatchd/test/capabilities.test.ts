@@ -10,7 +10,7 @@ import {
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
-import { testDb } from "./helpers/pglite.js";
+import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
  * Capabilities over HTTP (ADR-0022): issuance narrows and never grants;
@@ -29,8 +29,7 @@ let agentId: string;
 const ENV_PATH = "/v1/organizations/acme/projects/api/environments/development";
 
 beforeEach(async () => {
-  const db = await testDb();
-  await runMigrations(db);
+  const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
   const grant = await issueBootstrapGrant(ctx);
