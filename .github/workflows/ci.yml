@@ -6,9 +6,18 @@ on:
   pull_request:
   workflow_call:
 
+# CI_RUNNER (a repository variable) sends every job to a self-hosted runner
+# label; unset, jobs run on GitHub-hosted runners. Third-party actions are
+# pinned to commits because a self-hosted runner executes them on its host.
+# One runner takes one job at a time, so a newer push to a pull request
+# cancels the older run; runs on main are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     services:
       postgres:
         image: postgres:17.6
@@ -19,13 +28,12 @@ jobs:
     env:
       VARLATCH_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           cache: pnpm
@@ -99,9 +107,9 @@ jobs:
   # in history is published with the repository (ADR-0037 D6). Values are
   # redacted from the log.
   secret-scan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Scan the full history for secrets
@@ -112,9 +120,9 @@ jobs:
             git /repo --log-opts=--all --redact=100 --no-banner
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build varlatchd image
         run: docker build -f services/varlatchd/Dockerfile -t varlatchd:ci .
       - name: Image smoke — entrypoint help paths
@@ -140,11 +148,11 @@ jobs:
   # arm64 smoke runs under emulation (the release runs a full suite on arm64
   # hardware).
   multi-arch:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Build every image for both architectures
         run: |
           for dockerfile in services/varlatchd/Dockerfile apps/web/Dockerfile infra/compose/convex-deploy.Dockerfile; do
@@ -165,13 +173,13 @@ jobs:
   # The contributor setup (ADR-0037 D7) is only documented if it works:
   # `pnpm dev:up` from a clean checkout, sign-in, CLI, restart, and reset.
   contributor-setup:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           cache: pnpm
@@ -185,13 +193,13 @@ jobs:
   # Clean-room browser E2E: fresh canonical stack, passkey bootstrap with a
   # virtual authenticator, dashboard, and CLI browser-handoff login.
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           cache: pnpm
@@ -202,24 +210,55 @@ jobs:
       - name: Run clean-room E2E suites
         run: ./scripts/ci-e2e.sh
 
+  # Whether a pull request touches what backup-recovery guards: the server
+  # and its migrations, the CLI, the packages, the images and their build
+  # inputs, the Convex functions, infra, and the recovery scripts. Docs, the
+  # web UI alone, and tests do not. Pushes to main and releases always run it.
+  changes:
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    outputs:
+      recovery: ${{ steps.filter.outputs.recovery }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Recovery-relevant changes
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "recovery=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          relevant=$(git diff --name-only "$BASE" HEAD \
+            | grep -E '^(services/varlatchd/|apps/cli/|packages/|infra/|scripts/|convex/|apps/web/Dockerfile$|\.github/workflows/ci\.yml$|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.npmrc$|\.pnpmfile\.cjs$|tsconfig\.base\.json$)' \
+            | grep -vE '^(services/varlatchd|apps/cli|packages/[^/]+)/test/' || true)
+          if [ -n "$relevant" ]; then echo "recovery=true"; else echo "recovery=false"; fi >> "$GITHUB_OUTPUT"
+          printf 'Recovery-relevant changes:\n%s\n' "${relevant:-(none)}"
+
   backup-recovery:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    needs: changes
+    if: needs.changes.outputs.recovery == 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # The self-hosted runner is much smaller than a hosted one.
+    timeout-minutes: ${{ vars.CI_RUNNER && 180 || 45 }}
     permissions:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @varlatch/protocol generate && pnpm build
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

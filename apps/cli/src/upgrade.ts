@@ -214,6 +214,25 @@ async function restartStaleSupervisor(dir: string): Promise<void> {
 }
 
 /**
+ * Copy the CLI out of the image varlatchd runs, through a container that is
+ * created but never started. Not out of the running container: `docker cp`
+ * from it remounts its read-only secret bind mounts (by default of
+ * /dev/null), which a Docker daemon in a user namespace (rootless Docker,
+ * Docker inside a sysbox container) is not permitted to do.
+ */
+function copyReleaseCli(dir: string, cli: string): boolean {
+  const id = spawnSync("docker", ["compose", "ps", "-q", "varlatchd"], { cwd: dir, encoding: "utf8" }).stdout?.trim().split("\n")[0];
+  const image = id ? spawnSync("docker", ["inspect", "--format", "{{.Image}}", id], { encoding: "utf8" }).stdout?.trim() : "";
+  const container = image ? spawnSync("docker", ["create", image], { encoding: "utf8" }).stdout?.trim() : "";
+  if (!container) return false;
+  try {
+    return spawnSync("docker", ["cp", `${container}:/opt/varlatch/varlatch.cjs`, cli], { stdio: "ignore" }).status === 0 && existsSync(cli);
+  } finally {
+    spawnSync("docker", ["rm", "-v", container], { stdio: "ignore" });
+  }
+}
+
+/**
  * D11: the target release judges its own completion. Its CLI ships in its
  * varlatchd image; its `doctor --gate` runs here, on the host. An image
  * without one (or an older doctor) falls back to this CLI's gate.
@@ -222,8 +241,7 @@ async function releaseGate(dir: string): Promise<GateRun> {
   await waitForServices(dir, 180_000);
   const tmp = mkdtempSync(join(tmpdir(), "varlatch-release-cli-"));
   const cli = join(tmp, "varlatch.cjs");
-  const copied = spawnSync("docker", ["compose", "cp", "varlatchd:/opt/varlatch/varlatch.cjs", cli], { cwd: dir, stdio: "ignore" });
-  if (copied.status === 0 && existsSync(cli)) {
+  if (copyReleaseCli(dir, cli)) {
     const run = spawnSync(process.execPath, [cli, "doctor", "--gate", "--json", "--wait", "30", "--dir", dir], {
       encoding: "utf8", maxBuffer: 16 * 1024 * 1024, timeout: 300_000,
     });
