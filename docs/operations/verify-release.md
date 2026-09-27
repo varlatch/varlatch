@@ -56,9 +56,14 @@ docker buildx imagetools inspect "$image" --format '{{ json (index .SBOM "linux/
 
 The provenance records the repository, commit, and workflow that built the
 image. The SBOM lists every package in it, operating-system packages
-included. A release whose images were built on a self-hosted runner has no
-SBOM attestation, and its release notes say so. `THIRD-PARTY-NOTICES.md` lists the third-party components with
+included. `THIRD-PARTY-NOTICES.md` lists the third-party components with
 their licenses.
+
+A release whose images were built on a self-hosted runner has no SBOM
+attestation, and its release notes say so. It attaches each image's SBOM as
+a release file instead, one per image and architecture
+(`sbom-IMAGE-VERSION-linux-ARCH.spdx.json`, in SPDX 2.3 JSON). `SHA256SUMS`
+lists them, so the release-asset checks above cover them.
 
 `varlatch upgrade` does not verify signatures yet. Verify a release before
 you upgrade to it.
