@@ -13,6 +13,12 @@ $ varlatch run --redact -- ./deploy.sh 2>&1 | tee deploy.log
 calling https://api.example.com with [REDACTED:API_KEY]
 ```
 
+**It masks only the Secrets that Varlatch delivered to the command in this
+run.** A Secret that reaches the command any other way is not masked: a value
+inherited from your shell, including one you accept with `--allow-inherited`
+in a strict run, a file the command reads, or anything the command fetches
+itself.
+
 A run without `--redact` is unchanged: the command writes directly to your
 terminal, files, or pipes, and nothing is masked.
 

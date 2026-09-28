@@ -46,6 +46,12 @@ semantics version, and the CLI release that generated it. The output depends
 only on the revision and the CLI release, so `--check` in CI should use the
 same CLI release as the developers who generate the file.
 
+**Updating the accessor.** The Typed Accessor is part of the generated file,
+not a package your application installs, so a fix to it reaches your
+application only when you regenerate. After upgrading the CLI, run
+`varlatch types` again and commit the new file. `varlatch types --check` fails
+until you do whenever the new release generates a different module.
+
 ## What the module contains
 
 | Contract type | TypeScript type |

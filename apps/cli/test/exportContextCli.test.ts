@@ -119,6 +119,40 @@ describe("varlatch run --export-context, end to end", () => {
     expect(seen.context).not.toContain("sk-disclosed-1");
   });
 
+  it("with --redact too, the command gets a valid context and its delivered Secret is masked in its output", async () => {
+    // The command sees the real value and echoes it on both streams; only
+    // the relayed output is masked, and the context stays intact.
+    const echo = `const key = process.env.API_KEY ?? "";
+process.stdout.write(JSON.stringify({ context: process.env.VARLATCH_RUN_CONTEXT ?? null, delivered: key.length === 14 && key.startsWith("sk-"), echo: key }) + "\\n");
+process.stderr.write("stderr " + key + "\\n");`;
+    const result = await cli(["run", "--export-context", "--redact", "--", process.execPath, "-e", echo], { REGION: "eu-west" });
+    expect(result.code).toBe(0);
+    expect(requests).toEqual([
+      `GET ${ENV}/effective-configuration?include=values`,
+      `GET /v1/organizations/acme/projects/api/contract/revisions/${REVISION.id}`,
+      `POST ${ENV}/disclosures`,
+    ]);
+    expect(result.stdout).not.toContain("sk-disclosed-1");
+    expect(result.stderr).not.toContain("sk-disclosed-1");
+    expect(result.stderr).toBe("stderr [REDACTED:API_KEY]\n");
+    const seen = JSON.parse(result.stdout) as { context: string; delivered: boolean; echo: string };
+    expect(seen.delivered).toBe(true);
+    expect(seen.echo).toBe("[REDACTED:API_KEY]");
+    expect(JSON.parse(seen.context)).toEqual({
+      v: 1,
+      mode: "exported",
+      contractRevisionId: REVISION.id,
+      contractHash: REVISION.contentHash,
+      semanticsVersion: 2,
+      environment: { rootId: "env_dev", tier: "development" },
+      items: {
+        API_KEY: { server: "delivered", delivery: "varlatch" },
+        PORT: { server: "delivered", delivery: "varlatch" },
+        REGION: { server: "notStored", delivery: "inherited" },
+      },
+    });
+  });
+
   it("without the flag the run is unchanged, and an inherited context is removed", async () => {
     const result = await cli(["run", "--", process.execPath, "-e", PRINT], { VARLATCH_RUN_CONTEXT: '{"stale":true}' });
     expect(result.code).toBe(0);
