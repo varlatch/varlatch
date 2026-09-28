@@ -372,7 +372,9 @@ export class ScanEngine {
     else this.report.filesScanned++;
     if (incompletePrefix) this.report.incompletePrefixes++;
     const { occurrences, unlisted, allowedBy } = file.results();
-    for (const o of occurrences) {
+    // Found in the order they end; listed in the order they start.
+    const ordered = [...occurrences].sort((a, b) => a.start - b.start || a.entry - b.entry);
+    for (const o of ordered) {
       const secret = this.secrets[o.entry]!;
       const finding: Finding = {
         path: file.path,

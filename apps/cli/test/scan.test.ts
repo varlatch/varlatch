@@ -132,7 +132,11 @@ describe("findings and their locations", () => {
   it("reports a Secret inside another Secret's value as two findings", () => {
     const url: ScanSecret = { item: "DATABASE_URL", versionId: "ver_url", retiring: false, value: `postgres://app:${DB_PASS.value}@db/app` };
     const report = everyChunking([url, DB_PASS], { "dist/server.js": `const u="${url.value}"` });
-    expect(report.findings.map((f) => f.item).sort()).toEqual(["DATABASE_URL", "DB_PASS"]);
+    // Listed in the order they start, although DB_PASS ends first.
+    expect(report.findings.map((f) => [f.item, f.column])).toEqual([
+      ["DATABASE_URL", 10],
+      ["DB_PASS", 10 + "postgres://app:".length],
+    ]);
   });
 
   it("checks a retiring value that equals the current one only once", () => {
