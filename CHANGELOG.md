@@ -125,6 +125,13 @@ fixes.
 
 ### API
 
+- A disclosure request may declare `"purpose": "scan"`. The disclosure's
+  `secret.disclosed` audit event, and any `value.disclosed` event for a
+  reference it expands, record it as `purpose`. Only listed purposes are
+  accepted; anything else is refused with `VALIDATION_FAILED` before
+  anything is audited or decrypted. A purpose grants nothing, and without
+  one nothing changes. SDK: `discloseSecrets()` takes `purpose`. `/v1/meta`
+  lists `secrets.disclosure-purpose`.
 - Strict retrieval takes `{"mode": "preflight"}` (capability
   `retrieval.preflight`): the non-sensitive values and, for a caller with
   `secret.reveal`, a verdict per Secret, never a Secret value. Its responses
@@ -180,6 +187,21 @@ fixes.
   to start when stdout or stderr is a terminal, and cannot be combined with
   `--agent-safe`, whose Agent receives Placeholders, not Secrets. See
   [Output redaction](docs/reference/output-redaction.md).
+- `varlatch scan --staged` checks what the next commit records, and
+  `varlatch scan <path>...` checks build output, for the Secrets of the
+  selected environment that your identity may retrieve, at their current
+  and retiring versions. The values come from one disclosure, audited with
+  `purpose: "scan"`, and stay in memory. The Git index is read, not the
+  working tree, so a Secret staged and then edited or deleted is still
+  found. Files are scanned as bytes, across line breaks, in the same
+  encoded forms that `--redact` masks. Each finding names the file, line,
+  column, item, version, and form, never the value or the line. A file
+  over the size bounds, or one that cannot be read, is listed as not
+  scanned, never as clean. The exit status is 1 for findings and 2 when
+  some files were not scanned. `varlatch:allow NAME` markers and a baseline
+  file of paths, items, and version IDs accept known occurrences, and
+  `varlatch scan --install-hook` installs a pre-commit hook that runs the
+  scan. See [Secret scanning](docs/reference/secret-scanning.md).
 - `varlatch run --agent-safe` takes `--target NAME=kind:location`
   (repeatable) and `--omit NAME`. Every stored Secret needs one or the
   other. The Agent's environment gains `NODE_USE_ENV_PROXY=1`, so Node's
