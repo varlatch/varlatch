@@ -1116,6 +1116,27 @@ async function main(): Promise<void> {
         console.log(`varlatch ${EMBEDDED_RELEASE.version} (migration ${EMBEDDED_RELEASE.migrationVersion})`);
         return;
       }
+      case "self-update": {
+        // Replaces this CLI's own file with a release build; no login, and
+        // nothing else on the host changes.
+        const { runSelfUpdate, SelfUpdateError } = await import("./selfUpdate.js");
+        const { UpgradeError, DEFAULT_RELEASE_REPO } = await import("./upgrade.js");
+        try {
+          await runSelfUpdate({
+            version: positional(args, 0),
+            repo: flag(args, "--repo") ?? process.env.VARLATCH_RELEASE_REPO ?? DEFAULT_RELEASE_REPO,
+            check: has(args, "--check"),
+            json: has(args, "--json"),
+            yes: has(args, "--yes"),
+            allowUnverified: has(args, "--allow-unverified"),
+            script: process.argv[1] ?? "",
+          });
+        } catch (err) {
+          if (err instanceof SelfUpdateError || err instanceof UpgradeError) fail(err.message);
+          throw err;
+        }
+        return;
+      }
       case "upgrade": {
         // Operator tooling (ADR-0019 §19c): upgrades the compose stack on
         // THIS host from the published release set. No API login involved.
@@ -1201,6 +1222,8 @@ Usage:
                                                        # --confirm required: retire revokes all credentials
   varlatch credential <list <identity-id>|revoke <identity-id> <credential-id>>
   varlatch --version                                   # CLI release; refresh it after every upgrade
+  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
+                                                       # replace this CLI with a release build (checksum, signature)
   varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]
                    [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]
                    # backup-gated compose upgrade on this host (run where docker-compose.yml lives)`);

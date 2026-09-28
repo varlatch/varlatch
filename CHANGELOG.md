@@ -158,6 +158,17 @@ fixes.
 
 ### CLI
 
+- `varlatch self-update` replaces the CLI with a release's single-file
+  build, as installing it by hand does: it downloads
+  `varlatch-cli-<version>.cjs` and `SHA256SUMS`, checks the signature on
+  `SHA256SUMS` with cosign when the release is signed, checks the file
+  against it, shows what it verified, and asks before replacing the file
+  it runs from. `--check` only reports whether a newer release exists
+  (`--json` for scripts). It refuses a CLI run from a source checkout, and
+  never installs an older release. With `--yes`, a release whose signature
+  was not checked needs `--allow-unverified` as well. While the repository
+  is private, set `GITHUB_TOKEN` or `GH_TOKEN`. An installation on the same
+  host still upgrades with `varlatch upgrade`.
 - `varlatch run --strict` starts the command only if the environment it
   would receive satisfies the active Contract. It retrieves everything in
   one request, applies Contract defaults only to items with no stored value

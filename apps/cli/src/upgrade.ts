@@ -100,11 +100,11 @@ export function parseManifest(text: string, source: string): ReleaseManifest {
   return m;
 }
 
-interface GithubAsset {
+export interface GithubAsset {
   name: string;
   url: string;
 }
-interface GithubRelease {
+export interface GithubRelease {
   tag_name: string;
   html_url: string;
   assets: GithubAsset[];
@@ -120,7 +120,7 @@ function githubHeaders(accept: string): Record<string, string> {
   };
 }
 
-async function fetchRelease(repo: string, version: string | undefined): Promise<GithubRelease> {
+export async function fetchRelease(repo: string, version: string | undefined): Promise<GithubRelease> {
   const path = version ? `releases/tags/v${version.replace(/^v/, "")}` : "releases/latest";
   const url = `https://api.github.com/repos/${repo}/${path}`;
   const res = await fetch(url, { headers: githubHeaders("application/vnd.github+json") });
@@ -136,15 +136,21 @@ async function fetchRelease(repo: string, version: string | undefined): Promise<
 }
 
 async function downloadAsset(release: GithubRelease, name: string): Promise<string> {
-  const asset = release.assets.find((a) => a.name === name);
-  if (!asset) {
+  if (!release.assets.some((a) => a.name === name)) {
     throw new UpgradeError(
       `Release ${release.tag_name} has no ${name} asset — it predates the release-set tooling and cannot be applied by varlatch upgrade.`,
     );
   }
+  return new TextDecoder().decode(await downloadAssetBytes(release, name));
+}
+
+/** A release asset's exact bytes (what SHA256SUMS covers). */
+export async function downloadAssetBytes(release: GithubRelease, name: string): Promise<Uint8Array> {
+  const asset = release.assets.find((a) => a.name === name);
+  if (!asset) throw new UpgradeError(`Release ${release.tag_name} has no ${name} asset.`);
   const res = await fetch(asset.url, { headers: githubHeaders("application/octet-stream") });
   if (!res.ok) throw new UpgradeError(`Downloading ${name} failed (HTTP ${res.status})`);
-  return await res.text();
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 function compose(dir: string, args: string[], label: string): void {
