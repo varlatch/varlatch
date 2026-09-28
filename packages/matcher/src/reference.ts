@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { formsOf } from "./forms.js";
+import { formsOf, labelledFormsOf, type FormName } from "./forms.js";
 import type { SecretEntry } from "./matcher.js";
 
 /**
@@ -51,4 +51,25 @@ export function scrubWhole(
   }
   for (; at < input.length; at++) out.push(input[at]!);
   return Uint8Array.from(out);
+}
+
+/**
+ * The whole-input reference for scanning: every occurrence of every form of
+ * every entry, by a naive search over the complete input. For tests only.
+ */
+export function findWhole(
+  input: Uint8Array,
+  entries: readonly SecretEntry[],
+): { entry: number; item: string; form: FormName; start: number; end: number }[] {
+  const found: { entry: number; item: string; form: FormName; start: number; end: number }[] = [];
+  const haystack = Buffer.from(input);
+  entries.forEach(({ item, value }, entry) => {
+    for (const { form, bytes } of labelledFormsOf(value)) {
+      const needle = Buffer.from(bytes);
+      for (let at = haystack.indexOf(needle); at >= 0; at = haystack.indexOf(needle, at + 1)) {
+        found.push({ entry, item, form, start: at, end: at + needle.length });
+      }
+    }
+  });
+  return found;
 }

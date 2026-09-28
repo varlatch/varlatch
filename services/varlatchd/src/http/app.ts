@@ -41,6 +41,7 @@ import {
   beginRotation,
   completeRotation,
   deleteValue,
+  DISCLOSURE_PURPOSES,
   discloseSecrets,
   effectiveConfiguration,
   setValue,
@@ -1173,10 +1174,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const resource = envResource(scope.org, scope.project, scope.env);
         const reveal = await decide(sctx, c, principal, "secret.reveal", resource, { hideExistence: true });
         if (!reveal.allowed) return { denied: reveal };
+        // A declared purpose is recorded in the audit events, and only a
+        // known one is accepted (ADR-0038 Decision 14).
+        const purpose = z.enum(DISCLOSURE_PURPOSES).optional();
         const body = parseBody(
           z.union([
-            z.object({ items: z.array(z.string().min(1)).min(1) }),
-            z.object({ scope: z.literal("all-authorized-secrets") }),
+            z.object({ items: z.array(z.string().min(1)).min(1), purpose }),
+            z.object({ scope: z.literal("all-authorized-secrets"), purpose }),
           ]),
           input(),
         );

@@ -488,7 +488,9 @@ paths:
         Secrets disclosed in the same call and — only when the caller also
         holds config.value.read — from the environment's non-sensitive
         values, each such expansion audited; unauthorized or unknown
-        references stay literal.
+        references stay literal. An optional purpose (capability
+        secrets.disclosure-purpose) is recorded in the disclosure's audit
+        events and changes nothing else.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
@@ -506,10 +508,12 @@ paths:
                       type: array
                       minItems: 1
                       items: { type: string }
+                    purpose: { $ref: "#/components/schemas/DisclosurePurpose" }
                 - type: object
                   required: [scope]
                   properties:
                     scope: { type: string, enum: [all-authorized-secrets] }
+                    purpose: { $ref: "#/components/schemas/DisclosurePurpose" }
       responses:
         "200":
           description: Disclosed Secret values (Cache-Control no-store)
@@ -2818,6 +2822,16 @@ components:
         manifest: { $ref: "#/components/schemas/StateManifest" }
         stateDigest: { $ref: "#/components/schemas/StateDigest" }
         callerView: { $ref: "#/components/schemas/CallerView" }
+
+    DisclosurePurpose:
+      type: string
+      enum: [scan]
+      description: >
+        Why the caller asks for a disclosure, recorded as `purpose` in the
+        disclosure's `secret.disclosed` audit event and in any
+        reference-expansion `value.disclosed` events it causes. `scan`: a
+        local secret scan (`varlatch scan`). Any other value is refused
+        with VALIDATION_FAILED.
 
     StateDigest:
       type: string

@@ -20,6 +20,7 @@ export type ValidationReport = components["schemas"]["ValidationReport"];
 export type StateManifest = components["schemas"]["StateManifest"];
 export type CallerView = components["schemas"]["CallerView"];
 export type StrictRetrieval = components["schemas"]["StrictRetrieval"];
+export type DisclosurePurpose = components["schemas"]["DisclosurePurpose"];
 export type ContractRevision = components["schemas"]["ContractRevision"];
 export type Identity = components["schemas"]["Identity"];
 export type Profile = components["schemas"]["Profile"];

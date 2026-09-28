@@ -99,6 +99,10 @@ _Avoid_: runtime env (ambiguous about which of these layers is meant)
 `varlatch run --redact`: the command's stdout and stderr become pipes, and each complete occurrence of a Secret delivered to the command in this run (as written, or in a stated encoding) is replaced with `[REDACTED:<name>]` before the output is written on. Nothing is fetched to build the filter. Non-terminal output only, and refused with `--agent-safe`, whose Agent receives Placeholders. It protects where output is written (logs, files), not the command's own view, and guards against accidents, not deliberate leaks.
 _Avoid_: masking (suggests the value is hidden from the command too)
 
+**Secret Scan**:
+`varlatch scan`: a local check of staged Git content or build output for the Secret Values this identity may retrieve, the current and retiring versions of one Environment's Secrets, obtained through one audited Reveal declared with purpose `scan`. It reports the file, line, Config Item name, and version of each occurrence, never values or line contents, and lists every file it could not read as not scanned. A guardrail against accidents, not data-loss prevention.
+_Avoid_: secret scanner (suggests detecting any secret by its shape; it finds only this Environment's stored values)
+
 **Run Context**:
 The one reserved variable, `VARLATCH_RUN_CONTEXT`, that a strict run, or a default run with `--export-context`, gives the command: versioned JSON naming the mode (`strict` or `exported`), the Contract Revision, content hash, semantics version, and Environment (root ID and Tier), and recording for each Contract item two separate facts. One is the server's status (`delivered`, `withheld`, `notStored`); the other is how the item was delivered (`varlatch`, `inherited`, `default`, `absent`). Names and identifiers only. Every run removes an inherited one.
 
