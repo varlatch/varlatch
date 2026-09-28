@@ -9,8 +9,10 @@ import {
   type ContractSemantics,
   type Tier,
 } from "@varlatch/contract";
+import type { SecretEntry } from "@varlatch/matcher";
 import type { StrictRetrieval } from "@varlatch/protocol";
 import { RUN_CONTEXT } from "./inject.js";
+import { deliveredSecrets } from "./redact.js";
 
 /**
  * `varlatch run --strict`: resolve the exact environment the child would
@@ -399,8 +401,11 @@ export interface StrictRunOptions {
   environment: string;
   allowInherited: string[];
   parent: NodeJS.ProcessEnv;
-  /** Starts the child with exactly this environment; returns its exit code. */
-  start: (env: NodeJS.ProcessEnv) => Promise<number>;
+  /**
+   * Starts the child with exactly this environment; returns its exit code.
+   * `secrets` are the sensitive values Varlatch delivered in it (for `--redact`).
+   */
+  start: (env: NodeJS.ProcessEnv, secrets: SecretEntry[]) => Promise<number>;
   log: (line: string) => void;
 }
 
@@ -439,5 +444,5 @@ export async function runStrict(api: StrictClient, opts: StrictRunOptions): Prom
   if (plan.outsideContract > 0) {
     opts.log(`varlatch: ${plan.outsideContract} delivered item(s) are not in the Contract; delivered as usual`);
   }
-  return opts.start(plan.env);
+  return opts.start(plan.env, deliveredSecrets(retrieval.items, plan.env));
 }

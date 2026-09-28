@@ -10,7 +10,9 @@ varlatch run --strict [--allow-inherited NAME]... -- <command> [args...]
 ```
 
 A default `varlatch run` is unchanged: it never injects defaults and never
-fails because of the Contract.
+fails because of the Contract. `--strict` combines with `--redact`, which
+masks the delivered Secrets in the command's output; see
+[Output redaction](output-redaction.md).
 
 ## What it checks
 
