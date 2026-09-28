@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import type { SecretEntry } from "@varlatch/matcher";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
+import { OutputRedaction } from "./redact.js";
 
 /**
  * Default `varlatch run`: fetch, inject, forward signals, return the child's
- * exit code. This path applies no contract validation, type conversion, or
- * output redaction.
+ * exit code. This path applies no contract validation or type conversion,
+ * and redacts output only with `--redact`.
  */
 
 /**
@@ -36,14 +38,28 @@ export function withheldItems(effective: EffectiveConfiguration): string[] {
     .map((i) => i.name);
 }
 
+/**
+ * Start the child and return its exit code. With `redact` (the sensitive
+ * values delivered in `env`), its stdout and stderr are piped through output
+ * redaction; stdin, signals, and the exit code are unchanged, and the run
+ * ends once the child has exited and both pipes have closed.
+ */
 export function runChild(
   command: string,
   args: string[],
   env: NodeJS.ProcessEnv,
+  redact?: SecretEntry[],
 ): Promise<number> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { stdio: "inherit", env });
+    const redaction = redact ? new OutputRedaction(redact) : undefined;
+    for (const line of redaction?.notices() ?? []) console.error(line);
+    const child = spawn(command, args, { stdio: redaction ? ["inherit", "pipe", "pipe"] : "inherit", env });
+    const relayed = redaction?.relay([
+      [child.stdout!, process.stdout],
+      [child.stderr!, process.stderr],
+    ]);
     const forward = (signal: NodeJS.Signals) => () => {
+      redaction?.interrupt();
       child.kill(signal);
     };
     const sigint = forward("SIGINT");
@@ -54,7 +70,9 @@ export function runChild(
     child.on("exit", (code, signal) => {
       process.off("SIGINT", sigint);
       process.off("SIGTERM", sigterm);
-      resolvePromise(signal ? 128 + (signal === "SIGKILL" ? 9 : 15) : (code ?? 1));
+      const exitCode = signal ? 128 + (signal === "SIGKILL" ? 9 : 15) : (code ?? 1);
+      if (relayed) relayed.then(() => resolvePromise(exitCode), reject);
+      else resolvePromise(exitCode);
     });
   });
 }
