@@ -170,6 +170,20 @@ fixes.
   and the Agent starts only if the Agent holds `secret.use`, every Secret
   is valid, and no Contract Secret would come from your shell.
   `--allow-inherited` cannot name a Secret in an agent-safe run.
+- `varlatch run --redact` masks the Secrets delivered to the command in
+  its stdout and stderr, which become pipes. Each occurrence, as written,
+  JSON-escaped, percent-encoded, or in base64 or base64url, becomes
+  `[REDACTED:<NAME>]`, and overlapping values become one marker. Output is
+  matched as bytes, so binary output passes through unchanged unless it
+  contains a Secret. Bytes that could be the start of a Secret wait for the
+  command's next write and are never released on a timer: they are
+  released unchanged when the output ends, and discarded if the run is
+  interrupted. Values shorter than 8 bytes are not masked, and the run
+  names them. stdin, signals, and the exit code pass through; the relative
+  order of stdout and stderr is not kept. It works with `--strict`, refuses
+  to start when stdout or stderr is a terminal, and cannot be combined with
+  `--agent-safe`, whose Agent receives Placeholders, not Secrets. See
+  [Output redaction](docs/reference/output-redaction.md).
 - `varlatch run --agent-safe` takes `--target NAME=kind:location`
   (repeatable) and `--omit NAME`. Every stored Secret needs one or the
   other. The Agent's environment gains `NODE_USE_ENV_PROXY=1`, so Node's
