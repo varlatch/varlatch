@@ -21,7 +21,7 @@ import {
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { TargetError, formatTarget, parseTarget } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
-import { buildEnv, runChild, withheldItems } from "./inject.js";
+import { RUN_CONTEXT, buildEnv, runChild, withheldItems } from "./inject.js";
 import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -443,12 +443,15 @@ async function main(): Promise<void> {
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) {
           fail(
-            "Usage: varlatch run [--environment <name>] [--strict [--allow-inherited <NAME>]...] [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
+            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
           );
         }
         const preArgs = args.slice(0, sep);
         if (!has(preArgs, "--agent-safe") && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
           fail("--target and --omit apply only to --agent-safe runs.");
+        }
+        if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
+          fail("--export-context applies only to default runs; a --strict run always gives the command its run context.");
         }
         const ctx = context(preArgs);
         const api = client(ctx);
@@ -540,6 +543,10 @@ async function main(): Promise<void> {
           ctx.environment,
           { includeValues: true },
         );
+        // Before any Secret is disclosed: a run that cannot export its context discloses nothing.
+        const exportContext = has(preArgs, "--export-context")
+          ? await (await import("./exportContext.js")).prepareExportedContext(api, ctx.organization, ctx.project, effective)
+          : null;
         // Secrets require the explicit disclosure operation (design R2).
         try {
           const disclosed = await api.discloseSecrets(ctx.organization, ctx.project, ctx.environment, {
@@ -562,7 +569,9 @@ async function main(): Promise<void> {
           console.error(`varlatch: ${withheld.length} value(s) withheld by policy: ${withheld.join(", ")}`);
         }
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
-        const code = await runChild(cmd, cmdArgs, buildEnv(process.env, effective));
+        const env = buildEnv(process.env, effective);
+        if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
+        const code = await runChild(cmd, cmdArgs, env);
         process.exit(code);
         return;
       }
@@ -1086,7 +1095,8 @@ Usage:
   varlatch init --org <slug> --project <slug> [--server <url>]
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
-  varlatch run [-e <env>] -- <command> [args...]
+  varlatch run [-e <env>] [--export-context] -- <command> [args...]
+               (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor)
   varlatch run --strict [--allow-inherited <NAME>]... -- <command> [args...]
                (validate exactly what the command receives; exit 78 and start nothing on any violation;
                 combine with --agent-safe for the agent-safe preflight: Secrets stay placeholders)
@@ -1131,6 +1141,7 @@ Usage:
     }
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
+    if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
     if (err instanceof ContextError) fail(err.message);
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {

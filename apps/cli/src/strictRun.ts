@@ -37,7 +37,7 @@ import { RUN_CONTEXT } from "./inject.js";
  */
 
 export const STRICT_EXIT = 78; // EX_CONFIG
-const RUN_CONTEXT_MAX_BYTES = 64 * 1024;
+export const RUN_CONTEXT_MAX_BYTES = 64 * 1024;
 
 export type ViolationKind =
   | "contract"
@@ -64,9 +64,11 @@ export interface Violation {
 export type ServerStatus = "delivered" | "withheld" | "notStored";
 export type Delivery = "varlatch" | "inherited" | "default" | "absent";
 
+/** `VARLATCH_RUN_CONTEXT`: names and identifiers only, never values. */
 export interface RunContext {
   v: 1;
-  mode: "strict";
+  /** strict: from `varlatch run --strict`; exported: from a default run with `--export-context`. */
+  mode: "strict" | "exported";
   contractRevisionId: string;
   contractHash: string;
   semanticsVersion: number;
@@ -366,8 +368,8 @@ export function planStrictRun(
     environment: envCtx,
     items: contextItems,
   };
-  const encoded = JSON.stringify(context);
-  if (Buffer.byteLength(encoded, "utf8") > RUN_CONTEXT_MAX_BYTES) {
+  const encoded = encodeRunContext(context);
+  if (encoded === null) {
     violations.push({
       name: "(run context)",
       kind: "context",
@@ -377,6 +379,12 @@ export function planStrictRun(
     env[RUN_CONTEXT] = encoded;
   }
   return plan(context, outsideContract);
+}
+
+/** The run context as the child receives it, or null when it would exceed the bound: never truncated. */
+export function encodeRunContext(context: RunContext): string | null {
+  const encoded = JSON.stringify(context);
+  return Buffer.byteLength(encoded, "utf8") > RUN_CONTEXT_MAX_BYTES ? null : encoded;
 }
 
 /** Every violation at once: names, classes, and reasons, never values. */
