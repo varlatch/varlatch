@@ -230,9 +230,18 @@ fixes.
   ones. The run is otherwise unchanged. It needs `contract.read` and an
   active Contract, and fetches the Contract Revision before any Secret is
   disclosed.
+- When a signal ends the command, `varlatch run` exits with 128 plus the
+  signal's number, as a shell reports it, in every mode: 130 for SIGINT
+  (Ctrl-C), 129 for SIGHUP, 131 for SIGQUIT, 139 for SIGSEGV. Before, every
+  signal except SIGKILL gave 143, the status for SIGTERM, so a run
+  interrupted with Ctrl-C looked like a run that was stopped.
 
 ### Upgrading
 
+- **`varlatch run` exits 130, not 143, when interrupted with Ctrl-C.** Any
+  signal that ends the command now gives 128 plus its number. SIGTERM still
+  gives 143 and SIGKILL 137. A script that looks for 143 to detect an
+  interrupted run should look for 130, or for any status above 128.
 - **Agent-safe runs need targets.** A run in which a stored Secret has
   neither `--target` nor `--omit` does not start; add
   `--target NAME=header:authorization` (or `query:`, `json:`, `form:`) for
