@@ -30,29 +30,50 @@ function base64Core(value: Uint8Array, alignment: number, url: boolean): string 
   return url ? encoded.replace(/\+/g, "-").replace(/\//g, "_") : encoded;
 }
 
-/** Every registered form of `value`, deduplicated, each at least MIN_LENGTH bytes. */
-export function formsOf(value: string): Uint8Array[] {
+/**
+ * The name of a form, as reported by scanning: `raw` (as written), `json`
+ * (either JSON escaping), `percent` (either hex case), `base64`, or
+ * `base64url`. When two forms have the same bytes, the earlier name in this
+ * order is reported (a base64url form without `-` or `_` is `base64`).
+ */
+export type FormName = "raw" | "json" | "percent" | "base64" | "base64url";
+
+export interface LabelledForm {
+  form: FormName;
+  bytes: Uint8Array;
+}
+
+/**
+ * Every registered form of `value` with its name, deduplicated, each at
+ * least MIN_LENGTH bytes, in the order `formsOf` returns them.
+ */
+export function labelledFormsOf(value: string): LabelledForm[] {
   const raw = encoder.encode(value);
   if (raw.length < MIN_LENGTH) return [];
   const json = JSON.stringify(value).slice(1, -1);
   const percent = encodeURIComponent(value);
-  const candidates = [
-    value,
-    json,
-    json.replace(/\//g, "\\/"),
-    percent,
-    percent.replace(/%[0-9A-F]{2}/g, (e) => e.toLowerCase()),
+  const candidates: [FormName, string][] = [
+    ["raw", value],
+    ["json", json],
+    ["json", json.replace(/\//g, "\\/")],
+    ["percent", percent],
+    ["percent", percent.replace(/%[0-9A-F]{2}/g, (e) => e.toLowerCase())],
   ];
   for (const alignment of [0, 1, 2]) {
-    candidates.push(base64Core(raw, alignment, false), base64Core(raw, alignment, true));
+    candidates.push(["base64", base64Core(raw, alignment, false)], ["base64url", base64Core(raw, alignment, true)]);
   }
   const seen = new Set<string>();
-  const forms: Uint8Array[] = [];
-  for (const candidate of candidates) {
+  const forms: LabelledForm[] = [];
+  for (const [form, candidate] of candidates) {
     const bytes = encoder.encode(candidate);
     if (bytes.length < MIN_LENGTH || seen.has(candidate)) continue;
     seen.add(candidate);
-    forms.push(bytes);
+    forms.push({ form, bytes });
   }
   return forms;
+}
+
+/** Every registered form of `value`, deduplicated, each at least MIN_LENGTH bytes. */
+export function formsOf(value: string): Uint8Array[] {
+  return labelledFormsOf(value).map((f) => f.bytes);
 }
