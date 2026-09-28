@@ -589,6 +589,26 @@ async function main(): Promise<void> {
         return;
       }
 
+      case "scan": {
+        // Local secret scanning (ADR-0038 Decision 14): one audited disclosure
+        // with purpose "scan"; findings never show values or line contents.
+        const { parseScanArgs, runScan, ScanUsageError, SCAN_USAGE } = await import("./scanCommand.js");
+        const { ScanSourceError } = await import("./scanSources.js");
+        try {
+          process.exitCode = await runScan(
+            parseScanArgs(args),
+            { context: () => context(args), client },
+            { out: (line) => console.log(line), err: (line) => console.error(line), cwd: process.cwd() },
+          );
+        } catch (err) {
+          if (err instanceof ScanUsageError || err instanceof ScanSourceError) {
+            fail(`varlatch scan: ${err.message}${err instanceof ScanUsageError && !err.message.startsWith("nothing") ? `\n${SCAN_USAGE}` : ""}`);
+          }
+          throw err;
+        }
+        return;
+      }
+
       case "values": {
         const sub = args[0];
         const ctx = context(args);
@@ -1127,6 +1147,11 @@ Usage:
                                                        # existing installation → managed, step by step
   varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
                                                        # read-only installation health on this host
+  varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]
+                [--max-file-size <size>] [--max-total-size <size>]
+               (look for this identity's Secrets in staged files or build output; one audited disclosure;
+                exit 1 findings, 2 some files not scanned; never prints values or line contents)
+  varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
   varlatch invite <name> [--role member|admin]
   varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements|remove <id>>
   varlatch audit <list|export>
