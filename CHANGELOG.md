@@ -229,7 +229,13 @@ fixes.
   check requiredness for the environment and tell withheld items from absent
   ones. The run is otherwise unchanged. It needs `contract.read` and an
   active Contract, and fetches the Contract Revision before any Secret is
-  disclosed.
+  disclosed. The context always describes the values the command receives:
+  the run checks that the configuration and the disclosure of its Secrets
+  saw the same state (the same `stateDigest`), and when a write, rotation,
+  deletion, or Contract activation lands between the two requests it makes
+  both again, up to three times in all, each time an audited disclosure. If
+  they never agree, it starts nothing and exits 1. A run without the flag
+  makes the same two requests as before and checks nothing.
 - When a signal ends the command, `varlatch run` exits with 128 plus the
   signal's number, as a shell reports it, in every mode: 130 for SIGINT
   (Ctrl-C), 129 for SIGHUP, 131 for SIGQUIT, 139 for SIGSEGV. Before, every

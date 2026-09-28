@@ -548,33 +548,44 @@ async function main(): Promise<void> {
             fail(err instanceof Error ? err.message : String(err));
           }
         }
-        const effective = await api.effectiveConfiguration(
-          ctx.organization,
-          ctx.project,
-          ctx.environment,
-          { includeValues: true },
-        );
-        // Before any Secret is disclosed: a run that cannot export its context discloses nothing.
-        const exportContext = has(preArgs, "--export-context")
-          ? await (await import("./exportContext.js")).prepareExportedContext(api, ctx.organization, ctx.project, effective)
-          : null;
-        // Secrets require the explicit disclosure operation (design R2).
-        try {
-          const disclosed = await api.discloseSecrets(ctx.organization, ctx.project, ctx.environment, {
-            scope: "all-authorized-secrets",
-          });
-          const byName = new Map(disclosed.items.map((i) => [i.name, i.value]));
-          for (const item of effective.items ?? []) {
-            const value = byName.get(item.name);
-            if (item.sensitive && value !== undefined) item.value = value;
+        const exporting = has(preArgs, "--export-context") ? await import("./exportContext.js") : null;
+        const read = async () => {
+          const effective = await api.effectiveConfiguration(
+            ctx.organization,
+            ctx.project,
+            ctx.environment,
+            { includeValues: true },
+          );
+          // Before any Secret is disclosed: a run that cannot export its context discloses nothing.
+          const exportContext = exporting
+            ? await exporting.prepareExportedContext(api, ctx.organization, ctx.project, effective)
+            : null;
+          // Secrets require the explicit disclosure operation (design R2).
+          let disclosureDigest: string | null | undefined = null;
+          try {
+            const disclosed = await api.discloseSecrets(ctx.organization, ctx.project, ctx.environment, {
+              scope: "all-authorized-secrets",
+            });
+            disclosureDigest = disclosed.stateDigest;
+            const byName = new Map(disclosed.items.map((i) => [i.name, i.value]));
+            for (const item of effective.items ?? []) {
+              const value = byName.get(item.name);
+              if (item.sensitive && value !== undefined) item.value = value;
+            }
+          } catch (err) {
+            if (err instanceof VarlatchApiError && (err.code === "PERMISSION_DENIED" || err.code.startsWith("TAILNET_"))) {
+              console.error(`varlatch: secrets not disclosed (${err.code}); continuing with non-sensitive values`);
+            } else {
+              throw err;
+            }
           }
-        } catch (err) {
-          if (err instanceof VarlatchApiError && (err.code === "PERMISSION_DENIED" || err.code.startsWith("TAILNET_"))) {
-            console.error(`varlatch: secrets not disclosed (${err.code}); continuing with non-sensitive values`);
-          } else {
-            throw err;
-          }
-        }
+          return { configurationDigest: effective.stateDigest, disclosureDigest, result: { effective, exportContext } };
+        };
+        // Only an exported context checks that both requests saw the same
+        // state; a run without the flag makes its two requests once, unchecked.
+        const { effective, exportContext } = exporting
+          ? await exporting.readConsistently(read, (line) => console.error(line))
+          : (await read()).result;
         const withheld = withheldItems(effective);
         if (withheld.length > 0) {
           console.error(`varlatch: ${withheld.length} value(s) withheld by policy: ${withheld.join(", ")}`);

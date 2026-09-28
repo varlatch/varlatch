@@ -10,7 +10,8 @@ import { RUN_CONTEXT_MAX_BYTES, encodeRunContext, type Delivery, type RunContext
  * enforce per-Environment requiredness and tell withheld items from absent
  * ones. The run itself is unchanged: the same values, the same precedence,
  * no defaults. Only the context is added, and it holds names and identifiers,
- * never values.
+ * never values. Its one new failure: the run refuses to start when its two
+ * requests keep describing different states (`readConsistently`).
  */
 
 export class ExportContextError extends Error {
@@ -22,6 +23,62 @@ export interface ExportContextClient {
 }
 
 type ManifestContract = NonNullable<StateManifest["contract"]>;
+
+/** How many times an exported run reads its configuration and Secrets before it refuses. */
+export const EXPORT_CONTEXT_ATTEMPTS = 3;
+
+/** One read of a default run: the Effective Configuration, then the disclosure. */
+export interface ConfigurationRead<T> {
+  /** The Effective Configuration's `stateDigest`. */
+  configurationDigest: string | undefined;
+  /**
+   * The disclosure's `stateDigest`, or `null` when nothing was disclosed
+   * (the disclosure was refused), so every value delivered came from the
+   * Effective Configuration.
+   */
+  disclosureDigest: string | null | undefined;
+  result: T;
+}
+
+/**
+ * A default run reads its values in two requests, the Effective
+ * Configuration and then the disclosure, and each is served from its own
+ * database snapshot. The exported context is built from the first and the
+ * Secrets come from the second, so a write, rotation, deletion, or Contract
+ * activation that commits in between could make the context misdescribe the
+ * run. Both responses carry the digest of their state manifest, which is the
+ * same for every caller and every endpoint looking at the same state: equal
+ * digests mean both requests saw the same Environment, Contract Revision, and
+ * item versions. When they differ, both requests are made again, up to
+ * `attempts` reads in all. Each read discloses, and is audited, again. When
+ * no read agrees, the run refuses before its command starts.
+ *
+ * The digest does not cover authorization, and need not: each item's server
+ * status is taken from the response that delivered or withheld it. A
+ * disclosure without a digest (its caller lost `config.metadata.read` after
+ * the first request) is not taken as agreement.
+ */
+export async function readConsistently<T>(
+  read: () => Promise<ConfigurationRead<T>>,
+  notice: (line: string) => void,
+  attempts = EXPORT_CONTEXT_ATTEMPTS,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    const { configurationDigest, disclosureDigest, result } = await read();
+    if (disclosureDigest === null) return result;
+    if (disclosureDigest !== undefined && disclosureDigest === configurationDigest) return result;
+    if (attempt >= attempts) {
+      throw new ExportContextError(
+        `the configuration changed between reading it and disclosing its Secrets, on each of ${attempts} attempts, ` +
+          "so the run context could not describe the values delivered",
+      );
+    }
+    notice(
+      `varlatch: the configuration changed between reading it and disclosing its Secrets; reading both again ` +
+        `(attempt ${attempt + 1} of ${attempts}, another audited disclosure)`,
+    );
+  }
+}
 
 /**
  * For each Contract item, what the server did and how a default run
@@ -70,7 +127,7 @@ export async function prepareExportedContext(
   effective: EffectiveConfiguration,
 ): Promise<(delivered: EffectiveConfiguration, parent: NodeJS.ProcessEnv) => string> {
   const manifest = effective.manifest;
-  if (!manifest) {
+  if (!manifest || !effective.stateDigest) {
     throw new ExportContextError(
       "--export-context needs a server that returns a state manifest with the configuration: Varlatch 0.11.0 or later",
     );
