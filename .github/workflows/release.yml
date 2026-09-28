@@ -23,7 +23,9 @@ name: Release
 # itself), the hosted-runner probe runs; when hosted minutes have run out,
 # GitHub refuses it and the images, arm64-e2e and release jobs go to the
 # self-hosted runner (label varlatch-ci), which gives every job a fresh
-# container. RELEASE_RUNNER (a repository variable) forces a runner label.
+# container. RELEASE_RUNNER (a repository variable) forces a self-hosted
+# runner label; a forced label is always treated as self-hosted (SBOMs as
+# release files), so do not point it at a GitHub-hosted label.
 # If minutes run out partway through, set RELEASE_RUNNER (and CI_RUNNER) and
 # rerun the failed jobs: every job reads the variables again. On a
 # self-hosted x64 runner the arm64 suite runs under emulation unless
