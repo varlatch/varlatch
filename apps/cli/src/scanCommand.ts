@@ -152,8 +152,10 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
   const baselinePath = opts.baseline ? resolve(io.cwd, opts.baseline) : join(ctx.repoRoot, BASELINE_FILE);
   const baseline = loadBaseline(baselinePath, opts.baseline !== undefined);
 
+  // Values are disclosed only when at least one file fits the bounds and will be read.
+  const readable = files.some((f) => f.size <= Math.min(opts.limits.maxFileSize, opts.limits.maxTotalSize));
   let secrets: ScanSecret[] = [];
-  if (files.length > 0) {
+  if (readable) {
     const api = deps.client(ctx);
     secrets = await retrieveForScan(api, ctx, io);
   }
@@ -162,7 +164,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
   // Drop this reference to the values: from here on only the matcher holds them.
   secrets = [];
   for (const n of unlisted) engine.notScanned(n.path, n.reason);
-  if (files.length > 0 && !engine.checksAnything) {
+  if (readable && !engine.checksAnything) {
     io.err(
       `varlatch scan: this identity may retrieve no Secret value of ${MIN_LENGTH} bytes or more in ${ctx.environment}; ` +
         "there is nothing to look for.",

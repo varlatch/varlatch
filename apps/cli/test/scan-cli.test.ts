@@ -238,6 +238,14 @@ describe("varlatch scan --staged reads the Git index, not the working tree (A-S1
     expect(run.code, run.stderr).toBe(2);
     expect(run.stdout).toContain("big.bin: larger than the per-file bound (2 KiB > 1 KiB)");
     expect(run.stdout).toContain("varlatch scan: 2 staged file(s) checked against 3 Secret value(s) of production: no findings. 1 not scanned.");
+    expect(disclosures()).toHaveLength(1);
+
+    // When no file fits the bounds, nothing is read and nothing is disclosed.
+    requests = [];
+    const none = await varlatch(top, "scan", "--staged", "--max-file-size", "5");
+    expect(none.code, none.stderr).toBe(2);
+    expect(none.stdout).toContain("Not scanned (3), so not known to be clean:");
+    expect(requests).toEqual([]);
   });
 });
 
