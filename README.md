@@ -109,7 +109,8 @@ varlatch run -- npm run dev
 ```
 
 `varlatch run` passes the environment's values to your command directly, so
-no file of secrets lands on disk.
+no file of secrets lands on disk. `varlatch types --out src/config.ts`
+generates typed access to them for a TypeScript application.
 
 ### Develop Varlatch
 
@@ -149,6 +150,8 @@ placeholder values only. State lives in `.dev/`.
   `.env.schema` contract file format
 - [`docs/reference/agent-safe-runs.md`](docs/reference/agent-safe-runs.md):
   running an agent with placeholders, and where the broker substitutes
+- [`docs/reference/type-generation.md`](docs/reference/type-generation.md):
+  typed configuration for TypeScript with `varlatch types`
 
 ## Security, support, and contributing
 

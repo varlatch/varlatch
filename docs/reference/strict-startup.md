@@ -83,12 +83,18 @@ values:
           "DATABASE_URL":{"server":"delivered","delivery":"varlatch"}}}
 ```
 
+- `mode` is `strict`, or `exported` for a default run started with
+  `--export-context`.
 - `server` is `delivered`, `withheld`, or `notStored`.
 - `delivery` is `varlatch`, `inherited`, `default`, or `absent`.
 
 The name is reserved: no Contract item or stored value may use it, and every
-`varlatch run`, strict or not, removes a `VARLATCH_RUN_CONTEXT` inherited
-from an outer run, so it never describes the wrong Environment.
+`varlatch run` removes a `VARLATCH_RUN_CONTEXT` inherited from an outer run,
+so it never describes the wrong Environment. A default run gives the command
+a context of its own only with `--export-context`; see [Type
+generation](type-generation.md#exporting-the-run-context-from-a-default-run).
+The Typed Accessor that `varlatch types` generates reads the context to check
+requiredness for the Environment and to tell withheld items from absent ones.
 
 ## Agent-safe strict startup
 
