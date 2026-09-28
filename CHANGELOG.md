@@ -173,15 +173,6 @@ fixes.
   the Broker's own address. The run reports blocked requests, stray
   Placeholders, and the inherited Secrets it removed, never values.
 
-### Fixed
-
-- `varlatch upgrade` now runs the new release's own upgrade gate when Docker
-  runs in a user namespace, as rootless Docker does. It copied that
-  release's CLI out of the running varlatchd container, which fails there
-  because Docker cannot remount the container's read-only secret files, and
-  quietly used the gate of the CLI you ran instead. It now copies the CLI
-  from varlatchd's image.
-
 ### Upgrading
 
 - **Agent-safe runs need targets.** A run in which a stored Secret has
@@ -248,7 +239,7 @@ fixes.
   activating. A file that uses `forEnv(...)` must switch to `env(...)` or
   `tier(...)` first.
 
-## 0.10.1 (2026-09-25)
+## 0.10.1 (2026-09-27)
 
 ### Fixed
 
@@ -256,12 +247,20 @@ fixes.
   only the database, varlatchd, and Convex, so after restoring onto a stopped
   or new host the dashboard and the ingress proxy stayed down until you ran
   `docker compose up -d`, and `varlatch doctor --gate` failed. When restore
-  finishes it now points you to `varlatch doctor` and a fresh archive.
+  finishes it now points you to `varlatch doctor` and a fresh archive. On a
+  slow host it no longer reports that not every service started when
+  varlatchd's health check is still recovering from the restore.
 - Installations that use the tailnet ingress with secrets in files no longer
   print `The "VARLATCH_RUNTIME_PASSWORD" variable is not set` on every
   Compose command.
 - `varlatch upgrade --release-dir` no longer says it is fetching the release
   from GitHub. It reads only the files in that directory.
+- `varlatch upgrade` now runs the new release's own upgrade gate when Docker
+  runs in a user namespace, as rootless Docker does. It copied that
+  release's CLI out of the running varlatchd container, which fails there
+  because Docker cannot remount the container's read-only secret files, and
+  quietly used the gate of the CLI you ran instead. It now copies the CLI
+  from varlatchd's image.
 
 ### Upgrading
 
