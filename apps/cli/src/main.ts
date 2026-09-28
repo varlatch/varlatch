@@ -723,6 +723,32 @@ async function main(): Promise<void> {
         return;
       }
 
+      case "types": {
+        const usage = "Usage: varlatch types --out <file.ts> [--revision <id>] [--check]";
+        const out = flag(args, "--out") ?? fail(usage);
+        if (out.startsWith("-")) fail(usage);
+        // The output is the same for every Environment, so none needs to be selected.
+        const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+        const server = flag(args, "--server");
+        if (server) opts.server = server;
+        const ctx = resolveContext(opts);
+        const { runTypes } = await import("./typesCommand.js");
+        const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+        process.exitCode = await runTypes(
+          client(ctx),
+          {
+            organization: ctx.organization,
+            project: ctx.project,
+            revision: flag(args, "--revision"),
+            out,
+            check: has(args, "--check"),
+            generatorVersion: EMBEDDED_RELEASE.version,
+          },
+          { out: (line) => console.log(line), err: (line) => console.error(line) },
+        );
+        return;
+      }
+
       case "invite": {
         const name = args[0] ?? fail("Usage: varlatch invite <name> [--role member|admin]");
         const role = (flag(args, "--role") ?? "member") as "member" | "admin";
@@ -1109,6 +1135,9 @@ Usage:
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
                    push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
+  varlatch types --out <file.ts> [--revision <id>] [--check]
+                 (one TypeScript module with typed config and the Typed Accessor, from the active Contract;
+                  --check exits 1 when the file is stale)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
                       | nothing for convex: --base is the deployment URL)
