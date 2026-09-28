@@ -241,6 +241,12 @@ fixes.
   (Ctrl-C), 129 for SIGHUP, 131 for SIGQUIT, 139 for SIGSEGV. Before, every
   signal except SIGKILL gave 143, the status for SIGTERM, so a run
   interrupted with Ctrl-C looked like a run that was stopped.
+- `varlatch run` forwards SIGHUP, SIGQUIT, SIGUSR1, and SIGUSR2 to the
+  command, as well as SIGINT and SIGTERM, and keeps running until the
+  command ends. A service manager can now reload a service it starts
+  through `varlatch run` (`ExecReload=kill -HUP $MAINPID`), and a log
+  rotation signal reaches the service. On Windows only SIGINT and SIGTERM
+  are forwarded.
 
 ### Upgrading
 
@@ -248,6 +254,10 @@ fixes.
   signal that ends the command now gives 128 plus its number. SIGTERM still
   gives 143 and SIGKILL 137. A script that looks for 143 to detect an
   interrupted run should look for 130, or for any status above 128.
+- **SIGHUP, SIGQUIT, SIGUSR1, and SIGUSR2 sent to `varlatch run` reach
+  the command.** Before, they ended `varlatch run` itself and left the
+  command running without it. A command that does not handle one of them
+  now ends by it, with 128 plus its number.
 - **Agent-safe runs need targets.** A run in which a stored Secret has
   neither `--target` nor `--omit` does not start; add
   `--target NAME=header:authorization` (or `query:`, `json:`, `form:`) for

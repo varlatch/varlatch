@@ -58,6 +58,29 @@ export function signalExitCode(signal: string): number {
  * code are unchanged, and the run ends once the child has exited and both
  * pipes have closed.
  */
+/**
+ * The signals `varlatch run` passes on to its command. Beyond Ctrl-C
+ * (SIGINT) and a stop (SIGTERM), a service manager or script that signals
+ * only the CLI's process (a reload with SIGHUP, log rotation with SIGUSR1)
+ * must reach the command, or the CLI would exit and leave it running.
+ * Job-control and terminal signals (SIGTSTP, SIGCONT, SIGWINCH) are left
+ * alone: they reach the command through the terminal. Windows has only the
+ * first two. Listening for SIGUSR1 also keeps Node from starting its
+ * debugger on it.
+ */
+export const FORWARDED_SIGNALS: readonly NodeJS.Signals[] =
+  process.platform === "win32"
+    ? ["SIGINT", "SIGTERM"]
+    : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
+
+/**
+ * Forwarded signals that usually end a run: with `--redact`, held bytes are
+ * then discarded rather than released at the end of the stream. SIGHUP is
+ * here even though a service may treat it as "reload": discarding is the
+ * conservative choice. SIGUSR1 and SIGUSR2 do not end a run.
+ */
+const INTERRUPTING: ReadonlySet<NodeJS.Signals> = new Set(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"]);
+
 export function runChild(
   command: string,
   args: string[],
@@ -72,18 +95,17 @@ export function runChild(
       [child.stdout!, process.stdout],
       [child.stderr!, process.stderr],
     ]);
-    const forward = (signal: NodeJS.Signals) => () => {
-      redaction?.interrupt();
-      child.kill(signal);
-    };
-    const sigint = forward("SIGINT");
-    const sigterm = forward("SIGTERM");
-    process.on("SIGINT", sigint);
-    process.on("SIGTERM", sigterm);
+    const forwarding = FORWARDED_SIGNALS.map((signal) => {
+      const forward = (): void => {
+        if (INTERRUPTING.has(signal)) redaction?.interrupt();
+        child.kill(signal);
+      };
+      process.on(signal, forward);
+      return [signal, forward] as const;
+    });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
-      process.off("SIGINT", sigint);
-      process.off("SIGTERM", sigterm);
+      for (const [forwarded, forward] of forwarding) process.off(forwarded, forward);
       const exitCode = signal ? signalExitCode(signal) : (code ?? 1);
       if (relayed) relayed.then(() => resolvePromise(exitCode), reject);
       else resolvePromise(exitCode);
