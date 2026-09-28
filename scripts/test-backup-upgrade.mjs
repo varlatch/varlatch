@@ -41,7 +41,10 @@ function localCompose(projectName) {
  const byDockerfile={'services/varlatchd/Dockerfile':'varlatchd','apps/web/Dockerfile':'varlatch-web','infra/compose/convex-deploy.Dockerfile':'convex-deploy'};
  return readFileSync(join(root,'infra/compose/docker-compose.yml'),'utf8').replace('name: varlatch',`name: ${projectName}`)
  .replace(/build:\n\s+context: \.\.\/\.\.\n\s+dockerfile: (\S+)\n/g,(_,file)=>`image: ${imageNames[byDockerfile[file]]}\n`)
- .replace(/(    image: .+\n)/g,'$1    pull_policy: never\n');
+ // Only the candidate images built in this job are local-only; postgres and
+ // convex-backend pull when missing (on a lifecycle-only run no earlier step
+ // has pulled postgres:17.6).
+ .replace(/(    image: \S+:local\n)/g,'$1    pull_policy: never\n');
 }
 for(const [i,where] of [source,target].entries()) {
  mkdirSync(join(where,'secrets'),{recursive:true});
