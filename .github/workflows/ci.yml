@@ -16,9 +16,17 @@ on:
   schedule:
     - cron: "17 2 * * *"
 
-# CI_RUNNER (a repository variable) sends every job to a self-hosted runner
-# label; unset, jobs run on GitHub-hosted runners. Third-party actions are
-# pinned to commits because a self-hosted runner executes them on its host.
+# Runners: GitHub-hosted first. Each run starts with the hosted-runner probe;
+# when hosted minutes have run out, GitHub refuses it and every job of the run
+# goes to the self-hosted runner (label varlatch-ci) instead. The probe may
+# fail without failing the run. CI_RUNNER (a repository variable) forces a
+# runner label for every job. If minutes run out partway through a run, set
+# CI_RUNNER and rerun the failed jobs: a rerun keeps the probe's answer, but
+# every job reads CI_RUNNER again. While minutes are out, every run shows the
+# probe as one failed check next to green ones: expected, and not a merge
+# gate. While minutes last, the probe bills one hosted minute per run.
+# Third-party actions are pinned to commits because a self-hosted runner
+# executes them on its host.
 # One runner takes one job at a time, so a newer push to a pull request
 # cancels the older run; runs on main are never cancelled.
 concurrency:
@@ -29,7 +37,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     services:
       postgres:
         image: postgres:17.6
@@ -121,7 +129,7 @@ jobs:
   secret-scan:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -136,7 +144,7 @@ jobs:
   docker:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Build varlatchd image
@@ -166,7 +174,7 @@ jobs:
   multi-arch:
     needs: changes
     if: needs.changes.outputs.multiarch == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -193,7 +201,7 @@ jobs:
   contributor-setup:
     needs: changes
     if: needs.changes.outputs.contributor == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -215,7 +223,7 @@ jobs:
   e2e:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -238,14 +246,33 @@ jobs:
   # scheduled run skips everything when main has no commits since the last
   # one; any other event runs everything.
   changes:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    needs: hosted-runner
+    runs-on: ${{ vars.CI_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
     outputs:
+      runner: ${{ steps.runner.outputs.runner }}
+      hosted: ${{ steps.runner.outputs.hosted }}
       run: ${{ steps.filter.outputs.run }}
       multiarch: ${{ steps.filter.outputs.multiarch }}
       contributor: ${{ steps.filter.outputs.contributor }}
       recovery: ${{ steps.filter.outputs.recovery }}
       lifecycle: ${{ steps.filter.outputs.lifecycle }}
     steps:
+      - name: Runner for this run
+        id: runner
+        env:
+          FORCED: ${{ vars.CI_RUNNER }}
+          AVAILABLE: ${{ needs.hosted-runner.outputs.available }}
+        run: |
+          if [ -n "$FORCED" ]; then
+            runner=$FORCED hosted=false why="forced by the CI_RUNNER variable"
+          elif [ "$AVAILABLE" = true ]; then
+            runner=ubuntu-latest hosted=true why="GitHub-hosted minutes available"
+          else
+            runner=varlatch-ci hosted=false why="GitHub-hosted runners refused the probe (minutes used up)"
+          fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "hosted=$hosted" >> "$GITHUB_OUTPUT"
+          echo "Jobs run on $runner: $why." | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
@@ -291,14 +318,29 @@ jobs:
             printf '%s:\n%s\n' "$t" "${hits:-(none)}"
           done
 
+  # Hosted runners first: this job only proves one would start. When hosted
+  # minutes have run out GitHub refuses it within seconds; continue-on-error
+  # keeps the run green (its result then still reads success, with no
+  # output), and `changes` sends every job to the self-hosted runner.
+  hosted-runner:
+    name: GitHub-hosted runners available?
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 5
+    outputs:
+      available: ${{ steps.probe.outputs.available }}
+    steps:
+      - id: probe
+        run: echo "available=true" >> "$GITHUB_OUTPUT"
+
   # Recovery steps guard backup and restore; lifecycle steps guard installing,
   # upgrading and adopting. Each runs when its tier does.
   backup-recovery:
     needs: changes
     if: needs.changes.outputs.recovery == 'true' || needs.changes.outputs.lifecycle == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     # The self-hosted runner is much smaller than a hosted one.
-    timeout-minutes: ${{ vars.CI_RUNNER && 180 || 45 }}
+    timeout-minutes: ${{ !vars.CI_RUNNER && needs.changes.outputs.hosted == 'true' && 45 || 180 }}
     permissions:
       contents: read
       packages: read
