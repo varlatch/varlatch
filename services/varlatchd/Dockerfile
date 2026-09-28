@@ -50,6 +50,7 @@ COPY packages/context/package.json packages/context/
 COPY packages/sdk/package.json packages/sdk/
 COPY packages/env-schema/package.json packages/env-schema/
 COPY packages/matcher/package.json packages/matcher/
+COPY packages/accessor/package.json packages/accessor/
 COPY apps/cli/package.json apps/cli/
 RUN pnpm install --frozen-lockfile --filter @varlatch/cli...
 COPY packages/contract packages/contract
@@ -60,6 +61,7 @@ COPY packages/context packages/context
 COPY packages/sdk packages/sdk
 COPY packages/env-schema packages/env-schema
 COPY packages/matcher packages/matcher
+COPY packages/accessor packages/accessor
 COPY apps/cli apps/cli
 RUN pnpm --filter @varlatch/protocol generate \
  && pnpm --filter "@varlatch/cli..." build \

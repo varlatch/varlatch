@@ -144,6 +144,10 @@ fixes.
   the Capability does not hold is denied with the reason
   `placement-not-targeted`, and `capability.exercised` records the
   placements. `/v1/meta` lists `capabilities.targets`.
+- `GET /v1/organizations/{org}/projects/{project}/contract/revisions/{revision}`
+  returns one stored Contract revision, active or not, with its content hash
+  and semantics version. It needs `contract.read`. SDK:
+  `getContractRevision()`. `/v1/meta` lists `contracts.revision-by-id`.
 
 ### CLI
 
@@ -186,6 +190,24 @@ fixes.
   `fetch` goes through the Broker, and `NO_PROXY` and `no_proxy` each gain
   the Broker's own address. The run reports blocked requests, stray
   Placeholders, and the inherited Secrets it removed, never values.
+- `varlatch types --out <file.ts>` generates one TypeScript module from the
+  active Contract Revision, or from `--revision <id>`: a type for every
+  Contract item, a type of the non-sensitive items, and the Typed Accessor,
+  a small runtime that reads `process.env`, converts values with the
+  revision's Contract Semantics, and throws one error that lists every
+  problem by item name, never by value. The module is self-contained, so the
+  application needs nothing else. Generation needs `contract.read`, makes
+  one request, fetches no values, rewrites the file only when it changes,
+  and never writes through a symbolic link. `--check` exits 1 when the file
+  is stale, for CI. A revision at Contract Semantics version 1 is refused,
+  because version 1 defines no conversion. See
+  [Type generation](docs/reference/type-generation.md).
+- `varlatch run --export-context` gives the command `VARLATCH_RUN_CONTEXT`
+  from a default run, with `mode: "exported"`, so the Typed Accessor can
+  check requiredness for the environment and tell withheld items from absent
+  ones. The run is otherwise unchanged. It needs `contract.read` and an
+  active Contract, and fetches the Contract Revision before any Secret is
+  disclosed.
 
 ### Upgrading
 

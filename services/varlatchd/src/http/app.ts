@@ -1482,6 +1482,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json(serialize.revision(revision, project.active_contract_revision_id), 201);
   });
 
+  // Revisions are immutable and hold no values: generated types and exported
+  // run contexts name one, and fetch exactly that one (ADR-0038 D6, D13).
+  app.get("/v1/organizations/:org/projects/:project/contract/revisions/:revision", async (c) => {
+    const principal = c.get("principal");
+    const { org, project } = await projectScope(ctx, c);
+    await authorize(ctx, c, principal, "contract.read", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+    const revision = await getRevision(ctx, project.id, c.req.param("revision"));
+    return c.json(serialize.revision(revision, project.active_contract_revision_id));
+  });
+
   app.post(
     "/v1/organizations/:org/projects/:project/contract/revisions/:revision/activate",
     async (c) => {

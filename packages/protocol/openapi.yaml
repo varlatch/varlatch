@@ -874,6 +874,30 @@ paths:
               schema: { $ref: "#/components/schemas/ContractRevision" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/projects/{project}/contract/revisions/{revision}:
+    get:
+      tags: [contracts]
+      operationId: getContractRevision
+      summary: >
+        One stored Contract revision by ID, active or not (capability
+        contracts.revision-by-id). Needs contract.read. Revisions are
+        immutable and contain no values; the content hash identifies both the
+        items and the semantics version.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/project"
+        - name: revision
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContractRevision" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/projects/{project}/contract/revisions/{revision}/activate:
     post:
       tags: [contracts]

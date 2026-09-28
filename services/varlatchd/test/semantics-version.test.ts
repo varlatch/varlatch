@@ -141,3 +141,39 @@ describe("Contract Revision semantics version", () => {
     });
   });
 });
+
+describe("a Contract Revision by ID", () => {
+  it("returns any stored revision with its semantics version and content hash, active or not", async () => {
+    const legacy = await push(contract("listen port", 1));
+    const current = await push(contract("listen port", 2));
+    await activate(current.id);
+
+    const byId = await call("GET", `${P}/contract/revisions/${legacy.id}`);
+    expect(byId.status).toBe(200);
+    expect(byId.body).toMatchObject({ id: legacy.id, contentHash: legacy.contentHash, semanticsVersion: 1, active: false });
+    expect(contractHash(normalizeContract(byId.body.contract))).toBe(legacy.contentHash);
+
+    const active = await call("GET", `${P}/contract/revisions/${current.id}`);
+    expect(active.body).toMatchObject({ id: current.id, semanticsVersion: 2, active: true });
+    expect((await app.request("/v1/meta").then((r) => r.json()) as { capabilities: string[] }).capabilities).toContain(
+      "contracts.revision-by-id",
+    );
+  });
+
+  it("is not found for an unknown ID or another project's revision, and needs contract.read", async () => {
+    const own = await push(contract("listen port"));
+    expect((await call("GET", `${P}/contract/revisions/crv_unknown`)).status).toBe(404);
+
+    await call("POST", "/v1/organizations/acme/projects", { name: "Web", slug: "web", contractAuthority: "managed" });
+    expect((await call("GET", `/v1/organizations/acme/projects/web/contract/revisions/${own.id}`)).status).toBe(404);
+
+    // Denied exactly as the active Contract is.
+    await activate(own.id);
+    const member = await call("POST", "/v1/organizations/acme/identities", { name: "no-grants", kind: "service" });
+    const as = (path: string) => app.request(path, { headers: { Authorization: `Bearer ${member.body.credential as string}` } });
+    const byId = await as(`${P}/contract/revisions/${own.id}`);
+    expect(byId.status).toBe(403);
+    expect(((await byId.json()) as { error: { code: string } }).error.code).toBe("PERMISSION_DENIED");
+    expect((await as(`${P}/contract`)).status).toBe(403);
+  });
+});
