@@ -244,7 +244,8 @@ jobs:
   # slow suite only when the pull request touches what it guards; tests
   # (*/test/) never trigger one. A push to main runs only the fast checks. A
   # scheduled run skips everything when main has no commits since the last
-  # one; any other event runs everything.
+  # one; any other event runs everything, including a release: release.yml
+  # calls this workflow on a tag push, which must not count as a push to main.
   changes:
     needs: hosted-runner
     runs-on: ${{ vars.CI_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
@@ -280,6 +281,7 @@ jobs:
         id: filter
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           tiers="multiarch contributor recovery lifecycle"
@@ -288,12 +290,14 @@ jobs:
             for t in run $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if [ "$EVENT" = push ]; then
+          if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
+            echo "A push to main: the fast checks only."
             echo "run=true" >> "$GITHUB_OUTPUT"
             for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$EVENT" != pull_request ]; then
+            echo "Every tier runs ($EVENT on $REF)."
             for t in run $tiers; do echo "$t=true"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
