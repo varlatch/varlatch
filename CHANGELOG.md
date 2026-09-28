@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.11.0)
+## 0.11.0 (2026-09-28)
 
 ### Contracts
 
@@ -249,6 +249,28 @@ fixes.
   are forwarded.
 
 ### Upgrading
+
+Database schema: migrations 21 and 22.
+
+- From 0.10.0 or 0.10.1: download `varlatch-cli-0.11.0.cjs` from the
+  `v0.11.0` release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.11.0.cjs upgrade 0.11.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. The upgrade captures and
+  verifies an archive while the installation keeps serving, applies
+  migrations 21 and 22, and completes only once the new release passes its
+  health gate.
+- From 0.8.0 or 0.9.0: the same command. As for 0.10.0, the archive is taken
+  with the installation briefly paused, so plan a short maintenance window.
+  From the published 0.7.0, the offline path described under 0.8.0 still
+  applies with this CLI.
+- Then replace the host CLI with `varlatch-cli-0.11.0.cjs`. Agent-safe runs
+  need the 0.11.0 CLI and server together (see below).
+- 0.11.0 restores archives from 0.7.0 (migrations 16 and 18), 0.8.0
+  (migrations 18 and 19), 0.9.0 (migrations 19 and 20), 0.10.0 and 0.10.1
+  (migration 20), and builds made between 0.10.1 and 0.11.0 (migrations 21
+  and 22).
+
+The changes below need attention when you upgrade.
 
 - **`varlatch run` exits 130, not 143, when interrupted with Ctrl-C.** Any
   signal that ends the command now gives 128 plus its number. SIGTERM still

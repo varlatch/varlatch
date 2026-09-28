@@ -12,7 +12,7 @@ the CLI that needs only Node.js 22 or newer: no checkout, pnpm, or build.
 Install it root-owned on the Compose host:
 
 ```sh
-V=0.10.0  # the release the installation runs
+V=0.11.0  # the release the installation runs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
