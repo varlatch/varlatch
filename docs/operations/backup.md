@@ -26,6 +26,11 @@ signature first, as [Verifying a release](verify-release.md) describes.
 While the repository is private, fetch the same assets with
 `gh release download v$V -R varlatch/varlatch -p "varlatch-cli-*" -p SHA256SUMS`.
 
+From then on, `varlatch self-update` does the same for a newer release:
+it checks the signature on `SHA256SUMS` when cosign is installed and the
+release is signed, checks the file, and replaces the CLI after you confirm.
+Run it with `sudo` for a root-owned copy such as `/usr/local/bin/varlatch`.
+
 The varlatchd image carries the same file at `/opt/varlatch/varlatch.cjs`, so
 on the Compose host you can also take it from the running release, trusted
 exactly as far as the digest-pinned image you already run:
