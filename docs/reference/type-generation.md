@@ -191,6 +191,18 @@ identifiers only.
   before any Secret is disclosed. It needs `contract.read`, an active
   Contract, and a server running Varlatch 0.11.0 or later; otherwise the run
   starts nothing.
+- The context always describes the values the command receives. A default
+  run makes two requests, the configuration and then the disclosure of its
+  Secrets, and each is answered from its own database snapshot. With
+  `--export-context` the run compares the `stateDigest` of both responses,
+  so it knows they saw the same environment, Contract Revision, and value
+  versions. When something changed in between (a value written, rotated, or
+  deleted, or a Contract activated), it makes both requests again, up to
+  three times in all. Each time is another disclosure, and is audited as
+  one. If the two responses never agree, the run starts nothing and exits
+  with status 1, naming no value. A Grant change in between cannot make the
+  context wrong: each item's status comes from the response that delivered
+  or withheld it.
 - A context larger than 64 KiB fails the run; it is never truncated.
 - It applies only to default runs. A `--strict` run always gives the command
   its run context.
