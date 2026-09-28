@@ -117,7 +117,7 @@ import {
   type Principal,
 } from "./support.js";
 
-export const SERVER_VERSION = "0.10.0";
+export const SERVER_VERSION = "0.11.0";
 
 import { evaluate, type Action, type TailnetContext } from "../authz/evaluate.js";
 import {

@@ -70,10 +70,12 @@ terminal, files, or pipes, and nothing is masked.
 - **When the output ends, held bytes are released unchanged,** because they
   can no longer become a Secret. Output that ends with only the start of a
   Secret is therefore not masked: the guarantee covers complete values.
-- **When `varlatch run` is interrupted** by SIGINT or SIGTERM, it forwards
-  the signal to the command as always, and bytes still held when the output
-  ends are discarded, never released. Output the command writes after the
-  signal, while shutting down, is still relayed and masked.
+- **When `varlatch run` is interrupted** by SIGINT, SIGTERM, SIGHUP, or
+  SIGQUIT, it forwards the signal to the command as always, and bytes still
+  held when the output ends are discarded, never released. Output the
+  command writes after the signal, while shutting down, is still relayed
+  and masked. SIGUSR1 and SIGUSR2 are forwarded too, but do not count as an
+  interruption.
 - **When whatever reads the output goes away** (for example `| head`),
   held bytes are discarded and reading from the command stops, so the
   command's next write to that stream fails as it would on a closed pipe.

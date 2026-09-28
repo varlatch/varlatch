@@ -112,6 +112,13 @@ varlatch run -- npm run dev
 no file of secrets lands on disk. `varlatch types --out src/config.ts`
 generates typed access to them for a TypeScript application.
 
+`varlatch run` forwards SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1, and SIGUSR2
+to your command (only the first two on Windows), so a service manager can stop
+or reload a service through it, and it exits with your command's status: 128
+plus the signal's number when a signal ended it, 130 for Ctrl-C. A signal sent
+to the whole process group, such as Ctrl-C in a terminal, reaches your command
+twice: from the terminal and forwarded.
+
 ### Develop Varlatch
 
 ```sh

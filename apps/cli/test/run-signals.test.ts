@@ -21,6 +21,7 @@ const dir = mkdtempSync(join(tmpdir(), "varlatch-run-signals-"));
 const bundle = join(dir, "varlatch.cjs");
 const repo = join(dir, "repo");
 const child = join(dir, "child.cjs");
+const reloading = join(dir, "reloading.cjs");
 let server: http.Server;
 
 const stored = "valueaaaaaaaaaaaaa";
@@ -114,6 +115,12 @@ beforeAll(async () => {
   );
   // The command reports that it started, with its PID, and then waits to be signalled.
   writeFileSync(child, `process.stderr.write("ready " + process.pid + "\\n"); setInterval(() => {}, 1000);`);
+  // A service that treats SIGHUP, SIGUSR1, and SIGUSR2 as "reload" or "rotate" and keeps running.
+  writeFileSync(
+    reloading,
+    `for (const s of ["SIGHUP", "SIGUSR1", "SIGUSR2"]) process.on(s, () => process.stderr.write("got " + s + "\\n"));
+process.stderr.write("ready " + process.pid + "\\n"); setInterval(() => {}, 1000);`,
+  );
 });
 
 afterAll(async () => {
@@ -127,8 +134,8 @@ interface Run {
   done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
-function start(flags: string[]): Run {
-  const cli = spawn(process.execPath, [bundle, "run", ...flags, "--", process.execPath, child], {
+function start(flags: string[], command = child): Run {
+  const cli = spawn(process.execPath, [bundle, "run", ...flags, "--", process.execPath, command], {
     cwd: repo,
     env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test" },
     stdio: ["ignore", "pipe", "pipe"],
@@ -149,6 +156,15 @@ async function started(run: Run): Promise<number> {
     const match = /ready (\d+)\n/.exec(run.stderr());
     if (match) return Number(match[1]);
     if (Date.now() > deadline) throw new Error(`the command did not start; stderr: ${run.stderr()}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+/** Waits until the run's stderr contains `text`. */
+async function saw(run: Run, text: string): Promise<void> {
+  const deadline = Date.now() + 15_000;
+  while (!run.stderr().includes(text)) {
+    if (Date.now() > deadline) throw new Error(`never saw ${JSON.stringify(text)}; stderr: ${run.stderr()}`);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }
@@ -177,14 +193,30 @@ describe("varlatch run exits with 128 plus the number of the signal that ended i
       expect(run.stderr()).not.toContain(stored);
     });
 
-    // Ctrl-C and a service manager's stop reach `varlatch run`, which forwards them.
-    it.each(["SIGINT", "SIGTERM"] as const)("%s sent to varlatch run is forwarded, and the command's death by it is reported", async (signal) => {
+    // Ctrl-C, a stop, a hangup, and Ctrl-\ sent to `varlatch run` alone are forwarded.
+    it.each(["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"] as const)("%s sent to varlatch run is forwarded, and the command's death by it is reported", async (signal) => {
       const run = start(flags);
       await started(run);
       run.cli.kill(signal);
       const { code, signal: own } = await run.done;
       expect(own).toBeNull();
       expect(code).toBe(128 + constants.signals[signal]);
+    });
+
+    // A service manager's reload or a log rotation signals only `varlatch run`:
+    // the command must get it, and the run must go on until the command ends.
+    it.each(["SIGHUP", "SIGUSR1", "SIGUSR2"] as const)("%s sent to varlatch run reaches a command that handles it, and the run goes on", async (signal) => {
+      const run = start(flags, reloading);
+      await started(run);
+      run.cli.kill(signal);
+      await saw(run, `got ${signal}`);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(run.cli.exitCode).toBeNull();
+      expect(run.cli.signalCode).toBeNull();
+      run.cli.kill("SIGTERM");
+      const { code, signal: own } = await run.done;
+      expect(own).toBeNull();
+      expect(code).toBe(143);
     });
   });
 });
