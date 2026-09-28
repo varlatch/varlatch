@@ -378,6 +378,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/projects/{project}/contract/revisions/{revision}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One stored Contract revision by ID, active or not (capability contracts.revision-by-id). Needs contract.read. Revisions are immutable and contain no values; the content hash identifies both the items and the semantics version. */
+        get: operations["getContractRevision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/projects/{project}/contract/revisions/{revision}/activate": {
         parameters: {
             query?: never;
@@ -2761,6 +2778,33 @@ export interface operations {
         responses: {
             /** @description Stored (or deduplicated) revision */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractRevision"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getContractRevision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+                revision: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The revision */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

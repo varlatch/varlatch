@@ -57,6 +57,8 @@ describe("SDK against the real app", () => {
       provenance: { commitSha: "abc123" },
     });
     await client.activateContractRevision("acme", "api", revision.id);
+    const fetched = await client.getContractRevision("acme", "api", revision.id);
+    expect(fetched).toMatchObject({ id: revision.id, contentHash: revision.contentHash, active: true });
 
     await client.setValue("acme", "api", "development", "DATABASE_URL", {
       value: "postgres://dev",

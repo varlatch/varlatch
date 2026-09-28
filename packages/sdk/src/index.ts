@@ -405,6 +405,14 @@ export class VarlatchClient {
     );
   }
 
+  /** One stored revision by ID, active or not (capability contracts.revision-by-id). */
+  getContractRevision(org: string, project: string, revisionId: string): Promise<ContractRevision> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/contract/revisions/${encodeURIComponent(revisionId)}`,
+    );
+  }
+
   pushContractRevision(
     org: string,
     project: string,
