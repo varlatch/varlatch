@@ -859,9 +859,18 @@ export async function applyChangeSet(
 // all-authorized-secrets scope; one audit event enumerates exactly what was
 // returned, committed before plaintext leaves the process (ADR-0016).
 
+/**
+ * Why a caller asks for a disclosure, recorded in its audit events
+ * (ADR-0038 Decision 14). An allowlist: anything else is refused.
+ */
+export const DISCLOSURE_PURPOSES = ["scan"] as const;
+export type DisclosurePurpose = (typeof DISCLOSURE_PURPOSES)[number];
+
 export interface DisclosureRequest {
   items?: string[] | undefined;
   scope?: "all-authorized-secrets" | undefined;
+  /** Recorded in every audit event of the disclosure; no behaviour change. */
+  purpose?: DisclosurePurpose | undefined;
 }
 
 export interface DisclosureResult {
@@ -918,6 +927,7 @@ export async function discloseSecrets(
             .map((i) => (i.retiringVersionId ? `${i.name}@${i.versionId}+${i.retiringVersionId}` : `${i.name}@${i.versionId}`))
             .join(","),
           withheld: withheld.length,
+          ...purposeOf(request),
         },
       },
     ],
@@ -973,6 +983,7 @@ export async function discloseSecrets(
             metadata: {
               mode: "reference-expansion",
               items: sources.map((i) => `${i.name}@${i.versionId}`).join(","),
+              ...purposeOf(request),
             },
           },
         ],
@@ -993,6 +1004,11 @@ export async function discloseSecrets(
     if (literal.size > 0) unexpanded.push({ name: item.name, references: [...literal].sort() });
   }
   return { items, withheld, unexpanded };
+}
+
+/** The audit metadata a declared purpose adds; nothing when none was declared. */
+function purposeOf(request: DisclosureRequest): { purpose?: DisclosurePurpose } {
+  return request.purpose ? { purpose: request.purpose } : {};
 }
 
 /** Which Secrets a disclosure request selects; the rest are withheld. */

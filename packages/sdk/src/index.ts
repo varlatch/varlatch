@@ -28,6 +28,7 @@ import type {
   ValidationReport,
   StateManifest,
   CallerView,
+  DisclosurePurpose,
   StrictRetrieval,
   ValueVersion,
   ValueRotation,
@@ -329,11 +330,16 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * Explicit Secret disclosure. `purpose` (capability
+   * secrets.disclosure-purpose) is recorded in the audit events and changes
+   * nothing else; a server without the capability ignores it.
+   */
   discloseSecrets(
     org: string,
     project: string,
     environment: string,
-    request: { items: string[] } | { scope: "all-authorized-secrets" },
+    request: ({ items: string[] } | { scope: "all-authorized-secrets" }) & { purpose?: DisclosurePurpose },
   ): Promise<{
     items: {
       name: string;

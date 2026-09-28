@@ -45,6 +45,7 @@ export const CAPABILITIES = [
   "audit.ndjson",
   "values.changeset",
   "secrets.requested-disclosure",
+  "secrets.disclosure-purpose",
   "environments.personal",
   "environments.preview",
   "capabilities.broker",

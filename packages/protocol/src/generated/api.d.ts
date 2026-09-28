@@ -248,7 +248,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. */
+        /** Explicit Secret disclosure (capability secrets.requested-disclosure). The request declares its items or an intentional all-authorized scope; one audit event enumerates exactly what was returned. Responses are never cacheable. ${NAME} references inside disclosed Secrets are expanded server-side (capability values.references) from other Secrets disclosed in the same call and — only when the caller also holds config.value.read — from the environment's non-sensitive values, each such expansion audited; unauthorized or unknown references stay literal. An optional purpose (capability secrets.disclosure-purpose) is recorded in the disclosure's audit events and changes nothing else. */
         post: operations["discloseSecrets"];
         delete?: never;
         options?: never;
@@ -1279,6 +1279,11 @@ export interface components {
             stateDigest?: components["schemas"]["StateDigest"];
             callerView?: components["schemas"]["CallerView"];
         };
+        /**
+         * @description Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). Any other value is refused with VALIDATION_FAILED.
+         * @enum {string}
+         */
+        DisclosurePurpose: "scan";
         /** @description SHA-256 over the canonical JSON encoding of the state manifest: a digest of identifiers, never of values. Equal digests mean the same captured state, whoever retrieved it. */
         StateDigest: string;
         /** @description What the retrieval's database snapshot captured, independent of the caller: identifiers and names only, never plaintext or anything derived from it. Versions are immutable, so the listed versions also determine every reference and what it resolves to. */
@@ -2436,9 +2441,11 @@ export interface operations {
             content: {
                 "application/json": {
                     items: string[];
+                    purpose?: components["schemas"]["DisclosurePurpose"];
                 } | {
                     /** @enum {string} */
                     scope: "all-authorized-secrets";
+                    purpose?: components["schemas"]["DisclosurePurpose"];
                 };
             };
         };
