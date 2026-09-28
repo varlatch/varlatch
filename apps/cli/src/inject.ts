@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import { constants } from "node:os";
 import type { SecretEntry } from "@varlatch/matcher";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import { OutputRedaction } from "./redact.js";
@@ -39,10 +40,23 @@ export function withheldItems(effective: EffectiveConfiguration): string[] {
 }
 
 /**
- * Start the child and return its exit code. With `redact` (the sensitive
- * values delivered in `env`), its stdout and stderr are piped through output
- * redaction; stdin, signals, and the exit code are unchanged, and the run
- * ends once the child has exited and both pipes have closed.
+ * The exit status for a command ended by `signal`: 128 plus the signal's
+ * number, as a shell reports it (130 for SIGINT, 143 for SIGTERM, 129 for
+ * SIGHUP). A signal this platform does not number gives 143, the SIGTERM
+ * status, so the status still says the command was ended by a signal.
+ */
+export function signalExitCode(signal: string): number {
+  const number: unknown = (constants.signals as Record<string, unknown>)[signal];
+  return 128 + (typeof number === "number" && number > 0 ? number : constants.signals.SIGTERM);
+}
+
+/**
+ * Start the child and return its exit code, or `signalExitCode` when a
+ * signal ended it; every mode of `varlatch run` starts its command here.
+ * With `redact` (the sensitive values delivered in `env`), its stdout and
+ * stderr are piped through output redaction; stdin, signals, and the exit
+ * code are unchanged, and the run ends once the child has exited and both
+ * pipes have closed.
  */
 export function runChild(
   command: string,
@@ -70,7 +84,7 @@ export function runChild(
     child.on("exit", (code, signal) => {
       process.off("SIGINT", sigint);
       process.off("SIGTERM", sigterm);
-      const exitCode = signal ? 128 + (signal === "SIGKILL" ? 9 : 15) : (code ?? 1);
+      const exitCode = signal ? signalExitCode(signal) : (code ?? 1);
       if (relayed) relayed.then(() => resolvePromise(exitCode), reject);
       else resolvePromise(exitCode);
     });

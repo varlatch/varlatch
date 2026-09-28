@@ -12,6 +12,9 @@ import { contractItem, revision } from "./fixtures.js";
  * `varlatch run --export-context` in the shipped CLI bundle, against a local
  * server: the Contract Revision is fetched after the Effective Configuration
  * and before any disclosure, and the command receives the exported context.
+ * The context and the Secrets come from two responses, so the run checks
+ * that both describe the same state (their `stateDigest`), reads both again
+ * when they do not, and refuses when they never agree.
  */
 
 const CLI = fileURLToPath(new URL("../dist/varlatch.cjs", import.meta.url));
@@ -20,11 +23,57 @@ const REVISION = revision([
   contractItem("PORT", { type: "number" }),
   contractItem("REGION"),
 ]);
+/** A later Contract Revision, activated while a run reads its configuration. */
+const REVISION_B = revision(
+  [
+    contractItem("API_KEY", { sensitive: true, required: { kind: "always" } }),
+    contractItem("FEATURE_FLAG", { type: "boolean" }),
+    contractItem("PORT", { type: "number" }),
+    contractItem("REGION"),
+  ],
+  { id: "crv_types2" },
+);
 const ENV = "/v1/organizations/acme/projects/api/environments/development";
+
+interface State {
+  digest: string;
+  revision: typeof REVISION;
+  items: { name: string; sensitive: boolean; versionId: string; value: string }[];
+}
+const STATE_A: State = {
+  digest: `sha256:${"a".repeat(64)}`,
+  revision: REVISION,
+  items: [
+    { name: "API_KEY", sensitive: true, versionId: "ver_1", value: "sk-disclosed-1" },
+    { name: "PORT", sensitive: false, versionId: "ver_2", value: "8080" },
+  ],
+};
+/** STATE_A after a rotation of API_KEY, a new REGION value, and a Contract activation. */
+const STATE_B: State = {
+  digest: `sha256:${"b".repeat(64)}`,
+  revision: REVISION_B,
+  items: [
+    { name: "API_KEY", sensitive: true, versionId: "ver_3", value: "valuebbbbbbbbbbbbb" },
+    { name: "PORT", sensitive: false, versionId: "ver_2", value: "8080" },
+    { name: "REGION", sensitive: false, versionId: "ver_4", value: "regionbbbbbbbbbbbb" },
+  ],
+};
+
+const manifest = (state: State) => ({
+  manifestVersion: 1,
+  projectId: "prj_1",
+  environment: { id: "env_dev", rootId: "env_dev", parentId: null, tier: "development", expiresAt: null },
+  contract: { revisionId: state.revision.id, contentHash: state.revision.contentHash, semanticsVersion: 2 },
+  items: state.items.map((i) => ({ name: i.name, source: "self", valueRowId: `val_${i.name}`, versionId: i.versionId })),
+});
 
 let server: Server;
 let repo: string;
 const requests: string[] = [];
+/** The state each request is served from, in order; the last one repeats. */
+let configurationStates: State[];
+let disclosureStates: State[] | "denied";
+const next = (states: State[]) => (states.length > 1 ? states.shift()! : states[0]!);
 
 beforeAll(async () => {
   if (!existsSync(CLI)) throw new Error("the CLI bundle is not built: run pnpm --filter @varlatch/cli build");
@@ -32,26 +81,29 @@ beforeAll(async () => {
     requests.push(`${req.method} ${req.url}`);
     const json = (status: number, body: unknown) => res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(body));
     if (req.method === "GET" && req.url === `${ENV}/effective-configuration?include=values`) {
+      const state = next(configurationStates);
       return json(200, {
         environmentId: "env_dev",
-        items: [
-          { name: "API_KEY", sensitive: true, source: "self", versionId: "ver_1", value: null },
-          { name: "PORT", sensitive: false, source: "self", versionId: "ver_2", value: "8080" },
-        ],
-        manifest: {
-          manifestVersion: 1,
-          projectId: "prj_1",
-          environment: { id: "env_dev", rootId: "env_dev", parentId: null, tier: "development", expiresAt: null },
-          contract: { revisionId: REVISION.id, contentHash: REVISION.contentHash, semanticsVersion: 2 },
-          items: [],
-        },
+        items: state.items.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", versionId: i.versionId, value: i.sensitive ? null : i.value })),
+        manifest: manifest(state),
+        stateDigest: state.digest,
+        callerView: { withheld: [], unexpanded: [] },
       });
     }
-    if (req.method === "GET" && req.url === `/v1/organizations/acme/projects/api/contract/revisions/${REVISION.id}`) {
-      return json(200, REVISION);
-    }
+    const revision = [REVISION, REVISION_B].find((r) => req.url === `/v1/organizations/acme/projects/api/contract/revisions/${r.id}`);
+    if (req.method === "GET" && revision) return json(200, revision);
     if (req.method === "POST" && req.url === `${ENV}/disclosures`) {
-      return json(200, { items: [{ name: "API_KEY", versionId: "ver_1", value: "sk-disclosed-1" }], withheld: [] });
+      if (disclosureStates === "denied") {
+        return json(403, { error: { code: "PERMISSION_DENIED", message: "secret.reveal is not granted", requestId: "r" } });
+      }
+      const state = next(disclosureStates);
+      return json(200, {
+        items: state.items.filter((i) => i.sensitive).map((i) => ({ name: i.name, versionId: i.versionId, value: i.value })),
+        withheld: [],
+        manifest: manifest(state),
+        stateDigest: state.digest,
+        callerView: { withheld: [], unexpanded: [] },
+      });
     }
     return json(404, { error: { code: "RESOURCE_NOT_FOUND", message: "not here", requestId: "r" } });
   });
@@ -69,6 +121,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   requests.length = 0;
+  configurationStates = [STATE_A];
+  disclosureStates = [STATE_A];
 });
 
 const PRINT = `process.stdout.write(JSON.stringify({ context: process.env.VARLATCH_RUN_CONTEXT ?? null, key: process.env.API_KEY ?? null, region: process.env.REGION ?? null }))`;
@@ -165,5 +219,89 @@ process.stderr.write("stderr " + key + "\\n");`;
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("--export-context applies only to default runs");
     expect(requests).toEqual([]);
+  });
+});
+
+describe("varlatch run --export-context when the state changes between its two requests", () => {
+  const READ_A = [
+    `GET ${ENV}/effective-configuration?include=values`,
+    `GET /v1/organizations/acme/projects/api/contract/revisions/${REVISION.id}`,
+    `POST ${ENV}/disclosures`,
+  ];
+  const READ_B = [
+    `GET ${ENV}/effective-configuration?include=values`,
+    `GET /v1/organizations/acme/projects/api/contract/revisions/${REVISION_B.id}`,
+    `POST ${ENV}/disclosures`,
+  ];
+
+  it("reads both again, and runs with the context and the values of the read whose two responses agree", async () => {
+    // The first disclosure already sees STATE_B; the second read sees it throughout.
+    configurationStates = [STATE_A, STATE_B];
+    disclosureStates = [STATE_B];
+    const result = await cli(["run", "--export-context", "--", process.execPath, "-e", PRINT], { REGION: "eu-west" });
+    expect(result.code).toBe(0);
+    expect(requests).toEqual([...READ_A, ...READ_B]);
+    expect(result.stderr).toBe(
+      "varlatch: the configuration changed between reading it and disclosing its Secrets; reading both again " +
+        "(attempt 2 of 3, another audited disclosure)\n",
+    );
+    const seen = JSON.parse(result.stdout) as { context: string; key: string; region: string };
+    expect(seen.key).toBe("valuebbbbbbbbbbbbb");
+    expect(seen.region).toBe("regionbbbbbbbbbbbb");
+    expect(JSON.parse(seen.context)).toEqual({
+      v: 1,
+      mode: "exported",
+      contractRevisionId: REVISION_B.id,
+      contractHash: REVISION_B.contentHash,
+      semanticsVersion: 2,
+      environment: { rootId: "env_dev", tier: "development" },
+      items: {
+        API_KEY: { server: "delivered", delivery: "varlatch" },
+        FEATURE_FLAG: { server: "notStored", delivery: "absent" },
+        PORT: { server: "delivered", delivery: "varlatch" },
+        REGION: { server: "delivered", delivery: "varlatch" },
+      },
+    });
+  });
+
+  it("refuses before starting the command when the two responses never agree, naming no value", async () => {
+    configurationStates = [STATE_A];
+    disclosureStates = [STATE_B];
+    const marker = join(repo, "started");
+    const result = await cli(["run", "--export-context", "--", process.execPath, "-e", `require("fs").writeFileSync(${JSON.stringify(marker)}, "1")`]);
+    expect(result.code).toBe(1);
+    expect(requests).toEqual([...READ_A, ...READ_A, ...READ_A]);
+    expect(existsSync(marker)).toBe(false);
+    expect(result.stdout).toBe("");
+    const lines = result.stderr.trimEnd().split("\n");
+    expect(lines).toEqual([
+      "varlatch: the configuration changed between reading it and disclosing its Secrets; reading both again (attempt 2 of 3, another audited disclosure)",
+      "varlatch: the configuration changed between reading it and disclosing its Secrets; reading both again (attempt 3 of 3, another audited disclosure)",
+      "varlatch: the configuration changed between reading it and disclosing its Secrets, on each of 3 attempts, so the run context could not describe the values delivered. Nothing was started.",
+    ]);
+    for (const value of [...STATE_A.items, ...STATE_B.items].map((i) => i.value)) expect(result.stderr).not.toContain(value);
+  });
+
+  it("does not read again when the disclosure is refused: every value delivered comes from the configuration", async () => {
+    configurationStates = [STATE_A];
+    disclosureStates = "denied";
+    const result = await cli(["run", "--export-context", "--", process.execPath, "-e", PRINT]);
+    expect(result.code).toBe(0);
+    expect(requests).toEqual(READ_A);
+    expect(result.stderr).toBe("varlatch: secrets not disclosed (PERMISSION_DENIED); continuing with non-sensitive values\nvarlatch: 1 value(s) withheld by policy: API_KEY\n");
+    const seen = JSON.parse(result.stdout) as { context: string; key: string | null };
+    expect(seen.key).toBeNull();
+    expect(JSON.parse(seen.context).items.API_KEY).toEqual({ server: "withheld", delivery: "absent" });
+  });
+
+  it("without the flag nothing is compared or read again, as before", async () => {
+    configurationStates = [STATE_A];
+    disclosureStates = [STATE_B];
+    const result = await cli(["run", "--", process.execPath, "-e", PRINT]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(requests).toEqual([`GET ${ENV}/effective-configuration?include=values`, `POST ${ENV}/disclosures`]);
+    // The value comes from the disclosure, as it always has.
+    expect(JSON.parse(result.stdout)).toMatchObject({ context: null, key: "valuebbbbbbbbbbbbb" });
   });
 });

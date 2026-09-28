@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import { parseRunContext } from "@varlatch/accessor";
 import type { EffectiveConfiguration, StateManifest } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
-import { ExportContextError, exportedRunContext, prepareExportedContext, type ExportContextClient } from "../src/exportContext.js";
+import {
+  EXPORT_CONTEXT_ATTEMPTS,
+  ExportContextError,
+  exportedRunContext,
+  prepareExportedContext,
+  readConsistently,
+  type ConfigurationRead,
+  type ExportContextClient,
+} from "../src/exportContext.js";
 import { RUN_CONTEXT, buildEnv } from "../src/inject.js";
 import { contractItem, revision } from "./fixtures.js";
 
@@ -23,12 +31,15 @@ const MANIFEST: StateManifest = {
   items: [],
 };
 
+const DIGEST = `sha256:${"a".repeat(64)}`;
+const OTHER = `sha256:${"b".repeat(64)}`;
+
 /** A default run's Effective Configuration after disclosure: Secrets the caller may not reveal stay null. */
 function effective(items: { name: string; value: string | null; sensitive?: boolean }[], manifest: StateManifest | null = MANIFEST): EffectiveConfiguration {
   return {
     environmentId: "env_dev_child",
     items: items.map((i) => ({ name: i.name, sensitive: i.sensitive ?? false, source: "self" as const, value: i.value })),
-    ...(manifest ? { manifest } : {}),
+    ...(manifest ? { manifest, stateDigest: DIGEST } : {}),
   };
 }
 
@@ -105,6 +116,11 @@ describe("the exported run context", () => {
     await expect(prepareExportedContext(client(), "acme", "api", effective([], null))).rejects.toThrow(
       "--export-context needs a server that returns a state manifest with the configuration: Varlatch 0.11.0 or later",
     );
+    const undigested = effective([]);
+    delete undigested.stateDigest;
+    await expect(prepareExportedContext(client(), "acme", "api", undigested)).rejects.toThrow(
+      "--export-context needs a server that returns a state manifest with the configuration: Varlatch 0.11.0 or later",
+    );
     await expect(prepareExportedContext(client(), "acme", "api", effective([], { ...MANIFEST, contract: null }))).rejects.toThrow(
       "--export-context needs an active Contract",
     );
@@ -134,5 +150,72 @@ describe("the exported run context", () => {
   it("a default run without the flag still removes an inherited context", () => {
     const env = buildEnv({ [RUN_CONTEXT]: '{"v":1}', PATH: "/bin" }, effective([{ name: "PORT", value: "1" }]));
     expect(env[RUN_CONTEXT]).toBeUndefined();
+  });
+});
+
+describe("reading the configuration and its Secrets consistently", () => {
+  /** Reads that return the given digest pairs in order, recording each read. */
+  function reads(pairs: [string | undefined, string | null | undefined][]) {
+    const done: number[] = [];
+    const read = async (): Promise<ConfigurationRead<number>> => {
+      const [configurationDigest, disclosureDigest] = pairs[done.length]!;
+      done.push(done.length + 1);
+      return { configurationDigest, disclosureDigest, result: done.length };
+    };
+    return { read, done };
+  }
+
+  it("takes the first read when both responses carry the same digest", async () => {
+    const { read, done } = reads([[DIGEST, DIGEST]]);
+    const notices: string[] = [];
+    expect(await readConsistently(read, (line) => notices.push(line))).toBe(1);
+    expect(done).toEqual([1]);
+    expect(notices).toEqual([]);
+  });
+
+  it("takes a read whose disclosure was refused: every value delivered came from the configuration", async () => {
+    const { read, done } = reads([[DIGEST, null]]);
+    expect(await readConsistently(read, () => {})).toBe(1);
+    expect(done).toEqual([1]);
+  });
+
+  it("reads again when the digests differ, saying that it discloses again, and takes the read that agrees", async () => {
+    const { read, done } = reads([
+      [DIGEST, OTHER],
+      [OTHER, OTHER],
+    ]);
+    const notices: string[] = [];
+    expect(await readConsistently(read, (line) => notices.push(line))).toBe(2);
+    expect(done).toEqual([1, 2]);
+    expect(notices).toEqual([
+      "varlatch: the configuration changed between reading it and disclosing its Secrets; reading both again (attempt 2 of 3, another audited disclosure)",
+    ]);
+  });
+
+  it("does not take a disclosure without a digest as agreement", async () => {
+    const { read, done } = reads([
+      [DIGEST, undefined],
+      [DIGEST, DIGEST],
+    ]);
+    expect(await readConsistently(read, () => {})).toBe(2);
+    expect(done).toEqual([1, 2]);
+  });
+
+  it(`refuses after ${EXPORT_CONTEXT_ATTEMPTS} reads that never agree`, async () => {
+    expect(EXPORT_CONTEXT_ATTEMPTS).toBe(3);
+    const { read, done } = reads([
+      [DIGEST, OTHER],
+      [OTHER, DIGEST],
+      [DIGEST, undefined],
+      [DIGEST, DIGEST],
+    ]);
+    const notices: string[] = [];
+    const refused = readConsistently(read, (line) => notices.push(line));
+    await expect(refused).rejects.toThrow(ExportContextError);
+    await expect(refused).rejects.toThrow(
+      "the configuration changed between reading it and disclosing its Secrets, on each of 3 attempts, so the run context could not describe the values delivered",
+    );
+    expect(done).toEqual([1, 2, 3]);
+    expect(notices).toHaveLength(2);
   });
 });

@@ -77,7 +77,9 @@ terminal, files, or pipes, and nothing is masked.
 - **When whatever reads the output goes away** (for example `| head`),
   held bytes are discarded and reading from the command stops, so the
   command's next write to that stream fails as it would on a closed pipe.
-- **stdin, signals, and the exit code pass through unchanged.**
+- **stdin, signals, and the exit code pass through unchanged.** As in every
+  `varlatch run`, a command ended by a signal gives 128 plus the signal's
+  number, as a shell reports it: 130 for SIGINT (Ctrl-C), 143 for SIGTERM.
 - **The command writes to pipes, not a terminal.** A command that checks
   for a terminal may drop colours or buffer its output differently. Many
   tools have a flag to keep colours, such as `--color=always`.
