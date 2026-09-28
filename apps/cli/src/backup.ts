@@ -366,8 +366,21 @@ async function restoreInstallation(args: string[], dir: string): Promise<void> {
  * running services. The deploy job belongs to reconciliation.
  */
 async function startRemainingServices(dir: string): Promise<void> {
-  const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy');
-  await compose(dir, ['up', '-d', '--no-recreate', ...services]);
+  // The services left to start depend on a healthy varlatchd, and Compose
+  // gives up at once on a dependency that is unhealthy right now. Its health
+  // check fails while the restore holds it, which on a slow host lasts long
+  // enough to mark it unhealthy; it recovers once the restore gate lifts.
+  const deadline = Date.now() + 10 * 60_000;
+  while (Date.now() < deadline && await compose(dir, ['ps', '--format', '{{.Health}}', 'varlatchd']).catch(() => '') === 'unhealthy') {
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  // Start only what is not running, without Compose's dependency checks:
+  // restore already started everything these services depend on, and a
+  // health check that flaps on a loaded host must not keep the dashboard
+  // down (Compose re-checks dependency health while it starts services).
+  const running = new Set((await compose(dir, ['ps', '--status', 'running', '--services'])).split('\n').filter(Boolean));
+  const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy' && !running.has(s));
+  if (services.length) await compose(dir, ['up', '-d', '--no-deps', ...services]);
   console.log('Remaining services started.');
 }
 /**
