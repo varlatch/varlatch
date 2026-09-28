@@ -374,8 +374,13 @@ async function startRemainingServices(dir: string): Promise<void> {
   while (Date.now() < deadline && await compose(dir, ['ps', '--format', '{{.Health}}', 'varlatchd']).catch(() => '') === 'unhealthy') {
     await new Promise(r => setTimeout(r, 5000));
   }
-  const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy');
-  await compose(dir, ['up', '-d', '--no-recreate', ...services]);
+  // Start only what is not running, without Compose's dependency checks:
+  // restore already started everything these services depend on, and a
+  // health check that flaps on a loaded host must not keep the dashboard
+  // down (Compose re-checks dependency health while it starts services).
+  const running = new Set((await compose(dir, ['ps', '--status', 'running', '--services'])).split('\n').filter(Boolean));
+  const services = (await compose(dir, ['config', '--services'])).split('\n').filter(s => s && s !== 'convex-deploy' && !running.has(s));
+  if (services.length) await compose(dir, ['up', '-d', '--no-deps', ...services]);
   console.log('Remaining services started.');
 }
 /**
