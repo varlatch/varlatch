@@ -188,6 +188,11 @@ Secrets overlap, one Placeholder replaces both.
 The run reports, when it ends, how many replacements it made per Secret,
 and names a Secret too short to scrub (under 8 bytes).
 
+The Agent's own stdout and stderr are not filtered: it holds Placeholders,
+not Secrets, and an agent-safe run never fetches Secrets to build a filter.
+`--redact` is refused with `--agent-safe`; see
+[Output redaction](output-redaction.md).
+
 ## Sending requests through the Broker
 
 Send plain HTTP requests with an absolute `https://` URL to the Broker, with
