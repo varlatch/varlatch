@@ -64,6 +64,7 @@ export const CAPABILITIES = [
   "retrieval.strict",
   "retrieval.preflight",
   "capabilities.targets",
+  "contracts.revision-by-id",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

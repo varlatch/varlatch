@@ -21,7 +21,7 @@ import {
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { TargetError, formatTarget, parseTarget } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
-import { buildEnv, runChild, withheldItems } from "./inject.js";
+import { RUN_CONTEXT, buildEnv, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
@@ -444,12 +444,15 @@ async function main(): Promise<void> {
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) {
           fail(
-            "Usage: varlatch run [--environment <name>] [--strict [--allow-inherited <NAME>]...] [--redact | --agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
+            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
           );
         }
         const preArgs = args.slice(0, sep);
         if (!has(preArgs, "--agent-safe") && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
           fail("--target and --omit apply only to --agent-safe runs.");
+        }
+        if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
+          fail("--export-context applies only to default runs; a --strict run always gives the command its run context.");
         }
         // Output redaction (ADR-0038 Decision 10): refused before anything is fetched.
         const redact = has(preArgs, "--redact");
@@ -551,6 +554,10 @@ async function main(): Promise<void> {
           ctx.environment,
           { includeValues: true },
         );
+        // Before any Secret is disclosed: a run that cannot export its context discloses nothing.
+        const exportContext = has(preArgs, "--export-context")
+          ? await (await import("./exportContext.js")).prepareExportedContext(api, ctx.organization, ctx.project, effective)
+          : null;
         // Secrets require the explicit disclosure operation (design R2).
         try {
           const disclosed = await api.discloseSecrets(ctx.organization, ctx.project, ctx.environment, {
@@ -574,6 +581,7 @@ async function main(): Promise<void> {
         }
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
         const env = buildEnv(process.env, effective);
+        if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
         process.exit(code);
         return;
@@ -743,6 +751,32 @@ async function main(): Promise<void> {
           return;
         }
         fail("Usage: varlatch contract <push|activate|show>");
+        return;
+      }
+
+      case "types": {
+        const usage = "Usage: varlatch types --out <file.ts> [--revision <id>] [--check]";
+        const out = flag(args, "--out") ?? fail(usage);
+        if (out.startsWith("-")) fail(usage);
+        // The output is the same for every Environment, so none needs to be selected.
+        const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+        const server = flag(args, "--server");
+        if (server) opts.server = server;
+        const ctx = resolveContext(opts);
+        const { runTypes } = await import("./typesCommand.js");
+        const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+        process.exitCode = await runTypes(
+          client(ctx),
+          {
+            organization: ctx.organization,
+            project: ctx.project,
+            revision: flag(args, "--revision"),
+            out,
+            check: has(args, "--check"),
+            generatorVersion: EMBEDDED_RELEASE.version,
+          },
+          { out: (line) => console.log(line), err: (line) => console.error(line) },
+        );
         return;
       }
 
@@ -1118,8 +1152,9 @@ Usage:
   varlatch init --org <slug> --project <slug> [--server <url>]
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
-  varlatch run [-e <env>] [--redact] -- <command> [args...]
-               (--redact: mask the Secrets delivered to the command in its piped stdout and stderr;
+  varlatch run [-e <env>] [--export-context] [--redact] -- <command> [args...]
+               (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor;
+                --redact: mask the Secrets delivered to the command in its piped stdout and stderr,
                 refused when either is a terminal, and with --agent-safe)
   varlatch run --strict [--allow-inherited <NAME>]... [--redact] -- <command> [args...]
                (validate exactly what the command receives; exit 78 and start nothing on any violation;
@@ -1133,6 +1168,9 @@ Usage:
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
                    push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
+  varlatch types --out <file.ts> [--revision <id>] [--check]
+                 (one TypeScript module with typed config and the Typed Accessor, from the active Contract;
+                  --check exits 1 when the file is stale)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
                       | nothing for convex: --base is the deployment URL)
@@ -1170,6 +1208,7 @@ Usage:
     }
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
+    if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
     if (err instanceof ContextError) fail(err.message);
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {

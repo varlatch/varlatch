@@ -5,9 +5,11 @@ value: whether an item is required in an environment, when an item with no
 value is reported missing, and whether a value is valid for the item's type.
 From version 2 they also define how a value converts to a typed value.
 
-The rules are defined once, in the `@varlatch/contract` package, and the
-server's validation evaluates them. Test vectors in
-`packages/contract/test/vectors/` pin every version.
+The rules are defined once, in the `@varlatch/contract` package. The
+server's validation, strict startup, and the Typed Accessor that
+[`varlatch types`](type-generation.md) generates all evaluate them. Test
+vectors in `packages/contract/test/vectors/` pin every version, and run
+against the server's rules and the built accessor alike.
 
 ## Versions
 

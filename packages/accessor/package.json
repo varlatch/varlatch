@@ -1,8 +1,8 @@
 {
-  "name": "@varlatch/contract",
+  "name": "@varlatch/accessor",
   "version": "0.10.0",
   "private": true,
-  "description": "Canonical Varlatch Configuration Contract model, normalization, content hashing, semantic diffing, and versioned Contract Semantics",
+  "description": "The Typed Accessor: reads process.env and converts it with Contract Semantics; bundled into every module varlatch types generates",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,28 +12,25 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./semantics": {
-      "types": "./dist/semantics.d.ts",
-      "default": "./dist/semantics.js"
-    },
-    "./types": {
-      "types": "./dist/types.d.ts",
-      "default": "./dist/types.js"
+    "./embedded": {
+      "types": "./dist/embedded.d.ts",
+      "default": "./dist/embedded.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/bundle.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "zod": "4.1.5"
+    "@varlatch/contract": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "26.5.0",
+    "esbuild": "0.28.2",
     "typescript": "5.9.2",
     "vitest": "4.1.11"
   }
