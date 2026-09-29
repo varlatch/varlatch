@@ -1,0 +1,486 @@
+{
+  "v": 1,
+  "description": "Vectors for parsing VARLATCH_RUN_CONTEXT version 1, for every Typed Accessor runtime. raw is the variable text exactly; a valid vector gives the parsed fields, and an invalid one the reason reported for the VARLATCH_RUN_CONTEXT issue. The checks run in a fixed order (JSON, object, v, mode, contractRevisionId, contractHash, semanticsVersion, environment, items, each entry), so the first failing check is the one reported. Numbers follow JSON: 2.0 and 2e0 are the integer 2, while NaN and Infinity are not JSON. Produced by the TypeScript accessor, the reference. Vectors are only ever added to this file, never changed.",
+  "valid": [
+    {
+      "note": "a strict context with no items",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "an exported context with every server status and delivery",
+      "raw": "{\"v\":1,\"mode\":\"exported\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"DELIVERED_VARLATCH\":{\"server\":\"delivered\",\"delivery\":\"varlatch\"},\"DELIVERED_INHERITED\":{\"server\":\"delivered\",\"delivery\":\"inherited\"},\"DELIVERED_DEFAULT\":{\"server\":\"delivered\",\"delivery\":\"default\"},\"DELIVERED_ABSENT\":{\"server\":\"delivered\",\"delivery\":\"absent\"},\"WITHHELD_VARLATCH\":{\"server\":\"withheld\",\"delivery\":\"varlatch\"},\"WITHHELD_INHERITED\":{\"server\":\"withheld\",\"delivery\":\"inherited\"},\"WITHHELD_DEFAULT\":{\"server\":\"withheld\",\"delivery\":\"default\"},\"WITHHELD_ABSENT\":{\"server\":\"withheld\",\"delivery\":\"absent\"},\"NOTSTORED_VARLATCH\":{\"server\":\"notStored\",\"delivery\":\"varlatch\"},\"NOTSTORED_INHERITED\":{\"server\":\"notStored\",\"delivery\":\"inherited\"},\"NOTSTORED_DEFAULT\":{\"server\":\"notStored\",\"delivery\":\"default\"},\"NOTSTORED_ABSENT\":{\"server\":\"notStored\",\"delivery\":\"absent\"}}}",
+      "parsed": {
+        "mode": "exported",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {
+          "DELIVERED_VARLATCH": {
+            "server": "delivered",
+            "delivery": "varlatch"
+          },
+          "DELIVERED_INHERITED": {
+            "server": "delivered",
+            "delivery": "inherited"
+          },
+          "DELIVERED_DEFAULT": {
+            "server": "delivered",
+            "delivery": "default"
+          },
+          "DELIVERED_ABSENT": {
+            "server": "delivered",
+            "delivery": "absent"
+          },
+          "WITHHELD_VARLATCH": {
+            "server": "withheld",
+            "delivery": "varlatch"
+          },
+          "WITHHELD_INHERITED": {
+            "server": "withheld",
+            "delivery": "inherited"
+          },
+          "WITHHELD_DEFAULT": {
+            "server": "withheld",
+            "delivery": "default"
+          },
+          "WITHHELD_ABSENT": {
+            "server": "withheld",
+            "delivery": "absent"
+          },
+          "NOTSTORED_VARLATCH": {
+            "server": "notStored",
+            "delivery": "varlatch"
+          },
+          "NOTSTORED_INHERITED": {
+            "server": "notStored",
+            "delivery": "inherited"
+          },
+          "NOTSTORED_DEFAULT": {
+            "server": "notStored",
+            "delivery": "default"
+          },
+          "NOTSTORED_ABSENT": {
+            "server": "notStored",
+            "delivery": "absent"
+          }
+        }
+      }
+    },
+    {
+      "note": "semantics version 1 parses; the mismatch with the generated file is checked later",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":1,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 1,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "an unknown semantics version parses; support is checked later",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":3,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 3,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "2.0 is the integer 2",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2.0,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "2e0 is the integer 2",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2e0,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "v 1.0 is version 1",
+      "raw": "{\"v\":1.0,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "unknown top-level fields are ignored",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{},\"extra\":{\"nested\":[1,2]}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "unknown fields in environment and in items are ignored",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"staging\",\"extra\":true},\"items\":{\"A\":{\"server\":\"delivered\",\"delivery\":\"varlatch\",\"extra\":1}}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "staging"
+        },
+        "items": {
+          "A": {
+            "server": "delivered",
+            "delivery": "varlatch"
+          }
+        }
+      }
+    },
+    {
+      "note": "an empty rootId is accepted",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"\",\"tier\":\"development\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "",
+          "tier": "development"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "item names are not validated here, and __proto__ is an ordinary name",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"lower_case\":{\"server\":\"notStored\",\"delivery\":\"absent\"},\"__proto__\":{\"server\":\"withheld\",\"delivery\":\"inherited\"}}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {
+          "lower_case": {
+            "server": "notStored",
+            "delivery": "absent"
+          },
+          "__proto__": {
+            "server": "withheld",
+            "delivery": "inherited"
+          }
+        }
+      }
+    },
+    {
+      "note": "a duplicate key: the last one wins",
+      "raw": "{\"v\":1,\"mode\":\"loose\",\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "escaped characters in strings",
+      "raw": "{\"v\":1,\"mode\":\"\\u0073trict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "whitespace around the JSON",
+      "raw": " \n\t{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}} \r\n",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "crv_one",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    },
+    {
+      "note": "a revision ID of 128 characters",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "parsed": {
+        "mode": "strict",
+        "contractRevisionId": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+        "contractHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "semanticsVersion": 2,
+        "environment": {
+          "rootId": "env_prod",
+          "tier": "production"
+        },
+        "items": {}
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "note": "not JSON",
+      "raw": "{not json",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "an empty string",
+      "raw": "",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "a byte order mark before the JSON",
+      "raw": "﻿{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "NaN is not JSON",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":NaN,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "Infinity is not JSON",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":Infinity,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "a trailing comma",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{},}",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "trailing content after the JSON",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}} x",
+      "reason": "is not valid JSON"
+    },
+    {
+      "note": "an array",
+      "raw": "[]",
+      "reason": "is not a JSON object"
+    },
+    {
+      "note": "null",
+      "raw": "null",
+      "reason": "is not a JSON object"
+    },
+    {
+      "note": "a string",
+      "raw": "\"strict\"",
+      "reason": "is not a JSON object"
+    },
+    {
+      "note": "v 2",
+      "raw": "{\"v\":2,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "has a version this accessor does not read (it reads v 1); regenerate the types with the varlatch CLI that starts the application"
+    },
+    {
+      "note": "v as a string",
+      "raw": "{\"v\":\"1\",\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "has a version this accessor does not read (it reads v 1); regenerate the types with the varlatch CLI that starts the application"
+    },
+    {
+      "note": "v true",
+      "raw": "{\"v\":true,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "has a version this accessor does not read (it reads v 1); regenerate the types with the varlatch CLI that starts the application"
+    },
+    {
+      "note": "v missing",
+      "raw": "{\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "has a version this accessor does not read (it reads v 1); regenerate the types with the varlatch CLI that starts the application"
+    },
+    {
+      "note": "an unknown mode",
+      "raw": "{\"v\":1,\"mode\":\"loose\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: mode"
+    },
+    {
+      "note": "mode missing",
+      "raw": "{\"v\":1,\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: mode"
+    },
+    {
+      "note": "mode and contractHash both malformed: mode is reported",
+      "raw": "{\"v\":1,\"mode\":\"loose\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"md5:abc\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: mode"
+    },
+    {
+      "note": "a revision ID with a space and a newline",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"rev one\\n\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractRevisionId"
+    },
+    {
+      "note": "a revision ID of 129 characters",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractRevisionId"
+    },
+    {
+      "note": "an empty revision ID",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractRevisionId"
+    },
+    {
+      "note": "a hash with another algorithm",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"md5:abc\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractHash"
+    },
+    {
+      "note": "a hash in upper-case hex",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractHash"
+    },
+    {
+      "note": "a hash one digit short",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: contractHash"
+    },
+    {
+      "note": "semantics version 2.5",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2.5,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: semanticsVersion"
+    },
+    {
+      "note": "semantics version true",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":true,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: semanticsVersion"
+    },
+    {
+      "note": "semantics version as a string",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":\"2\",\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: semanticsVersion"
+    },
+    {
+      "note": "semantics version 1e400 overflows to infinity",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":1e400,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: semanticsVersion"
+    },
+    {
+      "note": "semantics version null",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":null,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: semanticsVersion"
+    },
+    {
+      "note": "an unknown tier",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"prod\"},\"items\":{}}",
+      "reason": "is malformed: environment"
+    },
+    {
+      "note": "rootId as a number",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":7,\"tier\":\"production\"},\"items\":{}}",
+      "reason": "is malformed: environment"
+    },
+    {
+      "note": "environment missing",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"items\":{}}",
+      "reason": "is malformed: environment"
+    },
+    {
+      "note": "environment as an array",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":[],\"items\":{}}",
+      "reason": "is malformed: environment"
+    },
+    {
+      "note": "items as an array",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":[]}",
+      "reason": "is malformed: items"
+    },
+    {
+      "note": "items null",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":null}",
+      "reason": "is malformed: items"
+    },
+    {
+      "note": "an unknown server status, never echoed",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"API_KEY\":{\"server\":\"leaked-secret-value\",\"delivery\":\"varlatch\"}}}",
+      "reason": "is malformed: an entry in items"
+    },
+    {
+      "note": "an unknown delivery",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"API_KEY\":{\"server\":\"delivered\",\"delivery\":\"env\"}}}",
+      "reason": "is malformed: an entry in items"
+    },
+    {
+      "note": "an item entry that is not an object",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"API_KEY\":\"delivered\"}}",
+      "reason": "is malformed: an entry in items"
+    },
+    {
+      "note": "an item entry that is an array",
+      "raw": "{\"v\":1,\"mode\":\"strict\",\"contractRevisionId\":\"crv_one\",\"contractHash\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"semanticsVersion\":2,\"environment\":{\"rootId\":\"env_prod\",\"tier\":\"production\"},\"items\":{\"API_KEY\":[\"delivered\",\"varlatch\"]}}",
+      "reason": "is malformed: an entry in items"
+    }
+  ]
+}

@@ -147,3 +147,58 @@ describe("semanticsFor", () => {
     expect(() => semanticsFor("__proto__" as unknown as number)).toThrow(UnsupportedSemanticsVersionError);
   });
 });
+
+describe("semantics version 2 portability vectors", () => {
+  // Inputs where other languages' regular expressions and parsers commonly
+  // differ. The TypeScript semantics are the reference: these pin what they
+  // already do, so every other implementation can be held to it.
+  const url = new URL("./vectors/semantics-v2-portability.json", import.meta.url);
+  const vectors = JSON.parse(readFileSync(url, "utf8")) as {
+    semanticsVersion: number;
+    validate: (ValidateVector & { internationalizedHost?: boolean })[];
+  };
+  const semantics = semanticsFor(2);
+
+  it("names version 2", () => {
+    expect(vectors.semanticsVersion).toBe(2);
+  });
+
+  it.each(vectors.validate.map((v) => [`${v.type} ${JSON.stringify(v.value)}`, v] as const))("%s", (_, v) => {
+    const subject = item({ type: v.type, ...(v.enumValues ? { enumValues: v.enumValues } : {}) });
+    const result = semantics.parse?.(subject, v.value);
+    if (!v.valid) {
+      expect(result).toEqual({ ok: false, reason: v.reason });
+      expect(v.converted).toBeUndefined();
+      return;
+    }
+    expect(result?.ok).toBe(true);
+    const value = result?.ok ? result.value : undefined;
+    const expected = v.converted;
+    expect(expected, "every valid vector names its conversion").toBeDefined();
+    if (expected && "number" in expected) {
+      expect(Object.is(value, Number(expected.number)), `${String(value)} is ${expected.number}`).toBe(true);
+    } else {
+      expect(value).toStrictEqual(expected && ("boolean" in expected ? expected.boolean : expected.string));
+    }
+  });
+
+  it("marks internationalized hosts on URL vectors only", () => {
+    for (const v of vectors.validate) {
+      if (v.internationalizedHost !== undefined) {
+        expect(v.type).toBe("url");
+        expect(v.internationalizedHost).toBe(true);
+      }
+    }
+    expect(vectors.validate.some((v) => v.internationalizedHost && v.valid)).toBe(true);
+    expect(vectors.validate.some((v) => v.internationalizedHost && !v.valid)).toBe(true);
+  });
+
+  it("never puts any fragment of the value in a reason", () => {
+    for (const v of vectors.validate) {
+      if (v.valid || v.type === "enum") continue;
+      for (let i = 0; i + 4 <= v.value.length; i++) {
+        expect(v.reason, JSON.stringify(v.value)).not.toContain(v.value.slice(i, i + 4));
+      }
+    }
+  });
+});
