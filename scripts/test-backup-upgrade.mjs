@@ -8,7 +8,7 @@
 // supervisor-only release does): doctor must flag it and the rerun recreate it.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, utimesSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, utimesSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync, cpSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -93,14 +93,27 @@ try {
  console.log('PASS  the upgrade gate holds the release pending on a failing check');
  const supervisorStatus=()=>{const r=spawnSync('node',[join(root,'apps/cli/dist/varlatch.cjs'),'doctor','--json','--wait','0','--dir',source],{encoding:'utf8',timeout:300_000});return JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))).checks.find(c=>c.id==='application-plane.supervisor')?.status;};
  assert.equal(supervisorStatus(),'pass','compose recreated convex-backend with the new supervisor mount');
+ // A supervisor file rewritten unchanged after the container started (as
+ // Coolify does on every deploy) is not stale: judged by content.
  const future=new Date(Date.now()+1000);utimesSync(join(source,'convex-supervisor.cjs'),future,future);
- assert.equal(supervisorStatus(),'fail','doctor flags a supervisor file newer than its process');
+ assert.equal(supervisorStatus(),'pass','doctor ignores a supervisor file that only got newer');
+ // A changed one is: its content no longer matches what the process loaded.
+ const released=readFileSync(join(source,'convex-supervisor.cjs'),'utf8');
+ appendFileSync(join(source,'convex-supervisor.cjs'),'\n// changed after convex-backend started\n');
+ assert.equal(supervisorStatus(),'fail','doctor flags a supervisor file changed since its process started');
+ // Let convex-backend run that changed file, so the resumed upgrade (which
+ // writes the release's supervisor back) finds it stale and recreates it.
+ docker(source,['up','-d','--no-deps','--force-recreate','convex-backend']);
+ await ready(`${base(source,'convex-backend',3210)}/version`);
+ assert.equal(supervisorStatus(),'pass','convex-backend now runs the changed file');
  // The operator fixes the public URL (and Convex's issuer follows through reconciliation).
  writeFileSync(join(source,'.env'),readFileSync(join(source,'.env'),'utf8').replace('VARLATCH_PUBLIC_URL=http://varlatchd:8686','VARLATCH_PUBLIC_URL=http://localhost:8686'));
  const completed=cli(source,['upgrade',release.version,'--release-dir',artifacts,'--yes']);
  assert.match(completed,/Upgrade gate: PASS/,completed);
  for(const out of [blocked,completed]) console.log(out.slice(out.indexOf('Upgrade gate:')).split('\n').filter(l=>!/^ *Container /.test(l)).join('\n').trim());
  assert.match(completed,/recreating convex-backend/,'a changed supervisor recreates convex-backend');
+ assert.equal(readFileSync(join(source,'convex-supervisor.cjs'),'utf8'),released,'the release supervisor is back in place');
+ assert.equal(supervisorStatus(),'pass','convex-backend runs the release supervisor again');
  assert.doesNotMatch(completed,/carries no CLI with an upgrade gate/,'the target release judged itself');
  assert(!existsSync(join(source,'varlatch-release.json.pending')));
  assert.equal(readFileSync(join(source,`backup.pre-${release.version}.json`),'utf8'),firstReceipt,'resumed without a new backup');
