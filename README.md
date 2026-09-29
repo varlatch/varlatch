@@ -110,7 +110,8 @@ varlatch run -- npm run dev
 
 `varlatch run` passes the environment's values to your command directly, so
 no file of secrets lands on disk. `varlatch types --out src/config.ts`
-generates typed access to them for a TypeScript application.
+generates typed access to them for a TypeScript application, and
+`varlatch types --out app/varlatch_config.py` for a Python one.
 
 `varlatch run` forwards SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGUSR1, and SIGUSR2
 to your command (only the first two on Windows), so a service manager can stop
@@ -158,7 +159,7 @@ placeholder values only. State lives in `.dev/`.
 - [`docs/reference/agent-safe-runs.md`](docs/reference/agent-safe-runs.md):
   running an agent with placeholders, and where the broker substitutes
 - [`docs/reference/type-generation.md`](docs/reference/type-generation.md):
-  typed configuration for TypeScript with `varlatch types`
+  typed configuration for TypeScript and Python with `varlatch types`
 
 ## Security, support, and contributing
 

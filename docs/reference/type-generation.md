@@ -1,14 +1,15 @@
 # Type generation: `varlatch types` and the Typed Accessor
 
-`varlatch types` turns a Contract Revision into one TypeScript module. The
-module declares a type for every Contract item and carries the Typed
-Accessor, a small runtime that reads `process.env`, converts each value with
-the revision's Contract Semantics, and checks it. The module is
+`varlatch types` turns a Contract Revision into one TypeScript or Python
+module. The module declares a type for every Contract item and carries the
+Typed Accessor, a small runtime that reads the environment, converts each
+value with the revision's Contract Semantics, and checks it. The module is
 self-contained: your application imports it and needs nothing else from
-Varlatch.
+Varlatch. This page describes the TypeScript module first; [Python](#python)
+lists what differs for Python.
 
 ```
-varlatch types --out <file.ts> [--revision <id>] [--check]
+varlatch types --out <file.ts|file.py> [--revision <id>] [--check]
 ```
 
 ## Generating the module
@@ -19,8 +20,8 @@ request and nothing else. It needs `contract.read` on the project, and it
 never fetches a value. No environment needs to be selected: the output is the
 same for every environment.
 
-- **`--out`** names the file to write. It must end in `.ts`, `.mts`, or
-  `.cts`.
+- **`--out`** names the file to write, and its extension selects the
+  language: `.ts`, `.mts`, or `.cts` for TypeScript, and `.py` for Python.
 - **Only on change.** The file is written only when its content changes. An
   unchanged file keeps its modification time, so build tools do not rebuild.
 - **Never through a symbolic link.** If the output path is a symbolic link,
@@ -173,6 +174,80 @@ server withheld.
 | `requireContext` | `false` | Throw when `VARLATCH_RUN_CONTEXT` is not set. |
 | `onWarning` | `process.emitWarning` | Receives each warning. |
 
+## Python
+
+```
+varlatch types --out app/varlatch_config.py
+```
+
+```python
+from app.varlatch_config import config
+
+serve(port=config.PORT)  # an int
+```
+
+The Python module needs Python 3.10 or later and the standard library only.
+Python 3.10 is supported until the first Varlatch release after 31 October
+2026, when its upstream support has ended; from then on, the module needs
+Python 3.11 or later. Generation, `--check`, `--revision`, the header, and
+the refusals are the same as for TypeScript. The accessor follows the same
+rules as the TypeScript one (it only reads, reports every problem in one
+error without a value, takes presence from the environment, applies defaults
+only as described in [Defaults](#defaults), and reads the [run
+context](#the-run-context)), with these differences.
+
+| Contract type | Annotation | Value |
+| --- | --- | --- |
+| `string`, `email`, `url` | `str` | the string |
+| `number` | `float` | an `int` when the value has no decimal point, such as `3000`; a `float` otherwise, such as `0.5` or `3000.0` |
+| `boolean` | `bool` | `True` or `False` |
+| `enum` | `typing.Literal` of the listed values | the string |
+
+- **Numbers.** A whole number is an `int`, so counts, sizes, and ports work
+  with slicing and `range()`. Which numbers are valid is exactly as for
+  TypeScript, including the bound of 9007199254740991. `-0` is the int `0`.
+  The annotation is `float`, which also accepts an `int`, so a type checker
+  may ask you to convert with `int(...)` where it needs an int.
+- **Absent items are `None`.** An optional item is annotated `X | None`. An
+  empty string is a value, never `None`.
+- **`Config`** is a frozen dataclass: assigning to or deleting an attribute
+  raises `dataclasses.FrozenInstanceError`. (Python cannot stop code that
+  calls `object.__setattr__` on purpose.) `config.public()` returns a
+  `PublicConfig` with the non-sensitive items only.
+- **`load_config()`** takes keyword arguments: `env` (a mapping, default
+  `os.environ`), `apply_defaults`, `stale_types` (`"warn"` or `"raise"`),
+  `require_context`, and `on_warning`. It returns a `LoadResult` with
+  `config`, `defaulted`, `not_evaluated`, `context`, and `warnings`.
+- **`config`**, a module attribute, is read and checked the first time it is
+  used, then kept. `from app.varlatch_config import config` uses it, so the
+  import itself reads and checks the configuration. If the configuration is invalid, every use raises a
+  `ConfigError` with the same issues. `from ... import *` does not load it.
+- **Errors and warnings.** `ConfigError.issues` is a tuple of `ConfigIssue`
+  named tuples, each a name and a reason. Stale types are reported through
+  `warnings.warn` with the category `VarlatchWarning`, unless you pass
+  `on_warning`.
+- **URLs.** A URL is validated as the server validates it. A URL whose host
+  name is internationalized, such as `https://bücher.example`, needs the
+  optional `ada-url` package (the URL parser Node uses) to be checked.
+  Without it, such a URL is reported as "is an internationalized URL; install
+  the ada-url package to validate it", never accepted unchecked. URLs with
+  ASCII host names need nothing extra.
+- **Text only.** On Linux and macOS, a value in the environment that is not
+  valid UTF-8 is reported as an issue rather than read with replacement
+  characters.
+- **Secrets and error reports.** Sensitive items are left out of
+  `repr(config)`, so logging the object or printing it in a traceback shows
+  no Secret; `dataclasses.asdict()` still returns every value. The accessor
+  keeps values out of its own messages, and out of its own stack frames
+  when it raises. Your code's frames are yours: a variable that holds
+  `config` or a value read from it holds a Secret. If you use an error
+  tracker that records local variables, turn that off or scrub Secrets
+  there; hiding items from `repr()` is not a guarantee against a tracker that
+  reads attributes directly.
+- **Checks on the file.** The file starts with `# ruff: noqa`,
+  `# mypy: ignore-errors`, and `# fmt: off`, because the runtime at its end is
+  not your code. Your own code is still checked against its types.
+
 ## Exporting the run context from a default run
 
 ```
@@ -219,4 +294,5 @@ describes another environment.
 - Without a run context the accessor cannot tell a withheld item from one
   that is not stored, and does not check conditions that depend on the
   environment.
-- Types are generated from server revisions only, and in TypeScript only.
+- Types are generated from server revisions only, in TypeScript and
+  Python.

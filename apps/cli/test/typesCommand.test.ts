@@ -126,12 +126,27 @@ describe("varlatch types", () => {
     expect(readdirSync(join(dir, "src"))).toEqual(["config.ts"]);
   });
 
-  it("refuses an output path that is not a regular file, or not a TypeScript file", async () => {
+  it("refuses an output path that is not a regular file, or not a TypeScript or Python file", async () => {
     mkdirSync(OUT(), { recursive: true });
     expect((await run(client(revision(ITEMS)).api)).err).toContain("is not a regular file");
     const js = await run(client(revision(ITEMS)).api, { out: join(dir, "config.js") });
     expect(js.code).toBe(1);
-    expect(js.err).toContain("--out must name a TypeScript file (.ts, .mts, .cts)");
+    expect(js.err).toContain("--out must name a TypeScript file (.ts, .mts, .cts) or a Python file (.py)");
+    const proto = await run(client(revision(ITEMS)).api, { out: join(dir, "config.__proto__") });
+    expect(proto.code).toBe(1);
+  });
+
+  it("writes a Python module when the output file ends in .py, and checks it", async () => {
+    const rev = revision(ITEMS);
+    const out = join(dir, "app", "varlatch_config.py");
+    const written = await run(client(rev).api, { out });
+    expect(written.code).toBe(0);
+    const text = readFileSync(out, "utf8");
+    expect(text).toContain(`# Contract Revision:          ${rev.id}`);
+    expect(text).toContain("from __future__ import annotations");
+    expect((await run(client(rev).api, { out, check: true })).code).toBe(0);
+    const again = await run(client(rev).api, { out });
+    expect(again.out).toContain("is already current");
   });
 
   it("refuses a version 1 revision, naming the fix, and writes nothing", async () => {

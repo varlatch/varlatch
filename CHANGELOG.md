@@ -5,6 +5,23 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.12.0)
+
+### Type generation
+
+- `varlatch types --out app/varlatch_config.py` generates typed
+  configuration for Python: one module, for Python 3.10 or later and the
+  standard library only, with a frozen `Config` dataclass, `load_config()`,
+  and a lazily loaded `config`. It checks and converts values with the same
+  rules as the TypeScript module and the server: a whole number is an `int`,
+  a number with a fraction a `float`, and a boolean a `bool`. Sensitive items
+  are left out of `repr()`. A URL with an internationalized host name needs
+  the optional `ada-url` package to be checked, and is reported, never
+  accepted unchecked, without it. See
+  [Type generation](docs/reference/type-generation.md#python).
+- Python 3.10 is supported until the first release after 31 October 2026,
+  when its upstream support has ended; that release requires Python 3.11.
+
 ## 0.11.0 (2026-09-28)
 
 ### Contracts

@@ -30,7 +30,7 @@ const licenseOf = path => (AGPL_DIRS.some(dir => path.startsWith(dir)) ? AGPL : 
 // Not hand-written: byte-exact copies of published releases, and generator
 // output.
 const EXCLUDED = [/^scripts\/fixtures\//, /(^|\/)(dist|node_modules|generated|_generated)\//];
-const SOURCE = /\.(ts|tsx|js|mjs|cjs|sh)$/;
+const SOURCE = /\.(ts|tsx|js|mjs|cjs|sh|py)$/;
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
   .split("\0")
@@ -53,7 +53,7 @@ for (const path of tracked) {
     problems.push(`${path}: missing SPDX-License-Identifier: ${expected}`);
     continue;
   }
-  const comment = path.endsWith(".sh") ? "#" : "//";
+  const comment = path.endsWith(".sh") || path.endsWith(".py") ? "#" : "//";
   lines.splice(shebang, 0, `${comment} SPDX-License-Identifier: ${expected}`);
   writeFileSync(join(repoRoot, path), lines.join("\n"));
 }
