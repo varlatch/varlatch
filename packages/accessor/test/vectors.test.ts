@@ -111,3 +111,73 @@ describe.each(SEMANTICS_VERSIONS.filter((v) => v !== 1).map((v) => [v]))(
     });
   },
 );
+
+describe("semantics version 2 portability vectors against the built accessor", () => {
+  const url = new URL("../../contract/test/vectors/semantics-v2-portability.json", import.meta.url);
+  const { validate } = JSON.parse(readFileSync(url, "utf8")) as { validate: ValidateVector[] };
+
+  it.each(validate.map((v) => [`${v.type} ${JSON.stringify(v.value)}`, v] as const))("%s", (_, v) => {
+    const s = schema([item("ITEM", { type: v.type, ...(v.enumValues ? { enumValues: v.enumValues } : {}) })]);
+    if (!v.valid) {
+      const err = configError(() => rt.loadConfig(s, { env: { ITEM: v.value } }));
+      expect(err.issues).toEqual([{ name: "ITEM", reason: v.reason }]);
+      return;
+    }
+    const { config } = rt.loadConfig(s, { env: { ITEM: v.value } });
+    const expected = v.converted;
+    if (expected && "number" in expected) {
+      expect(Object.is(config.ITEM, Number(expected.number)), `${String(config.ITEM)} is ${expected.number}`).toBe(true);
+    } else {
+      expect(config.ITEM).toStrictEqual(expected && ("boolean" in expected ? expected.boolean : expected.string));
+    }
+  });
+});
+
+interface RunContextVectors {
+  v: number;
+  valid: { note: string; raw: string; parsed: Record<string, unknown> & { items: Record<string, unknown> } }[];
+  invalid: { note: string; raw: string; reason: string }[];
+}
+
+describe("run context version 1 vectors against the built accessor", () => {
+  const url = new URL("./vectors/run-context-v1.json", import.meta.url);
+  const vectors = JSON.parse(readFileSync(url, "utf8")) as RunContextVectors;
+
+  it("names version 1, and covers every check", () => {
+    expect(vectors.v).toBe(1);
+    const reasons = new Set(vectors.invalid.map((v) => v.reason.replace(/ \(it reads.*$/, "")));
+    for (const reason of [
+      "is not valid JSON",
+      "is not a JSON object",
+      "has a version this accessor does not read",
+      "is malformed: mode",
+      "is malformed: contractRevisionId",
+      "is malformed: contractHash",
+      "is malformed: semanticsVersion",
+      "is malformed: environment",
+      "is malformed: items",
+      "is malformed: an entry in items",
+    ]) {
+      expect(reasons, reason).toContain(reason);
+    }
+  });
+
+  it.each(vectors.valid.map((v) => [v.note, v] as const))("valid: %s", (_, v) => {
+    const context = rt.parseRunContext(v.raw);
+    expect({ ...context, items: Object.fromEntries(context.items) }).toEqual(v.parsed);
+  });
+
+  it.each(vectors.invalid.map((v) => [v.note, v] as const))("invalid: %s", (_, v) => {
+    const err = configError(() => rt.parseRunContext(v.raw));
+    expect(err).toBeInstanceOf(rt.ConfigError);
+    expect(err.issues).toEqual([{ name: "VARLATCH_RUN_CONTEXT", reason: v.reason }]);
+    expect(err.message).not.toContain("leaked-secret-value");
+  });
+
+  it("reports the same issue when loading configuration", () => {
+    for (const v of vectors.invalid) {
+      const err = configError(() => rt.loadConfig(schema([]), { env: { VARLATCH_RUN_CONTEXT: v.raw } }));
+      expect(err.issues, v.note).toEqual([{ name: "VARLATCH_RUN_CONTEXT", reason: v.reason }]);
+    }
+  });
+});

@@ -9,7 +9,11 @@ The rules are defined once, in the `@varlatch/contract` package. The
 server's validation, strict startup, and the Typed Accessor that
 [`varlatch types`](type-generation.md) generates all evaluate them. Test
 vectors in `packages/contract/test/vectors/` pin every version, and run
-against the server's rules and the built accessor alike.
+against the server's rules and the built accessor alike. Version 2 also has
+portability vectors: its existing results on inputs where languages' regular
+expressions and parsers commonly differ, such as non-ASCII digits, Unicode
+case folding and whitespace, a trailing newline, and URL hosts. They hold any
+implementation of the rules in another language to the same results.
 
 ## Versions
 
