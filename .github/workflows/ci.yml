@@ -1,16 +1,27 @@
 name: CI
 
-# Tiers: every pull request runs the fast checks (test, python-accessor,
-# secret-scan, docker, e2e). The slow suites (multi-arch, contributor-setup,
-# and the recovery and install-lifecycle steps of backup-recovery) run on a
-# pull request only when it touches what they guard. A push to main (a merge)
-# runs the fast checks, so every merge commit has a recorded pass. Everything
-# runs nightly on main when main has new commits, on manual dispatch, and
-# before every release (release.yml calls this workflow).
+# Tiers: a draft pull request runs nothing. Marking it ready for review starts
+# its first run (`pnpm ready` does that once `pnpm verify` passes locally), and
+# from then on every push runs the fast checks (test, python-accessor,
+# secret-scan, docker, e2e), with two cuts. The test job tests only the
+# packages the pull request changes and every package that depends on them,
+# unless it changes a file outside the workspace packages that is not
+# documentation (the lockfile, the root manifests, tsconfig.base.json,
+# scripts/, infra/, CI itself), which tests every package. A pull request
+# that changes only documentation no check reads (*.md and docs/, but not
+# CHANGELOG.md or THIRD-PARTY-NOTICES.md) skips python-accessor, docker, and
+# e2e; the test job's checks and secret-scan still run. The slow suites
+# (multi-arch, contributor-setup, and the recovery and install-lifecycle steps
+# of backup-recovery) run on a pull request only when it touches what they
+# guard. A push to main (a merge) runs the fast checks with every package's
+# tests, so every merge commit has a recorded full pass. Everything runs
+# nightly on main when main has new commits, on manual dispatch, and before
+# every release (release.yml calls this workflow).
 on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
   workflow_dispatch:
   schedule:
@@ -27,8 +38,10 @@ on:
 # gate. While minutes last, the probe bills one hosted minute per run.
 # Third-party actions are pinned to commits because a self-hosted runner
 # executes them on its host.
-# One runner takes one job at a time, so a newer push to a pull request
-# cancels the older run; runs on main are never cancelled.
+# The self-hosted pool runs several jobs at once (a desktop machine with two
+# job slots, and a Hetzner server that takes over while the desktop is off),
+# but its capacity is small: a newer push to a pull request supersedes the
+# older run, so it cancels it. Runs on main are never cancelled.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -49,6 +62,9 @@ jobs:
       VARLATCH_TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # A pull request's tests are selected by a diff with its base.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
@@ -120,8 +136,30 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # A pull request tests the packages it changes and every package that
+      # depends on them (scripts/ci-changes.sh affected, which uses pnpm's
+      # --filter "...[<base>]"). pnpm counts a changed file outside every
+      # package as a change to the workspace root, which no package depends
+      # on, so such a file would select no tests; the changes job answers
+      # tests=all for any such file that is not documentation. Every other
+      # event tests every package. Build and typecheck always cover everything.
       - name: Test
-        run: pnpm test
+        env:
+          TESTS: ${{ github.event_name == 'pull_request' && needs.changes.outputs.tests || 'all' }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$TESTS" != affected ]; then
+            pnpm test
+            exit 0
+          fi
+          packages=$(scripts/ci-changes.sh affected "$BASE")
+          if [ -z "$packages" ]; then
+            echo "No package changed: no package tests to run."
+            exit 0
+          fi
+          filters=()
+          while read -r name; do filters+=(--filter "$name"); done <<< "$packages"
+          pnpm "${filters[@]}" test
 
   # The Typed Accessor for Python on the oldest and newest Python it
   # supports, each with the standard library only and with a pinned ada-url:
@@ -130,7 +168,7 @@ jobs:
   # generated modules and the differential tests, so they may not be skipped.
   python-accessor:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     env:
       VARLATCH_REQUIRE_NODE: "1"
@@ -180,7 +218,7 @@ jobs:
 
   docker:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -259,7 +297,7 @@ jobs:
   # virtual authenticator, dashboard, and CLI browser-handoff login.
   e2e:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -277,19 +315,28 @@ jobs:
       - name: Run clean-room E2E suites
         run: ./scripts/ci-e2e.sh
 
-  # Which tiers run. A pull request always runs the fast checks, and each
-  # slow suite only when the pull request touches what it guards; tests
-  # (*/test/) never trigger one. A push to main runs only the fast checks. A
-  # scheduled run skips everything when main has no commits since the last
-  # one; any other event runs everything, including a release: release.yml
-  # calls this workflow on a tag push, which must not count as a push to main.
+  # Which tiers run. A draft pull request runs nothing. Any other pull request
+  # runs the fast checks, except that one changing only documentation no check
+  # reads skips python-accessor, docker, and e2e (code=false); its test job
+  # tests the changed packages and their dependents, or every package when it
+  # changes a shared file (tests=affected or all; scripts/ci-changes.sh has
+  # the rules). Each slow suite runs only when the pull request touches what
+  # it guards; tests (*/test/) never trigger one, and a pull request that
+  # changes only documentation triggers none. A push to main runs only the
+  # fast checks, in full. A scheduled run skips everything when main has no
+  # commits since the last one; any other event runs everything, including a
+  # release: release.yml calls this workflow on a tag push, which must not
+  # count as a push to main.
   changes:
     needs: hosted-runner
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ${{ vars.CI_RUNNER || (needs.hosted-runner.outputs.available == 'true' && 'ubuntu-latest') || 'varlatch-ci' }}
     outputs:
       runner: ${{ steps.runner.outputs.runner }}
       hosted: ${{ steps.runner.outputs.hosted }}
       run: ${{ steps.filter.outputs.run }}
+      code: ${{ steps.filter.outputs.code }}
+      tests: ${{ steps.filter.outputs.tests }}
       multiarch: ${{ steps.filter.outputs.multiarch }}
       contributor: ${{ steps.filter.outputs.contributor }}
       recovery: ${{ steps.filter.outputs.recovery }}
@@ -324,21 +371,34 @@ jobs:
           tiers="multiarch contributor recovery lifecycle"
           if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
             echo "No commits on main since the last nightly run; skipping."
-            for t in run $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
+            for t in run code $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
+            echo "tests=all" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ]; then
-            echo "A push to main: the fast checks only."
-            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "A push to main: the fast checks only, with every package's tests."
+            printf '%s\n' run=true code=true tests=all >> "$GITHUB_OUTPUT"
             for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$EVENT" != pull_request ]; then
             echo "Every tier runs ($EVENT on $REF)."
-            for t in run $tiers; do echo "$t=true"; done >> "$GITHUB_OUTPUT"
+            for t in run code $tiers; do echo "$t=true"; done >> "$GITHUB_OUTPUT"
+            echo "tests=all" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "$BASE" HEAD | grep -vE '^(services/[^/]+|apps/[^/]+|packages/[^/]+|convex)/test/' || true)
+          # Without rename detection, a moved file also counts at its old path.
+          changed=$(git diff --no-renames --name-only "$BASE" HEAD)
+          # code=true|false and tests=affected|all, shared with `pnpm verify`.
+          selected=$(scripts/ci-changes.sh classify <<< "$changed")
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "$selected" >> "$GITHUB_OUTPUT"
+          if grep -qx code=false <<< "$selected"; then
+            echo "Documentation only: no slow suite runs."
+            for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(grep -vE '^(services/[^/]+|apps/[^/]+|packages/[^/]+|convex)/test/' <<< "$changed" || true)
           # Image build inputs and CI itself. Dependency changes only select
           # multi-arch here; the other suites see them nightly.
           shared='^\.github/workflows/ci\.yml$|^\.dockerignore$|(^|/)Dockerfile$|\.Dockerfile$'
@@ -352,7 +412,6 @@ jobs:
             # Installing, upgrading and adopting an installation, and its ingress.
             [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|fixtures/)"
           )
-          echo "run=true" >> "$GITHUB_OUTPUT"
           for t in $tiers; do
             hits=$(grep -E "${guards[$t]}" <<< "$files" || true)
             if [ -n "$hits" ]; then echo "$t=true"; else echo "$t=false"; fi >> "$GITHUB_OUTPUT"
@@ -365,6 +424,7 @@ jobs:
   # output), and `changes` sends every job to the self-hosted runner.
   hosted-runner:
     name: GitHub-hosted runners available?
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 5
