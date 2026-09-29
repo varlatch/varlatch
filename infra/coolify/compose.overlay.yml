@@ -13,6 +13,14 @@ services:
     networks:
       - default
 
+  convex-backend:
+    # Same reason: Convex fetches varlatchd's JWKS at its fixed name
+    # (http://varlatchd:8686, the alias on the default network). Without this,
+    # Convex sits only on Coolify's network and resolves just the legacy
+    # `tailscale` name, so `varlatch adopt` cannot move trust to varlatchd.
+    networks:
+      - default
+
   convex-deploy:
     profiles: !reset []
     # Deliberate divergence from the canonical file: no `profiles: [deploy]`,
