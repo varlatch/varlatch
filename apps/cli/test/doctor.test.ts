@@ -106,6 +106,18 @@ describe("checkSupervisor", () => {
     expect(checkSupervisor(null, "2026-09-24T10:00:05Z")).toBeNull();
     expect(checkSupervisor(changed, null)).toBeNull();
   });
+  it("judges by content when the supervisor recorded what it loaded", () => {
+    const sha = "a".repeat(64);
+    // Rewritten unchanged after the container started, as Coolify does on every deploy.
+    expect(checkSupervisor(changed, "2026-09-23T17:12:00.5Z", { file: sha, loaded: sha }))
+      .toMatchObject({ status: "pass", detail: expect.stringContaining("same content") });
+    const stale = checkSupervisor(changed, "2026-09-24T10:00:05Z", { file: sha, loaded: "b".repeat(64) });
+    expect(stale).toMatchObject({ status: "fail" });
+    expect(stale!.remedy).toContain("--force-recreate convex-backend");
+  });
+  it("falls back to times for a supervisor that recorded no hash", () => {
+    expect(checkSupervisor(changed, "2026-09-23T17:12:00.5Z", { file: "a".repeat(64), loaded: null })).toMatchObject({ status: "fail" });
+  });
 });
 
 describe("evaluateGate (ADR-0035 D11)", () => {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
@@ -168,14 +169,31 @@ export function checkRelease(
 /**
  * convex-backend runs the supervisor from a bind-mounted file whose image
  * never changes across releases, so a new file takes effect only when the
- * container restarts: one started before the file's last change still runs
- * the previous supervisor. Not applicable without the file or the container.
+ * container restarts. A supervisor that records the hash of what it loaded is
+ * judged by content: the host file may be rewritten, unchanged, after the
+ * container started (Coolify does that on every deploy). Without that hash (a
+ * supervisor from before it was recorded), a container started before the
+ * file's last change still runs the previous supervisor. Not applicable
+ * without the file or the container.
  */
-export function checkSupervisor(fileModifiedMs: number | null, startedAt: string | null): Check | null {
+export function checkSupervisor(
+  fileModifiedMs: number | null,
+  startedAt: string | null,
+  hashes?: { file: string; loaded: string | null },
+): Check | null {
   if (fileModifiedMs === null || !startedAt) return null;
   const started = Date.parse(startedAt);
   if (Number.isNaN(started)) return null;
   const base = { id: "application-plane.supervisor", title: "Convex supervisor runs the installed file", class: "mandatory" as const };
+  if (hashes?.loaded) {
+    return hashes.loaded === hashes.file
+      ? { ...base, status: "pass", detail: "convex-backend runs the installed supervisor file (same content)" }
+      : {
+          ...base, status: "fail",
+          detail: "convex-backend runs a different supervisor than the installed file",
+          remedy: "docker compose up -d --no-deps --force-recreate convex-backend",
+        };
+  }
   return started >= fileModifiedMs
     ? { ...base, status: "pass", detail: "convex-backend started after the supervisor file last changed" }
     : {
@@ -300,7 +318,12 @@ async function supervisorCheck(config: import("./adopt.js").ComposeConfig | null
   const id = services.find((s) => s.Service === "convex-backend" && s.State === "running")?.ID;
   if (!source || !existsSync(source) || !id) return null;
   const inspected = await run(["inspect", "--format", "{{.State.StartedAt}}", id]);
-  return checkSupervisor(statSync(source).mtimeMs, inspected.code === 0 ? inspected.stdout : null);
+  const loaded = await run(["exec", id, "cat", "/tmp/varlatch-supervisor.sha256"]);
+  const file = createHash("sha256").update(readFileSync(source)).digest("hex");
+  return checkSupervisor(statSync(source).mtimeMs, inspected.code === 0 ? inspected.stdout : null, {
+    file,
+    loaded: loaded.code === 0 && /^[0-9a-f]{64}$/.test(loaded.stdout.trim()) ? loaded.stdout.trim() : null,
+  });
 }
 
 /**
