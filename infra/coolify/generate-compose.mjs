@@ -141,9 +141,29 @@ function composeConfig(files) {
   return normalize(JSON.parse(execFileSync("docker", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })));
 }
 
+/**
+ * Coolify moves every service without a `networks` key onto its own network
+ * only, away from the default network where the sidecar carries the
+ * `varlatchd` alias. The services that address varlatchd by that name must
+ * therefore join `default` explicitly (Coolify still adds its own network).
+ */
+const ALIAS_CONSUMERS = ["varlatch-web", "convex-backend"];
+
+export function checkAliasReachability(text) {
+  const services = parseDocument(text).toJS().services ?? {};
+  const aliases = services.tailscale?.networks?.default?.aliases ?? [];
+  if (!aliases.includes("varlatchd")) throw new Error("tailscale no longer carries the varlatchd alias on the default network");
+  for (const name of ALIAS_CONSUMERS) {
+    const networks = services[name]?.networks;
+    const joined = Array.isArray(networks) ? networks.includes("default") : Boolean(networks && "default" in networks);
+    if (!joined) throw new Error(`${name} must join the default network explicitly on Coolify to resolve varlatchd`);
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
   const generated = generate();
+  checkAliasReachability(generated);
   const outPath = join(ROOT, OUTPUT);
   if (args.includes("--check")) {
     const current = readFileSync(outPath, "utf8");

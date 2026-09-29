@@ -202,6 +202,12 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    # Same reason: Convex fetches varlatchd's JWKS at its fixed name
+    # (http://varlatchd:8686, the alias on the default network). Without this,
+    # Convex sits only on Coolify's network and resolves just the legacy
+    # `tailscale` name, so `varlatch adopt` cannot move trust to varlatchd.
+    networks:
+      - default
 
   # One-shot Application Plane reconciliation (ADR-0035 D3/D4): deploys the
   # functions and applies Convex's trust configuration only where they differ

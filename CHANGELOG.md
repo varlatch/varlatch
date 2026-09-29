@@ -22,6 +22,23 @@ fixes.
 - Python 3.10 is supported until the first release after 31 October 2026,
   when its upstream support has ended; that release requires Python 3.11.
 
+### Fixed
+
+- On Coolify, `varlatch adopt` can now move Convex's trust to `varlatchd`.
+  Coolify had put the Convex backend on another network than the name
+  `varlatchd`, so the step refused to change anything. The Coolify Compose
+  file now puts Convex on the stack's default network, as it already did
+  for the dashboard.
+- `varlatch doctor` no longer reports the Convex supervisor as stale after
+  every Coolify deploy. It compared times, and Coolify rewrites the
+  supervisor file, unchanged, after starting the containers. The supervisor
+  now records a hash of the file it loaded, and `varlatch doctor` and
+  `varlatch upgrade` compare content. A supervisor from an older release is
+  still judged by time.
+- After a restore, the dashboard and the other remaining services start
+  without waiting for varlatchd's Docker health check. On a host where that
+  check kept failing, a restore waited up to 10 minutes first.
+
 ### Upgrading
 
 No database migration: 0.12.0 uses migration 22, like 0.11.0. Python

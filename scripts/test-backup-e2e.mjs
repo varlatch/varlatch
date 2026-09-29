@@ -51,6 +51,15 @@ for (const [i, where] of dirs.entries()) {
     // Restore reconciles the Application Plane with the deploy job (ADR-0035 D4).
     .replace(/build:\n\s+context: \.\.\/\.\.\n\s+dockerfile: infra\/compose\/convex-deploy\.Dockerfile\n/g, 'image: varlatch-backup-convex-deploy-test:local\n')
     .replace(/build:\n\s+context: \.\.\/\.\.\n\s+dockerfile: apps\/web\/Dockerfile\n/g, 'image: varlatch-backup-web-test:local\n');
+  if (i === 1) {
+    // The target's varlatchd reports unhealthy throughout: its health check
+    // fails while a restore holds it and can flap on a loaded host. Restore
+    // must still start the rest of the installation, promptly.
+    const before = compose;
+    compose = compose.replace(`"fetch('http://127.0.0.1:8686/readyz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",`, '"process.exit(1)",')
+      .replace('retries: 6', 'retries: 1').replace('start_period: 15s', 'start_period: 0s');
+    if (compose === before) throw Error('could not override the target varlatchd health check');
+  }
   writeFileSync(join(where, 'docker-compose.yml'), compose);
   writeFileSync(join(where, '.env'), `POSTGRES_SUPERUSER_PASSWORD=test-superuser\nVARLATCH_MIGRATE_PASSWORD=test-migrate\nVARLATCH_RUNTIME_PASSWORD=test-runtime\nCONVEX_DB_PASSWORD=test-convex\nCONVEX_INSTANCE_SECRET=${randomBytes(32).toString('hex')}\nVARLATCHD_PORT=0\nVARLATCH_WEB_PORT=0\nCONVEX_PORT=0\nCONVEX_SITE_PORT=0\nVARLATCH_KEK_HOST_PATH=./secrets/root\nVARLATCH_PUBLIC_URL=http://varlatchd:8686\n`);
 

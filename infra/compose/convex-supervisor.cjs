@@ -3,8 +3,16 @@
 // The pinned backend image includes Node. No Docker socket/admin key is exposed.
 const fs = require('node:fs');
 const http = require('node:http');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const state = process.env.VARLATCH_STATE_DIR || '/var/lib/varlatch';
+// For `varlatch doctor`: the hash of the supervisor this process loaded, so
+// a host file rewritten after the container started (Coolify does that on
+// every deploy) is judged by its content, not its modification time.
+try {
+  fs.writeFileSync('/tmp/varlatch-supervisor.sha256',
+    crypto.createHash('sha256').update(fs.readFileSync(__filename)).digest('hex'));
+} catch { /* diagnostics only */ }
 if ((process.env.DATA_DIR && process.env.DATA_DIR !== '/convex/data') ||
     (process.env.STORAGE_DIR && process.env.STORAGE_DIR !== '/convex/data/storage') ||
     Object.keys(process.env).some(name => name.startsWith('S3_STORAGE_') && process.env[name])) {
