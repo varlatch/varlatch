@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@varlatch/accessor": "workspace:*",
+    "@varlatch/accessor-python": "workspace:*",
     "@varlatch/backup": "workspace:*",
     "@varlatch/contract": "workspace:*",
     "@varlatch/context": "workspace:*",

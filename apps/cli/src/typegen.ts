@@ -36,7 +36,7 @@ export interface GenerateOptions {
 
 const IDENTIFIER = /^[A-Za-z0-9_-]{1,128}$/;
 const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/;
-const VERSION = /^[0-9A-Za-z.+-]{1,64}$/;
+export const VERSION = /^[0-9A-Za-z.+-]{1,64}$/;
 
 const LINE_TERMINATORS = /\r\n|[\n\r\u0085\u2028\u2029]/g;
 /** C0 and C1 controls (the newline is kept), DEL, and bidirectional formatting characters. */
@@ -45,21 +45,29 @@ const CONTROLS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u20
 const LITERAL_ESCAPES = /[\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
 
 /**
- * Comment text: every line terminator normalized, control and
- * bidirectional formatting characters removed, and `*\/` neutralized, so
- * Contract text can neither end the comment nor hide in it.
+ * Contract text as documentation lines: every line terminator normalized,
+ * tabs made spaces, and control and bidirectional formatting characters
+ * removed, so Contract text cannot hide in generated documentation. Each
+ * language then neutralizes what would end its own comment or string.
  */
-export function commentLines(text: string): string[] {
+export function cleanLines(text: string): string[] {
   const lines = text
     .replace(LINE_TERMINATORS, "\n")
     .replace(/\t/g, " ")
     .replace(CONTROLS, "")
-    .replace(/\*\//g, "*\\/")
     .split("\n")
     .map((line) => line.trimEnd());
   while (lines[0] === "") lines.shift();
   while (lines.at(-1) === "") lines.pop();
   return lines;
+}
+
+/**
+ * Comment text: cleaned, and `*\/` neutralized, so Contract text can neither
+ * end the comment nor hide in it.
+ */
+export function commentLines(text: string): string[] {
+  return cleanLines(text).map((line) => line.replace(/\*\//g, "*\\/"));
 }
 
 /** A JSON value as TypeScript source, with every invisible or line-ending character escaped. */
@@ -89,11 +97,11 @@ function typeOf(item: ContractItem): string {
 }
 
 /** Non-optional only when required in every Environment with nothing, not even a default, to satisfy it otherwise. */
-function isOptional(item: ContractItem): boolean {
+export function isOptional(item: ContractItem): boolean {
   return item.required.kind !== "always" || item.defaultValue !== undefined;
 }
 
-function requirednessLine(item: ContractItem): string {
+export function requirednessLine(item: ContractItem): string {
   const satisfied = item.defaultValue !== undefined ? ", or satisfied by the Contract default" : "";
   switch (item.required.kind) {
     case "always":
@@ -125,7 +133,11 @@ function memberDoc(item: ContractItem): string[] {
   return ["  /**", ...body.map((line) => (line === "" ? "   *" : `   * ${line}`)), "   */"];
 }
 
-function checkRevision(revision: RevisionInput): ContractItem[] {
+/** The revision's items, after checking its ID, hash, semantics version, and content. Throws TypesError. */
+export function checkRevision(
+  revision: RevisionInput,
+  implemented: readonly number[] = implementedSemanticsVersions(),
+): ContractItem[] {
   if (typeof revision.id !== "string" || !IDENTIFIER.test(revision.id)) {
     throw new TypesError("the server returned a Contract Revision ID this CLI does not accept");
   }
@@ -133,7 +145,6 @@ function checkRevision(revision: RevisionInput): ContractItem[] {
     throw new TypesError(`Contract Revision ${revision.id} has a content hash this CLI does not accept`);
   }
   const version = revision.semanticsVersion;
-  const implemented = implementedSemanticsVersions();
   if (!(SEMANTICS_VERSIONS as readonly unknown[]).includes(version)) {
     throw new TypesError(
       `Contract Revision ${revision.id} uses Contract Semantics version ${String(version)}, which this CLI does not implement (it generates types for version ${implemented.join(", ")}). Upgrade the CLI, or activate a revision at a version it implements`,

@@ -17,10 +17,12 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import type { ContractRevision } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { TypesError, generateTypesModule } from "./typegen.js";
+import { generatePythonModule } from "./typegenPython.js";
 
 /**
  * `varlatch types --out <file>`: fetch one Contract Revision (the active one,
- * or `--revision <id>`), generate the module, and write it only if its bytes
+ * or `--revision <id>`), generate the module in the language the file's
+ * extension names (TypeScript or Python), and write it only if its bytes
  * changed. The only network call is that one fetch, which needs
  * contract.read and returns no values.
  *
@@ -53,7 +55,13 @@ export interface TypesIo {
   err(line: string): void;
 }
 
-const EXTENSIONS = [".ts", ".mts", ".cts"];
+/** The output file's extension selects the language (ADR-0041). */
+const GENERATORS: Record<string, typeof generateTypesModule> = {
+  ".ts": generateTypesModule,
+  ".mts": generateTypesModule,
+  ".cts": generateTypesModule,
+  ".py": generatePythonModule,
+};
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
 
 async function fetchRevision(api: TypesClient, opts: TypesOptions): Promise<ContractRevision> {
@@ -122,14 +130,15 @@ function writeReplacing(path: string, content: Buffer, mode: number | undefined)
 
 export async function runTypes(api: TypesClient, opts: TypesOptions, io: TypesIo): Promise<number> {
   const path = resolve(opts.out);
-  if (!EXTENSIONS.includes(extname(path))) {
-    io.err(`varlatch types: --out must name a TypeScript file (${EXTENSIONS.join(", ")}): ${opts.out}`);
+  const generate = Object.hasOwn(GENERATORS, extname(path)) ? GENERATORS[extname(path)] : undefined;
+  if (!generate) {
+    io.err(`varlatch types: --out must name a TypeScript file (.ts, .mts, .cts) or a Python file (.py): ${opts.out}`);
     return 1;
   }
   try {
     const revision = await fetchRevision(api, opts);
     const content = Buffer.from(
-      generateTypesModule(
+      generate(
         {
           id: revision.id,
           contentHash: revision.contentHash,

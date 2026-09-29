@@ -766,7 +766,7 @@ async function main(): Promise<void> {
       }
 
       case "types": {
-        const usage = "Usage: varlatch types --out <file.ts> [--revision <id>] [--check]";
+        const usage = "Usage: varlatch types --out <file.ts|file.py> [--revision <id>] [--check]";
         const out = flag(args, "--out") ?? fail(usage);
         if (out.startsWith("-")) fail(usage);
         // The output is the same for every Environment, so none needs to be selected.
@@ -1200,9 +1200,9 @@ Usage:
   varlatch values <set <ITEM> <value>|list|delete <ITEM>>
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
                    push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
-  varlatch types --out <file.ts> [--revision <id>] [--check]
-                 (one TypeScript module with typed config and the Typed Accessor, from the active Contract;
-                  --check exits 1 when the file is stale)
+  varlatch types --out <file.ts|file.py> [--revision <id>] [--check]
+                 (one TypeScript or Python module, by extension, with typed config and the Typed Accessor,
+                  from the active Contract; --check exits 1 when the file is stale)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
                       | nothing for convex: --base is the deployment URL)

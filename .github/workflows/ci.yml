@@ -1,12 +1,12 @@
 name: CI
 
-# Tiers: every pull request runs the fast checks (test, secret-scan, docker,
-# e2e). The slow suites (multi-arch, contributor-setup, and the recovery and
-# install-lifecycle steps of backup-recovery) run on a pull request only when
-# it touches what they guard. A push to main (a merge) runs the fast checks,
-# so every merge commit has a recorded pass. Everything runs nightly on main
-# when main has new commits, on manual dispatch, and before every release
-# (release.yml calls this workflow).
+# Tiers: every pull request runs the fast checks (test, python-accessor,
+# secret-scan, docker, e2e). The slow suites (multi-arch, contributor-setup,
+# and the recovery and install-lifecycle steps of backup-recovery) run on a
+# pull request only when it touches what they guard. A push to main (a merge)
+# runs the fast checks, so every merge commit has a recorded pass. Everything
+# runs nightly on main when main has new commits, on manual dispatch, and
+# before every release (release.yml calls this workflow).
 on:
   push:
     branches: [main]
@@ -122,6 +122,43 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # The Typed Accessor for Python on the oldest and newest Python it
+  # supports, each with the standard library only and with a pinned ada-url:
+  # the two dependency modes in which a Python verdict must never accept a
+  # URL the server rejects. Node runs the reference implementation for the
+  # generated modules and the differential tests, so they may not be skipped.
+  python-accessor:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
+    runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    env:
+      VARLATCH_REQUIRE_NODE: "1"
+      ADA_URL: ada-url==4.0.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 12.3.4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the CLI and what it embeds
+        run: pnpm --filter @varlatch/protocol generate && pnpm --filter "@varlatch/cli..." build
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Python 3.10 and 3.14, without and with ada-url
+        working-directory: packages/accessor-python
+        run: |
+          for python in 3.10 3.14; do
+            echo "::group::Python $python, standard library only"
+            VARLATCH_EXPECT_ADA=0 uv run --no-project --python "$python" python -m unittest discover -s tests
+            echo "::endgroup::"
+            echo "::group::Python $python with $ADA_URL"
+            VARLATCH_EXPECT_ADA=1 uv run --no-project --python "$python" --with "$ADA_URL" python -m unittest discover -s tests
+            echo "::endgroup::"
+          done
 
   # Every commit this workflow sees is scanned, not just the diff: a secret
   # in history is published with the repository (ADR-0037 D6). Values are
