@@ -920,7 +920,15 @@ async function main(): Promise<void> {
           for (const p of page.items) console.log(`${p.slug}  (${p.name}, ${p.contractAuthority})`);
           return;
         }
-        fail("Usage: varlatch project <create|list>");
+        if (sub === "rename") {
+          const slug = args[1] ?? fail("Usage: varlatch project rename <slug> <new-name>");
+          const name = positional(args, 2) ?? fail("Provide the new name");
+          const ctx = context(args);
+          const renamed = await client(ctx).renameProject(ctx.organization, slug, name);
+          console.log(`Project ${renamed.slug} renamed to ${renamed.name}. Its slug, grants and contracts are unaffected; the rename is audited.`);
+          return;
+        }
+        fail("Usage: varlatch project <create|list|rename>");
         return;
       }
 
@@ -1226,7 +1234,7 @@ Usage:
   varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements|remove <id>>
   varlatch audit <list|export>
   varlatch org <list|create <slug> [name]> [--server <url>]
-  varlatch project <create <slug> --org <org> --server <url> [--managed]|list>
+  varlatch project <create <slug> --org <org> --server <url> [--managed]|list|rename <slug> <new-name>>
   varlatch env-create <name> --tier <tier> | --parent <env> [--kind personal|preview]
   varlatch env-delete <name> [--confirm <name>]        # --confirm required for production-tier roots
   varlatch identity <list|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>

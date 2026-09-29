@@ -52,6 +52,42 @@ export async function createProject(
   });
 }
 
+/**
+ * Rename is display-plane only: the slug is what the CLI, URLs, contracts and
+ * grants use, and it never changes. The audit event carries both names so
+ * older audit lines stay interpretable.
+ */
+export async function renameProject(
+  ctx: AppCtx,
+  organizationId: string,
+  projectId: string,
+  name: string,
+  actorIdentityId: string,
+): Promise<ProjectRow> {
+  if (!name || name.length > 200) {
+    throw new DomainError("VALIDATION_FAILED", "Invalid project name");
+  }
+  return withTx(ctx.db, async (db) => {
+    const prev = await db.query(
+      "SELECT slug, name FROM projects WHERE organization_id = $1 AND id = $2",
+      [organizationId, projectId],
+    );
+    const row = prev.rows[0] as { slug: string; name: string } | undefined;
+    if (!row) throw notFound("Project");
+    await db.query("UPDATE projects SET name = $1 WHERE id = $2", [name, projectId]);
+    await recordAuditEvent(db, {
+      eventType: "project.renamed",
+      decision: "info",
+      actorIdentityId,
+      organizationId,
+      action: "project.manage",
+      resource: { projectId, projectSlug: row.slug },
+      metadata: { previousName: row.name, name },
+    });
+    return getProject(ctx, organizationId, projectId, db);
+  });
+}
+
 export async function getProject(
   ctx: AppCtx,
   organizationId: string,

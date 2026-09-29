@@ -107,6 +107,15 @@ await page.waitForSelector('[data-testid="onboarding-environments"][data-done="t
 });
 check("environments step checks off from authoritative state", true);
 
+// 3b. Rename the display name through the same menu; the slug stays.
+page.once("dialog", (dialog) => void dialog.accept("Web storefront"));
+await page.click('[data-testid="project-menu"]');
+await page.click('[data-testid="menu-rename-project"]');
+await page.waitForSelector('[data-testid="project-card"][data-slug="web"] >> text=Web storefront', {
+  timeout: 15000,
+});
+check("rename from the project menu shows the new display name", true);
+
 // 4. Contract push + activate via /v1 (the CLI path the snippet teaches).
 const rev = await (
   await api("POST", "/organizations/onboard-co/projects/web/contract/revisions", {

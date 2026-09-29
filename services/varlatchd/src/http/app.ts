@@ -19,7 +19,7 @@ import { DomainError, notFound } from "../domain/errors.js";
 import { schemaIsCurrent } from "../db/migrate.js";
 import { getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
 import { createOrganization, getOrganization, getOrgRole, listOrganizationsFor, type OrgRow } from "../domain/orgs.js";
-import { createProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
+import { createProject, renameProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
 import {
   createEnvironment,
   deleteEnvironment,
@@ -914,6 +914,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org, project } = await projectScope(ctx, c);
     await authorize(ctx, c, principal, "project.read", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
     return c.json(serialize.project(project));
+  });
+
+  // Display name only (capability projects.rename); the slug never changes.
+  app.patch("/v1/organizations/:org/projects/:project", async (c) => {
+    const principal = c.get("principal");
+    const { org, project } = await projectScope(ctx, c);
+    await authorize(ctx, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+    const body = parseBody(z.object({ name: z.string().min(1).max(200) }), await c.req.json());
+    const renamed = await renameProject(ctx, org.id, project.id, body.name, principal.identity.id);
+    return c.json(serialize.project(renamed));
   });
 
   // ---- Environments
