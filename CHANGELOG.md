@@ -35,6 +35,9 @@ fixes.
   now records a hash of the file it loaded, and `varlatch doctor` and
   `varlatch upgrade` compare content. A supervisor from an older release is
   still judged by time.
+- After a restore, the dashboard and the other remaining services start
+  without waiting for varlatchd's Docker health check. On a host where that
+  check kept failing, a restore waited up to 10 minutes first.
 
 ## 0.11.0 (2026-09-28)
 
