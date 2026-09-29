@@ -449,6 +449,10 @@ describe("A-R8: the decision table", () => {
 });
 
 describe("seeded fuzzing", () => {
+  // Deterministic but CPU-bound: every seed is chunked at every offset. On a
+  // loaded two-CPU CI runner the first test has taken 5.2 s, past vitest's
+  // default 5 s, with a correct result; the bound is for time, not behaviour.
+  const FUZZ_TIMEOUT_MS = 60_000;
   function rng(seed: number) {
     let s = seed >>> 0;
     return () => {
@@ -494,7 +498,7 @@ describe("seeded fuzzing", () => {
         expect(Buffer.from(await relay(entries, cut(input, chunking(r, input.length)))), `seed ${seed}`).toEqual(input);
       }
     }
-  });
+  }, FUZZ_TIMEOUT_MS);
 
   it("no value is ever emitted, in any registered form, and the result matches the whole-input reference", async () => {
     const forms = (value: string) => {
@@ -533,5 +537,5 @@ describe("seeded fuzzing", () => {
       }
     }
     expect(tested).toBeGreaterThan(150);
-  });
+  }, FUZZ_TIMEOUT_MS);
 });

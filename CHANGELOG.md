@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.12.0)
+## 0.12.0 (2026-09-29)
 
 ### Type generation
 
@@ -38,6 +38,21 @@ fixes.
 - After a restore, the dashboard and the other remaining services start
   without waiting for varlatchd's Docker health check. On a host where that
   check kept failing, a restore waited up to 10 minutes first.
+
+### Upgrading
+
+No database migration: 0.12.0 uses migration 22, like 0.11.0. Python
+generation is entirely in the CLI, so the server does not need to be
+upgraded for it.
+
+- From 0.11.0: download `varlatch-cli-0.12.0.cjs` from the `v0.12.0`
+  release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.12.0.cjs upgrade 0.12.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.12.0.cjs`, or run `varlatch self-update`.
+- From 0.10.0 or 0.10.1, or older: follow the 0.11.0 instructions below with
+  the 0.12.0 CLI and version.
+- 0.12.0 restores everything 0.11.0 restores, and archives from 0.11.0.
 
 ## 0.11.0 (2026-09-28)
 
