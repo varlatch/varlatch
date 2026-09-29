@@ -63,8 +63,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # A pull request's tests are selected by a diff with its base.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+          # A pull request's tests are selected by a diff with its base. The
+          # depths are strings: in an expression, a numeric 0 is falsy, so
+          # `&& 0 || 1` always gave 1, and the base commit was missing.
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 12.3.4
