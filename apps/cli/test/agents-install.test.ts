@@ -178,6 +178,8 @@ function roundTrip(file: string, original: string): { installed: string | null; 
   const installed = existsSync(join(root, file)) ? readFileSync(join(root, file), "utf8") : null;
   // Every byte the file had is still there, in front of the CLI's addition.
   expect(installed?.startsWith(original), JSON.stringify(original)).toBe(true);
+  // Right after install, --check sees no drift, and installing again changes nothing.
+  expect(install(root, { mode: "check" }).drift, JSON.stringify(original)).toBe(false);
   const second = install(root);
   expect(second.changes.filter((c) => c.action !== "unchanged"), JSON.stringify(original)).toEqual([]);
   install(root, { mode: "remove" });
@@ -195,6 +197,10 @@ describe("byte-for-byte preservation", () => {
     CRLF: "User rules\r\nMore\r\n",
     "CRLF, no final line break": "User rules\r\nMore",
     "byte order mark": "\uFEFFUser rules\n",
+    "a bare CR at the end": "User rules\r",
+    "only a bare CR": "\r",
+    "CRLF, then a bare CR at the end": "User rules\r\nMore\r",
+    "bare CR line endings": "User rules\rMore\r",
   };
   const yaml = {
     "no final line break": "model: x",
@@ -205,6 +211,9 @@ describe("byte-for-byte preservation", () => {
     CRLF: "model: x\r\nmap-tokens: 1024\r\n",
     "CRLF, no final line break": "model: x\r\nmap-tokens: 1024",
     "comments only": "# my settings\n",
+    "a bare CR at the end": "model: x\r",
+    "CRLF, then a bare CR at the end": "model: x\r\nmap-tokens: 1024\r",
+    "bare CR line endings": "model: x\rmap-tokens: 1024\r",
   };
 
   for (const file of ["AGENTS.md", "CLAUDE.md", join(".claude", "CLAUDE.md")]) {
@@ -299,6 +308,12 @@ describe("the Aider adapter judges the file's YAML layout", () => {
     "\uFEFFmodel: x\n",
     "model:x\n",
     "- a\n- b\n",
+    // Aider's parser (PyYAML, YAML 1.1) breaks lines at a bare CR, NEL, and the
+    // Unicode separators, so each of these "comments" hides a read: key. The
+    // test oracle (YAML 1.2) sees only a comment, so they are not controls.
+    "# note\rread: [CONVENTIONS.md]\n",
+    "# note\u2028read: [CONVENTIONS.md]\n",
+    "# note\u0085read: [CONVENTIONS.md]\n",
   ];
 
   it("appends read: only where the result is the same mapping plus read", () => {
@@ -320,7 +335,14 @@ describe("the Aider adapter judges the file's YAML layout", () => {
 
   it("control: appending anyway breaks these layouts or changes what they say", () => {
     // Some refused layouts (a quoted key, say) would survive an append; the adapter refuses them to stay on the safe side.
-    const harmed = ['"read": [CONVENTIONS.md]\n', "  model: x\n  read: [CONVENTIONS.md]\n", "  model: x\n", "notes: |+\n  kept\n\n", "model: x\n...\n", "- a\n- b\n"];
+    const harmed = [
+      '"read": [CONVENTIONS.md]\n',
+      "  model: x\n  read: [CONVENTIONS.md]\n",
+      "  model: x\n",
+      "notes: |+\n  kept\n\n",
+      "model: x\n...\n",
+      "- a\n- b\n",
+    ];
     for (const text of harmed) {
       expect(unsafe, JSON.stringify(text)).toContain(text);
       expect(sameMappingPlusRead(text, `${text}\nread: AGENTS.md\n`), JSON.stringify(text)).toBe(false);
@@ -514,6 +536,18 @@ describe("the CLI", () => {
     const drift = await cli(["agents", "install", "--check"], cwd);
     expect(drift.code).toBe(EXIT.failure);
     expect(drift.stdout).toBe("differs: .agents/skills/varlatch/SKILL.md\n");
+  });
+
+  it("a file ending in a bare CR: install, then --check sees no drift, and --remove restores its bytes", async () => {
+    const original = Buffer.from("User rules\r", "utf8");
+    const cwd = project();
+    writeFileSync(join(cwd, "AGENTS.md"), original);
+    expect((await cli(["agents", "install"], cwd)).code).toBe(0);
+    const check = await cli(["agents", "install", "--check"], cwd);
+    expect(check.stdout).toBe("The agent files are up to date.\n");
+    expect(check.code).toBe(0);
+    expect((await cli(["agents", "install", "--remove"], cwd)).code).toBe(0);
+    expect(readFileSync(join(cwd, "AGENTS.md")).toString("hex")).toBe(original.toString("hex"));
   });
 
   it("agents install --scope user writes under HOME", async () => {

@@ -127,17 +127,35 @@ function appendOwned(current: string | null, owned: string): string {
 }
 
 /**
+ * The line ending of an addition at [start, end): the one inside it, else
+ * the one that ends it. install used the same one for the line break it put
+ * before the addition, so this is what removing takes back, and what
+ * installing again reuses. Judging from the whole file instead would be
+ * fooled by the file's own bytes next to the addition: a file ending in a
+ * bare CR, followed by the LF install added, reads as CRLF.
+ */
+function ownedEol(text: string, start: number, end: number): string {
+  const span = text.slice(start, end);
+  if (span.includes("\r\n")) return "\r\n";
+  if (span.includes("\n")) return "\n";
+  return text.startsWith("\r\n", end) ? "\r\n" : "\n";
+}
+
+/**
  * The file without the addition at [start, end), and without the line break
  * that ends it. At the end of the file, the line break install put before
- * it goes too. Null: nothing precedes or follows it, so install created the
- * file and removing takes the file away.
+ * it goes too. Only those exact bytes go, so the file's own bytes around
+ * them stay. Null: nothing precedes or follows the addition, so install
+ * created the file and removing takes the file away.
  */
 function withoutOwned(text: string, start: number, end: number): string | null {
+  const eol = ownedEol(text, start, end);
   const before = text.slice(0, start);
-  const after = text.slice(end).replace(/^\r?\n/, "");
+  const rest = text.slice(end);
+  const after = rest.startsWith(eol) ? rest.slice(eol.length) : rest;
   if (after !== "") return before + after;
   if (before === "") return null;
-  return before.replace(/\r?\n$/, "");
+  return before.endsWith(eol) ? before.slice(0, -eol.length) : before;
 }
 
 function escapeRegExp(text: string): string {
@@ -159,13 +177,15 @@ export function withBlock(current: string | null, remove: boolean): string | nul
   if (start < 0 && text.includes(BLOCK_END)) {
     throw new AgentsInstallError(`AGENTS.md has ${BLOCK_END} without ${BLOCK_BEGIN}; restore or delete the marker, then run this again`, false);
   }
-  const block = agentsBlock().replaceAll("\n", eolOf(text));
+  // An existing block keeps its line ending, so installing again changes nothing.
+  const eol = start >= 0 ? ownedEol(text, start, end + BLOCK_END.length) : eolOf(text);
+  const block = agentsBlock().replaceAll("\n", eol);
   if (start >= 0) {
     if (remove) return withoutOwned(text, start, end + BLOCK_END.length);
     return text.slice(0, start) + block + text.slice(end + BLOCK_END.length);
   }
   if (remove) return current;
-  return appendOwned(current, block + eolOf(text));
+  return appendOwned(current, block + eol);
 }
 
 /**
@@ -214,7 +234,10 @@ export function aiderLayout(text: string): "append" | "has-read" | "unsafe" {
   };
   let hasRead = false;
   let listOpen = false;
-  for (const raw of text.split(/\r?\n/)) {
+  // Every character a YAML parser may take as a line break, including those
+  // YAML 1.1 (Aider's parser) adds: a bare CR, NEL, and the Unicode line and
+  // paragraph separators. Otherwise a "comment" could hide a read: key.
+  for (const raw of text.split(/\r\n|[\n\r\u0085\u2028\u2029]/)) {
     const line = raw.replace(/\s+$/, "");
     if (line === "" || /^\s*#/.test(line)) continue;
     if (line.includes("\t")) return "unsafe";
