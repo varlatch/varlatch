@@ -99,6 +99,14 @@ def _ada_verdict(value: str) -> "bool | None":
         return None
 
 
+def _whole(value: str, digits: str) -> int:
+    # int() converts the digits without their leading zeros, which the bound
+    # check already measured: the text itself may carry more zeros than
+    # int()'s limit on digits in a string. int has no negative zero, so -0 is 0.
+    number = int(digits)
+    return -number if value.startswith("-") else number
+
+
 def _parse_number(value: str) -> "tuple[bool, object]":
     match = _NUMBER.fullmatch(value)
     if match is None:
@@ -114,7 +122,7 @@ def _parse_number(value: str) -> "tuple[bool, object]":
     # Integral text converts to int, so counts, sizes, and ports work with
     # slicing and range(); a fraction converts to the nearest double.
     if fraction is None:
-        return (True, int(value))
+        return (True, _whole(value, integer))
     return (True, float(value))
 
 
@@ -125,8 +133,7 @@ def _parse_integer(value: str) -> "tuple[bool, object]":
     digits = match.group(1).lstrip("0") or "0"
     if len(digits) > len(_MAX_EXACT) or (len(digits) == len(_MAX_EXACT) and digits > _MAX_EXACT):
         return (False, "must be a whole number no larger in magnitude than 2^53 - 1")
-    # The text matched the pattern, so int() sees only ASCII digits; -0 is 0.
-    return (True, int(value))
+    return (True, _whole(value, digits))
 
 
 # An evaluator before version 3 that meets an integer item fails closed, as
