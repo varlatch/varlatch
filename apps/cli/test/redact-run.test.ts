@@ -31,6 +31,8 @@ const items = [
   { name: "API_TOKEN", sensitive: true, value },
   { name: "DB_PASS", sensitive: true, value: multiByte },
   { name: "PIN", sensitive: true, value: "1234567" },
+  // A stored value with an unpaired surrogate: JSON carries it as "\ud83d", UTF-8 cannot.
+  { name: "SURROGATE", sensitive: true, value: "surrogate-\uD83D-value" },
   { name: "PORT", sensitive: false, value: "8080" },
 ];
 
@@ -267,6 +269,17 @@ process.stdout.on("error", (e) => { require("fs").writeSync(2, "child saw " + e.
     const { code } = await run.done;
     expect(code).toBe(0);
     expect(run.stdout().toString()).toBe(`t=${value}\n`);
+  });
+
+  it("masks a delivered value that holds an unpaired surrogate, as the command receives it, instead of failing", async () => {
+    const script = `${PRELUDE}(async () => { await out("s=" + process.env.SURROGATE + "\\n"); })();`;
+    const masked = start(["--redact"], script);
+    expect((await masked.done).code).toBe(0);
+    expect(masked.stdout().toString()).toBe("s=[REDACTED:SURROGATE]\n");
+    // Negative control, same input: without --redact the command prints it, the surrogate replaced by U+FFFD.
+    const plain = start([], script);
+    expect((await plain.done).code).toBe(0);
+    expect(plain.stdout().toString()).toBe("s=surrogate-\uFFFD-value\n");
   });
 
   it("refuses --agent-safe before fetching anything, and starts nothing", async () => {

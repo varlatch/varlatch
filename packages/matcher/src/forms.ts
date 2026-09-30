@@ -17,6 +17,20 @@ export const MIN_LENGTH = 8;
 
 const encoder = new TextEncoder();
 
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * A value as a command receives it. A stored value can hold an unpaired
+ * UTF-16 surrogate (JSON allows `"\ud83d"`), but UTF-8 cannot: an
+ * environment variable, a request body, and a terminal all carry U+FFFD in
+ * its place. Every form is computed from this text, so such a value is
+ * registered as a command can print it, and never makes a form throw
+ * (percent-encoding rejects an unpaired surrogate).
+ */
+export function deliveredText(value: string): string {
+  return value.replace(UNPAIRED_SURROGATE, "\uFFFD");
+}
+
 function base64Core(value: Uint8Array, alignment: number, url: boolean): string {
   // Encode the value after `alignment` filler bytes, then keep only the
   // characters whose six bits all come from the value: they are the same
@@ -47,7 +61,8 @@ export interface LabelledForm {
  * Every registered form of `value` with its name, deduplicated, each at
  * least MIN_LENGTH bytes, in the order `formsOf` returns them.
  */
-export function labelledFormsOf(value: string): LabelledForm[] {
+export function labelledFormsOf(stored: string): LabelledForm[] {
+  const value = deliveredText(stored);
   const raw = encoder.encode(value);
   if (raw.length < MIN_LENGTH) return [];
   const json = JSON.stringify(value).slice(1, -1);

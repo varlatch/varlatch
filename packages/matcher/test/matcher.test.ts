@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
-import { MIN_LENGTH, StreamMatcher, formsOf, scrubWhole, type SecretEntry } from "../src/index.js";
+import { MIN_LENGTH, StreamMatcher, deliveredText, formsOf, scrubWhole, type SecretEntry } from "../src/index.js";
 
 /**
  * ADR-0039 Decisions 17 to 19, and acceptance tests 31 to 35: forms,
@@ -74,6 +74,30 @@ describe("forms (Decision 17)", () => {
     expect(matcher.skipped).toEqual(["SHORT"]);
     const out = matcher.push(bytes("x1234567y"));
     expect(text(Buffer.concat([out, matcher.end().output]))).toBe("x1234567y");
+  });
+});
+
+describe("a stored value with an unpaired surrogate", () => {
+  // JSON can carry "\ud83d" alone; UTF-8 cannot, so every delivery replaces it with U+FFFD.
+  const stored = "token-\uD83D-value-\uDE00-end";
+  const delivered = "token-\uFFFD-value-\uFFFD-end";
+
+  it("is registered as a command receives it, and no form throws", () => {
+    expect(deliveredText(stored)).toBe(delivered);
+    expect(deliveredText("paired-😀-ok")).toBe("paired-😀-ok");
+    expect(() => formsOf(stored)).not.toThrow();
+    const forms = formsOf(stored).map(text);
+    expect(forms).toContain(delivered);
+    expect(forms).toContain(encodeURIComponent(delivered));
+    // Before the fix, the percent form threw while the matcher was built (the negative control).
+    expect(() => encodeURIComponent(stored)).toThrow(URIError);
+  });
+
+  it("is masked in output a command writes from its environment, split anywhere", () => {
+    // What a child writes: the stored value encoded to UTF-8, which replaces each surrogate.
+    const child = `log ${text(bytes(stored))} done`;
+    expect(child).toBe(`log ${delivered} done`);
+    expect(everySplit([{ item: "TOKEN", value: stored }], child)).toBe("log <TOKEN> done");
   });
 });
 
