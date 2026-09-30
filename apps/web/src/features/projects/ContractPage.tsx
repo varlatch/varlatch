@@ -6,12 +6,23 @@ import type { ContractRevision } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Button, Card, InfoTip, Input, Mono, Select, cn } from "../../components/ui";
+import {
+  canMoveRules,
+  movedContract,
+  moveConsequences,
+  newestSemanticsVersion,
+  reviewMove,
+  revisionSemanticsVersion,
+  semanticsSteps,
+  typeOffer,
+} from "./semanticsMove";
 
 /** Hover help for the item-type dropdown: `title` on each option plus an
     InfoTip echoing the selected type's meaning. */
 const TYPE_HELP: Record<string, string> = {
   string: "Any text value; no validation beyond presence.",
-  number: "Must be an integer or decimal written in digits, e.g. -12 or 3.5 (no exponent, no leading +). From semantics version 2, at most 2^53 - 1 in magnitude.",
+  number: "A number written in digits, e.g. -12 or 3.5 (no exponent, no leading +). From semantics version 2, at most 2^53 - 1 in magnitude.",
+  integer: "A whole number written in digits, e.g. -12 or 3000: an optional minus sign and digits only (no decimal point, exponent, or leading +), at most 2^53 - 1 in magnitude. Needs semantics version 3.",
   boolean: "Must be true or false in any case, or 1/0.",
   url: "Must be an absolute URL including its scheme, e.g. https://…",
   email: "Must look like an email address.",
@@ -66,9 +77,20 @@ export function ContractPage() {
     queryFn: () => api.getActiveContract(org as string, project as string),
     retry: false,
   });
+  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.meta() });
 
   const managed = projectQuery.data?.contractAuthority === "managed";
   const items = ((contract.data?.contract as { items?: Item[] } | undefined)?.items ?? []) as Item[];
+  const newest = newestSemanticsVersion(meta.data?.semanticsVersions);
+  const activeVersion = contract.data ? revisionSemanticsVersion(contract.data) : undefined;
+  // Edits keep the active revision's version; a project's first revision
+  // gets the newest one.
+  const editorVersion = contract.data ? activeVersion : contract.isError && meta.data ? newest : undefined;
+  const refresh = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["contract", org, project] }),
+      qc.invalidateQueries({ queryKey: ["project", org, project] }),
+    ]);
 
   return (
     <div className="space-y-4">
@@ -88,12 +110,12 @@ export function ContractPage() {
       {projectQuery.data && (
         <p className="text-sm text-muted">
           {managed
-            ? "Managed authority: edit and publish the contract right here — Varlatch is the source of truth."
+            ? "Managed authority: edit and publish the contract right here. Varlatch is the source of truth."
             : (
               <>
                 Git authority: the schema lives in your repository as <Mono>.env.schema</Mono> and
-                is pushed with <Mono>varlatch contract push</Mono> — the repo is the source of
-                truth, so this view is read-only.
+                is pushed with <Mono>varlatch contract push</Mono>. The repository is the source of
+                truth, so this view is read-only, except for moving to the newest rules.
               </>
             )}
         </p>
@@ -116,9 +138,9 @@ export function ContractPage() {
             <span className="flex items-center gap-1">
               Active revision <Mono>{contract.data.id}</Mono>
               <span className="ml-2" data-testid="semantics-version">
-                Semantics version {contract.data.semanticsVersion ?? 1}
+                Semantics version {activeVersion}
               </span>
-              <InfoTip text="The validation rules this revision is evaluated with. Edits keep the version; push with --semantics latest to move to the newest rules." />
+              <InfoTip text="The validation rules this revision is evaluated with. Edits keep the version. To change it, move to the newest rules here or push with --semantics latest." />
             </span>
             <Mono>{contract.data.contentHash}</Mono>
           </div>
@@ -154,12 +176,25 @@ export function ContractPage() {
         </Card>
       )}
 
+      {contract.data && projectQuery.data && activeVersion !== undefined && canMoveRules(activeVersion, newest) && (
+        <MoveRules
+          org={org as string}
+          project={project as string}
+          active={contract.data}
+          newest={newest}
+          authority={projectQuery.data.contractAuthority}
+          onActivated={refresh}
+        />
+      )}
+
       {managed ? (
         <ManagedEditor
           org={org as string}
           project={project as string}
           items={items}
-          onPublished={() => void qc.invalidateQueries({ queryKey: ["contract", org, project] })}
+          version={editorVersion}
+          newest={newest}
+          onPublished={refresh}
         />
       ) : (
         <p className="text-muted text-sm">
@@ -176,11 +211,16 @@ function ManagedEditor({
   org,
   project,
   items,
+  version,
+  newest,
   onPublished,
 }: {
   org: string;
   project: string;
   items: Item[];
+  /** The version a published revision gets: edits keep the active one's. */
+  version: number | undefined;
+  newest: number;
   onPublished: () => void;
 }) {
   const { api } = useSession();
@@ -191,6 +231,13 @@ function ManagedEditor({
   const [sensitive, setSensitive] = useState(false);
   const [requiredKind, setRequiredKind] = useState<"always" | "never">("always");
   const [defaultValue, setDefaultValue] = useState("");
+  const typeOptions = Object.keys(TYPE_HELP).map((t) => {
+    const offer = typeOffer(t, version, newest);
+    return offer.enabled
+      ? { value: t, label: t }
+      : { value: t, label: t, disabled: true, description: offer.reason };
+  });
+  const integerOffer = typeOffer("integer", version, newest);
 
   const publish = useMutation({
     mutationFn: async () => {
@@ -229,9 +276,10 @@ function ManagedEditor({
           onChange={(e) => setName(e.target.value.toUpperCase())}
         />
         <Select
+          data-testid="contract-item-type"
           value={type}
           onChange={(v) => setType(v)}
-          options={Object.keys(TYPE_HELP).map((t) => ({ value: t, label: t }))}
+          options={typeOptions}
         />
         <InfoTip text={`${type}: ${TYPE_HELP[type]}`} />
         <Select
@@ -256,10 +304,19 @@ function ManagedEditor({
           <InfoTip text="Secret items are write-only in the UI and disclosed only via the audited retrieval path. Uncontracted items default to secret." />
         </label>
         <Input placeholder="default (optional)" value={defaultValue} onChange={(e) => setDefaultValue(e.target.value)} />
-        <Button data-testid="contract-add-item" disabled={!/^[A-Z][A-Z0-9_]*$/.test(name)} onClick={addItem}>
+        <Button
+          data-testid="contract-add-item"
+          disabled={!/^[A-Z][A-Z0-9_]*$/.test(name) || !typeOffer(type, version, newest).enabled}
+          onClick={addItem}
+        >
           Add / replace item
         </Button>
       </div>
+      {!integerOffer.enabled && version !== undefined && (
+        <p className="text-xs text-muted mb-2" data-testid="integer-unavailable">
+          integer: {integerOffer.reason}
+        </p>
+      )}
       {draft && (
         <div className="flex items-center gap-2 mb-1">
           <p className="text-sm text-muted flex-1">
@@ -277,6 +334,163 @@ function ManagedEditor({
         </p>
       )}
       {publish.error && <p className="text-deny text-sm">{String(publish.error)}</p>}
+    </Card>
+  );
+}
+
+/** Plain text with `backticked` commands rendered as code. */
+function WithCode({ text }: { text: string }) {
+  return (
+    <>
+      {text.split("`").map((part, i) => (i % 2 === 1 ? <Mono key={i}>{part}</Mono> : part))}
+    </>
+  );
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Move to the newest rules: push the active Contract unchanged except for
+ * its semantics version, review what the server stored, and activate only on
+ * an explicit confirmation. Available for git and managed projects alike.
+ */
+function MoveRules({
+  org,
+  project,
+  active,
+  newest,
+  authority,
+  onActivated,
+}: {
+  org: string;
+  project: string;
+  active: ContractRevision;
+  newest: number;
+  authority: "git" | "managed";
+  /** Resolves once the page shows the newly active revision. */
+  onActivated: () => Promise<unknown>;
+}) {
+  const { api } = useSession();
+  const [review, setReview] = useState<{ base: ContractRevision; pushed: ContractRevision } | null>(null);
+  const [cancelled, setCancelled] = useState<string | null>(null);
+  const from = revisionSemanticsVersion(active);
+
+  const push = useMutation({
+    mutationFn: () =>
+      api.pushContractRevision(org, project, { contract: movedContract(active.contract, newest) }),
+    onSuccess: (pushed) => {
+      setCancelled(null);
+      setReview({ base: active, pushed });
+    },
+  });
+  const activate = useMutation({
+    mutationFn: async (revisionId: string) => {
+      await api.activateContractRevision(org, project, revisionId);
+      await onActivated();
+    },
+    onSuccess: () => setReview(null),
+  });
+
+  const result = review ? reviewMove(review.base, review.pushed, newest) : null;
+  const stale = review !== null && review.base.id !== active.id;
+
+  return (
+    <Card className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm flex-1">
+          This Contract uses semantics version {from}. Version {newest} is the newest this server
+          supports; moving changes the version and nothing else.
+        </p>
+        {!review && (
+          <Button data-testid="move-rules" disabled={push.isPending} onClick={() => push.mutate()}>
+            Move to the newest rules (version {newest})
+          </Button>
+        )}
+      </div>
+      {push.error && <p className="text-deny text-sm">Could not push the revision: {errorText(push.error)}</p>}
+      {cancelled && (
+        <p className="text-xs text-muted">
+          Cancelled. Revision <Mono>{cancelled}</Mono> stays stored but inactive; nothing changed.
+        </p>
+      )}
+
+      {review && result && (
+        <div className="border-t border-bd pt-2 space-y-2 text-sm" data-testid="move-rules-review">
+          <p>
+            Pushed revision <Mono>{review.pushed.id}</Mono>. It is not active yet.
+          </p>
+          <div>
+            <h3 className="font-medium">Changes</h3>
+            <ul className="list-disc pl-5" data-testid="move-rules-diff">
+              {result.versionChange && (
+                <li>
+                  Semantics version {result.versionChange.from} → {result.versionChange.to}
+                </li>
+              )}
+              {result.otherChanges.map((c) => (
+                <li key={c} className="text-deny">{c}</li>
+              ))}
+            </ul>
+          </div>
+          {!result.activatable && (
+            <p className="text-deny" data-testid="move-rules-refused">
+              The stored revision differs from the active Contract in more than the semantics
+              version, so it cannot be activated from here.
+            </p>
+          )}
+          <div>
+            <h3 className="font-medium">What the newer rules change</h3>
+            <ul className="list-disc pl-5">
+              {semanticsSteps(from, newest).map((s) => (
+                <li key={s.version}>
+                  Version {s.version}: {s.change}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h3 className="font-medium">After activation</h3>
+            <ul className="list-disc pl-5">
+              {moveConsequences(from, newest, authority).map((c) => (
+                <li key={c}>
+                  <WithCode text={c} />
+                </li>
+              ))}
+            </ul>
+          </div>
+          {stale && (
+            <p className="text-deny">The active revision changed since this review. Cancel and start again.</p>
+          )}
+          <div className="flex items-center gap-2">
+            <p className="text-xs text-muted flex-1">
+              Nothing changes until you activate. Cancel leaves the pushed revision stored but
+              inactive.
+            </p>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setCancelled(review.pushed.id);
+                setReview(null);
+                activate.reset();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              data-testid="move-rules-activate"
+              disabled={!result.activatable || stale || activate.isPending}
+              onClick={() => activate.mutate(review.pushed.id)}
+            >
+              Activate version {newest} rules
+            </Button>
+          </div>
+          {activate.error && (
+            <p className="text-deny">Could not activate the revision: {errorText(activate.error)}</p>
+          )}
+        </div>
+      )}
     </Card>
   );
 }

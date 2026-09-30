@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * P4 E2E: audit timeline (authoritative /v1 history, filters, provenance
- * drawer), contract tab (git read-only vs managed editor),
- * command palette, settings.
+ * drawer), contract tab (git read-only vs managed editor, moving to the
+ * newest semantics rules, the integer type), command palette, settings.
  * Usage: e2e-p4.mjs <enroll-url> <api-token>
  */
 import { chromium } from "playwright";
@@ -57,6 +57,51 @@ await api("POST", "/organizations/acme/projects/managed-app/environments", {
   name: "development",
   tier: "development",
 });
+
+// Contracts at older semantics versions, pinned explicitly (a push without a
+// pin to a project with no active revision gets the newest version).
+const { semanticsVersions } = await (await fetch(`${base}/v1/meta`)).json();
+const newestVersion = Math.max(...semanticsVersions);
+check("server supports semantics version 3", newestVersion >= 3, `versions ${semanticsVersions}`);
+const seedContract = async (slug, semanticsVersion, items) => {
+  const pushed = await api("POST", `/organizations/acme/projects/${slug}/contract/revisions`, {
+    contract: { schemaVersion: 1, semanticsVersion, items },
+  });
+  const revision = await pushed.json();
+  const activated = await api(
+    "POST",
+    `/organizations/acme/projects/${slug}/contract/revisions/${revision.id}/activate`,
+    {},
+  );
+  check(
+    `${slug} seeded at semantics version ${semanticsVersion}`,
+    pushed.status === 201 && activated.status === 200 && revision.semanticsVersion === semanticsVersion,
+    `push ${pushed.status} activate ${activated.status} version ${revision.semanticsVersion}`,
+  );
+};
+const activeContract = async (slug) =>
+  (await api("GET", `/organizations/acme/projects/${slug}/contract`)).json();
+await seedContract("managed-app", 1, [
+  {
+    name: "PORT",
+    required: { kind: "always" },
+    sensitive: false,
+    type: "number",
+    defaultValue: "3000",
+    description: "HTTP port",
+    example: "8080",
+  },
+]);
+const legacyGit = await api("POST", "/organizations/acme/projects", {
+  slug: "legacy-git",
+  name: "legacy-git",
+  contractAuthority: "git",
+});
+check("legacy git project seeded", legacyGit.status === 201, `status ${legacyGit.status}`);
+await seedContract("legacy-git", 2, [
+  { name: "LOG_LEVEL", required: { kind: "never" }, sensitive: false, type: "enum", enumValues: ["debug", "info"] },
+  { name: "SESSION_KEY", required: { kind: "always" }, sensitive: true, type: "string", rotationGraceSeconds: 3600 },
+]);
 
 await page.goto(enrollUrl);
 await page.click("#enroll");
@@ -136,15 +181,118 @@ check("git contract items render", (await page.locator('[data-contract-item="DAT
 check("git authority shown", (await page.textContent('[data-testid="contract-authority"]')).includes("git"));
 check("no managed editor for git projects", (await page.locator('[data-testid="managed-editor"]').count()) === 0);
 
+// 2b. Git project at an older semantics version: move to the newest rules.
+// The push and the activation are separate steps; cancel activates nothing.
+await page.goto(`${base}/o/acme/p/legacy-git/contract`);
+await page.waitForSelector('[data-testid="move-rules"]', { timeout: 20000 });
+check(
+  "git project offers moving to the newest rules",
+  (await page.textContent('[data-testid="move-rules"]')).includes(`version ${newestVersion}`),
+);
+check("git project still has no managed editor", (await page.locator('[data-testid="managed-editor"]').count()) === 0);
+const gitBefore = await activeContract("legacy-git");
+await page.click('[data-testid="move-rules"]');
+await page.waitForSelector('[data-testid="move-rules-review"]', { timeout: 10000 });
+let review = await page.textContent('[data-testid="move-rules-review"]');
+const gitDiff = await page.locator('[data-testid="move-rules-diff"] li').allTextContents();
+check(
+  "review diff shows only the semantics version change",
+  gitDiff.length === 1 && gitDiff[0].includes(`Semantics version 2 → ${newestVersion}`),
+  JSON.stringify(gitDiff),
+);
+check(
+  "review explains the version 3 step only",
+  review.includes("Adds the integer type") && !review.includes("Version 2:"),
+);
+check(
+  "review tells git projects later pushes keep the version",
+  review.includes(`Later pushes from your repository keep version ${newestVersion}`),
+);
+check("pushed revision is not active before confirmation", (await activeContract("legacy-git")).id === gitBefore.id);
+await page.click('[data-testid="move-rules-review"] button:has-text("Cancel")');
+await page.waitForSelector('[data-testid="move-rules"]', { timeout: 10000 });
+check(
+  "cancel leaves the active revision in place",
+  (await activeContract("legacy-git")).id === gitBefore.id &&
+    (await page.textContent('[data-testid="semantics-version"]')).includes("Semantics version 2"),
+);
+await page.click('[data-testid="move-rules"]');
+await page.waitForSelector('[data-testid="move-rules-activate"]:enabled', { timeout: 10000 });
+await page.click('[data-testid="move-rules-activate"]');
+await page.waitForSelector(`[data-testid="semantics-version"]:has-text("Semantics version ${newestVersion}")`, {
+  timeout: 10000,
+});
+check("git project moved to the newest version", (await page.locator('[data-testid="move-rules"]').count()) === 0);
+const gitAfter = await activeContract("legacy-git");
+check(
+  "the move changed the version and nothing else (git)",
+  gitAfter.semanticsVersion === newestVersion &&
+    JSON.stringify(gitAfter.contract.items) === JSON.stringify(gitBefore.contract.items),
+);
+
 // 3. Managed contract editor: add item, publish, see it active.
 await page.goto(`${base}/o/acme/p/managed-app/contract`);
 await page.waitForSelector('[data-testid="managed-editor"]', { timeout: 20000 });
+// Edits start from the active Contract: wait for it before adding an item.
+await page.waitForSelector('[data-contract-item="PORT"]', { timeout: 20000 });
 await page.fill('[data-testid="contract-item-name"]', "FEATURE_FLAG");
 await page.selectOption('[data-testid="managed-editor"] select >> nth=1', "never");
 await page.click('[data-testid="contract-add-item"]');
 await page.click('[data-testid="contract-publish"]');
 await page.waitForSelector('[data-contract-item="FEATURE_FLAG"]', { timeout: 10000 });
 check("managed publish activates a revision with the new item", true);
+check(
+  "an edit keeps the semantics version",
+  (await page.textContent('[data-testid="semantics-version"]')).includes("Semantics version 1"),
+);
+const integerOption = '[data-testid="contract-item-type"] option[value="integer"]';
+check("integer is not offered at version 1", await page.locator(integerOption).isDisabled());
+check(
+  "the editor says integer needs version 3",
+  (await page.textContent('[data-testid="integer-unavailable"]')).includes("Needs semantics version 3"),
+);
+
+// 3b. Managed project: move from version 1 to the newest rules, then use integer.
+const managedBefore = await activeContract("managed-app");
+await page.click('[data-testid="move-rules"]');
+await page.waitForSelector('[data-testid="move-rules-review"]', { timeout: 10000 });
+review = await page.textContent('[data-testid="move-rules-review"]');
+const managedDiff = await page.locator('[data-testid="move-rules-diff"] li').allTextContents();
+check(
+  "managed review diff shows only the semantics version change",
+  managedDiff.length === 1 && managedDiff[0].includes(`Semantics version 1 → ${newestVersion}`),
+  JSON.stringify(managedDiff),
+);
+check(
+  "managed review explains every step and the consequences",
+  review.includes("Version 2:") &&
+    review.includes("Adds the integer type") &&
+    review.includes("varlatch run --strict") &&
+    review.includes("larger than 2^53 - 1") &&
+    !review.includes("Later pushes from your repository"),
+);
+await page.click('[data-testid="move-rules-activate"]');
+await page.waitForSelector(`[data-testid="semantics-version"]:has-text("Semantics version ${newestVersion}")`, {
+  timeout: 10000,
+});
+check("managed project moved to the newest version", (await page.locator('[data-testid="move-rules"]').count()) === 0);
+const managedAfter = await activeContract("managed-app");
+check(
+  "the move changed the version and nothing else (managed)",
+  managedAfter.semanticsVersion === newestVersion &&
+    JSON.stringify(managedAfter.contract.items) === JSON.stringify(managedBefore.contract.items),
+);
+check("integer is offered at version 3", !(await page.locator(integerOption).isDisabled()));
+await page.fill('[data-testid="contract-item-name"]', "WORKERS");
+await page.selectOption('[data-testid="contract-item-type"]', "integer");
+await page.click('[data-testid="contract-add-item"]');
+await page.click('[data-testid="contract-publish"]');
+await page.waitForSelector('[data-contract-item="WORKERS"]', { timeout: 10000 });
+check(
+  "an integer item publishes at version 3",
+  (await page.textContent('[data-contract-item="WORKERS"]')).includes("integer") &&
+    (await activeContract("managed-app")).semanticsVersion === newestVersion,
+);
 
 // 4. The environment-name mapping was removed: no card on the contract tab.
 check("contract tab has no environment-name mapping card", (await page.$('[data-testid="varlock-mapping"]')) === null);
