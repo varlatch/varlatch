@@ -95,7 +95,7 @@ redaction is the default; see [In assisted mode](#in-assisted-mode).
 ## When `--redact` refuses to start
 
 In both cases the run refuses before it fetches anything, starts nothing,
-and exits with status 1.
+and exits with status 64 (a usage error; see [scripting](scripting.md)).
 
 - **stdout or stderr is a terminal.** Masking terminal output is not
   supported: piping it would break colours, interactive programs, and

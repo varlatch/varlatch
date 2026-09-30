@@ -32,6 +32,24 @@ fixes.
   output, and may stop with status 78 on a Secret shorter than 8 bytes. Set
   `VARLATCH_ASSISTED=0` to keep the previous behaviour in such a shell.
 
+### CLI
+
+- `--json` on the read commands that lacked it: `values list`, `validate`,
+  `org list`, `project list`, `identity list`, `credential list`,
+  `audit list`, and `tailnet requirements`, plus `contract push` and
+  `import`. Each prints one JSON document with `"version": 1`; no command
+  prints a value. See [scripting](docs/reference/scripting.md).
+- **Changed exit statuses:** a wrong command line now exits 64 (it exited
+  1), not being signed in or a denied request 77, and a server that cannot
+  be reached, or is in maintenance or overloaded, 69 instead of 1 or a
+  stack trace. Kept as before: `validate` 1 and 2, `scan` 1 (every failure)
+  and 2, `types --check` 1, strict startup 78, and the command's own status
+  from `varlatch run`. A script that checks for exactly 1 on these errors
+  needs updating.
+- `varlatch --help`, `-h`, `help`, and `<command> --help` (or
+  `help <command>`) print on stdout and exit 0; before, `--help` exited 1.
+  An unknown command exits 64 with the usage on stderr.
+
 ### Values
 
 - `values set` and `values rotate` take the value from `--stdin`,

@@ -276,7 +276,7 @@ process.stdout.on("error", (e) => { require("fs").writeSync(2, "child saw " + e.
       `require("fs").writeFileSync(process.env.MARKER, "started");`,
     );
     const { code } = await run.done;
-    expect(code).toBe(1);
+    expect(code).toBe(64);
     expect(run.stderr()).toMatch(/--redact does not apply to --agent-safe runs/);
     expect(run.stderr()).toMatch(/Nothing was started\./);
     expect(existsSync(join(dir, "started"))).toBe(false);
@@ -314,7 +314,7 @@ describe.skipIf(!hasScript)("varlatch run --redact on a terminal", () => {
     const before = requests;
     const { code, terminal } = underTerminal(redirect);
     const diagnostic = redirect.startsWith("2>") ? readFileSync(join(dir, "stderr.txt"), "utf8") : terminal;
-    expect(code).toBe(1);
+    expect(code).toBe(64);
     expect(diagnostic).toMatch(message);
     expect(diagnostic).toMatch(/Nothing was started\./);
     expect(existsSync(join(dir, "started"))).toBe(false);

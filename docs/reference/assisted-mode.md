@@ -71,8 +71,8 @@ varlatch --assisted <command> [args...]
 
 ## `values set` and `values rotate`
 
-- **A Secret's value on the command line is refused,** and nothing is
-  stored. An item counts as a Secret when the active Contract marks it
+- **A Secret's value on the command line is refused** with status 64, and
+  nothing is stored. An item counts as a Secret when the active Contract marks it
   sensitive, when it is not in the Contract, or when the Contract cannot be
   read. The refusal names the safe forms below, and suggests asking the
   human to run `varlatch values set <ITEM>` in their own terminal, or to use

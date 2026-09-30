@@ -240,11 +240,11 @@ describe.each([
       expect(values!.code).toBe(0);
       expect(values!.out).toContain("STRIPE_KEY  (secret, self)");
     } else {
-      expect(values!.code).toBe(1);
+      expect(values!.code).toBe(77);
       expect(values!.out).toMatch(/gives the Agent no Varlatch credential and never uses the operator's/);
     }
     for (const probe of [valuesWithoutToken, valuesWithoutConfigDir]) {
-      expect(probe!.code).toBe(1);
+      expect(probe!.code).toBe(77);
       expect(probe!.out).toMatch(/relaunches the run with --agent-metadata/);
     }
     expect(operatorRequestsAfter(record.startedAt)).toEqual([]);
