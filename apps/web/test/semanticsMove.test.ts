@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 import {
+  ITEM_TYPE_SINCE,
   canMoveRules,
   movedContract,
   moveConsequences,
@@ -184,5 +185,23 @@ describe("what the review explains", () => {
       }),
     ];
     for (const t of texts) expect(t).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
+describe("kept in step with @varlatch/contract", () => {
+  // The web app does not depend on the contract package, so these tests
+  // read its sources directly: a new type or version there fails here until
+  // the dashboard's copy follows.
+  it("the per-type minimum version matches the contract package", async () => {
+    const { ITEM_TYPES, ITEM_TYPE_SINCE_SEMANTICS } = await import("../../../packages/contract/src/types.ts");
+    expect({ ...ITEM_TYPE_SINCE }).toEqual({ ...ITEM_TYPE_SINCE_SEMANTICS });
+    expect(Object.keys(ITEM_TYPE_SINCE).sort()).toEqual([...ITEM_TYPES].sort());
+  });
+
+  it("every version after 1 has its own explanation", async () => {
+    const { SEMANTICS_VERSIONS } = await import("../../../packages/contract/src/semantics.ts");
+    for (const version of SEMANTICS_VERSIONS.filter((v: number) => v > 1)) {
+      expect(semanticsSteps(version - 1, version)[0]?.change, `version ${version}`).not.toContain("release notes");
+    }
   });
 });
