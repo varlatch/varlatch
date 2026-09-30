@@ -233,6 +233,15 @@ export class VarlatchClient {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/projects`, input);
   }
 
+  /** Rename a project's display name; its slug never changes (capability projects.rename). */
+  renameProject(org: string, project: string, name: string): Promise<Project> {
+    return this.request(
+      "PATCH",
+      `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}`,
+      { name },
+    );
+  }
+
   listEnvironments(org: string, project: string): Promise<Page<Environment>> {
     return this.request(
       "GET",

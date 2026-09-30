@@ -23,6 +23,9 @@ export function ProjectsPage() {
     queryKey: ["projects", org],
     queryFn: () => api.listProjects(org as string),
   });
+  // Feature-detect via capability rather than probing the route.
+  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.meta() });
+  const canRename = (meta.data?.capabilities ?? []).includes("projects.rename");
   const [slug, setSlug] = useState("");
   const [authority, setAuthority] = useState<"git" | "managed">("git");
   const [filter, setFilter] = useState("");
@@ -111,7 +114,7 @@ export function ProjectsPage() {
         </Card>
       )}
       {matches.map((p) => (
-        <ProjectCard key={p.id} org={org as string} project={p} highlight={filter.trim()} />
+        <ProjectCard key={p.id} org={org as string} project={p} highlight={filter.trim()} canRename={canRename} />
       ))}
     </div>
   );
@@ -195,13 +198,25 @@ function ProjectCard({
   org,
   project,
   highlight,
+  canRename,
 }: {
   org: string;
   project: Project;
   highlight: string;
+  canRename: boolean;
 }) {
   const { api } = useSession();
   const qc = useQueryClient();
+  const rename = useMutation({
+    mutationFn: (name: string) => api.renameProject(org, project.slug, name),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["projects", org] }),
+    onError: (err) => window.alert(err instanceof Error ? err.message : String(err)),
+  });
+  const promptRename = () => {
+    const next = window.prompt(`Display name for ${project.slug} (its slug stays ${project.slug}):`, project.name)?.trim();
+    if (!next || next === project.name) return;
+    rename.mutate(next);
+  };
   const envs = useQuery({
     queryKey: ["environments", org, project.slug],
     queryFn: () => api.listEnvironments(org, project.slug),
@@ -276,6 +291,9 @@ function ProjectCard({
               "data-testid": "menu-add-environment",
               onSelect: () => setAddingEnv(true),
             },
+            ...(canRename
+              ? [{ label: "Rename", "data-testid": "menu-rename-project", onSelect: promptRename }]
+              : []),
           ]}
         >
           <MoreHorizontal size={16} />

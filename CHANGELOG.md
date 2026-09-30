@@ -5,6 +5,17 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.13.0)
+
+### Projects
+
+- A project's display name can now be changed: `varlatch project rename
+  <slug> "<new name>"`, **Rename** in the project's menu on the dashboard, or
+  `PATCH /v1/organizations/{org}/projects/{project}` (capability
+  `projects.rename`). It needs `project.manage`. The slug, which the CLI,
+  URLs, contracts and grants use, never changes. The audit event
+  `project.renamed` records the previous and the new name.
+
 ## 0.12.0 (2026-09-29)
 
 ### Type generation

@@ -118,7 +118,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename a project's display name (capability projects.rename). The slug, which the CLI, URLs, contracts and grants use, does not change. The audit event project.renamed records the previous and the new name. Requires project.manage; existence-hiding. */
+        patch: operations["renameProject"];
         trace?: never;
     };
     "/organizations/{org}/projects/{project}/environments": {
@@ -2093,6 +2094,38 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Project */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed project */
             200: {
                 headers: {
                     [name: string]: unknown;

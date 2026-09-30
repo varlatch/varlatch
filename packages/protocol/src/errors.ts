@@ -65,6 +65,7 @@ export const CAPABILITIES = [
   "retrieval.preflight",
   "capabilities.targets",
   "contracts.revision-by-id",
+  "projects.rename",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
