@@ -5,6 +5,60 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.14.0)
+
+### Coding agents
+
+- **Assisted mode** for a coding agent driving the CLI with your credential
+  (Claude Code, Codex, Cursor, and others). Turn it on with `varlatch
+  --assisted <command>` in every command, or `VARLATCH_ASSISTED=1`. A coding
+  agent's own shell marker (`CLAUDECODE`, `CODEX_THREAD_ID`, `CURSOR_AGENT`,
+  `COPILOT_CLI`, `COPILOT_AGENT`, `GEMINI_CLI`, `OPENCODE`, `AGENT`,
+  `AI_AGENT`) turns it on as a backstop; `VARLATCH_ASSISTED=0` turns marker
+  detection off but never overrides `--assisted`. It changes the CLI's
+  behaviour only, never authorization. See
+  [assisted mode](docs/reference/assisted-mode.md).
+- In assisted mode, `varlatch run` masks Secrets in the command's output by
+  default, on a terminal too (the command then writes to pipes). The filter
+  also holds inherited values under names Varlatch knows as Secrets. A
+  Secret shorter than 8 bytes, which cannot be masked, stops the run with
+  status 78 before the command starts, naming the item;
+  `--allow-unmasked <NAME>` is the human's override, and `--no-redact`
+  turns masking off for one run.
+- In assisted mode, `values set` and `values rotate` refuse a Secret's value
+  on the command line, storing nothing, and never prompt.
+- **Behaviour change for agent sessions:** a `varlatch run` started by a
+  coding agent that sets one of those markers now masks Secrets in its
+  output, and may stop with status 78 on a Secret shorter than 8 bytes. Set
+  `VARLATCH_ASSISTED=0` to keep the previous behaviour in such a shell.
+
+### Values
+
+- `values set` and `values rotate` take the value from `--stdin`,
+  `--from-file <path>`, or `--generate hex|base64|base64url:<bytes>` or
+  `alnum:<characters>` (from the system's secure random source, never
+  shown), or, with no value in a terminal, from a hidden prompt, where
+  Backspace removes a whole character and arrow keys are ignored. The value
+  then never appears on a command line.
+- New `varlatch import <file>` stores a dotenv file's values without
+  printing them: names, counts, inferred types, and sensitivity only.
+  `--dry-run` shows the plan (and lists names even outside a repository),
+  `--contract` adds the file's new items to a Contract revision as Secrets
+  unless `--plain <NAME>`, and `--delete-source` deletes the file once every
+  value is stored. A file that is not valid UTF-8 is refused before anything
+  is stored or deleted. See [importing](docs/reference/import.md).
+
+### Agent-safe runs
+
+- The Agent gets its own empty configuration directory
+  (`VARLATCH_CONFIG_DIR`, removed when the run ends) and the run's
+  identifier (`VARLATCH_AGENT_RUN`). A `varlatch` command the Agent starts
+  never reads or writes the operator's credential store: before, a nested
+  `varlatch run -- printenv <SECRET>` found the operator's stored credential
+  and printed the Secret. A nested `varlatch run` now starts its command
+  with the run's environment, Placeholders included, and discloses nothing;
+  other commands use the `--agent-metadata` credential or stop.
+
 ## 0.13.0 (2026-09-30)
 
 ### Projects

@@ -86,7 +86,8 @@ async function workspace(token) {
   const configDir = mkdtempSync(join(tmpdir(), "strict-e2e-cfg-"));
   const cli = (args, extraEnv = {}) =>
     new Promise((resolve) => {
-      const env = { ...process.env, VARLATCH_CONFIG_DIR: configDir, ...extraEnv };
+      // VARLATCH_ASSISTED=0: a coding agent's marker in the host shell must not switch on assisted mode (ADR-0043).
+      const env = { ...process.env, VARLATCH_ASSISTED: "0", VARLATCH_CONFIG_DIR: configDir, ...extraEnv };
       delete env.VARLATCH_TOKEN;
       const child = spawn("node", [cliPath, ...args], { cwd: repoDir, env });
       let out = "";

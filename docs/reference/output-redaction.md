@@ -20,7 +20,9 @@ in a strict run, a file the command reads, or anything the command fetches
 itself.
 
 A run without `--redact` is unchanged: the command writes directly to your
-terminal, files, or pipes, and nothing is masked.
+terminal, files, or pipes, and nothing is masked. In
+[assisted mode](assisted-mode.md), when a coding agent drives the CLI,
+redaction is the default; see [In assisted mode](#in-assisted-mode).
 
 ## What is masked
 
@@ -109,6 +111,22 @@ and exits with status 1.
   never fetches Secrets just to build a filter. The Agent's protections are
   Placeholders, substitution targets, and response scrubbing; see
   [Agent-safe runs](agent-safe-runs.md).
+
+## In assisted mode
+
+In [assisted mode](assisted-mode.md) (`varlatch --assisted`, or a coding
+agent's marker), every `varlatch run` redacts without `--redact`, with these
+differences:
+
+- **Inherited Secrets are masked too:** the value of every name the command
+  inherits from your shell that Varlatch knows to be a Secret, stored in the
+  environment or marked sensitive in the active Contract.
+- **A Secret shorter than 8 bytes stops the run** with status 78 before the
+  command starts, naming the item, unless `--allow-unmasked <NAME>` allows
+  it through unmasked.
+- **A terminal is not refused:** the command writes to pipes instead.
+- **`--no-redact`** turns masking off for one run, with a warning.
+- Silent when there is nothing to mask.
 
 ## Limits
 

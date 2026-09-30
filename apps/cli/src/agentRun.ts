@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { maintenanceNotice } from "./maintenance.js";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
-import type { ResolvedContext } from "@varlatch/context";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AGENT_RUN_ENV, type ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { canonicalTargets, type EffectiveConfiguration } from "@varlatch/protocol";
 import { generatePlaceholder, sameTargets, startBroker, type BrokerEvent } from "./broker.js";
@@ -26,6 +28,37 @@ import {
  */
 
 export const BROKER_CREDENTIAL_ENV = "VARLATCH_BROKER_CREDENTIAL";
+
+/**
+ * What isolates an Agent Run from the operator's credential store (ADR-0043
+ * Decision 5): a fresh, empty configuration directory of its own, and the
+ * run's identifier. A CLI started with VARLATCH_AGENT_RUN set never reads
+ * the default store, so a `varlatch` command the Agent starts cannot fall
+ * back to the operator's credential by accident. Same-OS-user access stays
+ * out of scope (ADR-0022 Decision 16).
+ */
+export interface AgentIsolation {
+  VARLATCH_CONFIG_DIR: string;
+  [AGENT_RUN_ENV]: string;
+}
+
+/**
+ * Run `start` with a per-run configuration directory, created private
+ * (mode 0700) and removed when `start` settles, whatever its outcome.
+ */
+export async function withAgentIsolation<T>(runId: string, start: (isolation: AgentIsolation) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-agent-run-"));
+  try {
+    return await start({ VARLATCH_CONFIG_DIR: dir, [AGENT_RUN_ENV]: runId });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Start the Agent with its environment plus the run's isolation. */
+function startAgent(runId: string, command: string, commandArgs: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  return withAgentIsolation(runId, (isolation) => runChild(command, commandArgs, { ...env, ...isolation }));
+}
 
 export interface AgentRunOptions {
   agent: string;
@@ -244,7 +277,7 @@ export async function runAgentSafe(
     delete env.http_proxy;
     delete env.https_proxy;
     try {
-      return await runChild(command, commandArgs, env);
+      return await startAgent(runId, command, commandArgs, env);
     } finally {
       await minted?.revoke();
     }
@@ -357,7 +390,7 @@ async function runMediated(run: {
   );
 
   try {
-    return await runChild(run.command, run.commandArgs, run.childEnv(placeholdersByItem, broker.proxyUrl, minted?.credential));
+    return await startAgent(runId, run.command, run.commandArgs, run.childEnv(placeholdersByItem, broker.proxyUrl, minted?.credential));
   } finally {
     await broker.close();
     diagnostics.summarize();
@@ -554,7 +587,7 @@ export async function runAgentSafeStrict(
       if (preliminary.violations.length > 0) return refuse(preliminary.violations);
       const minted = mint ? await mint() : undefined;
       try {
-        return await runChild(command, commandArgs, agentEnvFrom(preliminary.env, new Map(), "", minted?.credential));
+        return await startAgent(runId, command, commandArgs, agentEnvFrom(preliminary.env, new Map(), "", minted?.credential));
       } finally {
         await minted?.revoke();
       }
