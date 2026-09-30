@@ -134,6 +134,8 @@ jobs:
           # Loads the backup + S3 modules; fails on argument validation.
           set +e; output=$(node apps/cli/dist/varlatch.cjs admin backup verify 2>&1); set -e
           grep -q -- "--bek-file" <<< "$output"
+          # The MCP server ships in the same bundle (ADR-0043 Decision 9).
+          node infra/release/smoke-mcp.mjs apps/cli/dist/varlatch.cjs
 
       - name: Typecheck
         run: pnpm typecheck
@@ -238,6 +240,8 @@ jobs:
       - name: Image smoke — shipped operator CLI (host backups extract it)
         run: |
           docker run --rm --entrypoint node varlatchd:ci /opt/varlatch/varlatch.cjs --version
+          # The image's copy carries the MCP server too (ADR-0043 Decision 9).
+          docker run --rm --entrypoint node -v "$PWD/infra/release/smoke-mcp.mjs:/tmp/smoke-mcp.mjs:ro" varlatchd:ci /tmp/smoke-mcp.mjs /opt/varlatch/varlatch.cjs
           for f in varlatch.cjs host-backup/run.sh host-backup/verify-remote.sh; do
             test "$(docker run --rm --entrypoint stat varlatchd:ci -c '%U %a' /opt/varlatch/$f)" = "root 644"
           done

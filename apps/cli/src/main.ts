@@ -907,6 +907,24 @@ async function main(): Promise<void> {
         return;
       }
 
+      case "mcp": {
+        // ADR-0043 Decision 9: the MCP server ships inside the CLI, with the
+        // same start path as the old varlatch-mcp entry point.
+        const { runMcpServer } = await import("@varlatch/mcp-server/run");
+        const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+        const code = await runMcpServer(args, {
+          env: process.env,
+          cwd: process.cwd(),
+          version: EMBEDDED_RELEASE.version,
+          name: "varlatch mcp",
+          err: (line) => console.error(line),
+          out: (text) => process.stdout.write(text),
+        });
+        // Null: serving over stdio until the host closes the stream.
+        if (code !== null) process.exit(code);
+        return;
+      }
+
       case "request": {
         // ADR-0043 Decision 6: the Agent's HTTPS path through the Broker.
         const { REQUEST_USAGE, RequestUsageError, brokerFromEnv, parseRequestArgs, readDataSpec, sendThroughBroker } =

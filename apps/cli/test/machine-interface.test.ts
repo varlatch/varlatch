@@ -180,7 +180,7 @@ describe("help", () => {
   });
 
   it("every command has help entries", () => {
-    const commands = ["login", "logout", "status", "init", "context", "env", "run", "validate", "values", "import", "contract", "types", "sync", "admin", "setup", "adopt", "doctor", "scan", "invite", "tailnet", "audit", "org", "project", "env-create", "env-delete", "identity", "credential", "self-update", "upgrade"];
+    const commands = ["login", "logout", "status", "init", "context", "env", "run", "validate", "values", "import", "contract", "types", "sync", "admin", "setup", "adopt", "doctor", "scan", "invite", "tailnet", "audit", "org", "project", "env-create", "env-delete", "identity", "credential", "self-update", "upgrade", "request", "mcp"];
     for (const command of commands) expect(commandHelp(command), command).not.toBeNull();
     expect(commandHelp("nosuch")).toBeNull();
   });

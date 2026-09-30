@@ -16,8 +16,10 @@
  *                                         an asset so `varlatch upgrade` can
  *                                         refresh the ones an installation has
  *   varlatch-cli-<version>.cjs            single-file operator CLI (backup,
- *                                         upgrade); needs only Node 22+.
- *                                         Requires `pnpm build` beforehand.
+ *                                         upgrade, and the MCP server as
+ *                                         `varlatch mcp`, smoke-tested here);
+ *                                         needs only Node 22+. Requires
+ *                                         `pnpm build` beforehand.
  *   THIRD-PARTY-NOTICES.md                third-party components and licenses
  *                                         (ADR-0037 D1); the bundle also
  *                                         carries it, LICENSE and LICENSES/
@@ -181,6 +183,13 @@ const cliBundle = join(repoRoot, "apps/cli/dist/varlatch.cjs");
 if (!existsSync(cliBundle)) fail("apps/cli/dist/varlatch.cjs missing — run pnpm build first");
 const cliVersion = execFileSync(process.execPath, [cliBundle, "--version"], { encoding: "utf8" }).trim();
 if (!cliVersion.startsWith(`varlatch ${version} `)) fail(`CLI bundle reports "${cliVersion}", expected ${version}`);
+// The asset carries the MCP server (ADR-0043 Decision 9): it starts, lists
+// its tools, has no disclosure tool, and refuses --allow-disclose.
+try {
+  execFileSync(process.execPath, [join(repoRoot, "infra/release/smoke-mcp.mjs"), cliBundle], { stdio: "inherit" });
+} catch {
+  fail("the CLI bundle's varlatch mcp failed its smoke test (above)");
+}
 const cliAsset = `varlatch-cli-${version}.cjs`;
 cpSync(cliBundle, join(outDir, cliAsset));
 // The release workflow writes into the repository root, where the file

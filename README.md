@@ -35,7 +35,8 @@ each release added.
   to destinations you allow, at the headers or fields you name, and replaces
   a secret the destination echoes back in its response. Every use is
   authorized and audited. An MCP
-  server, read-only by default, lets agents inspect configuration metadata.
+  server, `varlatch mcp`, lets MCP hosts inspect configuration metadata; it
+  never returns or writes a Secret's value.
 - **A complete audit log.** Every security-relevant action is recorded
   synchronously in an append-only log, exportable as NDJSON and deliverable to
   signed webhooks.
@@ -164,6 +165,8 @@ placeholder values only. State lives in `.dev/`.
   file into Varlatch with `varlatch import`
 - [`docs/reference/scripting.md`](docs/reference/scripting.md): JSON output,
   exit statuses, and help for scripts, CI, and agents
+- [`docs/reference/mcp.md`](docs/reference/mcp.md): the MCP server,
+  `varlatch mcp`
 - [`docs/reference/type-generation.md`](docs/reference/type-generation.md):
   typed configuration for TypeScript and Python with `varlatch types`
 
