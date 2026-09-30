@@ -162,6 +162,8 @@ placeholder values only. State lives in `.dev/`.
   coding agent driving the CLI with your credential, without reading Secrets
 - [`docs/reference/import.md`](docs/reference/import.md): moving a `.env`
   file into Varlatch with `varlatch import`
+- [`docs/reference/scripting.md`](docs/reference/scripting.md): JSON output,
+  exit statuses, and help for scripts, CI, and agents
 - [`docs/reference/type-generation.md`](docs/reference/type-generation.md):
   typed configuration for TypeScript and Python with `varlatch types`
 

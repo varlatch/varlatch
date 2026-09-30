@@ -27,6 +27,8 @@ import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
 import { STRICT_EXIT } from "./strictRun.js";
+import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
+import { USAGE, commandHelp } from "./usage.js";
 import {
   SecretInputError,
   describeGenerated,
@@ -39,7 +41,7 @@ import {
   valueFromBytes,
   type GenerateSpec,
 } from "./secretInput.js";
-import { validationOutcome } from "./validation.js";
+import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
 import {
@@ -60,9 +62,26 @@ import {
  * command's purpose is disclosure.
  */
 
-function fail(message: string): never {
+/**
+ * `varlatch scan` documents 1 for every failure, finding or not (usage,
+ * authentication, permission, server), and that meaning is frozen
+ * (ADR-0043 Decision 10); every other command distinguishes them.
+ */
+let everyFailureIsOne = false;
+
+function fail(message: string, code: number = EXIT.failure): never {
   console.error(message);
-  process.exit(1);
+  process.exit(everyFailureIsOne ? EXIT.failure : code);
+}
+
+/** The command line is wrong: exit 64 (ADR-0043 Decision 10). */
+function usageError(message: string): never {
+  fail(message, EXIT.usage);
+}
+
+/** Machine output (ADR-0043 Decision 10): one JSON document on stdout, with its schema version. */
+function printJson(doc: Record<string, unknown>): void {
+  console.log(JSON.stringify({ version: STATUS_SCHEMA_VERSION, ...doc }, null, 2));
 }
 
 function flag(args: string[], name: string): string | undefined {
@@ -102,12 +121,12 @@ function targetFlags(args: string[]): Record<string, string[]> {
   for (const raw of flags(args, "--target")) {
     const eq = raw.indexOf("=");
     const name = eq < 0 ? "" : raw.slice(0, eq);
-    if (!name) fail(`--target expects NAME=kind:location (for example API_KEY=header:authorization), got "${raw}"`);
+    if (!name) usageError(`--target expects NAME=kind:location (for example API_KEY=header:authorization), got "${raw}"`);
     try {
       (targets[name] ??= []).push(formatTarget(parseTarget(raw.slice(eq + 1))));
     } catch (err) {
       if (!(err instanceof TargetError)) throw err;
-      fail(`--target ${raw}: ${err.message}`);
+      usageError(`--target ${raw}: ${err.message}`);
     }
   }
   return targets;
@@ -131,7 +150,26 @@ function warnIfExpiring(server: string): void {
   if (warning) console.error(warning);
 }
 
+/**
+ * The API client for `ctx`, connected on its first request: a command's own
+ * checks of its command line come first, so a malformed command exits 64
+ * whether or not a credential is stored (ADR-0043 Decision 10). The
+ * credential is looked up, and a missing one refused (77), when the command
+ * first talks to the server, always before any child process starts.
+ */
 function client(ctx: ResolvedContext): VarlatchClient {
+  let connected: VarlatchClient | null = null;
+  const connect = (): VarlatchClient => (connected ??= connectClient(ctx));
+  return new Proxy({} as VarlatchClient, {
+    get(_target, property) {
+      const api = connect();
+      const member = Reflect.get(api, property, api) as unknown;
+      return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(api) : member;
+    },
+  });
+}
+
+function connectClient(ctx: ResolvedContext): VarlatchClient {
   const token = loadToken(ctx.server);
   const agentRun = agentRunOf();
   if (!token && agentRun) {
@@ -140,11 +178,13 @@ function client(ctx: ResolvedContext): VarlatchClient {
       `Not authenticated to ${ctx.server}: this command runs inside agent-safe run ${agentRun}, which gives the ` +
         "Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, " +
         "the operator relaunches the run with --agent-metadata.",
+      EXIT.denied,
     );
   }
   if (!token) {
     fail(
       `Not authenticated to ${ctx.server}.\nRun: varlatch login --server ${ctx.server} --token <credential>`,
+      EXIT.denied,
     );
   }
   warnIfExpiring(ctx.server);
@@ -272,7 +312,7 @@ async function obtainValue(
     switch (source.kind) {
       case "argument":
         if (mode.on && (await sensitive())) {
-          fail(
+          usageError(
             `varlatch: ${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line. ` +
               `Nothing was stored.\n${safeForms}`,
           );
@@ -280,7 +320,7 @@ async function obtainValue(
         return { value: source.value };
       case "stdin":
         if (process.stdin.isTTY) {
-          fail(`varlatch: --stdin reads a pipe or a file, and standard input is a terminal. For a hidden prompt, leave the value out: varlatch values ${sub} ${item}`);
+          usageError(`varlatch: --stdin reads a pipe or a file, and standard input is a terminal. For a hidden prompt, leave the value out: varlatch values ${sub} ${item}`);
         }
         return { value: valueFromBytes(await readAll(process.stdin), "standard input") };
       case "file":
@@ -288,9 +328,9 @@ async function obtainValue(
       case "generate":
         return { value: generateValue(source.spec), generated: source.spec };
       case "prompt":
-        if (mode.on) fail(`varlatch: no value given for ${item}, and assisted mode never prompts. Nothing was stored.\n${safeForms}`);
+        if (mode.on) usageError(`varlatch: no value given for ${item}, and assisted mode never prompts. Nothing was stored.\n${safeForms}`);
         if (!process.stdin.isTTY) {
-          fail(
+          usageError(
             `varlatch: no value given for ${item}. Pass --stdin, --from-file <path>, or --generate <spec>, ` +
               "or run the command in a terminal for a hidden prompt.",
           );
@@ -298,7 +338,7 @@ async function obtainValue(
         return { value: await promptHidden(`Value for ${item} (input hidden): `) };
     }
   } catch (err) {
-    if (err instanceof SecretInputError) fail(`varlatch: ${err.message}`);
+    if (err instanceof SecretInputError) fail(`varlatch: ${err.message}`, err.usage ? EXIT.usage : EXIT.failure);
     throw err;
   }
 }
@@ -309,10 +349,28 @@ async function main(): Promise<void> {
   const taken = takeAssistedOption(process.argv.slice(2));
   const [command, ...args] = taken.argv;
   const assisted = resolveAssisted(taken.given, process.env);
+  everyFailureIsOne = command === "scan";
+  // Help (ADR-0043 Decision 10): on stdout, status 0. Only the CLI's own
+  // arguments count: a --help after `--` belongs to the command run starts.
+  if (command === "--help" || command === "-h" || command === "help") {
+    const topic = command === "help" ? args[0] : undefined;
+    const help = topic ? commandHelp(topic) : USAGE;
+    if (help === null) usageError(`varlatch: no help for ${topic}: not a command\n\n${USAGE}`);
+    console.log(help);
+    return;
+  }
+  const own = args.includes("--") ? args.slice(0, args.indexOf("--")) : args;
+  if (command !== undefined && (own.includes("--help") || own.includes("-h"))) {
+    const help = commandHelp(command);
+    if (help !== null) {
+      console.log(help);
+      return;
+    }
+  }
   try {
     switch (command) {
       case "login": {
-        const server = flag(args, "--server") ?? fail("Usage: varlatch login --server <url> [--token <credential>|--oidc]");
+        const server = flag(args, "--server") ?? usageError("Usage: varlatch login --server <url> [--token <credential>|--oidc]");
         let token = flag(args, "--token");
         // Issuance metadata (ADR-0032): stored so expiry is knowable offline.
         // Explicit --token has none — its entry stays metadata-free.
@@ -321,7 +379,7 @@ async function main(): Promise<void> {
           // CI federation (capability auth.oidc): exchange the platform's
           // OIDC ID token for a short-lived credential; nothing stored in
           // the pipeline's secrets at all.
-          const organization = flag(args, "--org") ?? fail("OIDC login requires --org <organization>");
+          const organization = flag(args, "--org") ?? usageError("OIDC login requires --org <organization>");
           const idToken = await obtainOidcIdToken({
             explicitToken: flag(args, "--oidc-token"),
             audience: flag(args, "--audience"),
@@ -382,8 +440,8 @@ async function main(): Promise<void> {
       case "init": {
         const root = findRepoRoot(process.cwd());
         if (root) fail(`${REPO_CONFIG_FILE} already exists at ${root}`);
-        const org = flag(args, "--org") ?? fail("Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>]");
-        const project = flag(args, "--project") ?? fail("Provide --project");
+        const org = flag(args, "--org") ?? usageError("Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>]");
+        const project = flag(args, "--project") ?? usageError("Provide --project");
         const server = flag(args, "--server");
         const defaultEnv = flag(args, "--default-environment") ?? "development";
         const lines = [
@@ -411,7 +469,7 @@ async function main(): Promise<void> {
             flag(args, "--server") ??
             (stored.length === 1
               ? (stored[0] as (typeof stored)[number]).server
-              : fail(
+              : usageError(
                   `Multiple servers stored (${stored.map((s) => s.server).join(", ")}). Pass --server <url> or --all.`,
                 ));
           const key = server.replace(/\/+$/, "");
@@ -483,7 +541,7 @@ async function main(): Promise<void> {
       case "env": {
         const sub = args[0];
         if (sub === "use") {
-          const name = args[1] ?? fail("Usage: varlatch env use <environment>");
+          const name = args[1] ?? usageError("Usage: varlatch env use <environment>");
           const root = findRepoRoot(process.cwd()) ?? fail(`No ${REPO_CONFIG_FILE} found`);
           // Tier cache (ADR-0032): best-effort at selection time; offline or
           // unauthenticated selection still succeeds, just without a tier.
@@ -537,14 +595,14 @@ async function main(): Promise<void> {
           }
           return;
         }
-        fail("Usage: varlatch env <use|list>");
+        usageError("Usage: varlatch env <use|list>");
         return;
       }
 
       case "run": {
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) {
-          fail(
+          usageError(
             "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
           );
         }
@@ -557,7 +615,7 @@ async function main(): Promise<void> {
           // Placeholders included.
           const unavailable = ["--agent-safe", "--strict", "--export-context"].filter((f) => has(preArgs, f));
           if (unavailable.length > 0) {
-            fail(
+            usageError(
               `varlatch: this command runs inside agent-safe run ${agentRun}, where Secrets are Placeholders and are never ` +
                 `disclosed, so ${unavailable.join(" and ")} cannot run here. Nothing was started.`,
             );
@@ -573,11 +631,11 @@ async function main(): Promise<void> {
         const noRedact = has(preArgs, "--no-redact");
         const allowUnmasked = flags(preArgs, "--allow-unmasked");
         if (agentSafe && (noRedact || allowUnmasked.length > 0)) {
-          fail("--no-redact and --allow-unmasked do not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets.");
+          usageError("--no-redact and --allow-unmasked do not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets.");
         }
-        if (noRedact && has(preArgs, "--redact")) fail("--redact and --no-redact cannot be combined.");
+        if (noRedact && has(preArgs, "--redact")) usageError("--redact and --no-redact cannot be combined.");
         if (allowUnmasked.length > 0 && !assisted.on) {
-          fail("--allow-unmasked applies only in assisted mode (--assisted), where a Secret too short to mask stops the run.");
+          usageError("--allow-unmasked applies only in assisted mode (--assisted), where a Secret too short to mask stops the run.");
         }
         // Assisted mode (ADR-0043 Decision 4): redaction is the default, even
         // when the output is a terminal (the command then gets pipes).
@@ -586,10 +644,10 @@ async function main(): Promise<void> {
           console.error("varlatch: --no-redact: this run's output is not masked; a Secret the command prints reaches whatever captures its output.");
         }
         if (!agentSafe && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
-          fail("--target and --omit apply only to --agent-safe runs.");
+          usageError("--target and --omit apply only to --agent-safe runs.");
         }
         if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
-          fail("--export-context applies only to default runs; a --strict run always gives the command its run context.");
+          usageError("--export-context applies only to default runs; a --strict run always gives the command its run context.");
         }
         // Output redaction (ADR-0038 Decision 10): refused before anything is fetched.
         const redact = has(preArgs, "--redact");
@@ -599,7 +657,7 @@ async function main(): Promise<void> {
             stdoutIsTTY: !assisted.on && Boolean(process.stdout.isTTY),
             stderrIsTTY: !assisted.on && Boolean(process.stderr.isTTY),
           });
-          if (refusal) fail(`varlatch: ${refusal}. Nothing was started.`);
+          if (refusal) usageError(`varlatch: ${refusal}. Nothing was started.`);
         }
         const log = (line: string) => console.error(line);
         const ctx = context(preArgs);
@@ -608,7 +666,7 @@ async function main(): Promise<void> {
         if (has(preArgs, "--strict") && has(preArgs, "--agent-safe")) {
           const { runAgentSafeStrict } = await import("./agentRun.js");
           const { UsageError } = await import("./strictRun.js");
-          const agent = flag(preArgs, "--agent") ?? fail("Agent-safe runs need --agent <agent-identity name or id>");
+          const agent = flag(preArgs, "--agent") ?? usageError("Agent-safe runs need --agent <agent-identity name or id>");
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
           try {
             const code = await runAgentSafeStrict(
@@ -630,8 +688,9 @@ async function main(): Promise<void> {
             );
             process.exit(code);
           } catch (err) {
-            if (err instanceof UsageError) fail(`varlatch: ${err.message}. Nothing was started.`);
-            if (err instanceof VarlatchApiError) throw err;
+            if (err instanceof UsageError) usageError(`varlatch: ${err.message}. Nothing was started.`);
+            // Server errors and an unreachable server get their own statuses (77, 69) from the handler below.
+            if (err instanceof VarlatchApiError || networkFailure(err)) throw err;
             fail(err instanceof Error ? err.message : String(err));
           }
         }
@@ -655,16 +714,16 @@ async function main(): Promise<void> {
             });
             process.exit(code);
           } catch (err) {
-            if (err instanceof UsageError) fail(`varlatch: ${err.message}. Nothing was started.`);
+            if (err instanceof UsageError) usageError(`varlatch: ${err.message}. Nothing was started.`);
             throw err;
           }
         }
-        if (has(preArgs, "--allow-inherited")) fail("--allow-inherited applies only to --strict runs.");
+        if (has(preArgs, "--allow-inherited")) usageError("--allow-inherited applies only to --strict runs.");
 
         if (has(preArgs, "--agent-safe")) {
           // ADR-0022: placeholders + local broker; the child gets no bearer.
           const { runAgentSafe } = await import("./agentRun.js");
-          const agent = flag(preArgs, "--agent") ?? fail("Agent-safe runs need --agent <agent-identity name or id>");
+          const agent = flag(preArgs, "--agent") ?? usageError("Agent-safe runs need --agent <agent-identity name or id>");
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
           try {
             const code = await runAgentSafe(
@@ -685,9 +744,10 @@ async function main(): Promise<void> {
             );
             process.exit(code);
           } catch (err) {
-            if (err instanceof VarlatchApiError) throw err;
+            // Server errors and an unreachable server get their own statuses (77, 69) from the handler below.
+            if (err instanceof VarlatchApiError || networkFailure(err)) throw err;
             const { UsageError } = await import("./strictRun.js");
-            if (err instanceof UsageError) fail(`varlatch: ${err.message}. Nothing was started.`);
+            if (err instanceof UsageError) usageError(`varlatch: ${err.message}. Nothing was started.`);
             fail(err instanceof Error ? err.message : String(err));
           }
         }
@@ -752,6 +812,12 @@ async function main(): Promise<void> {
         const ctx = context(args);
         const report = await client(ctx).validateEnvironment(ctx.organization, ctx.project, ctx.environment);
         const outcome = validationOutcome(ctx.environment, report);
+        if (has(args, "--json")) {
+          // The same exit status as the human form: 0 valid, 1 invalid, 2 incomplete.
+          printJson(validationDocument(ctx.environment, report, outcome.exitCode));
+          if (outcome.exitCode !== 0) process.exit(outcome.exitCode);
+          return;
+        }
         for (const line of outcome.stdout) console.log(line);
         for (const line of outcome.stderr) console.error(line);
         if (outcome.exitCode !== 0) process.exit(outcome.exitCode);
@@ -771,7 +837,10 @@ async function main(): Promise<void> {
           );
         } catch (err) {
           if (err instanceof ScanUsageError || err instanceof ScanSourceError) {
-            fail(`varlatch scan: ${err.message}${err instanceof ScanUsageError && !err.message.startsWith("nothing") ? `\n${SCAN_USAGE}` : ""}`);
+            fail(
+              `varlatch scan: ${err.message}${err instanceof ScanUsageError && !err.message.startsWith("nothing") ? `\n${SCAN_USAGE}` : ""}`,
+              err instanceof ScanUsageError ? EXIT.usage : EXIT.failure,
+            );
           }
           throw err;
         }
@@ -787,7 +856,7 @@ async function main(): Promise<void> {
             sub === "set"
               ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
               : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
-          const item = args[1] && !args[1].startsWith("-") ? args[1] : fail(usage);
+          const item = args[1] && !args[1].startsWith("-") ? args[1] : usageError(usage);
           const obtained = await obtainValue(sub, item, args, assisted, () => sensitiveItem(api, ctx, item));
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
@@ -809,24 +878,32 @@ async function main(): Promise<void> {
         }
         if (sub === "list") {
           const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment);
+          if (has(args, "--json")) {
+            // Names and classification only: this command never fetches values.
+            printJson({
+              environment: ctx.environment,
+              items: (effective.items ?? []).map((i) => ({ name: i.name, sensitive: i.sensitive, source: i.source })),
+            });
+            return;
+          }
           for (const i of effective.items ?? []) {
             console.log(`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
           }
           return;
         }
         if (sub === "delete") {
-          const item = args[1] ?? fail("Usage: varlatch values delete <ITEM>");
+          const item = args[1] ?? usageError("Usage: varlatch values delete <ITEM>");
           await api.deleteValue(ctx.organization, ctx.project, ctx.environment, item);
           console.log(`${item} deleted from ${ctx.environment}.`);
           return;
         }
         if (sub === "rotate-complete") {
-          const item = args[1] ?? fail("Usage: varlatch values rotate-complete <ITEM>");
+          const item = args[1] ?? usageError("Usage: varlatch values rotate-complete <ITEM>");
           await api.completeRotation(ctx.organization, ctx.project, ctx.environment, item);
           console.log(`${item} rotation complete — previous value retired.`);
           return;
         }
-        fail("Usage: varlatch values <set|list|delete|rotate|rotate-complete>");
+        usageError("Usage: varlatch values <set|list|delete|rotate|rotate-complete>");
         return;
       }
 
@@ -834,8 +911,8 @@ async function main(): Promise<void> {
         // ADR-0043 Decision 2: the CLI reads the file itself; values never
         // appear in its output.
         const usage =
-          "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [-e <env>]";
-        const file = args[0] && !args[0].startsWith("-") ? args[0] : fail(usage);
+          "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]";
+        const file = args[0] && !args[0].startsWith("-") ? args[0] : usageError(usage);
         const { runImport, ImportError } = await import("./importCommand.js");
         const dryRun = has(args, "--dry-run");
         let target: Parameters<typeof runImport>[1];
@@ -854,12 +931,13 @@ async function main(): Promise<void> {
               contract: has(args, "--contract"),
               plain: flags(args, "--plain"),
               deleteSource: has(args, "--delete-source"),
+              json: has(args, "--json"),
             },
             target,
             { out: (line) => console.log(line), err: (line) => console.error(line) },
           );
         } catch (err) {
-          if (err instanceof ImportError) fail(`varlatch import: ${err.message}`);
+          if (err instanceof ImportError) fail(`varlatch import: ${err.message}`, err.exitCode);
           throw err;
         }
         return;
@@ -867,11 +945,11 @@ async function main(): Promise<void> {
 
       case "sync": {
         const sub = args[0];
-        if (sub !== "push") fail("Usage: varlatch sync push --platform <github-actions|coolify|convex> [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... ...");
+        if (sub !== "push") usageError("Usage: varlatch sync push --platform <github-actions|coolify|convex> [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... ...");
         const ctx = context(args);
         const api = client(ctx);
-        const platform = flag(args, "--platform") ?? fail("--platform is required (github-actions, coolify, convex)");
-        const base = flag(args, "--base") ?? fail("--base is required (GitHub owner, or a Coolify/Convex https origin)");
+        const platform = flag(args, "--platform") ?? usageError("--platform is required (github-actions, coolify, convex)");
+        const base = flag(args, "--base") ?? usageError("--base is required (GitHub owner, or a Coolify/Convex https origin)");
         const { runSyncPush } = await import("./syncPush.js");
         const code = await runSyncPush(api, ctx, {
           platform,
@@ -917,7 +995,7 @@ async function main(): Promise<void> {
             if (!existsSync(jsonFile)) fail(`No such file: ${jsonFile}`);
             contract = JSON.parse(readFileSync(jsonFile, "utf8")) as unknown;
           } else {
-            fail("Usage: varlatch contract push --schema <.env.schema> | --file <contract.json> [--semantics <version|latest>]");
+            usageError("Usage: varlatch contract push --schema <.env.schema> | --file <contract.json> [--semantics <version|latest>]");
           }
           const semantics = flag(args, "--semantics");
           if (semantics !== undefined) {
@@ -927,7 +1005,7 @@ async function main(): Promise<void> {
             if (!supported) fail("This server does not support Contract Semantics versions; it needs 0.11.0 or later.");
             const version = semantics === "latest" ? Math.max(...supported) : Number(semantics);
             if (!supported.includes(version)) {
-              fail(`--semantics must be latest or one of this server's versions: ${supported.join(", ")}`);
+              usageError(`--semantics must be latest or one of this server's versions: ${supported.join(", ")}`);
             }
             contract = { ...(contract as object), semanticsVersion: version };
           }
@@ -956,13 +1034,24 @@ async function main(): Promise<void> {
             contract,
             ...(provenance ? { provenance } : {}),
           });
+          if (has(args, "--json")) {
+            printJson({
+              revision: {
+                id: revision.id,
+                contentHash: revision.contentHash,
+                active: revision.active,
+                semanticsVersion: revision.semanticsVersion,
+              },
+            });
+            return;
+          }
           console.log(`Revision ${revision.id} (${revision.contentHash})${revision.active ? " [active]" : ""}`);
           console.log(`Contract Semantics version ${revision.semanticsVersion}`);
           if (!revision.active) console.log(`Activate with: varlatch contract activate ${revision.id}`);
           return;
         }
         if (sub === "activate") {
-          const revision = args[1] ?? fail("Usage: varlatch contract activate <revision-id>");
+          const revision = args[1] ?? usageError("Usage: varlatch contract activate <revision-id>");
           await api.activateContractRevision(ctx.organization, ctx.project, revision);
           console.log(`Activated ${revision}.`);
           return;
@@ -972,14 +1061,14 @@ async function main(): Promise<void> {
           console.log(JSON.stringify(active, null, 2));
           return;
         }
-        fail("Usage: varlatch contract <push|activate|show>");
+        usageError("Usage: varlatch contract <push|activate|show>");
         return;
       }
 
       case "types": {
         const usage = "Usage: varlatch types --out <file.ts|file.py> [--revision <id>] [--check]";
-        const out = flag(args, "--out") ?? fail(usage);
-        if (out.startsWith("-")) fail(usage);
+        const out = flag(args, "--out") ?? usageError(usage);
+        if (out.startsWith("-")) usageError(usage);
         // The output is the same for every Environment, so none needs to be selected.
         const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
         const server = flag(args, "--server");
@@ -1003,7 +1092,7 @@ async function main(): Promise<void> {
       }
 
       case "invite": {
-        const name = args[0] ?? fail("Usage: varlatch invite <name> [--role member|admin]");
+        const name = args[0] ?? usageError("Usage: varlatch invite <name> [--role member|admin]");
         const role = (flag(args, "--role") ?? "member") as "member" | "admin";
         const ctx = context(args);
         const invite = await client(ctx).createInvitation(ctx.organization, { name, role });
@@ -1021,12 +1110,12 @@ async function main(): Promise<void> {
           // The flagship convenience (ADR-0014 §9): compiles to an ordinary
           // typed Requirement — sugar, never a second authorization system.
           const tier = (flag(args, "--tier") ?? "production") as "development" | "staging" | "production";
-          const tailnet = flag(args, "--tailnet") ?? fail("Provide --tailnet <your-tailnet.ts.net>");
+          const tailnet = flag(args, "--tailnet") ?? usageError("Provide --tailnet <your-tailnet.ts.net>");
           const tags = flag(args, "--tags")?.split(",").filter(Boolean);
           const nodes = flag(args, "--nodes")?.split(",").filter(Boolean);
           const users = flag(args, "--users")?.split(",").filter(Boolean);
           if (!tags?.length && !nodes?.length && !users?.length) {
-            fail("Name at least one of --tags, --nodes, or --users");
+            usageError("Name at least one of --tags, --nodes, or --users");
           }
           const created = await api.createTailnetRequirement(ctx.organization, {
             target: { kind: "tier", tier },
@@ -1045,6 +1134,10 @@ async function main(): Promise<void> {
         }
         if (sub === "requirements") {
           const page = await api.listRequirements(ctx.organization);
+          if (has(args, "--json")) {
+            printJson({ organization: ctx.organization, requirements: page.items });
+            return;
+          }
           for (const r of page.items) {
             console.log(`${r.id}  ${JSON.stringify(r.target)}  ${JSON.stringify(r.selector)}`);
           }
@@ -1052,12 +1145,12 @@ async function main(): Promise<void> {
           return;
         }
         if (sub === "remove") {
-          const id = args[1] ?? fail("Usage: varlatch tailnet remove <requirement-id>");
+          const id = args[1] ?? usageError("Usage: varlatch tailnet remove <requirement-id>");
           await api.deleteRequirement(ctx.organization, id);
           console.log(`Removed ${id}. Constrained operations are unconstrained again.`);
           return;
         }
-        fail("Usage: varlatch tailnet <require|requirements|remove>");
+        usageError("Usage: varlatch tailnet <require|requirements|remove>");
         return;
       }
 
@@ -1067,6 +1160,10 @@ async function main(): Promise<void> {
         const api = client(ctx);
         if (sub === "list") {
           const page = await api.listAuditEvents(ctx.organization, { limit: 50 });
+          if (has(args, "--json")) {
+            printJson({ organization: ctx.organization, events: page.items });
+            return;
+          }
           for (const e of page.items) {
             console.log(
               `${e.occurredAt}  ${e.decision}  ${e.eventType}  actor=${e.actorIdentityId ?? "-"}`,
@@ -1078,42 +1175,48 @@ async function main(): Promise<void> {
           process.stdout.write(await api.exportAuditEventsNdjson(ctx.organization));
           return;
         }
-        fail("Usage: varlatch audit <list|export>");
+        usageError("Usage: varlatch audit <list|export>");
         return;
       }
 
       case "org": {
         const sub = args[0];
+        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create>");
+        if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
         const server =
           flag(args, "--server") ?? process.env.VARLATCH_SERVER ??
-          (findRepoRoot(process.cwd()) ? context(args).server : fail("Provide --server"));
-        const token = loadToken(server) ?? fail(`Not authenticated to ${server}`);
+          (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));
+        const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
         warnIfExpiring(server);
         const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
         if (sub === "list") {
           const page = await api.listOrganizations();
+          if (has(args, "--json")) {
+            printJson({ organizations: page.items.map((o) => ({ id: o.id, slug: o.slug, name: o.name })) });
+            return;
+          }
           for (const o of page.items) console.log(`${o.slug}  (${o.name})`);
           if (page.items.length === 0) console.log("(none — create one with: varlatch org create <slug> <name>)");
           return;
         }
         if (sub === "create") {
-          const slug = args[1] ?? fail("Usage: varlatch org create <slug> [name]");
+          const slug = args[1] ?? usageError("Usage: varlatch org create <slug> [name]");
           const name = positional(args, 2) ?? slug;
           const org = await api.createOrganization({ slug, name });
           console.log(`Organization ${org.slug} created (${org.id}). You are its admin.`);
           return;
         }
-        fail("Usage: varlatch org <list|create>");
+        usageError("Usage: varlatch org <list|create>");
         return;
       }
 
       case "project": {
         const sub = args[0];
         if (sub === "create") {
-          const slug = args[1] ?? fail("Usage: varlatch project create <slug> [name] [--managed]");
-          const server = flag(args, "--server") ?? process.env.VARLATCH_SERVER ?? fail("Provide --server");
-          const org = flag(args, "--org") ?? fail("Provide --org <slug>");
-          const token = loadToken(server) ?? fail(`Not authenticated to ${server}`);
+          const slug = args[1] ?? usageError("Usage: varlatch project create <slug> [name] [--managed]");
+          const server = flag(args, "--server") ?? process.env.VARLATCH_SERVER ?? usageError("Provide --server");
+          const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
+          const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
           warnIfExpiring(server);
           const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
           const project = await api.createProject(org, {
@@ -1128,23 +1231,30 @@ async function main(): Promise<void> {
         if (sub === "list") {
           const ctx = context(args);
           const page = await client(ctx).listProjects(ctx.organization);
+          if (has(args, "--json")) {
+            printJson({
+              organization: ctx.organization,
+              projects: page.items.map((p) => ({ slug: p.slug, name: p.name, contractAuthority: p.contractAuthority })),
+            });
+            return;
+          }
           for (const p of page.items) console.log(`${p.slug}  (${p.name}, ${p.contractAuthority})`);
           return;
         }
         if (sub === "rename") {
-          const slug = args[1] ?? fail("Usage: varlatch project rename <slug> <new-name>");
-          const name = positional(args, 2) ?? fail("Provide the new name");
+          const slug = args[1] ?? usageError("Usage: varlatch project rename <slug> <new-name>");
+          const name = positional(args, 2) ?? usageError("Provide the new name");
           const ctx = context(args);
           const renamed = await client(ctx).renameProject(ctx.organization, slug, name);
           console.log(`Project ${renamed.slug} renamed to ${renamed.name}. Its slug, grants and contracts are unaffected; the rename is audited.`);
           return;
         }
-        fail("Usage: varlatch project <create|list|rename>");
+        usageError("Usage: varlatch project <create|list|rename>");
         return;
       }
 
       case "env-create": {
-        const name = args[0] ?? fail("Usage: varlatch env-create <name> --tier development|staging|production [--parent <env>] [--kind personal|preview]");
+        const name = args[0] ?? usageError("Usage: varlatch env-create <name> --tier development|staging|production [--parent <env>] [--kind personal|preview]");
         const ctx = context(args);
         const api = client(ctx);
         const parent = flag(args, "--parent");
@@ -1157,7 +1267,7 @@ async function main(): Promise<void> {
           const kind = flag(args, "--kind");
           if (kind) input.kind = kind as "personal" | "preview";
         } else {
-          const tier = flag(args, "--tier") ?? fail("Root environments need --tier development|staging|production");
+          const tier = flag(args, "--tier") ?? usageError("Root environments need --tier development|staging|production");
           input.tier = tier as "development" | "staging" | "production";
         }
         const env = await api.createEnvironment(ctx.organization, ctx.project, input);
@@ -1166,7 +1276,7 @@ async function main(): Promise<void> {
       }
 
       case "env-delete": {
-        const name = args[0] ?? fail("Usage: varlatch env-delete <name> [--confirm <name>]");
+        const name = args[0] ?? usageError("Usage: varlatch env-delete <name> [--confirm <name>]");
         const ctx = context(args);
         const api = client(ctx);
         const envs = await api.listEnvironments(ctx.organization, ctx.project);
@@ -1176,7 +1286,7 @@ async function main(): Promise<void> {
         // ADR-0025: production-tier roots get client-side friction — the
         // deletion must repeat the environment name explicitly.
         if (env.tier === "production" && !env.parentEnvironmentId && flag(args, "--confirm") !== env.name) {
-          fail(`${env.name} is production-tier; re-type the name to confirm: varlatch env-delete ${env.name} --confirm ${env.name}`);
+          usageError(`${env.name} is production-tier; re-type the name to confirm: varlatch env-delete ${env.name} --confirm ${env.name}`);
         }
         await api.deleteEnvironment(ctx.organization, ctx.project, env.name);
         console.log(`Environment ${env.name} deleted (${env.kind}, tier ${env.tier}). The name is free for reuse; grants and mappings never transfer to a successor.`);
@@ -1189,6 +1299,19 @@ async function main(): Promise<void> {
         const api = client(ctx);
         if (sub === "list") {
           const page = await api.listIdentities(ctx.organization);
+          if (has(args, "--json")) {
+            printJson({
+              organization: ctx.organization,
+              identities: page.items.map((i) => ({
+                id: i.id,
+                name: i.name,
+                kind: i.kind,
+                retired: Boolean(i.disabled),
+                lastSeenAt: i.lastSeenAt ?? null,
+              })),
+            });
+            return;
+          }
           for (const i of page.items) {
             const state = i.disabled ? "retired" : "active";
             console.log(
@@ -1199,32 +1322,32 @@ async function main(): Promise<void> {
           return;
         }
         if (sub === "rename") {
-          const id = args[1] ?? fail("Usage: varlatch identity rename <identity-id> <new-name>");
-          const name = positional(args, 2) ?? fail("Provide the new name");
+          const id = args[1] ?? usageError("Usage: varlatch identity rename <identity-id> <new-name>");
+          const name = positional(args, 2) ?? usageError("Provide the new name");
           const renamed = await api.renameIdentity(ctx.organization, id, name);
           console.log(`Identity ${renamed.id} renamed to ${renamed.name}. Grants and credentials are unaffected; the rename is audited.`);
           return;
         }
         if (sub === "retire") {
-          const id = args[1] ?? fail("Usage: varlatch identity retire <identity-id> [--confirm <name>]");
+          const id = args[1] ?? usageError("Usage: varlatch identity retire <identity-id> [--confirm <name>]");
           const page = await api.listIdentities(ctx.organization);
           const identity = page.items.find((i) => i.id === id) ?? fail(`No such identity: ${id}`);
           // ADR-0034: retirement revokes every credential; mirror env-delete's
           // ADR-0025 friction — the retirement must repeat the identity name.
           if (flag(args, "--confirm") !== identity.name) {
-            fail(`Retiring ${identity.name} revokes ALL of its credentials; re-type the name to confirm: varlatch identity retire ${identity.id} --confirm ${identity.name}`);
+            usageError(`Retiring ${identity.name} revokes ALL of its credentials; re-type the name to confirm: varlatch identity retire ${identity.id} --confirm ${identity.name}`);
           }
           await api.retireIdentity(ctx.organization, identity.id);
           console.log(`Identity ${identity.name} retired — disabled and every credential revoked. Reactivation restores no credentials.`);
           return;
         }
         if (sub === "reactivate") {
-          const id = args[1] ?? fail("Usage: varlatch identity reactivate <identity-id>");
+          const id = args[1] ?? usageError("Usage: varlatch identity reactivate <identity-id>");
           const identity = await api.reactivateIdentity(ctx.organization, id);
           console.log(`Identity ${identity.id} reactivated. It has zero working credentials until you issue one.`);
           return;
         }
-        fail("Usage: varlatch identity <list|rename|retire|reactivate>");
+        usageError("Usage: varlatch identity <list|rename|retire|reactivate>");
         return;
       }
 
@@ -1233,8 +1356,23 @@ async function main(): Promise<void> {
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
-          const id = args[1] ?? fail("Usage: varlatch credential list <identity-id>");
+          const id = args[1] ?? usageError("Usage: varlatch credential list <identity-id>");
           const page = await api.listIdentityCredentials(ctx.organization, id);
+          if (has(args, "--json")) {
+            printJson({
+              identity: id,
+              credentials: page.items.map((c) => ({
+                id: c.id,
+                kind: c.kind,
+                name: c.name ?? null,
+                createdAt: c.createdAt,
+                expiresAt: c.expiresAt ?? null,
+                revokedAt: c.revokedAt ?? null,
+                lastUsedAt: c.lastUsedAt ?? null,
+              })),
+            });
+            return;
+          }
           for (const c of page.items) {
             const marks = [
               c.kind,
@@ -1252,18 +1390,18 @@ async function main(): Promise<void> {
           return;
         }
         if (sub === "revoke") {
-          const id = args[1] ?? fail("Usage: varlatch credential revoke <identity-id> <credential-id>");
-          const credentialId = positional(args, 2) ?? fail("Provide the credential id");
+          const id = args[1] ?? usageError("Usage: varlatch credential revoke <identity-id> <credential-id>");
+          const credentialId = positional(args, 2) ?? usageError("Provide the credential id");
           await api.revokeIdentityCredential(ctx.organization, id, credentialId);
           console.log(`Credential ${credentialId} revoked. Every subsequent request with it fails.`);
           return;
         }
-        fail("Usage: varlatch credential <list|revoke>");
+        usageError("Usage: varlatch credential <list|revoke>");
         return;
       }
 
       case "admin": {
-        if (args[0] !== "backup") fail("Usage: varlatch admin backup create|verify|restore|status");
+        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status");
         const { backupCommand } = await import("./backup.js");
         await backupCommand(args.slice(1));
         break;
@@ -1392,82 +1530,13 @@ async function main(): Promise<void> {
       }
 
       default:
-        console.log(`varlatch — self-host-first secrets and configuration
-
-Usage:
-  varlatch --assisted <command>...                      # a coding agent drives the CLI (or VARLATCH_ASSISTED=1):
-               run masks Secrets in the command's output by default and refuses one too short to mask
-               (exit 78; --allow-unmasked <NAME> is the human's override, --no-redact turns masking off);
-               values set/rotate never take a Secret's value from the command line
-  varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in
-  varlatch login --server <url> --token <credential>
-  varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
-  varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
-  varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
-  varlatch init --org <slug> --project <slug> [--server <url>]
-  varlatch context [--json]
-  varlatch env <use <name>|list [--json]>
-  varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... -- <command> [args...]
-               (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor;
-                --redact: mask the Secrets delivered to the command in its piped stdout and stderr,
-                refused when either is a terminal, and with --agent-safe)
-  varlatch run --strict [--allow-inherited <NAME>]... [--redact] -- <command> [args...]
-               (validate exactly what the command receives; exit 78 and start nothing on any violation;
-                combine with --agent-safe for the agent-safe preflight: Secrets stay placeholders)
-  varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
-               --target <NAME=header:<name>|query:<name>|json:<pointer>|form:<name>>... --omit <NAME>...
-               [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
-               [--agent-metadata] -- <command>...
-               (every stored Secret needs a --target or an --omit; it is substituted only there; the Agent gets its own
-                empty configuration directory, so a varlatch command it starts never uses the operator's credential)
-  varlatch validate [-e <env>]        (exit 1 invalid; 2 incomplete: items this identity may not read)
-  varlatch values <set <ITEM> [<value>]|list|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>>
-                  set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
-                  or no value in a terminal for a hidden prompt
-  varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source]
-               (store a dotenv file's values without printing them; --contract adds new items to a Contract
-                revision, Secrets unless --plain; --delete-source removes the file once every value is stored)
-  varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
-                   push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
-  varlatch types --out <file.ts|file.py> [--revision <id>] [--check]
-                 (one TypeScript or Python module, by extension, with typed config and the Typed Accessor,
-                  from the active Contract; --check exits 1 when the file is stale)
-  varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
-                     (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
-                      | nothing for convex: --base is the deployment URL)
-                     [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
-                     # client-side push for installations without server egress (ADR-0031)
-  varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
-  varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
-                 [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]
-                 [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]
-                                                       # install: one command, resumable
-  varlatch adopt [--dir <compose-directory>] [--apply] [--only <step>] [--revert <step>] [--secrets-dir <dir>]
-                                                       # existing installation → managed, step by step
-  varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
-                                                       # read-only installation health on this host
-  varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]
-                [--max-file-size <size>] [--max-total-size <size>]
-               (look for this identity's Secrets in staged files or build output; one audited disclosure;
-                exit 1 findings, 2 some files not scanned; never prints values or line contents)
-  varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
-  varlatch invite <name> [--role member|admin]
-  varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements|remove <id>>
-  varlatch audit <list|export>
-  varlatch org <list|create <slug> [name]> [--server <url>]
-  varlatch project <create <slug> --org <org> --server <url> [--managed]|list|rename <slug> <new-name>>
-  varlatch env-create <name> --tier <tier> | --parent <env> [--kind personal|preview]
-  varlatch env-delete <name> [--confirm <name>]        # --confirm required for production-tier roots
-  varlatch identity <list|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>
-                                                       # --confirm required: retire revokes all credentials
-  varlatch credential <list <identity-id>|revoke <identity-id> <credential-id>>
-  varlatch --version                                   # CLI release; refresh it after every upgrade
-  varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
-                                                       # replace this CLI with a release build (checksum, signature)
-  varlatch upgrade [<version>] [--dir <compose-dir>] [--check] [--repo <owner/repo>]
-                   [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--yes]
-                   # backup-gated compose upgrade on this host (run where docker-compose.yml lives)`);
-        process.exit(command ? 1 : 0);
+        // An unknown command is a usage error (64); no command prints the usage (0).
+        if (command === undefined) {
+          console.log(USAGE);
+          return;
+        }
+        console.error(`varlatch: unknown command ${command}\n\n${USAGE}`);
+        process.exit(EXIT.usage);
     }
   } catch (err) {
     if (err instanceof Error && err.name === "BackupError") fail(err.message);
@@ -1475,10 +1544,14 @@ Usage:
     if (err instanceof ContextError) fail(err.message);
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {
-      fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`);
+      fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`, EXIT.unavailable);
     }
     if (err instanceof VarlatchApiError) {
-      fail(`Error ${err.code}: ${err.message} (request ${err.requestId})`);
+      fail(`Error ${err.code}: ${err.message} (request ${err.requestId})`, apiErrorExit(err));
+    }
+    const network = networkFailure(err);
+    if (network) {
+      fail(`Cannot reach the Varlatch server (${network}). Check --server, VARLATCH_SERVER, or varlatch.toml, and that the server is running.`, EXIT.unavailable);
     }
     throw err;
   }

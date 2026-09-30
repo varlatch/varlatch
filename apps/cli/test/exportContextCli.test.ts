@@ -216,7 +216,7 @@ process.stderr.write("stderr " + key + "\\n");`;
 
   it("applies only to default runs", async () => {
     const result = await cli(["run", "--export-context", "--strict", "--", process.execPath, "-e", "0"]);
-    expect(result.code).toBe(1);
+    expect(result.code).toBe(64);
     expect(result.stderr).toContain("--export-context applies only to default runs");
     expect(requests).toEqual([]);
   });

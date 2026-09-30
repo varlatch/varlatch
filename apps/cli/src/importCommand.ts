@@ -13,6 +13,7 @@ import {
 import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { DotenvParseError, parseDotenv, type DotenvEntry } from "./dotenv.js";
+import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
 
 /**
  * `varlatch import <file>` (ADR-0043 Decision 2): the CLI reads a dotenv file
@@ -29,10 +30,18 @@ import { DotenvParseError, parseDotenv, type DotenvEntry } from "./dotenv.js";
  *   here, as with `varlatch contract push`.
  * - `--delete-source` removes the file only after every value was stored,
  *   and only if the file did not change meanwhile.
+ * - `--json` prints one JSON document on stdout instead of the human lines;
+ *   diagnostics stay on stderr.
  */
 
 export class ImportError extends Error {
   override name = "ImportError";
+  /** The status the CLI exits with (ADR-0043 Decision 10). */
+  readonly exitCode: number;
+  constructor(message: string, exitCode: number = EXIT.failure) {
+    super(message);
+    this.exitCode = exitCode;
+  }
 }
 
 export interface ImportOptions {
@@ -41,6 +50,7 @@ export interface ImportOptions {
   contract: boolean;
   plain: string[];
   deleteSource: boolean;
+  json?: boolean;
 }
 
 /** The project to import into, or why there is none (a dry run still lists names). */
@@ -153,9 +163,15 @@ function formatRows(rows: Row[], plain: Set<string>): string[] {
   });
 }
 
-export async function runImport(opts: ImportOptions, target: ImportTarget, io: ImportIo): Promise<number> {
+export async function runImport(opts: ImportOptions, target: ImportTarget, streams: ImportIo): Promise<number> {
+  // In JSON mode the human lines are replaced by one document at the end.
+  const io: ImportIo = opts.json ? { out: () => {}, err: streams.err } : streams;
+  const doc: Record<string, unknown> = { file: opts.file, dryRun: opts.dryRun };
+  const emit = (fields: Record<string, unknown>) => {
+    if (opts.json) streams.out(JSON.stringify({ version: 1, ...doc, ...fields }, null, 2));
+  };
   if (opts.plain.length > 0 && !opts.contract) {
-    throw new ImportError("--plain applies only with --contract: an item's sensitivity lives in the Contract");
+    throw new ImportError("--plain applies only with --contract: an item's sensitivity lives in the Contract", EXIT.usage);
   }
   if (!existsSync(opts.file)) throw new ImportError(`No such file: ${opts.file}`);
   const bytes = readFileSync(opts.file);
@@ -178,6 +194,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
   }
   if (entries.length === 0) {
     io.out(`${opts.file} sets no values; nothing to import.${opts.deleteSource ? " It was not deleted." : ""}`);
+    emit({ target: null, items: [], stored: [], deleted: false });
     return 0;
   }
 
@@ -186,7 +203,9 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
   if (online) {
     const found = await activeContract(online.api, online.ctx);
     if (found === "forbidden") {
-      if (opts.contract) throw new ImportError("--contract needs contract.read on this project to merge with the active Contract. Nothing was imported.");
+      if (opts.contract) {
+        throw new ImportError("--contract needs contract.read on this project to merge with the active Contract. Nothing was imported.", EXIT.denied);
+      }
       io.err("varlatch import: cannot read this project's Contract (403); sensitivity is shown as the default for items outside a Contract");
     } else {
       contract = found;
@@ -218,6 +237,12 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
   );
   for (const line of formatRows(rows, plain)) io.out(line);
   const references = rows.filter((r) => r.entry.value.includes("${")).map((r) => r.entry.name);
+  Object.assign(doc, {
+    target: online ? { organization: online.ctx.organization, project: online.ctx.project, environment: online.ctx.environment } : null,
+    offline: "offline" in target ? target.offline : null,
+    items: rows.map((r) => ({ name: r.entry.name, type: r.type, sensitive: r.sensitive, inContract: r.contracted, line: r.entry.line })),
+    references,
+  });
   if (references.length > 0) {
     io.out(`Note: Varlatch reads \${NAME} in a value as a reference to another item: ${references.join(", ")}`);
   }
@@ -231,13 +256,17 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
         : `Contract: ${additions.length} new item(s)${kept > 0 ? `; ${kept} already in the Contract keep their definition` : ""}.`,
     );
   }
+  const contractDoc = (revision: unknown) =>
+    opts.contract ? { contract: { newItems: additions.map((r) => r.entry.name), revision } } : { contract: null };
   if (opts.dryRun) {
     io.out(`Dry run: nothing was stored${opts.deleteSource ? ` and ${opts.file} was not deleted` : ""}.`);
+    emit({ ...contractDoc(null), stored: [], deleted: false });
     return 0;
   }
   if (!online) throw new ImportError(`Cannot import: ${"offline" in target ? target.offline : "not connected"}`);
   const { api, ctx } = online;
 
+  let pushed: { id: string; contentHash: string; active: boolean } | null = null;
   if (additions.length > 0) {
     const items: ContractItem[] = [
       ...(contract?.items ?? []),
@@ -253,6 +282,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
       contract: next,
       provenance: { adapter: "varlatch-import" },
     });
+    pushed = { id: revision.id, contentHash: revision.contentHash, active: revision.active };
     io.out(`Contract revision ${revision.id} (${revision.contentHash})${revision.active ? " [active]" : ""}`);
     if (!revision.active) io.out(`Activate with: varlatch contract activate ${revision.id}`);
   }
@@ -263,7 +293,9 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
       await api.setValue(ctx.organization, ctx.project, ctx.environment, row.entry.name, { value: row.entry.value });
       stored.push(row.entry.name);
     } catch (err) {
-      const reason = err instanceof VarlatchApiError ? err.code : err instanceof Error ? err.name : "an error";
+      const network = networkFailure(err);
+      const reason = err instanceof VarlatchApiError ? err.code : (network ?? (err instanceof Error ? err.name : "an error"));
+      const exitCode = err instanceof VarlatchApiError ? apiErrorExit(err) : network ? EXIT.unavailable : EXIT.failure;
       const skipped = rows.slice(index + 1).map((r) => r.entry.name);
       if (stored.length > 0) io.err(`varlatch import: stored: ${stored.join(", ")}`);
       io.err(`varlatch import: not stored: ${row.entry.name} (${reason})`);
@@ -271,6 +303,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
       throw new ImportError(
         `${stored.length} of ${rows.length} value(s) stored.${opts.deleteSource ? ` ${opts.file} was not deleted.` : ""} ` +
           "Fix the cause and run the import again; stored values are overwritten with the same ones.",
+        exitCode,
       );
     }
   }
@@ -285,10 +318,12 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
     }
     if (!current || digest(current) !== digest(bytes)) {
       io.err(`varlatch import: ${opts.file} changed or disappeared while importing; it was not deleted`);
+      emit({ ...contractDoc(pushed), stored, deleted: false });
       return 1;
     }
     unlinkSync(opts.file);
     io.out(`Deleted ${opts.file}.`);
   }
+  emit({ ...contractDoc(pushed), stored, deleted: opts.deleteSource });
   return 0;
 }

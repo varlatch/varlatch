@@ -273,10 +273,10 @@ describe("assisted run: output protection and precedence", () => {
 
   it("refuses --allow-unmasked outside assisted mode, and --no-redact or --allow-unmasked with --agent-safe", async () => {
     const outside = await cli(["run", "--allow-unmasked", "PIN", "--", "true"]);
-    expect(outside.code).toBe(1);
+    expect(outside.code).toBe(64);
     expect(outside.stderr).toMatch(/--allow-unmasked applies only in assisted mode/);
     const agentSafe = await cli(["--assisted", "run", "--agent-safe", "--no-redact", "--agent", "a", "--", "true"]);
-    expect(agentSafe.code).toBe(1);
+    expect(agentSafe.code).toBe(64);
     expect(agentSafe.stderr).toMatch(/do not apply to --agent-safe runs/);
   });
 });
@@ -390,7 +390,7 @@ describe("values set and values rotate: Secret input", () => {
   ] as const)("%s refuses a Secret's value on the command line, storing nothing and never echoing it", async (_name, flags, env) => {
     for (const item of ["API_TOKEN", "UNCONTRACTED_ITEM"]) {
       const r = await cli([...flags, "values", "set", item, "argv-secret-value-771"], { env });
-      expect(r.code).toBe(1);
+      expect(r.code).toBe(64);
       expect(r.stderr).toMatch(new RegExp(`${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line`));
       expect(r.stderr).toMatch(/--generate hex:32/);
       expect(r.stderr).toMatch(/in their own terminal/);
@@ -437,16 +437,16 @@ describe("values set and values rotate: Secret input", () => {
     expect(requests.find((q) => q.url.endsWith("/rotations"))?.body).toEqual({ value: "rotated-value-202", graceSeconds: 60 });
     expect(r.stdout + r.stderr).not.toContain("rotated-value-202");
     const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "argv-rotated-9"]);
-    expect(refused.code).toBe(1);
+    expect(refused.code).toBe(64);
     expect(refused.stderr).toMatch(/values rotate API_TOKEN --generate hex:32/);
   });
 
   it("with no value: assisted mode never prompts; otherwise a non-terminal is told how to give one", async () => {
     const assisted = await cli(["--assisted", "values", "set", "API_TOKEN"]);
-    expect(assisted.code).toBe(1);
+    expect(assisted.code).toBe(64);
     expect(assisted.stderr).toMatch(/assisted mode never prompts/);
     const plain = await cli(["values", "set", "API_TOKEN"]);
-    expect(plain.code).toBe(1);
+    expect(plain.code).toBe(64);
     expect(plain.stderr).toMatch(/Pass --stdin, --from-file <path>, or --generate <spec>/);
     expect(puts()).toEqual([]);
   });
@@ -542,7 +542,7 @@ describe("varlatch import", () => {
     expect(conflict.code).toBe(1);
     expect(conflict.stderr).toMatch(/--plain names API_TOKEN, which the Contract already marks sensitive/);
     const alone = await cli(["import", envFile(), "--plain", "DEBUG"]);
-    expect(alone.code).toBe(1);
+    expect(alone.code).toBe(64);
     expect(alone.stderr).toMatch(/--plain applies only with --contract/);
     expect(puts()).toEqual([]);
   });

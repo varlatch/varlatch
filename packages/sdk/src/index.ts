@@ -43,6 +43,11 @@ import type {
   SyncTarget,
 } from "@varlatch/protocol";
 
+/** A response's media type for a diagnostic, without parameters. */
+function contentType(res: Response): string {
+  return res.headers.get("Content-Type")?.split(";")[0]?.trim() || "no content type";
+}
+
 export class VarlatchApiError extends Error {
   override name = "VarlatchApiError";
   readonly code: ErrorCode;
@@ -192,17 +197,28 @@ export class VarlatchClient {
   private async finish<T>(res: Response): Promise<T> {
     if (res.status === 204) return undefined as T;
     const text = await res.text();
-    const parsed = text ? (JSON.parse(text) as unknown) : undefined;
+    // A body that is not JSON (a reverse proxy's HTML error page, a captive
+    // portal) keeps its HTTP status as a VarlatchApiError instead of
+    // surfacing as a SyntaxError; its content is never echoed.
+    let parsed: unknown;
+    let json = true;
+    try {
+      parsed = text ? (JSON.parse(text) as unknown) : undefined;
+    } catch {
+      json = false;
+    }
+    const fallback = (message: string) =>
+      new VarlatchApiError(res.status, {
+        code: "INTERNAL",
+        message,
+        requestId: res.headers.get("X-Request-Id") ?? "unknown",
+      });
     if (!res.ok) {
       const err = (parsed as ApiError | undefined)?.error;
-      throw err
-        ? new VarlatchApiError(res.status, err)
-        : new VarlatchApiError(res.status, {
-            code: "INTERNAL",
-            message: `HTTP ${res.status}`,
-            requestId: res.headers.get("X-Request-Id") ?? "unknown",
-          });
+      if (json && err) throw new VarlatchApiError(res.status, err);
+      throw fallback(json ? `HTTP ${res.status}` : `HTTP ${res.status}; the response is not a Varlatch API error (${contentType(res)})`);
     }
+    if (!json) throw fallback(`HTTP ${res.status}; the response is not JSON (${contentType(res)})`);
     return parsed as T;
   }
 

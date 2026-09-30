@@ -12,6 +12,12 @@ import { readFileSync } from "node:fs";
 
 export class SecretInputError extends Error {
   override name = "SecretInputError";
+  /** The command line is wrong (exit 64), rather than the input it names. */
+  readonly usage: boolean;
+  constructor(message: string, usage = false) {
+    super(message);
+    this.usage = usage;
+  }
 }
 
 export type ValueSource =
@@ -42,13 +48,13 @@ export const GENERATE_FORMS = "hex:<bytes>, base64:<bytes>, base64url:<bytes>, o
 
 export function parseGenerateSpec(raw: string): GenerateSpec {
   const match = /^(hex|base64|base64url|alnum):([0-9]+)$/.exec(raw);
-  if (!match) throw new SecretInputError(`--generate expects ${GENERATE_FORMS}, for example hex:32`);
+  if (!match) throw new SecretInputError(`--generate expects ${GENERATE_FORMS}, for example hex:32`, true);
   const encoding = match[1] as GenerateEncoding;
   const size = Number(match[2]);
   const min = encoding === "alnum" ? MIN_ALNUM : MIN_BYTES;
   if (size < min || size > MAX_SIZE) {
     const unit = encoding === "alnum" ? "characters" : "bytes";
-    throw new SecretInputError(`--generate ${encoding}: the size must be from ${min} to ${MAX_SIZE} ${unit}`);
+    throw new SecretInputError(`--generate ${encoding}: the size must be from ${min} to ${MAX_SIZE} ${unit}`, true);
   }
   return { encoding, size };
 }
@@ -94,13 +100,13 @@ export function parseValueSource(args: string[]): ValueSource {
     if (arg === "--stdin") sources.push({ kind: "stdin" });
     if (arg === "--from-file" || arg === "--generate") {
       const value = args[i + 1];
-      if (value === undefined) throw new SecretInputError(`${arg} needs a value`);
+      if (value === undefined) throw new SecretInputError(`${arg} needs a value`, true);
       sources.push(arg === "--from-file" ? { kind: "file", path: value } : { kind: "generate", spec: parseGenerateSpec(value) });
     }
     if (VALUED_FLAGS.has(arg as string)) i++;
   }
   if (sources.length > 1) {
-    throw new SecretInputError("give the value one way only: as an argument, --stdin, --from-file <path>, or --generate <spec>");
+    throw new SecretInputError("give the value one way only: as an argument, --stdin, --from-file <path>, or --generate <spec>", true);
   }
   return sources[0] ?? { kind: "prompt" };
 }

@@ -63,3 +63,22 @@ export function validationOutcome(environment: string, report: ValidationReport)
     exitCode: failed ? VALIDATE_EXIT.invalid : VALIDATE_EXIT.incomplete,
   };
 }
+
+/**
+ * `varlatch validate --json`: the report's names and reasons, never a value,
+ * with the result and the exit status the human form would give.
+ */
+export function validationDocument(environment: string, report: ValidationReport, exitCode: number): Record<string, unknown> {
+  const result = exitCode === VALIDATE_EXIT.valid ? "valid" : exitCode === VALIDATE_EXIT.invalid ? "invalid" : "incomplete";
+  const notEvaluated = report.notEvaluated ?? [];
+  return {
+    environment,
+    result,
+    complete: report.complete ?? notEvaluated.length === 0,
+    missing: report.missing ?? [],
+    invalid: report.invalid ?? [],
+    unresolved: report.unresolved ?? [],
+    notEvaluated,
+    exitCode,
+  };
+}
