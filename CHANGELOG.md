@@ -59,6 +59,15 @@ fixes.
   with the run's environment, Placeholders included, and discloses nothing;
   other commands use the `--agent-metadata` credential or stop.
 
+### Fixes
+
+- Output redaction, response scrubbing, and `varlatch scan` no longer fail
+  when a stored Secret holds an unpaired UTF-16 surrogate, which the API
+  accepts and UTF-8 cannot carry: such a value is matched as a command
+  receives it, with U+FFFD in place of the surrogate. Before, building the
+  matcher threw, so `varlatch run --redact` stopped before starting the
+  command.
+
 ## 0.13.0 (2026-09-30)
 
 ### Projects

@@ -268,3 +268,13 @@ describe("the scanner finds exactly what the scrubber replaces", () => {
     }
   });
 });
+
+describe("a stored value with an unpaired surrogate", () => {
+  it("is found in a file that holds it as JSON escapes, and as UTF-8 carries it", () => {
+    const stored = "token-\uD83D-value-\uDE00-end";
+    const escaped = JSON.stringify(stored).slice(1, -1);
+    // Split at every offset, as every scanner test is.
+    const found = everySplit([{ item: "KEY", value: stored }], `{"key":"${escaped}"}\nKEY=${text(bytes(stored))}\n`);
+    expect(found.map((o) => o.form).sort()).toEqual(["json", "raw"]);
+  });
+});

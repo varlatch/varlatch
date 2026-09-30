@@ -410,6 +410,35 @@ describe("broker proxy", () => {
     expect(broker.heldValues()).toBe(0);
   });
 
+  it("a stored value with an unpaired surrogate: substituted at JSON and query targets, and scrubbed from the echo", async () => {
+    const stored = "token-\uD83D-value-\uDE00-end";
+    const escaped = JSON.stringify(stored).slice(1, -1);
+    const percent = "token-%EF%BF%BD-value-%EF%BF%BD-end";
+    // The destination echoes everything it received.
+    const up = await upstream((req, res) => {
+      const got = up.received[up.received.length - 1]!;
+      res.writeHead(200, { "Content-Type": "application/json" }).end(`{"body":${got.body},"url":"${got.url}"}`);
+    });
+    cleanups.push(up.close);
+    const { broker, placeholder, events } = await liveBroker([`127.0.0.1:${up.port}`], {
+      targets: { STRIPE_KEY: ["json:/key", "query:k"] },
+      itemValue: stored,
+    });
+    const res = await proxyRequest(broker, `https://127.0.0.1:${up.port}/echo?k=${placeholder}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: `{"key":"${placeholder}"}`,
+    });
+    expect(res.status).toBe(200);
+    // JSON carries the stored value exactly; percent-encoding carries UTF-8, with U+FFFD for each surrogate.
+    expect(up.received[0]!.body).toBe(`{"key":"${escaped}"}`);
+    expect(up.received[0]!.url).toBe(`/echo?k=${percent}`);
+    // Neither form reaches the Agent.
+    expect(res.body).toBe(`{"body":{"key":"${placeholder}"},"url":"/echo?k=${placeholder}"}`);
+    expect(res.body).not.toContain("ud83d");
+    expect(events.filter((e) => e.kind === "scrubbed")).not.toEqual([]);
+  });
+
   it("the Agent cannot add or widen a target from its request (test 1)", async () => {
     const up = await upstream();
     cleanups.push(up.close);

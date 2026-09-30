@@ -17,6 +17,20 @@ export const MIN_LENGTH = 8;
 
 const encoder = new TextEncoder();
 
+const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/**
+ * A value as UTF-8 carries it. A stored value can hold an unpaired UTF-16
+ * surrogate (JSON allows `"\ud83d"`), but UTF-8 cannot: an environment
+ * variable, a header, percent-encoding, and a terminal all carry U+FFFD in
+ * its place. The raw, percent, and base64 forms are computed from this
+ * text, so they never throw (percent-encoding rejects an unpaired
+ * surrogate) and match what a command can print.
+ */
+export function deliveredText(value: string): string {
+  return value.replace(UNPAIRED_SURROGATE, "\uFFFD");
+}
+
 function base64Core(value: Uint8Array, alignment: number, url: boolean): string {
   // Encode the value after `alignment` filler bytes, then keep only the
   // characters whose six bits all come from the value: they are the same
@@ -47,13 +61,21 @@ export interface LabelledForm {
  * Every registered form of `value` with its name, deduplicated, each at
  * least MIN_LENGTH bytes, in the order `formsOf` returns them.
  */
-export function labelledFormsOf(value: string): LabelledForm[] {
+export function labelledFormsOf(stored: string): LabelledForm[] {
+  const value = deliveredText(stored);
   const raw = encoder.encode(value);
   if (raw.length < MIN_LENGTH) return [];
+  // JSON keeps an unpaired surrogate as a `\udXXX` escape instead of
+  // replacing it: a JSON body carrying the stored value (the Broker's JSON
+  // targets write one) holds the stored value's escaping. Both are
+  // registered; for a well-formed value they are the same form.
+  const storedJson = JSON.stringify(stored).slice(1, -1);
   const json = JSON.stringify(value).slice(1, -1);
   const percent = encodeURIComponent(value);
   const candidates: [FormName, string][] = [
     ["raw", value],
+    ["json", storedJson],
+    ["json", storedJson.replace(/\//g, "\\/")],
     ["json", json],
     ["json", json.replace(/\//g, "\\/")],
     ["percent", percent],
