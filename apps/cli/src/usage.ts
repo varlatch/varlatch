@@ -25,10 +25,14 @@ Usage:
                (also writes the files coding agents read, as agents install does; --no-agent-files skips them)
   varlatch agents guide [setup|run|agent-run|self-hosting|contract]
                (print the skill for coding agents, or one of its references: for any coding agent with a shell)
-  varlatch agents install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]
+  varlatch agents install [--scope project|user] [--agent <name>]... [--guardrails] [--check|--remove] [--json]
                (write the skill to .agents/skills/varlatch and .claude/skills/varlatch, a marked block in AGENTS.md,
                 and the adapters some coding agents need; --check exits 1 when the files differ, for CI;
-                --remove takes back what install wrote)
+                --remove takes back what install wrote; --guardrails also writes opt-in hooks and settings
+                for Claude Code and Codex: accident prevention, not a boundary)
+  varlatch agents hook --format <claude|codex>
+               (the handler guardrail hooks call: reads a pre-tool-use event on stdin and denies reading .env files
+                or the credential store, and printing the environment of a varlatch run)
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
   varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... -- <command> [args...]

@@ -205,6 +205,14 @@ fixes.
   new value), in the environment it is for, or after the human approves
   that item there. Starting or checking an app never authorizes creating
   values. The CLI's behaviour is unchanged.
+- New, opt-in `varlatch agents install --guardrails`: for Claude Code,
+  `VARLATCH_ASSISTED=1`, deny rules for `.env` files and the credential
+  store, and a `PreToolUse` hook in `.claude/settings.json`; for Codex, a
+  hook in `.codex/hooks.json` and `VARLATCH_ASSISTED` in `.codex/config.toml`.
+  Every hook runs `varlatch agents hook --format <claude|codex>`, which
+  denies reading `.env` files or the credential store, and printing the
+  environment of a `varlatch run`. Accident prevention, not a boundary. See
+  [coding agents](docs/reference/coding-agents.md#guardrails-opt-in).
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { appendOwned, eolOf, escapeRegExp, filesUnder, isCanonicalJson, ownedEol, readBytes, readText, withoutOwned } from "./files.js";
+import { planGuardrails } from "./guardrails.js";
 import { SKILL_NAME, skillFiles } from "./skill.js";
 
 /**
@@ -36,6 +38,8 @@ export interface InstallResult {
   leftInPlace: string[];
   /** For each coding agent named with --agent, how it finds the skill and AGENTS.md. */
   agents: { agent: string; reads: string }[];
+  /** What the human should know about what was written, such as a trust review a coding agent requires. */
+  notices: string[];
   /** Whether anything differs from what install writes (for --check). */
   drift: boolean;
 }
@@ -48,6 +52,8 @@ export interface InstallOptions {
   /** Coding agents named with --agent: their adapters apply even without an existing file. */
   agents: string[];
   mode: Mode;
+  /** Write the opt-in guardrails (ADR-0043 Decision 8). --remove takes them out regardless. */
+  guardrails?: boolean;
 }
 
 type Adapter = "claude" | "gemini" | "aider";
@@ -154,57 +160,6 @@ export function agentsBlock(): string {
   ].join("\n");
 }
 
-function eolOf(text: string): string {
-  return text.includes("\r\n") ? "\r\n" : "\n";
-}
-
-/**
- * The CLI's additions are exact, so that removing one gives the file back
- * byte for byte. A new file is the addition alone. An existing file, even
- * an empty one, keeps every byte and gains one line break (which ends its
- * last line, or leaves a blank line when it already ended one) and then the
- * addition, whose lines end with the file's line ending.
- */
-function appendOwned(current: string | null, owned: string): string {
-  return current === null ? owned : current + eolOf(current) + owned;
-}
-
-/**
- * The line ending of an addition at [start, end): the one inside it, else
- * the one that ends it. install used the same one for the line break it put
- * before the addition, so this is what removing takes back, and what
- * installing again reuses. Judging from the whole file instead would be
- * fooled by the file's own bytes next to the addition: a file ending in a
- * bare CR, followed by the LF install added, reads as CRLF.
- */
-function ownedEol(text: string, start: number, end: number): string {
-  const span = text.slice(start, end);
-  if (span.includes("\r\n")) return "\r\n";
-  if (span.includes("\n")) return "\n";
-  return text.startsWith("\r\n", end) ? "\r\n" : "\n";
-}
-
-/**
- * The file without the addition at [start, end), and without the line break
- * that ends it. At the end of the file, the line break install put before
- * it goes too. Only those exact bytes go, so the file's own bytes around
- * them stay. Null: nothing precedes or follows the addition, so install
- * created the file and removing takes the file away.
- */
-function withoutOwned(text: string, start: number, end: number): string | null {
-  const eol = ownedEol(text, start, end);
-  const before = text.slice(0, start);
-  const rest = text.slice(end);
-  const after = rest.startsWith(eol) ? rest.slice(eol.length) : rest;
-  if (after !== "") return before + after;
-  if (before === "") return null;
-  return before.endsWith(eol) ? before.slice(0, -eol.length) : before;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * AGENTS.md with the block added or replaced, or taken out when removing
  * (null: the file held only the block, so it goes). Every byte outside the
@@ -308,54 +263,12 @@ export function withAiderRead(current: string | null, remove: boolean): string |
   return appendOwned(current, AIDER_LINE + eolOf(text));
 }
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-
-/**
- * A file's text; null when there is no file; undefined when the path is not
- * a UTF-8 text file, which the CLI never edits (decoding and encoding again
- * would change its bytes). A byte order mark is kept.
- */
-function readText(path: string): string | null | undefined {
-  const bytes = readBytes(path);
-  if (bytes === undefined || bytes === null) return bytes;
-  try {
-    return UTF8.decode(bytes);
-  } catch {
-    return undefined;
-  }
-}
-
-/** A file's bytes; null when nothing is there; undefined when something other than a file is. */
-function readBytes(path: string): Buffer | null | undefined {
-  try {
-    if (!statSync(path).isFile()) return undefined;
-  } catch {
-    return null;
-  }
-  return readFileSync(path);
-}
-
-function filesUnder(dir: string): string[] {
-  if (!existsSync(dir)) return [];
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...filesUnder(path));
-    else out.push(path);
-  }
-  return out;
-}
-
-function isCanonicalJson(raw: string, parsed: unknown): boolean {
-  const canonical = JSON.stringify(parsed, null, 2);
-  return raw === canonical || raw === `${canonical}\n`;
-}
-
 interface Plan {
   /** Each file the command manages, with the content it should have (null: absent). */
   files: { path: string; desired: string | null }[];
   manual: string[];
   leftInPlace: string[];
+  notices: string[];
 }
 
 function plan(opts: InstallOptions): Plan {
@@ -379,7 +292,7 @@ function plan(opts: InstallOptions): Plan {
     }
     for (const existing of filesUnder(at(base))) if (!wanted.has(existing)) files.push({ path: existing, desired: null });
   }
-  if (opts.scope === "user") return { files, manual, leftInPlace };
+  if (opts.scope === "user") return { files, manual, leftInPlace, notices: [] };
 
   const agentsMd = readText(at("AGENTS.md"));
   if (agentsMd === undefined) {
@@ -458,7 +371,15 @@ function plan(opts: InstallOptions): Plan {
       manual.push("add AGENTS.md under read: in .aider.conf.yml (the CLI appends to the file only when its layout makes that safe)");
     }
   }
-  return { files, manual, leftInPlace };
+  const notices: string[] = [];
+  if (remove || opts.guardrails) {
+    const guardrails = planGuardrails(opts.root, opts.agents, opts.mode);
+    files.push(...guardrails.files);
+    manual.push(...guardrails.manual);
+    leftInPlace.push(...guardrails.leftInPlace);
+    notices.push(...guardrails.notices);
+  }
+  return { files, manual, leftInPlace, notices };
 }
 
 /** After --remove: the emptied skill directories go, and their parents if nothing else is in them. */
@@ -482,7 +403,10 @@ export function runInstall(opts: InstallOptions): InstallResult {
   if (opts.scope === "user" && opts.agents.length > 0) {
     throw new AgentsInstallError("--agent applies to a project: its adapters edit the project's files", true);
   }
-  const { files, manual, leftInPlace } = plan(opts);
+  if (opts.scope === "user" && opts.guardrails) {
+    throw new AgentsInstallError("--guardrails applies to a project: it edits the project's coding-agent settings", true);
+  }
+  const { files, manual, leftInPlace, notices } = plan(opts);
   const changes: Change[] = [];
   for (const file of files) {
     const current = readBytes(file.path);
@@ -507,7 +431,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
       writeFileSync(file.path, file.desired);
     }
   }
-  if (opts.mode === "remove") for (const base of SKILL_BASES) pruneEmpty(opts.root, base);
+  if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex"]) pruneEmpty(opts.root, base);
   return {
     scope: opts.scope,
     root: opts.root,
@@ -515,6 +439,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
     manual,
     leftInPlace,
     agents: opts.agents.map((agent) => ({ agent, reads: (AGENTS[agent] as { reads: string }).reads })),
+    notices,
     drift: changes.some((c) => c.action !== "unchanged"),
   };
 }
@@ -529,6 +454,7 @@ export function describeInstall(result: InstallResult, mode: Mode): string[] {
   if (lines.length === 0) lines.push(mode === "remove" ? "Nothing to remove." : "The agent files are up to date.");
   for (const m of result.manual) lines.push(`To do by hand: ${m}`);
   for (const l of result.leftInPlace) lines.push(`Left in place: ${l}`);
+  for (const n of result.notices) lines.push(`Note: ${n}`);
   for (const a of result.agents) lines.push(`${a.agent} reads ${a.reads}`);
   return lines;
 }
