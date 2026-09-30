@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
-import { appendOwned, eolOf, escapeRegExp, filesUnder, isCanonicalJson, ownedEol, readBytes, readText, withoutOwned } from "./files.js";
+import { appendOwned, eolOf, escapeRegExp, filesUnder, isCanonicalJson, ownedEol, readBytes, Staging, withoutOwned } from "./files.js";
 import { planGuardrails } from "./guardrails.js";
+import { planMcp } from "./mcpConfig.js";
 import { SKILL_NAME, skillFiles } from "./skill.js";
 
 /**
@@ -54,6 +55,8 @@ export interface InstallOptions {
   mode: Mode;
   /** Write the opt-in guardrails (ADR-0043 Decision 8). --remove takes them out regardless. */
   guardrails?: boolean;
+  /** Add the `varlatch mcp` server to the project's MCP files (ADR-0043 Decision 9). --remove takes it out regardless. */
+  mcp?: boolean;
 }
 
 type Adapter = "claude" | "gemini" | "aider";
@@ -277,6 +280,7 @@ function plan(opts: InstallOptions): Plan {
   const leftInPlace: string[] = [];
   const remove = opts.mode === "remove";
   const at = (p: string) => join(opts.root, p);
+  const staging = new Staging();
   const notText = (name: string, edit: string) => manual.push(`${name} is not a UTF-8 text file, so the CLI leaves it as it is: ${edit}`);
 
   // The skill directories are the CLI's own: every file in them is managed,
@@ -294,11 +298,11 @@ function plan(opts: InstallOptions): Plan {
   }
   if (opts.scope === "user") return { files, manual, leftInPlace, notices: [] };
 
-  const agentsMd = readText(at("AGENTS.md"));
+  const agentsMd = staging.read(at("AGENTS.md"));
   if (agentsMd === undefined) {
     throw new AgentsInstallError("AGENTS.md is not a UTF-8 text file, so the CLI does not edit it; fix or move it, then run this again", false);
   }
-  if (!(remove && agentsMd === null)) files.push({ path: at("AGENTS.md"), desired: withBlock(agentsMd, remove) });
+  if (!(remove && agentsMd === null)) staging.write(at("AGENTS.md"), withBlock(agentsMd, remove));
 
   const selected = new Set(opts.agents.map((agent) => AGENTS[agent]?.adapter));
 
@@ -307,24 +311,24 @@ function plan(opts: InstallOptions): Plan {
   const claude = [
     { path: "CLAUDE.md", importPath: "AGENTS.md" },
     { path: join(".claude", "CLAUDE.md"), importPath: "../AGENTS.md" },
-  ].map((c) => ({ ...c, current: readText(at(c.path)) }));
+  ].map((c) => ({ ...c, current: staging.read(at(c.path)) }));
   if (remove) {
     for (const c of claude) {
-      if (typeof c.current === "string") files.push({ path: at(c.path), desired: withClaudeImport(c.current, true, c.importPath) });
+      if (typeof c.current === "string") staging.write(at(c.path), withClaudeImport(c.current, true, c.importPath));
     }
   } else {
     const target = claude.find((c) => c.current !== null);
     if (target && typeof target.current === "string") {
-      files.push({ path: at(target.path), desired: withClaudeImport(target.current, false, target.importPath) });
+      staging.write(at(target.path), withClaudeImport(target.current, false, target.importPath));
     } else if (target) notText(target.path, `add the line @${target.importPath}`);
-    else if (selected.has("claude")) files.push({ path: at("CLAUDE.md"), desired: withClaudeImport(null, false) });
-    else if (readText(at("CLAUDE.local.md")) !== null) {
+    else if (selected.has("claude")) staging.write(at("CLAUDE.md"), withClaudeImport(null, false));
+    else if (staging.read(at("CLAUDE.local.md")) !== null) {
       manual.push("Claude Code skips AGENTS.md while CLAUDE.local.md exists: add the line @AGENTS.md to CLAUDE.local.md");
     }
   }
 
   const geminiPath = at(join(".gemini", "settings.json"));
-  const geminiRaw = readText(geminiPath);
+  const geminiRaw = staging.read(geminiPath);
   const geminiEdit = 'add "AGENTS.md" to context.fileName in .gemini/settings.json';
   if (remove) {
     if (geminiRaw?.includes('"AGENTS.md"')) leftInPlace.push('"AGENTS.md" in context.fileName in .gemini/settings.json');
@@ -345,16 +349,16 @@ function plan(opts: InstallOptions): Plan {
     } else if (next !== null) {
       // Written exactly as it was read, with a final line break only if it had one.
       const eol = geminiRaw === null || geminiRaw.endsWith("\n") ? "\n" : "";
-      files.push({ path: geminiPath, desired: `${JSON.stringify(next, null, 2)}${eol}` });
+      staging.write(geminiPath, `${JSON.stringify(next, null, 2)}${eol}`);
     }
   }
 
   const aiderPath = at(".aider.conf.yml");
-  const aiderRaw = readText(aiderPath);
+  const aiderRaw = staging.read(aiderPath);
   if (remove) {
     if (typeof aiderRaw === "string") {
       const next = withAiderRead(aiderRaw, true);
-      if (next !== aiderRaw) files.push({ path: aiderPath, desired: next });
+      if (next !== aiderRaw) staging.write(aiderPath, next);
       if (next?.includes("AGENTS.md")) leftInPlace.push("AGENTS.md under read: in .aider.conf.yml");
     }
   } else if (aiderRaw === undefined) {
@@ -364,7 +368,7 @@ function plan(opts: InstallOptions): Plan {
     if (aiderRaw?.includes(AIDER_LINE)) {
       // Installed before; the file may have changed around the CLI's line since.
     } else if (layout === "append") {
-      files.push({ path: aiderPath, desired: withAiderRead(aiderRaw, false) });
+      staging.write(aiderPath, withAiderRead(aiderRaw, false));
     } else if (layout === "has-read") {
       if (!aiderRaw?.includes("AGENTS.md")) manual.push("add AGENTS.md to the read: entry in .aider.conf.yml");
     } else {
@@ -373,13 +377,20 @@ function plan(opts: InstallOptions): Plan {
   }
   const notices: string[] = [];
   if (remove || opts.guardrails) {
-    const guardrails = planGuardrails(opts.root, opts.agents, opts.mode);
-    files.push(...guardrails.files);
+    const guardrails = planGuardrails(opts.root, opts.agents, opts.mode, staging);
     manual.push(...guardrails.manual);
     leftInPlace.push(...guardrails.leftInPlace);
     notices.push(...guardrails.notices);
   }
-  return { files, manual, leftInPlace, notices };
+  // After guardrails, which may have staged .codex/config.toml.
+  if (remove || opts.mcp) {
+    const mcp = planMcp(opts.root, opts.agents, opts.mode, staging);
+    manual.push(...mcp.manual);
+    leftInPlace.push(...mcp.leftInPlace);
+    notices.push(...mcp.notices);
+  }
+  files.push(...staging.entries());
+  return { files, manual, leftInPlace, notices: [...new Set(notices)] };
 }
 
 /** After --remove: the emptied skill directories go, and their parents if nothing else is in them. */
@@ -406,6 +417,9 @@ export function runInstall(opts: InstallOptions): InstallResult {
   if (opts.scope === "user" && opts.guardrails) {
     throw new AgentsInstallError("--guardrails applies to a project: it edits the project's coding-agent settings", true);
   }
+  if (opts.scope === "user" && opts.mcp) {
+    throw new AgentsInstallError("--mcp applies to a project: it edits the project's MCP files", true);
+  }
   const { files, manual, leftInPlace, notices } = plan(opts);
   const changes: Change[] = [];
   for (const file of files) {
@@ -431,7 +445,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
       writeFileSync(file.path, file.desired);
     }
   }
-  if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex"]) pruneEmpty(opts.root, base);
+  if (opts.mode === "remove") for (const base of [...SKILL_BASES, ".codex", ".cursor", ".vscode", ".gemini"]) pruneEmpty(opts.root, base);
   return {
     scope: opts.scope,
     root: opts.root,

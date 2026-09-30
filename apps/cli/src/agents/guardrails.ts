@@ -2,8 +2,8 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { parse as parseToml } from "smol-toml";
-import { appendOwned, eolOf, escapeRegExp, isCanonicalJson, readText, withoutOwned } from "./files.js";
+import { isCanonicalJson, type Staging } from "./files.js";
+import { isTable, parseTomlOrNull, withTomlPart } from "./toml.js";
 import type { HookFormat } from "./hook.js";
 
 /**
@@ -22,13 +22,7 @@ import type { HookFormat } from "./hook.js";
  * gets a marked, exact addition that `--remove` takes back byte for byte.
  */
 
-export interface GuardrailFile {
-  path: string;
-  desired: string | null;
-}
-
 export interface GuardrailPlan {
-  files: GuardrailFile[];
   manual: string[];
   leftInPlace: string[];
   notices: string[];
@@ -46,8 +40,6 @@ const CLAUDE_MATCHER = "Bash|Read|Grep|Edit|MultiEdit|Write|NotebookEdit|mcp__.*
 /** Static rules for when the hook cannot run: the documented .env patterns, and the credential store. */
 export const CLAUDE_DENY = ["Read(./.env)", "Read(./.env.local)", "Read(./.env.*.local)", "Read(~/.config/varlatch/**)"];
 const HOOK_TIMEOUT_SECONDS = 30;
-
-const CODEX_ENV_MARKER = "# Added by varlatch agents install --guardrails: assisted mode in the commands Codex runs.";
 
 type Json = Record<string, unknown>;
 
@@ -114,52 +106,27 @@ export function withCodexHook(hooksFile: Json): Json | string {
   return withHook(hooksFile, hookCommand("codex"), null);
 }
 
-/** The marked TOML addition for Codex's environment. */
-function codexEnvBlock(eol: string): string {
-  return [CODEX_ENV_MARKER, "[shell_environment_policy.set]", 'VARLATCH_ASSISTED = "1"', ""].join(eol);
-}
-
-/** A value's JSON with keys sorted: equal for equal data, whatever its objects' prototypes. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, v: unknown) =>
-    isObject(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v,
-  );
-}
-
-function tomlParses(text: string): Json | null {
-  try {
-    return parseToml(text) as Json;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Codex's config.toml with `VARLATCH_ASSISTED = "1"` in
- * shell_environment_policy.set, appended as a marked block, or null with a
- * reason. The append is kept only when the file parses before and after,
- * and after is before plus that one value: TOML forbids defining a table
- * twice, so the parser is the judge of whether appending is safe.
+ * shell_environment_policy.set, in the CLI's marked region, or null with a
+ * reason (see withTomlPart: the parser judges whether the change is safe).
  */
 export function withCodexEnv(current: string | null): { next: string | null; reason?: string } {
-  const text = current ?? "";
-  const before = tomlParses(text);
+  const before = parseTomlOrNull(current ?? "");
   if (before === null) return { next: null, reason: "it does not parse as TOML" };
   const policy = before.shell_environment_policy;
-  const set = isObject(policy) ? policy.set : undefined;
-  if (isObject(set) && set.VARLATCH_ASSISTED === "1") return { next: current };
+  const set = isTable(policy) ? policy.set : undefined;
+  if (isTable(set) && set.VARLATCH_ASSISTED === "1") return { next: current };
   if (set !== undefined) return { next: null, reason: "it already has a shell_environment_policy.set" };
-  const next = appendOwned(current, codexEnvBlock(eolOf(text)));
-  const after = tomlParses(next);
-  const expected = { ...before, shell_environment_policy: { ...(isObject(policy) ? policy : {}), set: { VARLATCH_ASSISTED: "1" } } };
-  if (after === null || canonical(after) !== canonical(expected)) return { next: null, reason: "appending to it would change what it says" };
-  return { next };
+  return withTomlPart(current, "[shell_environment_policy.set]", ['VARLATCH_ASSISTED = "1"'], (b) => ({
+    ...b,
+    shell_environment_policy: { ...(isTable(b.shell_environment_policy) ? b.shell_environment_policy : {}), set: { VARLATCH_ASSISTED: "1" } },
+  }));
 }
 
-/** config.toml without the marked block, byte for byte as before install (null: nothing else was in it). */
+/** config.toml without the CLI's environment table (null: nothing else was in the file). */
 export function withoutCodexEnv(current: string): string | null {
-  const block = new RegExp(`${escapeRegExp(CODEX_ENV_MARKER)}\\r?\\n\\[shell_environment_policy\\.set\\]\\r?\\nVARLATCH_ASSISTED = "1"`).exec(current);
-  return block ? withoutOwned(current, block.index, block.index + block[0].length) : current;
+  return withTomlPart(current, "[shell_environment_policy.set]", null).next;
 }
 
 interface JsonFile {
@@ -168,8 +135,8 @@ interface JsonFile {
   editable: boolean;
 }
 
-function readJson(path: string): JsonFile {
-  const raw = readText(path);
+function readJson(staging: Staging, path: string): JsonFile {
+  const raw = staging.read(path);
   if (typeof raw !== "string") return { raw, parsed: raw === null ? {} : null, editable: raw === null };
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -191,8 +158,8 @@ function serialize(value: Json, raw: string | null | undefined): string {
  * creates for the skill) and Codex when .codex exists. `--remove` takes the
  * CLI's entries out of every coding agent's files.
  */
-export function planGuardrails(root: string, agents: string[], mode: "install" | "check" | "remove"): GuardrailPlan {
-  const plan: GuardrailPlan = { files: [], manual: [], leftInPlace: [], notices: [] };
+export function planGuardrails(root: string, agents: string[], mode: "install" | "check" | "remove", staging: Staging): GuardrailPlan {
+  const plan: GuardrailPlan = { manual: [], leftInPlace: [], notices: [] };
   const at = (p: string) => join(root, p);
   const remove = mode === "remove";
   const named = agents.filter((a) => a in GUARDRAIL_AGENTS);
@@ -204,12 +171,12 @@ export function planGuardrails(root: string, agents: string[], mode: "install" |
 
   if (guard("claude-code", null)) {
     const path = at(join(".claude", "settings.json"));
-    const file = readJson(path);
+    const file = readJson(staging, path);
     if (remove) {
       if (file.parsed !== null && file.raw !== null) {
         const next = withoutHook(file.parsed, hookCommand("claude"));
         if (!isDeepStrictEqual(next, file.parsed)) {
-          if (file.editable) plan.files.push({ path, desired: Object.keys(next).length > 0 ? serialize(next, file.raw) : null });
+          if (file.editable) staging.write(path, Object.keys(next).length > 0 ? serialize(next, file.raw) : null);
           else plan.manual.push(`remove the hook "${hookCommand("claude")}" from .claude/settings.json`);
         }
         const env = file.parsed.env;
@@ -222,22 +189,22 @@ export function planGuardrails(root: string, agents: string[], mode: "install" |
       plan.manual.push(
         `add the Claude Code guardrails to .claude/settings.json by hand (the CLI edits it only when it is two-space JSON): ` +
           `"env": {"VARLATCH_ASSISTED": "1"}, permissions.deny ${CLAUDE_DENY.join(", ")}, and a PreToolUse hook running "${hookCommand("claude")}"`,
-      );
+     );
     } else {
       const { next, manual } = withClaudeGuardrails(file.parsed);
       plan.manual.push(...manual);
-      if (!isDeepStrictEqual(next, file.parsed) || file.raw === null) plan.files.push({ path, desired: serialize(next, file.raw) });
+      if (!isDeepStrictEqual(next, file.parsed) || file.raw === null) staging.write(path, serialize(next, file.raw));
     }
   }
 
   if (guard("codex", ".codex")) {
     const hooksPath = at(join(".codex", "hooks.json"));
-    const hooks = readJson(hooksPath);
+    const hooks = readJson(staging, hooksPath);
     if (remove) {
       if (hooks.parsed !== null && hooks.raw !== null) {
         const next = withoutHook(hooks.parsed, hookCommand("codex"));
         if (!isDeepStrictEqual(next, hooks.parsed)) {
-          if (hooks.editable) plan.files.push({ path: hooksPath, desired: Object.keys(next).length > 0 ? serialize(next, hooks.raw) : null });
+          if (hooks.editable) staging.write(hooksPath, Object.keys(next).length > 0 ? serialize(next, hooks.raw) : null);
           else plan.manual.push(`remove the hook "${hookCommand("codex")}" from .codex/hooks.json`);
         }
       }
@@ -246,22 +213,22 @@ export function planGuardrails(root: string, agents: string[], mode: "install" |
     } else {
       const next = withCodexHook(hooks.parsed);
       if (typeof next === "string") plan.manual.push(`add a PreToolUse hook running "${hookCommand("codex")}" to .codex/hooks.json (${next})`);
-      else if (!isDeepStrictEqual(next, hooks.parsed) || hooks.raw === null) plan.files.push({ path: hooksPath, desired: serialize(next, hooks.raw) });
+      else if (!isDeepStrictEqual(next, hooks.parsed) || hooks.raw === null) staging.write(hooksPath, serialize(next, hooks.raw));
     }
 
     const configPath = at(join(".codex", "config.toml"));
-    const config = readText(configPath);
+    const config = staging.read(configPath);
     if (remove) {
       if (typeof config === "string") {
         const next = withoutCodexEnv(config);
-        if (next !== config) plan.files.push({ path: configPath, desired: next });
+        if (next !== config) staging.write(configPath, next);
       }
     } else if (config === undefined) {
       plan.manual.push('.codex/config.toml is not a UTF-8 text file, so the CLI leaves it as it is: set VARLATCH_ASSISTED = "1" in [shell_environment_policy.set]');
     } else {
       const { next, reason } = withCodexEnv(config);
       if (next === null) plan.manual.push(`set VARLATCH_ASSISTED = "1" in shell_environment_policy.set in .codex/config.toml (${reason})`);
-      else if (next !== config) plan.files.push({ path: configPath, desired: next });
+      else if (next !== config) staging.write(configPath, next);
     }
     if (!remove) plan.notices.push("Codex reads a project's .codex/ settings and hooks only once you trust the project, and runs each hook after you review it (/hooks)");
   }

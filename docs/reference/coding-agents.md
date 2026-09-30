@@ -4,9 +4,9 @@ A coding agent that works in your repository needs to know how to use
 Varlatch safely: start every command with `varlatch --assisted`, never read
 `.env` files, never put a secret in a command, and hand you the steps that
 are yours. The CLI ships those instructions as one skill, `varlatch`, in the
-open [Agent Skills](https://agentskills.io/specification) format, plus a short
-block for [`AGENTS.md`](https://agents.md). Both are plain text that any coding agent can follow: shell
-commands, and no agent-specific tools.
+open [Agent Skills](https://agentskills.io/specification) format, plus a
+short block for [`AGENTS.md`](https://agents.md). Both are plain text that
+any coding agent can follow: shell commands, and no agent-specific tools.
 
 The skill is built into the CLI, so what it tells a coding agent always
 matches the CLI that runs the commands.
@@ -21,7 +21,8 @@ matches the CLI that runs the commands.
 ## `varlatch agents install`
 
 ```
-varlatch agents install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]
+varlatch agents install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp]
+                        [--check|--remove] [--json]
 ```
 
 In a project (the directory with `varlatch.toml`, or the current directory
@@ -126,9 +127,9 @@ else Claude Code, and Codex when the project has a `.codex` directory.
   hook for the shell, file, and MCP tools.
 - **Codex**: a `PreToolUse` hook in `.codex/hooks.json`, and
   `VARLATCH_ASSISTED = "1"` in `[shell_environment_policy.set]` in
-  `.codex/config.toml`, as a marked block. Codex reads a project's `.codex`
-  settings and hooks only once you trust the project, and runs each hook
-  after you review it (`/hooks`).
+  `.codex/config.toml`, in the CLI's marked region (see below). Codex reads
+  a project's `.codex` settings and hooks only once you trust the project,
+  and runs each hook after you review it (`/hooks`).
 
 Every hook runs one handler, `varlatch agents hook --format <claude|codex>`.
 It reads the tool call the agent is about to make and denies:
@@ -146,19 +147,60 @@ It reads the tool call the agent is about to make and denies:
 The denial tells the agent what to do instead. The handler gives no
 decision for a call it does not understand, so the agent goes ahead.
 
-The CLI merges into the settings files only when they are two-space JSON,
-as with Gemini CLI; otherwise it prints the entries to add. `--remove`
-takes out the hooks, and the marked block in `.codex/config.toml` byte for
-byte; it leaves `VARLATCH_ASSISTED` and the deny rules in
-`.claude/settings.json`, which JSON cannot mark as the CLI's, and names
-them. `--check --guardrails` includes the guardrails; without
-`--guardrails`, `install` and `--check` leave them alone.
+The CLI merges into the settings files only when they are two-space JSON, as
+with Gemini CLI; otherwise it prints the entries to add. `--remove` takes
+out the hooks, and the CLI's table in `.codex/config.toml`; it leaves
+`VARLATCH_ASSISTED` and the deny rules in `.claude/settings.json`, which
+JSON cannot mark as the CLI's, and names them. `--check --guardrails`
+includes the guardrails; without `--guardrails`, `install` and `--check`
+leave them alone.
 
 **Guardrails are accident prevention, not a boundary.** The handler reads
 commands the way a careful person would, not the way a shell runs them: a
 script file, an unusual reader, or a pipe through `xargs` gets past it. A
 hook fails open when `varlatch` is not on the agent's `PATH`. What Varlatch
 protects, it protects in the CLI and the server.
+
+## MCP (opt-in)
+
+```
+varlatch agents install --mcp [--agent <name>]...
+```
+
+A coding agent with a shell uses the CLI directly, so MCP is not needed
+for it. For one that should use MCP, `--mcp` adds a `varlatch` server that
+runs `varlatch mcp` (see [the MCP server](mcp.md)) to the project's MCP
+files: those of the coding agents named with `--agent`, and every one that
+already exists, or `.mcp.json` when there is none.
+
+| File | Read by | Entry |
+|---|---|---|
+| `.mcp.json` | Claude Code, Copilot CLI | `mcpServers.varlatch` |
+| `.cursor/mcp.json` | Cursor | `mcpServers.varlatch`, `"type": "stdio"` |
+| `.vscode/mcp.json` | Copilot in VS Code | `servers.varlatch`, `"type": "stdio"` |
+| `.gemini/settings.json` | Gemini CLI | `mcpServers.varlatch` |
+| `opencode.json` | OpenCode | `mcp.varlatch`, `"type": "local"` |
+| `.codex/config.toml` | Codex | `[mcp_servers.varlatch]`, in the CLI's region |
+
+The JSON files are edited only when they are two-space JSON, and an
+existing `varlatch` server that differs from the CLI's is left alone.
+`--remove` takes out a `varlatch` server equal to the one the CLI writes,
+and the containers and files that leaves empty; it names one that differs.
+`--check --mcp` includes the entries. Claude Code asks before it uses a
+project's `.mcp.json` servers, and Codex uses them only in a trusted
+project.
+
+## The CLI's region in `.codex/config.toml`
+
+The tables the CLI writes to `.codex/config.toml` (the guardrails'
+environment and the MCP server) go into one region at the end of the file,
+between `# varlatch:begin: ...` and `# varlatch:end`. The CLI adds to it
+only when the file parses as TOML before and after, and after says exactly
+what it said before plus the new table; otherwise it prints the table for
+you to add. `--remove` takes the tables out, and with the last one the
+region and the line breaks install added, so the file is back to its
+bytes. If you add lines after the region, removing it keeps them, along
+with the blank line before the region.
 
 ## What this does not do
 
