@@ -38,6 +38,15 @@ fixes.
 - Generated types: an `integer` is a `number` in TypeScript and an `int` in
   Python.
 
+### Fixed
+
+- Generated Python configuration (`varlatch types`) no longer fails on a
+  whole number written with more than 4300 digits, such as `1` after 4300
+  leading zeros. Python refused to convert that much text to an `int`
+  (`ValueError`), while the server and the TypeScript module accept it as
+  `1`. A `number` or `integer` item now converts the same way in all three.
+  Regenerate Python type files to pick up the fix.
+
 ### Upgrading
 
 - Moving a project to Contract Semantics version 3 is a coordinated step.
