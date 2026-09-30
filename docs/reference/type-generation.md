@@ -60,6 +60,7 @@ until you do whenever the new release generates a different module.
 | `string`, `email` | `string` |
 | `url` | `string`, validated as a URL |
 | `number` | `number` |
+| `integer` | `number`, documented as a whole number |
 | `boolean` | `boolean` |
 | `enum` | a union of the listed values |
 
@@ -200,6 +201,7 @@ context](#the-run-context)), with these differences.
 | --- | --- | --- |
 | `string`, `email`, `url` | `str` | the string |
 | `number` | `float` | an `int` when the value has no decimal point, such as `3000`; a `float` otherwise, such as `0.5` or `3000.0` |
+| `integer` | `int` | an `int`; the value is always a whole number |
 | `boolean` | `bool` | `True` or `False` |
 | `enum` | `typing.Literal` of the listed values | the string |
 
@@ -207,7 +209,9 @@ context](#the-run-context)), with these differences.
   with slicing and `range()`. Which numbers are valid is exactly as for
   TypeScript, including the bound of 9007199254740991. `-0` is the int `0`.
   The annotation is `float`, which also accepts an `int`, so a type checker
-  may ask you to convert with `int(...)` where it needs an int.
+  may ask you to convert with `int(...)` where it needs an int. Declare the
+  item `integer` instead (Contract Semantics version 3) and it is annotated
+  `int`, with fractions rejected.
 - **Absent items are `None`.** An optional item is annotated `X | None`. An
   empty string is a value, never `None`.
 - **`Config`** is a frozen dataclass: assigning to or deleting an attribute

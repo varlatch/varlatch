@@ -3,7 +3,8 @@
 Contract Semantics are the rules that decide what a Contract means for a
 value: whether an item is required in an environment, when an item with no
 value is reported missing, and whether a value is valid for the item's type.
-From version 2 they also define how a value converts to a typed value.
+From version 2 they also define how a value converts to a typed value, and
+version 3 adds the `integer` type.
 
 The rules are defined once, in the `@varlatch/contract` package. The
 server's validation, strict startup, and the Typed Accessor that
@@ -23,13 +24,15 @@ never changes: different results for any input make a new version.
 `GET /v1/meta` lists the versions a server supports as `semanticsVersions`,
 and every contract revision in the API carries its `semanticsVersion`.
 
-| | Version 1 | Version 2 |
-| --- | --- | --- |
-| Used by | every revision created before 0.11.0 | a new project's first revision, from 0.11.0 |
-| Conversion to typed values | none | numbers and booleans |
-| Number magnitude | unbounded | at most 9007199254740991 (2^53 - 1) |
+| | Version 1 | Version 2 | Version 3 |
+| --- | --- | --- | --- |
+| Used by | every revision created before 0.11.0 | a new project's first revision, from 0.11.0 to 0.12.0 | a new project's first revision, from 0.13.0 |
+| Conversion to typed values | none | numbers and booleans | numbers, integers, and booleans |
+| Number magnitude | unbounded | at most 9007199254740991 (2^53 - 1) | at most 9007199254740991 (2^53 - 1) |
+| The `integer` type | not available | not available | available |
 
-All other rules are the same in both versions.
+Version 3 is version 2 plus the `integer` type: its other rules are
+version 2's. Rules not in the table are the same in all three versions.
 
 ### Which version a revision gets
 
@@ -40,6 +43,15 @@ All other rules are the same in both versions.
   and `--semantics 1` pins version 1. A contract pushed with `--file` can
   set `semanticsVersion` itself. A version the server does not support is
   refused.
+- On the dashboard, a Contract on older rules offers **Move to the newest
+  rules**. It creates a revision with the same items at the newest version
+  and shows the difference and its consequences, and you activate it
+  separately. It works for Git-managed Contracts too: later pushes from the
+  repository keep the version, so the file needs no change.
+- A type a version does not define is refused. An `integer` item in a
+  revision at version 1 or 2 fails the push, and `varlatch contract push`
+  says so before sending anything, naming the fix: push with
+  `--semantics latest`, or move the Contract on the dashboard first.
 - The version is part of the content hash, so the same items at another
   version are a different revision. Activating it shows the version change
   like any other contract change.
@@ -56,10 +68,11 @@ missing one, and is validated like any other.
 
 ## Types
 
-| Type | Valid values | Version 2 converts to |
+| Type | Valid values | Converts to, from version 2 |
 | --- | --- | --- |
 | `string` | anything, including the empty string | the string |
 | `number` | an optional `-`, ASCII digits, and an optional `.` followed by digits. No exponent, no leading `+`, no spaces. | a number |
+| `integer` (version 3) | an optional `-` and ASCII digits, nothing else: no decimal point, so `3.0` is not an integer, and no exponent, leading `+`, separator, or spaces | the whole number |
 | `boolean` | `true`, `false`, `1`, or `0`, in any case | `true` for `true` and `1`, `false` for `false` and `0` |
 | `url` | anything the WHATWG URL parser accepts, so `localhost:3000` is a URL with the scheme `localhost:` | the string |
 | `email` | text with one `@` and a dot after it. This is a pattern check, not an address parser. | the string |
@@ -80,6 +93,32 @@ different integer or to infinity:
   beyond its precision are not preserved:
   `0.1000000000000000055511151231257827` converts to `0.1`.
 - `-0` converts to negative zero.
+
+### Integers in version 3
+
+An `integer` holds a whole number, such as a port, a count, or a size.
+
+- Only an optional `-` and ASCII digits are valid. `3.0`, `3.5`, `+1`,
+  `1e3`, `1_000`, ` 1`, and non-ASCII digits are all invalid, with the
+  reason "must be a whole number". Leading zeros are allowed: `0080` is 80.
+- The magnitude must be at most 9007199254740991 (2^53 - 1), checked on
+  the digits, as for `number`. `-0` converts to 0.
+- `number` does not change: it keeps accepting `3.5` in every version. An
+  item rejects fractions only once its Contract declares it `integer`.
+- Generated types make an `integer` a `number` in TypeScript and an `int`
+  in Python.
+
+### Moving a Contract to version 3
+
+Moving to newer rules changes how every value is checked, so plan it:
+
+- Generated type files become stale; regenerate them with `varlatch types`,
+  and `varlatch types --check` fails until you do.
+- `varlatch run --strict` from a CLI that does not implement version 3
+  refuses to start the command, naming the version. Upgrade the CLI
+  wherever strict runs use the project, CI included.
+- A module generated for an older version refuses a run context for
+  version 3 and asks for regeneration.
 
 ## Validation reports
 

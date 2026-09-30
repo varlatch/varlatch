@@ -35,6 +35,18 @@ def portability_v2() -> dict:
     return vectors("packages/contract/test/vectors/semantics-v2-portability.json")
 
 
+def semantics(version: int) -> dict:
+    return vectors(f"packages/contract/test/vectors/semantics-v{version}.json")
+
+
+def portability(version: int) -> dict:
+    return vectors(f"packages/contract/test/vectors/semantics-v{version}-portability.json")
+
+
+# The versions this runtime implements, each with golden and portability vectors.
+CONVERSION_VERSIONS = (2, 3)
+
+
 def run_context_v1() -> dict:
     return vectors("packages/accessor/test/vectors/run-context-v1.json")
 

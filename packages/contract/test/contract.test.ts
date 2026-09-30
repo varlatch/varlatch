@@ -212,11 +212,11 @@ describe("semanticsVersion", () => {
   });
 
   it("rejects a version it does not implement, naming it", () => {
-    for (const semanticsVersion of [0, 3, 1.5, "2"]) {
+    for (const semanticsVersion of [0, 4, 1.5, "2"]) {
       expect(() => normalizeContract({ ...sample, semanticsVersion })).toThrow(ContractValidationError);
     }
     expect(() => normalizeContract({ ...sample, semanticsVersion: 9 })).toThrow(
-      "semanticsVersion: version 9 is not supported (supported: 1, 2)",
+      "semanticsVersion: version 9 is not supported (supported: 1, 2, 3)",
     );
     expect(LATEST_SEMANTICS_VERSION).toBe(Math.max(...SEMANTICS_VERSIONS));
   });
@@ -299,3 +299,36 @@ const GOLDEN_EMPTY_HASH =
   "sha256:8aec8887eb1a0f7eb74d40e98c4283c5801214cac1e8a2031473e6084d289db0";
 const GOLDEN_SAMPLE_V2_HASH =
   "sha256:b6113a514cf12d0da43dd4fe2dd2d025f3b9d4aa96e8ce9e5c41aa171b5955c9";
+
+describe("the integer type (ADR-0042)", () => {
+  const port = { name: "PORT", required: { kind: "always" }, sensitive: false, type: "integer" };
+
+  it("needs Contract Semantics version 3: older revisions, named or by omission, are refused with the fix", () => {
+    for (const semanticsVersion of [undefined, 1, 2]) {
+      expect(() => normalizeContract({ schemaVersion: 1, semanticsVersion, items: [port] }), String(semanticsVersion)).toThrow(
+        /PORT: type integer needs Contract Semantics version 3 or later, and this Contract uses version [12]; move it to the newest rules \(varlatch contract push --semantics latest/,
+      );
+    }
+    const v3 = normalizeContract({ schemaVersion: 1, semanticsVersion: 3, items: [port] });
+    expect(v3.items[0]?.type).toBe("integer");
+    expect(canonicalJson(v3)).toContain('"type":"integer"');
+  });
+
+  it("waits for the version when a push leaves it to the server, and is checked again once decided", () => {
+    const undecided = normalizeContract({ schemaVersion: 1, items: [port] }, { versionUndecided: true });
+    expect(undecided).not.toHaveProperty("semanticsVersion");
+    expect(() => normalizeContract({ ...undecided, semanticsVersion: 2 })).toThrow(/needs Contract Semantics version 3/);
+    expect(normalizeContract({ ...undecided, semanticsVersion: 3 }).semanticsVersion).toBe(3);
+    // A Contract that names its version is checked even then.
+    expect(() => normalizeContract({ schemaVersion: 1, semanticsVersion: 2, items: [port] }, { versionUndecided: true })).toThrow(
+      /needs Contract Semantics version 3/,
+    );
+  });
+
+  it("changes nothing for number items", () => {
+    const ratio = { ...port, name: "RATIO", type: "number" };
+    for (const semanticsVersion of [1, 2, 3]) {
+      expect(normalizeContract({ schemaVersion: 1, semanticsVersion, items: [ratio] }).items[0]?.type).toBe("number");
+    }
+  });
+});

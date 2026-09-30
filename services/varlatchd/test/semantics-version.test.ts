@@ -118,9 +118,9 @@ describe("Contract Revision semantics version", () => {
   });
 
   it("refuses a version the server does not evaluate, naming it", async () => {
-    const res = await call("POST", `${P}/contract/revisions`, { contract: contract("listen port", 3) });
+    const res = await call("POST", `${P}/contract/revisions`, { contract: contract("listen port", 4) });
     expect(res.status).toBe(422);
-    expect(JSON.stringify(res.body)).toContain("version 3 is not supported (supported: 1, 2)");
+    expect(JSON.stringify(res.body)).toContain("version 4 is not supported (supported: 1, 2, 3)");
     const revisions = await ctx.db.query("SELECT count(*)::int AS n FROM contract_revisions");
     expect((revisions.rows[0] as { n: number }).n).toBe(0);
   });
@@ -177,3 +177,55 @@ describe("a Contract Revision by ID", () => {
     expect((await as(`${P}/contract`)).status).toBe(403);
   });
 });
+
+describe("the integer type (ADR-0042)", () => {
+  function withInteger(semanticsVersion?: number) {
+    return {
+      schemaVersion: 1,
+      ...(semanticsVersion === undefined ? {} : { semanticsVersion }),
+      items: [
+        { name: "PORT", required: { kind: "always" }, sensitive: false, type: "integer" },
+        { name: "RATIO", required: { kind: "never" }, sensitive: false, type: "number" },
+      ],
+    };
+  }
+
+  it("a push that keeps an older version is refused with the fix, and stores nothing", async () => {
+    await activate((await push(contract("listen port", 2))).id);
+    const res = await call("POST", `${P}/contract/revisions`, { contract: withInteger() });
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(res.body)).toContain(
+      "PORT: type integer needs Contract Semantics version 3 or later, and this Contract uses version 2",
+    );
+    expect(JSON.stringify(res.body)).toContain("--semantics latest");
+    const pinnedOld = await call("POST", `${P}/contract/revisions`, { contract: withInteger(2) });
+    expect(pinnedOld.status).toBe(422);
+    const revisions = await ctx.db.query("SELECT count(*)::int AS n FROM contract_revisions");
+    expect((revisions.rows[0] as { n: number }).n).toBe(1);
+  });
+
+  it("after a move to version 3, pushes that name no version keep it, as Git pushes do", async () => {
+    await activate((await push(contract("listen port", 1))).id);
+    // The move: the same items, pinned to the newest version.
+    const moved = await push(contract("listen port", 3));
+    expect(moved.semanticsVersion).toBe(3);
+    await activate(moved.id);
+    // A later push from a file that names no version (`varlatch contract push --schema`).
+    const next = await push(withInteger());
+    expect(next.semanticsVersion).toBe(3);
+    expect(next.contract.semanticsVersion).toBe(3);
+    await activate(next.id);
+    expect((await push(contract("a description edit"))).semanticsVersion).toBe(3);
+  });
+
+  it("validates whole numbers only, while number keeps accepting fractions", async () => {
+    await activate((await push(withInteger(3))).id);
+    expect((await call("PUT", `${E}/values/PORT`, { value: "3.0" })).status).toBe(200);
+    expect((await call("PUT", `${E}/values/RATIO`, { value: "3.5" })).status).toBe(200);
+    const invalid = await call("POST", `${E}/validate`, {});
+    expect(invalid.body).toMatchObject({ valid: false, invalid: [{ name: "PORT", reason: "must be a whole number" }] });
+    expect((await call("PUT", `${E}/values/PORT`, { value: "3000" })).status).toBe(200);
+    expect((await call("POST", `${E}/validate`, {})).body).toMatchObject({ valid: true, invalid: [] });
+  });
+});
+

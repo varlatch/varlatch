@@ -27,8 +27,8 @@ _RUN_CONTEXT = "VARLATCH_RUN_CONTEXT"
 _SCHEMA_FORMAT = 1
 # Every version the Contract Semantics define, and those this runtime
 # implements: only versions that define conversion.
-_SEMANTICS_VERSIONS = (1, 2)
-_IMPLEMENTED_VERSIONS = (2,)
+_SEMANTICS_VERSIONS = (1, 2, 3)
+_IMPLEMENTED_VERSIONS = (2, 3)
 _TIERS = ("development", "staging", "production")
 _SERVER_STATUSES = ("delivered", "withheld", "notStored")
 _DELIVERIES = ("varlatch", "inherited", "default", "absent")
@@ -66,6 +66,8 @@ class VarlatchWarning(UserWarning):
 # and `\s` is a different set), and the portability vectors pin each case.
 
 _NUMBER = _re.compile(r"-?([0-9]+)(?:\.([0-9]+))?")
+# Version 3 integers: an optional "-" and ASCII digits only, never a fraction.
+_INTEGER = _re.compile(r"-?([0-9]+)")
 _BOOLEAN = _re.compile(r"true|false|1|0", _re.IGNORECASE | _re.ASCII)
 # JavaScript's \s: WhiteSpace and LineTerminator, including U+FEFF, and not
 # U+001C..U+001F or U+0085, which Python's \s includes.
@@ -116,6 +118,22 @@ def _parse_number(value: str) -> "tuple[bool, object]":
     return (True, float(value))
 
 
+def _parse_integer(value: str) -> "tuple[bool, object]":
+    match = _INTEGER.fullmatch(value)
+    if match is None:
+        return (False, "must be a whole number")
+    digits = match.group(1).lstrip("0") or "0"
+    if len(digits) > len(_MAX_EXACT) or (len(digits) == len(_MAX_EXACT) and digits > _MAX_EXACT):
+        return (False, "must be a whole number no larger in magnitude than 2^53 - 1")
+    # The text matched the pattern, so int() sees only ASCII digits; -0 is 0.
+    return (True, int(value))
+
+
+# An evaluator before version 3 that meets an integer item fails closed, as
+# the reference implementation does.
+_BEFORE_INTEGER = "has a type this Contract Semantics version does not define (integer needs version 3)"
+
+
 def _parse_url(value: str) -> "tuple[bool, object]":
     verdict = _url_verdict(value)
     if verdict is None:
@@ -127,11 +145,14 @@ def _parse_url(value: str) -> "tuple[bool, object]":
     return (True, value) if verdict else (False, "must be a valid URL")
 
 
-def _parse(item: "dict[str, object]", value: str) -> "tuple[bool, object]":
-    """Validation and conversion as one step: (True, value) or (False, reason)."""
+def _parse(item: "dict[str, object]", value: str, version: int = 3) -> "tuple[bool, object]":
+    """Validation and conversion as one step, at a semantics version that
+    defines conversion: (True, value) or (False, reason)."""
     kind = item["type"]
     if kind == "number":
         return _parse_number(value)
+    if kind == "integer":
+        return _parse_integer(value) if version >= 3 else (False, _BEFORE_INTEGER)
     if kind == "string":
         return (True, value)
     if kind == "boolean":
@@ -311,6 +332,7 @@ def _evaluate(
             "generated types",
             f"use Contract Semantics version {version}, which defines no conversion; activate a revision at version {' or '.join(str(v) for v in _IMPLEMENTED_VERSIONS)} and regenerate them with varlatch types",
         )
+    semantics = _typing.cast(int, _json_integer(version))
 
     warnings: "list[str]" = []
 
@@ -364,7 +386,7 @@ def _evaluate(
             if not _is_text(raw):
                 issues.append(ConfigIssue(name, "is not valid UTF-8 in the environment"))
                 continue
-            ok, result = _parse(item, raw)
+            ok, result = _parse(item, raw, semantics)
             if ok:
                 values[name] = result
             else:
@@ -380,7 +402,7 @@ def _evaluate(
         withheld = recorded is not None and recorded[0] == "withheld"
         # A default never stands in for a value the server withheld.
         if options.get("apply_defaults") is True and "defaultValue" in item and not withheld:
-            ok, result = _parse(item, _typing.cast(str, item["defaultValue"]))
+            ok, result = _parse(item, _typing.cast(str, item["defaultValue"]), semantics)
             if ok:
                 values[name] = result
                 defaulted.append(name)

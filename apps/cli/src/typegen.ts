@@ -86,6 +86,7 @@ function commentLiteral(value: string): string {
 function typeOf(item: ContractItem): string {
   switch (item.type) {
     case "number":
+    case "integer":
       return "number";
     case "boolean":
       return "boolean";
@@ -123,6 +124,7 @@ function memberDoc(item: ContractItem): string[] {
   const body: string[] = [];
   if (item.description !== undefined) body.push(...commentLines(item.description), "");
   body.push(...commentLines(requirednessLine(item)), "");
+  if (item.type === "integer") body.push("A whole number.", "");
   if (item.example !== undefined) {
     const [first = "", ...rest] = commentLines(item.example);
     body.push(`@example ${first}`.trimEnd(), ...rest);
@@ -195,11 +197,12 @@ export function generateTypesModule(revision: RevisionInput, opts: GenerateOptio
     "// above, and never writes to process.env.",
     "",
     "/**",
-    " * Every Contract item, converted: numbers to `number`, booleans to `boolean`,",
-    " * enums to their values; URLs are validated and stay strings. An item is",
-    " * optional unless the Contract requires it in every environment without a",
-    " * default: a default is applied only by `varlatch run --strict`, or by",
-    " * `loadConfig({ applyDefaults: true })`, and never replaces a withheld value.",
+    " * Every Contract item, converted: numbers and integers to `number`,",
+    " * booleans to `boolean`, enums to their values; URLs are validated and stay",
+    " * strings. An item is optional unless the Contract requires it in every",
+    " * environment without a default: a default is applied only by",
+    " * `varlatch run --strict`, or by `loadConfig({ applyDefaults: true })`, and",
+    " * never replaces a withheld value.",
     " */",
   ];
   if (items.length === 0) {

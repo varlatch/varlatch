@@ -5,7 +5,7 @@
 import math
 import unittest
 
-from _support import ada_available, check_ada_mode, portability_v2, runtime, semantics_v2
+from _support import CONVERSION_VERSIONS, ada_available, check_ada_mode, portability, runtime, semantics
 
 
 def item(vector: dict) -> dict:
@@ -16,8 +16,8 @@ def item(vector: dict) -> dict:
 
 
 class ValidateVectors(unittest.TestCase):
-    def check(self, vector: dict) -> None:
-        ok, result = runtime._parse(item(vector), vector["value"])
+    def check(self, vector: dict, version: int) -> None:
+        ok, result = runtime._parse(item(vector), vector["value"], version)
         label = f"{vector['type']} {vector['value']!r}"
         if vector.get("internationalizedHost") and not ada_available():
             # Without UTS #46 the value is rejected, never guessed, with the fix named.
@@ -32,7 +32,10 @@ class ValidateVectors(unittest.TestCase):
             text = expected["number"]
             self.assertIsInstance(result, (int, float), label)
             self.assertNotIsInstance(result, bool, label)
-            if "." in vector["value"]:
+            if vector["type"] == "integer":
+                self.assertIs(type(result), int, label)
+                self.assertEqual(result, int(text), label)
+            elif "." in vector["value"]:
                 self.assertIsInstance(result, float, label)
                 self.assertEqual(result, float(text), label)
                 self.assertEqual(math.copysign(1, result), math.copysign(1, float(text)), f"{label}: sign of zero")
@@ -47,25 +50,32 @@ class ValidateVectors(unittest.TestCase):
             self.assertIs(type(result), str, label)
 
     def test_golden_vectors(self) -> None:
-        data = semantics_v2()
-        self.assertEqual(data["semanticsVersion"], 2)
-        for vector in data["validate"]:
-            with self.subTest(type=vector["type"], value=vector["value"]):
-                self.check(vector)
+        for version in CONVERSION_VERSIONS:
+            data = semantics(version)
+            self.assertEqual(data["semanticsVersion"], version)
+            for vector in data["validate"]:
+                with self.subTest(version=version, type=vector["type"], value=vector["value"]):
+                    self.check(vector, version)
 
     def test_portability_vectors(self) -> None:
-        data = portability_v2()
-        self.assertEqual(data["semanticsVersion"], 2)
-        for vector in data["validate"]:
-            with self.subTest(type=vector["type"], value=vector["value"]):
-                self.check(vector)
+        for version in CONVERSION_VERSIONS:
+            data = portability(version)
+            self.assertEqual(data["semanticsVersion"], version)
+            for vector in data["validate"]:
+                with self.subTest(version=version, type=vector["type"], value=vector["value"]):
+                    self.check(vector, version)
+
+    def test_integer_is_refused_before_version_3_as_the_reference_does(self) -> None:
+        ok, reason = runtime._parse({"name": "ITEM", "type": "integer", "required": {"kind": "never"}}, "1", 2)
+        self.assertFalse(ok)
+        self.assertIn("integer needs version 3", reason)
 
     def test_the_dependency_mode_is_the_one_ci_asked_for(self) -> None:
         check_ada_mode(self)
 
     def test_no_reason_contains_a_fragment_of_the_value(self) -> None:
-        for vector in semantics_v2()["validate"] + portability_v2()["validate"]:
-            ok, reason = runtime._parse(item(vector), vector["value"])
+        for vector in semantics(3)["validate"] + portability(3)["validate"]:
+            ok, reason = runtime._parse(item(vector), vector["value"], 3)
             if ok or vector["type"] == "enum":
                 continue
             value = vector["value"]
@@ -75,7 +85,7 @@ class ValidateVectors(unittest.TestCase):
 
 class RequiredVectors(unittest.TestCase):
     def test_golden_vectors(self) -> None:
-        for vector in semantics_v2()["required"]:
+        for vector in semantics(3)["required"]:
             subject = {"name": "ITEM", "type": "string", "required": vector["required"]}
             if "defaultValue" in vector:
                 subject["defaultValue"] = vector["defaultValue"]

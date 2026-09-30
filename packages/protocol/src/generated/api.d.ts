@@ -1224,7 +1224,7 @@ export interface components {
             installationId?: string;
             /** @description Platform adapters this Installation allows for outbound sync (ADR-0031); absent when the installation switch is off. */
             syncAdapters?: components["schemas"]["SyncPlatform"][];
-            /** @description Contract Semantics versions this server evaluates. Absent on servers older than 0.11.0, which evaluate only version 1. */
+            /** @description Contract Semantics versions this server evaluates. Absent on servers older than 0.11.0, which evaluate only version 1. Version 3 (from 0.13.0) adds the `integer` item type. */
             semanticsVersions?: number[];
         };
         Organization: {

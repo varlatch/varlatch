@@ -40,15 +40,15 @@ beforeAll(async () => {
 
 describe("the built accessor implements exactly the versions that define conversion", () => {
   it("implements version 2, and refuses version 1 naming the fix", () => {
-    expect(rt.implementedSemanticsVersions()).toEqual([2]);
+    expect(rt.implementedSemanticsVersions()).toEqual([2, 3]);
     const err = configError(() => rt.loadConfig(schema([], { semanticsVersion: 1 }), { env: {} }));
     expect(err).toBeInstanceOf(rt.ConfigError);
     expect(err.message).toContain("Contract Semantics version 1, which defines no conversion");
-    expect(err.message).toContain("activate a revision at version 2");
+    expect(err.message).toContain("activate a revision at version 2 or 3");
   });
 
   it("refuses a version it does not implement", () => {
-    for (const version of [0, 3, 1.5]) {
+    for (const version of [0, 4, 1.5]) {
       const err = configError(() => rt.loadConfig(schema([], { semanticsVersion: version }), { env: {} }));
       expect(err.message).toContain(`Contract Semantics version ${version}, which this accessor does not implement`);
     }
@@ -112,12 +112,14 @@ describe.each(SEMANTICS_VERSIONS.filter((v) => v !== 1).map((v) => [v]))(
   },
 );
 
-describe("semantics version 2 portability vectors against the built accessor", () => {
-  const url = new URL("../../contract/test/vectors/semantics-v2-portability.json", import.meta.url);
+describe.each([[2], [3]])("semantics version %i portability vectors against the built accessor", (version) => {
+  const url = new URL(`../../contract/test/vectors/semantics-v${version}-portability.json`, import.meta.url);
   const { validate } = JSON.parse(readFileSync(url, "utf8")) as { validate: ValidateVector[] };
 
   it.each(validate.map((v) => [`${v.type} ${JSON.stringify(v.value)}`, v] as const))("%s", (_, v) => {
-    const s = schema([item("ITEM", { type: v.type, ...(v.enumValues ? { enumValues: v.enumValues } : {}) })]);
+    const s = schema([item("ITEM", { type: v.type, ...(v.enumValues ? { enumValues: v.enumValues } : {}) })], {
+      semanticsVersion: version,
+    });
     if (!v.valid) {
       const err = configError(() => rt.loadConfig(s, { env: { ITEM: v.value } }));
       expect(err.issues).toEqual([{ name: "ITEM", reason: v.reason }]);

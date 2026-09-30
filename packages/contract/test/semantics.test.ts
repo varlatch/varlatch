@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ITEM_TYPES,
+  ITEM_TYPE_SINCE_SEMANTICS,
   SEMANTICS_VERSIONS,
   UnsupportedSemanticsVersionError,
   semanticsFor,
@@ -101,8 +102,8 @@ describe.each(SEMANTICS_VERSIONS.map((v) => [v]))("semantics version %i golden v
     expect(semantics.missingWhenAbsent(subject, v.environment)).toBe(v.missingWhenAbsent);
   });
 
-  it("covers every item type with a valid and an invalid value", () => {
-    for (const type of ITEM_TYPES) {
+  it("covers every item type the version defines with a valid and an invalid value", () => {
+    for (const type of ITEM_TYPES.filter((t) => ITEM_TYPE_SINCE_SEMANTICS[t] <= version)) {
       const own = vectors.validate.filter((v) => v.type === type);
       expect(own.some((v) => v.valid), `${type} valid`).toBe(true);
       if (type !== "string") expect(own.some((v) => !v.valid), `${type} invalid`).toBe(true);
@@ -137,30 +138,31 @@ describe("semanticsFor", () => {
   it("defines conversion from version 2", () => {
     expect(semanticsFor(1).parse).toBeUndefined();
     expect(semanticsFor(2).parse).toBeTypeOf("function");
+    expect(semanticsFor(3).parse).toBeTypeOf("function");
   });
 
   it("fails closed on a version it does not implement, naming it", () => {
-    for (const version of [0, 3, 1.5, Number.NaN]) {
+    for (const version of [0, 4, 1.5, Number.NaN]) {
       expect(() => semanticsFor(version)).toThrow(UnsupportedSemanticsVersionError);
     }
-    expect(() => semanticsFor(7)).toThrow("Contract semantics version 7 is not supported (supported: 1, 2)");
+    expect(() => semanticsFor(7)).toThrow("Contract semantics version 7 is not supported (supported: 1, 2, 3)");
     expect(() => semanticsFor("__proto__" as unknown as number)).toThrow(UnsupportedSemanticsVersionError);
   });
 });
 
-describe("semantics version 2 portability vectors", () => {
+describe.each([[2], [3]])("semantics version %i portability vectors", (version) => {
   // Inputs where other languages' regular expressions and parsers commonly
   // differ. The TypeScript semantics are the reference: these pin what they
   // already do, so every other implementation can be held to it.
-  const url = new URL("./vectors/semantics-v2-portability.json", import.meta.url);
+  const url = new URL(`./vectors/semantics-v${version}-portability.json`, import.meta.url);
   const vectors = JSON.parse(readFileSync(url, "utf8")) as {
     semanticsVersion: number;
     validate: (ValidateVector & { internationalizedHost?: boolean })[];
   };
-  const semantics = semanticsFor(2);
+  const semantics = semanticsFor(version);
 
-  it("names version 2", () => {
-    expect(vectors.semanticsVersion).toBe(2);
+  it("names its version", () => {
+    expect(vectors.semanticsVersion).toBe(version);
   });
 
   it.each(vectors.validate.map((v) => [`${v.type} ${JSON.stringify(v.value)}`, v] as const))("%s", (_, v) => {
@@ -200,5 +202,43 @@ describe("semantics version 2 portability vectors", () => {
         expect(v.reason, JSON.stringify(v.value)).not.toContain(v.value.slice(i, i + 4));
       }
     }
+  });
+});
+
+describe("semantics version 3", () => {
+  const load = (name: string) =>
+    JSON.parse(readFileSync(new URL(`./vectors/${name}.json`, import.meta.url), "utf8")) as { validate: ValidateVector[] };
+
+  it("repeats every version 2 vector with its version 2 result: nothing but integer changes", () => {
+    const v3 = load("semantics-v3").validate;
+    for (const v of load("semantics-v2").validate) {
+      const again = v3.find((w) => w.type === v.type && w.value === v.value && JSON.stringify(w.enumValues) === JSON.stringify(v.enumValues));
+      expect(again, `${v.type} ${JSON.stringify(v.value)}`).toBeDefined();
+      expect({ ...again, note: undefined }).toEqual({ ...v, note: undefined });
+    }
+  });
+
+  it("integer: an optional - and ASCII digits, within 2^53 - 1; never a fraction, even .0", () => {
+    const parse = semanticsFor(3).parse!;
+    const integer = { name: "PORT", type: "integer" as const, required: { kind: "never" as const }, sensitive: false };
+    expect(parse(integer, "3000")).toEqual({ ok: true, value: 3000 });
+    expect(Object.is((parse(integer, "-0") as { value: number }).value, 0)).toBe(true);
+    for (const value of ["3.0", "3.5", "+1", "1e3", " 1", ""]) {
+      expect(parse(integer, value), value).toEqual({ ok: false, reason: "must be a whole number" });
+    }
+    expect(parse(integer, "9007199254740992")).toEqual({
+      ok: false,
+      reason: "must be a whole number no larger in magnitude than 2^53 - 1",
+    });
+  });
+
+  it("number keeps accepting fractions at every version", () => {
+    const number = { name: "RATIO", type: "number" as const, required: { kind: "never" as const }, sensitive: false };
+    for (const version of SEMANTICS_VERSIONS) expect(semanticsFor(version).validate(number, "3.5"), `v${version}`).toBeNull();
+  });
+
+  it("an evaluator before version 3 that meets an integer item fails closed", () => {
+    const integer = { name: "PORT", type: "integer" as const, required: { kind: "never" as const }, sensitive: false };
+    for (const version of [1, 2]) expect(semanticsFor(version).validate(integer, "1"), `v${version}`).toMatch(/integer needs version 3/);
   });
 });

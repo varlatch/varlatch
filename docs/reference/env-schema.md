@@ -39,7 +39,7 @@ Item decorators, on comment lines directly above an item, one per line:
 | `@required=tier(production)` | required in every environment of this tier: `development`, `staging`, or `production` |
 | `@sensitive` or `@sensitive=true` | sensitive |
 | `@sensitive=false` or `@public` | not sensitive |
-| `@type=string`, `number`, `boolean`, `url`, or `email` | type |
+| `@type=string`, `number`, `integer`, `boolean`, `url`, or `email` | type (`integer` needs Contract Semantics version 3; see [Contract Semantics](contract-semantics.md#integers-in-version-3)) |
 | `@type=enum(a, b, ...)` | enum type with these values |
 | `@example=...` | example (quotes stripped) |
 

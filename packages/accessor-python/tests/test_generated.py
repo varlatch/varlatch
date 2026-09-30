@@ -17,8 +17,9 @@ from _support import (
     context,
     generate,
     load_module,
-    portability_v2,
-    semantics_v2,
+    CONVERSION_VERSIONS,
+    portability,
+    semantics,
 )
 
 ITEMS = [
@@ -249,19 +250,23 @@ class RunContext(unittest.TestCase):
 class VectorsThroughTheGeneratedModule(unittest.TestCase):
     def test_every_validate_vector(self) -> None:
         check_ada_mode(self)
-        vectors = semantics_v2()["validate"] + portability_v2()["validate"]
+        for version in CONVERSION_VERSIONS:
+            self.check_version(version)
+
+    def check_version(self, version: int) -> None:
+        vectors = semantics(version)["validate"] + portability(version)["validate"]
         specs = []
         for v in vectors:
             fields = {"type": v["type"]}
             if "enumValues" in v:
                 fields["enumValues"] = v["enumValues"]
-            specs.append({"items": [contract_item("ITEM", **fields)]})
+            specs.append({"items": [contract_item("ITEM", **fields)], "semanticsVersion": version})
         # One module per distinct item shape.
         shapes = {json.dumps(s, sort_keys=True): s for s in specs}
         modules = dict(zip(shapes, (load_module(t) for t in generate(*shapes.values()))))
         for v, spec in zip(vectors, specs):
             module = modules[json.dumps(spec, sort_keys=True)]
-            with self.subTest(type=v["type"], value=v["value"]):
+            with self.subTest(version=version, type=v["type"], value=v["value"]):
                 if v.get("internationalizedHost") and not ada_available():
                     err = error(lambda: module.load_config(env={"ITEM": v["value"]}), module)
                     self.assertEqual(err.issues[0].reason, "is an internationalized URL; install the ada-url package to validate it")
@@ -271,7 +276,10 @@ class VectorsThroughTheGeneratedModule(unittest.TestCase):
                 else:
                     value = module.load_config(env={"ITEM": v["value"]}).config.ITEM
                     expected = v["converted"]
-                    if "number" in expected:
+                    if "number" in expected and v["type"] == "integer":
+                        self.assertIs(type(value), int)
+                        self.assertEqual(value, int(expected["number"]))
+                    elif "number" in expected:
                         self.assertEqual(value, float(expected["number"]))
                     elif "boolean" in expected:
                         self.assertIs(value, expected["boolean"])
@@ -279,7 +287,7 @@ class VectorsThroughTheGeneratedModule(unittest.TestCase):
                         self.assertEqual(value, expected["string"])
 
     def test_every_requiredness_vector_through_run_contexts(self) -> None:
-        for i, v in enumerate(semantics_v2()["required"]):
+        for i, v in enumerate(semantics(3)["required"]):
             fields = {"required": v["required"]}
             if "defaultValue" in v:
                 fields["defaultValue"] = v["defaultValue"]
@@ -315,3 +323,32 @@ class Refusals(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Integers(unittest.TestCase):
+    """The integer type (semantics version 3): annotated and returned as int."""
+
+    def test_annotation_value_and_refusals(self) -> None:
+        [text] = generate(
+            {
+                "items": [
+                    contract_item("PORT", type="integer", required={"kind": "always"}),
+                    contract_item("RATIO", type="number"),
+                ],
+                "semanticsVersion": 3,
+            }
+        )
+        module = load_module(text)
+        hints = {f.name: f.type for f in dataclasses.fields(module.Config)}
+        self.assertEqual(hints["PORT"], "int")
+        self.assertEqual(hints["RATIO"], "float | None")
+        config = module.load_config(env={"PORT": "3000", "RATIO": "3.5"}).config
+        self.assertIs(type(config.PORT), int)
+        self.assertEqual(config.PORT, 3000)
+        self.assertEqual(config.RATIO, 3.5)
+        for bad in ("3.0", "3.5", "+1", "1e3"):
+            err = error(lambda: module.load_config(env={"PORT": bad}), module)
+            self.assertEqual([tuple(i) for i in err.issues], [("PORT", "must be a whole number")])
+        with open(module.__file__, encoding="utf-8") as f:
+            self.assertIn("A whole number.", f.read())
+
