@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createWriteStream, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { createWriteStream, readFileSync, renameSync, rmSync } from "node:fs";
 import http from "node:http";
+import { basename, dirname, join } from "node:path";
 import type { Writable } from "node:stream";
 import { AGENT_RUN_ENV } from "@varlatch/context";
+import { BROKER_REPLY_HEADER } from "./scrub.js";
 
 /**
  * `varlatch request` (ADR-0043 Decision 6): a curl-like client for the
@@ -189,15 +192,13 @@ export interface RequestIo {
 }
 
 export type RequestOutcome =
-  /** The destination answered (any HTTP status, as curl reports it). */
+  /** The destination answered (any HTTP status, as curl reports it), and all of it was written. */
   | { kind: "response"; status: number }
-  /** The Broker refused the request itself, before or after exercising. */
+  /** The Broker answered itself (it marks such replies): a refusal, or its authentication challenge. */
   | { kind: "refused"; status: number }
-  | { kind: "unreachable"; code: string };
-
-/** The Broker's own answers are short `text/plain` bodies starting with this prefix. */
-const BROKER_PREFIX = "varlatch-broker: ";
-const REFUSAL_BUFFER = 64 * 1024;
+  | { kind: "unreachable"; code: string }
+  /** The response was cut off, or could not be written: the output is incomplete. */
+  | { kind: "incomplete"; reason: string };
 
 function head(res: http.IncomingMessage): Buffer {
   const lines = [`HTTP/${res.httpVersion} ${res.statusCode} ${res.statusMessage ?? ""}`.trimEnd()];
@@ -205,13 +206,31 @@ function head(res: http.IncomingMessage): Buffer {
   return Buffer.from(`${lines.join("\r\n")}\r\n\r\n`, "utf8");
 }
 
+const errorCode = (err: unknown) => (err as NodeJS.ErrnoException).code ?? (err instanceof Error ? err.message : String(err));
+
 /**
- * Send one request to the Broker and relay the response: the body to stdout
- * or `-o`, streamed as it arrives, and with `-i` the status line and headers
- * first. A refusal from the Broker itself goes to stderr instead.
+ * Send one request to the Broker and relay the response.
+ *
+ * - A reply the Broker generated itself carries its marker header, which it
+ *   strips from every destination response: that reply goes to stderr, and
+ *   the outcome is "refused". Every other reply is the destination's, whatever
+ *   its status or body, and is relayed.
+ * - The body streams to stdout, or with `-o` to a temporary file beside the
+ *   named one that replaces it only once the whole response was received
+ *   and written; `-i` writes the status line and headers first.
+ * - Success needs the complete response and a successful write. A response
+ *   the Broker or the destination cuts off (a scrubbing limit, an idle
+ *   cutoff, a disconnect), or an output that cannot be written, settles as
+ *   "incomplete"; a partial `-o` file is removed.
  */
 export function sendThroughBroker(opts: RequestOptions, broker: BrokerEndpoint, io: RequestIo): Promise<RequestOutcome> {
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (outcome: RequestOutcome) => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
     const headers: string[] = ["Host", opts.url.host];
     if (!opts.headers.some(([n]) => n.toLowerCase() === "user-agent")) headers.push("User-Agent", "varlatch-request");
     for (const [name, value] of opts.headers) headers.push(name, value);
@@ -224,59 +243,69 @@ export function sendThroughBroker(opts: RequestOptions, broker: BrokerEndpoint, 
       { host: broker.host, port: broker.port, method: opts.method, path: opts.url.href, headers, agent, setHost: false },
       (res) => {
         const status = res.statusCode ?? 0;
-        const type = String(res.headers["content-type"] ?? "");
-        const relay = () => {
-          const out: Writable = opts.output ? createWriteStream(opts.output) : io.stdout;
-          if (opts.include) out.write(head(res));
-          res.pipe(out, { end: opts.output !== null });
-          res.on("end", () => {
-            if (opts.output) out.once("finish", () => resolve({ kind: "response", status }));
-            else resolve({ kind: "response", status });
-          });
-        };
-        if (status < 400 || !type.startsWith("text/plain")) return relay();
-        // Possibly the Broker's own refusal: look at the start of the body first.
-        const chunks: Buffer[] = [];
-        let size = 0;
-        let decided = false;
-        const decide = (ended: boolean) => {
-          if (decided) return;
-          const start = Buffer.concat(chunks).subarray(0, BROKER_PREFIX.length).toString("utf8");
-          if (!ended && start.length < BROKER_PREFIX.length && size < REFUSAL_BUFFER) return;
-          decided = true;
-          const buffered = Buffer.concat(chunks);
-          if (start === BROKER_PREFIX) {
-            res.resume();
-            for (const line of buffered.toString("utf8").trimEnd().split("\n")) io.err(line);
-            res.on("end", () => resolve({ kind: "refused", status }));
-            if (ended) resolve({ kind: "refused", status });
-            return;
-          }
-          // An ordinary error response from the destination: relay it all.
-          const out: Writable = opts.output ? createWriteStream(opts.output) : io.stdout;
-          if (opts.include) out.write(head(res));
-          out.write(buffered);
-          if (ended) {
-            if (opts.output) out.end(() => resolve({ kind: "response", status }));
-            else resolve({ kind: "response", status });
-            return;
-          }
-          res.removeAllListeners("data");
-          res.pipe(out, { end: opts.output !== null });
-          res.on("end", () => {
-            if (opts.output) out.once("finish", () => resolve({ kind: "response", status }));
-            else resolve({ kind: "response", status });
-          });
-        };
-        res.on("data", (chunk: Buffer) => {
-          chunks.push(chunk);
-          size += chunk.length;
-          decide(false);
-        });
-        res.on("end", () => decide(true));
+        if (res.headers[BROKER_REPLY_HEADER] !== undefined) return refusal(res, status);
+        relay(res, status);
       },
     );
-    req.on("error", (err: NodeJS.ErrnoException) => resolve({ kind: "unreachable", code: err.code ?? err.message }));
+    req.on("error", (err) => settle({ kind: "unreachable", code: errorCode(err) }));
     req.end(opts.body ?? undefined);
+
+    /** The Broker's own reply: its text to stderr, whole or not. */
+    function refusal(res: http.IncomingMessage, status: number): void {
+      const chunks: Buffer[] = [];
+      const done = () => {
+        const text = Buffer.concat(chunks).toString("utf8").trim();
+        if (text) for (const line of text.split("\n")) io.err(line);
+        else if (status === 407) io.err("varlatch-broker: the per-run proxy credential in HTTPS_PROXY was not accepted");
+        settle({ kind: "refused", status });
+      };
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", done);
+      res.on("error", done);
+      res.on("close", done);
+    }
+
+    function relay(res: http.IncomingMessage, status: number): void {
+      const temp = opts.output ? join(dirname(opts.output), `.${basename(opts.output)}.varlatch-${randomBytes(6).toString("hex")}`) : null;
+      const out: Writable = temp ? createWriteStream(temp, { flags: "wx" }) : io.stdout;
+      const cleanup = () => {
+        if (!temp) return;
+        out.destroy();
+        rmSync(temp, { force: true });
+      };
+      const fail = (reason: string) => {
+        if (settled) return;
+        res.destroy();
+        cleanup();
+        settle({ kind: "incomplete", reason });
+      };
+      out.on("error", (err) => fail(`cannot write ${opts.output ?? "standard output"} (${errorCode(err)})`));
+      // A response that ends before it is complete: the Broker cut it off
+      // (a scrubbing limit, an idle cutoff) or the destination went away.
+      res.on("aborted", () => fail("the response was cut off before it was complete"));
+      res.on("error", (err) => fail(`the response was cut off before it was complete (${errorCode(err)})`));
+      res.on("close", () => {
+        if (!res.complete) fail("the response was cut off before it was complete");
+      });
+      if (opts.include) out.write(head(res));
+      res.pipe(out, { end: temp !== null });
+      res.on("end", () => {
+        if (!res.complete) return fail("the response was cut off before it was complete");
+        if (temp) {
+          out.once("finish", () => {
+            if (settled) return;
+            try {
+              renameSync(temp, opts.output as string);
+            } catch (err) {
+              return fail(`cannot write ${opts.output} (${errorCode(err)})`);
+            }
+            settle({ kind: "response", status });
+          });
+          return;
+        }
+        // Everything relayed to stdout has been handed over before the outcome is final.
+        io.stdout.write("", (err) => (err ? fail(`cannot write standard output (${errorCode(err)})`) : settle({ kind: "response", status })));
+      });
+    }
   });
 }

@@ -6,7 +6,7 @@ import net from "node:net";
 import { parseTarget, type Target } from "@varlatch/protocol";
 import type { SecretEntry } from "@varlatch/matcher";
 import { BODY_LIMIT, planPlacement, type Placement, type PlacementRule, type Surface } from "./placement.js";
-import { BeforeHeaders, Cutoff, SCRUB_LIMITS, Scrubber, Watchdog, relayScrubbed, type ScrubEvent, type ScrubLimits } from "./scrub.js";
+import { BeforeHeaders, Cutoff, SCRUB_LIMITS, Scrubber, Watchdog, relayScrubbed, type ScrubEvent, type ScrubLimits, BROKER_REPLY_HEADER } from "./scrub.js";
 
 /**
  * The local Broker (ADR-0022, amended by ADR-0039): a loopback-only forward
@@ -134,7 +134,7 @@ export function sameTargets(a: Record<string, string[]>, b: Record<string, strin
 }
 
 function deny(res: http.ServerResponse, status: number, message: string, headers: Record<string, string> = {}): void {
-  res.writeHead(status, { "Content-Type": "text/plain", Connection: "close", ...headers });
+  res.writeHead(status, { "Content-Type": "text/plain", Connection: "close", [BROKER_REPLY_HEADER]: "refused", ...headers });
   res.end(`varlatch-broker: ${message}\n`);
 }
 
@@ -233,19 +233,19 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
   // Opaque tunnels: never inspected, never substituted.
   server.on("connect", (req, socket) => {
     if (!checkProxyAuth(req.headers, token)) {
-      socket.end("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n\r\n");
+      socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\n`);
       return;
     }
     const [host = "", portRaw = "443"] = (req.url ?? "").split(":");
     const port = Number(portRaw) || 443;
     if (matchesSelectors(selectors, host, port)) {
       socket.end(
-        `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${CONNECT_DIAGNOSTIC(host)}\n`,
+        `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\n${CONNECT_DIAGNOSTIC(host)}\n`,
       );
       return;
     }
     if (options.strict) {
-      socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\nvarlatch-broker: blocked by --agent-network=strict\n");
+      socket.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\nvarlatch-broker: blocked by --agent-network=strict\n`);
       return;
     }
     const upstream = net.connect(port, host, () => {
@@ -259,7 +259,7 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
 
   async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!checkProxyAuth(req.headers, token)) {
-      res.writeHead(407, { "Proxy-Authenticate": "Basic", Connection: "close" });
+      res.writeHead(407, { "Proxy-Authenticate": "Basic", Connection: "close", [BROKER_REPLY_HEADER]: "refused" });
       res.end();
       return;
     }
@@ -394,7 +394,10 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
           },
           (upstreamRes) => {
             if (!scrubber) {
-              res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.headers);
+              // The Broker's own marker is never relayed from a destination.
+              const relayed = { ...upstreamRes.headers };
+              delete relayed[BROKER_REPLY_HEADER];
+              res.writeHead(upstreamRes.statusCode ?? 502, relayed);
               upstreamRes.pipe(res);
               upstreamRes.on("end", resolve);
               upstreamRes.on("error", reject);

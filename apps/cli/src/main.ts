@@ -930,7 +930,14 @@ async function main(): Promise<void> {
         if (outcome.kind === "refused") {
           fail(
             `varlatch request: the Broker refused the request (${outcome.status}); nothing reached the destination unless it says so above`,
-            outcome.status === 503 ? EXIT.unavailable : EXIT.failure,
+            outcome.status === 407 ? EXIT.denied : outcome.status === 503 ? EXIT.unavailable : EXIT.failure,
+          );
+        }
+        if (outcome.kind === "incomplete") {
+          fail(
+            `varlatch request: ${outcome.reason}; the output is incomplete` +
+              (opts.output ? `, and ${opts.output} was not written` : ""),
+            EXIT.failure,
           );
         }
         return;

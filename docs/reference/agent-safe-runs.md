@@ -225,10 +225,19 @@ varlatch request -X POST -H "Authorization: Bearer $STRIPE_KEY" \
   scrubs the response before `varlatch request` prints it.
 - It needs no Varlatch credential and holds no Secret. Outside an
   agent-safe run, or in one without Secrets (no Broker), it refuses.
+- The Broker marks the replies it generates itself and strips that marker
+  from every destination response, so a refusal is never confused with a
+  destination's error, whatever its body says.
+- Success means the whole response arrived and was written. A response cut
+  off by the Broker (a scrubbing limit or an idle cutoff) or by the
+  destination fails the command; with `-o`, the named file is written only
+  once the response is complete, and never left partial.
 - Exit status: 0 when the destination answered, whatever the HTTP status
-  (as curl); 1 when the Broker refused the request, with its reason on
-  stderr; 69 when the Broker cannot be reached or the installation is in
-  maintenance; 64 for a wrong command line.
+  (as curl), and the response was written whole; 1 when the Broker refused
+  the request (its reason on stderr), or the response was cut off or could
+  not be written; 77 when the Broker did not accept the per-run proxy
+  credential; 69 when the Broker cannot be reached or the installation is
+  in maintenance; 64 for a wrong command line.
 
 From code, send plain HTTP requests with an absolute `https://` URL to the
 Broker, with the per-run proxy credential from `HTTPS_PROXY`:

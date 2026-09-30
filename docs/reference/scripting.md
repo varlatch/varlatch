@@ -52,7 +52,9 @@ These keep the meanings they always had:
   reason; 2 when some files were not scanned.
 - `varlatch types --check`: 1 when the file is stale or missing.
 - `varlatch request`: 0 when the destination answered, whatever the HTTP
-  status (as curl), 1 when the Broker refused the request, 69 when the
+  status (as curl), and the response was written whole; 1 when the Broker
+  refused the request, or the response was cut off or could not be written;
+  77 when the Broker did not accept the per-run proxy credential; 69 when the
   Broker cannot be reached.
 - `varlatch run`: once the command has started, the command's own status
   (128 plus the signal's number when a signal ended it). Before that, the

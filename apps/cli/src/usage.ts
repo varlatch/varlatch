@@ -37,7 +37,8 @@ Usage:
   varlatch request [-X <method>] [-H '<name>: <value>']... [-d <data>|@<file>|@-] [--json <data>|@<file>|@-]
                    [-o <file>] [-i] <https-url>
                (inside an agent-safe run: send the request through the Broker, which substitutes Secrets at their
-                targets and scrubs the response; exit 0 on any response, 1 when the Broker refuses, 69 unreachable)
+                targets and scrubs the response; exit 0 on any whole response, 1 when the Broker refuses or the response
+                is cut off, 77 when the Broker rejects the proxy credential, 69 unreachable)
   varlatch validate [-e <env>] [--json]  (exit 1 invalid; 2 incomplete: items this identity may not read)
   varlatch values <set <ITEM> [<value>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>>
                   set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
