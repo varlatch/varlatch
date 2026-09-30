@@ -96,7 +96,7 @@ _Avoid_: runtime env (ambiguous about which of these layers is meant)
 `varlatch run --strict`: validate the Delivered Configuration against the active Contract Revision of one strict retrieval before starting the command, and refuse to start it on any violation (exit 78). Contract defaults fill only items with no stored value, never withheld ones, and inherited values are used only for names allowed with `--allow-inherited`. A default run never blocks on the Contract. With `--agent-safe`, the operator's preflight validates Secrets without returning them (it needs `secret.reveal`), and the Broker's Capability is issued against the state the preflight saw; the Agent still receives only Placeholders.
 
 **Output Redaction**:
-`varlatch run --redact`: the command's stdout and stderr become pipes, and each complete occurrence of a Secret delivered to the command in this run (as written, or in a stated encoding) is replaced with `[REDACTED:<name>]` before the output is written on. Nothing is fetched to build the filter. Non-terminal output only, and refused with `--agent-safe`, whose Agent receives Placeholders. It protects where output is written (logs, files), not the command's own view, and guards against accidents, not deliberate leaks.
+`varlatch run --redact`: the command's stdout and stderr become pipes, and each complete occurrence of a Secret delivered to the command in this run (as written, or in a stated encoding) is replaced with `[REDACTED:<name>]` before the output is written on. Nothing is fetched to build the filter. Non-terminal output only, and refused with `--agent-safe`, whose Agent receives Placeholders. It protects where output is written (logs, files), not the command's own view, and guards against accidents, not deliberate leaks. In Assisted Mode it is the default, also covers inherited values under known Secret names, works on a terminal, and a Secret too short to mask stops the run (exit 78) unless `--allow-unmasked` names it.
 _Avoid_: masking (suggests the value is hidden from the command too)
 
 **Secret Scan**:
@@ -265,11 +265,22 @@ _Avoid_: scoped token, macaroon, biscuit (all presume a self-certifying represen
 A trusted local process that exercises credentials on behalf of a less-trusted process (typically an AI agent), substituting real secret material only at the TLS-verified network boundary so the agent handles Placeholders. The Broker authenticates *mediation*; `secret.use` authority always belongs to the Agent Identity.
 _Avoid_: proxy (describes its mechanism, not its role), agent (the Broker is trusted; the Agent is not)
 
+**Coding Agent**:
+The tool a developer works with (Claude Code, Codex, Cursor, and others). In an Agent Run it acts as an Agent; in Assisted Operation Varlatch sees only the human whose credential it uses.
+_Avoid_: agent, when the Agent Identity is not meant
+
+**Assisted Operation**:
+A Coding Agent driving the CLI with the human's own credential, the human approving its actions in the Coding Agent's own interface. To Varlatch it is the human acting: nothing creates, widens, or narrows authority. Its invariant: on the documented flow the CLI never hands the Coding Agent a Secret's value. That protects against accidents, not deliberate misuse.
+
+**Assisted Mode**:
+The CLI's client-side behaviour for Assisted Operation, turned on by `varlatch --assisted` (the documented form, in every command), `VARLATCH_ASSISTED=1`, or, as a backstop, a Coding Agent's shell marker; `VARLATCH_ASSISTED=0` turns marker detection off but never overrides `--assisted`. It changes client defaults only (Output Redaction by default, no Secret value from the command line, no prompts), never authorization.
+_Avoid_: agent mode (confusable with Agent Runs)
+
 **Agent**:
 An AI coding agent acting as a distinct, less-trusted Identity, never as the human it works for. A persistent logical principal that owns Grants; individual executions are Agent Runs.
 
 **Agent Run**:
-One ephemeral execution of an Agent: a spawned child process correlated by a run identifier, holding Placeholders, proxy configuration, and a per-run proxy token, but no reusable Varlatch credential (unless the explicit metadata-credential mode adds an Agent Metadata Credential). Capabilities are scoped to a run and die with it (revoke-on-exit best-effort, TTL as fail-safe).
+One ephemeral execution of an Agent: a spawned child process correlated by a run identifier, holding Placeholders, proxy configuration, and a per-run proxy token, but no reusable Varlatch credential (unless the explicit metadata-credential mode adds an Agent Metadata Credential). It gets its own empty configuration directory (`VARLATCH_CONFIG_DIR`, removed at exit) and `VARLATCH_AGENT_RUN`, so a CLI it starts never reads the operator's credential store. Capabilities are scoped to a run and die with it (revoke-on-exit best-effort, TTL as fail-safe).
 _Avoid_: session (overloaded with Better Auth sessions)
 
 **Agent Metadata Credential**:

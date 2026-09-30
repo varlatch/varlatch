@@ -81,7 +81,9 @@ function tempDir(prefix) {
 function baseEnv(extra = {}) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) if (key.startsWith("VARLATCH_") || NAMES.includes(key)) delete env[key];
-  return { ...env, ...extra };
+  // A coding agent's marker in the host shell would switch on assisted mode
+  // (ADR-0043); these runs test the modes they name, so detection is off.
+  return { ...env, VARLATCH_ASSISTED: "0", ...extra };
 }
 
 /**

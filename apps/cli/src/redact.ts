@@ -3,7 +3,8 @@ import type { Readable, Writable } from "node:stream";
 import { MIN_LENGTH, StreamMatcher, type SecretEntry } from "@varlatch/matcher";
 
 /**
- * Output redaction: `varlatch run --redact` (ADR-0038 Decision 10).
+ * Output redaction: `varlatch run --redact` (ADR-0038 Decision 10), and the
+ * default for `varlatch run` in assisted mode (ADR-0043 Decision 4).
  *
  * The child's stdout and stderr are pipes; each passes through its own
  * shared matcher (ADR-0039 Decisions 17 to 19), registered with exactly the
@@ -83,14 +84,23 @@ function write(dest: Writable, chunk: Uint8Array): Promise<boolean> {
   });
 }
 
+/**
+ * Which feature turned redaction on: `--redact` (ADR-0038 Decision 10), or
+ * assisted mode (ADR-0043 Decision 4), where it is the default and a short
+ * value reaches the redactor only when the operator allowed it.
+ */
+export type RedactionMode = "redact" | "assisted";
+
 export class OutputRedaction {
   private interrupted = false;
   private readonly entries: SecretEntry[];
+  private readonly mode: RedactionMode;
   /** Items whose value is too short to register; they pass through unchanged. */
   readonly skipped: string[];
 
-  constructor(entries: SecretEntry[]) {
+  constructor(entries: SecretEntry[], mode: RedactionMode = "redact") {
     this.entries = entries;
+    this.mode = mode;
     this.skipped = [...new Set(this.matcher().skipped)].sort();
   }
 
@@ -100,6 +110,13 @@ export class OutputRedaction {
 
   /** What the run says on stderr before the child starts: names only. */
   notices(): string[] {
+    if (this.mode === "assisted") {
+      // Silent when there is nothing to mask: assisted mode is the default for every run.
+      if (this.skipped.length === 0) return [];
+      return [
+        `varlatch: allowed with --allow-unmasked, so not masked (shorter than ${MIN_LENGTH} bytes): ${this.skipped.join(", ")}`,
+      ];
+    }
     if (this.entries.length === 0) {
       return ["varlatch: --redact: no Secret was delivered to this run, so there is nothing to mask"];
     }

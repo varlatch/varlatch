@@ -173,11 +173,39 @@ export function resolveContext(options: ResolveOptions): ResolvedContext {
 
 // ---- User-level credential store (never in the repo) ----------------------
 
+function defaultConfigDir(env: NodeJS.ProcessEnv): string {
+  return env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "varlatch") : join(homedir(), ".config", "varlatch");
+}
+
 export function credentialsPath(env: NodeJS.ProcessEnv = process.env): string {
-  const base =
-    env.VARLATCH_CONFIG_DIR ??
-    (env.XDG_CONFIG_HOME ? join(env.XDG_CONFIG_HOME, "varlatch") : join(homedir(), ".config", "varlatch"));
-  return join(base, "credentials.json");
+  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "credentials.json");
+}
+
+/** Set by `varlatch run --agent-safe` in the Agent's environment (ADR-0043 Decision 5). */
+export const AGENT_RUN_ENV = "VARLATCH_AGENT_RUN";
+
+/**
+ * The agent-safe run this process is inside, or null. An agent-safe run
+ * gives the Agent its own, empty configuration directory in
+ * VARLATCH_CONFIG_DIR and names the run in VARLATCH_AGENT_RUN.
+ */
+export function agentRunOf(env: NodeJS.ProcessEnv = process.env): string | null {
+  const run = env[AGENT_RUN_ENV];
+  return run ? run : null;
+}
+
+/**
+ * Inside an agent-safe run the default credential store (the operator's) is
+ * never read or written (ADR-0043 Decision 5): only a VARLATCH_CONFIG_DIR
+ * other than the default location counts. This keeps a command the Agent
+ * starts from falling back to the operator's credential by accident. It is
+ * not a boundary: a process running as the operator's OS user can still
+ * read the file directly (ADR-0022 Decision 16).
+ */
+function operatorStoreBlocked(env: NodeJS.ProcessEnv): boolean {
+  if (!agentRunOf(env)) return false;
+  const dir = env.VARLATCH_CONFIG_DIR;
+  return !dir || resolve(dir) === resolve(defaultConfigDir(env));
 }
 
 /** One stored entry. Pre-ADR-0032 files carry only `token`; every other
@@ -195,6 +223,7 @@ interface CredentialsFile {
 }
 
 function readCredentialsFile(env: NodeJS.ProcessEnv): CredentialsFile | null {
+  if (operatorStoreBlocked(env)) return null;
   const path = credentialsPath(env);
   if (!existsSync(path)) return null;
   try {
@@ -205,6 +234,11 @@ function readCredentialsFile(env: NodeJS.ProcessEnv): CredentialsFile | null {
 }
 
 function writeCredentialsFile(file: CredentialsFile, env: NodeJS.ProcessEnv): void {
+  if (operatorStoreBlocked(env)) {
+    throw new ContextError(
+      `This command runs inside agent-safe run ${agentRunOf(env)}, which never writes the operator's credential store.`,
+    );
+  }
   const path = credentialsPath(env);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);

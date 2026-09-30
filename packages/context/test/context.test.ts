@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ContextError,
+  agentRunOf,
   deleteCredential,
   findRepoRoot,
   listCredentials,
@@ -134,6 +135,47 @@ describe("credential store", () => {
     ]);
     // loadCredential is store-only: VARLATCH_TOKEN never masquerades as an entry.
     expect(loadCredential("https://absent.example", { ...env, VARLATCH_TOKEN: "vlt_svc_ci" })).toBeNull();
+  });
+
+  describe("inside an agent-safe run (ADR-0043 Decision 5)", () => {
+    const server = "https://a.example";
+    function operatorStore() {
+      // The default location, as XDG_CONFIG_HOME makes it, holding the operator's credential.
+      const xdg = mkdtempSync(join(tmpdir(), "varlatch-xdg-"));
+      saveToken(server, "vlt_cli_operator", { XDG_CONFIG_HOME: xdg });
+      return { xdg, defaultDir: join(xdg, "varlatch") };
+    }
+
+    it("never reads the operator's default store; the same lookup outside a run does (negative control)", () => {
+      const { xdg, defaultDir } = operatorStore();
+      expect(loadToken(server, { XDG_CONFIG_HOME: xdg })).toBe("vlt_cli_operator");
+      const inRun = { XDG_CONFIG_HOME: xdg, VARLATCH_AGENT_RUN: "run_1" };
+      expect(agentRunOf(inRun)).toBe("run_1");
+      expect(loadToken(server, inRun)).toBeNull();
+      expect(loadCredential(server, inRun)).toBeNull();
+      expect(listCredentials(inRun)).toEqual([]);
+      // Pointing VARLATCH_CONFIG_DIR back at the default location does not reopen it.
+      expect(loadToken(server, { ...inRun, VARLATCH_CONFIG_DIR: defaultDir })).toBeNull();
+      expect(loadToken(server, { ...inRun, VARLATCH_CONFIG_DIR: `${defaultDir}/` })).toBeNull();
+    });
+
+    it("uses the run's own directory and an explicit VARLATCH_TOKEN (the agent-run credential)", () => {
+      const { xdg } = operatorStore();
+      const runDir = mkdtempSync(join(tmpdir(), "varlatch-run-"));
+      const inRun = { XDG_CONFIG_HOME: xdg, VARLATCH_AGENT_RUN: "run_1", VARLATCH_CONFIG_DIR: runDir };
+      expect(loadToken(server, inRun)).toBeNull();
+      saveToken(server, "vlt_cli_inside", inRun);
+      expect(loadToken(server, inRun)).toBe("vlt_cli_inside");
+      expect(loadToken(server, { XDG_CONFIG_HOME: xdg })).toBe("vlt_cli_operator");
+      expect(loadToken(server, { XDG_CONFIG_HOME: xdg, VARLATCH_AGENT_RUN: "run_1", VARLATCH_TOKEN: "vlt_agr_1" })).toBe("vlt_agr_1");
+    });
+
+    it("refuses to write the operator's default store", () => {
+      const { xdg } = operatorStore();
+      expect(() => saveToken(server, "vlt_cli_new", { XDG_CONFIG_HOME: xdg, VARLATCH_AGENT_RUN: "run_1" })).toThrow(ContextError);
+      expect(deleteCredential(server, { XDG_CONFIG_HOME: xdg, VARLATCH_AGENT_RUN: "run_1" })).toBe(false);
+      expect(loadToken(server, { XDG_CONFIG_HOME: xdg })).toBe("vlt_cli_operator");
+    });
   });
 
   it("deleteCredential removes one server and reports absence", () => {

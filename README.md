@@ -158,6 +158,10 @@ placeholder values only. State lives in `.dev/`.
   `.env.schema` contract file format
 - [`docs/reference/agent-safe-runs.md`](docs/reference/agent-safe-runs.md):
   running an agent with placeholders, and where the broker substitutes
+- [`docs/reference/assisted-mode.md`](docs/reference/assisted-mode.md): a
+  coding agent driving the CLI with your credential, without reading Secrets
+- [`docs/reference/import.md`](docs/reference/import.md): moving a `.env`
+  file into Varlatch with `varlatch import`
 - [`docs/reference/type-generation.md`](docs/reference/type-generation.md):
   typed configuration for TypeScript and Python with `varlatch types`
 

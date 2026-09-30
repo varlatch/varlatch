@@ -3,12 +3,12 @@ import { spawn } from "node:child_process";
 import { constants } from "node:os";
 import type { SecretEntry } from "@varlatch/matcher";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
-import { OutputRedaction } from "./redact.js";
+import { OutputRedaction, type RedactionMode } from "./redact.js";
 
 /**
  * Default `varlatch run`: fetch, inject, forward signals, return the child's
  * exit code. This path applies no contract validation or type conversion,
- * and redacts output only with `--redact`.
+ * and redacts output only with `--redact` or in assisted mode (ADR-0043).
  */
 
 /**
@@ -53,10 +53,11 @@ export function signalExitCode(signal: string): number {
 /**
  * Start the child and return its exit code, or `signalExitCode` when a
  * signal ended it; every mode of `varlatch run` starts its command here.
- * With `redact` (the sensitive values delivered in `env`), its stdout and
- * stderr are piped through output redaction; stdin, signals, and the exit
- * code are unchanged, and the run ends once the child has exited and both
- * pipes have closed.
+ * With `redact` (the sensitive values delivered in `env`, and in assisted
+ * mode also inherited values under known Secret names), its stdout and
+ * stderr are piped through output redaction, even when this process's own
+ * output is a terminal; stdin, signals, and the exit code are unchanged,
+ * and the run ends once the child has exited and both pipes have closed.
  */
 /**
  * The signals `varlatch run` passes on to its command. Beyond Ctrl-C
@@ -86,9 +87,10 @@ export function runChild(
   args: string[],
   env: NodeJS.ProcessEnv,
   redact?: SecretEntry[],
+  mode: RedactionMode = "redact",
 ): Promise<number> {
   return new Promise((resolvePromise, reject) => {
-    const redaction = redact ? new OutputRedaction(redact) : undefined;
+    const redaction = redact ? new OutputRedaction(redact, mode) : undefined;
     for (const line of redaction?.notices() ?? []) console.error(line);
     const child = spawn(command, args, { stdio: redaction ? ["inherit", "pipe", "pipe"] : "inherit", env });
     const relayed = redaction?.relay([

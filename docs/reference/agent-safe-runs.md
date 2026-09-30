@@ -149,6 +149,18 @@ and counts failures by rule when the run ends.
   wins when both are set (Node reads `no_proxy` first), so neither is copied
   into the other.
 - No reusable Varlatch credential, unless you pass `--agent-metadata`.
+- Its own, empty configuration directory in `VARLATCH_CONFIG_DIR`, created
+  private for the run and removed when it ends, and the run's identifier in
+  `VARLATCH_AGENT_RUN`. A `varlatch` command the Agent starts never reads or
+  writes your credential store, even if it unsets or changes those
+  variables, so it cannot fall back to your credential by accident:
+  - `varlatch run` inside the run discloses nothing and contacts no server:
+    it starts its command with the run's environment, Placeholders
+    included, and says so. `--strict`, `--export-context`, and
+    `--agent-safe` are refused there.
+  - Other commands use the agent-run credential from `--agent-metadata`,
+    or, without it, stop with a message saying the run gives the Agent no
+    credential.
 
 ## Responses
 
@@ -226,6 +238,9 @@ destinations passes through unchanged, Placeholders intact, unless you pass
 
 - Enforcement is in the local Broker. A process running as your OS user can
   inspect the Broker's memory, credential file, and sockets.
+- The Agent's own configuration directory keeps `varlatch` commands from
+  finding your credential by accident. It is not a boundary: a process
+  running as your OS user can still read your credential store directly.
 - A correctly placed credential can call any endpoint and method on the
   destination that it permits. Destinations are host and port.
 - A destination that logs or echoes the target header, or logs URLs with a

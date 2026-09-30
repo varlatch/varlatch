@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   ContextError,
   REPO_CONFIG_FILE,
+  agentRunOf,
   deleteCredential,
   findRepoRoot,
   listCredentials,
@@ -23,6 +24,20 @@ import { TargetError, formatTarget, parseTarget } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { RUN_CONTEXT, buildEnv, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
+import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
+import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
+import { STRICT_EXIT } from "./strictRun.js";
+import {
+  SecretInputError,
+  describeGenerated,
+  generateValue,
+  parseValueSource,
+  promptHidden,
+  readAll,
+  readValueFile,
+  valueFromBytes,
+  type GenerateSpec,
+} from "./secretInput.js";
 import { validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -117,6 +132,15 @@ function warnIfExpiring(server: string): void {
 
 function client(ctx: ResolvedContext): VarlatchClient {
   const token = loadToken(ctx.server);
+  const agentRun = agentRunOf();
+  if (!token && agentRun) {
+    // ADR-0043 Decision 5: never the operator's stored credential.
+    fail(
+      `Not authenticated to ${ctx.server}: this command runs inside agent-safe run ${agentRun}, which gives the ` +
+        "Agent no Varlatch credential and never uses the operator's.\nFor read access to configuration metadata, " +
+        "the operator relaunches the run with --agent-metadata.",
+    );
+  }
   if (!token) {
     fail(
       `Not authenticated to ${ctx.server}.\nRun: varlatch login --server ${ctx.server} --token <credential>`,
@@ -206,8 +230,84 @@ async function browserLogin(server: string): Promise<string> {
   });
 }
 
+/**
+ * Whether `item` is a Secret by the active Contract: items outside it, and
+ * every item of a project without one, are (ADR-0012). A caller that cannot
+ * read the Contract treats the item as a Secret, the safe classification.
+ */
+async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: string): Promise<boolean> {
+  try {
+    const revision = await api.getActiveContract(ctx.organization, ctx.project);
+    const contract = revision.contract as unknown as { items?: { name: string; sensitive: boolean }[] };
+    return contract.items?.find((i) => i.name === item)?.sensitive ?? true;
+  } catch (err) {
+    if (err instanceof VarlatchApiError && (err.status === 404 || err.status === 403)) return true;
+    throw err;
+  }
+}
+
+/**
+ * The value for `values set` or `values rotate` (ADR-0043 Decision 2), from
+ * the one source given. In assisted mode a Secret's value is never taken
+ * from the command line, and there is no prompt: a coding agent cannot type
+ * into one, and the human uses their own terminal instead.
+ */
+async function obtainValue(
+  sub: "set" | "rotate",
+  item: string,
+  args: string[],
+  mode: AssistedMode,
+  sensitive: () => Promise<boolean>,
+): Promise<{ value: string; generated?: GenerateSpec }> {
+  const safeForms = [
+    "  Store it without putting the value in a command:",
+    `    varlatch --assisted values ${sub} ${item} --generate hex:32       a new random value`,
+    `    varlatch --assisted values ${sub} ${item} --from-file <path>      from a file`,
+    `    <command> | varlatch --assisted values ${sub} ${item} --stdin     from another command's output`,
+    `  Or ask the human to run \`varlatch values ${sub} ${item}\` in their own terminal (a hidden prompt), or to use the dashboard.`,
+  ].join("\n");
+  try {
+    const source = parseValueSource(args);
+    switch (source.kind) {
+      case "argument":
+        if (mode.on && (await sensitive())) {
+          fail(
+            `varlatch: ${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line. ` +
+              `Nothing was stored.\n${safeForms}`,
+          );
+        }
+        return { value: source.value };
+      case "stdin":
+        if (process.stdin.isTTY) {
+          fail(`varlatch: --stdin reads a pipe or a file, and standard input is a terminal. For a hidden prompt, leave the value out: varlatch values ${sub} ${item}`);
+        }
+        return { value: valueFromBytes(await readAll(process.stdin), "standard input") };
+      case "file":
+        return { value: readValueFile(source.path) };
+      case "generate":
+        return { value: generateValue(source.spec), generated: source.spec };
+      case "prompt":
+        if (mode.on) fail(`varlatch: no value given for ${item}, and assisted mode never prompts. Nothing was stored.\n${safeForms}`);
+        if (!process.stdin.isTTY) {
+          fail(
+            `varlatch: no value given for ${item}. Pass --stdin, --from-file <path>, or --generate <spec>, ` +
+              "or run the command in a terminal for a hidden prompt.",
+          );
+        }
+        return { value: await promptHidden(`Value for ${item} (input hidden): `) };
+    }
+  } catch (err) {
+    if (err instanceof SecretInputError) fail(`varlatch: ${err.message}`);
+    throw err;
+  }
+}
+
 async function main(): Promise<void> {
-  const [, , command, ...args] = process.argv;
+  // The global --assisted option (ADR-0043 Decision 3): taken from the CLI's
+  // own arguments, never from a command's after `--`.
+  const taken = takeAssistedOption(process.argv.slice(2));
+  const [command, ...args] = taken.argv;
+  const assisted = resolveAssisted(taken.given, process.env);
   try {
     switch (command) {
       case "login": {
@@ -444,11 +544,47 @@ async function main(): Promise<void> {
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) {
           fail(
-            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
+            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
           );
         }
         const preArgs = args.slice(0, sep);
-        if (!has(preArgs, "--agent-safe") && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
+        const agentRun = agentRunOf();
+        if (agentRun) {
+          // A `varlatch run` the Agent starts inside an agent-safe run
+          // (ADR-0043 Decision 5): never disclose, never fall back to the
+          // operator's credential. The command gets this run's environment,
+          // Placeholders included.
+          const unavailable = ["--agent-safe", "--strict", "--export-context"].filter((f) => has(preArgs, f));
+          if (unavailable.length > 0) {
+            fail(
+              `varlatch: this command runs inside agent-safe run ${agentRun}, where Secrets are Placeholders and are never ` +
+                `disclosed, so ${unavailable.join(" and ")} cannot run here. Nothing was started.`,
+            );
+          }
+          console.error(
+            `varlatch: inside agent-safe run ${agentRun}, Secrets are Placeholders and are never disclosed; the command ` +
+              "starts with this run's environment unchanged. Requests to allowed destinations go through the Broker in HTTPS_PROXY.",
+          );
+          const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
+          process.exit(await runChild(cmd, cmdArgs, process.env));
+        }
+        const agentSafe = has(preArgs, "--agent-safe");
+        const noRedact = has(preArgs, "--no-redact");
+        const allowUnmasked = flags(preArgs, "--allow-unmasked");
+        if (agentSafe && (noRedact || allowUnmasked.length > 0)) {
+          fail("--no-redact and --allow-unmasked do not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets.");
+        }
+        if (noRedact && has(preArgs, "--redact")) fail("--redact and --no-redact cannot be combined.");
+        if (allowUnmasked.length > 0 && !assisted.on) {
+          fail("--allow-unmasked applies only in assisted mode (--assisted), where a Secret too short to mask stops the run.");
+        }
+        // Assisted mode (ADR-0043 Decision 4): redaction is the default, even
+        // when the output is a terminal (the command then gets pipes).
+        const assistedRedaction = assisted.on && !agentSafe && !noRedact;
+        if (assisted.on && noRedact) {
+          console.error("varlatch: --no-redact: this run's output is not masked; a Secret the command prints reaches whatever captures its output.");
+        }
+        if (!agentSafe && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
           fail("--target and --omit apply only to --agent-safe runs.");
         }
         if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
@@ -458,12 +594,13 @@ async function main(): Promise<void> {
         const redact = has(preArgs, "--redact");
         if (redact) {
           const refusal = redactRefusal({
-            agentSafe: has(preArgs, "--agent-safe"),
-            stdoutIsTTY: Boolean(process.stdout.isTTY),
-            stderrIsTTY: Boolean(process.stderr.isTTY),
+            agentSafe,
+            stdoutIsTTY: !assisted.on && Boolean(process.stdout.isTTY),
+            stderrIsTTY: !assisted.on && Boolean(process.stderr.isTTY),
           });
           if (refusal) fail(`varlatch: ${refusal}. Nothing was started.`);
         }
+        const log = (line: string) => console.error(line);
         const ctx = context(preArgs);
         const api = client(ctx);
 
@@ -507,8 +644,13 @@ async function main(): Promise<void> {
               environment: ctx.environment,
               allowInherited: flags(preArgs, "--allow-inherited"),
               parent: process.env,
-              start: (env, secrets) => runChild(cmd, cmdArgs, env, redact ? secrets : undefined),
-              log: (line) => console.error(line),
+              start: async (env, secrets, secretNames) => {
+                if (!assistedRedaction) return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
+                const plan = planAssistedRedaction(assistedRedactionSet(secrets, env, process.env, secretNames), allowUnmasked);
+                if (!assistedGate(plan, log)) return STRICT_EXIT;
+                return runChild(cmd, cmdArgs, env, plan.entries, "assisted");
+              },
+              log,
             });
             process.exit(code);
           } catch (err) {
@@ -593,6 +735,13 @@ async function main(): Promise<void> {
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
         const env = buildEnv(process.env, effective);
         if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
+        if (assistedRedaction) {
+          const secretNames = await knownSecretNames(api, ctx, effective, log);
+          const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);
+          const plan = planAssistedRedaction(set, allowUnmasked);
+          if (!assistedGate(plan, log)) process.exit(STRICT_EXIT);
+          process.exit(await runChild(cmd, cmdArgs, env, plan.entries, "assisted"));
+        }
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
         process.exit(code);
         return;
@@ -632,11 +781,27 @@ async function main(): Promise<void> {
         const sub = args[0];
         const ctx = context(args);
         const api = client(ctx);
-        if (sub === "set") {
-          const item = args[1] ?? fail("Usage: varlatch values set <ITEM> <value>");
-          const value = args[2] ?? fail("Provide a value");
-          const version = await api.setValue(ctx.organization, ctx.project, ctx.environment, item, { value });
-          console.log(`${item} set (version ${version.versionId}).`);
+        if (sub === "set" || sub === "rotate") {
+          const usage =
+            sub === "set"
+              ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
+              : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
+          const item = args[1] && !args[1].startsWith("-") ? args[1] : fail(usage);
+          const obtained = await obtainValue(sub, item, args, assisted, () => sensitiveItem(api, ctx, item));
+          const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";
+          if (sub === "set") {
+            const version = await api.setValue(ctx.organization, ctx.project, ctx.environment, item, { value: obtained.value });
+            console.log(`${item} set (version ${version.versionId})${how}.`);
+            return;
+          }
+          const graceStr = flag(args, "--grace");
+          const rot = await api.beginRotation(ctx.organization, ctx.project, ctx.environment, item, {
+            value: obtained.value,
+            ...(graceStr ? { graceSeconds: Number(graceStr) } : {}),
+          });
+          console.log(
+            `${item} rotating${how} — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
+          );
           return;
         }
         if (sub === "list") {
@@ -652,19 +817,6 @@ async function main(): Promise<void> {
           console.log(`${item} deleted from ${ctx.environment}.`);
           return;
         }
-        if (sub === "rotate") {
-          const item = args[1] ?? fail("Usage: varlatch values rotate <ITEM> <new-value> [--grace <seconds>]");
-          const value = args[2] ?? fail("Provide the new value");
-          const graceStr = flag(args, "--grace");
-          const rot = await api.beginRotation(ctx.organization, ctx.project, ctx.environment, item, {
-            value,
-            ...(graceStr ? { graceSeconds: Number(graceStr) } : {}),
-          });
-          console.log(
-            `${item} rotating — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
-          );
-          return;
-        }
         if (sub === "rotate-complete") {
           const item = args[1] ?? fail("Usage: varlatch values rotate-complete <ITEM>");
           await api.completeRotation(ctx.organization, ctx.project, ctx.environment, item);
@@ -672,6 +824,41 @@ async function main(): Promise<void> {
           return;
         }
         fail("Usage: varlatch values <set|list|delete|rotate|rotate-complete>");
+        return;
+      }
+
+      case "import": {
+        // ADR-0043 Decision 2: the CLI reads the file itself; values never
+        // appear in its output.
+        const usage =
+          "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [-e <env>]";
+        const file = args[0] && !args[0].startsWith("-") ? args[0] : fail(usage);
+        const { runImport, ImportError } = await import("./importCommand.js");
+        const dryRun = has(args, "--dry-run");
+        let target: Parameters<typeof runImport>[1];
+        try {
+          const ctx = context(args);
+          target = loadToken(ctx.server) || !dryRun ? { ctx, api: client(ctx) } : { offline: `not signed in to ${ctx.server}` };
+        } catch (err) {
+          if (!(err instanceof ContextError) || !dryRun) throw err;
+          target = { offline: err.message.split(". ")[0] ?? err.message };
+        }
+        try {
+          process.exitCode = await runImport(
+            {
+              file,
+              dryRun,
+              contract: has(args, "--contract"),
+              plain: flags(args, "--plain"),
+              deleteSource: has(args, "--delete-source"),
+            },
+            target,
+            { out: (line) => console.log(line), err: (line) => console.error(line) },
+          );
+        } catch (err) {
+          if (err instanceof ImportError) fail(`varlatch import: ${err.message}`);
+          throw err;
+        }
         return;
       }
 
@@ -1205,6 +1392,10 @@ async function main(): Promise<void> {
         console.log(`varlatch — self-host-first secrets and configuration
 
 Usage:
+  varlatch --assisted <command>...                      # a coding agent drives the CLI (or VARLATCH_ASSISTED=1):
+               run masks Secrets in the command's output by default and refuses one too short to mask
+               (exit 78; --allow-unmasked <NAME> is the human's override, --no-redact turns masking off);
+               values set/rotate never take a Secret's value from the command line
   varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in
   varlatch login --server <url> --token <credential>
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
@@ -1213,7 +1404,7 @@ Usage:
   varlatch init --org <slug> --project <slug> [--server <url>]
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
-  varlatch run [-e <env>] [--export-context] [--redact] -- <command> [args...]
+  varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... -- <command> [args...]
                (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor;
                 --redact: mask the Secrets delivered to the command in its piped stdout and stderr,
                 refused when either is a terminal, and with --agent-safe)
@@ -1224,9 +1415,15 @@ Usage:
                --target <NAME=header:<name>|query:<name>|json:<pointer>|form:<name>>... --omit <NAME>...
                [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]
                [--agent-metadata] -- <command>...
-               (every stored Secret needs a --target or an --omit; it is substituted only there)
+               (every stored Secret needs a --target or an --omit; it is substituted only there; the Agent gets its own
+                empty configuration directory, so a varlatch command it starts never uses the operator's credential)
   varlatch validate [-e <env>]        (exit 1 invalid; 2 incomplete: items this identity may not read)
-  varlatch values <set <ITEM> <value>|list|delete <ITEM>>
+  varlatch values <set <ITEM> [<value>]|list|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>>
+                  set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
+                  or no value in a terminal for a hidden prompt
+  varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source]
+               (store a dotenv file's values without printing them; --contract adds new items to a Contract
+                revision, Secrets unless --plain; --delete-source removes the file once every value is stored)
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
                    push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
   varlatch types --out <file.ts|file.py> [--revision <id>] [--check]

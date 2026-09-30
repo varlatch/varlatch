@@ -411,9 +411,11 @@ export interface StrictRunOptions {
   parent: NodeJS.ProcessEnv;
   /**
    * Starts the child with exactly this environment; returns its exit code.
-   * `secrets` are the sensitive values Varlatch delivered in it (for `--redact`).
+   * `secrets` are the sensitive values Varlatch delivered in it (for `--redact`);
+   * `secretNames` are every name the retrieval knows as a Secret, stored or in
+   * the Contract (for assisted mode's inherited values, ADR-0043 Decision 4).
    */
-  start: (env: NodeJS.ProcessEnv, secrets: SecretEntry[]) => Promise<number>;
+  start: (env: NodeJS.ProcessEnv, secrets: SecretEntry[], secretNames: string[]) => Promise<number>;
   log: (line: string) => void;
 }
 
@@ -452,5 +454,16 @@ export async function runStrict(api: StrictClient, opts: StrictRunOptions): Prom
   if (plan.outsideContract > 0) {
     opts.log(`varlatch: ${plan.outsideContract} delivered item(s) are not in the Contract; delivered as usual`);
   }
-  return opts.start(plan.env, deliveredSecrets(retrieval.items, plan.env));
+  return opts.start(plan.env, deliveredSecrets(retrieval.items, plan.env), secretNamesOf(retrieval));
+}
+
+/** Every name the retrieval knows as a Secret: stored as one, or sensitive in the Contract. */
+export function secretNamesOf(retrieval: Pick<StrictRetrieval, "items" | "contract">): string[] {
+  const contract = retrieval.contract as unknown as ConfigurationContract | null | undefined;
+  return [
+    ...new Set([
+      ...retrieval.items.filter((i) => i.sensitive).map((i) => i.name),
+      ...(contract?.items ?? []).filter((i) => i.sensitive).map((i) => i.name),
+    ]),
+  ].sort();
 }
