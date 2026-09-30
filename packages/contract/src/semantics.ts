@@ -12,7 +12,7 @@ import type { ConfigurationContract, ContractItem, Tier } from "./types.js";
  * `test/vectors/` pin every version.
  */
 
-export const SEMANTICS_VERSIONS = [1, 2] as const;
+export const SEMANTICS_VERSIONS = [1, 2, 3] as const;
 export type SemanticsVersion = (typeof SEMANTICS_VERSIONS)[number];
 
 /** The Environment facts requiredness depends on. */
@@ -103,9 +103,15 @@ const V1: ContractSemantics = {
         return item.enumValues?.includes(value)
           ? null
           : `must be one of: ${item.enumValues?.join(", ")}`;
+      case "integer":
+        // Normalization keeps integer items out of version 1 and 2
+        // revisions; an evaluator that still meets one fails closed.
+        return BEFORE_INTEGER;
     }
   },
 };
+
+const BEFORE_INTEGER = "has a type this Contract Semantics version does not define (integer needs version 3)";
 
 /** The largest integer a JavaScript number represents exactly: 2^53 - 1. */
 const MAX_EXACT = "9007199254740991";
@@ -140,6 +146,7 @@ function parseNumberV2(value: string): ParseResult {
  */
 function parseV2(item: ContractItem, value: string): ParseResult {
   if (item.type === "number") return parseNumberV2(value);
+  if (item.type === "integer") return { ok: false, reason: BEFORE_INTEGER };
   const reason = V1.validate(item, value);
   if (reason !== null) return { ok: false, reason };
   if (item.type === "boolean") return { ok: true, value: /^(true|1)$/i.test(value) };
@@ -157,13 +164,49 @@ const V2: ContractSemantics = {
   },
 };
 
+const INTEGER_V3 = /^-?([0-9]+)$/;
+
+/**
+ * Version 3 integers (ADR-0042): an optional `-` and ASCII digits only, so
+ * no fraction (`3.0` too), exponent, sign `+`, separator, or whitespace; and
+ * the same exact-digit bound as version 2 numbers. `-0` converts to 0.
+ */
+function parseIntegerV3(value: string): ParseResult {
+  const match = INTEGER_V3.exec(value);
+  if (!match) return { ok: false, reason: "must be a whole number" };
+  const digits = (match[1] as string).replace(/^0+(?=\d)/, "");
+  if (digits.length > MAX_EXACT.length || (digits.length === MAX_EXACT.length && digits > MAX_EXACT)) {
+    return { ok: false, reason: "must be a whole number no larger in magnitude than 2^53 - 1" };
+  }
+  const converted = Number(value);
+  return { ok: true, value: converted === 0 ? 0 : converted };
+}
+
+/** Version 3: version 2 plus the `integer` type. Every other rule is version 2's. */
+function parseV3(item: ContractItem, value: string): ParseResult {
+  if (item.type === "integer") return parseIntegerV3(value);
+  return parseV2(item, value);
+}
+
+const V3: ContractSemantics = {
+  version: 3,
+  requiredApplies,
+  missingWhenAbsent: V1.missingWhenAbsent,
+  parse: parseV3,
+  validate(item, value) {
+    const result = parseV3(item, value);
+    return result.ok ? null : result.reason;
+  },
+};
+
 const BY_VERSION = new Map<unknown, ContractSemantics>([
   [1, V1],
   [2, V2],
+  [3, V3],
 ]);
 
 /** The newest version: what a project's first revision gets. */
-export const LATEST_SEMANTICS_VERSION: SemanticsVersion = 2;
+export const LATEST_SEMANTICS_VERSION: SemanticsVersion = 3;
 
 /** A Contract's semantics version: absent means 1. */
 export function semanticsVersionOf(contract: Pick<ConfigurationContract, "semanticsVersion">): number {

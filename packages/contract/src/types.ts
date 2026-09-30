@@ -30,12 +30,28 @@ export type Requiredness =
 export const ITEM_TYPES = [
   "string",
   "number",
+  "integer",
   "boolean",
   "url",
   "email",
   "enum",
 ] as const;
 export type ItemType = (typeof ITEM_TYPES)[number];
+
+/**
+ * The first Contract Semantics version that defines each item type
+ * (ADR-0042). A revision at an older version may not use the type: its
+ * evaluators do not know it.
+ */
+export const ITEM_TYPE_SINCE_SEMANTICS: Readonly<Record<ItemType, number>> = {
+  string: 1,
+  number: 1,
+  integer: 3,
+  boolean: 1,
+  url: 1,
+  email: 1,
+  enum: 1,
+};
 
 export interface ContractItem {
   /** Config Item name, e.g. DATABASE_URL. */

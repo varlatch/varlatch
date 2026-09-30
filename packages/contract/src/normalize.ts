@@ -4,6 +4,7 @@ import {
   CONFIG_ITEM_NAME_PATTERN,
   CONTRACT_SCHEMA_VERSION,
   ITEM_TYPES,
+  ITEM_TYPE_SINCE_SEMANTICS,
   TIERS,
   isReservedItemName,
   type ConfigurationContract,
@@ -66,6 +67,17 @@ function codePointCompare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+export interface NormalizeOptions {
+  /**
+   * The semantics version is not decided yet: a Contract without
+   * `semanticsVersion` is being pushed, and the server will give it the
+   * active revision's version. The check that each item type exists at the
+   * revision's version then waits for that decision; everything else is
+   * checked as usual. A Contract that names its version is always checked.
+   */
+  versionUndecided?: boolean;
+}
+
 /**
  * Validate an untrusted input and produce the canonical Contract form:
  * items sorted by name, enum values and selector environment IDs sorted and
@@ -74,7 +86,7 @@ function codePointCompare(a: string, b: string): number {
  * Throws {@link ContractValidationError} on structurally or semantically
  * invalid input (unknown fields, duplicate names, enum constraint violations).
  */
-export function normalizeContract(input: unknown): ConfigurationContract {
+export function normalizeContract(input: unknown, options: NormalizeOptions = {}): ConfigurationContract {
   const parsed = contractSchema.safeParse(input);
   if (!parsed.success) {
     throw new ContractValidationError(
@@ -91,8 +103,15 @@ export function normalizeContract(input: unknown): ConfigurationContract {
       `semanticsVersion: version ${version} is not supported (supported: ${SEMANTICS_VERSIONS.join(", ")})`,
     );
   }
+  const typesVersion = version ?? (options.versionUndecided ? undefined : 1);
   const seen = new Set<string>();
   for (const item of parsed.data.items) {
+    const since = ITEM_TYPE_SINCE_SEMANTICS[item.type];
+    if (typesVersion !== undefined && typesVersion < since) {
+      issues.push(
+        `${item.name}: type ${item.type} needs Contract Semantics version ${since} or later, and this Contract uses version ${typesVersion}; move it to the newest rules (varlatch contract push --semantics latest, or the dashboard's Contract page)`,
+      );
+    }
     if (isReservedItemName(item.name)) {
       issues.push(`${item.name} is reserved for launcher metadata and cannot be a Config Item`);
     }

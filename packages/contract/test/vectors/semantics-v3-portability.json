@@ -1,0 +1,960 @@
+{
+  "semanticsVersion": 3,
+  "description": "Portability vectors for Contract Semantics version 3: the version 2 portability vectors, with their version 2 results, plus the integer inputs where languages' parsers commonly differ. Produced by the TypeScript semantics, the reference; they change no rule. A vector marked internationalizedHost needs UTS #46 processing to decide; an implementation without it must reject that value rather than guess. Vectors are only ever added to this file, never changed.",
+  "validate": [
+    {
+      "type": "number",
+      "value": "٤٢",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "Arabic-Indic digits are not ASCII digits"
+    },
+    {
+      "type": "number",
+      "value": "４２",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "fullwidth digits are not ASCII digits"
+    },
+    {
+      "type": "number",
+      "value": "१",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "Devanagari digit one"
+    },
+    {
+      "type": "number",
+      "value": "1_000",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "underscores are not part of the form"
+    },
+    {
+      "type": "number",
+      "value": " 42",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "no surrounding whitespace"
+    },
+    {
+      "type": "number",
+      "value": "42 ",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "no surrounding whitespace"
+    },
+    {
+      "type": "number",
+      "value": "42\n",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "a trailing newline is not ignored"
+    },
+    {
+      "type": "number",
+      "value": "\n42",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "a leading newline is not ignored"
+    },
+    {
+      "type": "number",
+      "value": "+42",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "no leading plus"
+    },
+    {
+      "type": "number",
+      "value": "4e2",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "no exponent"
+    },
+    {
+      "type": "number",
+      "value": "0x10",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "no hexadecimal"
+    },
+    {
+      "type": "number",
+      "value": "Infinity",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "NaN",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": "-",
+      "valid": false,
+      "reason": "must be a number"
+    },
+    {
+      "type": "number",
+      "value": ".5",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "digits are required before the point"
+    },
+    {
+      "type": "number",
+      "value": "5.",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "digits are required after the point"
+    },
+    {
+      "type": "number",
+      "value": "00042",
+      "valid": true,
+      "converted": {
+        "number": "42"
+      },
+      "note": "leading zeros are allowed"
+    },
+    {
+      "type": "number",
+      "value": "-0.0",
+      "valid": true,
+      "converted": {
+        "number": "-0"
+      },
+      "note": "negative zero with a fraction"
+    },
+    {
+      "type": "number",
+      "value": "0.0",
+      "valid": true,
+      "converted": {
+        "number": "0"
+      }
+    },
+    {
+      "type": "number",
+      "value": "1.50",
+      "valid": true,
+      "converted": {
+        "number": "1.5"
+      }
+    },
+    {
+      "type": "number",
+      "value": "٤.5",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "a non-ASCII digit before the point"
+    },
+    {
+      "type": "number",
+      "value": "4٥",
+      "valid": false,
+      "reason": "must be a number",
+      "note": "a non-ASCII digit after an ASCII one"
+    },
+    {
+      "type": "boolean",
+      "value": "falſe",
+      "valid": false,
+      "reason": "must be a boolean",
+      "note": "U+017F (long s) case-folds to s in some engines, never here"
+    },
+    {
+      "type": "boolean",
+      "value": "FALſE",
+      "valid": false,
+      "reason": "must be a boolean",
+      "note": "U+017F (long s) case-folds to s in some engines, never here"
+    },
+    {
+      "type": "boolean",
+      "value": "true\n",
+      "valid": false,
+      "reason": "must be a boolean",
+      "note": "a trailing newline is not ignored"
+    },
+    {
+      "type": "boolean",
+      "value": "ｔrue",
+      "valid": false,
+      "reason": "must be a boolean",
+      "note": "fullwidth t"
+    },
+    {
+      "type": "boolean",
+      "value": "١",
+      "valid": false,
+      "reason": "must be a boolean",
+      "note": "Arabic-Indic one"
+    },
+    {
+      "type": "boolean",
+      "value": "True",
+      "valid": true,
+      "converted": {
+        "boolean": true
+      }
+    },
+    {
+      "type": "email",
+      "value": "a b@c.de",
+      "valid": false,
+      "reason": "must be an email address",
+      "note": "U+00A0 is whitespace"
+    },
+    {
+      "type": "email",
+      "value": "a　b@c.de",
+      "valid": false,
+      "reason": "must be an email address",
+      "note": "U+3000 is whitespace"
+    },
+    {
+      "type": "email",
+      "value": "a b@c.de",
+      "valid": false,
+      "reason": "must be an email address",
+      "note": "U+2028 is whitespace"
+    },
+    {
+      "type": "email",
+      "value": "a﻿b@c.de",
+      "valid": false,
+      "reason": "must be an email address",
+      "note": "U+FEFF is whitespace here, though not in Python's default"
+    },
+    {
+      "type": "email",
+      "value": "a\u001cb@c.de",
+      "valid": true,
+      "converted": {
+        "string": "a\u001cb@c.de"
+      },
+      "note": "U+001C is not whitespace here, though it is in Python's default"
+    },
+    {
+      "type": "email",
+      "value": "ab@c.de",
+      "valid": true,
+      "converted": {
+        "string": "ab@c.de"
+      },
+      "note": "U+0085 is not whitespace here, though it is in Python's default"
+    },
+    {
+      "type": "email",
+      "value": "a​b@c.de",
+      "valid": true,
+      "converted": {
+        "string": "a​b@c.de"
+      },
+      "note": "U+200B is not whitespace"
+    },
+    {
+      "type": "email",
+      "value": "é@b.co",
+      "valid": true,
+      "converted": {
+        "string": "é@b.co"
+      },
+      "note": "non-ASCII is allowed"
+    },
+    {
+      "type": "email",
+      "value": "a@b.c\u000b",
+      "valid": false,
+      "reason": "must be an email address",
+      "note": "a trailing vertical tab is whitespace"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "café"
+      ],
+      "value": "café",
+      "valid": false,
+      "reason": "must be one of: café",
+      "note": "no Unicode normalization: NFD does not equal NFC"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "café"
+      ],
+      "value": "café",
+      "valid": true,
+      "converted": {
+        "string": "café"
+      }
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "İ"
+      ],
+      "value": "i̇",
+      "valid": false,
+      "reason": "must be one of: İ",
+      "note": "no case folding"
+    },
+    {
+      "type": "enum",
+      "enumValues": [
+        "debug"
+      ],
+      "value": "DEBUG",
+      "valid": false,
+      "reason": "must be one of: debug"
+    },
+    {
+      "type": "url",
+      "value": "HTTP://EXAMPLE.COM",
+      "valid": true,
+      "converted": {
+        "string": "HTTP://EXAMPLE.COM"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://example.com:65535",
+      "valid": true,
+      "converted": {
+        "string": "http://example.com:65535"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://example.com:65536",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://example.com:",
+      "valid": true,
+      "converted": {
+        "string": "http://example.com:"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://example.com:80a",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a:b@c:d",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://1.2.3.4",
+      "valid": true,
+      "converted": {
+        "string": "http://1.2.3.4"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://1.2.3.256",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://0x7f.1",
+      "valid": true,
+      "converted": {
+        "string": "http://0x7f.1"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://4294967295",
+      "valid": true,
+      "converted": {
+        "string": "http://4294967295"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://4294967296",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://999999999999",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://1.2.3.4.5",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://1.2.3.09",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://foo.09",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://foo.0x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://1.2.3.4.5.com",
+      "valid": true,
+      "converted": {
+        "string": "http://1.2.3.4.5.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[::1]",
+      "valid": true,
+      "converted": {
+        "string": "http://[::1]"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[::1]:80",
+      "valid": true,
+      "converted": {
+        "string": "http://[::1]:80"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[:::1]",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://[1:2:3:4:5:6:7:8:9]",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://[::ffff:1.2.3.4]",
+      "valid": true,
+      "converted": {
+        "string": "http://[::ffff:1.2.3.4]"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[::1.2.3.256]",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://[::1]x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a<b.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a^b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a|b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a%b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://exa%20mple.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://%41.com",
+      "valid": true,
+      "converted": {
+        "string": "http://%41.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://%zz.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a%00b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://ex\u0000ample.com",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "\u0000http://x",
+      "valid": true,
+      "converted": {
+        "string": "\u0000http://x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://x\u0000",
+      "valid": true,
+      "converted": {
+        "string": "http://x\u0000"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://ex\nample.com",
+      "valid": true,
+      "converted": {
+        "string": "http://ex\nample.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://.com",
+      "valid": true,
+      "converted": {
+        "string": "http://.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://a..b",
+      "valid": true,
+      "converted": {
+        "string": "http://a..b"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://user:pass@host",
+      "valid": true,
+      "converted": {
+        "string": "http://user:pass@host"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://@host",
+      "valid": true,
+      "converted": {
+        "string": "http://@host"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://user@",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http:host",
+      "valid": true,
+      "converted": {
+        "string": "http:host"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https:",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "file:",
+      "valid": true,
+      "converted": {
+        "string": "file:"
+      }
+    },
+    {
+      "type": "url",
+      "value": "file:///etc/passwd",
+      "valid": true,
+      "converted": {
+        "string": "file:///etc/passwd"
+      }
+    },
+    {
+      "type": "url",
+      "value": "file://host/x",
+      "valid": true,
+      "converted": {
+        "string": "file://host/x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "file://ho st/x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "foo://exa mple",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "foo://a<b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "foo:bar baz",
+      "valid": true,
+      "converted": {
+        "string": "foo:bar baz"
+      }
+    },
+    {
+      "type": "url",
+      "value": "foo://%zz",
+      "valid": true,
+      "converted": {
+        "string": "foo://%zz"
+      }
+    },
+    {
+      "type": "url",
+      "value": "1http://x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "a+b-c.d:x",
+      "valid": true,
+      "converted": {
+        "string": "a+b-c.d:x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "a_b:x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "ht tp://x",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://example.com/pa th?q=a b#f g",
+      "valid": true,
+      "converted": {
+        "string": "http://example.com/pa th?q=a b#f g"
+      }
+    },
+    {
+      "type": "url",
+      "value": "ws://x",
+      "valid": true,
+      "converted": {
+        "string": "ws://x"
+      }
+    },
+    {
+      "type": "url",
+      "value": "wss://",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "javascript:alert(1)",
+      "valid": true,
+      "converted": {
+        "string": "javascript:alert(1)"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://example.com\\path",
+      "valid": true,
+      "converted": {
+        "string": "http://example.com\\path"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http:\\\\example.com",
+      "valid": true,
+      "converted": {
+        "string": "http:\\\\example.com"
+      }
+    },
+    {
+      "type": "url",
+      "value": "sc://ñ",
+      "valid": true,
+      "converted": {
+        "string": "sc://ñ"
+      }
+    },
+    {
+      "type": "url",
+      "value": "HTTP://[::1]",
+      "valid": true,
+      "converted": {
+        "string": "HTTP://[::1]"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[0:0:0:0:0:0:0:0]",
+      "valid": true,
+      "converted": {
+        "string": "http://[0:0:0:0:0:0:0:0]"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[::]",
+      "valid": true,
+      "converted": {
+        "string": "http://[::]"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://[1::2::3]",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://[g::1]",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://a\u0007b",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "http://",
+      "valid": false,
+      "reason": "must be a valid URL"
+    },
+    {
+      "type": "url",
+      "value": "https://example.com:0",
+      "valid": true,
+      "converted": {
+        "string": "https://example.com:0"
+      }
+    },
+    {
+      "type": "url",
+      "value": "https://example.com:00080",
+      "valid": true,
+      "converted": {
+        "string": "https://example.com:00080"
+      }
+    },
+    {
+      "type": "url",
+      "value": "http://ß.de",
+      "valid": true,
+      "converted": {
+        "string": "http://ß.de"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "http://münchen.de",
+      "valid": true,
+      "converted": {
+        "string": "http://münchen.de"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "http://%C3%A9.com",
+      "valid": true,
+      "converted": {
+        "string": "http://%C3%A9.com"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "http://a‍.com",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "http://xn--mnchen-3ya.de",
+      "valid": true,
+      "converted": {
+        "string": "http://xn--mnchen-3ya.de"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "http://☕.example",
+      "valid": true,
+      "converted": {
+        "string": "http://☕.example"
+      },
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "url",
+      "value": "https://١.com",
+      "valid": false,
+      "reason": "must be a valid URL",
+      "internationalizedHost": true,
+      "note": "an internationalized host: its verdict needs UTS #46 processing"
+    },
+    {
+      "type": "integer",
+      "value": "٤٢",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "Arabic-Indic digits are not ASCII digits"
+    },
+    {
+      "type": "integer",
+      "value": "４２",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "fullwidth digits"
+    },
+    {
+      "type": "integer",
+      "value": "१",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "a Devanagari digit"
+    },
+    {
+      "type": "integer",
+      "value": "1\n",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "a trailing newline is not ignored"
+    },
+    {
+      "type": "integer",
+      "value": "\n1",
+      "valid": false,
+      "reason": "must be a whole number"
+    },
+    {
+      "type": "integer",
+      "value": "4٥",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "a non-ASCII digit after an ASCII one"
+    },
+    {
+      "type": "integer",
+      "value": "1 ",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "a trailing no-break space"
+    },
+    {
+      "type": "integer",
+      "value": "Infinity",
+      "valid": false,
+      "reason": "must be a whole number"
+    },
+    {
+      "type": "integer",
+      "value": "NaN",
+      "valid": false,
+      "reason": "must be a whole number"
+    },
+    {
+      "type": "integer",
+      "value": "1e400",
+      "valid": false,
+      "reason": "must be a whole number"
+    },
+    {
+      "type": "integer",
+      "value": "-0.0",
+      "valid": false,
+      "reason": "must be a whole number",
+      "note": "a fraction, even of zero"
+    }
+  ]
+}

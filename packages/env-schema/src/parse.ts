@@ -9,7 +9,8 @@
  *                     @required=env(name, ...)   root Environments, by name
  *                     @required=tier(development|staging|production)
  *                     @sensitive  @sensitive=false  @public
- *                     @type=string|number|boolean|url|email|enum(a,b,...)
+ *                     @type=string|number|integer|boolean|url|email|enum(a,b,...)
+ *                     (integer needs Contract Semantics version 3)
  *                     @example=... / @example="..."
  *   Items:            NAME=            (no default)
  *                     NAME=literal     (defaultValue)
@@ -35,7 +36,7 @@ export interface DraftItem {
   name: string;
   required: DraftRequired | null;
   sensitive: boolean | null;
-  type: "string" | "number" | "boolean" | "url" | "email" | "enum";
+  type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "enum";
   enumValues?: string[];
   defaultValue?: string;
   description?: string;
@@ -269,7 +270,7 @@ function buildItem(
           if (item.enumValues.length === 0) {
             throw new EnvSchemaParseError(d.line, "enum() needs at least one value");
           }
-        } else if (["string", "number", "boolean", "url", "email"].includes(v)) {
+        } else if (["string", "number", "integer", "boolean", "url", "email"].includes(v)) {
           item.type = v as DraftItem["type"];
         } else {
           throw new EnvSchemaParseError(d.line, `Unsupported @type: ${v}`);

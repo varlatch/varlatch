@@ -209,3 +209,30 @@ describe("resolveDraft", () => {
     expect(contractHash(a)).toBe(contractHash(b));
   });
 });
+
+describe("@type=integer (ADR-0042)", () => {
+  const schema = `# @type=integer
+WORKERS=4
+
+# @type=number
+RATIO=0.5
+`;
+
+  it("parses as the integer type, and number stays number", () => {
+    const draft = parseEnvSchema(schema);
+    expect(draft.items.map((i) => [i.name, i.type])).toEqual([
+      ["WORKERS", "integer"],
+      ["RATIO", "number"],
+    ]);
+  });
+
+  it("resolves without a semantics version, leaving the version check to the push", () => {
+    const contract = resolveDraft(parseEnvSchema(schema), []);
+    expect(contract).not.toHaveProperty("semanticsVersion");
+    expect(contract.items.find((i) => i.name === "WORKERS")?.type).toBe("integer");
+  });
+
+  it("rejects an unknown type as before", () => {
+    expect(() => parseEnvSchema("# @type=int\nX=1\n")).toThrow(EnvSchemaParseError);
+  });
+});

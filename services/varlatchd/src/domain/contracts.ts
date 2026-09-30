@@ -7,6 +7,7 @@ import {
   normalizeContract,
   semanticsVersionOf,
   type ConfigurationContract,
+  type NormalizeOptions,
 } from "@varlatch/contract";
 import { recordAuditEvent } from "../audit/events.js";
 import { newId } from "../db/ids.js";
@@ -31,9 +32,9 @@ function parseContract(row: ContractRevisionRow): ConfigurationContract {
     : row.contract;
 }
 
-function normalizeOrReject(input: unknown): ConfigurationContract {
+function normalizeOrReject(input: unknown, options?: NormalizeOptions): ConfigurationContract {
   try {
-    return normalizeContract(input);
+    return normalizeContract(input, options);
   } catch (err) {
     if (err instanceof ContractValidationError) {
       throw new DomainError("CONTRACT_INVALID", err.message, { issues: err.issues });
@@ -69,8 +70,10 @@ export async function pushRevision(
   provenance: Record<string, string> | undefined,
   actorIdentityId: string,
 ): Promise<ContractRevisionRow> {
-  const pushed = normalizeOrReject(contractInput);
   const pinned = pinsSemanticsVersion(contractInput);
+  // Without a pin the version is decided below, so the check that each item
+  // type exists at it (ADR-0042) runs on the second normalization.
+  const pushed = normalizeOrReject(contractInput, { versionUndecided: !pinned });
   return withTx(ctx.db, async (db) => {
     let contract = pushed;
     if (!pinned) {

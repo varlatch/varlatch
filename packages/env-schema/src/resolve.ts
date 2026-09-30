@@ -97,5 +97,8 @@ export function resolveDraft(
       .sort();
     throw new UnknownEnvironmentNameError([...unknown].sort(), [...derived].sort(), roots);
   }
-  return normalizeContract({ schemaVersion: 1, items });
+  // The file names no semantics version: the push leaves it to the server
+  // (the active revision's, or the newest for a first revision), so the
+  // check that each type exists at that version waits for the decision.
+  return normalizeContract({ schemaVersion: 1, items }, { versionUndecided: true });
 }
