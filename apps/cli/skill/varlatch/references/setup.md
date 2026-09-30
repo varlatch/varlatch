@@ -9,6 +9,13 @@ this command, with the server's URL, and wait:
 varlatch login --server https://varlatch.example.com
 ```
 
+A human who signs in with a credential instead (a service token, say)
+pipes it in, so it never appears on a command line:
+
+```text
+op read op://vault/varlatch/token | varlatch login --server https://varlatch.example.com --token-stdin
+```
+
 Check the result yourself:
 
 ```sh

@@ -17,6 +17,7 @@ Usage:
   varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
                the named short Secrets; every other known Secret stays masked
   varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in
+  varlatch login --server <url> --token-stdin            # a credential from a pipe or file, e.g. from a password manager
   varlatch login --server <url> --token <credential>
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
   varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
