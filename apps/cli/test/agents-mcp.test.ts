@@ -186,6 +186,14 @@ describe("the CLI's TOML region", () => {
     expect(drop(edited, "[shell_environment_policy.set]")).toBe(`${original}\n\n[profiles.mine]\nmodel = "x"\n`);
   });
 
+  it("refuses a change that parses but does not say what was expected", () => {
+    // The guard behind every add: the file after must equal the file before plus the intended value.
+    const wrong = withTomlPart('model = "o5"\n', "[mcp_servers.varlatch]", ['command = "varlatch"'], (b) => ({ ...b, mcp_servers: { varlatch: ENTRY } }));
+    expect(wrong).toEqual({ next: null, reason: "adding to it would change what it says" });
+    const right = withTomlPart('model = "o5"\n', "[mcp_servers.varlatch]", ['command = "varlatch"', 'args = ["mcp"]'], (b) => ({ ...b, mcp_servers: { varlatch: ENTRY } }));
+    expect(right.next).toContain("[mcp_servers.varlatch]");
+  });
+
   it("leaves a file whose region is damaged", () => {
     for (const damaged of [`model = "o5"\n${REGION_BEGIN}\n[mcp_servers.varlatch]\n`, `model = "o5"\n${REGION_END}\n`, `${REGION_BEGIN}\nstray = 1\n${REGION_END}\n`]) {
       expect(withTomlPart(damaged, "[mcp_servers.varlatch]", ['command = "varlatch"'], (b) => b)).toEqual({ next: null, reason: expect.stringMatching(/damaged/) });
