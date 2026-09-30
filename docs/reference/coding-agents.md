@@ -35,8 +35,10 @@ when there is none), it writes:
   overwritten.
 - **A block in `AGENTS.md`**, between `<!-- varlatch:begin -->` and
   `<!-- varlatch:end -->`, with the rules that matter most and a pointer to
-  the skill. The file is created if needed. Everything outside the markers
-  is kept byte for byte, including Windows line endings.
+  the skill. The file is created if needed. An existing file keeps every
+  byte it had: the block goes at the end, after one line break, with the
+  file's own line endings. Once the block is there, installing again
+  replaces only what is between the markers.
 - **Adapters** for coding agents that need more than those paths:
   - an existing `CLAUDE.md` (or else `.claude/CLAUDE.md`) gets one marked
     line importing `AGENTS.md`, which Claude Code does not read while a
@@ -48,8 +50,12 @@ when there is none), it writes:
     otherwise it prints the edit for you to make and leaves the file as it
     is. Comments count as formatting.
   - an existing `.aider.conf.yml` without a `read:` entry gets a marked
-    `read: AGENTS.md` line. One with a `read:` entry is yours to extend, and
-    the CLI says so.
+    `read: AGENTS.md` line, but only when its layout makes appending safe:
+    blank lines, comments, top-level `key: value` lines with a one-line
+    value, and list items under a top-level key. For any other layout
+    (quoted or indented keys, multi-line values, anchors, several
+    documents), and for one with a `read:` entry, the CLI leaves the file as
+    it is and prints the edit for you to make.
 
 An adapter applies when its file exists. `--agent <name>` (repeatable) also
 creates the file for that coding agent when it does not exist:
@@ -62,17 +68,23 @@ each one reads, according to its documentation. An unknown name exits 64.
 Running it again changes nothing unless the CLI has changed: install after
 each CLI upgrade to update the skill.
 
+The CLI edits only UTF-8 text files. An `AGENTS.md` that is not one stops
+the command with status 78; an adapter's file that is not one is left as it
+is, with the edit printed. An unknown option, a missing option value, or an
+extra argument exits 64 before anything is written, so a mistyped `--check`
+never installs.
+
 ### Options
 
 - **`--check`** changes nothing and exits 1 when any file differs from what
   install would write: missing, edited, or left over from an older version.
   Use it in CI. Edits the CLI leaves to you are listed but are not drift.
 - **`--remove`** takes back what install wrote: the skill directories (and
-  their parents, when nothing else is in them), the `AGENTS.md` block (and
-  the file, when nothing else is in it), and the marked lines in `CLAUDE.md`
-  and `.aider.conf.yml` (and a file that held only that line). The Gemini
-  CLI entry stays, because JSON has no way to mark it as the CLI's; the
-  output names it.
+  their parents, when nothing else is in them), the `AGENTS.md` block, and
+  the marked lines in `CLAUDE.md` and `.aider.conf.yml`, each with the line
+  breaks install added. A file you had before gets back exactly the bytes
+  it had; a file install created is deleted. The Gemini CLI entry stays,
+  because JSON has no way to mark it as the CLI's; the output names it.
 - **`--scope user`** writes the skill to `~/.agents/skills/varlatch/` and
   `~/.claude/skills/varlatch/`, for every repository on this machine. It
   touches no instruction files, and does not take `--agent`.

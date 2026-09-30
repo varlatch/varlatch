@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parseDocument } from "yaml";
 import { EXIT } from "../src/exitCodes.js";
 import {
   agentsBlock,
+  aiderLayout,
   changedTargets,
   runInstall,
   withAiderRead,
@@ -112,7 +114,8 @@ describe("the AGENTS.md block", () => {
     const replaced = withBlock(stale, false) as string;
     expect(replaced).toBe(`${user}\n${agentsBlock()}\n\n## After\n\nMore rules.\n`);
     expect(withBlock(replaced, false)).toBe(replaced);
-    expect(withBlock(replaced, true)).toBe(`${user}\n## After\n\nMore rules.\n`);
+    // Only the block and its line break go: the blank lines around it are the file's.
+    expect(withBlock(replaced, true)).toBe(`${user}\n\n## After\n\nMore rules.\n`);
   });
 
   it("keeps CRLF line endings", () => {
@@ -145,8 +148,8 @@ describe("adapters", () => {
       expect(withClaudeImport(theirs, false)).toBe(theirs);
       expect(withClaudeImport(theirs, true)).toBe(theirs);
     }
-    expect(withClaudeImport("", false, "AGENTS.md")).toMatch(/^<!-- varlatch: .* -->\n@AGENTS\.md\n$/);
-    expect(withClaudeImport(withClaudeImport("", false) as string, true)).toBeNull();
+    expect(withClaudeImport(null, false, "AGENTS.md")).toMatch(/^<!-- varlatch: .* -->\n@AGENTS\.md\n$/);
+    expect(withClaudeImport(withClaudeImport(null, false) as string, true)).toBeNull();
     expect(withClaudeImport("Nested.\n", false, "../AGENTS.md")).toContain("\n@../AGENTS.md\n");
   });
 
@@ -162,9 +165,166 @@ describe("adapters", () => {
   it(".aider.conf.yml gains one marked read: line and loses only that", () => {
     const own = "model: x\n";
     const added = withAiderRead(own, false) as string;
-    expect(added).toBe("model: x\nread: AGENTS.md # added by varlatch agents install\n");
+    expect(added).toBe("model: x\n\nread: AGENTS.md # added by varlatch agents install\n");
     expect(withAiderRead(added, true)).toBe(own);
     expect(withAiderRead(withAiderRead(null, false), true)).toBeNull();
+  });
+});
+
+/** install, install again, then --remove, checking the file's bytes at each step. */
+function roundTrip(file: string, original: string): { installed: string | null; manual: string[] } {
+  const root = project({ [file]: original });
+  const first = install(root);
+  const installed = existsSync(join(root, file)) ? readFileSync(join(root, file), "utf8") : null;
+  // Every byte the file had is still there, in front of the CLI's addition.
+  expect(installed?.startsWith(original), JSON.stringify(original)).toBe(true);
+  const second = install(root);
+  expect(second.changes.filter((c) => c.action !== "unchanged"), JSON.stringify(original)).toEqual([]);
+  install(root, { mode: "remove" });
+  expect(readFileSync(join(root, file)).equals(Buffer.from(original, "utf8")), `${file} ${JSON.stringify(original)}`).toBe(true);
+  return { installed, manual: first.manual };
+}
+
+describe("byte-for-byte preservation", () => {
+  const text = {
+    "no final line break": "User rules",
+    "one final line break": "User rules\n",
+    "several trailing line breaks": "User rules\n\n\n",
+    "whitespace only": "  \n \n",
+    empty: "",
+    CRLF: "User rules\r\nMore\r\n",
+    "CRLF, no final line break": "User rules\r\nMore",
+    "byte order mark": "\uFEFFUser rules\n",
+  };
+  const yaml = {
+    "no final line break": "model: x",
+    "one final line break": "model: x\n",
+    "several trailing line breaks": "model: x\n\n\n",
+    "whitespace only": "  \n \n",
+    empty: "",
+    CRLF: "model: x\r\nmap-tokens: 1024\r\n",
+    "CRLF, no final line break": "model: x\r\nmap-tokens: 1024",
+    "comments only": "# my settings\n",
+  };
+
+  for (const file of ["AGENTS.md", "CLAUDE.md", join(".claude", "CLAUDE.md")]) {
+    it(`${file}: install adds, and --remove takes back, only the CLI's addition`, () => {
+      for (const [shape, original] of Object.entries(text)) {
+        const { installed } = roundTrip(file, original);
+        expect(installed, shape).not.toBe(original);
+        // The addition uses the file's own line ending.
+        if (original.includes("\r\n")) expect(installed?.slice(original.length).replaceAll("\r\n", ""), shape).not.toContain("\n");
+      }
+    });
+  }
+
+  it(".aider.conf.yml: install adds, and --remove takes back, only the CLI's line", () => {
+    for (const [shape, original] of Object.entries(yaml)) {
+      const { installed } = roundTrip(".aider.conf.yml", original);
+      expect(installed, shape).toMatch(/read: AGENTS\.md # added by varlatch agents install\r?\n$/);
+    }
+  });
+
+  it("a file that is not UTF-8 text is never rewritten", () => {
+    const bytes = Buffer.from([0x23, 0x20, 0xff, 0xfe, 0x0a]);
+    const agents = project();
+    writeFileSync(join(agents, "AGENTS.md"), bytes);
+    expect(() => install(agents)).toThrow(/AGENTS\.md is not a UTF-8 text file/);
+    expect(readFileSync(join(agents, "AGENTS.md")).equals(bytes)).toBe(true);
+    for (const file of ["CLAUDE.md", ".aider.conf.yml", join(".gemini", "settings.json")]) {
+      const root = project();
+      mkdirSync(join(root, file, ".."), { recursive: true });
+      writeFileSync(join(root, file), bytes);
+      const result = install(root);
+      expect(readFileSync(join(root, file)).equals(bytes), file).toBe(true);
+      expect(result.manual, file).toEqual([expect.stringMatching(/is not a UTF-8 text file, so the CLI leaves it as it is/)]);
+      install(root, { mode: "remove" });
+      expect(readFileSync(join(root, file)).equals(bytes), file).toBe(true);
+    }
+  });
+
+  it(".gemini/settings.json keeps a missing final line break", () => {
+    const raw = JSON.stringify({ theme: "Dracula" }, null, 2);
+    const root = project({ ".gemini/settings.json": raw });
+    install(root);
+    const after = readFileSync(join(root, ".gemini/settings.json"), "utf8");
+    expect(after).toBe(JSON.stringify({ theme: "Dracula", context: { fileName: ["GEMINI.md", "AGENTS.md"] } }, null, 2));
+  });
+});
+
+/** Whether `after` is `before`'s YAML mapping plus read: AGENTS.md, with no other value changed and no parse error. */
+function sameMappingPlusRead(before: string, after: string): boolean {
+  const a = parseDocument(before, { uniqueKeys: true });
+  const b = parseDocument(after, { uniqueKeys: true });
+  if (a.errors.length > 0 || b.errors.length > 0) return false;
+  const base = (a.toJS() ?? {}) as Record<string, unknown>;
+  try {
+    expect(b.toJS()).toEqual({ ...base, read: "AGENTS.md" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe("the Aider adapter judges the file's YAML layout", () => {
+  const appendable = [
+    "model: x\n",
+    "# only a comment\n",
+    "",
+    "model: gpt-4o # the model\nlint-cmd:\n  - \"python: flake8\"\n  - 'js: eslint'\n",
+    "openai-api-base: https://api.example.com/v1\nmap-tokens: 1024\n",
+    "auto-commits: false\nfiles: [a.py, b.py]\n",
+    "lint-cmd:\n- one\n- two\n",
+    "model: x\r\nmap-tokens: 1024",
+    "empty-value:\n",
+  ];
+  const unsafe = [
+    '"read": [CONVENTIONS.md]\n',
+    "  model: x\n  read: [CONVENTIONS.md]\n",
+    "  model: x\n",
+    "'model': x\n",
+    "notes: |+\n  kept\n\n",
+    "notes: >\n  folded\n",
+    "base: &b x\nother: *b\n",
+    "files: [a.py,\n  b.py]\n",
+    "---\nmodel: x\n",
+    "model: x\n...\n",
+    "<<: {a: 1}\n",
+    "? complex\n: key\n",
+    "model:\tx\n",
+    "nested:\n  sub: 1\n",
+    "items:\n  - name: x\n",
+    "title: some\n  continued\n",
+    "model: 'it''s\n  split'\n",
+    "\uFEFFmodel: x\n",
+    "model:x\n",
+    "- a\n- b\n",
+  ];
+
+  it("appends read: only where the result is the same mapping plus read", () => {
+    for (const text of appendable) {
+      expect(aiderLayout(text), JSON.stringify(text)).toBe("append");
+      expect(sameMappingPlusRead(text, withAiderRead(text, false) as string), JSON.stringify(text)).toBe(true);
+    }
+  });
+
+  it("leaves every other layout, and an existing read: entry, unchanged for the human", () => {
+    for (const text of [...unsafe, "read: [CONVENTIONS.md]\n", "model: x\nread:\n  - CONVENTIONS.md\n"]) {
+      expect(aiderLayout(text), JSON.stringify(text)).not.toBe("append");
+      const root = project({ ".aider.conf.yml": text });
+      const result = install(root);
+      expect(readFileSync(join(root, ".aider.conf.yml"), "utf8"), JSON.stringify(text)).toBe(text);
+      expect(result.manual, JSON.stringify(text)).toEqual([expect.stringMatching(/AGENTS\.md .*\.aider\.conf\.yml|\.aider\.conf\.yml.*AGENTS\.md/)]);
+    }
+  });
+
+  it("control: appending anyway breaks these layouts or changes what they say", () => {
+    // Some refused layouts (a quoted key, say) would survive an append; the adapter refuses them to stay on the safe side.
+    const harmed = ['"read": [CONVENTIONS.md]\n', "  model: x\n  read: [CONVENTIONS.md]\n", "  model: x\n", "notes: |+\n  kept\n\n", "model: x\n...\n", "- a\n- b\n"];
+    for (const text of harmed) {
+      expect(unsafe, JSON.stringify(text)).toContain(text);
+      expect(sameMappingPlusRead(text, `${text}\nread: AGENTS.md\n`), JSON.stringify(text)).toBe(false);
+    }
   });
 });
 
@@ -301,7 +461,7 @@ describe("runInstall", () => {
   it("adds read: to .aider.conf.yml only when it has none; an existing read: entry is the human's to extend", () => {
     const root = project({ ".aider.conf.yml": "model: x\n" });
     install(root);
-    expect(readFileSync(join(root, ".aider.conf.yml"), "utf8")).toBe("model: x\nread: AGENTS.md # added by varlatch agents install\n");
+    expect(readFileSync(join(root, ".aider.conf.yml"), "utf8")).toBe("model: x\n\nread: AGENTS.md # added by varlatch agents install\n");
     const theirs = "read: [CONVENTIONS.md]\n";
     const kept = project({ ".aider.conf.yml": theirs });
     const result = install(kept);
@@ -372,9 +532,26 @@ describe("the CLI", () => {
       ["agents", "install", "--scope", "system"],
       ["agents", "install", "--agent", "nosuch"],
       ["agents", "install", "--scope", "user", "--agent", "codex"],
+      // Malformed options are refused before anything is written, never read as absent.
+      ["agents", "install", "--chek"],
+      ["agents", "install", "--check=true"],
+      ["agents", "install", "--scope"],
+      ["agents", "install", "--agent"],
+      ["agents", "install", "--agent", "--check"],
+      ["agents", "install", "--scope", "user", "--scope", "project"],
+      ["agents", "install", "extra"],
+      ["agents", "install", "--", "--check"],
+      ["agents", "guide", "run", "extra"],
+      ["agents", "guide", "--topic", "run"],
+      ["init", "--org", "acme", "--project", "web", "--no-agent-file"],
+      ["init", "--org", "acme", "--project", "web", "extra"],
+      ["init", "--org", "acme", "--project"],
+      ["init", "--org", "acme", "--org", "other", "--project", "web"],
     ]) {
       const r = await cli(args, cwd);
       expect(r.code, args.join(" ")).toBe(EXIT.usage);
+      expect(r.stdout, args.join(" ")).toBe("");
+      expect(r.stderr, args.join(" ")).toMatch(/Usage: varlatch|unknown coding agent|do not combine|--scope must be|--agent applies/);
     }
     expect(snapshot(cwd)).toEqual({});
     const damaged = project({ "AGENTS.md": "<!-- varlatch:begin -->\nhalf\n" });

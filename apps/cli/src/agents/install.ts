@@ -115,18 +115,42 @@ function eolOf(text: string): string {
   return text.includes("\r\n") ? "\r\n" : "\n";
 }
 
-function trimEndLines(text: string): string {
-  return text.replace(/(\r?\n)+$/, "");
+/**
+ * The CLI's additions are exact, so that removing one gives the file back
+ * byte for byte. A new file is the addition alone. An existing file, even
+ * an empty one, keeps every byte and gains one line break (which ends its
+ * last line, or leaves a blank line when it already ended one) and then the
+ * addition, whose lines end with the file's line ending.
+ */
+function appendOwned(current: string | null, owned: string): string {
+  return current === null ? owned : current + eolOf(current) + owned;
+}
+
+/**
+ * The file without the addition at [start, end), and without the line break
+ * that ends it. At the end of the file, the line break install put before
+ * it goes too. Null: nothing precedes or follows it, so install created the
+ * file and removing takes the file away.
+ */
+function withoutOwned(text: string, start: number, end: number): string | null {
+  const before = text.slice(0, start);
+  const after = text.slice(end).replace(/^\r?\n/, "");
+  if (after !== "") return before + after;
+  if (before === "") return null;
+  return before.replace(/\r?\n$/, "");
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
  * AGENTS.md with the block added or replaced, or taken out when removing
- * (null: nothing else is left, so the file goes). Keeps the file's line
- * endings and everything outside the markers.
+ * (null: the file held only the block, so it goes). Every byte outside the
+ * block and the line breaks install added around it stays as it was.
  */
 export function withBlock(current: string | null, remove: boolean): string | null {
   const text = current ?? "";
-  const eol = eolOf(text);
   const start = text.indexOf(BLOCK_BEGIN);
   const end = start < 0 ? -1 : text.indexOf(BLOCK_END, start);
   if (start >= 0 && end < 0) {
@@ -135,19 +159,13 @@ export function withBlock(current: string | null, remove: boolean): string | nul
   if (start < 0 && text.includes(BLOCK_END)) {
     throw new AgentsInstallError(`AGENTS.md has ${BLOCK_END} without ${BLOCK_BEGIN}; restore or delete the marker, then run this again`, false);
   }
-  const block = agentsBlock().replaceAll("\n", eol);
+  const block = agentsBlock().replaceAll("\n", eolOf(text));
   if (start >= 0) {
-    const before = text.slice(0, start);
-    const after = text.slice(end + BLOCK_END.length);
-    if (!remove) return before + block + after;
-    const kept = trimEndLines(before);
-    const rest = after.replace(/^(\r?\n)+/, "");
-    const joined = kept && rest ? `${kept}${eol}${eol}${rest}` : kept ? `${kept}${eol}` : rest;
-    return joined.trim() ? joined : null;
+    if (remove) return withoutOwned(text, start, end + BLOCK_END.length);
+    return text.slice(0, start) + block + text.slice(end + BLOCK_END.length);
   }
   if (remove) return current;
-  if (!text.trim()) return block + eol;
-  return `${trimEndLines(text)}${eol}${eol}${block}${eol}`;
+  return appendOwned(current, block + eolOf(text));
 }
 
 /**
@@ -155,16 +173,15 @@ export function withBlock(current: string | null, remove: boolean): string | nul
  * removing (null: the file held only the import, so it goes). `importPath`
  * is relative to the file. Unchanged when the file already imports AGENTS.md.
  */
-export function withClaudeImport(current: string, remove: boolean, importPath = "AGENTS.md"): string | null {
-  const eol = eolOf(current);
-  const ours = `${CLAUDE_MARKER}${eol}@${importPath}${eol}`;
+export function withClaudeImport(current: string | null, remove: boolean, importPath = "AGENTS.md"): string | null {
+  const text = current ?? "";
   if (remove) {
-    const next = current.includes(`${eol}${eol}${ours}`) ? current.replace(`${eol}${eol}${ours}`, eol) : current.replace(ours, "");
-    return next.trim() ? next : null;
+    const ours = new RegExp(`${escapeRegExp(CLAUDE_MARKER)}\\r?\\n@${escapeRegExp(importPath)}(?=\\r?\\n|$)`).exec(text);
+    return ours ? withoutOwned(text, ours.index, ours.index + ours[0].length) : current;
   }
-  if (new RegExp(`^[ \\t]*@(\\./)?${importPath.replaceAll(".", "\\.")}[ \\t]*$`, "m").test(current)) return current;
-  if (!current.trim()) return ours;
-  return `${trimEndLines(current)}${eol}${eol}${ours}`;
+  if (new RegExp(`^[ \\t]*@(\\./)?${escapeRegExp(importPath)}[ \\t]*$`, "m").test(text)) return current;
+  const eol = eolOf(text);
+  return appendOwned(current, `${CLAUDE_MARKER}${eol}@${importPath}${eol}`);
 }
 
 /** The Gemini CLI settings with AGENTS.md among its context files, or null when they need no change. */
@@ -176,27 +193,80 @@ export function withGeminiContext(settings: Record<string, unknown>): Record<str
   return { ...settings, context: { ...context, fileName: [...names, "AGENTS.md"] } };
 }
 
+/**
+ * What .aider.conf.yml needs, judged without a YAML parser and on the safe
+ * side: "append" only when every line is blank, a comment, a top-level
+ * `key: value` with a plain key and a one-line value, or a list item under
+ * a top-level key, and no key is `read`. Appending `read:` at column 0 then
+ * adds one key and changes no other value. "has-read": a top-level plain
+ * `read` key, which is the human's to extend. "unsafe": anything else
+ * (quoted or indented keys, block scalars, anchors, multi-line values,
+ * several documents), which the CLI leaves untouched.
+ */
+export function aiderLayout(text: string): "append" | "has-read" | "unsafe" {
+  const oneLineValue = (value: string): boolean => {
+    const v = value.replace(/\s+#.*$/, "").trim();
+    if (v === "") return true;
+    if (/^"([^"\\]|\\.)*"$/.test(v) || /^'([^']|'')*'$/.test(v)) return true;
+    if (/^\[[^[\]{}"'#]*\]$/.test(v)) return true;
+    // A plain scalar: no leading indicator, and no ": " that would open a mapping.
+    return !/^[-?:,[\]{}#&*!|>'"%@`]/.test(v) && !/:(\s|$)/.test(v);
+  };
+  let hasRead = false;
+  let listOpen = false;
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, "");
+    if (line === "" || /^\s*#/.test(line)) continue;
+    if (line.includes("\t")) return "unsafe";
+    const key = /^([A-Za-z0-9][A-Za-z0-9_.-]*):(?:\s+(.*))?$/.exec(line);
+    if (key) {
+      if (!oneLineValue(key[2] ?? "")) return "unsafe";
+      if (key[1] === "read") hasRead = true;
+      listOpen = (key[2] ?? "").replace(/\s+#.*$/, "").trim() === "";
+      continue;
+    }
+    const item = /^\s*-\s+(.*)$/.exec(line);
+    if (item && listOpen && oneLineValue(item[1] as string)) continue;
+    return "unsafe";
+  }
+  return hasRead ? "has-read" : "append";
+}
+
 /** .aider.conf.yml with the marked read: line added, or taken out when removing (null: nothing else is left). */
 export function withAiderRead(current: string | null, remove: boolean): string | null {
   const text = current ?? "";
-  const eol = eolOf(text);
   if (remove) {
-    const next = text
-      .split(/\r?\n/)
-      .filter((line) => line !== AIDER_LINE)
-      .join(eol);
-    return next.trim() ? next : null;
+    const ours = new RegExp(`^${escapeRegExp(AIDER_LINE)}(?=\\r?\\n|$)`, "m").exec(text);
+    return ours ? withoutOwned(text, ours.index, ours.index + ours[0].length) : current;
   }
-  if (!text.trim()) return `${AIDER_LINE}${eol}`;
-  return `${trimEndLines(text)}${eol}${AIDER_LINE}${eol}`;
+  return appendOwned(current, AIDER_LINE + eolOf(text));
 }
 
-function read(path: string): string | null {
+const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/**
+ * A file's text; null when there is no file; undefined when the path is not
+ * a UTF-8 text file, which the CLI never edits (decoding and encoding again
+ * would change its bytes). A byte order mark is kept.
+ */
+function readText(path: string): string | null | undefined {
+  const bytes = readBytes(path);
+  if (bytes === undefined || bytes === null) return bytes;
   try {
-    return statSync(path).isFile() ? readFileSync(path, "utf8") : null;
+    return UTF8.decode(bytes);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A file's bytes; null when nothing is there; undefined when something other than a file is. */
+function readBytes(path: string): Buffer | null | undefined {
+  try {
+    if (!statSync(path).isFile()) return undefined;
   } catch {
     return null;
   }
+  return readFileSync(path);
 }
 
 function filesUnder(dir: string): string[] {
@@ -228,6 +298,7 @@ function plan(opts: InstallOptions): Plan {
   const leftInPlace: string[] = [];
   const remove = opts.mode === "remove";
   const at = (p: string) => join(opts.root, p);
+  const notText = (name: string, edit: string) => manual.push(`${name} is not a UTF-8 text file, so the CLI leaves it as it is: ${edit}`);
 
   // The skill directories are the CLI's own: every file in them is managed,
   // and one this version does not ship is removed.
@@ -244,7 +315,10 @@ function plan(opts: InstallOptions): Plan {
   }
   if (opts.scope === "user") return { files, manual, leftInPlace };
 
-  const agentsMd = read(at("AGENTS.md"));
+  const agentsMd = readText(at("AGENTS.md"));
+  if (agentsMd === undefined) {
+    throw new AgentsInstallError("AGENTS.md is not a UTF-8 text file, so the CLI does not edit it; fix or move it, then run this again", false);
+  }
   if (!(remove && agentsMd === null)) files.push({ path: at("AGENTS.md"), desired: withBlock(agentsMd, remove) });
 
   const selected = new Set(opts.agents.map((agent) => AGENTS[agent]?.adapter));
@@ -254,22 +328,29 @@ function plan(opts: InstallOptions): Plan {
   const claude = [
     { path: "CLAUDE.md", importPath: "AGENTS.md" },
     { path: join(".claude", "CLAUDE.md"), importPath: "../AGENTS.md" },
-  ].map((c) => ({ ...c, current: read(at(c.path)) }));
+  ].map((c) => ({ ...c, current: readText(at(c.path)) }));
   if (remove) {
-    for (const c of claude) if (c.current !== null) files.push({ path: at(c.path), desired: withClaudeImport(c.current, true, c.importPath) });
+    for (const c of claude) {
+      if (typeof c.current === "string") files.push({ path: at(c.path), desired: withClaudeImport(c.current, true, c.importPath) });
+    }
   } else {
     const target = claude.find((c) => c.current !== null);
-    if (target) files.push({ path: at(target.path), desired: withClaudeImport(target.current as string, false, target.importPath) });
-    else if (selected.has("claude")) files.push({ path: at("CLAUDE.md"), desired: withClaudeImport("", false) });
-    else if (read(at("CLAUDE.local.md")) !== null) {
+    if (target && typeof target.current === "string") {
+      files.push({ path: at(target.path), desired: withClaudeImport(target.current, false, target.importPath) });
+    } else if (target) notText(target.path, `add the line @${target.importPath}`);
+    else if (selected.has("claude")) files.push({ path: at("CLAUDE.md"), desired: withClaudeImport(null, false) });
+    else if (readText(at("CLAUDE.local.md")) !== null) {
       manual.push("Claude Code skips AGENTS.md while CLAUDE.local.md exists: add the line @AGENTS.md to CLAUDE.local.md");
     }
   }
 
   const geminiPath = at(join(".gemini", "settings.json"));
-  const geminiRaw = read(geminiPath);
+  const geminiRaw = readText(geminiPath);
+  const geminiEdit = 'add "AGENTS.md" to context.fileName in .gemini/settings.json';
   if (remove) {
     if (geminiRaw?.includes('"AGENTS.md"')) leftInPlace.push('"AGENTS.md" in context.fileName in .gemini/settings.json');
+  } else if (geminiRaw === undefined) {
+    notText(".gemini/settings.json", geminiEdit);
   } else if (geminiRaw !== null || selected.has("gemini")) {
     let parsed: unknown = null;
     try {
@@ -281,25 +362,34 @@ function plan(opts: InstallOptions): Plan {
     const next = settings ? withGeminiContext(settings) : null;
     const editable = settings !== null && (geminiRaw === null || isCanonicalJson(geminiRaw, settings));
     if (settings === null || (next !== null && !editable)) {
-      manual.push('add "AGENTS.md" to context.fileName in .gemini/settings.json (the CLI edits the file only when that keeps its formatting)');
+      manual.push(`${geminiEdit} (the CLI edits the file only when that keeps its formatting)`);
     } else if (next !== null) {
-      files.push({ path: geminiPath, desired: `${JSON.stringify(next, null, 2)}\n` });
+      // Written exactly as it was read, with a final line break only if it had one.
+      const eol = geminiRaw === null || geminiRaw.endsWith("\n") ? "\n" : "";
+      files.push({ path: geminiPath, desired: `${JSON.stringify(next, null, 2)}${eol}` });
     }
   }
 
   const aiderPath = at(".aider.conf.yml");
-  const aiderRaw = read(aiderPath);
+  const aiderRaw = readText(aiderPath);
   if (remove) {
-    if (aiderRaw !== null) {
+    if (typeof aiderRaw === "string") {
       const next = withAiderRead(aiderRaw, true);
       if (next !== aiderRaw) files.push({ path: aiderPath, desired: next });
       if (next?.includes("AGENTS.md")) leftInPlace.push("AGENTS.md under read: in .aider.conf.yml");
     }
+  } else if (aiderRaw === undefined) {
+    notText(".aider.conf.yml", "add AGENTS.md under read:");
   } else if (aiderRaw !== null || selected.has("aider")) {
-    if (aiderRaw !== null && /^read:/m.test(aiderRaw)) {
-      if (!aiderRaw.includes("AGENTS.md")) manual.push("add AGENTS.md to the read: entry in .aider.conf.yml");
-    } else {
+    const layout = aiderRaw === null ? "append" : aiderLayout(aiderRaw);
+    if (aiderRaw?.includes(AIDER_LINE)) {
+      // Installed before; the file may have changed around the CLI's line since.
+    } else if (layout === "append") {
       files.push({ path: aiderPath, desired: withAiderRead(aiderRaw, false) });
+    } else if (layout === "has-read") {
+      if (!aiderRaw?.includes("AGENTS.md")) manual.push("add AGENTS.md to the read: entry in .aider.conf.yml");
+    } else {
+      manual.push("add AGENTS.md under read: in .aider.conf.yml (the CLI appends to the file only when its layout makes that safe)");
     }
   }
   return { files, manual, leftInPlace };
@@ -329,7 +419,10 @@ export function runInstall(opts: InstallOptions): InstallResult {
   const { files, manual, leftInPlace } = plan(opts);
   const changes: Change[] = [];
   for (const file of files) {
-    const current = read(file.path);
+    const current = readBytes(file.path);
+    if (current === undefined) {
+      throw new AgentsInstallError(`${relative(opts.root, file.path)} is not a file; move it, then run this again`, false);
+    }
     const action: Action =
       file.desired === null
         ? current === null
@@ -337,7 +430,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
           : "remove"
         : current === null
           ? "create"
-          : current === file.desired
+          : current.equals(Buffer.from(file.desired, "utf8"))
             ? "unchanged"
             : "update";
     changes.push({ path: relative(opts.root, file.path).split("\\").join("/"), action });

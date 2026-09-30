@@ -42,14 +42,18 @@ fixes.
   everything outside its markers), and small adapters: an `@AGENTS.md`
   import in an existing `CLAUDE.md`, `context.fileName` in
   `.gemini/settings.json` (only when the edit keeps the file's formatting),
-  and `read:` in `.aider.conf.yml`. `--check` exits 1 when the files differ,
+  and `read:` in `.aider.conf.yml` (only when its layout makes appending
+  safe). Existing files keep every byte, and `--remove` gives them back
+  exactly as they were. `--check` exits 1 when the files differ,
   for CI; `--remove` takes back what it wrote; `--scope user` installs the
   skill for every repository on the machine; `--agent <name>` creates an
   adapter's file.
 - New `varlatch agents guide [topic]` prints the skill or one of its
   references, for a coding agent without skill support.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
-  `--no-agent-files` to skip them.
+  `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
+  option, a missing option value, or an extra argument with status 64,
+  before writing anything; before, `init` ignored an option it did not know.
 
 ### MCP
 
