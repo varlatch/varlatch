@@ -101,9 +101,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
 }
 
 /**
- * The "coding agent": records what isolation it was given, then runs four
- * nested probes, each also with VARLATCH_TOKEN removed (a script or tool
- * that drops it, so the only way to a credential is the store).
+ * The "coding agent": records what isolation it was given, then runs nested
+ * probes: as is; with VARLATCH_TOKEN removed (a script or tool that drops
+ * it, so the only way to a credential is the store); and with
+ * VARLATCH_CONFIG_DIR removed too, which leaves only the store guard
+ * between the command and the operator's default store.
  */
 const AGENT = `
 const { spawnSync } = require("child_process");
@@ -125,10 +127,13 @@ function probe(name, args, env) {
 }
 const withoutToken = { ...e };
 delete withoutToken.VARLATCH_TOKEN;
+const withoutConfigDir = { ...withoutToken };
+delete withoutConfigDir.VARLATCH_CONFIG_DIR;
 probe("run", ["run", "--", ...print], e);
 probe("values", ["values", "list"], e);
 probe("runWithoutToken", ["run", "--", ...print], withoutToken);
 probe("valuesWithoutToken", ["values", "list"], withoutToken);
+probe("valuesWithoutConfigDir", ["values", "list"], withoutConfigDir);
 fs.writeFileSync(e.OUT, JSON.stringify(record));
 `;
 
@@ -221,8 +226,8 @@ describe.each([
   it("nested varlatch commands never disclose and never use the operator's stored credential", async () => {
     const { code, output, record } = await agentSafeRun(bundle, metadata);
     expect(code, output).toBe(0);
-    const { run, values, runWithoutToken, valuesWithoutToken } = record.probes;
-    for (const probe of [run, values, runWithoutToken, valuesWithoutToken]) expect(probe!.out).not.toContain(CANARY);
+    const { run, values, runWithoutToken, valuesWithoutToken, valuesWithoutConfigDir } = record.probes;
+    for (const probe of [run, values, runWithoutToken, valuesWithoutToken, valuesWithoutConfigDir]) expect(probe!.out).not.toContain(CANARY);
     expect(output).not.toContain(CANARY);
     // A nested run starts its command with the run's environment: the Placeholder, never a disclosure.
     for (const probe of [run, runWithoutToken]) {
@@ -238,8 +243,10 @@ describe.each([
       expect(values!.code).toBe(1);
       expect(values!.out).toMatch(/gives the Agent no Varlatch credential and never uses the operator's/);
     }
-    expect(valuesWithoutToken!.code).toBe(1);
-    expect(valuesWithoutToken!.out).toMatch(/relaunches the run with --agent-metadata/);
+    for (const probe of [valuesWithoutToken, valuesWithoutConfigDir]) {
+      expect(probe!.code).toBe(1);
+      expect(probe!.out).toMatch(/relaunches the run with --agent-metadata/);
+    }
     expect(operatorRequestsAfter(record.startedAt)).toEqual([]);
     expect(requests.filter((r) => r.url.endsWith("/disclosures"))).toEqual([]);
   });
