@@ -141,6 +141,9 @@ importers:
       '@varlatch/matcher':
         specifier: workspace:*
         version: link:../../packages/matcher
+      '@varlatch/mcp-server':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server
       '@varlatch/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol

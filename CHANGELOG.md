@@ -32,6 +32,22 @@ fixes.
   output, and may stop with status 78 on a Secret shorter than 8 bytes. Set
   `VARLATCH_ASSISTED=0` to keep the previous behaviour in such a shell.
 
+### MCP
+
+- The MCP server ships inside the CLI as `varlatch mcp`, in every release
+  and under the CLI's version. See [the MCP server](docs/reference/mcp.md).
+- **Removed: secret disclosure through MCP.** `varlatch_disclose_secrets` is
+  gone, and `--allow-disclose` and `VARLATCH_MCP_ALLOW_DISCLOSE` are refused
+  with status 64. No MCP host can keep a tool result out of the model's
+  context.
+- `varlatch_set_value` refuses a Secret's value (a sensitive item, an item
+  outside the Contract, or any item when the Contract cannot be read) and
+  writes nothing.
+- Inside an agent-safe run the server uses only the agent-run credential,
+  never the operator's stored one, and refuses `--allow-writes`.
+- The old `varlatch-mcp` entry point runs the same code with a deprecation
+  notice; replace it with `varlatch mcp`.
+
 ### CLI
 
 - `--json` on the read commands that lacked it: `values list`, `validate`,

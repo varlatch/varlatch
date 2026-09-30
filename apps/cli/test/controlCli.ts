@@ -36,8 +36,22 @@ function haveCommit(): boolean {
   }
 }
 
+/**
+ * The 0.13 `@varlatch/mcp-server` entry point, bundled from the same commit:
+ * the negative control for ADR-0043 Decision 9 (it registers the disclosure
+ * tool with --allow-disclose, writes Secrets, and reads the operator's
+ * store inside an agent-safe run).
+ */
+export async function controlMcpServer(workDir: string): Promise<string> {
+  return buildControl(workDir, join("packages", "mcp-server", "src", "main.ts"), `varlatch-mcp-${CONTROL_VERSION}.cjs`, null);
+}
+
 export async function controlCli(workDir: string): Promise<string> {
-  const prebuilt = process.env.VARLATCH_CONTROL_CLI;
+  return buildControl(workDir, join("apps", "cli", "src", "main.ts"), `varlatch-cli-${CONTROL_VERSION}.cjs`, process.env.VARLATCH_CONTROL_CLI);
+}
+
+async function buildControl(workDir: string, entry: string, name: string, prebuiltOverride: string | undefined | null): Promise<string> {
+  const prebuilt = prebuiltOverride;
   if (prebuilt) {
     if (!existsSync(prebuilt)) throw new Error(`VARLATCH_CONTROL_CLI names ${prebuilt}, which does not exist`);
     return prebuilt;
@@ -56,9 +70,11 @@ export async function controlCli(workDir: string): Promise<string> {
     );
   }
   const source = join(workDir, `control-${CONTROL_VERSION}`);
-  mkdirSync(source, { recursive: true });
-  const archive = git(["archive", "--format=tar", CONTROL_COMMIT, "apps/cli/src", "packages"]);
-  execFileSync("tar", ["-x", "-C", source], { input: archive });
+  if (!existsSync(join(source, "packages"))) {
+    mkdirSync(source, { recursive: true });
+    const archive = git(["archive", "--format=tar", CONTROL_COMMIT, "apps/cli/src", "packages"]);
+    execFileSync("tar", ["-x", "-C", source], { input: archive });
+  }
 
   const require = createRequire(join(cliDir, "package.json"));
   // Workspace packages resolve to the control's own sources; anything the
@@ -79,9 +95,9 @@ export async function controlCli(workDir: string): Promise<string> {
     join(cliDir, "node_modules"),
     ...readdirSync(join(root, "packages")).map((p) => join(root, "packages", p, "node_modules")),
   ].filter(existsSync);
-  const outfile = join(workDir, `varlatch-cli-${CONTROL_VERSION}.cjs`);
+  const outfile = join(workDir, name);
   await build({
-    entryPoints: [join(source, "apps", "cli", "src", "main.ts")],
+    entryPoints: [join(source, entry)],
     bundle: true,
     platform: "node",
     format: "cjs",

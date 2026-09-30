@@ -9,13 +9,47 @@ export interface McpDefaults {
   environment?: string;
 }
 
+/**
+ * The MCP server (ADR-0043 Decision 9): read tools by default, writes only
+ * with `allowWrites`, and no tool that returns a Secret's value. No MCP host
+ * can keep a tool result out of the model's context, so there is no
+ * disclosure tool at all, and a write that would put a Secret's value into a
+ * tool call is refused: Secrets enter through `varlatch import`,
+ * `values set --generate`, or the human.
+ */
 export interface VarlatchMcpOptions {
   client: VarlatchClient;
   defaults?: McpDefaults;
   /** Enable varlatch_set_value / varlatch_delete_value. Off by default. */
   allowWrites?: boolean;
-  /** Enable varlatch_disclose_secrets (plaintext secrets). Off by default. */
-  allowDisclose?: boolean;
+  /** Reported to MCP hosts: the version of the CLI that runs the server. */
+  version?: string;
+}
+
+/**
+ * Whether `item` is a Secret by the active Contract: items outside it, and
+ * every item of a project without one, are (ADR-0012), and so is every item
+ * when the Contract cannot be read.
+ */
+export async function isSecretItem(client: VarlatchClient, organization: string, project: string, item: string): Promise<boolean> {
+  try {
+    const revision = await client.getActiveContract(organization, project);
+    const contract = revision.contract as unknown as { items?: { name: string; sensitive: boolean }[] } | undefined;
+    return contract?.items?.find((i) => i.name === item)?.sensitive ?? true;
+  } catch (err) {
+    if (err instanceof VarlatchApiError && (err.status === 404 || err.status === 403)) return true;
+    throw err;
+  }
+}
+
+/** Why a write of a Secret's value through MCP is refused, naming the ways that keep the value out of the model. */
+export function secretWriteRefusal(item: string): string {
+  return (
+    `${item} is a Secret, and its value is never written through MCP: the value would be in the model's context. ` +
+    `Store it with \`varlatch --assisted values set ${item} --generate hex:32\` (a new random value), ` +
+    `\`--from-file <path>\`, \`--stdin\`, or \`varlatch --assisted import <file>\`; or ask the human to run ` +
+    `\`varlatch values set ${item}\` in their own terminal. Nothing was stored.`
+  );
 }
 
 const orgArg = {
@@ -40,29 +74,31 @@ function toolError(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
 }
 
+function errorResult(err: unknown): ToolResult {
+  if (err instanceof VarlatchApiError) {
+    return toolError(`varlatch API error ${err.status} (${err.code}, request ${err.requestId}): ${err.message}`);
+  }
+  return toolError(err instanceof Error ? err.message : String(err));
+}
+
 async function run(fn: () => Promise<unknown>): Promise<ToolResult> {
   try {
     return ok(await fn());
   } catch (err) {
-    if (err instanceof VarlatchApiError) {
-      return toolError(
-        `varlatch API error ${err.status} (${err.code}, request ${err.requestId}): ${err.message}`,
-      );
-    }
-    return toolError(err instanceof Error ? err.message : String(err));
+    return errorResult(err);
   }
 }
 
 export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer {
-  const { client, defaults = {}, allowWrites = false, allowDisclose = false } = options;
+  const { client, defaults = {}, allowWrites = false, version = "0.0.0" } = options;
 
-  const server = new McpServer({ name: "varlatch", version: "0.3.1" });
+  const server = new McpServer({ name: "varlatch", version });
 
   function required(name: keyof McpDefaults, override: string | undefined): string {
     const value = override ?? defaults[name];
     if (!value) {
       throw new Error(
-        `No ${name} given and none resolved from context; pass the "${name}" argument or launch varlatch-mcp inside a varlatch repo / with --${name === "organization" ? "org" : name}.`,
+        `No ${name} given and none resolved from context; pass the "${name}" argument or run varlatch mcp inside a varlatch repo / with --${name === "organization" ? "org" : name}.`,
       );
     }
     return value;
@@ -73,13 +109,13 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
     {
       title: "Server and context info",
       description:
-        "Show the varlatch server, resolved default organization/project/environment, and which optional capabilities (writes, secret disclosure) this MCP server was started with.",
+        "Show the varlatch server, resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.",
       inputSchema: {},
     },
     () =>
       run(async () => {
         const meta = await client.meta();
-        return { server: client.server, meta, defaults, allowWrites, allowDisclose };
+        return { server: client.server, meta, defaults, allowWrites, secretValues: "never returned or written through MCP" };
       }),
   );
 
@@ -203,7 +239,8 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
       {
         title: "Set value",
         description:
-          "Set a configuration value in an environment. Pass expectedVersionId for optimistic concurrency.",
+          "Set a non-secret configuration value in an environment. A Secret's value is refused (Secrets, and items " +
+          "outside the Contract, never pass through MCP). Pass expectedVersionId for optimistic concurrency.",
         inputSchema: {
           ...envArg,
           item: z.string().describe("Item name from the contract, e.g. DATABASE_URL"),
@@ -211,21 +248,23 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
           expectedVersionId: z.string().optional(),
         },
       },
-      (args) =>
-        run(() =>
-          client.setValue(
-            required("organization", args.organization),
-            required("project", args.project),
-            required("environment", args.environment),
-            args.item,
-            {
+      async (args) => {
+        try {
+          const organization = required("organization", args.organization);
+          const project = required("project", args.project);
+          const environment = required("environment", args.environment);
+          // Checked before anything is written; an unreadable Contract counts as a Secret.
+          if (await isSecretItem(client, organization, project, args.item)) return toolError(secretWriteRefusal(args.item));
+          return ok(
+            await client.setValue(organization, project, environment, args.item, {
               value: args.value,
-              ...(args.expectedVersionId !== undefined
-                ? { expectedVersionId: args.expectedVersionId }
-                : {}),
-            },
-          ),
-        ),
+              ...(args.expectedVersionId !== undefined ? { expectedVersionId: args.expectedVersionId } : {}),
+            }),
+          );
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
     );
 
     server.registerTool(
@@ -245,30 +284,6 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
           );
           return { deleted: args.item };
         }),
-    );
-  }
-
-  if (allowDisclose) {
-    server.registerTool(
-      "varlatch_disclose_secrets",
-      {
-        title: "Disclose secrets",
-        description:
-          "Disclose plaintext secret values for the named items. Every disclosure is audited server-side. Only available because this server was started with secret disclosure enabled.",
-        inputSchema: {
-          ...envArg,
-          items: z.array(z.string()).min(1).describe("Secret item names to disclose"),
-        },
-      },
-      (args) =>
-        run(() =>
-          client.discloseSecrets(
-            required("organization", args.organization),
-            required("project", args.project),
-            required("environment", args.environment),
-            { items: args.items },
-          ),
-        ),
     );
   }
 

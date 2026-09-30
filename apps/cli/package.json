@@ -25,6 +25,7 @@
     "@varlatch/sync": "workspace:*",
     "@varlatch/env-schema": "workspace:*",
     "@varlatch/matcher": "workspace:*",
+    "@varlatch/mcp-server": "workspace:*",
     "tar": "^7.5.22"
   },
   "devDependencies": {
