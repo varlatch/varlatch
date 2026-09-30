@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.13.0)
+## 0.13.0 (2026-09-30)
 
 ### Projects
 
@@ -40,6 +40,16 @@ fixes.
 
 ### Upgrading
 
+No database migration: 0.13.0 uses migration 22, like 0.12.0 and 0.11.0.
+
+- From 0.12.0 or 0.11.0: download `varlatch-cli-0.13.0.cjs` from the
+  `v0.13.0` release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.13.0.cjs upgrade 0.13.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.13.0.cjs`, or run `varlatch self-update`.
+- From 0.10.1 or older: follow the 0.11.0 instructions below with the
+  0.13.0 CLI and version.
+- 0.13.0 restores everything 0.12.0 restores, and archives from 0.12.0.
 - Moving a project to Contract Semantics version 3 is a coordinated step.
   Regenerate type files with `varlatch types`: `--check` fails until you
   do. Upgrade every CLI that runs `varlatch run --strict` for the project,

@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/web",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "description": "The Varlatch dashboard: a two-backend client (ADR-0005) \u2014 varlatchd /v1 for security-critical operations, Convex for reactive mirrors",
   "license": "AGPL-3.0-or-later",
