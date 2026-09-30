@@ -741,6 +741,27 @@ async function main(): Promise<void> {
             }
             contract = { ...(contract as object), semanticsVersion: version };
           }
+          // A type newer than the version this revision will get (integer
+          // needs version 3) is refused here, naming the fix, rather than by
+          // the server after the push.
+          const items = ((contract as { items?: unknown }).items ?? []) as { name: string; type: string }[];
+          const { versionNeeded, pushVersionProblem } = await import("./contractPush.js");
+          if (Array.isArray(items) && versionNeeded(items).version > 1) {
+            const serverVersions = (await api.meta()).semanticsVersions ?? [1];
+            let activeVersion: number | null = null;
+            try {
+              activeVersion = (await api.getActiveContract(ctx.organization, ctx.project)).semanticsVersion ?? 1;
+            } catch (err) {
+              if (!(err instanceof VarlatchApiError && err.status === 404)) throw err;
+            }
+            const pinned = (contract as { semanticsVersion?: unknown }).semanticsVersion;
+            const problem = pushVersionProblem(items, {
+              pinned: typeof pinned === "number" ? pinned : undefined,
+              activeVersion,
+              serverVersions,
+            });
+            if (problem) fail(`varlatch contract push: ${problem}. Nothing was pushed.`);
+          }
           const revision = await api.pushContractRevision(ctx.organization, ctx.project, {
             contract,
             ...(provenance ? { provenance } : {}),

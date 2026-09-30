@@ -70,6 +70,8 @@ function annotation(item: ContractItem): string {
   switch (item.type) {
     case "number":
       return "float";
+    case "integer":
+      return "int";
     case "boolean":
       return "bool";
     case "enum":
@@ -86,6 +88,7 @@ function itemDoc(item: ContractItem): string[] {
   if (item.type === "number") {
     lines.push("", "A whole number is an int; a number with a fraction is a float.");
   }
+  if (item.type === "integer") lines.push("", "A whole number.");
   if (item.example !== undefined) {
     const [first = "", ...rest] = cleanLines(item.example);
     lines.push("", `Example: ${first}`.trimEnd(), ...rest);
@@ -172,12 +175,13 @@ export function generatePythonModule(revision: RevisionInput, opts: GenerateOpti
       [
         "Every Contract item, converted.",
         "",
-        "Numbers become int (whole numbers) or float, booleans become bool, and",
-        "enums their values; URLs are validated and stay str. An item is optional",
-        "(None when absent) unless the Contract requires it in every environment",
-        "without a default: a default is applied only by `varlatch run --strict`,",
-        "or by load_config(apply_defaults=True), and never replaces a withheld",
-        "value. Read-only; sensitive items are kept out of repr().",
+        "Integers become int; numbers become int (whole numbers) or float;",
+        "booleans become bool, and enums their values; URLs are validated and",
+        "stay str. An item is optional (None when absent) unless the Contract",
+        "requires it in every environment without a default: a default is",
+        "applied only by `varlatch run --strict`, or by",
+        "load_config(apply_defaults=True), and never replaces a withheld value.",
+        "Read-only; sensitive items are kept out of repr().",
       ],
       items,
       true,

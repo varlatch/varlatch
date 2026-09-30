@@ -16,6 +16,36 @@ fixes.
   URLs, contracts and grants use, never changes. The audit event
   `project.renamed` records the previous and the new name.
 
+### Contracts
+
+- A new item type, `integer`, holds whole numbers: ports, counts, sizes. It
+  accepts an optional `-` and ASCII digits only, so `3.0`, `3.5`, `+1`, and
+  `1e3` are invalid ("must be a whole number"), within the same bound as
+  `number` (2^53 - 1). Declare it with `@type=integer` in `.env.schema`, or
+  pick it on the dashboard. `number` does not change: existing items keep
+  accepting fractions.
+- `integer` comes with Contract Semantics version 3, which is version 2 plus
+  the new type. A project's first revision now gets version 3. Existing
+  Contracts keep their version until you move them.
+- An `integer` item in a Contract at version 1 or 2 is refused.
+  `varlatch contract push` says so before sending anything and names the
+  fix: `--semantics latest`, or the dashboard's move action.
+- On the dashboard, a Contract on older rules offers **Move to the newest
+  rules**. It creates a revision with the same items at the newest version
+  and shows the difference and what changes, and you activate it in a
+  separate step. For a Git-managed Contract, later pushes from the
+  repository keep the new version.
+- Generated types: an `integer` is a `number` in TypeScript and an `int` in
+  Python.
+
+### Upgrading
+
+- Moving a project to Contract Semantics version 3 is a coordinated step.
+  Regenerate type files with `varlatch types`: `--check` fails until you
+  do. Upgrade every CLI that runs `varlatch run --strict` for the project,
+  CI included: an older CLI refuses a version 3 Contract. Nothing changes
+  for a project until you move it.
+
 ## 0.12.0 (2026-09-29)
 
 ### Type generation

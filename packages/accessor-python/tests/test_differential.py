@@ -16,7 +16,7 @@ COUNT = 4000
 _REFERENCE = """
 import { readFileSync } from "node:fs";
 const { semanticsFor } = await import(process.env.SEMANTICS_JS);
-const parse = semanticsFor(2).parse;
+const parse = semanticsFor(3).parse;
 const cases = JSON.parse(readFileSync(0, "utf8"));
 const out = cases.map(([type, value, enumValues]) => {
   const item = { name: "ITEM", type, required: { kind: "never" }, sensitive: false, ...(enumValues ? { enumValues } : {}) };
@@ -71,9 +71,11 @@ class Differential(unittest.TestCase):
         rng = random.Random(SEED)
         cases: "list[list[object]]" = []
         for _ in range(COUNT):
-            kind = rng.choice(["number", "number", "boolean", "email", "enum", "string"])
+            kind = rng.choice(["number", "number", "integer", "integer", "boolean", "email", "enum", "string"])
             if kind == "number":
                 cases.append(["number", number(rng), None])
+            elif kind == "integer":
+                cases.append(["integer", number(rng), None])
             elif kind == "boolean":
                 cases.append(["boolean", boolean(rng), None])
             elif kind == "email":
@@ -88,11 +90,14 @@ class Differential(unittest.TestCase):
             item = {"name": "ITEM", "type": kind, "required": {"kind": "never"}}
             if allowed is not None:
                 item["enumValues"] = allowed
-            got_ok, got = runtime._parse(item, value)  # type: ignore[arg-type]
+            got_ok, got = runtime._parse(item, value, 3)  # type: ignore[arg-type]
             if got_ok != ok:
                 mismatches.append((kind, value, (ok, expected), (got_ok, got)))
             elif not ok and got != expected:
                 mismatches.append((kind, value, (ok, expected), (got_ok, got)))
+            elif ok and kind == "integer":
+                if not (type(got) is int and got == int(expected)):
+                    mismatches.append((kind, value, (ok, expected), (got_ok, got)))
             elif ok and kind == "number":
                 same = float(got) == float(expected) and (
                     isinstance(got, int) or math.copysign(1, got) == math.copysign(1, float(expected))
@@ -103,7 +108,7 @@ class Differential(unittest.TestCase):
                 mismatches.append((kind, value, (ok, expected), (got_ok, got)))
         self.assertEqual(mismatches[:20], [], f"seed {SEED}: {len(mismatches)} of {COUNT} inputs disagree")
         # The corpus must exercise both outcomes of every type.
-        for kind in ("number", "boolean", "email", "enum"):
+        for kind in ("number", "integer", "boolean", "email", "enum"):
             outcomes = {ok for (k, _, _), (ok, _) in zip(cases, reference) if k == kind}  # type: ignore[misc]
             self.assertEqual(outcomes, {True, False}, kind)
 

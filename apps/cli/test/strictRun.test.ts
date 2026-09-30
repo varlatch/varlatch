@@ -76,6 +76,14 @@ describe("strict startup: the delivery table", () => {
     expect(p.context?.items.PORT).toEqual({ server: "delivered", delivery: "varlatch" });
   });
 
+  it("an integer item at version 3 accepts whole numbers only; number keeps accepting fractions", () => {
+    const contract = [contractItem("PORT", { type: "integer" }), contractItem("RATIO", { type: "number" })];
+    const ok = plan(retrieval({ contract, semanticsVersion: 3, items: [{ name: "PORT", value: "3000" }, { name: "RATIO", value: "3.5" }] }));
+    expect(ok.violations).toEqual([]);
+    const bad = plan(retrieval({ contract, semanticsVersion: 3, items: [{ name: "PORT", value: "3.0" }, { name: "RATIO", value: "3.5" }] }));
+    expect(bad.violations.map((v) => [v.name, v.kind, v.reason])).toEqual([["PORT", "invalid", "the delivered value must be a whole number"]]);
+  });
+
   it("an invalid delivered value is a violation that names the item, never the value", () => {
     const p = plan(retrieval({ contract: [contractItem("PORT", { type: "number" })], items: [{ name: "PORT", value: "80a0" }] }));
     expect(kinds(p)).toEqual(["PORT:invalid"]);

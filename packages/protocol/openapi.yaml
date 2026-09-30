@@ -2749,6 +2749,7 @@ components:
           description: >
             Contract Semantics versions this server evaluates. Absent on
             servers older than 0.11.0, which evaluate only version 1.
+            Version 3 (from 0.13.0) adds the `integer` item type.
 
     Organization:
       type: object

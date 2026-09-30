@@ -78,6 +78,18 @@ describe("the generated Python module", () => {
     expect(pyString("é\n‮\u{1f600}")).toBe('"\\xe9\\x0a\\u202e\\U0001f600"');
   });
 
+  it("an integer item is an int, documented as a whole number (semantics version 3)", () => {
+    const part = generatedPart(
+      gen([contractItem("WORKERS", { type: "integer", required: { kind: "always" } }), contractItem("RATIO", { type: "number" })], {
+        semanticsVersion: 3,
+      }),
+    );
+    expect(part).toContain("    WORKERS: int\n");
+    expect(part).toContain("    RATIO: float | None = None\n");
+    expect(part).toContain("A whole number.");
+    expect(part).toContain('"semanticsVersion": 3,');
+  });
+
   it("refuses version 1, naming the fix", () => {
     expect(() => gen(ITEMS, { semanticsVersion: 1 })).toThrow(TypesError);
     expect(() => gen(ITEMS, { semanticsVersion: 1 })).toThrow("defines no conversion");

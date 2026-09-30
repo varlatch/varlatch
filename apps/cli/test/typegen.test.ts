@@ -163,17 +163,25 @@ describe("the generated module", () => {
     expect(syntaxErrors(text)).toEqual([]);
   });
 
+  it("an integer item is a number, documented as a whole number (semantics version 3)", () => {
+    const text = gen([contractItem("WORKERS", { type: "integer", required: { kind: "always" } })], { semanticsVersion: 3 });
+    const [member] = configMembers(text);
+    expect(member).toMatchObject({ name: "WORKERS", optional: false, type: "number" });
+    expect(member?.doc).toContain("A whole number.");
+    expect(syntaxErrors(text)).toEqual([]);
+  });
+
   it("refuses a version 1 revision, naming the fix", () => {
     expect(() => gen(ITEMS, { semanticsVersion: 1 })).toThrow(TypesError);
     expect(() => gen(ITEMS, { semanticsVersion: 1 })).toThrow(
-      /uses Contract Semantics version 1, which defines no conversion.*Activate a revision at version 2: push it with varlatch contract push --semantics latest, then activate it/,
+      /uses Contract Semantics version 1, which defines no conversion.*Activate a revision at version 2 or 3: push it with varlatch contract push --semantics latest, then activate it/,
     );
   });
 
   it("refuses a semantics version it does not implement", () => {
-    const rev = { ...revision(ITEMS), semanticsVersion: 3 };
+    const rev = { ...revision(ITEMS), semanticsVersion: 9 };
     expect(() => generateTypesModule(rev, { generatorVersion: GENERATOR })).toThrow(
-      /Contract Semantics version 3, which this CLI does not implement.*activate a revision at a version it implements/,
+      /Contract Semantics version 9, which this CLI does not implement.*activate a revision at a version it implements/,
     );
   });
 
