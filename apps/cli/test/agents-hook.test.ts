@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { checkCommand, checkToolCall, isInStore, isProtectedEnvFile, lexShell, runHook, type HookContext } from "../src/agents/hook.js";
 
@@ -54,6 +57,8 @@ describe("shell commands", () => {
     ["sort < .env", ENV, "sort < names.txt"],
     ["base64 .envrc", ENV, "base64 logo.png"],
     ["cp .env /tmp/x", ENV, "cp .env.example /tmp/x"],
+    ["mv .env.local backup/", ENV, "mv notes.txt backup/"],
+    ["find . -name '.env*' -exec cat {} +", ENV, "find . -name '*.md' -exec cat {} +"],
     ["git show HEAD:.env", ENV, "git add .env.example"],
     ["git -C app diff .env", ENV, "git -C app status .env"],
     ["echo start; cat .env | head", ENV, "echo start; cat notes | head"],
@@ -111,6 +116,9 @@ describe("shell commands", () => {
       "cat <<EOF > notes.md\nsee .env and ~/.config/varlatch\nEOF\nnpm test",
       "cat <<-'EOF' > notes.md\n\tcat .env\n\tEOF",
       "git commit -m 'stop reading .env in tests'",
+      "find . -name '.env*' -not -path './node_modules/*'",
+      "cp .env.example .env",
+      "cp -n .env.example config/.env.local",
       "npm test 2>&1 | tee test.log",
       "echo done >&2",
     ]) {
@@ -138,6 +146,27 @@ describe("the shell reader", () => {
   it("skips heredoc bodies and comments", () => {
     const { segments } = lexShell("cat <<EOF >x\ncat .env\nEOF\nls # cat .env");
     expect(segments.map((s) => s.words)).toEqual([["cat"], ["ls"]]);
+  });
+});
+
+describe("a directory called .env", () => {
+  it("is not a .env file: a Python virtualenv is often called .env", () => {
+    const root = mkdtempSync(join(tmpdir(), "varlatch-hook-venv-"));
+    try {
+      mkdirSync(join(root, ".env", "bin"), { recursive: true });
+      const here: HookContext = { ...ctx, cwd: root };
+      for (const command of ["python3 -m venv .env", "source .env/bin/activate", "du -sh .env"]) {
+        expect(checkCommand(command, here), command).toBeNull();
+      }
+      expect(checkToolCall("Grep", { pattern: "x", path: ".env" }, here)).toBeNull();
+      // Control: the same commands with .env a file.
+      rmSync(join(root, ".env"), { recursive: true });
+      writeFileSync(join(root, ".env"), "A=1\n");
+      expect(checkCommand("python3 -m venv .env", here)).toMatch(ENV);
+      expect(checkToolCall("Grep", { pattern: "x", path: ".env" }, here)).toMatch(ENV);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

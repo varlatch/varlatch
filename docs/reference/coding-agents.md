@@ -136,7 +136,9 @@ It reads the tool call the agent is about to make and denies:
 - reading a `.env*` file other than `.env.example` and `.env.schema`, with a
   file tool or a shell command (`cat`, `grep`, `source`, `git show`, an
   interpreter's inline code, and so on). Commands that only name a file
-  (`echo .env >> .gitignore`, `ls`, `rm`) and `varlatch import` are allowed;
+  (`echo .env >> .gitignore`, `ls`, `rm`, `find -name`), a `.env` that is
+  the destination of `cp`, a directory called `.env` (a Python
+  virtualenv), and `varlatch import` are allowed;
 - reading the Varlatch credential store, wherever it is configured;
 - printing the environment of a `varlatch run`: `env`, `printenv`, `export
   -p`, or inline code that reads the environment, as the run's command.

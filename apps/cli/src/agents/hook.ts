@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
 import { credentialsPath } from "@varlatch/context";
@@ -38,6 +39,16 @@ const ENV_TEMPLATES = new Set([".env.example", ".env.schema"]);
 export function isProtectedEnvFile(path: string): boolean {
   const base = path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
   return base.startsWith(".env") && !ENV_TEMPLATES.has(base);
+}
+
+/** A protected .env* name that is not an existing directory (a Python virtualenv is often called .env). */
+function isProtectedEnvPath(path: string, ctx: HookContext): boolean {
+  if (!isProtectedEnvFile(path)) return false;
+  try {
+    return !statSync(resolve(ctx.cwd, expandPath(path, ctx))).isDirectory();
+  } catch {
+    return true;
+  }
 }
 
 /** The credential-store directories: the one this environment uses, and the default one. */
@@ -369,7 +380,7 @@ function varlatchArgs(words: string[]): string[] | null {
 
 function checkSegment(seg: Segment, ctx: HookContext, underRun: boolean, depth: number): Denial | null {
   for (const input of seg.inputs) {
-    if (isProtectedEnvFile(input)) return DENY_ENV_FILE;
+    if (isProtectedEnvPath(input, ctx)) return DENY_ENV_FILE;
     if (isInStore(input, ctx)) return DENY_STORE;
   }
   for (const output of seg.outputs) if (isInStore(output, ctx)) return DENY_STORE;
@@ -405,15 +416,23 @@ function checkSegment(seg: Segment, ctx: HookContext, underRun: boolean, depth: 
   }
 
   let reads = !NON_READING.has(name);
+  let args = words.slice(1);
   if (name === "git") {
-    const sub = words.slice(1).find((w, i, rest) => !w.startsWith("-") && !["-C", "-c"].includes(rest[i - 1] ?? ""));
+    const sub = args.find((w, i, rest) => !w.startsWith("-") && !["-C", "-c"].includes(rest[i - 1] ?? ""));
     reads = sub !== undefined && GIT_READING.has(sub);
+  }
+  // find lists names unless it runs a command on what it finds.
+  if (name === "find") reads = args.some((w) => ["-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"].includes(w));
+  // cp and mv read their sources; the destination (the last operand) is written.
+  if (name === "cp" || name === "mv") {
+    const last = args.map((w, i) => (w.startsWith("-") ? -1 : i)).filter((i) => i >= 0).pop();
+    if (last !== undefined) args = args.filter((_w, i) => i !== last);
   }
   for (const w of words.slice(1)) {
     // --env-file=.env, and git's rev:path form (HEAD:.env).
     const candidates = [w, w.slice(w.lastIndexOf("=") + 1), w.slice(w.lastIndexOf(":") + 1)];
     for (const candidate of candidates) {
-      if (reads && isProtectedEnvFile(candidate)) return DENY_ENV_FILE;
+      if (reads && args.includes(w) && isProtectedEnvPath(candidate, ctx)) return DENY_ENV_FILE;
       if (isInStore(candidate, ctx)) return DENY_STORE;
     }
   }
@@ -469,7 +488,7 @@ export function checkToolCall(toolName: string, toolInput: unknown, ctx: HookCon
   } else if (LISTING_TOOLS.has(toolName)) return null;
   else paths = pathsIn(input);
   for (const path of paths) {
-    if (isProtectedEnvFile(path)) return DENY_ENV_FILE;
+    if (isProtectedEnvPath(path, ctx)) return DENY_ENV_FILE;
     if (isInStore(path, ctx)) return DENY_STORE;
   }
   return null;
