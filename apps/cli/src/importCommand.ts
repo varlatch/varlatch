@@ -100,6 +100,33 @@ export function checkEntries(entries: DotenvEntry[]): string[] {
   return problems;
 }
 
+/**
+ * The file as text, or an ImportError naming the first line that is not
+ * valid UTF-8. Decoding with replacement would store U+FFFD in place of the
+ * original bytes, and --delete-source would then remove the only copy.
+ */
+export function decodeStrict(bytes: Buffer, file: string): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    // A multi-byte sequence never contains a line feed, so lines can be checked one by one.
+    let line = 1;
+    let start = 0;
+    for (;;) {
+      const end = bytes.indexOf(0x0a, start);
+      try {
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, end < 0 ? bytes.length : end));
+      } catch {
+        break;
+      }
+      if (end < 0) break;
+      line++;
+      start = end + 1;
+    }
+    throw new ImportError(`${file} line ${line}: not valid UTF-8 text. Nothing was imported.`);
+  }
+}
+
 function digest(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -134,7 +161,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, io: I
   const bytes = readFileSync(opts.file);
   let entries: DotenvEntry[];
   try {
-    entries = parseDotenv(bytes.toString("utf8"));
+    entries = parseDotenv(decodeStrict(bytes, opts.file));
   } catch (err) {
     if (err instanceof DotenvParseError) throw new ImportError(`${opts.file} ${err.message}. Nothing was imported.`);
     throw err;

@@ -37,14 +37,16 @@ fixes.
 - `values set` and `values rotate` take the value from `--stdin`,
   `--from-file <path>`, or `--generate hex|base64|base64url:<bytes>` or
   `alnum:<characters>` (from the system's secure random source, never
-  shown), or, with no value in a terminal, from a hidden prompt. The value
+  shown), or, with no value in a terminal, from a hidden prompt, where
+  Backspace removes a whole character and arrow keys are ignored. The value
   then never appears on a command line.
 - New `varlatch import <file>` stores a dotenv file's values without
   printing them: names, counts, inferred types, and sensitivity only.
   `--dry-run` shows the plan (and lists names even outside a repository),
   `--contract` adds the file's new items to a Contract revision as Secrets
   unless `--plain <NAME>`, and `--delete-source` deletes the file once every
-  value is stored. See [importing](docs/reference/import.md).
+  value is stored. A file that is not valid UTF-8 is refused before anything
+  is stored or deleted. See [importing](docs/reference/import.md).
 
 ### Agent-safe runs
 

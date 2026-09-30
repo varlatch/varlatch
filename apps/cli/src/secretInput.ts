@@ -120,6 +120,65 @@ export function valueFromBytes(bytes: Buffer, from: string): string {
   return value;
 }
 
+/**
+ * Whether `text` is well-formed Unicode: no unpaired UTF-16 surrogate, so it
+ * has an exact UTF-8 form that the server stores and the matcher registers.
+ */
+export function isWellFormedText(text: string): boolean {
+  return Buffer.from(text, "utf8").toString("utf8") === text;
+}
+
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * `value` without its last user-perceived character: a whole grapheme
+ * cluster (an emoji, a letter with its combining marks), never half of a
+ * surrogate pair.
+ */
+export function dropLastCharacter(value: string): string {
+  let last = 0;
+  for (const { index } of graphemes.segment(value)) last = index;
+  return value.slice(0, last);
+}
+
+/**
+ * The value typed into a hidden prompt from the terminal's input: printable
+ * characters are kept, Backspace removes the last whole character, and
+ * other control characters and escape sequences (arrow and function keys)
+ * are ignored rather than stored.
+ */
+export class HiddenInput {
+  private value = "";
+  private escape: "none" | "start" | "csi" | "ss3" = "none";
+
+  /** Feed characters; returns the value once Enter or Ctrl-D ends the input, null while it continues. */
+  feed(data: string): string | null {
+    for (const ch of data) {
+      if (this.escape === "start") {
+        this.escape = ch === "[" ? "csi" : ch === "O" ? "ss3" : "none";
+        continue;
+      }
+      if (this.escape === "csi") {
+        // Parameters and intermediates, then one final byte from @ to ~.
+        if (ch >= "@" && ch <= "~") this.escape = "none";
+        continue;
+      }
+      if (this.escape === "ss3") {
+        this.escape = "none";
+        continue;
+      }
+      if (ch === "\u001b") {
+        this.escape = "start";
+        continue;
+      }
+      if (ch === "\r" || ch === "\n" || ch === "\u0004") return this.value;
+      if (ch === "\u007f" || ch === "\b") this.value = dropLastCharacter(this.value);
+      else if (ch >= " ") this.value += ch;
+    }
+    return null;
+  }
+}
+
 export async function readAll(stream: NodeJS.ReadableStream): Promise<Buffer> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : (chunk as Buffer));
@@ -138,15 +197,15 @@ export function readValueFile(path: string): string {
 }
 
 /**
- * Read one line from the terminal without echoing it. Ctrl-C ends the
- * command (exit 130, nothing stored); Ctrl-D on an empty line and Enter on
- * an empty line both mean no value.
+ * Read one line from the terminal without echoing it (see HiddenInput).
+ * Ctrl-C ends the command (exit 130, nothing stored); Enter or Ctrl-D on an
+ * empty line means no value.
  */
 export function promptHidden(question: string): Promise<string> {
   const input = process.stdin;
   const output = process.stderr;
   return new Promise((resolve, reject) => {
-    let value = "";
+    const typed = new HiddenInput();
     output.write(question);
     input.setRawMode(true);
     input.resume();
@@ -159,21 +218,19 @@ export function promptHidden(question: string): Promise<string> {
       done();
     };
     const onData = (data: string) => {
-      for (const ch of data) {
-        if (ch === "\u0003") {
-          return finish(() => {
-            output.write("varlatch: cancelled; nothing was stored\n");
-            process.exit(130);
-          });
-        }
-        if (ch === "\r" || ch === "\n" || ch === "\u0004") {
-          return finish(() =>
-            value.length > 0 ? resolve(value) : reject(new SecretInputError("no value entered; nothing was stored")),
-          );
-        }
-        if (ch === "\u007f" || ch === "\b") value = value.slice(0, -1);
-        else if (ch >= " ") value += ch;
+      if (data.includes("\u0003")) {
+        return finish(() => {
+          output.write("varlatch: cancelled; nothing was stored\n");
+          process.exit(130);
+        });
       }
+      const value = typed.feed(data);
+      if (value === null) return;
+      finish(() => {
+        if (value.length === 0) reject(new SecretInputError("no value entered; nothing was stored"));
+        else if (!isWellFormedText(value)) reject(new SecretInputError("the value entered is not well-formed Unicode text; nothing was stored"));
+        else resolve(value);
+      });
     };
     input.on("data", onData);
   });

@@ -69,3 +69,15 @@ describe("parseDotenv", () => {
     expect((error as Error).message).not.toMatch(/s3cr3t|SECRET_VALUE/);
   });
 });
+
+describe("decodeStrict", () => {
+  it("returns valid UTF-8 as text and names the first invalid line otherwise", async () => {
+    const { decodeStrict, ImportError } = await import("../src/importCommand.js");
+    expect(decodeStrict(Buffer.from("A=é\nB=😀\n"), ".env")).toBe("A=é\nB=😀\n");
+    const bad = Buffer.concat([Buffer.from("A=1\nB=2\nC=x"), Buffer.from([0xc3, 0x28]), Buffer.from("\n")]);
+    expect(() => decodeStrict(bad, ".env")).toThrow(ImportError);
+    expect(() => decodeStrict(bad, ".env")).toThrow(".env line 3: not valid UTF-8 text. Nothing was imported.");
+    // A truncated sequence at the very end of the file.
+    expect(() => decodeStrict(Buffer.from([0x41, 0x3d, 0xe2, 0x82]), ".env")).toThrow(".env line 1:");
+  });
+});

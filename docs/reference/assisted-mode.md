@@ -102,7 +102,11 @@ varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
   `echo` and most editors add. The value must be UTF-8 text without NUL
   bytes, and not empty. `--stdin` refuses a terminal; leave the value out
   for a hidden prompt instead.
-- **Give the value one way only.** Two sources are refused.
+- **The hidden prompt** shows nothing as you type. Backspace removes the
+  last whole character (an emoji or an accented letter included), and arrow
+  and function keys are ignored rather than stored.
+- **Give the value one way only.** Two sources are refused. A value that is
+  not well-formed Unicode text is refused from every source.
 
 ## Limits
 

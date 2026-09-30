@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  HiddenInput,
   SecretInputError,
   describeGenerated,
+  dropLastCharacter,
+  isWellFormedText,
   generateValue,
   parseGenerateSpec,
   parseValueSource,
@@ -83,5 +86,39 @@ describe("values from standard input or a file", () => {
     writeFileSync(join(dir, "key"), "-----BEGIN KEY-----\nabc\n-----END KEY-----\n");
     expect(readValueFile(join(dir, "key"))).toBe("-----BEGIN KEY-----\nabc\n-----END KEY-----");
     expect(() => readValueFile(join(dir, "absent"))).toThrow(/cannot read .*absent \(ENOENT\)/);
+  });
+});
+
+describe("hidden prompt input", () => {
+  const typed = (...chunks: string[]) => {
+    const input = new HiddenInput();
+    let result: string | null = null;
+    for (const chunk of chunks) result = input.feed(chunk) ?? result;
+    return result;
+  };
+
+  it("Backspace after an astral character removes the whole character, never half a surrogate pair", () => {
+    expect(typed("abcdefgh😀", "\u007f", "\r")).toBe("abcdefgh");
+    expect(isWellFormedText(typed("abcdefgh😀\u007f\r")!)).toBe(true);
+    // The fault it replaces: removing one UTF-16 unit leaves an unpaired surrogate, which the check refuses.
+    expect(isWellFormedText("abcdefgh😀".slice(0, -1))).toBe(false);
+  });
+
+  it("Backspace removes a whole grapheme cluster: a letter with its combining mark, a joined emoji", () => {
+    expect(dropLastCharacter("abcdefghe\u0301")).toBe("abcdefgh");
+    expect(dropLastCharacter("abcdefgh👨‍👩‍👧")).toBe("abcdefgh");
+    expect(dropLastCharacter("")).toBe("");
+    expect(typed("abcdefgh\u00e9x\b\u007f\r")).toBe("abcdefgh");
+  });
+
+  it("ignores escape sequences (arrow and function keys) and other control characters", () => {
+    expect(typed("abc\u001b[D", "def\u001bOA", "gh\u001b[1;5C\t\r")).toBe("abcdefgh");
+  });
+
+  it("ends at Enter or Ctrl-D, and needs more input until then", () => {
+    const input = new HiddenInput();
+    expect(input.feed("abcd")).toBeNull();
+    expect(input.feed("efgh\u0004")).toBe("abcdefgh");
+    expect(typed("\r")).toBe("");
   });
 });

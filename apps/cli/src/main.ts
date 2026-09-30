@@ -31,6 +31,7 @@ import {
   SecretInputError,
   describeGenerated,
   generateValue,
+  isWellFormedText,
   parseValueSource,
   promptHidden,
   readAll,
@@ -788,6 +789,8 @@ async function main(): Promise<void> {
               : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
           const item = args[1] && !args[1].startsWith("-") ? args[1] : fail(usage);
           const obtained = await obtainValue(sub, item, args, assisted, () => sensitiveItem(api, ctx, item));
+          // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
+          if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";
           if (sub === "set") {
             const version = await api.setValue(ctx.organization, ctx.project, ctx.environment, item, { value: obtained.value });

@@ -60,14 +60,17 @@ NAME="line\nnext"          double quotes: \n \r \t \" \\ are escapes, may span l
 NAME=                      an empty value
 ```
 
-Nothing is expanded. Names must be valid item names: upper-case letters,
-digits, and `_`, starting with a letter. Names starting with `VARLATCH_` are
+Nothing is expanded. The file must be valid UTF-8: a file that is not is
+refused, naming the first invalid line, so no value is ever stored with its
+bytes changed. Names must be valid item names: upper-case letters, digits,
+and `_`, starting with a letter. Names starting with `VARLATCH_` are
 reserved for the CLI and refused.
 
 ## When it stops
 
-- **A problem in the file** stops the import before anything is stored.
-  Errors give the line number and the reason, and every name problem
+- **A problem in the file** stops the import before anything is stored, and
+  the file is never deleted. Errors give the line number and the reason
+  (including text that is not valid UTF-8), and every name problem
   (invalid, reserved, or set twice) is listed at once.
 - **A failed write** stops the import. It names the items stored, the item
   that failed with the error code, and the items not attempted, and does not

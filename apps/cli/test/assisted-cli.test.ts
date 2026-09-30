@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -372,6 +372,13 @@ describe.skipIf(!hasScript)("assisted run on a pseudo-terminal", () => {
     expect(terminal).not.toContain(hidden);
     expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ value: hidden });
   });
+
+  it("Backspace after an astral character stores the exact remaining value, and arrow keys are ignored", async () => {
+    const { code, terminal } = await underTerminal(["values", "set", "API_TOKEN"], {}, { after: "(input hidden): ", text: "abcdefgh😀\u007f\u001b[Dij\r" });
+    expect(code).toBe(0);
+    expect(terminal).toContain("API_TOKEN set (version ver_new_API_TOKEN).");
+    expect(requests.find((r) => r.method === "PUT")?.body).toEqual({ value: "abcdefghij" });
+  });
 });
 
 describe("values set and values rotate: Secret input", () => {
@@ -559,6 +566,37 @@ describe("varlatch import", () => {
     expect(r.stderr).toMatch(/not attempted: DEBUG, NEW_SECRET/);
     expect(r.stderr).toMatch(/2 of 5 value\(s\) stored\. .* was not deleted\./);
     noValues(r);
+  });
+
+  describe("a file that is not valid UTF-8", () => {
+    // Byte 0xff can never appear in UTF-8; decoding with replacement would store U+FFFD instead.
+    const invalid = Buffer.concat([Buffer.from("A=1\nTOKEN=abcdefgh"), Buffer.from([0xff]), Buffer.from("ijkl\nB=2\n")]);
+    function invalidFile(): string {
+      const file = join(dir, `.env-invalid-${Math.random().toString(36).slice(2)}`);
+      writeFileSync(file, invalid);
+      return file;
+    }
+
+    it.each([
+      ["an import", []],
+      ["an import with --delete-source", ["--delete-source"]],
+      ["a dry run", ["--dry-run"]],
+    ])("%s refuses it by line, stores nothing, and leaves the file byte for byte", async (_name, flags) => {
+      const file = invalidFile();
+      const r = await cli(["import", file, ...flags]);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toMatch(/line 2: not valid UTF-8 text\. Nothing was imported\./);
+      expect(r.stdout + r.stderr).not.toMatch(/abcdefgh|ijkl/);
+      expect(puts()).toEqual([]);
+      expect(readFileSync(file).equals(invalid)).toBe(true);
+    });
+
+    it("valid non-ASCII UTF-8 is stored exactly", async () => {
+      const value = "pässwörd-€-😀-ok";
+      const r = await cli(["import", envFile(`PASS=${value}\n`), "--delete-source"]);
+      expect(r.code).toBe(0);
+      expect(puts().map((p) => p.body)).toEqual([{ value }]);
+    });
   });
 
   it("reports a parse error by line, and every name problem at once, without values; nothing is stored", async () => {
