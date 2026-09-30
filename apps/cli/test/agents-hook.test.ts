@@ -68,6 +68,9 @@ describe("shell commands", () => {
     ["cat ~/.config/varlatch/credentials.json", STORE, "cat ~/.config/git/config"],
     ["ls $HOME/.config/varlatch", STORE, "ls $HOME/.config"],
     ["tar czf /tmp/x.tgz ${XDG_CONFIG_HOME}/varlatch", STORE, "tar czf /tmp/x.tgz ${XDG_CONFIG_HOME}/git"],
+    // A store outside ~/.config is found only by expanding ~ and $HOME.
+    ["cat ~/.xdg/varlatch/credentials.json", STORE, "cat ~/.xdg/git/config"],
+    ["cp $HOME/.xdg/varlatch/credentials.json /tmp", STORE, "cp $HOME/.xdg/git/config /tmp"],
     ["echo token > ~/.config/varlatch/credentials.json", STORE, "echo token > ./out.txt"],
     ["varlatch run -- env", DUMP, "varlatch run -- npm test"],
     ["varlatch --assisted run -e staging -- printenv API_KEY", DUMP, "varlatch --assisted run -e staging -- node app.js"],
