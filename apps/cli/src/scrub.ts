@@ -4,6 +4,14 @@ import { pipeline, type Readable } from "node:stream";
 import zlib from "node:zlib";
 import { StreamMatcher, type SecretEntry } from "@varlatch/matcher";
 
+
+/**
+ * Marks a reply the Broker generated itself (a refusal, the proxy
+ * authentication challenge), never one from a destination: the Broker
+ * strips it from every relayed response, so a client such as
+ * `varlatch request` can tell the two apart by origin (ADR-0043 Decision 6).
+ */
+export const BROKER_REPLY_HEADER = "varlatch-broker";
 /**
  * Response scrubbing for requests the Broker substituted into (ADR-0039
  * Decisions 16 to 23). Every header value and every body byte of such a
@@ -150,7 +158,8 @@ export async function relayScrubbed(opts: {
   try {
     statusMessage = scrubber.headerValue(upstream.statusMessage ?? "");
     headers = pairs(upstream.rawHeaders)
-      .filter(([n]) => !HOP_BY_HOP.has(n.toLowerCase()))
+      // The Broker's own marker is never relayed from a destination: it could spoof a refusal.
+      .filter(([n]) => !HOP_BY_HOP.has(n.toLowerCase()) && n.toLowerCase() !== BROKER_REPLY_HEADER)
       .map(([n, v]) => [n, scrubber.headerValue(v)] as [string, string]);
   } catch {
     upstream.destroy();
