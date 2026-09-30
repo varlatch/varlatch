@@ -207,8 +207,31 @@ not Secrets, and an agent-safe run never fetches Secrets to build a filter.
 
 ## Sending requests through the Broker
 
-Send plain HTTP requests with an absolute `https://` URL to the Broker, with
-the per-run proxy credential from `HTTPS_PROXY`:
+Inside the run, send requests with `varlatch request`, a curl-like client
+that talks to the run's Broker the way substitution needs:
+
+```
+varlatch request -X POST -H "Authorization: Bearer $STRIPE_KEY" \
+  --json '{"amount": 500}' https://api.stripe.com/v1/charges
+```
+
+- It takes `-X <method>`, `-H '<name>: <value>'` (repeatable),
+  `-d <data>` (a form body unless `-H` sets a Content-Type), `--json <data>`
+  (a JSON body with JSON Content-Type and Accept), `-o <file>`, and `-i`
+  (the status line and headers first). `-d @<file>`, `--json @<file>`, and
+  `@-` (standard input) send the bytes as they are.
+- The shell expands `$STRIPE_KEY` to its Placeholder; the Broker substitutes
+  the Secret only at its targets, originates TLS to the destination, and
+  scrubs the response before `varlatch request` prints it.
+- It needs no Varlatch credential and holds no Secret. Outside an
+  agent-safe run, or in one without Secrets (no Broker), it refuses.
+- Exit status: 0 when the destination answered, whatever the HTTP status
+  (as curl); 1 when the Broker refused the request, with its reason on
+  stderr; 69 when the Broker cannot be reached or the installation is in
+  maintenance; 64 for a wrong command line.
+
+From code, send plain HTTP requests with an absolute `https://` URL to the
+Broker, with the per-run proxy credential from `HTTPS_PROXY`:
 
 ```js
 import http from "node:http";
@@ -229,8 +252,9 @@ req.end();
 ```
 
 The Broker does not intercept TLS, so a client that tunnels HTTPS with
-`CONNECT`, which includes Node's `fetch` and most HTTP libraries, gets a
-`502` with an explanation for an allowed destination. Traffic to other
+`CONNECT`, which includes curl, Node's `fetch`, and most HTTP libraries,
+gets a `502` for an allowed destination, with an explanation that names
+`varlatch request`. Traffic to other
 destinations passes through unchanged, Placeholders intact, unless you pass
 `--agent-network strict`, which blocks it.
 

@@ -70,6 +70,15 @@ fixes.
 
 ### Agent-safe runs
 
+- New `varlatch request`, a curl-like client for the Agent inside an
+  agent-safe run: `-X`, `-H`, `-d`, `--json`, `-o`, `-i`. It sends each
+  request to the run's Broker in the form substitution needs, so the Secret
+  is substituted at its targets, TLS is originated by the Broker, and the
+  response is scrubbed. Clients that tunnel HTTPS with CONNECT (curl,
+  `fetch`, most SDKs) get a 502, whose explanation now names
+  `varlatch request`. It refuses outside an agent-safe run. See
+  [agent-safe runs](docs/reference/agent-safe-runs.md#sending-requests-through-the-broker).
+
 - The Agent gets its own empty configuration directory
   (`VARLATCH_CONFIG_DIR`, removed when the run ends) and the run's
   identifier (`VARLATCH_AGENT_RUN`). A `varlatch` command the Agent starts

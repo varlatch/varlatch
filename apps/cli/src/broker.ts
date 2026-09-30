@@ -187,8 +187,10 @@ const CONNECT_DIAGNOSTIC = (host: string) =>
   `Varlatch blocked an HTTPS CONNECT tunnel to ${host}. ` +
   `Agent-safe secret substitution requires the broker to inspect the outbound ` +
   `request before establishing TLS. This client uses an opaque CONNECT tunnel, ` +
-  `which Varlatch intentionally does not MITM. Send plain HTTP requests with ` +
-  `absolute URIs through the proxy instead.`;
+  `which Varlatch intentionally does not MITM. Send the request with ` +
+  `varlatch request (a curl-like client, for example: varlatch request -H ` +
+  `"Authorization: Bearer $API_KEY" https://${host}/...), or send plain HTTP ` +
+  `requests with absolute URIs through the proxy.`;
 
 // Headers the broker owns on the connection it originates: hop-by-hop and
 // proxy headers are dropped; Host and Content-Length are set from the

@@ -622,7 +622,7 @@ async function main(): Promise<void> {
           }
           console.error(
             `varlatch: inside agent-safe run ${agentRun}, Secrets are Placeholders and are never disclosed; the command ` +
-              "starts with this run's environment unchanged. Requests to allowed destinations go through the Broker in HTTPS_PROXY.",
+              "starts with this run's environment unchanged. Send requests to allowed destinations with varlatch request.",
           );
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
           process.exit(await runChild(cmd, cmdArgs, process.env));
@@ -904,6 +904,35 @@ async function main(): Promise<void> {
           return;
         }
         usageError("Usage: varlatch values <set|list|delete|rotate|rotate-complete>");
+        return;
+      }
+
+      case "request": {
+        // ADR-0043 Decision 6: the Agent's HTTPS path through the Broker.
+        const { REQUEST_USAGE, RequestUsageError, brokerFromEnv, parseRequestArgs, readDataSpec, sendThroughBroker } =
+          await import("./request.js");
+        let opts: ReturnType<typeof parseRequestArgs>;
+        try {
+          opts = parseRequestArgs(args, readDataSpec);
+        } catch (err) {
+          if (err instanceof RequestUsageError) usageError(`varlatch request: ${err.message}\n${REQUEST_USAGE}`);
+          throw err;
+        }
+        const broker = brokerFromEnv(process.env);
+        if ("refusal" in broker) usageError(`varlatch request: ${broker.refusal}`);
+        const outcome = await sendThroughBroker(opts, broker, {
+          stdout: process.stdout,
+          err: (line) => console.error(line),
+        });
+        if (outcome.kind === "unreachable") {
+          fail(`varlatch request: cannot reach the Broker at ${broker.host}:${broker.port} (${outcome.code})`, EXIT.unavailable);
+        }
+        if (outcome.kind === "refused") {
+          fail(
+            `varlatch request: the Broker refused the request (${outcome.status}); nothing reached the destination unless it says so above`,
+            outcome.status === 503 ? EXIT.unavailable : EXIT.failure,
+          );
+        }
         return;
       }
 
