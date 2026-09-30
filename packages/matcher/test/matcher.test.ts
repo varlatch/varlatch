@@ -82,15 +82,37 @@ describe("a stored value with an unpaired surrogate", () => {
   const stored = "token-\uD83D-value-\uDE00-end";
   const delivered = "token-\uFFFD-value-\uFFFD-end";
 
-  it("is registered as a command receives it, and no form throws", () => {
+  it("is registered as UTF-8 carries it, and in JSON's own escaping of the stored value; no form throws", () => {
     expect(deliveredText(stored)).toBe(delivered);
     expect(deliveredText("paired-😀-ok")).toBe("paired-😀-ok");
     expect(() => formsOf(stored)).not.toThrow();
     const forms = formsOf(stored).map(text);
     expect(forms).toContain(delivered);
     expect(forms).toContain(encodeURIComponent(delivered));
+    // JSON keeps the surrogate as an ASCII escape: the exact stored value is recoverable from it.
+    const storedJson = JSON.stringify(stored).slice(1, -1);
+    expect(storedJson).toBe("token-\\ud83d-value-\\ude00-end");
+    expect(forms).toContain(storedJson);
+    expect(forms).toContain(JSON.stringify(`${stored}/`).slice(1, -1).replace(/\//g, "\\/").slice(0, -2));
     // Before the fix, the percent form threw while the matcher was built (the negative control).
     expect(() => encodeURIComponent(stored)).toThrow(URIError);
+  });
+
+  it("a well-formed value's forms are unchanged", () => {
+    const value = 'a/b"c d+e=f?😀';
+    const plain = formsOf(value).map(text);
+    expect(new Set(plain).size).toBe(plain.length);
+    expect(plain).toContain(JSON.stringify(value).slice(1, -1));
+    expect(plain.filter((f) => f.includes("\\u"))).toEqual([]);
+  });
+
+  it("is masked in a JSON body that carries the stored value, split anywhere", () => {
+    const body = `{"token":"${JSON.stringify(stored).slice(1, -1)}","n":1}`;
+    expect(everySplit([{ item: "TOKEN", value: stored }], body)).toBe(`{"token":"<TOKEN>","n":1}`);
+    // Not only once: a value holding "/" in the slash-escaped form too.
+    const slashed = "token-\uD83D/value-end";
+    const escaped = JSON.stringify(slashed).slice(1, -1).replace(/\//g, "\\/");
+    expect(everySplit([{ item: "TOKEN", value: slashed }], `{"t":"${escaped}"}`)).toBe(`{"t":"<TOKEN>"}`);
   });
 
   it("is masked in output a command writes from its environment, split anywhere", () => {

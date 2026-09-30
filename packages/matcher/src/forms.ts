@@ -20,12 +20,12 @@ const encoder = new TextEncoder();
 const UNPAIRED_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 /**
- * A value as a command receives it. A stored value can hold an unpaired
- * UTF-16 surrogate (JSON allows `"\ud83d"`), but UTF-8 cannot: an
- * environment variable, a request body, and a terminal all carry U+FFFD in
- * its place. Every form is computed from this text, so such a value is
- * registered as a command can print it, and never makes a form throw
- * (percent-encoding rejects an unpaired surrogate).
+ * A value as UTF-8 carries it. A stored value can hold an unpaired UTF-16
+ * surrogate (JSON allows `"\ud83d"`), but UTF-8 cannot: an environment
+ * variable, a header, percent-encoding, and a terminal all carry U+FFFD in
+ * its place. The raw, percent, and base64 forms are computed from this
+ * text, so they never throw (percent-encoding rejects an unpaired
+ * surrogate) and match what a command can print.
  */
 export function deliveredText(value: string): string {
   return value.replace(UNPAIRED_SURROGATE, "\uFFFD");
@@ -65,10 +65,17 @@ export function labelledFormsOf(stored: string): LabelledForm[] {
   const value = deliveredText(stored);
   const raw = encoder.encode(value);
   if (raw.length < MIN_LENGTH) return [];
+  // JSON keeps an unpaired surrogate as a `\udXXX` escape instead of
+  // replacing it: a JSON body carrying the stored value (the Broker's JSON
+  // targets write one) holds the stored value's escaping. Both are
+  // registered; for a well-formed value they are the same form.
+  const storedJson = JSON.stringify(stored).slice(1, -1);
   const json = JSON.stringify(value).slice(1, -1);
   const percent = encodeURIComponent(value);
   const candidates: [FormName, string][] = [
     ["raw", value],
+    ["json", storedJson],
+    ["json", storedJson.replace(/\//g, "\\/")],
     ["json", json],
     ["json", json.replace(/\//g, "\\/")],
     ["percent", percent],

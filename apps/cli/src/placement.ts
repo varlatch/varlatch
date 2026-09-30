@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { deliveredText } from "@varlatch/matcher";
 import type { Target } from "@varlatch/protocol";
 
 /**
@@ -82,9 +83,14 @@ function tokensIn(text: string): { token: string; index: number }[] {
   return [...text.matchAll(TOKEN)].map((m) => ({ token: m[0], index: m.index }));
 }
 
-/** RFC 3986 percent-encoding: only unreserved characters stay literal. */
+/**
+ * RFC 3986 percent-encoding: only unreserved characters stay literal. The
+ * encoding is of UTF-8, which cannot carry an unpaired UTF-16 surrogate: it
+ * becomes U+FFFD, as in a header or an environment variable, instead of
+ * failing the request.
+ */
 export function percentEncode(value: string): string {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return encodeURIComponent(deliveredText(value)).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 /** Every decoding a destination might apply, leniently, to find encoded Placeholders. */
