@@ -45,7 +45,9 @@ fixes.
   stack trace. Kept as before: `validate` 1 and 2, `scan` 1 (every failure)
   and 2, `types --check` 1, strict startup 78, and the command's own status
   from `varlatch run`. A script that checks for exactly 1 on these errors
-  needs updating.
+  needs updating. A malformed command is 64 whether or not a credential is
+  stored, and a proxy's HTML error page keeps its HTTP status (a 502 is 69)
+  instead of ending in a stack trace.
 - `varlatch --help`, `-h`, `help`, and `<command> --help` (or
   `help <command>`) print on stdout and exit 0; before, `--help` exited 1.
   An unknown command exits 64 with the usage on stderr.

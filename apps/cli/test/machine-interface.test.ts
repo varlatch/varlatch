@@ -58,6 +58,15 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (auth === "Bearer vlt_denied") return error(403, "PERMISSION_DENIED");
     if (auth === "Bearer vlt_overloaded") return error(503, "UNAVAILABLE");
     if (auth === "Bearer vlt_broken") return error(500, "INTERNAL");
+    // A reverse proxy's error page, and a captive portal: not Varlatch API responses.
+    if (auth === "Bearer vlt_html502") {
+      res.writeHead(502, { "Content-Type": "text/html" });
+      return res.end("<html><body>Bad Gateway from proxy-page-marker</body></html>");
+    }
+    if (auth === "Bearer vlt_html200") {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      return res.end("<html><body>portal-page-marker</body></html>");
+    }
     if (url === "/v1/organizations") return json(200, { items: [{ id: "org_1", slug: "acme", name: "Acme" }] });
     if (url === `${ORG}/projects`) return json(200, { items: [{ slug: "web", name: "Web", contractAuthority: "git", id: "prj_1" }] });
     if (url === `${ORG}/identities`) {
@@ -187,16 +196,34 @@ describe("help", () => {
 });
 
 describe("exit statuses", () => {
-  it.each([
+  const malformed: [string, string[]][] = [
     ["values set without an item", ["values", "set"]],
     ["run without --", ["run", "true"]],
     ["import without a file", ["import"]],
     ["contract push without a source", ["contract", "push"]],
     ["conflicting run flags", ["run", "--redact", "--no-redact", "--", "true"]],
     ["two value sources", ["values", "set", "API_TOKEN", "v", "--stdin"]],
-  ])("%s: 64 (usage), before any request", async (_name, args) => {
+    ["an unknown values subcommand", ["values", "bogus"]],
+    ["an unknown contract subcommand", ["contract", "bogus"]],
+    ["an unknown identity subcommand", ["identity", "bogus"]],
+    ["an unknown credential subcommand", ["credential", "bogus"]],
+    ["an unknown audit subcommand", ["audit", "bogus"]],
+    ["an unknown tailnet subcommand", ["tailnet", "bogus"]],
+    ["an unknown org subcommand", ["org", "bogus"]],
+    ["org create without a slug", ["org", "create"]],
+    ["credential list without an identity", ["credential", "list"]],
+  ];
+
+  it.each(malformed)("%s: 64 (usage) with a credential, before any request", async (_name, args) => {
     const r = await cli(args);
     expect(r.code).toBe(EXIT.usage);
+    expect(requests).toEqual([]);
+  });
+
+  it.each(malformed)("%s: 64 (usage) without any credential too, never a request to sign in", async (_name, args) => {
+    const r = await cli(args, { VARLATCH_TOKEN: "" });
+    expect(r.code).toBe(EXIT.usage);
+    expect(r.stderr).not.toMatch(/Not authenticated|varlatch login/);
     expect(requests).toEqual([]);
   });
 
@@ -217,15 +244,37 @@ describe("exit statuses", () => {
     expect(r.stderr).toMatch(/^Error [A-Z_]+: .* \(request req_1\)/);
   });
 
-  it("a server that cannot be reached: 69, naming the cause, without a stack trace", async () => {
+  async function closedPort(): Promise<number> {
     const closed = http.createServer();
     await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
     const port = (closed.address() as AddressInfo).port;
     await new Promise((resolve) => closed.close(resolve));
-    const r = await cli(["values", "list", "--server", `http://127.0.0.1:${port}`]);
+    return port;
+  }
+
+  it.each([
+    ["values list", ["values", "list"]],
+    ["an agent-safe run", ["run", "--agent-safe", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
+    ["an agent-safe strict run", ["run", "--agent-safe", "--strict", "--agent", "coder", "--allow-host", "api.example.com", "--", "true"]],
+  ])("a server that cannot be reached: 69 for %s, naming the cause, without a stack trace", async (_name, args) => {
+    const port = await closedPort();
+    const sep = args.indexOf("--");
+    const withServer = sep < 0 ? [...args, "--server", `http://127.0.0.1:${port}`] : [...args.slice(0, sep), "--server", `http://127.0.0.1:${port}`, ...args.slice(sep)];
+    const r = await cli(withServer, { VARLATCH_BROKER_CREDENTIAL: "vlt_brk_test" });
     expect(r.code).toBe(EXIT.unavailable);
     expect(r.stderr).toMatch(/Cannot reach the Varlatch server \(ECONNREFUSED\)/);
-    expect(r.stderr).not.toMatch(/at .*\.cjs:\d+/);
+    expect(r.stderr).not.toMatch(/at .*\.cjs:\d+|fetch failed/);
+  });
+
+  it.each([
+    ["a gateway's HTML 502", "vlt_html502", EXIT.unavailable, /^Error INTERNAL: HTTP 502; the response is not a Varlatch API error \(text\/html\)/],
+    ["a portal's HTML 200", "vlt_html200", EXIT.failure, /^Error INTERNAL: HTTP 200; the response is not JSON \(text\/html\)/],
+  ])("%s: %i, one line, the page never echoed and no stack trace", async (_name, token, code, message) => {
+    const r = await cli(["values", "list", "--json"], { VARLATCH_TOKEN: token });
+    expect(r.code).toBe(code);
+    expect(r.stderr).toMatch(message);
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
+    expect(r.stdout + r.stderr).not.toMatch(/page-marker|SyntaxError|at .*\.cjs:\d+/);
   });
 
   it.each([

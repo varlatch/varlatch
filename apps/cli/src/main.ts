@@ -150,7 +150,26 @@ function warnIfExpiring(server: string): void {
   if (warning) console.error(warning);
 }
 
+/**
+ * The API client for `ctx`, connected on its first request: a command's own
+ * checks of its command line come first, so a malformed command exits 64
+ * whether or not a credential is stored (ADR-0043 Decision 10). The
+ * credential is looked up, and a missing one refused (77), when the command
+ * first talks to the server, always before any child process starts.
+ */
 function client(ctx: ResolvedContext): VarlatchClient {
+  let connected: VarlatchClient | null = null;
+  const connect = (): VarlatchClient => (connected ??= connectClient(ctx));
+  return new Proxy({} as VarlatchClient, {
+    get(_target, property) {
+      const api = connect();
+      const member = Reflect.get(api, property, api) as unknown;
+      return typeof member === "function" ? (member as (...a: unknown[]) => unknown).bind(api) : member;
+    },
+  });
+}
+
+function connectClient(ctx: ResolvedContext): VarlatchClient {
   const token = loadToken(ctx.server);
   const agentRun = agentRunOf();
   if (!token && agentRun) {
@@ -670,7 +689,8 @@ async function main(): Promise<void> {
             process.exit(code);
           } catch (err) {
             if (err instanceof UsageError) usageError(`varlatch: ${err.message}. Nothing was started.`);
-            if (err instanceof VarlatchApiError) throw err;
+            // Server errors and an unreachable server get their own statuses (77, 69) from the handler below.
+            if (err instanceof VarlatchApiError || networkFailure(err)) throw err;
             fail(err instanceof Error ? err.message : String(err));
           }
         }
@@ -724,7 +744,8 @@ async function main(): Promise<void> {
             );
             process.exit(code);
           } catch (err) {
-            if (err instanceof VarlatchApiError) throw err;
+            // Server errors and an unreachable server get their own statuses (77, 69) from the handler below.
+            if (err instanceof VarlatchApiError || networkFailure(err)) throw err;
             const { UsageError } = await import("./strictRun.js");
             if (err instanceof UsageError) usageError(`varlatch: ${err.message}. Nothing was started.`);
             fail(err instanceof Error ? err.message : String(err));
@@ -1160,6 +1181,8 @@ async function main(): Promise<void> {
 
       case "org": {
         const sub = args[0];
+        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create>");
+        if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
         const server =
           flag(args, "--server") ?? process.env.VARLATCH_SERVER ??
           (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));

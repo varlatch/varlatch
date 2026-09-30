@@ -39,8 +39,8 @@ change either: scripts that parse them keep working.
 | --- | --- |
 | 0 | Success. |
 | 1 | Any other failure: a server error, a file that cannot be read, a failed write. |
-| 64 | The command line is wrong: an unknown command, a missing argument, flags that conflict, or a value given the way assisted mode refuses. Nothing was changed. |
-| 69 | The server cannot be reached, or is in maintenance or overloaded (502, 503, 504). Try again later. |
+| 64 | The command line is wrong: an unknown command or subcommand, a missing argument, flags that conflict, or a value given the way assisted mode refuses. Checked before any credential is needed, so it is 64 whether or not you are signed in. Nothing was changed. |
+| 69 | The server cannot be reached, or is in maintenance or overloaded (502, 503, 504), including an error page from a proxy in front of it. Try again later. |
 | 77 | Not authenticated, or the server denied the request (401, 403). |
 | 78 | Strict startup found a violation, or assisted mode cannot mask a Secret shorter than 8 bytes. The command was not started. |
 

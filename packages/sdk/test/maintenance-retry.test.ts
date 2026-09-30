@@ -84,3 +84,23 @@ describe("maintenance retry", () => {
     expect(waits[0]!.retryInMs).toBeLessThanOrEqual(1200);
   });
 });
+
+describe("responses that are not Varlatch API errors", () => {
+  const html = (status: number) =>
+    new Response("<html><body>Bad Gateway: upstream secret-looking text</body></html>", { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+
+  it.each([502, 503, 504, 500, 404])("an HTML %i keeps its status as a VarlatchApiError, never echoing the page", async (status) => {
+    const client = new VarlatchClient({ server: "https://example.test", maintenanceRetryMs: 0, fetch: async () => html(status) });
+    const err = await client.meta().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VarlatchApiError);
+    expect(err).toMatchObject({ status, code: "INTERNAL" });
+    expect((err as Error).message).toBe(`HTTP ${status}; the response is not a Varlatch API error (text/html)`);
+  });
+
+  it("a 200 that is not JSON is an error too, not a SyntaxError", async () => {
+    const client = new VarlatchClient({ server: "https://example.test", fetch: async () => new Response("<html>portal</html>", { status: 200 }) });
+    const err = await client.meta().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VarlatchApiError);
+    expect((err as Error).message).toMatch(/^HTTP 200; the response is not JSON/);
+  });
+});
