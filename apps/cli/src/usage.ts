@@ -18,7 +18,14 @@ Usage:
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
   varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
-  varlatch init --org <slug> --project <slug> [--server <url>]
+  varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
+               (also writes the files coding agents read, as agents install does; --no-agent-files skips them)
+  varlatch agents guide [setup|run|agent-run|self-hosting]
+               (print the skill for coding agents, or one of its references: for any coding agent with a shell)
+  varlatch agents install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]
+               (write the skill to .agents/skills/varlatch and .claude/skills/varlatch, a marked block in AGENTS.md,
+                and the adapters some coding agents need; --check exits 1 when the files differ, for CI;
+                --remove takes back what install wrote)
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
   varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... -- <command> [args...]
@@ -94,7 +101,7 @@ Usage:
 Exit status: 0 success; 1 failure; 64 the command line is wrong; 69 the server cannot be reached or is in
 maintenance; 77 not authenticated or denied; 78 strict startup violation, or assisted mode cannot mask a Secret.
 Kept as before: validate 1 invalid, 2 incomplete; scan 1 findings, 2 not everything scanned; types --check 1 stale;
-run returns the command's own status once the command has started.`;
+run returns the command's own status once the command has started. agents install --check exits 1 when the files differ.`;
 
 /**
  * The usage entries for `command`: each entry starts at a line

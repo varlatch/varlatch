@@ -453,6 +453,67 @@ async function main(): Promise<void> {
         ];
         writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
         console.log(`Wrote ${REPO_CONFIG_FILE}. Commit it; it contains no credentials.`);
+        // ADR-0043 Decision 7: the files coding agents read, unless
+        // --no-agent-files. A failure here leaves the project initialized.
+        if (!has(args, "--no-agent-files")) {
+          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+          const { changedTargets, runInstall } = await import("./agents/install.js");
+          try {
+            const result = runInstall({ scope: "project", root: process.cwd(), version: EMBEDDED_RELEASE.version, agents: [], mode: "install" });
+            const targets = changedTargets(result);
+            if (targets.length > 0) {
+              console.log(`Wrote the Varlatch skill and instructions for coding agents: ${targets.join(", ")}. Commit them too.`);
+            }
+            for (const m of result.manual) console.log(`To do by hand: ${m}`);
+          } catch (err) {
+            console.error(
+              `varlatch: the files for coding agents were not written (${err instanceof Error ? err.message : String(err)}); ` +
+                "run varlatch agents install to try again.",
+            );
+          }
+        }
+        return;
+      }
+
+      case "agents": {
+        // ADR-0043 Decision 7: the agent-neutral skill, printed or installed.
+        const sub = args[0];
+        const usage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]>";
+        if (sub === "guide") {
+          const { GuideTopicError, guide } = await import("./agents/skill.js");
+          try {
+            process.stdout.write(guide(positional(args, 1)));
+          } catch (err) {
+            if (err instanceof GuideTopicError) usageError(`varlatch agents guide: ${err.message}`);
+            throw err;
+          }
+          return;
+        }
+        if (sub !== "install") usageError(usage);
+        if (has(args, "--check") && has(args, "--remove")) usageError("varlatch agents install: --check and --remove do not combine");
+        const scope = flag(args, "--scope") ?? "project";
+        if (scope !== "project" && scope !== "user") usageError("varlatch agents install: --scope must be project or user");
+        const mode = has(args, "--check") ? "check" : has(args, "--remove") ? "remove" : "install";
+        const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+        const { AgentsInstallError, describeInstall, runInstall } = await import("./agents/install.js");
+        const { homedir } = await import("node:os");
+        let result: ReturnType<typeof runInstall>;
+        try {
+          result = runInstall({
+            scope,
+            root: scope === "user" ? homedir() : (findRepoRoot(process.cwd()) ?? process.cwd()),
+            version: EMBEDDED_RELEASE.version,
+            agents: flags(args, "--agent"),
+            mode,
+          });
+        } catch (err) {
+          if (err instanceof AgentsInstallError) fail(`varlatch agents install: ${err.message}`, err.usage ? EXIT.usage : EXIT.config);
+          throw err;
+        }
+        if (has(args, "--json")) printJson({ ...result });
+        else for (const line of describeInstall(result, mode)) console.log(line);
+        // --check is for CI: files that differ from what install writes exit 1.
+        if (mode === "check" && result.drift) process.exitCode = EXIT.failure;
         return;
       }
 

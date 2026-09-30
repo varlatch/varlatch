@@ -23,6 +23,8 @@ varlatch --assisted <command> [args...]
   coding agents start a fresh shell for each command, so an exported variable
   does not carry over. The option may appear anywhere before a `--`, and it
   works in every shell, including PowerShell.
+  The [Varlatch skill](coding-agents.md), which `varlatch init` and
+  `varlatch agents install` put where coding agents look, tells them to.
 - **`VARLATCH_ASSISTED=1`** turns it on too, for tools that can set the
   environment of every shell an agent starts.
 - **Coding agents' own markers are a backstop.** The CLI also enters

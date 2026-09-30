@@ -1,0 +1,105 @@
+# Coding agents: the Varlatch skill and agent files
+
+A coding agent that works in your repository needs to know how to use
+Varlatch safely: start every command with `varlatch --assisted`, never read
+`.env` files, never put a secret in a command, and hand you the steps that
+are yours. The CLI ships those instructions as one skill, `varlatch`, in the
+open [Agent Skills](https://agentskills.io/specification) format, plus a short
+block for [`AGENTS.md`](https://agents.md). Both are plain text that any coding agent can follow: shell
+commands, and no agent-specific tools.
+
+The skill is built into the CLI, so what it tells a coding agent always
+matches the CLI that runs the commands.
+
+## `varlatch init` writes them
+
+`varlatch init` writes the agent files next to `varlatch.toml`, as
+`varlatch agents install` does. Commit them with `varlatch.toml`. Pass
+`--no-agent-files` to skip them. If they cannot be written (for example,
+`AGENTS.md` has a damaged marker), `init` still succeeds and says so.
+
+## `varlatch agents install`
+
+```
+varlatch agents install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]
+```
+
+In a project (the directory with `varlatch.toml`, or the current directory
+when there is none), it writes:
+
+- **The skill** to `.agents/skills/varlatch/` and a copy to
+  `.claude/skills/varlatch/`. Between them, these two paths reach the coding
+  agents that support skills. They are copies, not links, because links
+  break in Windows checkouts. These directories belong to the CLI: a file in
+  them that this version does not ship is removed, and an edit is
+  overwritten.
+- **A block in `AGENTS.md`**, between `<!-- varlatch:begin -->` and
+  `<!-- varlatch:end -->`, with the rules that matter most and a pointer to
+  the skill. The file is created if needed. Everything outside the markers
+  is kept byte for byte, including Windows line endings.
+- **Adapters** for coding agents that need more than those paths:
+  - an existing `CLAUDE.md` (or else `.claude/CLAUDE.md`) gets one marked
+    line importing `AGENTS.md`, which Claude Code does not read while a
+    `CLAUDE.md` exists. A file that already imports it is left alone. With
+    only a `CLAUDE.local.md`, the CLI names the line for you to add.
+  - an existing `.gemini/settings.json` gets `AGENTS.md` added to
+    `context.fileName`, next to `GEMINI.md`. The CLI edits the file only
+    when it is formatted the way the CLI would write it (two-space JSON);
+    otherwise it prints the edit for you to make and leaves the file as it
+    is. Comments count as formatting.
+  - an existing `.aider.conf.yml` without a `read:` entry gets a marked
+    `read: AGENTS.md` line. One with a `read:` entry is yours to extend, and
+    the CLI says so.
+
+An adapter applies when its file exists. `--agent <name>` (repeatable) also
+creates the file for that coding agent when it does not exist:
+`claude-code` writes a `CLAUDE.md` with the import, `gemini` a
+`.gemini/settings.json`, and `aider` a `.aider.conf.yml`. The other accepted
+names (`codex`, `cursor`, `copilot`, `opencode`, `devin`, `amp`, `goose`,
+`zed`, `cline`, `roo`, `jules`) need no adapter; the output says which paths
+each one reads, according to its documentation. An unknown name exits 64.
+
+Running it again changes nothing unless the CLI has changed: install after
+each CLI upgrade to update the skill.
+
+### Options
+
+- **`--check`** changes nothing and exits 1 when any file differs from what
+  install would write: missing, edited, or left over from an older version.
+  Use it in CI. Edits the CLI leaves to you are listed but are not drift.
+- **`--remove`** takes back what install wrote: the skill directories (and
+  their parents, when nothing else is in them), the `AGENTS.md` block (and
+  the file, when nothing else is in it), and the marked lines in `CLAUDE.md`
+  and `.aider.conf.yml` (and a file that held only that line). The Gemini
+  CLI entry stays, because JSON has no way to mark it as the CLI's; the
+  output names it.
+- **`--scope user`** writes the skill to `~/.agents/skills/varlatch/` and
+  `~/.claude/skills/varlatch/`, for every repository on this machine. It
+  touches no instruction files, and does not take `--agent`.
+- **`--json`** prints one document: `version`, `scope`, `root`, `changes`
+  (each `path` with an `action`: `create`, `update`, `remove`, or
+  `unchanged`), `manual` (edits left to you), `leftInPlace`, `agents`, and
+  `drift`.
+
+A file with one Varlatch marker but not the other stops the command with
+status 78 and changes nothing: restore or delete the marker, then run it
+again.
+
+## `varlatch agents guide`
+
+```
+varlatch agents guide [setup|run|agent-run|self-hosting]
+```
+
+Prints the skill, or one of its references, on stdout. A coding agent with a
+shell but no skill support can read the instructions this way, and the
+`AGENTS.md` block points to it.
+
+## What this does not do
+
+The skill and the agent files tell a coding agent how to use Varlatch; they
+enforce nothing. What Varlatch protects, it protects in the CLI and the
+server, whether or not a coding agent read the skill: see
+[assisted mode](assisted-mode.md) and [agent-safe runs](agent-safe-runs.md).
+No coding agent is covered yet by an end-to-end evaluation with a model;
+this page will list those that are.
