@@ -6,8 +6,12 @@ appear on a command line or in its output: it prints names, counts, inferred
 types, and sensitivity, never a value, including in every error.
 
 ```
-varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [-e <env>]
+varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]
 ```
+
+The options may come before or after the one filename (`import --dry-run
+.env` and `import .env --dry-run` are the same). An unknown option, an
+option without its value, or a second filename exits 64 and stores nothing.
 
 ```
 $ varlatch import .env --dry-run

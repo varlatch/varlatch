@@ -27,33 +27,68 @@ long as you follow these rules.
    over to the next command.
 2. **Never read, print, or create `.env` files**, and never read the
    Varlatch credential store. To see which names a `.env` file sets, without
-   their values: `varlatch --assisted import --dry-run <file>`.
+   their values: `varlatch --assisted import <file> --dry-run`.
 3. **Never put a secret value in a command.** Store a secret with
    `varlatch --assisted import`, `values set <NAME> --generate hex:32`,
-   `--from-file <path>`, or `--stdin`, or ask the human to enter it.
+   `--from-file <path>`, or `--stdin`, or ask the human to enter it. (Inside
+   an agent-safe run your variables hold Placeholders, not secrets: see rule 8.)
 4. **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too
-   short to mask. Report the names in the error. Never add `--allow-unmasked`
-   or `--no-redact` yourself; those are the human's decisions.
-5. **When a value is missing**, report its name and environment and ask the
-   human. Never invent a value.
-6. **When a step needs the human** (signing in, entering a secret, allowing
-   an unmaskable value, launching an agent-safe run), give them the exact
+   short to mask. Report the names in the error, then stop and ask. Never add
+   `--allow-unmasked` or `--no-redact` yourself; when the human approves
+   showing one item unmasked, the option goes before `--`:
+   `varlatch --assisted run --allow-unmasked <NAME> -- <command>`.
+5. **Never replace an existing value or change an item's sensitivity
+   without the human's approval for that named item.** Approval for one item
+   does not cover another: never regenerate or reclassify items the human did
+   not name, even to make a command run.
+6. **When a value is missing**, report its name and environment, and give
+   the human this command for their own terminal, where it prompts without
+   showing the value (no `--assisted`: assisted mode never prompts), or point
+   them to the dashboard. Never invent a value.
+
+   ```text
+   varlatch values set <NAME> -e <environment>
+   ```
+7. **When a step needs the human** (signing in, entering a secret, approving
+   a change to a value, launching an agent-safe run), give them the exact
    command or URL, then stop and wait.
-7. **Inside an agent-safe run** (`VARLATCH_AGENT_RUN` is set), secrets are
-   Placeholders. Call allowed APIs with `varlatch request`, not curl or
-   fetch, which the Broker refuses.
-8. **Read machine output.** Pass `--json` and parse it, never the human
+8. **Inside an agent-safe run** (`VARLATCH_AGENT_RUN` is set), your
+   variables hold Placeholders, not secret values. Putting a Placeholder in
+   a `varlatch --assisted request` header or body target is how you use a
+   secret there; a real secret value stays forbidden. curl and fetch are
+   refused by the Broker. For example:
+   `varlatch --assisted request -X POST -H "Authorization: Bearer $STRIPE_KEY" --json '{"amount": 500}' https://api.example.com/v1/charges`
+9. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
    be reached, 77 not signed in or denied, 78 configuration that cannot run.
    On 69, a sandbox around your commands may be blocking the connection: tell
    the human which server the command tried to reach (`varlatch --assisted
    context --json` shows it), and ask them to allow that connection. Do not
    try to work around it.
-9. **Know the limits.** Output is masked only for values Varlatch delivered
-   or knows by name, and only in the forms it recognises. Never print,
-   encode, or transform environment values.
+10. **Know the limits.** Output is masked only for values Varlatch delivered
+    or knows by name, and only in the forms it recognises. Never print,
+    encode, or transform environment values.
+
+## Moving a project's `.env` into Varlatch
+
+```sh
+varlatch --assisted import .env --dry-run --json
+varlatch --assisted import .env --contract --plain LOG_LEVEL --delete-source --json
+varlatch --assisted contract activate <revision>
+varlatch --assisted run -- <command>
+```
+
+1. The dry run lists names, inferred types, and sensitivity; no values.
+2. The import stores every value and adds the new items to a Contract
+   revision. New items are Secrets unless named with `--plain`: use it only
+   for items confirmed not secret (a port, a log level), and ask the human
+   when unsure. `--delete-source` deletes the file only after every value
+   was stored.
+3. Activate the revision the import printed (`contract.revision.id` in its
+   JSON output).
+4. Start the app with its configuration.
 
 ## Common commands
 
@@ -63,7 +98,6 @@ varlatch --assisted values list --json
 varlatch --assisted validate --json
 varlatch --assisted run -- npm test
 varlatch --assisted values set SESSION_SECRET --generate hex:32
-varlatch --assisted import .env --dry-run
 ```
 
 ## More

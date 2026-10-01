@@ -35,9 +35,6 @@ export interface GenerateSpec {
   size: number;
 }
 
-/** The flags of `values set` and `values rotate` that take a value, and those that do not. */
-const VALUED_FLAGS = new Set(["--from-file", "--generate", "--grace", "--environment", "-e", "--server"]);
-const BARE_FLAGS = new Set(["--stdin"]);
 
 /** At least 128 bits of randomness; at most what fits comfortably in an environment. */
 const MIN_BYTES = 16;
@@ -85,26 +82,16 @@ export function describeGenerated(spec: GenerateSpec): string {
 }
 
 /**
- * The value source of `values set <ITEM> [<value>]` or `values rotate <ITEM>
- * [<new-value>]`: `args` starts with the subcommand and the item. At most one
- * source; none means the hidden prompt.
+ * The value source of `values set` or `values rotate`, from their parsed
+ * options (the command line is checked strictly first): at most one; none
+ * means the hidden prompt.
  */
-export function parseValueSource(args: string[]): ValueSource {
+export function valueSourceOf(options: { value?: string | undefined; stdin: boolean; file?: string | undefined; generate?: string | undefined }): ValueSource {
   const sources: ValueSource[] = [];
-  const candidate = args[2];
-  if (candidate !== undefined && !VALUED_FLAGS.has(candidate) && !BARE_FLAGS.has(candidate)) {
-    sources.push({ kind: "argument", value: candidate });
-  }
-  for (let i = 2; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === "--stdin") sources.push({ kind: "stdin" });
-    if (arg === "--from-file" || arg === "--generate") {
-      const value = args[i + 1];
-      if (value === undefined) throw new SecretInputError(`${arg} needs a value`, true);
-      sources.push(arg === "--from-file" ? { kind: "file", path: value } : { kind: "generate", spec: parseGenerateSpec(value) });
-    }
-    if (VALUED_FLAGS.has(arg as string)) i++;
-  }
+  if (options.value !== undefined) sources.push({ kind: "argument", value: options.value });
+  if (options.stdin) sources.push({ kind: "stdin" });
+  if (options.file !== undefined) sources.push({ kind: "file", path: options.file });
+  if (options.generate !== undefined) sources.push({ kind: "generate", spec: parseGenerateSpec(options.generate) });
   if (sources.length > 1) {
     throw new SecretInputError("give the value one way only: as an argument, --stdin, --from-file <path>, or --generate <spec>", true);
   }

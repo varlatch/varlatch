@@ -50,6 +50,44 @@ fixes.
   adapter's file.
 - New `varlatch agents guide [topic]` prints the skill or one of its
   references, for a coding agent without skill support.
+- From the first agent evaluation (it failed; see the coding-agents docs):
+  the skill now has the whole onboarding pattern in its main file
+  (`import <file> --contract --plain <non-secret> --delete-source`, then
+  `contract activate`); requires the human's approval, for the named item
+  only, before an existing value is replaced or an item's sensitivity
+  changes; gives the human-terminal command for a missing value
+  (`varlatch values set <NAME> -e <environment>`); shows `--allow-unmasked`
+  before `--`; and says, in the skill and the AGENTS.md block, that inside
+  an agent-safe run Placeholders belong in `varlatch --assisted request`
+  targets, with an example.
+- **Behaviour change:** `varlatch import` takes its options on either side
+  of the filename (`import --dry-run .env` exited 64 although the skill
+  showed it) and now refuses an unknown option, a missing option value, or
+  a second filename with status 64; before, it ignored an option it did not
+  know.
+- **Behaviour change:** `varlatch values set` and `values rotate` check
+  their command line strictly, in every mode, before anything is read,
+  prompted for, or written. An unknown option, an option without its value,
+  an option given twice (`-e` and `--environment` count as one), an extra
+  argument, or a `--grace` that is not a whole number exits 64 and stores
+  nothing. Before, an unknown option was taken as the value: in a terminal,
+  `values set STRIPE_KEY --env production` stored the literal `--env` in
+  the default environment. A value that begins with `-` now goes after
+  `--` (`values set OFFSET -- -1`); `--json`, which these commands never
+  supported, is refused. `import` also counts `-e` and `--environment` as
+  one option.
+- `values set` and `values rotate` refusals in assisted mode (a value on
+  the command line, or no value) now name the environment in every command
+  they suggest, and put first the human-terminal command for a value from
+  elsewhere: `varlatch values set <ITEM> -e <environment>`. Before, the
+  suggested command had no `-e` and targeted the default environment.
+- The exit-78 message for a Secret too short to mask now says every remedy
+  is the human's decision, for that item only (replacing the value
+  overwrites it), and shows the override as a command with the option
+  before `--`. Both suggested commands name the refused run's environment,
+  and its server when overridden; the retry also keeps `--strict`,
+  `--allow-inherited`, and earlier allowances. Before, a remedy for a
+  production refusal replaced or showed the default environment's value.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than
   work around it.

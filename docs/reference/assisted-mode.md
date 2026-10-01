@@ -53,16 +53,22 @@ varlatch --assisted <command> [args...]
 - **A Secret too short to mask stops the run.** Values shorter than 8 bytes
   cannot be masked (masking them would corrupt unrelated output, and the
   masks would give the value away). The run names those items and exits
-  with status 78 before the command starts:
+  with status 78 before the command starts. For `run -e production`:
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    Replace the value with a longer one, for example: varlatch --assisted values set PIN --generate hex:32
-    If an item is not a secret, correct its sensitivity in the Contract.
-    Or the human may approve showing it unmasked in this run: --allow-unmasked PIN
-    (the human's decision: an agent asks for it rather than adding it).
+    Ask the human before changing anything. Each choice is theirs, for PIN only:
+    - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set PIN -e production --generate hex:32
+    - if it is not a secret, correct its sensitivity in the Contract
+    - show it unmasked in this run only: varlatch --assisted run -e production --allow-unmasked PIN -- <command>
+    An agent reports this and waits; approval for one item does not cover another.
   Nothing was started.
   ```
+
+  Both commands act on the refused run's values: they name its environment
+  (always, even when it came from the default), its server when the run
+  overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
+  `--strict`, `--allow-inherited`, and earlier `--allow-unmasked` options.
 
   `--allow-unmasked <NAME>` (repeatable) lets that item through unmasked in
   this run, and the run says so. It is refused outside assisted mode.
@@ -77,10 +83,14 @@ varlatch --assisted <command> [args...]
   nothing is stored. An item counts as a Secret when the active Contract marks it
   sensitive, when it is not in the Contract, or when the Contract cannot be
   read. The refusal names the safe forms below, and suggests asking the
-  human to run `varlatch values set <ITEM>` in their own terminal, or to use
-  the dashboard. Non-sensitive items are unaffected.
+  human to run `varlatch values set <ITEM> -e <environment>` in their own
+  terminal, or to use the dashboard. Non-sensitive items are unaffected.
 - **There is no prompt** when no value is given: a coding agent cannot type
-  into one.
+  into one. The refusal gives the same command for the human.
+- Every command a refusal suggests names the environment the agent's
+  command resolved (`-e`), so a handed-over command targets the same
+  environment. The human's command has no `--assisted`, so it prompts
+  without showing the value.
 
 ## Giving a value without the command line
 
@@ -109,6 +119,14 @@ varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
   and function keys are ignored rather than stored.
 - **Give the value one way only.** Two sources are refused. A value that is
   not well-formed Unicode text is refused from every source.
+- **The command line is checked strictly**, in every mode, before anything
+  is read, prompted for, or written. An unknown option (`--env`, or
+  `--environment=production`, which is not supported), an option without
+  its value, an option given twice (`-e` and `--environment` count as one),
+  or an extra argument exits with status 64 and stores nothing. A typo can
+  never become the stored value. A value that begins with `-` goes after
+  `--`: `varlatch values set OFFSET -- -1`. `--grace` (rotate only) takes a
+  whole number of seconds.
 
 ## Limits
 

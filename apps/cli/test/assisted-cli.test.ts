@@ -118,7 +118,8 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
         validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
       });
     }
-    const put = new RegExp(`^${ENV_PATH}/values/([A-Z0-9_]+)$`).exec(url);
+    // Any environment: a handoff for production must reach production's path.
+    const put = /^\/v1\/organizations\/acme\/projects\/web\/environments\/[a-z]+\/values\/([A-Z0-9_]+)$/.exec(url);
     if (put && req.method === "PUT") {
       if (failPut.has(put[1]!)) return json(500, { error: { code: "INTERNAL", message: "injected", requestId: "req_x" } });
       return json(200, { versionId: `ver_new_${put[1]}` });
@@ -294,7 +295,12 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
-    expect(r.stderr).toMatch(/--allow-unmasked PIN/);
+    // Every remedy is the human's, for this item only; replacing overwrites.
+    expect(r.stderr).toMatch(/Ask the human before changing anything\. Each choice is theirs, for PIN only:/);
+    expect(r.stderr).toMatch(/overwrites the current value: varlatch --assisted values set PIN -e development --generate hex:32/);
+    expect(r.stderr).toMatch(/approval for one item does not cover another/);
+    // The override is shown as a command with the option before `--`, where the CLI reads it.
+    expect(r.stderr).toMatch(new RegExp(`varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
     expect(r.stderr).toMatch(/Nothing was started\./);
     expect(existsSync(marker)).toBe(false);
     expect(r.stdout + r.stderr).not.toContain(PIN);
@@ -438,7 +444,7 @@ describe("values set and values rotate: Secret input", () => {
     expect(r.stdout + r.stderr).not.toContain("rotated-value-202");
     const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "argv-rotated-9"]);
     expect(refused.code).toBe(64);
-    expect(refused.stderr).toMatch(/values rotate API_TOKEN --generate hex:32/);
+    expect(refused.stderr).toMatch(/values rotate API_TOKEN -e development --generate hex:32/);
   });
 
   it("with no value: assisted mode never prompts; otherwise a non-terminal is told how to give one", async () => {
@@ -451,12 +457,98 @@ describe("values set and values rotate: Secret input", () => {
     expect(puts()).toEqual([]);
   });
 
+  /** The command the refusal hands to the human: the line after "...or to use the dashboard:". */
+  const handoff = (stderr: string) => /use the dashboard:\n {4}(varlatch values .+)\n/.exec(stderr)?.[1];
+
+  it("the handoff names the environment, with or without -e, and never adds --assisted", async () => {
+    const production = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production"]);
+    expect(production.code).toBe(64);
+    expect(handoff(production.stderr)).toBe("varlatch values set STRIPE_KEY -e production");
+    const byDefault = await cli(["--assisted", "values", "set", "API_TOKEN"]);
+    // Without -e the command still names the environment it resolved, so it works anywhere.
+    expect(handoff(byDefault.stderr)).toBe("varlatch values set API_TOKEN -e development");
+    expect(production.stderr).toMatch(/values set STRIPE_KEY -e production --generate hex:32/);
+    expect(puts()).toEqual([]);
+  });
+
+  it("the handoff, run as printed in the human's terminal, prompts and stores the value in that environment", async () => {
+    const refused = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production"]);
+    const printed = handoff(refused.stderr);
+    expect(printed).toBeDefined();
+    const args = printed!.split(" ").slice(1);
+    const { code, terminal } = await underTerminal(args, {}, { after: "(input hidden): ", text: "typed-by-human-55\r" });
+    expect(code).toBe(0);
+    expect(terminal).not.toContain("typed-by-human-55");
+    expect(puts()).toEqual([
+      expect.objectContaining({ url: "/v1/organizations/acme/projects/web/environments/production/values/STRIPE_KEY", body: { value: "typed-by-human-55" } }),
+    ]);
+    // Control: the same command with --assisted added, as agents handed it over in the evaluation, stores nothing.
+    requests = [];
+    const assisted = await cli(["--assisted", ...args]);
+    expect(assisted.code).toBe(64);
+    expect(puts()).toEqual([]);
+  });
+
   it("refuses two sources and weak generators", async () => {
     const two = await cli(["values", "set", "API_TOKEN", "v", "--stdin"]);
     expect(two.stderr).toMatch(/one way only/);
     const weak = await cli(["values", "set", "API_TOKEN", "--generate", "hex:4"]);
     expect(weak.stderr).toMatch(/from 16 to 4096 bytes/);
     expect(puts()).toEqual([]);
+  });
+});
+
+describe("values set and values rotate: a strict command line", () => {
+  // Each exits 64 before anything is read, prompted, or written: no request
+  // reaches the server. Before, `values set STRIPE_KEY --env production` in
+  // a terminal stored the literal "--env" in the default environment.
+  const both: [string, string[], RegExp][] = [
+    ["an unknown option", ["--env", "production"], /unknown option --env/],
+    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=production/],
+    ["--json, which these commands do not take", ["--json"], /unknown option --json/],
+    ["-e without a value", ["-e"], /--environment needs a value/],
+    ["--from-file without a path", ["--from-file"], /--from-file needs a value/],
+    ["--generate without a spec", ["--generate"], /--generate needs a value/],
+    ["--server followed by another option", ["--server", "--stdin"], /--server needs a value/],
+    ["-e and --environment both", ["-e", "production", "--environment", "development"], /--environment \(or -e\) given twice/],
+    ["-e twice", ["-e", "development", "-e", "development"], /--environment \(or -e\) given twice/],
+    ["--from-file twice", ["--from-file", "a", "--from-file", "b"], /--from-file given twice/],
+    ["an extra argument", ["value", "extra"], /unexpected argument extra/],
+    ["a value that begins with a dash, before --", ["-x9-value"], /unknown option -x9-value \(a value that begins with "-" goes after --\)/],
+  ];
+  const cases: [string, string, string[], RegExp][] = [
+    ...both.flatMap(([name, extra, message]): [string, string, string[], RegExp][] => [["set", name, extra, message], ["rotate", name, extra, message]]),
+    ["rotate", "--grace without a value", ["--grace"], /--grace needs a value/],
+    ["rotate", "--grace that is not a number", ["--grace", "soon"], /--grace needs a whole number of seconds, not soon/],
+    ["rotate", "--grace twice", ["--grace", "60", "--grace", "60"], /--grace given twice/],
+    ["set", "--grace, which only rotate takes", ["--grace", "60"], /unknown option --grace/],
+  ];
+
+  it.each(cases)("values %s, %s: assisted, exit 64 and nothing sent", async (sub, _name, extra, message) => {
+    const r = await cli(["--assisted", "values", sub, "API_TOKEN", ...extra]);
+    expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(message);
+    expect(requests).toEqual([]);
+  });
+
+  describe.skipIf(!hasScript)("in the human's terminal", () => {
+    it.each(cases)("values %s, %s: exit 64 without a prompt, and nothing sent", async (sub, _name, extra, message) => {
+      const { code, terminal } = await underTerminal(["values", sub, "API_TOKEN", ...extra], {}, { after: "(input hidden): ", text: "typed-after-a-typo-91\r" });
+      expect(code).toBe(64);
+      expect(terminal).toMatch(message);
+      expect(terminal).not.toContain("(input hidden)");
+      expect(requests).toEqual([]);
+    });
+  });
+
+  it("the documented forms still work: options on either side of the value, -- before a value that begins with a dash, rotate's --grace", async () => {
+    expect((await cli(["--assisted", "values", "set", "PORT", "-e", "development", "9090"])).code).toBe(0);
+    expect((await cli(["values", "set", "PORT", "--", "-1"])).code).toBe(0);
+    expect((await cli(["--assisted", "values", "set", "API_TOKEN", "--environment", "development", "--stdin"], { input: "from-stdin-value-27\n" })).code).toBe(0);
+    expect(requests.filter((r) => r.method === "PUT").map((r) => r.body)).toEqual([{ value: "9090" }, { value: "-1" }, { value: "from-stdin-value-27" }]);
+    const rotated = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--grace", "60", "--stdin"], { input: "rotated-value-303\n" });
+    expect(rotated.code).toBe(0);
+    expect(requests.find((r) => r.url.endsWith("/rotations"))?.body).toEqual({ value: "rotated-value-303", graceSeconds: 60 });
   });
 });
 

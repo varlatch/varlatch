@@ -68,10 +68,11 @@ describe("planAssistedRedaction", () => {
   });
 
   it("the refusal names items and remedies, never a value", () => {
-    const lines = unmaskableRefusal(["PIN", "REDIS_PASSWORD"]).join("\n");
+    const lines = unmaskableRefusal(["PIN", "REDIS_PASSWORD"], { target: "-e production", runOptions: ["--strict"] }).join("\n");
     expect(lines).toMatch(/shorter than 8 bytes.*: PIN, REDIS_PASSWORD/);
-    expect(lines).toMatch(/--generate hex:32/);
-    expect(lines).toMatch(/--allow-unmasked PIN/);
+    // Every command names the run's environment, so it acts on the same values.
+    expect(lines).toMatch(/varlatch --assisted values set PIN -e production --generate hex:32/);
+    expect(lines).toMatch(/varlatch --assisted run -e production --strict --allow-unmasked PIN -- <command>/);
     expect(lines).not.toMatch(/1234567|abcdefg/);
   });
 });

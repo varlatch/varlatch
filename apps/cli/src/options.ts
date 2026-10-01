@@ -21,6 +21,10 @@ export interface OptionSpec {
   booleans?: readonly string[];
   /** How many positional arguments the command takes (default none). */
   positionals?: number;
+  /** Other names for an option, as `{ "-e": "--environment" }`: either name counts as the option, once. */
+  aliases?: Readonly<Record<string, string>>;
+  /** Whether `--` ends the options, so a positional argument may begin with "-" (a value, for instance). */
+  endOfOptions?: boolean;
 }
 
 export interface ParsedOptions {
@@ -32,8 +36,21 @@ export interface ParsedOptions {
 
 export function parseOptions(args: readonly string[], spec: OptionSpec): ParsedOptions {
   const parsed: ParsedOptions = { values: new Map(), lists: new Map(), booleans: new Set(), positionals: [] };
+  const positional = (arg: string) => {
+    if (parsed.positionals.length >= (spec.positionals ?? 0)) throw new OptionsError(`unexpected argument ${arg}`);
+    parsed.positionals.push(arg);
+  };
+  // "--environment (or -e)": an option named with its aliases.
+  const named = (option: string) => {
+    const others = Object.entries(spec.aliases ?? {}).filter(([, to]) => to === option).map(([from]) => from);
+    return others.length > 0 ? `${option} (or ${others.join(", ")})` : option;
+  };
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i] as string;
+    if (spec.endOfOptions && args[i] === "--") {
+      for (const rest of args.slice(i + 1)) positional(rest);
+      break;
+    }
+    const arg = spec.aliases?.[args[i] as string] ?? (args[i] as string);
     if (spec.booleans?.includes(arg)) {
       parsed.booleans.add(arg);
       continue;
@@ -43,16 +60,17 @@ export function parseOptions(args: readonly string[], spec: OptionSpec): ParsedO
       const value = args[++i];
       if (value === undefined || value.startsWith("-")) throw new OptionsError(`${arg} needs a value`);
       if (single) {
-        if (parsed.values.has(arg)) throw new OptionsError(`${arg} given twice`);
+        if (parsed.values.has(arg)) throw new OptionsError(`${named(arg)} given twice`);
         parsed.values.set(arg, value);
       } else {
         parsed.lists.set(arg, [...(parsed.lists.get(arg) ?? []), value]);
       }
       continue;
     }
-    if (arg.startsWith("-")) throw new OptionsError(`unknown option ${arg}`);
-    if (parsed.positionals.length >= (spec.positionals ?? 0)) throw new OptionsError(`unexpected argument ${arg}`);
-    parsed.positionals.push(arg);
+    if (arg.startsWith("-")) {
+      throw new OptionsError(`unknown option ${arg}${spec.endOfOptions ? ' (a value that begins with "-" goes after --)' : ""}`);
+    }
+    positional(arg);
   }
   return parsed;
 }

@@ -35,7 +35,7 @@ import {
   describeGenerated,
   generateValue,
   isWellFormedText,
-  parseValueSource,
+  valueSourceOf,
   promptHidden,
   readAll,
   readValueFile,
@@ -88,6 +88,17 @@ function printJson(doc: Record<string, unknown>): void {
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/**
+ * The options a suggested command needs to reach the same environment and
+ * server from a new shell: always the resolved environment, and the server
+ * when this command overrode it (by flag, or by VARLATCH_SERVER, which the
+ * next shell may not have). The project comes from the repository.
+ */
+function contextOptions(args: string[], ctx: ResolvedContext): string {
+  const overridden = flag(args, "--server") !== undefined || Boolean(process.env.VARLATCH_SERVER);
+  return `-e ${ctx.environment}${overridden ? ` --server ${ctx.server}` : ""}`;
 }
 
 function has(args: string[], name: string): boolean {
@@ -307,19 +318,31 @@ async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: st
 async function obtainValue(
   sub: "set" | "rotate",
   item: string,
-  args: string[],
+  where: string,
+  parsed: ParsedOptions,
   mode: AssistedMode,
   sensitive: () => Promise<boolean>,
 ): Promise<{ value: string; generated?: GenerateSpec }> {
+  // Every command names the environment (and an overridden server): a
+  // handoff without -e would target the default one. The human's command
+  // has no --assisted, so it prompts.
+  const target = `${item} ${where}`;
   const safeForms = [
-    "  Store it without putting the value in a command:",
-    `    varlatch --assisted values ${sub} ${item} --generate hex:32       a new random value`,
-    `    varlatch --assisted values ${sub} ${item} --from-file <path>      from a file`,
-    `    <command> | varlatch --assisted values ${sub} ${item} --stdin     from another command's output`,
-    `  Or ask the human to run \`varlatch values ${sub} ${item}\` in their own terminal (a hidden prompt), or to use the dashboard.`,
+    "  A value from elsewhere (a provider's key, a password) is the human's to enter. Ask them to run this",
+    "  in their own terminal, where it prompts without showing the value, or to use the dashboard:",
+    `    varlatch values ${sub} ${target}`,
+    "  Or store it without putting the value in a command:",
+    `    varlatch --assisted values ${sub} ${target} --generate hex:32       a new random value, for a value nothing else holds`,
+    `    varlatch --assisted values ${sub} ${target} --from-file <path>      from a file`,
+    `    <command> | varlatch --assisted values ${sub} ${target} --stdin     from another command's output`,
   ].join("\n");
   try {
-    const source = parseValueSource(args);
+    const source = valueSourceOf({
+      value: parsed.positionals[2],
+      stdin: parsed.booleans.has("--stdin"),
+      file: parsed.values.get("--from-file"),
+      generate: parsed.values.get("--generate"),
+    });
     switch (source.kind) {
       case "argument":
         if (mode.on && (await sensitive())) {
@@ -657,6 +680,8 @@ async function main(): Promise<void> {
           console.log(`Selected ${name} for this repository${tier ? ` (tier ${tier})` : ""}.`);
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const ctx = context(args);
           const envs = await client(ctx).listEnvironments(ctx.organization, ctx.project);
@@ -792,7 +817,7 @@ async function main(): Promise<void> {
               start: async (env, secrets, secretNames) => {
                 if (!assistedRedaction) return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
                 const plan = planAssistedRedaction(assistedRedactionSet(secrets, env, process.env, secretNames), allowUnmasked);
-                if (!assistedGate(plan, log)) return STRICT_EXIT;
+                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: ["--strict", ...flags(preArgs, "--allow-inherited").map((n) => `--allow-inherited ${n}`)] })) return STRICT_EXIT;
                 return runChild(cmd, cmdArgs, env, plan.entries, "assisted");
               },
               log,
@@ -885,7 +910,7 @@ async function main(): Promise<void> {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);
           const plan = planAssistedRedaction(set, allowUnmasked);
-          if (!assistedGate(plan, log)) process.exit(STRICT_EXIT);
+          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx) })) process.exit(STRICT_EXIT);
           process.exit(await runChild(cmd, cmdArgs, env, plan.entries, "assisted"));
         }
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
@@ -934,15 +959,38 @@ async function main(): Promise<void> {
 
       case "values": {
         const sub = args[0];
-        const ctx = context(args);
-        const api = client(ctx);
         if (sub === "set" || sub === "rotate") {
           const usage =
             sub === "set"
-              ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
-              : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
-          const item = args[1] && !args[1].startsWith("-") ? args[1] : usageError(usage);
-          const obtained = await obtainValue(sub, item, args, assisted, () => sensitiveItem(api, ctx, item));
+              ? "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
+              : "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
+          // Strict (ADR-0043 Decision 10), before anything is read, prompted
+          // or written: an option typo such as `--env production` must never
+          // become the stored value. A value that begins with "-" goes after `--`.
+          const parsed = strictOptions(
+            `values ${sub}`,
+            args,
+            {
+              values: ["--environment", "--server", "--from-file", "--generate", ...(sub === "rotate" ? ["--grace"] : [])],
+              booleans: ["--stdin"],
+              aliases: { "-e": "--environment" },
+              positionals: 3,
+              endOfOptions: true,
+            },
+            usage,
+          );
+          const item = parsed.positionals[1];
+          if (item === undefined || item.startsWith("-")) usageError(usage);
+          const grace = parsed.values.get("--grace");
+          if (grace !== undefined && !/^\d+$/.test(grace)) usageError(`varlatch values rotate: --grace needs a whole number of seconds, not ${grace}\n${usage}`);
+          // The context from the parsed options only: nothing after `--` is read as an option.
+          const where = [
+            ...(parsed.values.has("--environment") ? ["--environment", parsed.values.get("--environment") as string] : []),
+            ...(parsed.values.has("--server") ? ["--server", parsed.values.get("--server") as string] : []),
+          ];
+          const ctx = context(where);
+          const api = client(ctx);
+          const obtained = await obtainValue(sub, item, contextOptions(where, ctx), parsed, assisted, () => sensitiveItem(api, ctx, item));
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";
@@ -951,16 +999,17 @@ async function main(): Promise<void> {
             console.log(`${item} set (version ${version.versionId})${how}.`);
             return;
           }
-          const graceStr = flag(args, "--grace");
           const rot = await api.beginRotation(ctx.organization, ctx.project, ctx.environment, item, {
             value: obtained.value,
-            ...(graceStr ? { graceSeconds: Number(graceStr) } : {}),
+            ...(grace !== undefined ? { graceSeconds: Number(grace) } : {}),
           });
           console.log(
             `${item} rotating${how} — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
           );
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment);
           if (has(args, "--json")) {
@@ -1051,9 +1100,18 @@ async function main(): Promise<void> {
         // appear in its output.
         const usage =
           "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]";
-        const file = args[0] && !args[0].startsWith("-") ? args[0] : usageError(usage);
+        // One filename, with options on either side of it (agents write
+        // `import --dry-run .env` as often as `import .env --dry-run`), parsed
+        // strictly: an unknown option, a missing value, or a second filename is 64.
+        const opts = strictOptions(
+          "import",
+          args,
+          { values: ["--environment", "--server"], aliases: { "-e": "--environment" }, lists: ["--plain"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
+          usage,
+        );
+        const file = opts.positionals[0] ?? usageError(usage);
         const { runImport, ImportError } = await import("./importCommand.js");
-        const dryRun = has(args, "--dry-run");
+        const dryRun = opts.booleans.has("--dry-run");
         let target: Parameters<typeof runImport>[1];
         try {
           const ctx = context(args);
@@ -1067,10 +1125,10 @@ async function main(): Promise<void> {
             {
               file,
               dryRun,
-              contract: has(args, "--contract"),
-              plain: flags(args, "--plain"),
-              deleteSource: has(args, "--delete-source"),
-              json: has(args, "--json"),
+              contract: opts.booleans.has("--contract"),
+              plain: opts.lists.get("--plain") ?? [],
+              deleteSource: opts.booleans.has("--delete-source"),
+              json: opts.booleans.has("--json"),
             },
             target,
             { out: (line) => console.log(line), err: (line) => console.error(line) },
@@ -1367,6 +1425,8 @@ async function main(): Promise<void> {
           console.log(`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const ctx = context(args);
           const page = await client(ctx).listProjects(ctx.organization);
