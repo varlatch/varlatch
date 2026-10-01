@@ -98,7 +98,7 @@ function flag(args: string[], name: string): string | undefined {
  * which the run does not read (only its existence is checked, never its
  * content; it may hold values already stored, or older copies).
  */
-function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfiguration, cmd: string): string[] {
+function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfiguration, cmd: string, where: string): string[] {
   const notices: string[] = [];
   // Facts only: inherited variables may still configure the command, and a .env file may be an older copy.
   if ((effective.items ?? []).length === 0) {
@@ -110,7 +110,8 @@ function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfigurat
       const shown = relative(process.cwd(), file) || ".env";
       notices.push(
         `varlatch: ${shown} exists and is not read by Varlatch, which cannot tell whether its values are stored already (or older copies). ` +
-          `To compare names, without values: varlatch --assisted import ${shown} --dry-run --json`,
+          // The run's environment and server, so the comparison reads the store this run used.
+          `To compare names, without values: varlatch --assisted import ${shown} ${where} --dry-run --json`,
       );
     }
   }
@@ -950,7 +951,7 @@ async function main(): Promise<void> {
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
         const env = buildEnv(process.env, effective);
         if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
-        if (assisted.on) for (const line of assistedRunNotices(ctx, effective, cmd)) log(line);
+        if (assisted.on) for (const line of assistedRunNotices(ctx, effective, cmd, contextOptions(preArgs, ctx))) log(line);
         if (assistedRedaction) {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);

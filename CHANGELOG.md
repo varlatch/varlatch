@@ -103,7 +103,10 @@ fixes.
   environment already has, unless that item is named with `--replace
   <NAME>`; a leftover file may be an older copy of a value rotated since.
   The dry run, in every mode, marks names the environment already has
-  (`existing` in its JSON). An import outside assisted mode still replaces.
+  (`existing` in its JSON); an identical plain value, compared in its stored
+  form, is not a replacement. A retry after a partial import needs the
+  same approval for the values it now finds stored. An import outside
+  assisted mode still replaces.
 - Inside an agent-safe run, `varlatch context --json` lists the variables
   holding Placeholders (`agentRun.placeholders`, names only), and a nested
   `varlatch run` masks the run's own credentials (the agent-run credential,

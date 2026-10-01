@@ -31,8 +31,9 @@ long as you follow these rules.
    Varlatch credential store. To see which names a `.env` file sets, without
    their values: `varlatch --assisted import <file> --dry-run`. A `.env`
    file may hold values not yet in Varlatch, or older copies of values that
-   are: the dry run marks the names the environment already has. Import only
-   with the human's approval for each such name (see below). A repository
+   are: the dry run (`-e <environment>` for the environment you work in)
+   marks the names it already has. Import only with the human's approval for
+   each such name (see below). A repository
    with `varlatch.toml` is already set up: never run `varlatch init` there.
 3. **Never put a secret value in a command.** Store a secret with
    `varlatch --assisted import`, `values set <NAME> --generate hex:32`,

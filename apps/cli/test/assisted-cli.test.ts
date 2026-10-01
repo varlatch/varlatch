@@ -84,7 +84,8 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url.startsWith(`${ENV_PATH}/effective-configuration`)) {
       return json(200, {
         environmentId: "env_1",
-        items: stored.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: i.sensitive ? null : i.value })),
+        // As the daemon: metadata only, unless include=values, which returns non-sensitive values only.
+        items: stored.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: !i.sensitive && url.includes("include=values") ? i.value : null })),
         manifest: {
           manifestVersion: 1,
           projectId: "prj_1",
@@ -122,6 +123,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     const put = /^\/v1\/organizations\/acme\/projects\/web\/environments\/[a-z]+\/values\/([A-Z0-9_]+)$/.exec(url);
     if (put && req.method === "PUT") {
       if (failPut.has(put[1]!)) return json(500, { error: { code: "INTERNAL", message: "injected", requestId: "req_x" } });
+      // Stored, as the server would: a later request sees it (a new item is a Secret, as outside a Contract).
+      if (url.startsWith(`${ENV_PATH}/`)) {
+        const before = stored.find((i) => i.name === put[1]);
+        stored = [...stored.filter((i) => i.name !== put[1]), { name: put[1]!, sensitive: before?.sensitive ?? true, value: (body as { value: string }).value }];
+      }
       return json(200, { versionId: `ver_new_${put[1]}` });
     }
     const rotate = new RegExp(`^${ENV_PATH}/values/([A-Z0-9_]+)/rotations$`).exec(url);
@@ -305,7 +311,7 @@ describe("assisted run: notices before the command starts", () => {
       const r = await run(["--assisted"]);
       expect(r.code).toBe(0);
       expect(r.stderr).toContain(
-        "varlatch: .env exists and is not read by Varlatch, which cannot tell whether its values are stored already (or older copies). To compare names, without values: varlatch --assisted import .env --dry-run --json",
+        "varlatch: .env exists and is not read by Varlatch, which cannot tell whether its values are stored already (or older copies). To compare names, without values: varlatch --assisted import .env -e development --dry-run --json",
       );
       expect(r.stderr).not.toMatch(/not in Varlatch yet|move them in|once moved in/);
       expect(r.stdout + r.stderr).not.toContain("dotenv-content-never-read-58");
@@ -687,6 +693,25 @@ describe("varlatch import", () => {
       expect(unknown.code).toBe(1);
       expect(unknown.stderr).toMatch(/--replace names NOT_IN_FILE, which .* does not set/);
       expect(puts()).toEqual([]);
+    });
+
+    it("after a partial import, the retry advice asks for approval again, and a value rotated meanwhile is not replaced", async () => {
+      const file = envFile("FIRST_KEY=first-key-from-file-21\nSECOND_KEY=second-key-from-file-22\n");
+      failPut.add("SECOND_KEY");
+      const partial = await cli(["--assisted", "import", file]);
+      expect(partial.code).toBe(1);
+      expect(partial.stderr).toMatch(/1 of 2 value\(s\) stored\. Fix the cause and run the import again: it now finds FIRST_KEY stored, and replaces it only with the human's approval for that item \(--replace <NAME>\)\./);
+      expect(partial.stderr).not.toMatch(/--replace FIRST_KEY/);
+      // FIRST_KEY is rotated before the retry; the file still holds the old value.
+      stored = stored.map((i) => (i.name === "FIRST_KEY" ? { ...i, value: "first-key-rotated-meanwhile-23" } : i));
+      failPut.clear();
+      requests = [];
+      const retry = await cli(["--assisted", "import", file]);
+      expect(retry.code).toBe(78);
+      expect(retry.stderr).toMatch(/development already has a value for FIRST_KEY;/);
+      expect(puts()).toEqual([]);
+      expect(stored.find((i) => i.name === "FIRST_KEY")?.value).toBe("first-key-rotated-meanwhile-23");
+      expect(partial.stdout + partial.stderr + retry.stdout + retry.stderr).not.toMatch(/first-key-from-file-21|second-key-from-file-22|first-key-rotated/);
     });
 
     it("outside assisted mode the import still replaces, as documented", async () => {

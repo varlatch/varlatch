@@ -310,7 +310,7 @@ describe("completion gaps from the second agent evaluation", () => {
     const block = agentsBlock();
     const skill = SKILL_FILES["SKILL.md"] as string;
     expect(block).toMatch(/never run `varlatch init`/);
-    expect(block).toMatch(/A `\.env` file here may hold\s+values not yet in Varlatch, or older copies of values that are: compare names first, without reading it\s+\(`varlatch --assisted import \.env --dry-run --json` marks those the environment already has\)/);
+    expect(block).toMatch(/A `\.env` file here may hold\s+values not yet in Varlatch, or older copies of values that are: compare names first, without reading it\s+\(`varlatch --assisted import \.env -e <environment> --dry-run --json` marks those it already has\)/);
     expect(block).toMatch(/Where a name\s+already has a value, ask the human; the import replaces it only with `--replace <NAME>`, and refuses otherwise/);
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
     expect(block).toMatch(/If it says no values are\s+stored in Varlatch, the command gets only what it inherits: check what it needs \(`validate`\) and report that/);
@@ -343,6 +343,28 @@ describe("completion gaps from the second agent evaluation", () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("[REDACTED:API_TOKEN]");
     expect(r.stdout + r.stderr).not.toContain(API_TOKEN);
+  });
+});
+
+describe("the .env notice's comparison command", () => {
+  it("keeps the run's environment and server: run from a fresh shell, it compares against the store the run used", async () => {
+    // The project's own server is unreachable; this run reaches the fake one through VARLATCH_SERVER, in production.
+    const repo = join(dir, `p${n++}`);
+    mkdirSync(repo);
+    writeFileSync(join(repo, "varlatch.toml"), `organization = "acme"\nproject = "web"\nserver = "http://127.0.0.1:9"\ndefault_environment = "development"\n`);
+    writeFileSync(join(repo, ".env"), "STRIPE_KEY=stale-stripe-copy-44\n");
+    state.production = { STRIPE_KEY: "current-production-stripe-45" };
+    const run = await cli(["--assisted", "run", "-e", "production", "--", "node", "-e", "console.log('ok')"], repo, { VARLATCH_SERVER: origin });
+    expect(run.code, run.stderr).toBe(0);
+    const hint = /To compare names, without values: (varlatch --assisted import \.env [^\n]+--dry-run --json)/.exec(run.stderr)?.[1];
+    expect(hint).toBe(`varlatch --assisted import .env -e production --server ${origin} --dry-run --json`);
+    // A fresh shell: no VARLATCH_SERVER.
+    const compared = await cli(words(hint as string).slice(1), repo);
+    expect(compared.code, compared.stderr).toBe(0);
+    const doc = JSON.parse(compared.stdout) as { target: { environment: string }; items: { name: string; existing: boolean }[] };
+    expect(doc.target.environment).toBe("production");
+    expect(doc.items).toEqual([expect.objectContaining({ name: "STRIPE_KEY", existing: true })]);
+    expect(run.stderr + compared.stdout + compared.stderr).not.toMatch(/stale-stripe-copy|current-production-stripe/);
   });
 });
 

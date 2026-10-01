@@ -105,7 +105,7 @@ export function agentsBlock(): string {
     "- Never read, print, or create `.env` files, and never put a secret value in a command.",
     "- This repository is already set up (`varlatch.toml`): never run `varlatch init`. A `.env` file here may hold",
     "  values not yet in Varlatch, or older copies of values that are: compare names first, without reading it",
-    "  (`varlatch --assisted import .env --dry-run --json` marks those the environment already has). Where a name",
+    "  (`varlatch --assisted import .env -e <environment> --dry-run --json` marks those it already has). Where a name",
     "  already has a value, ask the human; the import replaces it only with `--replace <NAME>`, and refuses otherwise.",
     "- To find out whether an environment is ready (what is missing or invalid), run",
     "  `varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract.",

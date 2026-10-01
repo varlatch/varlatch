@@ -45,9 +45,14 @@ Dry run: nothing was stored.
   older copy of a value rotated since. In assisted mode an import that
   would replace an existing value without `--replace` for it stores
   nothing, deletes nothing, and exits 78; outside assisted mode the import
-  replaces it, as before. A plain value identical to the stored one is not
-  a replacement; a Secret's stored value is never fetched, so an existing
-  Secret always counts. `--replace` must name an entry of the file.
+  replaces it, as before. A plain value identical to the stored one (in its
+  stored form, before references are expanded) is not a replacement: the
+  comparison reads the environment's non-sensitive values, a read the
+  server audits. A Secret's stored value is never fetched, and a plain
+  value the caller may not read is unknown, so either always counts.
+  `--replace` must name an entry of the file. After a partial import, a
+  retry in assisted mode finds the values already stored as existing, and
+  each needs the human's approval again: one may have changed since.
 
 ## What is stored
 

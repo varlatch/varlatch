@@ -227,12 +227,14 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     }
   }
   // What the target environment already has, by name: a value there would be replaced. Plain values are
-  // compared (an identical one is not a replacement); a Secret's value is never fetched, so it counts.
+  // requested (include=values returns non-sensitive values only) and compared in their stored form, before
+  // reference expansion: an identical one is not a replacement. A Secret's value is never on this path, and
+  // a withheld plain value is unknown: both count as replacements.
   let present: Map<string, { sensitive: boolean; value: string | null }> | null = null;
   if (online) {
     try {
-      const effective = await online.api.effectiveConfiguration(online.ctx.organization, online.ctx.project, online.ctx.environment);
-      present = new Map((effective.items ?? []).map((i) => [i.name, { sensitive: i.sensitive, value: i.value ?? null }]));
+      const effective = await online.api.effectiveConfiguration(online.ctx.organization, online.ctx.project, online.ctx.environment, { includeValues: true });
+      present = new Map((effective.items ?? []).map((i) => [i.name, { sensitive: i.sensitive, value: i.sensitive ? null : (i.rawValue ?? i.value ?? null) }]));
     } catch (err) {
       if (!(err instanceof VarlatchApiError && (err.status === 403 || err.status === 404))) throw err;
       io.err(`varlatch import: cannot read what ${online.ctx.environment} already has (${err.status}); existing values cannot be told apart`);
@@ -254,7 +256,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     const existing = contracted.get(entry.name);
     const sensitive = !online ? null : existing ? existing.sensitive : opts.contract ? !plain.has(entry.name) : true;
     const there = present?.get(entry.name);
-    const replaces = present === null ? null : there !== undefined && (there.sensitive || there.value !== entry.value);
+    const replaces = present === null ? null : there !== undefined && (there.sensitive || there.value === null || there.value !== entry.value);
     return { entry, type: existing?.type ?? inferType(entry.value, semanticsVersion), sensitive, contracted: existing !== undefined, existing: replaces };
   });
   const where = online ? `${online.ctx.organization}/${online.ctx.project} (${online.ctx.environment})` : null;
@@ -346,13 +348,14 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
       if (stored.length > 0) io.err(`varlatch import: stored: ${stored.join(", ")}`);
       io.err(`varlatch import: not stored: ${row.entry.name} (${reason})`);
       if (skipped.length > 0) io.err(`varlatch import: not attempted: ${skipped.join(", ")}`);
-      // The retry replaces what this run stored with the same values from the same file: in assisted mode it names them.
-      const again = opts.assisted && stored.length > 0 ? ` In assisted mode, add ${stored.map((n) => `--replace ${n}`).join(" ")} for the values this run stored from ${opts.file}.` : "";
-      throw new ImportError(
-        `${stored.length} of ${rows.length} value(s) stored.${opts.deleteSource ? ` ${opts.file} was not deleted.` : ""} ` +
-          `Fix the cause and run the import again; stored values are overwritten with the same ones.${again}`,
-        exitCode,
-      );
+      // A retry in assisted mode finds the values stored above as existing, and may find them changed since
+      // (rotated) or the file edited: replacing each needs the human's approval again, never this run's word.
+      const again = opts.assisted
+        ? stored.length > 0
+          ? `Fix the cause and run the import again: it now finds ${stored.join(", ")} stored, and replaces ${stored.length === 1 ? "it" : "each"} only with the human's approval for that item (--replace <NAME>).`
+          : "Fix the cause and run the import again."
+        : "Fix the cause and run the import again; stored values are overwritten with the same ones.";
+      throw new ImportError(`${stored.length} of ${rows.length} value(s) stored.${opts.deleteSource ? ` ${opts.file} was not deleted.` : ""} ${again}`, exitCode);
     }
   }
   io.out(`Stored ${stored.length} value(s) in ${where}.`);
