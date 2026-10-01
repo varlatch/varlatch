@@ -385,6 +385,80 @@ describe("assisted run: output protection and precedence", () => {
   });
 });
 
+describe("run: a strict command line before --", () => {
+  // Each exits 64 in every mode, before any request and before the command
+  // starts, the nested agent-run case included (review of #75: a misspelled
+  // `--allow-unmask PIN` gave a plain run that printed every Secret raw).
+  const leaky = (marker: string) => [process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, ''); console.log(process.env.API_TOKEN, process.env.PIN)`];
+  const malformed: [string, string[], RegExp][] = [
+    ["the misspelled override (the review's reproduction)", ["--allow-unmask", "PIN"], /varlatch run: unknown option --allow-unmask/],
+    ["an unknown option", ["--bogus"], /unknown option --bogus/],
+    ["--json, which run does not take", ["--json"], /unknown option --json/],
+    ["--environment=, which is not parsed", ["--environment=development"], /unknown option --environment=development/],
+    ["-e without a value", ["-e"], /--environment needs a value/],
+    ["--server followed by another option", ["--server", "--strict"], /--server needs a value/],
+    ["-e and --environment both", ["-e", "development", "--environment", "development"], /--environment \(or -e\) given twice/],
+    ["--strict twice", ["--strict", "--strict"], /--strict given twice/],
+    ["--ttl twice", ["--agent-safe", "--agent", "a", "--ttl", "60", "--ttl", "60"], /--ttl given twice/],
+    ["an argument before --", ["extra"], /unexpected argument extra/],
+  ];
+  const modes: [string, string[], Record<string, string>][] = [
+    ["a human's run", [], {}],
+    ["assisted", ["--assisted"], {}],
+    ["a nested run inside an agent-safe run", [], { VARLATCH_AGENT_RUN: "run_0123456789abcdef" }],
+  ];
+
+  it.each(malformed)("%s: exit 64, no request, nothing started, in every mode", async (_name, options, message) => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+    for (const [mode, flags, env] of modes) {
+      const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+      requests = [];
+      const r = await cli([...flags, "run", ...options, "--", ...leaky(marker)], { env });
+      expect(r.code, `${mode}: ${r.stderr}`).toBe(64);
+      expect(r.stderr, mode).toMatch(message);
+      expect(r.stderr, mode).not.toMatch(/inside agent-safe run/);
+      expect(requests, mode).toEqual([]);
+      expect(existsSync(marker), mode).toBe(false);
+      expect(r.stdout + r.stderr).not.toContain(TOKEN);
+      expect(r.stdout + r.stderr).not.toContain(PIN);
+    }
+  });
+
+  it("control: the intended override, same child, starts and masks every Secret but PIN", async () => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+    const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+    const r = await cli(["run", "--allow-unmasked", "PIN", "--", ...leaky(marker)]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(r.stdout).toContain(`[REDACTED:API_TOKEN] ${PIN}`);
+  });
+
+  it("the command's own arguments after -- reach it unchanged: a default, assisted, strict, and nested run", async () => {
+    const argv = join(dir, `argv-${Math.random().toString(36).slice(2)}.cjs`);
+    writeFileSync(argv, "console.log(JSON.stringify(process.argv.slice(2)));\n");
+    const childArgs = ["--bogus", "--allow-unmask", "PIN", "-e", "x", "--strict", "--strict", "extra", "--", "--no-redact"];
+    for (const [name, args, env] of [
+      ["default", ["run", "-e", "development"], {}],
+      ["assisted", ["--assisted", "run", "--environment", "development"], {}],
+      ["strict", ["run", "--strict", "--allow-inherited", "LEGACY_KEY"], { LEGACY_KEY: LEGACY }],
+      ["nested", ["run"], { VARLATCH_AGENT_RUN: "run_0123456789abcdef" }],
+    ] as [string, string[], Record<string, string>][]) {
+      const r = await cli([...args, "--", process.execPath, argv, ...childArgs], { env });
+      expect(r.code, `${name}: ${r.stderr}`).toBe(0);
+      expect(JSON.parse(r.stdout.trim().split("\n").at(-1) as string), name).toEqual(childArgs);
+    }
+  });
+
+  it("every documented option is accepted, repeatable ones repeated", async () => {
+    const r = await cli(["run", "-e", "development", "--server", origin, "--export-context", "--redact", "--", "true"]);
+    expect(r.code, r.stderr).toBe(0);
+    stored.push({ name: "PIN", sensitive: true, value: PIN }, { name: "PIN_TWO", sensitive: true, value: "abcdefg" });
+    const two = await cli(["run", "--strict", "--allow-inherited", "LEGACY_KEY", "--allow-inherited", "PORT", "--allow-unmasked", "PIN", "--allow-unmasked", "PIN_TWO", "--", "true"], { env: { LEGACY_KEY: LEGACY } });
+    expect(two.code, two.stderr).toBe(0);
+    expect(two.stderr).toContain("varlatch: showing PIN, PIN_TWO unmasked in this run only");
+  });
+});
+
 describe("assisted run: notices before the command starts", () => {
   const run = (flags: string[], env: Record<string, string> = {}) => cli([...flags, "run", "--", process.execPath, "-e", "console.log(process.env.API_TOKEN ? 'configured' : 'started')"], { env });
 

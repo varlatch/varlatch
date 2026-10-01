@@ -141,6 +141,14 @@ fixes.
   `--assisted`), with the run's environment, server, and startup options
   (`--strict`, `--allow-inherited`, `--export-context`), and say the agent
   stops and waits.
+- **Behaviour change:** `varlatch run` checks its own options, before
+  `--`, strictly in every mode, an agent-safe run and a run nested inside
+  one included: an unknown option (`--allow-unmask PIN` gave a run that
+  masked nothing), an option without its value, an option given twice
+  (the repeatable ones excepted), or an argument before `--` exits 64
+  before anything is fetched or started. Before, `run` ignored an option
+  it did not know. The command's arguments after `--` are passed
+  unchanged.
 - **Behaviour change:** in assisted mode, `values set` and `values rotate`
   refuse (78, nothing stored) to replace an existing value unless the item
   is named with `--replace <ITEM>`. The check comes after the command line

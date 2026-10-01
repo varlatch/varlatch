@@ -91,9 +91,11 @@ varlatch --assisted <command> [args...]
   It is not an unmasked run, and it cannot be combined with `--no-redact`.
   The option is checked strictly, in every mode, before anything is fetched:
   each `--allow-unmasked` needs an item's name after it, and the
-  `--allow-unmasked=<NAME>` spelling is not supported. A malformed form
-  exits with status 64 and starts nothing; it never falls back to a run
-  without masking.
+  `--allow-unmasked=<NAME>` spelling is not supported. A malformed form, or
+  a misspelled option such as `--allow-unmask`, exits with status 64 and
+  starts nothing; it never falls back to a run without masking. (Every
+  option of `varlatch run` is checked this way; see
+  [scripting](scripting.md).)
 - These are protections against accidents, not a boundary: an agent that
   deliberately turns assisted mode off is outside what they cover.
 - **`--agent-safe` runs are unchanged:** the Agent holds Placeholders, not

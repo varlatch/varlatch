@@ -199,6 +199,15 @@ function allowUnmaskedNames(args: string[]): string[] {
   return names;
 }
 
+/** Every option `varlatch run` takes before `--`, and nothing else (ADR-0043 Decision 10). */
+const RUN_OPTIONS: OptionSpec = {
+  values: ["--environment", "--server", "--agent", "--broker-credential-file", "--agent-network", "--ttl"],
+  lists: ["--allow-unmasked", "--allow-inherited", "--allow-host", "--target", "--omit"],
+  booleans: ["--export-context", "--strict", "--redact", "--no-redact", "--agent-safe", "--agent-metadata"],
+  onceBooleans: true,
+  aliases: { "-e": "--environment" },
+};
+
 /** The run's startup options that a remedy repeats, so a handed-over command keeps the run's policy. */
 function runPolicyOptions(args: string[]): string[] {
   return [
@@ -844,13 +853,19 @@ async function main(): Promise<void> {
       }
 
       case "run": {
+        const runUsage =
+          "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... " +
+          "[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]";
         const sep = args.indexOf("--");
-        if (sep < 0 || sep === args.length - 1) {
-          usageError(
-            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
-          );
-        }
+        if (sep < 0 || sep === args.length - 1) usageError(runUsage);
         const preArgs = args.slice(0, sep);
+        // Strict (ADR-0043 Decision 10), in every mode and before anything is
+        // fetched or started, the nested agent-run case included: an unknown or
+        // misspelled option (`--allow-unmask PIN`) must never select a plain run
+        // in which no Secret is masked. The command's own arguments, after `--`,
+        // are never read.
+        allowUnmaskedNames(preArgs);
+        strictOptions("run", preArgs, RUN_OPTIONS, runUsage);
         const agentRun = agentRunOf();
         if (agentRun) {
           // A `varlatch run` the Agent starts inside an agent-safe run
