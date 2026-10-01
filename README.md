@@ -161,6 +161,8 @@ placeholder values only. State lives in `.dev/`.
   running an agent with placeholders, and where the broker substitutes
 - [`docs/reference/assisted-mode.md`](docs/reference/assisted-mode.md): a
   coding agent driving the CLI with your credential, without reading Secrets
+- [`docs/reference/coding-agents.md`](docs/reference/coding-agents.md): the
+  Varlatch skill and agent files, `varlatch agents install`
 - [`docs/reference/import.md`](docs/reference/import.md): moving a `.env`
   file into Varlatch with `varlatch import`
 - [`docs/reference/scripting.md`](docs/reference/scripting.md): JSON output,

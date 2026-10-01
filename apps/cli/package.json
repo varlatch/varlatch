@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json && pnpm run bundle",
     "bundle": "esbuild dist/main.js --bundle --platform=node --target=node22 --format=cjs --outfile=dist/varlatch.cjs '--banner:js=/*! Varlatch CLI. Copyright 2026 Robotsson. SPDX-License-Identifier: Apache-2.0. Bundled third-party licenses: THIRD-PARTY-NOTICES.md */'",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "embed-skill": "node scripts/embed-skill.mjs"
   },
   "dependencies": {
     "@varlatch/accessor": "workspace:*",

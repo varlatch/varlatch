@@ -29,6 +29,7 @@ import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedac
 import { STRICT_EXIT } from "./strictRun.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
 import { USAGE, commandHelp } from "./usage.js";
+import { OptionsError, parseOptions, type OptionSpec, type ParsedOptions } from "./options.js";
 import {
   SecretInputError,
   describeGenerated,
@@ -102,6 +103,16 @@ function positional(args: string[], i: number): string | undefined {
   const previous = args[i - 1];
   if (previous !== undefined && previous.startsWith("-")) return undefined;
   return value;
+}
+
+/** The command line parsed strictly (see options.ts), or exit 64 naming the problem. */
+function strictOptions(command: string, args: string[], spec: OptionSpec, usage: string): ParsedOptions {
+  try {
+    return parseOptions(args, spec);
+  } catch (err) {
+    if (err instanceof OptionsError) usageError(`varlatch ${command}: ${err.message}\n${usage}`);
+    throw err;
+  }
 }
 
 function flags(args: string[], name: string): string[] {
@@ -438,12 +449,19 @@ async function main(): Promise<void> {
       }
 
       case "init": {
+        // init writes files, so its command line is parsed strictly: a
+        // mistyped --no-agent-files must not write the agent files.
+        const usage = "Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>] [--no-agent-files]";
+        const opts = strictOptions("init", args, {
+          values: ["--org", "--project", "--server", "--default-environment"],
+          booleans: ["--no-agent-files"],
+        }, usage);
         const root = findRepoRoot(process.cwd());
         if (root) fail(`${REPO_CONFIG_FILE} already exists at ${root}`);
-        const org = flag(args, "--org") ?? usageError("Usage: varlatch init --org <slug> --project <slug> [--server <url>] [--default-environment <name>]");
-        const project = flag(args, "--project") ?? usageError("Provide --project");
-        const server = flag(args, "--server");
-        const defaultEnv = flag(args, "--default-environment") ?? "development";
+        const org = opts.values.get("--org") ?? usageError(usage);
+        const project = opts.values.get("--project") ?? usageError("Provide --project");
+        const server = opts.values.get("--server");
+        const defaultEnv = opts.values.get("--default-environment") ?? "development";
         const lines = [
           ...(server ? [`server = "${server}"`] : []),
           `organization = "${org}"`,
@@ -453,6 +471,73 @@ async function main(): Promise<void> {
         ];
         writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
         console.log(`Wrote ${REPO_CONFIG_FILE}. Commit it; it contains no credentials.`);
+        // ADR-0043 Decision 7: the files coding agents read, unless
+        // --no-agent-files. A failure here leaves the project initialized.
+        if (!opts.booleans.has("--no-agent-files")) {
+          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+          const { changedTargets, runInstall } = await import("./agents/install.js");
+          try {
+            const result = runInstall({ scope: "project", root: process.cwd(), version: EMBEDDED_RELEASE.version, agents: [], mode: "install" });
+            const targets = changedTargets(result);
+            if (targets.length > 0) {
+              console.log(`Wrote the Varlatch skill and instructions for coding agents: ${targets.join(", ")}. Commit them too.`);
+            }
+            for (const m of result.manual) console.log(`To do by hand: ${m}`);
+          } catch (err) {
+            console.error(
+              `varlatch: the files for coding agents were not written (${err instanceof Error ? err.message : String(err)}); ` +
+                "run varlatch agents install to try again.",
+            );
+          }
+        }
+        return;
+      }
+
+      case "agents": {
+        // ADR-0043 Decision 7: the agent-neutral skill, printed or installed.
+        const [sub, ...rest] = args;
+        const usage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]>";
+        if (sub === "guide") {
+          const opts = strictOptions("agents guide", rest, { positionals: 1 }, usage);
+          const { GuideTopicError, guide } = await import("./agents/skill.js");
+          try {
+            process.stdout.write(guide(opts.positionals[0]));
+          } catch (err) {
+            if (err instanceof GuideTopicError) usageError(`varlatch agents guide: ${err.message}`);
+            throw err;
+          }
+          return;
+        }
+        if (sub !== "install") usageError(usage);
+        const opts = strictOptions("agents install", rest, {
+          values: ["--scope"],
+          lists: ["--agent"],
+          booleans: ["--check", "--remove", "--json"],
+        }, usage);
+        if (opts.booleans.has("--check") && opts.booleans.has("--remove")) usageError("varlatch agents install: --check and --remove do not combine");
+        const scope = opts.values.get("--scope") ?? "project";
+        if (scope !== "project" && scope !== "user") usageError("varlatch agents install: --scope must be project or user");
+        const mode = opts.booleans.has("--check") ? "check" : opts.booleans.has("--remove") ? "remove" : "install";
+        const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+        const { AgentsInstallError, describeInstall, runInstall } = await import("./agents/install.js");
+        const { homedir } = await import("node:os");
+        let result: ReturnType<typeof runInstall>;
+        try {
+          result = runInstall({
+            scope,
+            root: scope === "user" ? homedir() : (findRepoRoot(process.cwd()) ?? process.cwd()),
+            version: EMBEDDED_RELEASE.version,
+            agents: opts.lists.get("--agent") ?? [],
+            mode,
+          });
+        } catch (err) {
+          if (err instanceof AgentsInstallError) fail(`varlatch agents install: ${err.message}`, err.usage ? EXIT.usage : EXIT.config);
+          throw err;
+        }
+        if (opts.booleans.has("--json")) printJson({ ...result });
+        else for (const line of describeInstall(result, mode)) console.log(line);
+        // --check is for CI: files that differ from what install writes exit 1.
+        if (mode === "check" && result.drift) process.exitCode = EXIT.failure;
         return;
       }
 
