@@ -57,10 +57,11 @@ varlatch --assisted <command> [args...]
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    Replace the value with a longer one, for example: varlatch --assisted values set PIN --generate hex:32
-    If an item is not a secret, correct its sensitivity in the Contract.
-    Or the human may approve showing it unmasked in this run: --allow-unmasked PIN
-    (the human's decision: an agent asks for it rather than adding it).
+    Ask the human before changing anything. Each choice is theirs, for PIN only:
+    - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set PIN --generate hex:32
+    - if it is not a secret, correct its sensitivity in the Contract
+    - show it unmasked in this run only: varlatch --assisted run --allow-unmasked PIN -- <command>
+    An agent reports this and waits; approval for one item does not cover another.
   Nothing was started.
   ```
 
