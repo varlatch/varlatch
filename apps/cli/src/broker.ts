@@ -232,6 +232,14 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
 
   // Opaque tunnels: never inspected, never substituted.
   server.on("connect", (req, socket) => {
+    // Before any reply: a client may reset the connection at any point (curl
+    // does after a refused CONNECT), and an unhandled socket error would end
+    // the Broker, and with it every tunnel the Agent's own traffic uses.
+    let upstream: net.Socket | undefined;
+    socket.on("error", () => {
+      socket.destroy();
+      upstream?.destroy();
+    });
     if (!checkProxyAuth(req.headers, token)) {
       socket.end(`HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\n`);
       return;
@@ -248,13 +256,13 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
       socket.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\nvarlatch-broker: blocked by --agent-network=strict\n`);
       return;
     }
-    const upstream = net.connect(port, host, () => {
+    const tunnel = net.connect(port, host, () => {
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      upstream.pipe(socket);
-      socket.pipe(upstream);
+      tunnel.pipe(socket);
+      socket.pipe(tunnel);
     });
-    upstream.on("error", () => socket.destroy());
-    socket.on("error", () => upstream.destroy());
+    upstream = tunnel;
+    tunnel.on("error", () => socket.destroy());
   });
 
   async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

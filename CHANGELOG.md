@@ -132,6 +132,13 @@ fixes.
 
 ### Fixes
 
+- An agent-safe run's Broker no longer stops when a client resets its
+  connection after a refused `CONNECT` (407 without the proxy credential,
+  502 for an allowed destination, 403 with `--agent-network strict`). curl
+  does this after the 502; the unhandled socket error ended the Broker, and
+  with it every tunnel the Agent's own traffic used. The refusals are
+  unchanged.
+
 - Output redaction, response scrubbing, and `varlatch scan` no longer fail
   when a stored Secret holds an unpaired UTF-16 surrogate, which the API
   accepts and UTF-8 cannot carry: such a value is matched as a command
