@@ -213,6 +213,18 @@ describe("the override the exit-78 message prints", () => {
   });
 });
 
+describe("Placeholders in an agent-safe run", () => {
+  it("the AGENTS.md block and the skill both permit them in request targets, with a concrete example, and keep real values forbidden", () => {
+    const block = agentsBlock();
+    expect(block).toMatch(/agent-safe run, variables hold Placeholders, not secrets/);
+    expect(block).toMatch(/`varlatch --assisted request -H "Authorization: Bearer \$STRIPE_KEY" https:\/\/[^`]+`/);
+    expect(block).toMatch(/never put a secret value in a command/);
+    const skill = SKILL_FILES["SKILL.md"] as string;
+    expect(skill).toMatch(/Putting a Placeholder in\s+a `varlatch --assisted request` header or body target is how you use a\s+secret there; a real secret value stays forbidden/);
+    expect(skill).toMatch(/`varlatch --assisted request -X POST -H "Authorization: Bearer \$STRIPE_KEY" --json '\{"amount": 500\}' https:\/\/[^`]+`/);
+  });
+});
+
 describe("the agent-safe request example", () => {
   it("parses as written, in SKILL.md and in the AGENTS.md block; outside an agent-safe run it is refused, not misread", async () => {
     const examples = [...documented("request").map((c) => c.line), ...[...agentsBlock().matchAll(/`(varlatch --assisted request [^`]+)`/g)].map((m) => m[1] as string)];
