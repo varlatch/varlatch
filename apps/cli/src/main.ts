@@ -307,16 +307,22 @@ async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: st
 async function obtainValue(
   sub: "set" | "rotate",
   item: string,
+  environment: string,
   args: string[],
   mode: AssistedMode,
   sensitive: () => Promise<boolean>,
 ): Promise<{ value: string; generated?: GenerateSpec }> {
+  // Every command names the environment: a handoff without -e would target
+  // the default one. The human's command has no --assisted, so it prompts.
+  const target = `${item} -e ${environment}`;
   const safeForms = [
-    "  Store it without putting the value in a command:",
-    `    varlatch --assisted values ${sub} ${item} --generate hex:32       a new random value`,
-    `    varlatch --assisted values ${sub} ${item} --from-file <path>      from a file`,
-    `    <command> | varlatch --assisted values ${sub} ${item} --stdin     from another command's output`,
-    `  Or ask the human to run \`varlatch values ${sub} ${item}\` in their own terminal (a hidden prompt), or to use the dashboard.`,
+    "  A value from elsewhere (a provider's key, a password) is the human's to enter. Ask them to run this",
+    "  in their own terminal, where it prompts without showing the value, or to use the dashboard:",
+    `    varlatch values ${sub} ${target}`,
+    "  Or store it without putting the value in a command:",
+    `    varlatch --assisted values ${sub} ${target} --generate hex:32       a new random value, for a value nothing else holds`,
+    `    varlatch --assisted values ${sub} ${target} --from-file <path>      from a file`,
+    `    <command> | varlatch --assisted values ${sub} ${target} --stdin     from another command's output`,
   ].join("\n");
   try {
     const source = parseValueSource(args);
@@ -942,7 +948,7 @@ async function main(): Promise<void> {
               ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
               : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
           const item = args[1] && !args[1].startsWith("-") ? args[1] : usageError(usage);
-          const obtained = await obtainValue(sub, item, args, assisted, () => sensitiveItem(api, ctx, item));
+          const obtained = await obtainValue(sub, item, ctx.environment, args, assisted, () => sensitiveItem(api, ctx, item));
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";

@@ -118,7 +118,8 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
         validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
       });
     }
-    const put = new RegExp(`^${ENV_PATH}/values/([A-Z0-9_]+)$`).exec(url);
+    // Any environment: a handoff for production must reach production's path.
+    const put = /^\/v1\/organizations\/acme\/projects\/web\/environments\/[a-z]+\/values\/([A-Z0-9_]+)$/.exec(url);
     if (put && req.method === "PUT") {
       if (failPut.has(put[1]!)) return json(500, { error: { code: "INTERNAL", message: "injected", requestId: "req_x" } });
       return json(200, { versionId: `ver_new_${put[1]}` });
@@ -443,7 +444,7 @@ describe("values set and values rotate: Secret input", () => {
     expect(r.stdout + r.stderr).not.toContain("rotated-value-202");
     const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "argv-rotated-9"]);
     expect(refused.code).toBe(64);
-    expect(refused.stderr).toMatch(/values rotate API_TOKEN --generate hex:32/);
+    expect(refused.stderr).toMatch(/values rotate API_TOKEN -e development --generate hex:32/);
   });
 
   it("with no value: assisted mode never prompts; otherwise a non-terminal is told how to give one", async () => {
@@ -453,6 +454,38 @@ describe("values set and values rotate: Secret input", () => {
     const plain = await cli(["values", "set", "API_TOKEN"]);
     expect(plain.code).toBe(64);
     expect(plain.stderr).toMatch(/Pass --stdin, --from-file <path>, or --generate <spec>/);
+    expect(puts()).toEqual([]);
+  });
+
+  /** The command the refusal hands to the human: the line after "...or to use the dashboard:". */
+  const handoff = (stderr: string) => /use the dashboard:\n {4}(varlatch values .+)\n/.exec(stderr)?.[1];
+
+  it("the handoff names the environment, with or without -e, and never adds --assisted", async () => {
+    const production = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production"]);
+    expect(production.code).toBe(64);
+    expect(handoff(production.stderr)).toBe("varlatch values set STRIPE_KEY -e production");
+    const byDefault = await cli(["--assisted", "values", "set", "API_TOKEN"]);
+    // Without -e the command still names the environment it resolved, so it works anywhere.
+    expect(handoff(byDefault.stderr)).toBe("varlatch values set API_TOKEN -e development");
+    expect(production.stderr).toMatch(/values set STRIPE_KEY -e production --generate hex:32/);
+    expect(puts()).toEqual([]);
+  });
+
+  it("the handoff, run as printed in the human's terminal, prompts and stores the value in that environment", async () => {
+    const refused = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production"]);
+    const printed = handoff(refused.stderr);
+    expect(printed).toBeDefined();
+    const args = printed!.split(" ").slice(1);
+    const { code, terminal } = await underTerminal(args, {}, { after: "(input hidden): ", text: "typed-by-human-55\r" });
+    expect(code).toBe(0);
+    expect(terminal).not.toContain("typed-by-human-55");
+    expect(puts()).toEqual([
+      expect.objectContaining({ url: "/v1/organizations/acme/projects/web/environments/production/values/STRIPE_KEY", body: { value: "typed-by-human-55" } }),
+    ]);
+    // Control: the same command with --assisted added, as agents handed it over in the evaluation, stores nothing.
+    requests = [];
+    const assisted = await cli(["--assisted", ...args]);
+    expect(assisted.code).toBe(64);
     expect(puts()).toEqual([]);
   });
 

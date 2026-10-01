@@ -65,6 +65,11 @@ fixes.
   showed it) and now refuses an unknown option, a missing option value, or
   a second filename with status 64; before, it ignored an option it did not
   know.
+- `values set` and `values rotate` refusals in assisted mode (a value on
+  the command line, or no value) now name the environment in every command
+  they suggest, and put first the human-terminal command for a value from
+  elsewhere: `varlatch values set <ITEM> -e <environment>`. Before, the
+  suggested command had no `-e` and targeted the default environment.
 - The exit-78 message for a Secret too short to mask now says every remedy
   is the human's decision, for that item only (replacing the value
   overwrites it), and shows the override as a command with the option

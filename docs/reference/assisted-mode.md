@@ -78,10 +78,14 @@ varlatch --assisted <command> [args...]
   nothing is stored. An item counts as a Secret when the active Contract marks it
   sensitive, when it is not in the Contract, or when the Contract cannot be
   read. The refusal names the safe forms below, and suggests asking the
-  human to run `varlatch values set <ITEM>` in their own terminal, or to use
-  the dashboard. Non-sensitive items are unaffected.
+  human to run `varlatch values set <ITEM> -e <environment>` in their own
+  terminal, or to use the dashboard. Non-sensitive items are unaffected.
 - **There is no prompt** when no value is given: a coding agent cannot type
-  into one.
+  into one. The refusal gives the same command for the human.
+- Every command a refusal suggests names the environment the agent's
+  command resolved (`-e`), so a handed-over command targets the same
+  environment. The human's command has no `--assisted`, so it prompts
+  without showing the value.
 
 ## Giving a value without the command line
 
