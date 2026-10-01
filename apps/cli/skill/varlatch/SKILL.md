@@ -47,6 +47,10 @@ long as you follow these rules.
 8. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
    be reached, 77 not signed in or denied, 78 configuration that cannot run.
+   On 69, a sandbox around your commands may be blocking the connection: tell
+   the human which server the command tried to reach (`varlatch --assisted
+   context --json` shows it), and ask them to allow that connection. Do not
+   try to work around it.
 9. **Know the limits.** Output is masked only for values Varlatch delivered
    or knows by name, and only in the forms it recognises. Never print,
    encode, or transform environment values.

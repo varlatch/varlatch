@@ -50,6 +50,9 @@ fixes.
   adapter's file.
 - New `varlatch agents guide [topic]` prints the skill or one of its
   references, for a coding agent without skill support.
+- The skill tells a coding agent that status 69 can come from a sandbox
+  blocking the connection, and to ask the human to allow it rather than
+  work around it.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,
