@@ -75,3 +75,8 @@ varlatch --assisted context --json
 | 69 | The server cannot be reached, or is in maintenance |
 | 77 | Not signed in, or denied |
 | 78 | The configuration cannot run as it is |
+
+On 69, the server may be down, or a sandbox around your commands may be
+blocking the connection. Tell the human which server the command tried to
+reach (`varlatch --assisted context --json` shows it), and ask them to allow
+that connection or check the server.
