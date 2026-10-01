@@ -38,6 +38,13 @@ describe("parseOptions", () => {
     expect(() => parseOptions(["-e"], aliased)).toThrow(/--environment needs a value/);
   });
 
+  it("with onceBooleans, an option without a value given twice is refused too; without it, it stays accepted", () => {
+    const once = { booleans: ["--strict"], onceBooleans: true };
+    expect(parseOptions(["--strict"], once).booleans.has("--strict")).toBe(true);
+    expect(() => parseOptions(["--strict", "--strict"], once)).toThrow(/--strict given twice/);
+    expect(parseOptions(["--check", "--check"], spec).booleans.has("--check")).toBe(true);
+  });
+
   it("with endOfOptions, -- makes the rest positional, so a value may begin with a dash", () => {
     const spec2 = { booleans: ["--stdin"], positionals: 2, endOfOptions: true };
     expect(parseOptions(["x", "--", "-5"], spec2).positionals).toEqual(["x", "-5"]);

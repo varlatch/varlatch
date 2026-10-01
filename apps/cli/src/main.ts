@@ -41,7 +41,9 @@ import {
   readValueFile,
   valueFromBytes,
   type GenerateSpec,
+  type ValueSource,
 } from "./secretInput.js";
+import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -129,6 +131,15 @@ function contextOptions(args: string[], ctx: ResolvedContext): string {
   return `-e ${ctx.environment}${overridden ? ` --server ${ctx.server}` : ""}`;
 }
 
+/** contextOptions, or a placeholder when the context cannot be resolved (the refusal must still be said). */
+function safeContextOptions(args: string[]): string {
+  try {
+    return contextOptions(args, context(args));
+  } catch {
+    return "-e <environment>";
+  }
+}
+
 function has(args: string[], name: string): boolean {
   return args.includes(name);
 }
@@ -160,6 +171,50 @@ function flags(args: string[], name: string): string[] {
     if (args[i] === name && args[i + 1] !== undefined) values.push(args[i + 1] as string);
   }
   return values;
+}
+
+/**
+ * The items named with `--allow-unmasked`, checked strictly before anything
+ * is fetched or started. A malformed form (no name, `--allow-unmasked=NAME`)
+ * must not leave the list empty: that would select a plain run, in which no
+ * Secret is masked.
+ */
+function allowUnmaskedNames(args: string[]): string[] {
+  const names: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i] as string;
+    for (const option of ["--allow-unmasked", "--no-redact"]) {
+      if (arg.startsWith(`${option}=`)) {
+        usageError(`varlatch: ${option}=... is not supported; write ${option === "--allow-unmasked" ? "--allow-unmasked <NAME>" : "--no-redact"}. Nothing was started.`);
+      }
+    }
+    if (arg !== "--allow-unmasked") continue;
+    const name = args[i + 1];
+    if (name === undefined || !CONFIG_ITEM_NAME_PATTERN.test(name)) {
+      usageError(`varlatch: --allow-unmasked needs an item's name${name === undefined ? "" : `, not ${name}`}: --allow-unmasked <NAME>, before \`--\`. Nothing was started.`);
+    }
+    names.push(name);
+    i++;
+  }
+  return names;
+}
+
+/** Every option `varlatch run` takes before `--`, and nothing else (ADR-0043 Decision 10). */
+const RUN_OPTIONS: OptionSpec = {
+  values: ["--environment", "--server", "--agent", "--broker-credential-file", "--agent-network", "--ttl"],
+  lists: ["--allow-unmasked", "--allow-inherited", "--allow-host", "--target", "--omit"],
+  booleans: ["--export-context", "--strict", "--redact", "--no-redact", "--agent-safe", "--agent-metadata"],
+  onceBooleans: true,
+  aliases: { "-e": "--environment" },
+};
+
+/** The run's startup options that a remedy repeats, so a handed-over command keeps the run's policy. */
+function runPolicyOptions(args: string[]): string[] {
+  return [
+    ...(has(args, "--strict") ? ["--strict"] : []),
+    ...flags(args, "--allow-inherited").map((name) => `--allow-inherited ${name}`),
+    ...(has(args, "--export-context") ? ["--export-context"] : []),
+  ];
 }
 
 /**
@@ -322,6 +377,24 @@ async function browserLogin(server: string): Promise<string> {
 }
 
 /**
+ * Whether the environment already has a value for `item`, from its effective
+ * configuration's metadata (names only). A value inherited from a parent
+ * environment counts: a value set here overrides it, which changes what this
+ * environment uses. When the server cannot say (denied, missing), the answer
+ * is unknown, never "absent"; an unreachable server fails as usual (69).
+ */
+async function valuePresence(api: VarlatchClient, ctx: ResolvedContext, item: string): Promise<"present" | "inherited" | "absent" | { unknown: string }> {
+  try {
+    const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment);
+    const found = (effective.items ?? []).find((i) => i.name === item);
+    return found === undefined ? "absent" : found.source === "parent" ? "inherited" : "present";
+  } catch (err) {
+    if (err instanceof VarlatchApiError) return { unknown: `${err.status} ${err.code}` };
+    throw err;
+  }
+}
+
+/**
  * Whether `item` is a Secret by the active Contract: items outside it, and
  * every item of a project without one, are (ADR-0012). A caller that cannot
  * read the Contract treats the item as a Secret, the safe classification.
@@ -338,19 +411,39 @@ async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: st
 }
 
 /**
- * The value for `values set` or `values rotate` (ADR-0043 Decision 2), from
- * the one source given. In assisted mode a Secret's value is never taken
- * from the command line, and there is no prompt: a coding agent cannot type
- * into one, and the human uses their own terminal instead.
+ * The value source of `values set` or `values rotate` (ADR-0043 Decision 2)
+ * from the parsed options: more than one, or a malformed generator, is a
+ * wrong command line (64), found before any request.
  */
-async function obtainValue(
+function valueSource(parsed: ParsedOptions): ValueSource {
+  try {
+    return valueSourceOf({
+      value: parsed.positionals[2],
+      stdin: parsed.booleans.has("--stdin"),
+      file: parsed.values.get("--from-file"),
+      generate: parsed.values.get("--generate"),
+    });
+  } catch (err) {
+    if (err instanceof SecretInputError) fail(`varlatch: ${err.message}`, err.usage ? EXIT.usage : EXIT.failure);
+    throw err;
+  }
+}
+
+/**
+ * The refusals that need no value. In assisted mode a Secret's value is never
+ * taken from the command line, and there is no prompt: a coding agent cannot
+ * type into one, and the human uses their own terminal instead. A prompt or
+ * `--stdin` that cannot work here is refused too. Nothing is read, prompted
+ * for, or generated.
+ */
+async function refuseValueSource(
   sub: "set" | "rotate",
   item: string,
   where: string,
-  parsed: ParsedOptions,
+  source: ValueSource,
   mode: AssistedMode,
   sensitive: () => Promise<boolean>,
-): Promise<{ value: string; generated?: GenerateSpec }> {
+): Promise<void> {
   // Every command names the environment (and an overridden server): a
   // handoff without -e would target the default one. The human's command
   // has no --assisted, so it prompts.
@@ -364,39 +457,48 @@ async function obtainValue(
     `    varlatch --assisted values ${sub} ${target} --from-file <path>      from a file`,
     `    <command> | varlatch --assisted values ${sub} ${target} --stdin     from another command's output`,
   ].join("\n");
+  switch (source.kind) {
+    case "argument":
+      if (mode.on && (await sensitive())) {
+        usageError(
+          `varlatch: ${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line. ` +
+            `Nothing was stored.\n${safeForms}`,
+        );
+      }
+      return;
+    case "stdin":
+      if (process.stdin.isTTY) {
+        usageError(`varlatch: --stdin reads a pipe or a file, and standard input is a terminal. For a hidden prompt, leave the value out: varlatch values ${sub} ${item}`);
+      }
+      return;
+    case "prompt":
+      if (mode.on) usageError(`varlatch: no value given for ${item}, and assisted mode never prompts. Nothing was stored.\n${safeForms}`);
+      if (!process.stdin.isTTY) {
+        usageError(
+          `varlatch: no value given for ${item}. Pass --stdin, --from-file <path>, or --generate <spec>, ` +
+            "or run the command in a terminal for a hidden prompt.",
+        );
+      }
+      return;
+    case "file":
+    case "generate":
+      return;
+  }
+}
+
+/** The value itself, once every check has passed: read, generated, or prompted for. */
+async function obtainValue(source: ValueSource, item: string): Promise<{ value: string; generated?: GenerateSpec }> {
   try {
-    const source = valueSourceOf({
-      value: parsed.positionals[2],
-      stdin: parsed.booleans.has("--stdin"),
-      file: parsed.values.get("--from-file"),
-      generate: parsed.values.get("--generate"),
-    });
     switch (source.kind) {
       case "argument":
-        if (mode.on && (await sensitive())) {
-          usageError(
-            `varlatch: ${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line. ` +
-              `Nothing was stored.\n${safeForms}`,
-          );
-        }
         return { value: source.value };
       case "stdin":
-        if (process.stdin.isTTY) {
-          usageError(`varlatch: --stdin reads a pipe or a file, and standard input is a terminal. For a hidden prompt, leave the value out: varlatch values ${sub} ${item}`);
-        }
         return { value: valueFromBytes(await readAll(process.stdin), "standard input") };
       case "file":
         return { value: readValueFile(source.path) };
       case "generate":
         return { value: generateValue(source.spec), generated: source.spec };
       case "prompt":
-        if (mode.on) usageError(`varlatch: no value given for ${item}, and assisted mode never prompts. Nothing was stored.\n${safeForms}`);
-        if (!process.stdin.isTTY) {
-          usageError(
-            `varlatch: no value given for ${item}. Pass --stdin, --from-file <path>, or --generate <spec>, ` +
-              "or run the command in a terminal for a hidden prompt.",
-          );
-        }
         return { value: await promptHidden(`Value for ${item} (input hidden): `) };
     }
   } catch (err) {
@@ -751,13 +853,19 @@ async function main(): Promise<void> {
       }
 
       case "run": {
+        const runUsage =
+          "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... " +
+          "[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]";
         const sep = args.indexOf("--");
-        if (sep < 0 || sep === args.length - 1) {
-          usageError(
-            "Usage: varlatch run [--environment <name>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>...] -- <command> [args...]",
-          );
-        }
+        if (sep < 0 || sep === args.length - 1) usageError(runUsage);
         const preArgs = args.slice(0, sep);
+        // Strict (ADR-0043 Decision 10), in every mode and before anything is
+        // fetched or started, the nested agent-run case included: an unknown or
+        // misspelled option (`--allow-unmask PIN`) must never select a plain run
+        // in which no Secret is masked. The command's own arguments, after `--`,
+        // are never read.
+        allowUnmaskedNames(preArgs);
+        strictOptions("run", preArgs, RUN_OPTIONS, runUsage);
         const agentRun = agentRunOf();
         if (agentRun) {
           // A `varlatch run` the Agent starts inside an agent-safe run
@@ -784,26 +892,41 @@ async function main(): Promise<void> {
         }
         const agentSafe = has(preArgs, "--agent-safe");
         const noRedact = has(preArgs, "--no-redact");
-        const allowUnmasked = flags(preArgs, "--allow-unmasked");
+        const allowUnmasked = allowUnmaskedNames(preArgs);
         if (agentSafe && (noRedact || allowUnmasked.length > 0)) {
           usageError("--no-redact and --allow-unmasked do not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets.");
         }
         if (noRedact && has(preArgs, "--redact")) usageError("--redact and --no-redact cannot be combined.");
-        if (allowUnmasked.length > 0 && !assisted.on) {
-          usageError("--allow-unmasked applies only in assisted mode (--assisted), where a Secret too short to mask stops the run.");
-        }
-        // Assisted mode (ADR-0043 Decision 4): redaction is the default, even
-        // when the output is a terminal (the command then gets pipes).
-        const assistedRedaction = assisted.on && !agentSafe && !noRedact;
-        if (assisted.on && noRedact) {
-          console.error("varlatch: --no-redact: this run's output is not masked; a Secret the command prints reaches whatever captures its output.");
-        }
         if (!agentSafe && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
           usageError("--target and --omit apply only to --agent-safe runs.");
         }
         if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
           usageError("--export-context applies only to default runs; a --strict run always gives the command its run context.");
         }
+        if (has(preArgs, "--allow-inherited") && !has(preArgs, "--strict")) usageError("--allow-inherited applies only to --strict runs.");
+        // Assisted mode refuses both ways of showing a Secret: the choice is the
+        // human's, for a named item, in their own terminal (an agent evaluation
+        // saw an agent add --allow-unmasked itself). An accident protection, not
+        // a boundary against deliberately turning assisted mode off.
+        if (assisted.on && (noRedact || allowUnmasked.length > 0)) {
+          const shown = allowUnmasked.length > 0 ? allowUnmasked : ["<NAME>"];
+          usageError(
+            `varlatch: ${noRedact ? "--no-redact" : "--allow-unmasked"} is refused in assisted mode: showing a Secret unmasked is the human's decision, ` +
+              "for a named item, made in their own terminal. Report the item and wait. The human runs, outside assisted mode (every other Secret stays masked):\n" +
+              `  varlatch run ${[safeContextOptions(preArgs), ...runPolicyOptions(preArgs), ...shown.map((n) => `--allow-unmasked ${n}`)].join(" ")} -- <command>\n` +
+              "Nothing was started.",
+          );
+        }
+        // The human's named override, outside assisted mode, keeps the assisted
+        // protections for everything else: every other known Secret (inherited
+        // ones included) stays masked, and another short one still stops the run.
+        if (!assisted.on && allowUnmasked.length > 0 && noRedact) {
+          usageError("--allow-unmasked shows only the named items and keeps every other Secret masked; it cannot be combined with --no-redact.");
+        }
+        const humanOverride = !assisted.on && !agentSafe && allowUnmasked.length > 0;
+        // Assisted mode (ADR-0043 Decision 4): redaction is the default, even
+        // when the output is a terminal (the command then gets pipes).
+        const assistedRedaction = (assisted.on && !agentSafe) || humanOverride;
         // Output redaction (ADR-0038 Decision 10): refused before anything is fetched.
         const redact = has(preArgs, "--redact");
         if (redact) {
@@ -813,6 +936,9 @@ async function main(): Promise<void> {
             stderrIsTTY: !assisted.on && Boolean(process.stderr.isTTY),
           });
           if (refusal) usageError(`varlatch: ${refusal}. Nothing was started.`);
+        }
+        if (humanOverride) {
+          console.error(`varlatch: showing ${allowUnmasked.join(", ")} unmasked in this run only, if too short to mask; every other known Secret stays masked.`);
         }
         const log = (line: string) => console.error(line);
         const ctx = context(preArgs);
@@ -862,7 +988,7 @@ async function main(): Promise<void> {
               start: async (env, secrets, secretNames) => {
                 if (!assistedRedaction) return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
                 const plan = planAssistedRedaction(assistedRedactionSet(secrets, env, process.env, secretNames), allowUnmasked);
-                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: ["--strict", ...flags(preArgs, "--allow-inherited").map((n) => `--allow-inherited ${n}`)] })) return STRICT_EXIT;
+                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs) })) return STRICT_EXIT;
                 return runChild(cmd, cmdArgs, env, plan.entries, "assisted");
               },
               log,
@@ -873,7 +999,6 @@ async function main(): Promise<void> {
             throw err;
           }
         }
-        if (has(preArgs, "--allow-inherited")) usageError("--allow-inherited applies only to --strict runs.");
 
         if (has(preArgs, "--agent-safe")) {
           // ADR-0022: placeholders + local broker; the child gets no bearer.
@@ -956,7 +1081,7 @@ async function main(): Promise<void> {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);
           const plan = planAssistedRedaction(set, allowUnmasked);
-          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx) })) process.exit(STRICT_EXIT);
+          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs) })) process.exit(STRICT_EXIT);
           process.exit(await runChild(cmd, cmdArgs, env, plan.entries, "assisted"));
         }
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
@@ -1008,8 +1133,8 @@ async function main(): Promise<void> {
         if (sub === "set" || sub === "rotate") {
           const usage =
             sub === "set"
-              ? "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
-              : "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
+              ? "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
+              : "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [--replace <ITEM>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
           // Strict (ADR-0043 Decision 10), before anything is read, prompted
           // or written: an option typo such as `--env production` must never
           // become the stored value. A value that begins with "-" goes after `--`.
@@ -1017,7 +1142,7 @@ async function main(): Promise<void> {
             `values ${sub}`,
             args,
             {
-              values: ["--environment", "--server", "--from-file", "--generate", ...(sub === "rotate" ? ["--grace"] : [])],
+              values: ["--environment", "--server", "--from-file", "--generate", "--replace", ...(sub === "rotate" ? ["--grace"] : [])],
               booleans: ["--stdin"],
               aliases: { "-e": "--environment" },
               positionals: 3,
@@ -1029,6 +1154,13 @@ async function main(): Promise<void> {
           if (item === undefined || item.startsWith("-")) usageError(usage);
           const grace = parsed.values.get("--grace");
           if (grace !== undefined && !/^\d+$/.test(grace)) usageError(`varlatch values rotate: --grace needs a whole number of seconds, not ${grace}\n${usage}`);
+          // --replace names the one item this command replaces: approval for one item never covers another.
+          const replace = parsed.values.get("--replace");
+          if (replace !== undefined && replace !== item) {
+            usageError(`varlatch values ${sub}: --replace names ${replace}, but this command ${sub === "set" ? "sets" : "rotates"} ${item}; approval for one item never covers another.\n${usage}`);
+          }
+          // The value source and the generator are part of the command line: checked before any request.
+          const source = valueSource(parsed);
           // The context from the parsed options only: nothing after `--` is read as an option.
           const where = [
             ...(parsed.values.has("--environment") ? ["--environment", parsed.values.get("--environment") as string] : []),
@@ -1036,7 +1168,27 @@ async function main(): Promise<void> {
           ];
           const ctx = context(where);
           const api = client(ctx);
-          const obtained = await obtainValue(sub, item, contextOptions(where, ctx), parsed, assisted, () => sensitiveItem(api, ctx, item));
+          // Refusals that need no value (a Secret on the command line, a prompt in assisted mode) come first.
+          await refuseValueSource(sub, item, contextOptions(where, ctx), source, assisted, () => sensitiveItem(api, ctx, item));
+          // Assisted mode: replacing an existing value needs --replace <ITEM>, checked before any value is read,
+          // prompted for, generated, or written (an agent evaluation saw an agent regenerate an item nobody named).
+          // --replace records the override's intent; it does not prove that a human approved it.
+          if (assisted.on && replace !== item) {
+            const presence = await valuePresence(api, ctx, item);
+            if (presence !== "absent") {
+              const verb = sub === "set" ? "setting" : "rotating";
+              fail(
+                (presence === "present"
+                  ? `varlatch values ${sub}: ${item} already has a value in ${ctx.environment}; ${verb} it replaces that value. `
+                  : presence === "inherited"
+                    ? `varlatch values ${sub}: ${ctx.environment} inherits a value for ${item} from its parent environment; ${verb} it here overrides that value in ${ctx.environment}. `
+                    : `varlatch values ${sub}: whether ${item} already has a value in ${ctx.environment} cannot be checked (${presence.unknown}), so it counts as existing. `) +
+                  `Replacing it is the human's decision, for this item only: ask them, and with their approval add --replace ${item}. Nothing was stored.`,
+                EXIT.config,
+              );
+            }
+          }
+          const obtained = await obtainValue(source, item);
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";

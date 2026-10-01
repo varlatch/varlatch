@@ -50,7 +50,8 @@ Dry run: nothing was stored.
   comparison reads the environment's non-sensitive values, a read the
   server audits. A Secret's stored value is never fetched, and a plain
   value the caller may not read is unknown, so either always counts.
-  `--replace` must name an entry of the file. After a partial import, a
+  `--replace` must name an entry of the file. It records the override's
+  intent: it is not proof that a human approved. After a partial import, a
   retry in assisted mode finds the values already stored as existing, and
   each needs the human's approval again: one may have changed since.
 

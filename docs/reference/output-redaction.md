@@ -122,10 +122,11 @@ differences:
   inherits from your shell that Varlatch knows to be a Secret, stored in the
   environment or marked sensitive in the active Contract.
 - **A Secret shorter than 8 bytes stops the run** with status 78 before the
-  command starts, naming the item, unless `--allow-unmasked <NAME>` allows
-  it through unmasked.
+  command starts, naming the item. The remedies are the human's, in their
+  own terminal; there, `varlatch run --allow-unmasked <NAME> -- <command>`
+  lets that item through unmasked and keeps every other Secret masked.
 - **A terminal is not refused:** the command writes to pipes instead.
-- **`--no-redact`** turns masking off for one run, with a warning.
+- **`--no-redact` and `--allow-unmasked` are refused** in assisted mode.
 - Silent when there is nothing to mask.
 
 ## Limits

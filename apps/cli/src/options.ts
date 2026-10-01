@@ -19,6 +19,8 @@ export interface OptionSpec {
   lists?: readonly string[];
   /** Options without a value. */
   booleans?: readonly string[];
+  /** Whether an option without a value given twice is a usage error too. */
+  onceBooleans?: boolean;
   /** How many positional arguments the command takes (default none). */
   positionals?: number;
   /** Other names for an option, as `{ "-e": "--environment" }`: either name counts as the option, once. */
@@ -52,6 +54,7 @@ export function parseOptions(args: readonly string[], spec: OptionSpec): ParsedO
     }
     const arg = spec.aliases?.[args[i] as string] ?? (args[i] as string);
     if (spec.booleans?.includes(arg)) {
+      if (spec.onceBooleans && parsed.booleans.has(arg)) throw new OptionsError(`${named(arg)} given twice`);
       parsed.booleans.add(arg);
       continue;
     }

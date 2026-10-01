@@ -59,7 +59,13 @@ These keep the meanings they always had:
 - `varlatch run`: once the command has started, the command's own status
   (128 plus the signal's number when a signal ended it). Before that, the
   statuses above: a run refused for its flags exits 64, one that cannot
-  authenticate 77.
+  authenticate 77. Its own options, before `--`, are checked strictly in
+  every mode before anything is fetched or started: an unknown option
+  (a misspelling such as `--allow-unmask`, or `--environment=<name>`, which
+  is not supported), an option without its value, an option given twice
+  (`--allow-unmasked`, `--allow-inherited`, `--allow-host`, `--target`, and
+  `--omit` repeat), or an argument before `--` exits 64. Everything after
+  `--` goes to the command unchanged.
 
 ## Help
 

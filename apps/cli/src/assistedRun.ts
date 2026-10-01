@@ -81,23 +81,26 @@ export interface RemedyContext {
 
 /**
  * Why an assisted run did not start: names and remedies, never a value.
- * Every command names the run's environment: without it, a remedy for a
- * production refusal would replace or show the default environment's value.
+ * The remedies are the human's, as commands for their own terminal (an
+ * agent evaluation saw an agent run a printed remedy itself). Every command
+ * names the run's environment: without it, a remedy for a production
+ * refusal would replace or show the default environment's value.
  * Every remedy changes or exposes the human's configuration, so each is
  * theirs to approve, for the named item only: an agent reports and waits
  * (ADR-0043; the agent evaluation saw an agent regenerate other items).
  */
 export function unmaskableRefusal(items: string[], how: RemedyContext): string[] {
   const first = items[0] as string;
-  const retry = ["varlatch --assisted run", how.target, ...(how.runOptions ?? []), `--allow-unmasked ${first} -- <command>`].join(" ");
+  // The human's commands, for their own terminal: no --assisted (assisted mode refuses the override).
+  const retry = ["varlatch run", how.target, ...(how.runOptions ?? []), `--allow-unmasked ${first} -- <command>`].join(" ");
   return [
     `varlatch: ${items.length === 1 ? "this Secret is" : "these Secrets are"} shorter than ${MIN_LENGTH} bytes, so ` +
       `${items.length === 1 ? "its value" : "their values"} cannot be masked in the command's output: ${items.join(", ")}`,
-    `  Ask the human before changing anything. Each choice is theirs, for ${items.length === 1 ? first : "each named item"} only:`,
-    `  - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set ${first} ${how.target} --generate hex:32`,
+    `  Stop and ask the human. Each choice is theirs, for ${items.length === 1 ? first : "each named item"} only, made in their own terminal:`,
+    `  - replace the value with a longer one, which overwrites the current value: varlatch values set ${first} ${how.target} --generate hex:32`,
     `  - if it is not a secret, correct its sensitivity in the Contract`,
-    `  - show it unmasked in this run only: ${retry}`,
-    "  An agent reports this and waits; approval for one item does not cover another.",
+    `  - show it unmasked in one run, every other Secret still masked: ${retry}`,
+    "  An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another.",
     "Nothing was started.",
   ];
 }
