@@ -282,6 +282,56 @@ describe("assisted run: output protection and precedence", () => {
   });
 });
 
+describe("assisted run: notices before the command starts", () => {
+  const run = (flags: string[]) => cli([...flags, "run", "--", process.execPath, "-e", "console.log('started')"]);
+
+  it("an environment with no values is said, on stderr, and the command still starts", async () => {
+    stored = [];
+    const r = await run(["--assisted"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("started");
+    expect(r.stderr).toContain(`varlatch: development has no values in Varlatch, so ${process.execPath} starts without its configuration.`);
+    const withValues = await (async () => {
+      stored = defaultItems();
+      return run(["--assisted"]);
+    })();
+    expect(withValues.stderr).not.toMatch(/has no values in Varlatch/);
+  });
+
+  it("a .env file in the project is named, never read, with the command to move it in", async () => {
+    const file = join(repo, ".env");
+    writeFileSync(file, "DOTENV_CANARY=dotenv-content-never-read-58\n");
+    try {
+      const r = await run(["--assisted"]);
+      expect(r.code).toBe(0);
+      expect(r.stderr).toContain("varlatch: .env is not read by Varlatch; its values reach the command only once moved in: varlatch --assisted import .env --dry-run");
+      expect(r.stdout + r.stderr).not.toContain("dotenv-content-never-read-58");
+      // Not in assisted mode: no notices, the human's output is unchanged.
+      stored = [];
+      const plain = await run([]);
+      expect(plain.stderr).not.toMatch(/is not read by Varlatch|has no values in Varlatch/);
+    } finally {
+      rmSync(file, { force: true });
+    }
+    const none = await run(["--assisted"]);
+    expect(none.stderr).not.toMatch(/is not read by Varlatch/);
+  });
+});
+
+describe("init in a repository that is already set up", () => {
+  it("says so and names the next steps, assisted forms in assisted mode", async () => {
+    const assisted = await cli(["--assisted", "init"]);
+    expect(assisted.code).toBe(1);
+    expect(assisted.stderr).toMatch(/varlatch\.toml already exists at .*: this repository is already set up for Varlatch, so there is nothing to initialize\./);
+    expect(assisted.stderr).toContain("To move a .env file's values in without reading them: varlatch --assisted import .env --dry-run");
+    expect(assisted.stderr).toContain("To see whether an environment is ready: varlatch --assisted validate -e <environment> --json");
+    const plain = await cli(["init"]);
+    expect(plain.code).toBe(1);
+    expect(plain.stderr).toContain("varlatch import .env --dry-run");
+    expect(plain.stderr).not.toContain("--assisted");
+  });
+});
+
 describe("assisted run: a value too short to mask", () => {
   beforeEach(() => {
     stored.push({ name: "PIN", sensitive: true, value: PIN });

@@ -3,10 +3,12 @@ name: varlatch
 description: >-
   Use in a repository that has varlatch.toml, or when the user mentions
   Varlatch, secrets, environment variables, or .env files for running,
-  testing, deploying, or setting up a project. Covers moving .env files into
-  Varlatch without reading them, running commands with configuration
-  injected, adding or generating secrets without seeing them, Contracts and
-  generated types, and working inside an agent-safe run.
+  testing, deploying, or setting up a project, or asks whether an
+  environment is ready to deploy. Covers moving .env files into Varlatch
+  without reading them, running commands with configuration injected,
+  checking an environment's readiness, adding or generating secrets without
+  seeing them, Contracts and generated types, and working inside an
+  agent-safe run.
 license: Apache-2.0
 metadata:
   generator: varlatch {{VERSION}}
@@ -27,7 +29,10 @@ long as you follow these rules.
    over to the next command.
 2. **Never read, print, or create `.env` files**, and never read the
    Varlatch credential store. To see which names a `.env` file sets, without
-   their values: `varlatch --assisted import <file> --dry-run`.
+   their values: `varlatch --assisted import <file> --dry-run`. A `.env`
+   file in the project holds values that are not in Varlatch yet: move them
+   in (see below) before running anything. A repository with `varlatch.toml`
+   is already set up: never run `varlatch init` there.
 3. **Never put a secret value in a command.** Store a secret with
    `varlatch --assisted import`, `values set <NAME> --generate hex:32`,
    `--from-file <path>`, or `--stdin`, or ask the human to enter it. (Inside
@@ -38,12 +43,17 @@ long as you follow these rules.
    short to mask. Report the names in the error, then stop and ask. Never add
    `--allow-unmasked` or `--no-redact` yourself; when the human approves
    showing one item unmasked, the option goes before `--`:
-   `varlatch --assisted run --allow-unmasked <NAME> -- <command>`.
+   `varlatch --assisted run --allow-unmasked <NAME> -- <command>`. If `run`
+   says the environment has no values, the command started without its
+   configuration: report that; it is not success.
 5. **Never replace an existing value or change an item's sensitivity
    without the human's approval for that named item.** Approval for one item
    does not cover another: never regenerate or reclassify items the human did
    not name, even to make a command run.
-6. **When a value is missing**, report its name and environment, and give
+6. **To find out whether an environment is ready** (to deploy, or what is
+   missing or invalid), run `varlatch --assisted validate -e <environment> --json`.
+   Listing values does not check the Contract. **When a value is missing**,
+   report its name and environment, and give
    the human this command for their own terminal, where it prompts without
    showing the value (no `--assisted`: assisted mode never prompts), or point
    them to the dashboard. Never invent a value.
@@ -60,6 +70,9 @@ long as you follow these rules.
    secret there; a real secret value stays forbidden. curl and fetch are
    refused by the Broker. For example:
    `varlatch --assisted request -X POST -H "Authorization: Bearer $STRIPE_KEY" --json '{"amount": 500}' https://api.example.com/v1/charges`
+   Showing a Placeholder discloses nothing: when the human asks you to check
+   a variable there, `varlatch --assisted run -- printenv <NAME>` shows the
+   Placeholder, never the secret.
 9. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
    be reached, 77 not signed in or denied, 78 configuration that cannot run.
@@ -69,7 +82,8 @@ long as you follow these rules.
    try to work around it.
 10. **Know the limits.** Output is masked only for values Varlatch delivered
     or knows by name, and only in the forms it recognises. Never print,
-    encode, or transform environment values.
+    encode, or transform environment values (inside an agent-safe run they
+    are Placeholders, not secrets: rule 8).
 
 ## Moving a project's `.env` into Varlatch
 
@@ -96,6 +110,7 @@ varlatch --assisted run -- <command>
 varlatch --assisted context --json
 varlatch --assisted values list --json
 varlatch --assisted validate --json
+varlatch --assisted validate -e production --json
 varlatch --assisted run -- npm test
 varlatch --assisted values set SESSION_SECRET --generate hex:32
 ```

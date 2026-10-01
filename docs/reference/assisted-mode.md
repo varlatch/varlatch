@@ -50,6 +50,10 @@ varlatch --assisted <command> [args...]
   Contract marks sensitive. Reading the Contract needs `contract.read`;
   without it, only stored Secret names count, and the run says so. Nothing
   is fetched to build the filter.
+- **Before the command starts, the run says** (on stderr) when the
+  environment has no values in Varlatch, and when a `.env` file in the
+  project is not read, with the command that moves it in. Only the file's
+  existence is checked, never its content.
 - **A Secret too short to mask stops the run.** Values shorter than 8 bytes
   cannot be masked (masking them would corrupt unrelated output, and the
   masks would give the value away). The run names those items and exits

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { maintenanceNotice } from "./maintenance.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   ContextError,
   REPO_CONFIG_FILE,
@@ -20,7 +20,7 @@ import {
   type ResolvedContext,
 } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
-import { TargetError, formatTarget, parseTarget } from "@varlatch/protocol";
+import { TargetError, formatTarget, parseTarget, type EffectiveConfiguration } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { RUN_CONTEXT, buildEnv, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
@@ -88,6 +88,27 @@ function printJson(doc: Record<string, unknown>): void {
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
+}
+
+/**
+ * What an assisted run tells a coding agent before the command starts, on
+ * stderr (an agent evaluation saw an app started with no values reported as
+ * success): an environment with no values at all, and a `.env` file the run
+ * does not read (only its existence is checked, never its content).
+ */
+function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfiguration, cmd: string): string[] {
+  const notices: string[] = [];
+  if ((effective.items ?? []).length === 0) {
+    notices.push(`varlatch: ${ctx.environment} has no values in Varlatch, so ${cmd} starts without its configuration.`);
+  }
+  for (const dir of [...new Set([process.cwd(), ctx.repoRoot])]) {
+    const file = join(dir, ".env");
+    if (existsSync(file)) {
+      const shown = relative(process.cwd(), file) || ".env";
+      notices.push(`varlatch: ${shown} is not read by Varlatch; its values reach the command only once moved in: varlatch --assisted import ${shown} --dry-run`);
+    }
+  }
+  return notices;
 }
 
 /**
@@ -480,7 +501,15 @@ async function main(): Promise<void> {
           booleans: ["--no-agent-files"],
         }, usage);
         const root = findRepoRoot(process.cwd());
-        if (root) fail(`${REPO_CONFIG_FILE} already exists at ${root}`);
+        if (root) {
+          // Already set up: say what comes next instead (an agent evaluation saw init tried in a configured repository).
+          const cli = assisted.on ? "varlatch --assisted" : "varlatch";
+          fail(
+            `${REPO_CONFIG_FILE} already exists at ${root}: this repository is already set up for Varlatch, so there is nothing to initialize.\n` +
+              `  To move a .env file's values in without reading them: ${cli} import .env --dry-run\n` +
+              `  To see whether an environment is ready: ${cli} validate -e <environment> --json`,
+          );
+        }
         const org = opts.values.get("--org") ?? usageError(usage);
         const project = opts.values.get("--project") ?? usageError("Provide --project");
         const server = opts.values.get("--server");
@@ -906,6 +935,7 @@ async function main(): Promise<void> {
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
         const env = buildEnv(process.env, effective);
         if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
+        if (assisted.on) for (const line of assistedRunNotices(ctx, effective, cmd)) log(line);
         if (assistedRedaction) {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);

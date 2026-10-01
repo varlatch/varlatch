@@ -88,6 +88,22 @@ fixes.
   and its server when overridden; the retry also keeps `--strict`,
   `--allow-inherited`, and earlier allowances. Before, a remedy for a
   production refusal replaced or showed the default environment's value.
+- From the second agent evaluation (it failed; see the coding-agents docs):
+  the AGENTS.md block and the skill now say that a repository with
+  `varlatch.toml` needs no `varlatch init`; that a `.env` file holds values
+  not yet in Varlatch, to move in first; that `varlatch --assisted validate
+  -e <environment> --json` answers whether an environment is ready (listing
+  values does not check the Contract); that a run in an environment with no
+  values is not success; and that inside an agent-safe run, showing a
+  Placeholder (`varlatch --assisted run -- printenv <NAME>`) discloses
+  nothing.
+- In assisted mode, `varlatch run` says on stderr, before the command
+  starts, when the environment has no values in Varlatch, and when a `.env`
+  file in the project is not read (only its existence is checked, never its
+  content), with the command that moves it in.
+- `varlatch init` in a repository that is already set up still exits 1, and
+  now says what to do next: import a `.env` file, or validate an
+  environment.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than
   work around it.

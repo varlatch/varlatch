@@ -76,6 +76,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     }
     if (rest === "/disclosures") return json(200, { items: items.map(({ name, versionId, value }) => ({ name, versionId, value })), withheld: [] });
     if (rest.startsWith("/effective-configuration")) return json(200, { environmentId: "env_1", items: items.map((i) => ({ ...i, value: null })), manifest });
+    if (rest === "/validate" && req.method === "POST") {
+      // Production requires STRIPE_KEY in these tests' Contract-free fake: missing unless stored.
+      const missing = scoped[1] === "production" && values.STRIPE_KEY === undefined ? ["STRIPE_KEY"] : [];
+      return json(200, { valid: missing.length === 0, complete: true, missing, invalid: [], unresolved: [], notEvaluated: [] });
+    }
     json(404, { error: { code: "NOT_FOUND", message: url, requestId: "r" } });
   });
 }
@@ -274,6 +279,41 @@ describe("the exit-78 remedies keep the run's environment", () => {
     expect(handoff.stderr).toContain(`    varlatch values set STRIPE_KEY -e production --server ${origin}\n`);
     const plain = await refusedInProduction(repo);
     expect(`${plain.replace} ${plain.unmask}`).not.toContain("--server");
+  });
+});
+
+describe("completion gaps from the second agent evaluation", () => {
+  it("the AGENTS.md block and the skill say: no init in a set-up repository, move a .env in first, readiness is validate, an empty run is not success, and a Placeholder is harmless to show", () => {
+    const block = agentsBlock();
+    const skill = SKILL_FILES["SKILL.md"] as string;
+    expect(block).toMatch(/never run `varlatch init`/);
+    expect(block).toMatch(/A `\.env` file here holds\s+values that are not in Varlatch yet: move them in first, without reading it\s+\(`varlatch --assisted import \.env --dry-run`/);
+    expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
+    expect(block).toMatch(/environment has no values, the command started without its configuration: report that, it is not success/);
+    expect(block).toMatch(/showing one discloses nothing \(so\s+`varlatch --assisted run -- printenv <NAME>` is safe there when the human asks you to check\)/);
+    expect(skill).toMatch(/A repository with `varlatch\.toml`\s+is already set up: never run `varlatch init` there/);
+    expect(skill).toMatch(/\*\*To find out whether an environment is ready\*\*[\s\S]*?`varlatch --assisted validate -e <environment> --json`/);
+    expect(skill).toMatch(/If `run`\s+says the environment has no values, the command started without its\s+configuration: report that; it is not success/);
+    expect(skill).toMatch(/Showing a Placeholder discloses nothing: when the human asks you to check\s+a variable there, `varlatch --assisted run -- printenv <NAME>` shows the\s+Placeholder, never the secret/);
+    expect(skill).toMatch(/asks whether an\s+environment is ready to deploy/);
+  });
+
+  it("the readiness command runs as written and reports the missing item", async () => {
+    const line = /`(varlatch --assisted validate -e <environment> --json)`/.exec(agentsBlock())?.[1] as string;
+    const r = await cli(fill(line, { "<environment>": "production" }), project());
+    expect(r.stderr).not.toMatch(/unknown option|needs a value|unexpected argument/);
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ environment: "production", result: "invalid", missing: ["STRIPE_KEY"] });
+  });
+
+  it("the Placeholder check runs as written; outside an agent-safe run, assisted mode still masks the value", async () => {
+    const repo = project();
+    state.values = { API_TOKEN };
+    const line = /`(varlatch --assisted run -- printenv <NAME>)`/.exec(agentsBlock())?.[1] as string;
+    const r = await cli(fill(line, { "<NAME>": "API_TOKEN" }), repo);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("[REDACTED:API_TOKEN]");
+    expect(r.stdout + r.stderr).not.toContain(API_TOKEN);
   });
 });
 
