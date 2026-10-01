@@ -557,6 +557,8 @@ describe("the CLI", () => {
     expect(Object.keys(snapshot(home)).sort()).toEqual(SKILL_PATHS.sort());
   });
 
+  // 22 CLI processes in sequence: 2.7 to 3.8 s in CI, and over the default
+  // 5 s once under full-suite load (main 12f10fa), so it gets its own limit.
   it("wrong command lines exit 64, and a damaged AGENTS.md exits 78, each writing nothing", async () => {
     const cwd = project();
     for (const args of [
@@ -593,7 +595,7 @@ describe("the CLI", () => {
     expect(r.code).toBe(EXIT.config);
     expect(r.stderr).toMatch(/without <!-- varlatch:end -->/);
     expect(snapshot(damaged)).toEqual({ "AGENTS.md": "<!-- varlatch:begin -->\nhalf\n" });
-  });
+  }, 30_000);
 
   it("init writes the agent files by default, and --no-agent-files skips them", async () => {
     const withFiles = project({ "AGENTS.md": "# Mine\n" });
