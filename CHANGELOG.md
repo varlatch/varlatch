@@ -170,6 +170,13 @@ fixes.
 - **Behaviour change:** the MCP server's `varlatch_delete_value` (with
   `--allow-writes`) deletes only when its `confirm` argument repeats the
   item's name; otherwise it returns an error and makes no request.
+- **Behaviour change:** the MCP server's `varlatch_set_value` replaces a
+  plain value the environment already has, or inherits from its parent,
+  only when its `replace` argument repeats the item's name; otherwise it
+  returns an error and writes nothing, and unknown existence counts as
+  existing. A new plain value needs no `replace`; a Secret stays
+  unwritable with or without it; `replace` naming another item is refused
+  before any request. `replace` records intent, not an approval.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

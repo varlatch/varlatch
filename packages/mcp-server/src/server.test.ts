@@ -112,15 +112,52 @@ describe("varlatch MCP server", () => {
     },
   };
 
-  it("sets a non-secret value against the resolved environment", async () => {
-    const { client, requests } = fakeClient({
-      [CONTRACT]: contract,
-      "/v1/organizations/acme/projects/api/environments/dev/values/LOG_LEVEL": { versionId: "v1" },
-    });
+  const EFFECTIVE = "/v1/organizations/acme/projects/api/environments/dev/effective-configuration";
+  const PUT_LOG_LEVEL = "/v1/organizations/acme/projects/api/environments/dev/values/LOG_LEVEL";
+  const effective = (items: { name: string; source: "self" | "parent" }[]) => ({
+    environmentId: "env_1",
+    items: items.map((i) => ({ ...i, sensitive: false })),
+  });
+  const textOf = (result: Awaited<ReturnType<Client["callTool"]>>) => (result.content as { type: string; text: string }[])[0]!.text;
+  const puts = (requests: RecordedRequest[]) => requests.filter((r) => r.method === "PUT");
+
+  it("sets a new non-secret value against the resolved environment, without replace", async () => {
+    const { client, requests } = fakeClient({ [CONTRACT]: contract, [EFFECTIVE]: effective([]), [PUT_LOG_LEVEL]: { versionId: "v1" } });
     const mcp = await connect({ client, defaults, allowWrites: true });
     const result = await mcp.callTool({ name: "varlatch_set_value", arguments: { item: "LOG_LEVEL", value: "debug" } });
     expect(result.isError).toBeFalsy();
-    expect(requests.filter((r) => r.method === "PUT")).toMatchObject([{ body: { value: "debug" } }]);
+    expect(puts(requests)).toMatchObject([{ body: { value: "debug" } }]);
+    // Existence from metadata only: no values are read.
+    expect(requests.find((r) => r.url.includes("/effective-configuration"))?.url).not.toMatch(/include/);
+  });
+
+  it.each([
+    ["a value the environment has", effective([{ name: "LOG_LEVEL", source: "self" }]), /LOG_LEVEL already has a value in dev; setting it replaces that value\./],
+    ["a value inherited from the parent environment", effective([{ name: "LOG_LEVEL", source: "parent" }]), /dev inherits a value for LOG_LEVEL from its parent environment; setting it here overrides that value in dev\./],
+    ["a value whose existence cannot be checked", { status: 403, error: "PERMISSION_DENIED" }, /whether LOG_LEVEL already has a value in dev cannot be checked \(403 PERMISSION_DENIED\), so it counts as existing\./],
+  ])("replacing %s needs replace naming the item: refused without it, written with it", async (_name, existing, message) => {
+    const { client, requests } = fakeClient({ [CONTRACT]: contract, [EFFECTIVE]: existing, [PUT_LOG_LEVEL]: { versionId: "v2" } });
+    const mcp = await connect({ client, defaults, allowWrites: true });
+    // expectedVersionId guards against a concurrent change; it is no substitute for replace.
+    for (const args of [{ item: "LOG_LEVEL", value: "debug" }, { item: "LOG_LEVEL", value: "debug", expectedVersionId: "v1" }]) {
+      const refused = await mcp.callTool({ name: "varlatch_set_value", arguments: args });
+      expect(refused.isError).toBe(true);
+      expect(textOf(refused)).toMatch(message);
+      expect(textOf(refused)).toMatch(/Replacing it is the human's decision, for this item only: ask them, and with their approval pass replace: "LOG_LEVEL"\. Nothing was stored\./);
+    }
+    expect(puts(requests)).toEqual([]);
+    const approved = await mcp.callTool({ name: "varlatch_set_value", arguments: { item: "LOG_LEVEL", value: "debug", expectedVersionId: "v1", replace: "LOG_LEVEL" } });
+    expect(approved.isError).toBeFalsy();
+    expect(puts(requests)).toMatchObject([{ body: { value: "debug", expectedVersionId: "v1" } }]);
+  });
+
+  it("replace naming another item is refused before any request", async () => {
+    const { client, requests } = fakeClient({ [CONTRACT]: contract, [EFFECTIVE]: effective([]), [PUT_LOG_LEVEL]: { versionId: "v1" } });
+    const mcp = await connect({ client, defaults, allowWrites: true });
+    const result = await mcp.callTool({ name: "varlatch_set_value", arguments: { item: "LOG_LEVEL", value: "debug", replace: "API_KEY" } });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/replace names API_KEY, but this call sets LOG_LEVEL; approval for one item never covers another\. Nothing was stored\./);
+    expect(requests).toEqual([]);
   });
 
   it.each([
@@ -134,12 +171,15 @@ describe("varlatch MCP server", () => {
       [`/v1/organizations/acme/projects/api/environments/dev/values/${item}`]: { versionId: "v1" },
     });
     const mcp = await connect({ client, defaults, allowWrites: true });
-    const result = await mcp.callTool({ name: "varlatch_set_value", arguments: { item, value: "mcp-secret-value-1" } });
-    expect(result.isError).toBe(true);
-    const text = (result.content as { type: string; text: string }[])[0]!.text;
-    expect(text).toMatch(new RegExp(`${item} is a Secret, and its value is never written through MCP`));
-    expect(text).toMatch(/--generate hex:32/);
-    expect(text).not.toContain("mcp-secret-value-1");
+    // replace never makes a Secret writable.
+    for (const extra of [{}, { replace: item }]) {
+      const result = await mcp.callTool({ name: "varlatch_set_value", arguments: { item, value: "mcp-secret-value-1", ...extra } });
+      expect(result.isError).toBe(true);
+      const text = (result.content as { type: string; text: string }[])[0]!.text;
+      expect(text).toMatch(new RegExp(`${item} is a Secret, and its value is never written through MCP`));
+      expect(text).toMatch(/--generate hex:32/);
+      expect(text).not.toContain("mcp-secret-value-1");
+    }
     expect(requests.filter((r) => r.method !== "GET")).toEqual([]);
   });
 

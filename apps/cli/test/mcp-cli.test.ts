@@ -39,6 +39,8 @@ let control = "";
 let server: http.Server;
 let origin = "";
 let requests: { method: string; url: string; auth: string }[] = [];
+/** Names dev has (source "self") or inherits (source "parent"); a status instead makes the metadata read fail. */
+let devItems: { name: string; source: "self" | "parent" }[] | number = [];
 
 const PROJECT = "/v1/organizations/acme/projects/api";
 
@@ -64,6 +66,10 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
           ],
         },
       });
+    }
+    if (url.startsWith(`${PROJECT}/environments/dev/effective-configuration`)) {
+      if (typeof devItems === "number") return json(devItems, { error: { code: "PERMISSION_DENIED", message: "denied", requestId: "r" } });
+      return json(200, { environmentId: "env_dev", items: devItems.map((i) => ({ ...i, sensitive: false })) });
     }
     if (url === `${PROJECT}/environments/dev/disclosures`) {
       return json(200, { items: [{ name: "API_KEY", versionId: "ver_1", value: CANARY }], withheld: [] });
@@ -96,6 +102,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   requests = [];
+  devItems = [];
 });
 
 /** A HOME whose default store holds the operator's credential, and no VARLATCH_CONFIG_DIR. */
@@ -153,6 +160,35 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
     const plain = await client.callTool("varlatch_set_value", { item: "LOG_LEVEL", value: "debug" });
     expect(plain.isError).toBeFalsy();
     expect(requests.filter((r) => r.method === "PUT").map((r) => r.url)).toEqual([`${PROJECT}/environments/dev/values/LOG_LEVEL`]);
+    await client.close();
+  });
+
+  it("replaces an existing plain value only with the item's name as replace: own, inherited, or unknown existence", async () => {
+    const client = await connect(entry, ["--allow-writes"], env());
+    const puts = () => requests.filter((r) => r.method === "PUT");
+    for (const [existing, message] of [
+      [[{ name: "LOG_LEVEL", source: "self" }], /LOG_LEVEL already has a value in dev/],
+      [[{ name: "LOG_LEVEL", source: "parent" }], /dev inherits a value for LOG_LEVEL from its parent environment/],
+      [403, /cannot be checked \(403 PERMISSION_DENIED\), so it counts as existing/],
+    ] as [typeof devItems, RegExp][]) {
+      devItems = existing;
+      const refused = await client.callTool("varlatch_set_value", { item: "LOG_LEVEL", value: "debug" });
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toMatch(message);
+      expect(refused.text).toMatch(/pass replace: "LOG_LEVEL"\. Nothing was stored\./);
+      const other = await client.callTool("varlatch_set_value", { item: "LOG_LEVEL", value: "debug", replace: "OTHER" });
+      expect(other.isError).toBe(true);
+      expect(puts()).toEqual([]);
+      const approved = await client.callTool("varlatch_set_value", { item: "LOG_LEVEL", value: "debug", replace: "LOG_LEVEL" });
+      expect(approved.isError).toBeFalsy();
+      expect(puts()).toHaveLength(1);
+      requests = [];
+    }
+    // A Secret stays unwritable, replace or not.
+    const secret = await client.callTool("varlatch_set_value", { item: "API_KEY", value: "mcp-written-secret-7", replace: "API_KEY" });
+    expect(secret.isError).toBe(true);
+    expect(secret.text).toMatch(/API_KEY is a Secret, and its value is never written through MCP/);
+    expect(puts()).toEqual([]);
     await client.close();
   });
 

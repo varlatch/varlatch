@@ -40,6 +40,17 @@ tool argument comes from the model. So:
   `varlatch import`, `varlatch values set --generate`, `--from-file`,
   `--stdin`, or the human. `varlatch_delete_value` writes no value and stays
   available with `--allow-writes`.
+- **No tool replaces a value without the item named again.**
+  `varlatch_set_value` writes a new plain value directly, but replaces one
+  the environment already has, or inherits from its parent environment,
+  only when its `replace` argument repeats the item's name; otherwise it
+  returns an error and writes nothing. Existence comes from metadata only
+  (no values are read), and when the server cannot say whether the item
+  has a value, it counts as existing. `replace` naming another item is
+  refused before any request. `replace` never makes a Secret writable, and
+  `expectedVersionId` guards against a concurrent change: it is no
+  substitute for `replace`. Like `confirm`, `replace` records intent, not
+  proof that a human approved.
 - **No tool deletes without the item named again.** `varlatch_delete_value`
   deletes only when its `confirm` argument repeats the item's name, for a
   plain value and a Secret alike; otherwise it returns an error and makes
