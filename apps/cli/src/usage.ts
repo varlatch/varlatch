@@ -11,8 +11,10 @@ Usage:
   varlatch <command> --help                            # one command's usage (also: varlatch help <command>)
   varlatch --assisted <command>...                      # a coding agent drives the CLI (or VARLATCH_ASSISTED=1):
                run masks Secrets in the command's output by default and refuses one too short to mask
-               (exit 78; --allow-unmasked <NAME> is the human's override, --no-redact turns masking off);
-               values set/rotate never take a Secret's value from the command line
+               (exit 78), and refuses --allow-unmasked and --no-redact; values set/rotate never take a
+               Secret's value from the command line, and replace an existing value only with --replace <ITEM>
+  varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
+               the named short Secrets; every other known Secret stays masked
   varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in
   varlatch login --server <url> --token <credential>
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
@@ -50,7 +52,7 @@ Usage:
                (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes
                 adds non-secret writes; no tool returns or writes a Secret's value)
   varlatch validate [-e <env>] [--json]  (exit 1 invalid; 2 incomplete: items this identity may not read)
-  varlatch values <set <ITEM> [<value> | -- <value>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>> [-e <env>]
+  varlatch values <set <ITEM> [<value> | -- <value>] [--replace <ITEM>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>] [--replace <ITEM>]|rotate-complete <ITEM>> [-e <env>]
                   set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
                   or no value in a terminal for a hidden prompt
   varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]

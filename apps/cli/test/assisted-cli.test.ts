@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { agentsBlock } from "../src/agents/install.js";
 import { contractItem, revision } from "./fixtures.js";
 
 /**
@@ -44,6 +45,7 @@ interface StoredItem {
 /** Server state, reset before each test. */
 let stored: StoredItem[];
 let requests: { method: string; url: string; auth: string; body: unknown }[];
+let denyEffective = false;
 let failPut: Set<string>;
 
 const CONTRACT = [
@@ -81,11 +83,14 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url === "/v1/organizations/acme/projects/web/contract/revisions" && req.method === "POST") {
       return json(201, { ...active, id: "crv_imported", active: false });
     }
-    if (url.startsWith(`${ENV_PATH}/effective-configuration`)) {
+    const effectiveIn = /^\/v1\/organizations\/acme\/projects\/web\/environments\/([a-z]+)\/effective-configuration/.exec(url);
+    if (effectiveIn) {
+      if (denyEffective) return json(403, { error: { code: "PERMISSION_DENIED", message: "metadata read denied", requestId: "req_d" } });
+      const inEnv = effectiveIn[1] === "development" ? stored : [];
       return json(200, {
         environmentId: "env_1",
         // As the daemon: metadata only, unless include=values, which returns non-sensitive values only.
-        items: stored.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: !i.sensitive && url.includes("include=values") ? i.value : null })),
+        items: inEnv.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: !i.sensitive && url.includes("include=values") ? i.value : null })),
         manifest: {
           manifestVersion: 1,
           projectId: "prj_1",
@@ -165,6 +170,7 @@ beforeEach(() => {
   stored = defaultItems();
   requests = [];
   failPut = new Set();
+  denyEffective = false;
 });
 
 /** No coding agent's marker and no VARLATCH_ASSISTED: every signal is added per test. */
@@ -254,12 +260,12 @@ describe("assisted run: output protection and precedence", () => {
   it.each([
     ["no option, setting, or marker", [], [], {}],
     ["a marker with VARLATCH_ASSISTED=0", [], [], { VARLATCH_ASSISTED: "0", CLAUDECODE: "1" }],
-    ["--assisted --no-redact", ["--assisted"], ["--no-redact"], {}],
+    ["--no-redact outside assisted mode", [], ["--no-redact"], {}],
   ] as const)("negative control, same input: %s leaves the output unmasked", async (_name, global, runFlags, env) => {
     const r = await cli([...global, "run", ...runFlags, "--", process.execPath, printer()], { env: { ...env, ...INHERITED } });
     expect(r.code).toBe(0);
     expect(leaked(r)).toEqual(["token", "token-base64", "token-percent", "token-json", "legacy", "withheld"]);
-    if (runFlags.length > 0) expect(r.stderr).toMatch(/--no-redact: this run's output is not masked/);
+    expect(r.stderr).not.toMatch(/refused in assisted mode/);
   });
 
   it("negative control for inherited-value filtering: --redact outside assisted mode masks the delivered Secret but not the inherited ones", async () => {
@@ -278,10 +284,22 @@ describe("assisted run: output protection and precedence", () => {
     expect(r.stdout + r.stderr).not.toContain(LEGACY);
   });
 
-  it("refuses --allow-unmasked outside assisted mode, and --no-redact or --allow-unmasked with --agent-safe", async () => {
-    const outside = await cli(["run", "--allow-unmasked", "PIN", "--", "true"]);
-    expect(outside.code).toBe(64);
-    expect(outside.stderr).toMatch(/--allow-unmasked applies only in assisted mode/);
+  it("assisted mode refuses --no-redact and --allow-unmasked before anything starts; outside it, they do not combine; with --agent-safe, both are refused", async () => {
+    const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+    for (const [flag, shown] of [["--no-redact", "<NAME>"], ["--allow-unmasked", "PIN"]] as const) {
+      const args = flag === "--no-redact" ? ["--no-redact"] : ["--allow-unmasked", "PIN"];
+      for (const env of [{}, { CLAUDECODE: "1" }]) {
+        const refused = await cli([...("CLAUDECODE" in env ? [] : ["--assisted"]), "run", ...args, "--", process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, '')`], { env });
+        expect(refused.code).toBe(64);
+        expect(refused.stderr).toContain(`varlatch: ${flag} is refused in assisted mode: showing a Secret unmasked is the human's decision, for a named item, made in their own terminal.`);
+        expect(refused.stderr).toContain(`  varlatch run -e development --allow-unmasked ${shown} -- <command>`);
+        expect(existsSync(marker)).toBe(false);
+      }
+    }
+    expect(requests.filter((r) => r.url.includes("/disclosures") || r.url.includes("/retrievals"))).toEqual([]);
+    const both = await cli(["run", "--allow-unmasked", "PIN", "--no-redact", "--", "true"]);
+    expect(both.code).toBe(64);
+    expect(both.stderr).toMatch(/--allow-unmasked shows only the named items and keeps every other Secret masked; it cannot be combined with --no-redact/);
     const agentSafe = await cli(["--assisted", "run", "--agent-safe", "--no-redact", "--agent", "a", "--", "true"]);
     expect(agentSafe.code).toBe(64);
     expect(agentSafe.stderr).toMatch(/do not apply to --agent-safe runs/);
@@ -354,23 +372,40 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
-    // Every remedy is the human's, for this item only; replacing overwrites.
-    expect(r.stderr).toMatch(/Ask the human before changing anything\. Each choice is theirs, for PIN only:/);
-    expect(r.stderr).toMatch(/overwrites the current value: varlatch --assisted values set PIN -e development --generate hex:32/);
-    expect(r.stderr).toMatch(/approval for one item does not cover another/);
-    // The override is shown as a command with the option before `--`, where the CLI reads it.
-    expect(r.stderr).toMatch(new RegExp(`varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
+    // Every remedy is the human's, for this item only, made in their own terminal; replacing overwrites.
+    expect(r.stderr).toMatch(/Stop and ask the human\. Each choice is theirs, for PIN only, made in their own terminal:/);
+    expect(r.stderr).toMatch(/overwrites the current value: varlatch values set PIN -e development --generate hex:32/);
+    expect(r.stderr).toMatch(/An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another\./);
+    // The human's override: outside assisted mode (no --assisted), the option before `--`.
+    expect(r.stderr).toMatch(new RegExp(`every other Secret still masked: varlatch run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
+    expect(r.stderr).not.toMatch(/varlatch --assisted (run|values)/);
     expect(r.stderr).toMatch(/Nothing was started\./);
     expect(existsSync(marker)).toBe(false);
     expect(r.stdout + r.stderr).not.toContain(PIN);
   });
 
-  it("runs with the human's --allow-unmasked, masking everything else", async () => {
-    const r = await cli(["--assisted", "run", "--allow-unmasked", "PIN", "--", process.execPath, printer()]);
-    expect(r.code).toBe(0);
-    expect(r.stderr).toMatch(/allowed with --allow-unmasked, so not masked \(shorter than 8 bytes\): PIN/);
+  it("the human's override, run exactly as the refusal prints it, shows only PIN: every other known Secret, inherited ones included, stays masked", async () => {
+    const refused = await cli(["--assisted", "run", "--", process.execPath, printer()]);
+    const printed = /every other Secret still masked: (varlatch run -e development --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
+    expect(printed, refused.stderr).toBeDefined();
+    // The human's terminal: no --assisted, no marker.
+    const args = (printed as string).split(" ").slice(1, -1).concat([process.execPath, printer()]);
+    const r = await cli(args, { env: INHERITED });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("varlatch: showing PIN unmasked in this run only, if too short to mask; every other known Secret stays masked.");
     expect(r.stderr).toContain(`pin=${PIN}`);
     expect(r.stdout).toContain("token=[REDACTED:API_TOKEN]");
+    expect(r.stdout).toContain("legacy=[REDACTED:LEGACY_KEY]");
+    expect(r.stdout + r.stderr).not.toContain(TOKEN);
+    expect(r.stdout + r.stderr).not.toContain(LEGACY);
+  });
+
+  it("the human's override names one item: another short Secret still stops the run", async () => {
+    stored.push({ name: "PIN_TWO", sensitive: true, value: "abcdefg" });
+    const r = await cli(["run", "--allow-unmasked", "PIN", "--", process.execPath, printer()]);
+    expect(r.code).toBe(78);
+    expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN_TWO/);
+    expect(r.stdout + r.stderr).not.toContain("abcdefg");
   });
 
   it("negative control, same input: outside assisted mode the run starts and prints the value", async () => {
@@ -423,7 +458,7 @@ describe.skipIf(!hasScript)("assisted run on a pseudo-terminal", () => {
   });
 
   it("negative control, same input: with --no-redact the command keeps the terminal and its output is not masked", async () => {
-    const { code, terminal } = await underTerminal(["--assisted", "run", "--no-redact", "--", process.execPath, printer()], INHERITED);
+    const { code, terminal } = await underTerminal(["run", "--no-redact", "--", process.execPath, printer()], INHERITED);
     expect(code).toBe(0);
     expect(terminal).toContain("tty=true");
     expect(terminal).toContain(TOKEN);
@@ -454,7 +489,8 @@ describe("values set and values rotate: Secret input", () => {
     ["the CLAUDECODE marker", [], { CLAUDECODE: "1" }],
   ] as const)("%s refuses a Secret's value on the command line, storing nothing and never echoing it", async (_name, flags, env) => {
     for (const item of ["API_TOKEN", "UNCONTRACTED_ITEM"]) {
-      const r = await cli([...flags, "values", "set", item, "argv-secret-value-771"], { env });
+      // API_TOKEN exists: the replacement is named, so this checks the command-line refusal.
+      const r = await cli([...flags, "values", "set", item, ...(item === "API_TOKEN" ? ["--replace", "API_TOKEN"] : []), "argv-secret-value-771"], { env });
       expect(r.code).toBe(64);
       expect(r.stderr).toMatch(new RegExp(`${item} is a Secret, and in assisted mode a Secret's value is never taken from the command line`));
       expect(r.stderr).toMatch(/--generate hex:32/);
@@ -465,7 +501,7 @@ describe("values set and values rotate: Secret input", () => {
   });
 
   it("accepts a non-sensitive value on the command line in assisted mode", async () => {
-    const r = await cli(["--assisted", "values", "set", "PORT", "9090"]);
+    const r = await cli(["--assisted", "values", "set", "PORT", "--replace", "PORT", "9090"]);
     expect(r.code).toBe(0);
     expect(puts().map((p) => p.body)).toEqual([{ value: "9090" }]);
   });
@@ -482,9 +518,9 @@ describe("values set and values rotate: Secret input", () => {
   it("--stdin, --from-file, and --generate store the value without printing it", async () => {
     const file = join(dir, "secret.txt");
     writeFileSync(file, "from-file-value-39\n");
-    const viaStdin = await cli(["--assisted", "values", "set", "API_TOKEN", "--stdin"], { input: "from-stdin-value-18\n" });
-    const viaFile = await cli(["--assisted", "values", "set", "API_TOKEN", "--from-file", file]);
-    const viaGenerate = await cli(["--assisted", "values", "set", "API_TOKEN", "--generate", "hex:32"]);
+    const viaStdin = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN", "--stdin"], { input: "from-stdin-value-18\n" });
+    const viaFile = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN", "--from-file", file]);
+    const viaGenerate = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN", "--generate", "hex:32"]);
     for (const r of [viaStdin, viaFile, viaGenerate]) expect(r.code).toBe(0);
     const [a, b, c] = puts().map((p) => (p.body as { value: string }).value);
     expect([a, b]).toEqual(["from-stdin-value-18", "from-file-value-39"]);
@@ -497,17 +533,17 @@ describe("values set and values rotate: Secret input", () => {
   });
 
   it("values rotate takes the same sources", async () => {
-    const r = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--stdin", "--grace", "60"], { input: "rotated-value-202\n" });
+    const r = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--replace", "API_TOKEN", "--stdin", "--grace", "60"], { input: "rotated-value-202\n" });
     expect(r.code).toBe(0);
     expect(requests.find((q) => q.url.endsWith("/rotations"))?.body).toEqual({ value: "rotated-value-202", graceSeconds: 60 });
     expect(r.stdout + r.stderr).not.toContain("rotated-value-202");
-    const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "argv-rotated-9"]);
+    const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--replace", "API_TOKEN", "argv-rotated-9"]);
     expect(refused.code).toBe(64);
     expect(refused.stderr).toMatch(/values rotate API_TOKEN -e development --generate hex:32/);
   });
 
   it("with no value: assisted mode never prompts; otherwise a non-terminal is told how to give one", async () => {
-    const assisted = await cli(["--assisted", "values", "set", "API_TOKEN"]);
+    const assisted = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN"]);
     expect(assisted.code).toBe(64);
     expect(assisted.stderr).toMatch(/assisted mode never prompts/);
     const plain = await cli(["values", "set", "API_TOKEN"]);
@@ -523,11 +559,23 @@ describe("values set and values rotate: Secret input", () => {
     const production = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production"]);
     expect(production.code).toBe(64);
     expect(handoff(production.stderr)).toBe("varlatch values set STRIPE_KEY -e production");
-    const byDefault = await cli(["--assisted", "values", "set", "API_TOKEN"]);
+    const byDefault = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN"]);
     // Without -e the command still names the environment it resolved, so it works anywhere.
     expect(handoff(byDefault.stderr)).toBe("varlatch values set API_TOKEN -e development");
     expect(production.stderr).toMatch(/values set STRIPE_KEY -e production --generate hex:32/);
     expect(puts()).toEqual([]);
+  });
+
+  it("the AGENTS.md handoff, run as written in the human's terminal, prompts and stores the value in that environment", async () => {
+    const written = /```text\n  (varlatch values set <NAME> -e <environment>)\n  ```/.exec(agentsBlock())?.[1];
+    expect(written).toBe("varlatch values set <NAME> -e <environment>");
+    const args = (written as string).replace("<NAME>", "STRIPE_KEY").replace("<environment>", "production").split(" ").slice(1);
+    const { code, terminal } = await underTerminal(args, {}, { after: "(input hidden): ", text: "typed-by-human-56\r" });
+    expect(code).toBe(0);
+    expect(terminal).not.toContain("typed-by-human-56");
+    expect(puts()).toEqual([
+      expect.objectContaining({ url: "/v1/organizations/acme/projects/web/environments/production/values/STRIPE_KEY", body: { value: "typed-by-human-56" } }),
+    ]);
   });
 
   it("the handoff, run as printed in the human's terminal, prompts and stores the value in that environment", async () => {
@@ -554,6 +602,65 @@ describe("values set and values rotate: Secret input", () => {
     const weak = await cli(["values", "set", "API_TOKEN", "--generate", "hex:4"]);
     expect(weak.stderr).toMatch(/from 16 to 4096 bytes/);
     expect(puts()).toEqual([]);
+  });
+});
+
+describe("values set and values rotate in assisted mode: replacing an existing value needs --replace <ITEM>", () => {
+  const writes = () => requests.filter((r) => r.method === "PUT" || r.url.endsWith("/rotations"));
+
+  it("refused (78) before any value is read, prompted for, generated, or written: from a file, from stdin, generated, or none", async () => {
+    const missingFile = join(dir, "does-not-exist.txt");
+    for (const source of [["--from-file", missingFile], ["--stdin"], ["--generate", "hex:32"], []]) {
+      const r = await cli(["--assisted", "values", "set", "API_TOKEN", ...source], { input: "stdin-value-never-read-66\n" });
+      expect(r.code, source.join(" ")).toBe(78);
+      // The file is never opened: no "cannot read" error, only the replacement refusal.
+      expect(r.stderr).toContain("varlatch values set: API_TOKEN already has a value in development; setting it replaces that value. Replacing it is the human's decision, for this item only: ask them, and with their approval add --replace API_TOKEN. Nothing was stored.");
+      expect(r.stderr).not.toMatch(/cannot read|never prompts/);
+    }
+    const rotate = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--generate", "hex:32"]);
+    expect(rotate.code).toBe(78);
+    expect(rotate.stderr).toMatch(/varlatch values rotate: API_TOKEN already has a value in development; rotating it replaces that value\./);
+    expect(writes()).toEqual([]);
+  });
+
+  it("with --replace naming the item it proceeds; --replace naming another item is a usage error; a new item needs none", async () => {
+    const approved = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "API_TOKEN", "--generate", "hex:32"]);
+    expect(approved.code, approved.stderr).toBe(0);
+    requests = [];
+    const other = await cli(["--assisted", "values", "set", "API_TOKEN", "--replace", "PORT", "--generate", "hex:32"]);
+    expect(other.code).toBe(64);
+    expect(other.stderr).toMatch(/--replace names PORT, but this command sets API_TOKEN; approval for one item never covers another\./);
+    expect(requests).toEqual([]);
+    const fresh = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "--generate", "hex:32"]);
+    expect(fresh.code, fresh.stderr).toBe(0);
+  });
+
+  it("when the server cannot say whether the item exists, it counts as existing", async () => {
+    denyEffective = true;
+    const unknown = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "--generate", "hex:32"]);
+    expect(unknown.code).toBe(78);
+    expect(unknown.stderr).toMatch(/whether BRAND_NEW_ITEM already has a value in development cannot be checked \(403 PERMISSION_DENIED\), so it counts as existing\./);
+    expect(writes()).toEqual([]);
+    const approved = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "--replace", "BRAND_NEW_ITEM", "--generate", "hex:32"]);
+    expect(approved.code, approved.stderr).toBe(0);
+  });
+
+  it("run 3's sequence: with approval for REDIS_PASSWORD only, regenerating LOG_LEVEL is refused and LOG_LEVEL is kept", async () => {
+    stored.push({ name: "REDIS_PASSWORD", sensitive: true, value: "r3d1s7x" }, { name: "LOG_LEVEL", sensitive: true, value: "debug" });
+    const redis = await cli(["--assisted", "values", "set", "REDIS_PASSWORD", "-e", "development", "--replace", "REDIS_PASSWORD", "--generate", "hex:32"]);
+    expect(redis.code, redis.stderr).toBe(0);
+    const log = await cli(["--assisted", "values", "set", "LOG_LEVEL", "-e", "development", "--generate", "hex:32"]);
+    expect(log.code).toBe(78);
+    expect(log.stderr).toMatch(/LOG_LEVEL already has a value in development/);
+    expect(stored.find((i) => i.name === "LOG_LEVEL")?.value).toBe("debug");
+    expect(requests.filter((r) => r.method === "PUT").map((r) => r.url.split("/").at(-1))).toEqual(["REDIS_PASSWORD"]);
+  });
+
+  it("outside assisted mode nothing changes: no check, the value is replaced", async () => {
+    const r = await cli(["values", "set", "API_TOKEN", "--generate", "hex:32"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(requests.some((q) => q.url.includes("/effective-configuration"))).toBe(false);
+    expect(writes()).toHaveLength(1);
   });
 });
 
@@ -601,11 +708,11 @@ describe("values set and values rotate: a strict command line", () => {
   });
 
   it("the documented forms still work: options on either side of the value, -- before a value that begins with a dash, rotate's --grace", async () => {
-    expect((await cli(["--assisted", "values", "set", "PORT", "-e", "development", "9090"])).code).toBe(0);
+    expect((await cli(["--assisted", "values", "set", "PORT", "-e", "development", "--replace", "PORT", "9090"])).code).toBe(0);
     expect((await cli(["values", "set", "PORT", "--", "-1"])).code).toBe(0);
-    expect((await cli(["--assisted", "values", "set", "API_TOKEN", "--environment", "development", "--stdin"], { input: "from-stdin-value-27\n" })).code).toBe(0);
+    expect((await cli(["--assisted", "values", "set", "API_TOKEN", "--environment", "development", "--replace", "API_TOKEN", "--stdin"], { input: "from-stdin-value-27\n" })).code).toBe(0);
     expect(requests.filter((r) => r.method === "PUT").map((r) => r.body)).toEqual([{ value: "9090" }, { value: "-1" }, { value: "from-stdin-value-27" }]);
-    const rotated = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--grace", "60", "--stdin"], { input: "rotated-value-303\n" });
+    const rotated = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--grace", "60", "--replace", "API_TOKEN", "--stdin"], { input: "rotated-value-303\n" });
     expect(rotated.code).toBe(0);
     expect(requests.find((r) => r.url.endsWith("/rotations"))?.body).toEqual({ value: "rotated-value-303", graceSeconds: 60 });
   });

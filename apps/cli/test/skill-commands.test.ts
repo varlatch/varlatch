@@ -238,7 +238,7 @@ describe("the override the exit-78 message prints", () => {
     state.values = { PIN: "1234567" };
     const refused = await cli(["--assisted", "run", "--", "node", "-e", "console.log('ok')"], repo);
     expect(refused.code, refused.stderr).toBe(78);
-    const printed = /(varlatch --assisted run -e development --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
+    const printed = /(varlatch run -e development --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
     expect(printed, refused.stderr).toBeDefined();
     const r = await cli(fill(printed as string, { "<command>": "node" }).concat(["-e", "console.log('ran')"]), repo);
     expect(r.code, r.stderr).toBe(0);
@@ -256,8 +256,8 @@ describe("the exit-78 remedies keep the run's environment", () => {
     const r = await cli(["--assisted", "run", "-e", "production", ...extra, "--", "node", "-e", "console.log('ok')"], repo, env);
     expect(r.code, r.stderr).toBe(78);
     return {
-      replace: /: (varlatch --assisted values set PIN .*--generate hex:32)$/m.exec(r.stderr)?.[1],
-      unmask: /: (varlatch --assisted run .*--allow-unmasked PIN -- <command>)$/m.exec(r.stderr)?.[1],
+      replace: /: (varlatch values set PIN .*--generate hex:32)$/m.exec(r.stderr)?.[1],
+      unmask: /: (varlatch run .*--allow-unmasked PIN -- <command>)$/m.exec(r.stderr)?.[1],
     };
   }
 
@@ -270,7 +270,7 @@ describe("the exit-78 remedies keep the run's environment", () => {
     const contract = normalizeContract({ schemaVersion: 1, semanticsVersion: 3, items: [{ name: "PIN", type: "string", sensitive: true, required: { kind: "always" } }] as never });
     state.active = { id: "crv_pin", projectId: "prj_1", contentHash: contractHash(contract), semanticsVersion: 3, active: true, contract, createdAt: "2026-10-01T00:00:00.000Z" };
     const { unmask } = await refusedInProduction(repo, [...extra]);
-    expect(unmask).toBe(`varlatch --assisted run -e production ${extra.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`);
+    expect(unmask).toBe(`varlatch run -e production ${extra.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`);
     const r = await cli(fill(unmask as string, { "<command>": "node" }).concat(["-e", "console.log('PIN=' + process.env.PIN)"]), repo);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("PIN=1234567");
@@ -280,7 +280,7 @@ describe("the exit-78 remedies keep the run's environment", () => {
   it("the printed replacement replaces production's value, leaves development's, and the refused run then starts", async () => {
     const repo = project();
     const { replace } = await refusedInProduction(repo);
-    expect(replace).toBe("varlatch --assisted values set PIN -e production --generate hex:32");
+    expect(replace).toBe("varlatch values set PIN -e production --generate hex:32");
     const r = await cli(fill(replace as string), repo);
     expect(r.code, r.stderr).toBe(0);
     expect(state.production.PIN).toMatch(/^[0-9a-f]{64}$/);
@@ -294,8 +294,8 @@ describe("the exit-78 remedies keep the run's environment", () => {
     const repo = project();
     for (const [extra, env] of [[["--server", origin], {}], [[], { VARLATCH_SERVER: origin }]] as const) {
       const { replace, unmask } = await refusedInProduction(repo, [...extra], env);
-      expect(replace).toBe(`varlatch --assisted values set PIN -e production --server ${origin} --generate hex:32`);
-      expect(unmask).toBe(`varlatch --assisted run -e production --server ${origin} --allow-unmasked PIN -- <command>`);
+      expect(replace).toBe(`varlatch values set PIN -e production --server ${origin} --generate hex:32`);
+      expect(unmask).toBe(`varlatch run -e production --server ${origin} --allow-unmasked PIN -- <command>`);
     }
     const handoff = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production", "--server", origin], repo);
     expect(handoff.code).toBe(64);
@@ -306,25 +306,57 @@ describe("the exit-78 remedies keep the run's environment", () => {
 });
 
 describe("completion gaps from the second agent evaluation", () => {
-  it("the AGENTS.md block and the skill say: no init in a set-up repository, compare a .env's names before importing, readiness is validate, no stored values is a fact to check, and only listed Placeholders are safe to show", () => {
+  it("the AGENTS.md block: no init, the full onboarding, readiness is validate, the human-terminal handoff, named replacement, no agent-added unmasking, listed Placeholders only", () => {
     const block = agentsBlock();
     const skill = SKILL_FILES["SKILL.md"] as string;
     expect(block).toMatch(/never run `varlatch init`/);
-    expect(block).toMatch(/A `\.env` file here may hold\s+values not yet in Varlatch, or older copies of values that are: compare names first, without reading it\s+\(`varlatch --assisted import \.env -e <environment> --dry-run --json` marks those it already has\)/);
-    expect(block).toMatch(/Where a name\s+already has a value, ask the human; the import replaces it only with `--replace <NAME>`, and refuses otherwise/);
+    expect(block).toMatch(/1\. Compare names with the target environment: `varlatch --assisted import \.env -e <environment> --dry-run --json`/);
+    expect(block).toMatch(/Ask the human about each; the import replaces one\s+only with `--replace <NAME>` for it/);
+    expect(block).toMatch(/2\. Import: `varlatch --assisted import \.env -e <environment> --contract --plain <NAME> --delete-source --json`/);
+    expect(block).toMatch(/`--plain` only for items the human confirmed are not secret; the file is deleted only after every value was stored/);
+    expect(block).toMatch(/3\. If the import created a Contract revision, activate it: `varlatch --assisted contract activate <revision>`/);
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
-    expect(block).toMatch(/If it says no values are\s+stored in Varlatch, the command gets only what it inherits: check what it needs \(`validate`\) and report that/);
-    expect(block).toMatch(/`varlatch --assisted context --json` under `agentRun\.placeholders`\. Showing a listed one discloses nothing\s+\(`varlatch --assisted run -- printenv <NAME>` when the human asks you to check it\); never show any other\s+variable there: the run also carries credentials and inherited values/);
-    // The old blanket claims are gone.
-    expect(block).not.toMatch(/move them in first|it is not success|showing one discloses nothing \(so/);
-    expect(skill).toMatch(/A repository\s+with `varlatch\.toml` is already set up: never run `varlatch init` there/);
-    expect(skill).toMatch(/\*\*To find out whether an environment is ready\*\*[\s\S]*?`varlatch --assisted validate -e <environment> --json`/);
-    expect(skill).toMatch(/says no values are stored in Varlatch, the command gets only what it\s+inherits: check what it needs/);
-    expect(skill).toMatch(/`varlatch --assisted context --json` lists the run's Placeholders \(names\s+only, under `agentRun\.placeholders`\)\. Showing a listed one discloses\s+nothing/);
-    expect(skill).toMatch(/Never show any other variable\s+there: the run also carries credentials/);
-    expect(skill).toMatch(/the one exception: a listed\s+Placeholder inside an agent-safe run, rule 8/);
-    expect(skill).toMatch(/Ask the human about each of those; the import replaces one only\s+with `--replace <NAME>` for it, and otherwise refuses \(78\)/);
-    expect(skill).toMatch(/asks whether an\s+environment is ready to deploy/);
+    expect(block).toMatch(/no `--assisted`; add `--server <url>` when the server was overridden\), or point them to the dashboard:\n\n  ```text\n  varlatch values set <NAME> -e <environment>\n  ```/);
+    expect(block).toMatch(/in assisted mode `values set`, `values rotate`, and `import` refuse to replace one without `--replace <NAME>`/);
+    expect(block).toMatch(/Never add `--allow-unmasked` or `--no-redact` yourself \(assisted mode refuses both\)\. When a Secret is too short to\s+mask \(exit 78\), report the item and wait: every remedy is the human's, run in their own terminal/);
+    expect(block).toMatch(/`varlatch --assisted context --json` under `agentRun\.placeholders`/);
+    // The skill says the same.
+    expect(skill).toMatch(/Never add `--allow-unmasked` or `--no-redact` yourself:\s+assisted mode refuses both/);
+    expect(skill).toMatch(/```text\n   varlatch run -e <environment> --allow-unmasked <NAME> -- <command>\n   ```/);
+    expect(skill).toMatch(/refuse \(78\) to replace an existing value\s+unless that item is named with `--replace <NAME>`/);
+    expect(skill).toMatch(/add\s+`--server <url>` when the server was overridden/);
+    expect(skill).toMatch(/If the import created a revision, activate it/);
+    expect(skill).toMatch(/for items the human confirmed are not secret/);
+  });
+
+  it("the AGENTS.md onboarding, run as written: a fresh project is imported, its revision activated, the file deleted", async () => {
+    const block = agentsBlock();
+    const step = (n: number) => new RegExp(`${n}\\. [^\\n]*?\`(varlatch --assisted [^\`]+)\``).exec(block)?.[1] as string;
+    const repo = project();
+    const fills = { "<environment>": "development", "<NAME>": "LOG_LEVEL" };
+    const dry = await cli(fill(step(1), fills), repo);
+    expect(dry.code, dry.stderr).toBe(0);
+    const imported = await cli(fill(step(2), fills), repo);
+    expect(imported.code, imported.stderr).toBe(0);
+    const revision = (JSON.parse(imported.stdout) as { contract: { revision: { id: string } } }).contract.revision.id;
+    const activated = await cli(fill(step(3), { "<revision>": revision }), repo);
+    expect(activated.code, activated.stderr).toBe(0);
+    expect(state.values).toEqual({ API_TOKEN, LOG_LEVEL: "debug" });
+    expect(existsSync(join(repo, ".env"))).toBe(false);
+    const items = (state.active?.contract as { items: { name: string; sensitive: boolean }[] }).items;
+    expect(items.find((i) => i.name === "LOG_LEVEL")?.sensitive).toBe(false);
+    expect(items.find((i) => i.name === "API_TOKEN")?.sensitive).toBe(true);
+  });
+
+  it("the AGENTS.md onboarding, run as written over a stale .env: step 2 stops (78) before replacing the stored value", async () => {
+    const block = agentsBlock();
+    const step2 = /2\. [^\n]*?`(varlatch --assisted [^`]+)`/.exec(block)?.[1] as string;
+    const repo = project();
+    state.values = { API_TOKEN: "current-rotated-token-value-91" };
+    const r = await cli(fill(step2, { "<environment>": "development", "<NAME>": "LOG_LEVEL" }), repo);
+    expect(r.code).toBe(78);
+    expect(state.values).toEqual({ API_TOKEN: "current-rotated-token-value-91" });
+    expect(existsSync(join(repo, ".env"))).toBe(true);
   });
 
   it("the readiness command runs as written and reports the missing item", async () => {

@@ -22,9 +22,7 @@ fixes.
   default, on a terminal too (the command then writes to pipes). The filter
   also holds inherited values under names Varlatch knows as Secrets. A
   Secret shorter than 8 bytes, which cannot be masked, stops the run with
-  status 78 before the command starts, naming the item;
-  `--allow-unmasked <NAME>` is the human's override, and `--no-redact`
-  turns masking off for one run.
+  status 78 before the command starts, naming the item.
 - In assisted mode, `values set` and `values rotate` refuse a Secret's value
   on the command line, storing nothing, and never prompt.
 - **Behaviour change for agent sessions:** a `varlatch run` started by a
@@ -122,6 +120,29 @@ fixes.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than
   work around it.
+- From the third agent evaluation (it failed): the AGENTS.md block again
+  has the whole onboarding pattern (compare names first, `--contract`,
+  `--plain` only for items the human confirmed are not secret,
+  `--delete-source` only once every value is stored, then activate the
+  revision), tells the agent never to add `--allow-unmasked` or
+  `--no-redact`, and gives the human-terminal command for a value the human
+  provides (`varlatch values set <NAME> -e <environment>`).
+- **Behaviour change:** assisted mode refuses `--allow-unmasked` and
+  `--no-redact` (64, nothing started): showing a Secret is the human's
+  decision, in their own terminal. Outside assisted mode,
+  `varlatch run --allow-unmasked <NAME> -- <command>` is that override: it
+  shows only the named short Secrets and keeps every other known Secret,
+  inherited ones included, masked; another short one still stops the run.
+  Before, `--allow-unmasked` applied only in assisted mode. The exit-78
+  message now presents every remedy as the human's command for their own
+  terminal (no `--assisted`), with the run's environment, server, and retry
+  options, and says the agent stops and waits.
+- **Behaviour change:** in assisted mode, `values set` and `values rotate`
+  refuse (78, nothing stored) to replace an existing value unless the item
+  is named with `--replace <ITEM>`, checked before any value is read,
+  prompted for, generated, or written; when existence cannot be checked, it
+  counts as existing. `--replace` records the override's intent, not an
+  approval. Outside assisted mode they replace as before.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

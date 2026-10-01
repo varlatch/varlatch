@@ -63,22 +63,30 @@ varlatch --assisted <command> [args...]
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    Ask the human before changing anything. Each choice is theirs, for PIN only:
-    - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set PIN -e production --generate hex:32
+    Stop and ask the human. Each choice is theirs, for PIN only, made in their own terminal:
+    - replace the value with a longer one, which overwrites the current value: varlatch values set PIN -e production --generate hex:32
     - if it is not a secret, correct its sensitivity in the Contract
-    - show it unmasked in this run only: varlatch --assisted run -e production --allow-unmasked PIN -- <command>
-    An agent reports this and waits; approval for one item does not cover another.
+    - show it unmasked in one run, every other Secret still masked: varlatch run -e production --allow-unmasked PIN -- <command>
+    An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another.
   Nothing was started.
   ```
 
-  Both commands act on the refused run's values: they name its environment
-  (always, even when it came from the default), its server when the run
-  overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
+  The remedies are the human's commands, for their own terminal (no
+  `--assisted`). They act on the refused run's values: they name its
+  environment (always, even when it came from the default), its server when
+  the run overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
   `--strict`, `--allow-inherited`, and earlier `--allow-unmasked` options.
-
-  `--allow-unmasked <NAME>` (repeatable) lets that item through unmasked in
-  this run, and the run says so. It is refused outside assisted mode.
-- **`--no-redact`** turns masking off for one run and prints a warning.
+- **`--allow-unmasked` and `--no-redact` are refused** in assisted mode
+  (status 64, nothing started): showing a Secret is the human's decision.
+  The refusal prints the human's override for their own terminal.
+- **The human's override,** outside assisted mode:
+  `varlatch run --allow-unmasked <NAME> -- <command>` (repeatable) lets the
+  named short Secrets through unmasked in that run, and keeps everything else
+  assisted mode protects: every other known Secret, inherited ones included,
+  stays masked, and another Secret too short to mask still stops the run.
+  It is not an unmasked run, and it cannot be combined with `--no-redact`.
+- These are protections against accidents, not a boundary: an agent that
+  deliberately turns assisted mode off is outside what they cover.
 - **`--agent-safe` runs are unchanged:** the Agent holds Placeholders, not
   Secrets, and redaction does not apply there. See
   [Agent-safe runs](agent-safe-runs.md).
@@ -97,6 +105,15 @@ varlatch --assisted <command> [args...]
   command resolved (`-e`), so a handed-over command targets the same
   environment. The human's command has no `--assisted`, so it prompts
   without showing the value.
+- **Replacing an existing value needs `--replace <ITEM>`** (status 78
+  otherwise, nothing stored). The check runs after the command line is
+  checked and before any value is read from a file or standard input,
+  prompted for, generated, or written. When the server cannot say whether
+  the item has a value (denied, for instance), it counts as existing.
+  `--replace` must name the item the command sets or rotates; approval for
+  one item never covers another. It records the override's intent: it is
+  not proof that a human approved, nor an authentication or a permission.
+  Outside assisted mode, `values set` and `values rotate` replace as before.
 
 ## Giving a value without the command line
 

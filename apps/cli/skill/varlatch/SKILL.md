@@ -42,24 +42,35 @@ long as you follow these rules.
 4. **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too
-   short to mask. Report the names in the error, then stop and ask. Never add
-   `--allow-unmasked` or `--no-redact` yourself; when the human approves
-   showing one item unmasked, the option goes before `--`:
-   `varlatch --assisted run --allow-unmasked <NAME> -- <command>`. If `run`
+   short to mask. Report the names in the error, then stop and wait. Every
+   remedy is the human's, run in their own terminal: the refusal prints
+   their commands. Never add `--allow-unmasked` or `--no-redact` yourself:
+   assisted mode refuses both. The human's override, outside assisted mode,
+   shows only the named item and keeps every other Secret masked:
+
+   ```text
+   varlatch run -e <environment> --allow-unmasked <NAME> -- <command>
+   ```
+
+   If `run`
    says no values are stored in Varlatch, the command gets only what it
    inherits: check what it needs (`validate`, or its own output) and report
    that, rather than calling the run a success or a failure on that alone.
 5. **Never replace an existing value or change an item's sensitivity
    without the human's approval for that named item.** Approval for one item
    does not cover another: never regenerate or reclassify items the human did
-   not name, even to make a command run.
+   not name, even to make a command run. In assisted mode, `values set`,
+   `values rotate`, and `import` refuse (78) to replace an existing value
+   unless that item is named with `--replace <NAME>`; add it only with the
+   human's approval for that item. It records the override, not an approval.
 6. **To find out whether an environment is ready** (to deploy, or what is
    missing or invalid), run `varlatch --assisted validate -e <environment> --json`.
    Listing values does not check the Contract. **When a value is missing**,
    report its name and environment, and give
    the human this command for their own terminal, where it prompts without
-   showing the value (no `--assisted`: assisted mode never prompts), or point
-   them to the dashboard. Never invent a value.
+   showing the value (no `--assisted`: assisted mode never prompts; add
+   `--server <url>` when the server was overridden), or point them to the
+   dashboard. Never invent a value.
 
    ```text
    varlatch values set <NAME> -e <environment>
@@ -107,11 +118,11 @@ varlatch --assisted run -- <command>
    nothing.
 2. The import stores every value and adds the new items to a Contract
    revision. New items are Secrets unless named with `--plain`: use it only
-   for items confirmed not secret (a port, a log level), and ask the human
-   when unsure. `--delete-source` deletes the file only after every value
-   was stored.
-3. Activate the revision the import printed (`contract.revision.id` in its
-   JSON output).
+   for items the human confirmed are not secret (a port, a log level), and
+   ask when unsure. `--delete-source` deletes the file only after every
+   value was stored.
+3. If the import created a revision, activate it (`contract.revision.id` in
+   its JSON output; none when every item was already in the Contract).
 4. Start the app with its configuration.
 
 ## Common commands
