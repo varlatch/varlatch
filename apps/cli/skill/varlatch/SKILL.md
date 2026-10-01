@@ -64,7 +64,10 @@ long as you follow these rules.
    unless that item is named with `--replace <NAME>`; add it only with the
    human's approval for that item. A value inherited from a parent
    environment counts: setting it in the child overrides it. `--replace`
-   records the override, not an approval.
+   records the override, not an approval. **Never delete a value without
+   the human's approval for that item in that environment.** In assisted
+   mode `values delete` refuses (78) without `--confirm <NAME>`; add it only
+   after that approval. It records the intent, not an approval.
 6. **To find out whether an environment is ready** (to deploy, or what is
    missing or invalid), run `varlatch --assisted validate -e <environment> --json`.
    Listing values does not check the Contract. **When a value is missing**,

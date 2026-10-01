@@ -52,6 +52,21 @@ export function secretWriteRefusal(item: string): string {
   );
 }
 
+/**
+ * Why a deletion through MCP is refused, or null when `confirm` names the
+ * item. Every deletion needs the item named again, plain value or Secret
+ * alike; the confirmation records the intent to delete, not proof that a
+ * human approved it (ADR-0043).
+ */
+export function deleteConfirmationRefusal(item: string, environment: string, confirm: string | undefined): string | null {
+  if (confirm === item) return null;
+  const why =
+    confirm === undefined
+      ? `deleting ${item} from ${environment} is the human's decision, for this item in this environment`
+      : `confirm names ${confirm}, but this call deletes ${item}; approval for one item never covers another`;
+  return `${why}. Ask the human, and with their approval for ${item} in ${environment}, pass confirm: "${item}". Nothing was deleted.`;
+}
+
 const orgArg = {
   organization: z.string().optional().describe("Organization slug (defaults to the resolved repo context)"),
 };
@@ -271,19 +286,33 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
       "varlatch_delete_value",
       {
         title: "Delete value",
-        description: "Delete a configuration value from an environment.",
-        inputSchema: { ...envArg, item: z.string() },
+        description:
+          "Delete a configuration value from an environment. Deleting is the human's decision, for that item in that " +
+          "environment: ask them first, and with their approval pass the item's name again as confirm. Without it, " +
+          "nothing is deleted.",
+        inputSchema: {
+          ...envArg,
+          item: z.string(),
+          confirm: z
+            .string()
+            .optional()
+            .describe("Required: the item's name again, given only after the human approved deleting it in this environment"),
+        },
       },
-      (args) =>
-        run(async () => {
-          await client.deleteValue(
-            required("organization", args.organization),
-            required("project", args.project),
-            required("environment", args.environment),
-            args.item,
-          );
-          return { deleted: args.item };
-        }),
+      async (args) => {
+        try {
+          const organization = required("organization", args.organization);
+          const project = required("project", args.project);
+          const environment = required("environment", args.environment);
+          // Checked before any request: --allow-writes enables the tool, it does not record the intent to delete.
+          const refusal = deleteConfirmationRefusal(args.item, environment, args.confirm);
+          if (refusal) return toolError(refusal);
+          await client.deleteValue(organization, project, environment, args.item);
+          return ok({ deleted: args.item, environment });
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
     );
   }
 

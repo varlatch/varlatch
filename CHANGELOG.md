@@ -157,6 +157,19 @@ fixes.
   inherited from the parent environment counts as existing, and so does one
   whose existence cannot be checked. `--replace` records the override's
   intent, not an approval. Outside assisted mode they replace as before.
+- **Behaviour change:** in assisted mode, `values delete` deletes only with
+  the item named again, `--confirm <ITEM>`, for a plain value and a Secret
+  alike; otherwise it exits 78 with no request and nothing deleted.
+  `--confirm` naming another item exits 64. `--confirm` records the
+  deletion's intent, not an approval. `values delete` now checks its
+  command line strictly in every mode (an unknown option such as `--env`,
+  a missing value, a repeated option, or an extra argument: 64, no
+  request); before, `values delete X --env production` deleted X from the
+  default environment. Outside assisted mode a deletion needs no
+  confirmation, as before.
+- **Behaviour change:** the MCP server's `varlatch_delete_value` (with
+  `--allow-writes`) deletes only when its `confirm` argument repeats the
+  item's name; otherwise it returns an error and makes no request.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

@@ -40,6 +40,13 @@ tool argument comes from the model. So:
   `varlatch import`, `varlatch values set --generate`, `--from-file`,
   `--stdin`, or the human. `varlatch_delete_value` writes no value and stays
   available with `--allow-writes`.
+- **No tool deletes without the item named again.** `varlatch_delete_value`
+  deletes only when its `confirm` argument repeats the item's name, for a
+  plain value and a Secret alike; otherwise it returns an error and makes
+  no request. `--allow-writes` enables the tool; it does not record the
+  intent to delete. The confirmation records that intent, not proof that
+  a human approved: a coding agent passes it only after the human approved
+  deleting that item in that environment.
 
 ## The credential
 

@@ -141,6 +141,13 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       }
       return json(200, { versionId: `ver_new_${put[1]}` });
     }
+    // Any environment; development's stored values change, as the server would.
+    const del = /^\/v1\/organizations\/acme\/projects\/web\/environments\/([a-z]+)\/values\/([A-Z0-9_]+)$/.exec(url);
+    if (del && req.method === "DELETE") {
+      if (del[1] === "development") stored = stored.filter((i) => i.name !== del[2]);
+      res.writeHead(204);
+      return res.end();
+    }
     const rotate = new RegExp(`^${ENV_PATH}/values/([A-Z0-9_]+)/rotations$`).exec(url);
     if (rotate && req.method === "POST") {
       return json(200, { primaryVersionId: `ver_rot_${rotate[1]}`, rotationDeadline: "2026-10-01T00:00:00.000Z" });
@@ -865,6 +872,100 @@ describe("values set and values rotate in assisted mode: replacing an existing v
     expect(r.code, r.stderr).toBe(0);
     expect(requests.some((q) => q.url.includes("/effective-configuration"))).toBe(false);
     expect(writes()).toHaveLength(1);
+  });
+});
+
+describe("values delete: in assisted mode, every deletion needs the item named with --confirm", () => {
+  const deletes = () => requests.filter((r) => r.method === "DELETE");
+  const value = (name: string) => stored.find((i) => i.name === name)?.value;
+
+  it.each([
+    ["a Secret", "API_TOKEN"],
+    ["a plain value (sensitivity is not consulted)", "PORT"],
+    ["an item with no value (existence is not consulted)", "NO_SUCH_ITEM"],
+  ])("%s without --confirm: 78 before any request, nothing deleted, the handoff keeps the environment", async (_name, item) => {
+    for (const env of [{}, { CLAUDECODE: "1" }]) {
+      requests = [];
+      const before = value(item);
+      const r = await cli([...("CLAUDECODE" in env ? [] : ["--assisted"]), "values", "delete", item, "-e", "development"], { env });
+      expect(r.code, r.stderr).toBe(78);
+      expect(r.stderr).toContain(
+        `varlatch values delete: deleting ${item} from development is the human's decision, for this item in this environment. Ask them, and with their approval for ${item} in development, add --confirm ${item}. Or the human runs, in their own terminal:\n  varlatch values delete ${item} -e development\nNothing was deleted.`,
+      );
+      expect(requests).toEqual([]);
+      expect(value(item)).toBe(before);
+    }
+  });
+
+  it("an unconfirmed delete-and-recreate leaves the original value intact", async () => {
+    const del = await cli(["--assisted", "values", "delete", "API_TOKEN"]);
+    expect(del.code).toBe(78);
+    const set = await cli(["--assisted", "values", "set", "API_TOKEN", "--generate", "hex:32"]);
+    expect(set.code).toBe(78);
+    expect(value("API_TOKEN")).toBe(TOKEN);
+    expect(requests.filter((r) => r.method !== "GET")).toEqual([]);
+  });
+
+  it("a confirmation naming another item is refused (64), before any request", async () => {
+    for (const flags of [["--assisted"], []]) {
+      requests = [];
+      const r = await cli([...flags, "values", "delete", "API_TOKEN", "--confirm", "PORT"]);
+      expect(r.code).toBe(64);
+      expect(r.stderr).toMatch(/--confirm names PORT, but this command deletes API_TOKEN; approval for one item never covers another\./);
+      expect(requests).toEqual([]);
+      expect(value("API_TOKEN")).toBe(TOKEN);
+    }
+  });
+
+  it("with the human's approval, --confirm naming the item deletes it, in that environment only", async () => {
+    const r = await cli(["--assisted", "values", "delete", "API_TOKEN", "-e", "development", "--confirm", "API_TOKEN"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("API_TOKEN deleted from development.");
+    expect(deletes().map((d) => d.url)).toEqual(["/v1/organizations/acme/projects/web/environments/development/values/API_TOKEN"]);
+    expect(value("API_TOKEN")).toBeUndefined();
+    expect(value("PORT")).toBe("8080");
+  });
+
+  it("the handoff keeps an overridden server, and run as printed in the human's terminal deletes that environment's value", async () => {
+    const refused = await cli(["--assisted", "values", "delete", "PORT", "-e", "production", "--server", origin]);
+    expect(refused.code).toBe(78);
+    const printed = /^ {2}(varlatch values delete .*)$/m.exec(refused.stderr)?.[1];
+    expect(printed).toBe(`varlatch values delete PORT -e production --server ${origin}`);
+    requests = [];
+    const human = await cli((printed as string).split(" ").slice(1));
+    expect(human.code, human.stderr).toBe(0);
+    expect(deletes().map((d) => d.url)).toEqual(["/v1/organizations/acme/projects/web/environments/production/values/PORT"]);
+  });
+
+  it("outside assisted mode a deletion needs no confirmation, as before", async () => {
+    const r = await cli(["values", "delete", "API_TOKEN"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(value("API_TOKEN")).toBeUndefined();
+  });
+
+  it.each([
+    ["an unknown option (the --env typo)", ["--env", "production"], /unknown option --env/],
+    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=production/],
+    ["--confirm=, which is not parsed", ["--confirm=API_TOKEN"], /unknown option --confirm=API_TOKEN/],
+    ["--confirm without a value", ["--confirm"], /--confirm needs a value/],
+    ["--confirm twice", ["--confirm", "API_TOKEN", "--confirm", "API_TOKEN"], /--confirm given twice/],
+    ["-e and --environment both", ["-e", "development", "--environment", "development"], /--environment \(or -e\) given twice/],
+    ["an extra argument", ["extra"], /unexpected argument extra/],
+  ])("a wrong command line, %s: 64 in either mode, before any request", async (_name, extra, message) => {
+    for (const flags of [["--assisted"], []]) {
+      requests = [];
+      const r = await cli([...flags, "values", "delete", "API_TOKEN", ...extra]);
+      expect(r.code, `${flags.join(" ")} ${r.stderr}`).toBe(64);
+      expect(r.stderr).toMatch(message);
+      expect(requests).toEqual([]);
+      expect(value("API_TOKEN")).toBe(TOKEN);
+    }
+  });
+
+  it("no item is a usage error", async () => {
+    const r = await cli(["values", "delete"]);
+    expect(r.code).toBe(64);
+    expect(requests).toEqual([]);
   });
 });
 

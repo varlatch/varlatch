@@ -69,6 +69,10 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       return json(200, { items: [{ name: "API_KEY", versionId: "ver_1", value: CANARY }], withheld: [] });
     }
     if (/\/values\/[A-Z_]+$/.test(url) && req.method === "PUT") return json(200, { versionId: "ver_new" });
+    if (/\/values\/[A-Z_]+$/.test(url) && req.method === "DELETE") {
+      res.writeHead(204);
+      return res.end();
+    }
     json(404, { error: { code: "NOT_FOUND", message: url, requestId: "r" } });
   });
 }
@@ -149,6 +153,20 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
     const plain = await client.callTool("varlatch_set_value", { item: "LOG_LEVEL", value: "debug" });
     expect(plain.isError).toBeFalsy();
     expect(requests.filter((r) => r.method === "PUT").map((r) => r.url)).toEqual([`${PROJECT}/environments/dev/values/LOG_LEVEL`]);
+    await client.close();
+  });
+
+  it("deletes only with the item's name as confirm: --allow-writes alone records no intent", async () => {
+    const client = await connect(entry, ["--allow-writes"], env());
+    for (const args of [{ item: "LOG_LEVEL" }, { item: "LOG_LEVEL", confirm: "API_KEY" }]) {
+      const refused = await client.callTool("varlatch_delete_value", args);
+      expect(refused.isError).toBe(true);
+      expect(refused.text).toMatch(/Nothing was deleted\./);
+    }
+    expect(requests.filter((r) => r.method === "DELETE")).toEqual([]);
+    const done = await client.callTool("varlatch_delete_value", { item: "LOG_LEVEL", confirm: "LOG_LEVEL" });
+    expect(done.isError).toBeFalsy();
+    expect(requests.filter((r) => r.method === "DELETE").map((r) => r.url)).toEqual([`${PROJECT}/environments/dev/values/LOG_LEVEL`]);
     await client.close();
   });
 

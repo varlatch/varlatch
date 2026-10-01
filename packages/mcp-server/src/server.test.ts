@@ -143,12 +143,40 @@ describe("varlatch MCP server", () => {
     expect(requests.filter((r) => r.method !== "GET")).toEqual([]);
   });
 
-  it("deleting a value writes no value, and stays available with --allow-writes", async () => {
+  it("deleting a value writes no value, and stays available with --allow-writes, given the item's name as confirm", async () => {
     const { client, requests } = fakeClient({ "/v1/organizations/acme/projects/api/environments/dev/values/API_KEY": {} });
     const mcp = await connect({ client, defaults, allowWrites: true });
-    const result = await mcp.callTool({ name: "varlatch_delete_value", arguments: { item: "API_KEY" } });
+    const result = await mcp.callTool({ name: "varlatch_delete_value", arguments: { item: "API_KEY", confirm: "API_KEY" } });
     expect(result.isError).toBeFalsy();
-    expect(requests).toMatchObject([{ method: "DELETE" }]);
+    expect(requests).toMatchObject([{ method: "DELETE", url: "https://varlatch.test/v1/organizations/acme/projects/api/environments/dev/values/API_KEY" }]);
+  });
+
+  it.each([
+    ["no confirm (--allow-writes alone records no intent)", { item: "API_KEY" }, /deleting API_KEY from dev is the human's decision, for this item in this environment\. Ask the human, and with their approval for API_KEY in dev, pass confirm: "API_KEY"\. Nothing was deleted\./],
+    ["confirm naming another item", { item: "API_KEY", confirm: "LOG_LEVEL" }, /confirm names LOG_LEVEL, but this call deletes API_KEY; approval for one item never covers another/],
+    ["a plain item without confirm (sensitivity is not consulted)", { item: "LOG_LEVEL" }, /deleting LOG_LEVEL from dev is the human's decision/],
+    ["an empty confirm", { item: "API_KEY", confirm: "" }, /confirm names , but this call deletes API_KEY/],
+  ])("refuses a deletion with %s, before any request", async (_name, args, message) => {
+    const { client, requests } = fakeClient({
+      "/v1/organizations/acme/projects/api/environments/dev/values/API_KEY": {},
+      "/v1/organizations/acme/projects/api/environments/dev/values/LOG_LEVEL": {},
+    });
+    const mcp = await connect({ client, defaults, allowWrites: true });
+    const result = await mcp.callTool({ name: "varlatch_delete_value", arguments: args });
+    expect(result.isError).toBe(true);
+    expect((result.content as { type: string; text: string }[])[0]!.text).toMatch(message);
+    expect(requests).toEqual([]);
+  });
+
+  it("the confirmation names the environment the deletion targets", async () => {
+    const { client, requests } = fakeClient({ "/v1/organizations/acme/projects/api/environments/production/values/API_KEY": {} });
+    const mcp = await connect({ client, defaults, allowWrites: true });
+    const refused = await mcp.callTool({ name: "varlatch_delete_value", arguments: { item: "API_KEY", environment: "production" } });
+    expect((refused.content as { type: string; text: string }[])[0]!.text).toMatch(/from production .* for API_KEY in production/);
+    expect(requests).toEqual([]);
+    const done = await mcp.callTool({ name: "varlatch_delete_value", arguments: { item: "API_KEY", environment: "production", confirm: "API_KEY" } });
+    expect(done.isError).toBeFalsy();
+    expect(requests).toMatchObject([{ method: "DELETE", url: expect.stringContaining("/environments/production/values/API_KEY") }]);
   });
 
   it("returns a tool error when scope cannot be resolved", async () => {
