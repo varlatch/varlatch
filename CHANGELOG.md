@@ -90,19 +90,31 @@ fixes.
   production refusal replaced or showed the default environment's value.
 - From the second agent evaluation (it failed; see the coding-agents docs):
   the AGENTS.md block and the skill now say that a repository with
-  `varlatch.toml` needs no `varlatch init`; that a `.env` file holds values
-  not yet in Varlatch, to move in first; that `varlatch --assisted validate
-  -e <environment> --json` answers whether an environment is ready (listing
-  values does not check the Contract); that a run in an environment with no
-  values is not success; and that inside an agent-safe run, showing a
-  Placeholder (`varlatch --assisted run -- printenv <NAME>`) discloses
-  nothing.
+  `varlatch.toml` needs no `varlatch init`; that a `.env` file may hold
+  values not yet in Varlatch or older copies, so names are compared first
+  and an existing value is replaced only with the human's approval for that
+  item; that `varlatch --assisted validate -e <environment> --json` answers
+  whether an environment is ready (listing values does not check the
+  Contract); that a run with no stored values gets only what it inherits;
+  and that inside an agent-safe run only the listed Placeholders are safe to
+  show.
+- **Behaviour change:** in assisted mode, `varlatch import` refuses (78,
+  storing nothing and deleting nothing) to replace a value the target
+  environment already has, unless that item is named with `--replace
+  <NAME>`; a leftover file may be an older copy of a value rotated since.
+  The dry run, in every mode, marks names the environment already has
+  (`existing` in its JSON). An import outside assisted mode still replaces.
+- Inside an agent-safe run, `varlatch context --json` lists the variables
+  holding Placeholders (`agentRun.placeholders`, names only), and a nested
+  `varlatch run` masks the run's own credentials (the agent-run credential,
+  the Broker's proxy credential) in its command's output.
 - In assisted mode, `varlatch run` says on stderr, before the command
-  starts, when the environment has no values in Varlatch, and when a `.env`
-  file in the project is not read (only its existence is checked, never its
-  content), with the command that moves it in.
+  starts, when no values are stored in Varlatch for the environment (the
+  command gets only what it inherits), and when a `.env` file exists in the
+  project that the run does not read (only its existence is checked, never
+  its content), with the value-free command to compare its names.
 - `varlatch init` in a repository that is already set up still exits 1, and
-  now says what to do next: import a `.env` file, or validate an
+  now says what to do next: compare a `.env` file's names, or validate an
   environment.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than

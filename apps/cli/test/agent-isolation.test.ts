@@ -24,6 +24,7 @@ const CANARY = "stripe-key-canary-operator-only-7c1d";
 const OPERATOR = "vlt_cli_operator";
 const BROKER = "vlt_brk_test";
 const AGENT_TOKEN = "vlt_agr_test";
+const UNMANAGED = "unmanaged-inherited-canary-63";
 
 const dir = mkdtempSync(join(tmpdir(), "varlatch-isolation-e2e-"));
 const bundle = join(dir, "varlatch.cjs");
@@ -134,6 +135,14 @@ probe("values", ["values", "list"], e);
 probe("runWithoutToken", ["run", "--", ...print], withoutToken);
 probe("valuesWithoutToken", ["values", "list"], withoutToken);
 probe("valuesWithoutConfigDir", ["values", "list"], withoutConfigDir);
+// The skill's commands for checking a Placeholder, as written, and the same check aimed at what is not one.
+probe("context", ["--assisted", "context", "--json"], e);
+probe("printPlaceholder", ["--assisted", "run", "--", "printenv", "STRIPE_KEY"], e);
+probe("printToken", ["--assisted", "run", "--", "printenv", "VARLATCH_TOKEN"], e);
+probe("printProxy", ["--assisted", "run", "--", "printenv", "HTTPS_PROXY"], e);
+record.agentToken = e.VARLATCH_TOKEN ?? null;
+record.proxyToken = e.HTTPS_PROXY ? decodeURIComponent(new URL(e.HTTPS_PROXY).password) : null;
+record.unmanaged = e.UNMANAGED_KEY ?? null;
 fs.writeFileSync(e.OUT, JSON.stringify(record));
 `;
 
@@ -169,6 +178,9 @@ interface Record {
   hasToken: boolean;
   placeholder: boolean;
   probes: { [name: string]: { code: number | null; out: string } };
+  agentToken: string | null;
+  proxyToken: string | null;
+  unmanaged: string | null;
 }
 
 /** One agent-safe run by `cli`, with the operator's credential in the default store (HOME), and the agent's record. */
@@ -193,7 +205,8 @@ async function agentSafeRun(cli: string, metadata: boolean): Promise<{ code: num
     process.execPath,
     join(dir, "agent.cjs"),
   ];
-  const env = { PATH: process.env.PATH, HOME: home, VARLATCH_BROKER_CREDENTIAL: BROKER, CLI_BUNDLE: cli, REPO: repo, OUT: out };
+  // UNMANAGED_KEY: an inherited secret Varlatch does not know, which an agent-safe run passes as it is.
+  const env = { PATH: process.env.PATH, HOME: home, VARLATCH_BROKER_CREDENTIAL: BROKER, CLI_BUNDLE: cli, REPO: repo, OUT: out, UNMANAGED_KEY: UNMANAGED };
   return new Promise((resolve) => {
     const child = spawn(process.execPath, args, { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
@@ -221,6 +234,32 @@ describe.each([
     expect(existsSync(record.configDir!)).toBe(false);
     expect(record.placeholder).toBe(true);
     expect(record.hasToken).toBe(metadata);
+  });
+
+  it("the skill's Placeholder check: context lists only the run's Placeholders, the listed one shows its Placeholder, and nested runs mask the run's credentials", async () => {
+    const { code, output, record } = await agentSafeRun(bundle, metadata);
+    expect(code, output).toBe(0);
+    const { context, printPlaceholder, printToken, printProxy } = record.probes;
+    expect(context!.code, context!.out).toBe(0);
+    const listed = JSON.parse(context!.out.slice(context!.out.indexOf("{"))) as { agentRun?: { id: string; placeholders: string[] } };
+    expect(listed.agentRun?.id).toBe(record.agentRun);
+    // Names only: the run's Secret, never the credential or an inherited value Varlatch does not know.
+    expect(listed.agentRun?.placeholders).toEqual(["STRIPE_KEY"]);
+    expect(context!.out).not.toMatch(/vlch_ph_v1_|vlt_agr_|unmanaged-inherited/);
+    expect(printPlaceholder!.code).toBe(0);
+    expect(printPlaceholder!.out).toMatch(/^vlch_ph_v1_[0-9a-f]{32}$/m);
+    // The run's own credentials are masked in a nested command's output.
+    expect(record.proxyToken).toBeTruthy();
+    expect(printProxy!.out).not.toContain(record.proxyToken as string);
+    expect(printProxy!.out).toContain("[REDACTED:HTTPS_PROXY]");
+    if (metadata) {
+      expect(record.agentToken).toBe(AGENT_TOKEN);
+      expect(printToken!.out).not.toContain(AGENT_TOKEN);
+      expect(printToken!.out).toContain("[REDACTED:VARLATCH_TOKEN]");
+    }
+    // An unknown inherited value reaches the Agent as it is: no listing names it, which is why the
+    // skill allows showing only listed Placeholders.
+    expect(record.unmanaged).toBe(UNMANAGED);
   });
 
   it("nested varlatch commands never disclose and never use the operator's stored credential", async () => {

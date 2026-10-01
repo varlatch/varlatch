@@ -32,6 +32,11 @@ import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
  *   and only if the file did not change meanwhile.
  * - `--json` prints one JSON document on stdout instead of the human lines;
  *   diagnostics stay on stderr.
+ * - The plan marks names the target environment already has. In assisted
+ *   mode an import that would replace one stores nothing (78) unless each
+ *   such item is approved by name with `--replace <NAME>`: a leftover file
+ *   may be an older copy of a value that was rotated since (rule 5 of the
+ *   skill, enforced here).
  */
 
 export class ImportError extends Error {
@@ -51,6 +56,10 @@ export interface ImportOptions {
   plain: string[];
   deleteSource: boolean;
   json?: boolean;
+  /** Assisted mode: replacing an existing value needs `--replace <NAME>` for that item. */
+  assisted?: boolean;
+  /** Items the human approved replacing, by name. */
+  replace?: string[];
 }
 
 /** The project to import into, or why there is none (a dry run still lists names). */
@@ -68,6 +77,8 @@ interface Row {
   sensitive: boolean | null;
   /** Already in the active Contract. */
   contracted: boolean;
+  /** The target environment already has a value under this name (null when unknown). */
+  existing: boolean | null;
 }
 
 const TYPE_ORDER: ItemType[] = ["integer", "number", "url", "email"];
@@ -158,7 +169,7 @@ function formatRows(rows: Row[], plain: Set<string>): string[] {
   return rows.map((r) => {
     const sensitivity =
       r.sensitive === null ? "" : r.sensitive ? "secret" : r.contracted || !plain.has(r.entry.name) ? "plain" : "plain (--plain)";
-    const note = r.contracted ? "  in the Contract" : "";
+    const note = `${r.contracted ? "  in the Contract" : ""}${r.existing ? "  already has a value" : ""}`;
     return `  ${r.entry.name.padEnd(width)}  ${r.type.padEnd(typeWidth)}  ${sensitivity}${note}`.trimEnd();
   });
 }
@@ -188,6 +199,10 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   for (const name of [...plain].sort()) {
     if (!names.has(name)) problems.push(`--plain names ${name}, which ${opts.file} does not set`);
   }
+  const replace = new Set(opts.replace ?? []);
+  for (const name of [...replace].sort()) {
+    if (!names.has(name)) problems.push(`--replace names ${name}, which ${opts.file} does not set`);
+  }
   if (problems.length > 0) {
     for (const line of problems) io.err(`varlatch import: ${opts.file} ${line}`);
     throw new ImportError(`${problems.length} problem(s) in ${opts.file}. Nothing was imported.`);
@@ -211,6 +226,18 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
       contract = found;
     }
   }
+  // What the target environment already has, by name: a value there would be replaced. Plain values are
+  // compared (an identical one is not a replacement); a Secret's value is never fetched, so it counts.
+  let present: Map<string, { sensitive: boolean; value: string | null }> | null = null;
+  if (online) {
+    try {
+      const effective = await online.api.effectiveConfiguration(online.ctx.organization, online.ctx.project, online.ctx.environment);
+      present = new Map((effective.items ?? []).map((i) => [i.name, { sensitive: i.sensitive, value: i.value ?? null }]));
+    } catch (err) {
+      if (!(err instanceof VarlatchApiError && (err.status === 403 || err.status === 404))) throw err;
+      io.err(`varlatch import: cannot read what ${online.ctx.environment} already has (${err.status}); existing values cannot be told apart`);
+    }
+  }
   const semanticsVersion = contract ? (contract.semanticsVersion ?? 1) : LATEST_SEMANTICS_VERSION;
   const contracted = new Map((contract?.items ?? []).map((i) => [i.name, i]));
   for (const name of [...plain].sort()) {
@@ -226,7 +253,9 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   const rows: Row[] = entries.map((entry) => {
     const existing = contracted.get(entry.name);
     const sensitive = !online ? null : existing ? existing.sensitive : opts.contract ? !plain.has(entry.name) : true;
-    return { entry, type: existing?.type ?? inferType(entry.value, semanticsVersion), sensitive, contracted: existing !== undefined };
+    const there = present?.get(entry.name);
+    const replaces = present === null ? null : there !== undefined && (there.sensitive || there.value !== entry.value);
+    return { entry, type: existing?.type ?? inferType(entry.value, semanticsVersion), sensitive, contracted: existing !== undefined, existing: replaces };
   });
   const where = online ? `${online.ctx.organization}/${online.ctx.project} (${online.ctx.environment})` : null;
   const secrets = rows.filter((r) => r.sensitive).length;
@@ -240,7 +269,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   Object.assign(doc, {
     target: online ? { organization: online.ctx.organization, project: online.ctx.project, environment: online.ctx.environment } : null,
     offline: "offline" in target ? target.offline : null,
-    items: rows.map((r) => ({ name: r.entry.name, type: r.type, sensitive: r.sensitive, inContract: r.contracted, line: r.entry.line })),
+    items: rows.map((r) => ({ name: r.entry.name, type: r.type, sensitive: r.sensitive, inContract: r.contracted, existing: r.existing, line: r.entry.line })),
     references,
   });
   if (references.length > 0) {
@@ -258,6 +287,10 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   }
   const contractDoc = (revision: unknown) =>
     opts.contract ? { contract: { newItems: additions.map((r) => r.entry.name), revision } } : { contract: null };
+  const replacing = rows.filter((r) => r.existing === true).map((r) => r.entry.name);
+  if (replacing.length > 0 && online) {
+    io.out(`${online.ctx.environment} already has a value for ${replacing.join(", ")}; importing replaces ${replacing.length === 1 ? "it" : "them"}.`);
+  }
   if (opts.dryRun) {
     io.out(`Dry run: nothing was stored${opts.deleteSource ? ` and ${opts.file} was not deleted` : ""}.`);
     emit({ ...contractDoc(null), stored: [], deleted: false });
@@ -265,6 +298,19 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   }
   if (!online) throw new ImportError(`Cannot import: ${"offline" in target ? target.offline : "not connected"}`);
   const { api, ctx } = online;
+  // Assisted mode: replacing what the environment has is the human's decision, item by item.
+  if (opts.assisted) {
+    const unapproved = present === null ? rows.map((r) => r.entry.name).filter((n) => !replace.has(n)) : replacing.filter((n) => !replace.has(n));
+    if (unapproved.length > 0) {
+      io.err(
+        present === null
+          ? `varlatch import: what ${ctx.environment} already has cannot be read, so any of these may replace a value: ${unapproved.join(", ")}`
+          : `varlatch import: ${ctx.environment} already has a value for ${unapproved.join(", ")}; the file may be an older copy.`,
+      );
+      io.err("  Replacing a value is the human's decision, for each named item. Ask them; with their approval for an item, add --replace <NAME> for it.");
+      throw new ImportError(`Nothing was imported${opts.deleteSource ? ` and ${opts.file} was not deleted` : ""}.`, EXIT.config);
+    }
+  }
 
   let pushed: { id: string; contentHash: string; active: boolean } | null = null;
   if (additions.length > 0) {
@@ -300,9 +346,11 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
       if (stored.length > 0) io.err(`varlatch import: stored: ${stored.join(", ")}`);
       io.err(`varlatch import: not stored: ${row.entry.name} (${reason})`);
       if (skipped.length > 0) io.err(`varlatch import: not attempted: ${skipped.join(", ")}`);
+      // The retry replaces what this run stored with the same values from the same file: in assisted mode it names them.
+      const again = opts.assisted && stored.length > 0 ? ` In assisted mode, add ${stored.map((n) => `--replace ${n}`).join(" ")} for the values this run stored from ${opts.file}.` : "";
       throw new ImportError(
         `${stored.length} of ${rows.length} value(s) stored.${opts.deleteSource ? ` ${opts.file} was not deleted.` : ""} ` +
-          "Fix the cause and run the import again; stored values are overwritten with the same ones.",
+          `Fix the cause and run the import again; stored values are overwritten with the same ones.${again}`,
         exitCode,
       );
     }

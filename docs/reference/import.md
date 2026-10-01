@@ -6,7 +6,7 @@ appear on a command line or in its output: it prints names, counts, inferred
 types, and sensitivity, never a value, including in every error.
 
 ```
-varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]
+varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]
 ```
 
 The options may come before or after the one filename (`import --dry-run
@@ -39,6 +39,15 @@ Dry run: nothing was stored.
   sensitive: change that in the Contract.
 - **`--delete-source`** deletes the file once every value was stored, and
   only if the file did not change while importing.
+- **`--replace <NAME>`** (repeatable) approves replacing the value the target
+  environment already has for that item. The plan marks such names
+  ("already has a value"; `existing` in the JSON): a leftover file may be an
+  older copy of a value rotated since. In assisted mode an import that
+  would replace an existing value without `--replace` for it stores
+  nothing, deletes nothing, and exits 78; outside assisted mode the import
+  replaces it, as before. A plain value identical to the stored one is not
+  a replacement; a Secret's stored value is never fetched, so an existing
+  Secret always counts. `--replace` must name an entry of the file.
 
 ## What is stored
 

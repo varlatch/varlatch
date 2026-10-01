@@ -188,6 +188,29 @@ describe("documented import commands run as written", () => {
 });
 
 describe("the onboarding pattern in SKILL.md", () => {
+  it("with a leftover .env holding an older copy of a stored value: run as written, it stops before replacing it, and stores, pushes, and deletes nothing", async () => {
+    const block = /## Moving a project's `\.env` into Varlatch\n\n```sh\n([\s\S]*?)```/.exec(SKILL_FILES["SKILL.md"] as string);
+    const lines = (block?.[1] as string).trim().split("\n");
+    const repo = project();
+    // The current, rotated value is stored; the project's .env still holds the old one.
+    state.values = { API_TOKEN: "current-rotated-token-value-90" };
+    const dry = await cli(fill(lines[0] as string), repo);
+    expect(dry.code, dry.stderr).toBe(0);
+    const items = (JSON.parse(dry.stdout) as { items: { name: string; existing: boolean }[] }).items;
+    expect(items.find((i) => i.name === "API_TOKEN")?.existing).toBe(true);
+    expect(items.find((i) => i.name === "LOG_LEVEL")?.existing).toBe(false);
+    const imp = await cli(fill(lines[1] as string), repo);
+    expect(imp.code, imp.stderr).toBe(78);
+    expect(imp.stderr).toMatch(/development already has a value for API_TOKEN; the file may be an older copy\./);
+    expect(state.values).toEqual({ API_TOKEN: "current-rotated-token-value-90" });
+    expect(state.revisions).toEqual([]);
+    expect(existsSync(join(repo, ".env"))).toBe(true);
+    // Once the human approves replacing API_TOKEN by name, the same step proceeds.
+    const approved = await cli(fill(lines[1] as string).concat(["--replace", "API_TOKEN"]), repo);
+    expect(approved.code, approved.stderr).toBe(0);
+    expect(state.values).toEqual({ API_TOKEN, LOG_LEVEL: "debug" });
+  });
+
   it("runs as written, in order: dry run, import with the Contract, activate, start", async () => {
     const block = /## Moving a project's `\.env` into Varlatch\n\n```sh\n([\s\S]*?)```/.exec(SKILL_FILES["SKILL.md"] as string);
     expect(block, "the onboarding block is in the main skill").not.toBeNull();
@@ -283,18 +306,24 @@ describe("the exit-78 remedies keep the run's environment", () => {
 });
 
 describe("completion gaps from the second agent evaluation", () => {
-  it("the AGENTS.md block and the skill say: no init in a set-up repository, move a .env in first, readiness is validate, an empty run is not success, and a Placeholder is harmless to show", () => {
+  it("the AGENTS.md block and the skill say: no init in a set-up repository, compare a .env's names before importing, readiness is validate, no stored values is a fact to check, and only listed Placeholders are safe to show", () => {
     const block = agentsBlock();
     const skill = SKILL_FILES["SKILL.md"] as string;
     expect(block).toMatch(/never run `varlatch init`/);
-    expect(block).toMatch(/A `\.env` file here holds\s+values that are not in Varlatch yet: move them in first, without reading it\s+\(`varlatch --assisted import \.env --dry-run`/);
+    expect(block).toMatch(/A `\.env` file here may hold\s+values not yet in Varlatch, or older copies of values that are: compare names first, without reading it\s+\(`varlatch --assisted import \.env --dry-run --json` marks those the environment already has\)/);
+    expect(block).toMatch(/Where a name\s+already has a value, ask the human; the import replaces it only with `--replace <NAME>`, and refuses otherwise/);
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
-    expect(block).toMatch(/environment has no values, the command started without its configuration: report that, it is not success/);
-    expect(block).toMatch(/showing one discloses nothing \(so\s+`varlatch --assisted run -- printenv <NAME>` is safe there when the human asks you to check\)/);
-    expect(skill).toMatch(/A repository with `varlatch\.toml`\s+is already set up: never run `varlatch init` there/);
+    expect(block).toMatch(/If it says no values are\s+stored in Varlatch, the command gets only what it inherits: check what it needs \(`validate`\) and report that/);
+    expect(block).toMatch(/`varlatch --assisted context --json` under `agentRun\.placeholders`\. Showing a listed one discloses nothing\s+\(`varlatch --assisted run -- printenv <NAME>` when the human asks you to check it\); never show any other\s+variable there: the run also carries credentials and inherited values/);
+    // The old blanket claims are gone.
+    expect(block).not.toMatch(/move them in first|it is not success|showing one discloses nothing \(so/);
+    expect(skill).toMatch(/A repository\s+with `varlatch\.toml` is already set up: never run `varlatch init` there/);
     expect(skill).toMatch(/\*\*To find out whether an environment is ready\*\*[\s\S]*?`varlatch --assisted validate -e <environment> --json`/);
-    expect(skill).toMatch(/If `run`\s+says the environment has no values, the command started without its\s+configuration: report that; it is not success/);
-    expect(skill).toMatch(/Showing a Placeholder discloses nothing: when the human asks you to check\s+a variable there, `varlatch --assisted run -- printenv <NAME>` shows the\s+Placeholder, never the secret/);
+    expect(skill).toMatch(/says no values are stored in Varlatch, the command gets only what it\s+inherits: check what it needs/);
+    expect(skill).toMatch(/`varlatch --assisted context --json` lists the run's Placeholders \(names\s+only, under `agentRun\.placeholders`\)\. Showing a listed one discloses\s+nothing/);
+    expect(skill).toMatch(/Never show any other variable\s+there: the run also carries credentials/);
+    expect(skill).toMatch(/the one exception: a listed\s+Placeholder inside an agent-safe run, rule 8/);
+    expect(skill).toMatch(/Ask the human about each of those; the import replaces one only\s+with `--replace <NAME>` for it, and otherwise refuses \(78\)/);
     expect(skill).toMatch(/asks whether an\s+environment is ready to deploy/);
   });
 
@@ -320,7 +349,7 @@ describe("completion gaps from the second agent evaluation", () => {
 describe("Placeholders in an agent-safe run", () => {
   it("the AGENTS.md block and the skill both permit them in request targets, with a concrete example, and keep real values forbidden", () => {
     const block = agentsBlock();
-    expect(block).toMatch(/agent-safe run, variables hold Placeholders, not secrets/);
+    expect(block).toMatch(/agent-safe run, the run's Secrets are Placeholders, not secrets/);
     expect(block).toMatch(/`varlatch --assisted request -H "Authorization: Bearer \$STRIPE_KEY" https:\/\/[^`]+`/);
     expect(block).toMatch(/never put a secret value in a command/);
     const skill = SKILL_FILES["SKILL.md"] as string;

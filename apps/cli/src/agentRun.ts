@@ -181,6 +181,42 @@ export function buildAgentEnv(
   return env;
 }
 
+/** A Placeholder, as the Broker issues them for the run's Secrets. */
+const PLACEHOLDER_VALUE = /^vlch_ph_v1_[0-9a-f]{32}$/;
+
+/**
+ * The names in an Agent's environment that hold Placeholders: only these
+ * are safe to show. Names only, never values. The environment also holds
+ * the run's credentials and inherited variables that are not Placeholders.
+ */
+export function placeholderNames(env: NodeJS.ProcessEnv): string[] {
+  return Object.entries(env)
+    .filter(([, value]) => typeof value === "string" && PLACEHOLDER_VALUE.test(value))
+    .map(([name]) => name)
+    .sort();
+}
+
+/**
+ * The run's own credentials in an Agent's environment, masked in the output
+ * of a nested `varlatch run`: the agent-run credential (VARLATCH_TOKEN, with
+ * --agent-metadata) and the Broker's proxy credential in the proxy URLs.
+ */
+export function agentRunCredentials(env: NodeJS.ProcessEnv): { item: string; value: string }[] {
+  const out: { item: string; value: string }[] = [];
+  if (env.VARLATCH_TOKEN) out.push({ item: "VARLATCH_TOKEN", value: env.VARLATCH_TOKEN });
+  for (const name of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]) {
+    const url = env[name];
+    if (!url) continue;
+    try {
+      const password = decodeURIComponent(new URL(url).password);
+      if (password && !out.some((e) => e.value === password)) out.push({ item: name, value: password });
+    } catch {
+      // Not a URL: nothing of the run's to mask.
+    }
+  }
+  return out;
+}
+
 function setProxy(env: NodeJS.ProcessEnv, proxyUrl: string): void {
   env.HTTP_PROXY = proxyUrl;
   env.HTTPS_PROXY = proxyUrl;

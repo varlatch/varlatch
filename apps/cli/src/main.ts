@@ -93,19 +93,25 @@ function flag(args: string[], name: string): string | undefined {
 /**
  * What an assisted run tells a coding agent before the command starts, on
  * stderr (an agent evaluation saw an app started with no values reported as
- * success): an environment with no values at all, and a `.env` file the run
- * does not read (only its existence is checked, never its content).
+ * success): that no values are stored for the environment (the command may
+ * still be configured by what it inherits), and that a `.env` file exists
+ * which the run does not read (only its existence is checked, never its
+ * content; it may hold values already stored, or older copies).
  */
 function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfiguration, cmd: string): string[] {
   const notices: string[] = [];
+  // Facts only: inherited variables may still configure the command, and a .env file may be an older copy.
   if ((effective.items ?? []).length === 0) {
-    notices.push(`varlatch: ${ctx.environment} has no values in Varlatch, so ${cmd} starts without its configuration.`);
+    notices.push(`varlatch: no values are stored in Varlatch for ${ctx.environment}; ${cmd} gets only the variables it inherits.`);
   }
   for (const dir of [...new Set([process.cwd(), ctx.repoRoot])]) {
     const file = join(dir, ".env");
     if (existsSync(file)) {
       const shown = relative(process.cwd(), file) || ".env";
-      notices.push(`varlatch: ${shown} is not read by Varlatch; its values reach the command only once moved in: varlatch --assisted import ${shown} --dry-run`);
+      notices.push(
+        `varlatch: ${shown} exists and is not read by Varlatch, which cannot tell whether its values are stored already (or older copies). ` +
+          `To compare names, without values: varlatch --assisted import ${shown} --dry-run --json`,
+      );
     }
   }
   return notices;
@@ -506,7 +512,7 @@ async function main(): Promise<void> {
           const cli = assisted.on ? "varlatch --assisted" : "varlatch";
           fail(
             `${REPO_CONFIG_FILE} already exists at ${root}: this repository is already set up for Varlatch, so there is nothing to initialize.\n` +
-              `  To move a .env file's values in without reading them: ${cli} import .env --dry-run\n` +
+              `  To compare a .env file's names with what Varlatch has, without values: ${cli} import .env --dry-run --json\n` +
               `  To see whether an environment is ready: ${cli} validate -e <environment> --json`,
           );
         }
@@ -661,8 +667,12 @@ async function main(): Promise<void> {
       case "context": {
         const ctx = context(args);
         const repo = repoStatus(ctx, loadLocalState(ctx.repoRoot));
+        // Inside an agent-safe run: which variables hold Placeholders (names only), the only ones safe to show.
+        const runId = agentRunOf();
+        const { placeholderNames } = await import("./agentRun.js");
+        const agentRun = runId ? { id: runId, placeholders: placeholderNames(process.env) } : null;
         if (has(args, "--json")) {
-          console.log(JSON.stringify({ version: STATUS_SCHEMA_VERSION, ...repo }, null, 2));
+          console.log(JSON.stringify({ version: STATUS_SCHEMA_VERSION, ...repo, ...(agentRun ? { agentRun } : {}) }, null, 2));
           return;
         }
         console.log(`Server        ${ctx.server}`);
@@ -672,6 +682,7 @@ async function main(): Promise<void> {
         console.log(`Source        ${ctx.environmentSource}`);
         if (repo.tier) console.log(`Tier          ${repo.tier} (cached ${repo.tierCachedAt})`);
         console.log(`Repo root     ${ctx.repoRoot}`);
+        if (agentRun) console.log(`Agent run     ${agentRun.id} (Placeholders: ${agentRun.placeholders.join(", ") || "none"})`);
         return;
       }
 
@@ -761,10 +772,14 @@ async function main(): Promise<void> {
           }
           console.error(
             `varlatch: inside agent-safe run ${agentRun}, Secrets are Placeholders and are never disclosed; the command ` +
-              "starts with this run's environment unchanged. Send requests to allowed destinations with varlatch request.",
+              "starts with this run's environment unchanged, and the run's own credentials are masked in its output. " +
+              "Send requests to allowed destinations with varlatch request.",
           );
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
-          process.exit(await runChild(cmd, cmdArgs, process.env));
+          // The run's credentials never reach a nested command's output (an agent asked to check a variable).
+          const { agentRunCredentials } = await import("./agentRun.js");
+          const credentials = agentRunCredentials(process.env);
+          process.exit(await runChild(cmd, cmdArgs, process.env, credentials.length > 0 ? credentials : undefined));
         }
         const agentSafe = has(preArgs, "--agent-safe");
         const noRedact = has(preArgs, "--no-redact");
@@ -1129,14 +1144,14 @@ async function main(): Promise<void> {
         // ADR-0043 Decision 2: the CLI reads the file itself; values never
         // appear in its output.
         const usage =
-          "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]";
+          "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]";
         // One filename, with options on either side of it (agents write
         // `import --dry-run .env` as often as `import .env --dry-run`), parsed
         // strictly: an unknown option, a missing value, or a second filename is 64.
         const opts = strictOptions(
           "import",
           args,
-          { values: ["--environment", "--server"], aliases: { "-e": "--environment" }, lists: ["--plain"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
+          { values: ["--environment", "--server"], aliases: { "-e": "--environment" }, lists: ["--plain", "--replace"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
           usage,
         );
         const file = opts.positionals[0] ?? usageError(usage);
@@ -1159,6 +1174,8 @@ async function main(): Promise<void> {
               plain: opts.lists.get("--plain") ?? [],
               deleteSource: opts.booleans.has("--delete-source"),
               json: opts.booleans.has("--json"),
+              assisted: assisted.on,
+              replace: opts.lists.get("--replace") ?? [],
             },
             target,
             { out: (line) => console.log(line), err: (line) => console.error(line) },

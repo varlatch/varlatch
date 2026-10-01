@@ -30,9 +30,10 @@ long as you follow these rules.
 2. **Never read, print, or create `.env` files**, and never read the
    Varlatch credential store. To see which names a `.env` file sets, without
    their values: `varlatch --assisted import <file> --dry-run`. A `.env`
-   file in the project holds values that are not in Varlatch yet: move them
-   in (see below) before running anything. A repository with `varlatch.toml`
-   is already set up: never run `varlatch init` there.
+   file may hold values not yet in Varlatch, or older copies of values that
+   are: the dry run marks the names the environment already has. Import only
+   with the human's approval for each such name (see below). A repository
+   with `varlatch.toml` is already set up: never run `varlatch init` there.
 3. **Never put a secret value in a command.** Store a secret with
    `varlatch --assisted import`, `values set <NAME> --generate hex:32`,
    `--from-file <path>`, or `--stdin`, or ask the human to enter it. (Inside
@@ -44,8 +45,9 @@ long as you follow these rules.
    `--allow-unmasked` or `--no-redact` yourself; when the human approves
    showing one item unmasked, the option goes before `--`:
    `varlatch --assisted run --allow-unmasked <NAME> -- <command>`. If `run`
-   says the environment has no values, the command started without its
-   configuration: report that; it is not success.
+   says no values are stored in Varlatch, the command gets only what it
+   inherits: check what it needs (`validate`, or its own output) and report
+   that, rather than calling the run a success or a failure on that alone.
 5. **Never replace an existing value or change an item's sensitivity
    without the human's approval for that named item.** Approval for one item
    does not cover another: never regenerate or reclassify items the human did
@@ -70,9 +72,12 @@ long as you follow these rules.
    secret there; a real secret value stays forbidden. curl and fetch are
    refused by the Broker. For example:
    `varlatch --assisted request -X POST -H "Authorization: Bearer $STRIPE_KEY" --json '{"amount": 500}' https://api.example.com/v1/charges`
-   Showing a Placeholder discloses nothing: when the human asks you to check
-   a variable there, `varlatch --assisted run -- printenv <NAME>` shows the
-   Placeholder, never the secret.
+   `varlatch --assisted context --json` lists the run's Placeholders (names
+   only, under `agentRun.placeholders`). Showing a listed one discloses
+   nothing: when the human asks you to check it, `varlatch --assisted run --
+   printenv <NAME>` shows its Placeholder. Never show any other variable
+   there: the run also carries credentials (masked in a nested run's output)
+   and inherited values that are not Placeholders.
 9. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
    be reached, 77 not signed in or denied, 78 configuration that cannot run.
@@ -82,8 +87,8 @@ long as you follow these rules.
    try to work around it.
 10. **Know the limits.** Output is masked only for values Varlatch delivered
     or knows by name, and only in the forms it recognises. Never print,
-    encode, or transform environment values (inside an agent-safe run they
-    are Placeholders, not secrets: rule 8).
+    encode, or transform environment values (the one exception: a listed
+    Placeholder inside an agent-safe run, rule 8).
 
 ## Moving a project's `.env` into Varlatch
 
@@ -94,7 +99,11 @@ varlatch --assisted contract activate <revision>
 varlatch --assisted run -- <command>
 ```
 
-1. The dry run lists names, inferred types, and sensitivity; no values.
+1. The dry run lists names, inferred types, and sensitivity; no values. It
+   marks the names the environment already has: the file may be an older
+   copy. Ask the human about each of those; the import replaces one only
+   with `--replace <NAME>` for it, and otherwise refuses (78) and stores
+   nothing.
 2. The import stores every value and adds the new items to a Contract
    revision. New items are Secrets unless named with `--plain`: use it only
    for items confirmed not secret (a port, a log level), and ask the human

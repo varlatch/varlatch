@@ -51,6 +51,9 @@ varlatch --assisted request -i -o response.json https://api.example.com/v1/items
 ## Other commands inside the run
 
 - `varlatch --assisted run -- <command>` starts the command with the run's
-  environment, Placeholders included, and discloses nothing.
+  environment, Placeholders included, and masks the run's own credentials in
+  its output. Inherited variables that are not Placeholders pass as they
+  are: show only the names `varlatch --assisted context --json` lists under
+  `agentRun.placeholders`.
 - Commands that read from the server work only with `--agent-metadata`, and
   only for reading.
