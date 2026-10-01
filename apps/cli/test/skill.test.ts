@@ -151,7 +151,7 @@ describe("the embedded skill", () => {
     const stripped = Object.fromEntries(Object.entries(SKILL_FILES).map(([p, c]) => [p, c.replaceAll("varlatch --assisted ", "varlatch ")]));
     const found = missingAssisted(stripped);
     expect(found).toContain("SKILL.md: varlatch run -- npm test");
-    expect(found).toContain("SKILL.md: varlatch import --dry-run <file>");
+    expect(found).toContain("SKILL.md: varlatch import <file> --dry-run");
     expect(found).toContain("references/run.md: varlatch values set API_KEY --stdin");
     expect(missingAssisted({ "AGENTS.md": agentsBlock().replaceAll("varlatch --assisted ", "varlatch ") }).length).toBeGreaterThan(0);
   });

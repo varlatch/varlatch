@@ -33,15 +33,17 @@ output. Look first, then import:
 
 ```sh
 varlatch --assisted import .env --dry-run --json
-varlatch --assisted import .env --contract --delete-source
+varlatch --assisted import .env --contract --plain LOG_LEVEL --delete-source --json
+varlatch --assisted contract activate <revision>
 ```
 
 - `--dry-run` lists the names, inferred types, and sensitivity.
 - `--contract` adds the file's new items to a Contract revision. New items
-  are Secrets unless named with `--plain <NAME>`; use it only for values
-  that are clearly not secret (a port, a log level). Activate the revision
-  with `varlatch --assisted contract activate <revision>`.
-- `--delete-source` deletes the file once every value is stored.
+  are Secrets unless named with `--plain <NAME>`; use it only for items
+  confirmed not secret (a port, a log level), and ask the human when
+  unsure. Activate the revision the import printed
+  (`contract.revision.id` in its JSON output).
+- `--delete-source` deletes the file only after every value was stored.
 - `-e <environment>` imports into another environment, for example
   `.env.production` into `production`.
 

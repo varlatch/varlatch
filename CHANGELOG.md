@@ -50,6 +50,25 @@ fixes.
   adapter's file.
 - New `varlatch agents guide [topic]` prints the skill or one of its
   references, for a coding agent without skill support.
+- From the first agent evaluation (it failed; see the coding-agents docs):
+  the skill now has the whole onboarding pattern in its main file
+  (`import <file> --contract --plain <non-secret> --delete-source`, then
+  `contract activate`); requires the human's approval, for the named item
+  only, before an existing value is replaced or an item's sensitivity
+  changes; gives the human-terminal command for a missing value
+  (`varlatch values set <NAME> -e <environment>`); shows `--allow-unmasked`
+  before `--`; and says, in the skill and the AGENTS.md block, that inside
+  an agent-safe run Placeholders belong in `varlatch --assisted request`
+  targets, with an example.
+- **Behaviour change:** `varlatch import` takes its options on either side
+  of the filename (`import --dry-run .env` exited 64 although the skill
+  showed it) and now refuses an unknown option, a missing option value, or
+  a second filename with status 64; before, it ignored an option it did not
+  know.
+- The exit-78 message for a Secret too short to mask now says every remedy
+  is the human's decision, for that item only (replacing the value
+  overwrites it), and shows the override as a command with the option
+  before `--`.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than
   work around it.

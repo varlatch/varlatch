@@ -1051,9 +1051,18 @@ async function main(): Promise<void> {
         // appear in its output.
         const usage =
           "Usage: varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json] [-e <env>]";
-        const file = args[0] && !args[0].startsWith("-") ? args[0] : usageError(usage);
+        // One filename, with options on either side of it (agents write
+        // `import --dry-run .env` as often as `import .env --dry-run`), parsed
+        // strictly: an unknown option, a missing value, or a second filename is 64.
+        const opts = strictOptions(
+          "import",
+          args,
+          { values: ["-e", "--environment", "--server"], lists: ["--plain"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
+          usage,
+        );
+        const file = opts.positionals[0] ?? usageError(usage);
         const { runImport, ImportError } = await import("./importCommand.js");
-        const dryRun = has(args, "--dry-run");
+        const dryRun = opts.booleans.has("--dry-run");
         let target: Parameters<typeof runImport>[1];
         try {
           const ctx = context(args);
@@ -1067,10 +1076,10 @@ async function main(): Promise<void> {
             {
               file,
               dryRun,
-              contract: has(args, "--contract"),
-              plain: flags(args, "--plain"),
-              deleteSource: has(args, "--delete-source"),
-              json: has(args, "--json"),
+              contract: opts.booleans.has("--contract"),
+              plain: opts.lists.get("--plain") ?? [],
+              deleteSource: opts.booleans.has("--delete-source"),
+              json: opts.booleans.has("--json"),
             },
             target,
             { out: (line) => console.log(line), err: (line) => console.error(line) },

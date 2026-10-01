@@ -16,9 +16,12 @@ varlatch --assisted run --strict -- node server.js
 - `--strict` checks the configuration against the active Contract first and
   starts nothing on a violation (exit 78, naming the items).
 - Exit 78 also means a Secret is shorter than 8 bytes and cannot be masked.
-  Report the item to the human. They may replace it
-  (`values set <NAME> --generate hex:32` suits development values), correct
-  its sensitivity, or allow it for one run with `--allow-unmasked <NAME>`.
+  Report the item to the human and wait. Each remedy is theirs, for that
+  item only: replace it (`values set <NAME> --generate hex:32` overwrites
+  the current value, which suits development values), correct its
+  sensitivity in the Contract, or show it unmasked in one run with
+  `varlatch --assisted run --allow-unmasked <NAME> -- <command>` (the option
+  before `--`). Approval for one item does not cover another.
   That flag is theirs to add, never yours.
 - Once the command has started, `run` exits with the command's own status.
 
@@ -39,10 +42,11 @@ varlatch --assisted values set LOG_LEVEL debug
 ```
 
 When only the human knows a Secret, give them this command for their own
-terminal (it prompts without echoing) and wait:
+terminal, with the environment it belongs to (it prompts without echoing;
+without `--assisted`, since assisted mode never prompts), and wait:
 
 ```text
-varlatch values set API_KEY
+varlatch values set API_KEY -e production
 ```
 
 ## Rotating
