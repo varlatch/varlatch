@@ -53,7 +53,7 @@ Usage:
   varlatch values <set <ITEM> [<value> | -- <value>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>> [-e <env>]
                   set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
                   or no value in a terminal for a hidden prompt
-  varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json]
+  varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]
                (store a dotenv file's values without printing them; --contract adds new items to a Contract
                 revision, Secrets unless --plain; --delete-source removes the file once every value is stored)
   varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>

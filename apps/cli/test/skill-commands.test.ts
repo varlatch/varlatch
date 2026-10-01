@@ -76,6 +76,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     }
     if (rest === "/disclosures") return json(200, { items: items.map(({ name, versionId, value }) => ({ name, versionId, value })), withheld: [] });
     if (rest.startsWith("/effective-configuration")) return json(200, { environmentId: "env_1", items: items.map((i) => ({ ...i, value: null })), manifest });
+    if (rest === "/validate" && req.method === "POST") {
+      // Production requires STRIPE_KEY in these tests' Contract-free fake: missing unless stored.
+      const missing = scoped[1] === "production" && values.STRIPE_KEY === undefined ? ["STRIPE_KEY"] : [];
+      return json(200, { valid: missing.length === 0, complete: true, missing, invalid: [], unresolved: [], notEvaluated: [] });
+    }
     json(404, { error: { code: "NOT_FOUND", message: url, requestId: "r" } });
   });
 }
@@ -183,6 +188,29 @@ describe("documented import commands run as written", () => {
 });
 
 describe("the onboarding pattern in SKILL.md", () => {
+  it("with a leftover .env holding an older copy of a stored value: run as written, it stops before replacing it, and stores, pushes, and deletes nothing", async () => {
+    const block = /## Moving a project's `\.env` into Varlatch\n\n```sh\n([\s\S]*?)```/.exec(SKILL_FILES["SKILL.md"] as string);
+    const lines = (block?.[1] as string).trim().split("\n");
+    const repo = project();
+    // The current, rotated value is stored; the project's .env still holds the old one.
+    state.values = { API_TOKEN: "current-rotated-token-value-90" };
+    const dry = await cli(fill(lines[0] as string), repo);
+    expect(dry.code, dry.stderr).toBe(0);
+    const items = (JSON.parse(dry.stdout) as { items: { name: string; existing: boolean }[] }).items;
+    expect(items.find((i) => i.name === "API_TOKEN")?.existing).toBe(true);
+    expect(items.find((i) => i.name === "LOG_LEVEL")?.existing).toBe(false);
+    const imp = await cli(fill(lines[1] as string), repo);
+    expect(imp.code, imp.stderr).toBe(78);
+    expect(imp.stderr).toMatch(/development already has a value for API_TOKEN; the file may be an older copy\./);
+    expect(state.values).toEqual({ API_TOKEN: "current-rotated-token-value-90" });
+    expect(state.revisions).toEqual([]);
+    expect(existsSync(join(repo, ".env"))).toBe(true);
+    // Once the human approves replacing API_TOKEN by name, the same step proceeds.
+    const approved = await cli(fill(lines[1] as string).concat(["--replace", "API_TOKEN"]), repo);
+    expect(approved.code, approved.stderr).toBe(0);
+    expect(state.values).toEqual({ API_TOKEN, LOG_LEVEL: "debug" });
+  });
+
   it("runs as written, in order: dry run, import with the Contract, activate, start", async () => {
     const block = /## Moving a project's `\.env` into Varlatch\n\n```sh\n([\s\S]*?)```/.exec(SKILL_FILES["SKILL.md"] as string);
     expect(block, "the onboarding block is in the main skill").not.toBeNull();
@@ -277,10 +305,73 @@ describe("the exit-78 remedies keep the run's environment", () => {
   });
 });
 
+describe("completion gaps from the second agent evaluation", () => {
+  it("the AGENTS.md block and the skill say: no init in a set-up repository, compare a .env's names before importing, readiness is validate, no stored values is a fact to check, and only listed Placeholders are safe to show", () => {
+    const block = agentsBlock();
+    const skill = SKILL_FILES["SKILL.md"] as string;
+    expect(block).toMatch(/never run `varlatch init`/);
+    expect(block).toMatch(/A `\.env` file here may hold\s+values not yet in Varlatch, or older copies of values that are: compare names first, without reading it\s+\(`varlatch --assisted import \.env -e <environment> --dry-run --json` marks those it already has\)/);
+    expect(block).toMatch(/Where a name\s+already has a value, ask the human; the import replaces it only with `--replace <NAME>`, and refuses otherwise/);
+    expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
+    expect(block).toMatch(/If it says no values are\s+stored in Varlatch, the command gets only what it inherits: check what it needs \(`validate`\) and report that/);
+    expect(block).toMatch(/`varlatch --assisted context --json` under `agentRun\.placeholders`\. Showing a listed one discloses nothing\s+\(`varlatch --assisted run -- printenv <NAME>` when the human asks you to check it\); never show any other\s+variable there: the run also carries credentials and inherited values/);
+    // The old blanket claims are gone.
+    expect(block).not.toMatch(/move them in first|it is not success|showing one discloses nothing \(so/);
+    expect(skill).toMatch(/A repository\s+with `varlatch\.toml` is already set up: never run `varlatch init` there/);
+    expect(skill).toMatch(/\*\*To find out whether an environment is ready\*\*[\s\S]*?`varlatch --assisted validate -e <environment> --json`/);
+    expect(skill).toMatch(/says no values are stored in Varlatch, the command gets only what it\s+inherits: check what it needs/);
+    expect(skill).toMatch(/`varlatch --assisted context --json` lists the run's Placeholders \(names\s+only, under `agentRun\.placeholders`\)\. Showing a listed one discloses\s+nothing/);
+    expect(skill).toMatch(/Never show any other variable\s+there: the run also carries credentials/);
+    expect(skill).toMatch(/the one exception: a listed\s+Placeholder inside an agent-safe run, rule 8/);
+    expect(skill).toMatch(/Ask the human about each of those; the import replaces one only\s+with `--replace <NAME>` for it, and otherwise refuses \(78\)/);
+    expect(skill).toMatch(/asks whether an\s+environment is ready to deploy/);
+  });
+
+  it("the readiness command runs as written and reports the missing item", async () => {
+    const line = /`(varlatch --assisted validate -e <environment> --json)`/.exec(agentsBlock())?.[1] as string;
+    const r = await cli(fill(line, { "<environment>": "production" }), project());
+    expect(r.stderr).not.toMatch(/unknown option|needs a value|unexpected argument/);
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ environment: "production", result: "invalid", missing: ["STRIPE_KEY"] });
+  });
+
+  it("the Placeholder check runs as written; outside an agent-safe run, assisted mode still masks the value", async () => {
+    const repo = project();
+    state.values = { API_TOKEN };
+    const line = /`(varlatch --assisted run -- printenv <NAME>)`/.exec(agentsBlock())?.[1] as string;
+    const r = await cli(fill(line, { "<NAME>": "API_TOKEN" }), repo);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("[REDACTED:API_TOKEN]");
+    expect(r.stdout + r.stderr).not.toContain(API_TOKEN);
+  });
+});
+
+describe("the .env notice's comparison command", () => {
+  it("keeps the run's environment and server: run from a fresh shell, it compares against the store the run used", async () => {
+    // The project's own server is unreachable; this run reaches the fake one through VARLATCH_SERVER, in production.
+    const repo = join(dir, `p${n++}`);
+    mkdirSync(repo);
+    writeFileSync(join(repo, "varlatch.toml"), `organization = "acme"\nproject = "web"\nserver = "http://127.0.0.1:9"\ndefault_environment = "development"\n`);
+    writeFileSync(join(repo, ".env"), "STRIPE_KEY=stale-stripe-copy-44\n");
+    state.production = { STRIPE_KEY: "current-production-stripe-45" };
+    const run = await cli(["--assisted", "run", "-e", "production", "--", "node", "-e", "console.log('ok')"], repo, { VARLATCH_SERVER: origin });
+    expect(run.code, run.stderr).toBe(0);
+    const hint = /To compare names, without values: (varlatch --assisted import \.env [^\n]+--dry-run --json)/.exec(run.stderr)?.[1];
+    expect(hint).toBe(`varlatch --assisted import .env -e production --server ${origin} --dry-run --json`);
+    // A fresh shell: no VARLATCH_SERVER.
+    const compared = await cli(words(hint as string).slice(1), repo);
+    expect(compared.code, compared.stderr).toBe(0);
+    const doc = JSON.parse(compared.stdout) as { target: { environment: string }; items: { name: string; existing: boolean }[] };
+    expect(doc.target.environment).toBe("production");
+    expect(doc.items).toEqual([expect.objectContaining({ name: "STRIPE_KEY", existing: true })]);
+    expect(run.stderr + compared.stdout + compared.stderr).not.toMatch(/stale-stripe-copy|current-production-stripe/);
+  });
+});
+
 describe("Placeholders in an agent-safe run", () => {
   it("the AGENTS.md block and the skill both permit them in request targets, with a concrete example, and keep real values forbidden", () => {
     const block = agentsBlock();
-    expect(block).toMatch(/agent-safe run, variables hold Placeholders, not secrets/);
+    expect(block).toMatch(/agent-safe run, the run's Secrets are Placeholders, not secrets/);
     expect(block).toMatch(/`varlatch --assisted request -H "Authorization: Bearer \$STRIPE_KEY" https:\/\/[^`]+`/);
     expect(block).toMatch(/never put a secret value in a command/);
     const skill = SKILL_FILES["SKILL.md"] as string;

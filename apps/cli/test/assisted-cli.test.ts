@@ -84,7 +84,8 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url.startsWith(`${ENV_PATH}/effective-configuration`)) {
       return json(200, {
         environmentId: "env_1",
-        items: stored.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: i.sensitive ? null : i.value })),
+        // As the daemon: metadata only, unless include=values, which returns non-sensitive values only.
+        items: stored.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: !i.sensitive && url.includes("include=values") ? i.value : null })),
         manifest: {
           manifestVersion: 1,
           projectId: "prj_1",
@@ -122,6 +123,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     const put = /^\/v1\/organizations\/acme\/projects\/web\/environments\/[a-z]+\/values\/([A-Z0-9_]+)$/.exec(url);
     if (put && req.method === "PUT") {
       if (failPut.has(put[1]!)) return json(500, { error: { code: "INTERNAL", message: "injected", requestId: "req_x" } });
+      // Stored, as the server would: a later request sees it (a new item is a Secret, as outside a Contract).
+      if (url.startsWith(`${ENV_PATH}/`)) {
+        const before = stored.find((i) => i.name === put[1]);
+        stored = [...stored.filter((i) => i.name !== put[1]), { name: put[1]!, sensitive: before?.sensitive ?? true, value: (body as { value: string }).value }];
+      }
       return json(200, { versionId: `ver_new_${put[1]}` });
     }
     const rotate = new RegExp(`^${ENV_PATH}/values/([A-Z0-9_]+)/rotations$`).exec(url);
@@ -279,6 +285,59 @@ describe("assisted run: output protection and precedence", () => {
     const agentSafe = await cli(["--assisted", "run", "--agent-safe", "--no-redact", "--agent", "a", "--", "true"]);
     expect(agentSafe.code).toBe(64);
     expect(agentSafe.stderr).toMatch(/do not apply to --agent-safe runs/);
+  });
+});
+
+describe("assisted run: notices before the command starts", () => {
+  const run = (flags: string[], env: Record<string, string> = {}) => cli([...flags, "run", "--", process.execPath, "-e", "console.log(process.env.API_TOKEN ? 'configured' : 'started')"], { env });
+
+  it("no stored values is said as a fact; the command still gets what it inherits, and may be configured", async () => {
+    stored = [];
+    const r = await run(["--assisted"], { API_TOKEN: "inherited-token-value-31" });
+    expect(r.code).toBe(0);
+    // Configured from the inherited variable: the notice must not say otherwise.
+    expect(r.stdout).toContain("configured");
+    expect(r.stderr).toContain(`varlatch: no values are stored in Varlatch for development; ${process.execPath} gets only the variables it inherits.`);
+    expect(r.stderr).not.toMatch(/without its configuration|not success/);
+    stored = defaultItems();
+    const withValues = await run(["--assisted"]);
+    expect(withValues.stderr).not.toMatch(/no values are stored in Varlatch/);
+  });
+
+  it("a .env file is named as existing, never read, with no claim about what Varlatch has, and the value-free comparison", async () => {
+    const file = join(repo, ".env");
+    writeFileSync(file, "DOTENV_CANARY=dotenv-content-never-read-58\n");
+    try {
+      const r = await run(["--assisted"]);
+      expect(r.code).toBe(0);
+      expect(r.stderr).toContain(
+        "varlatch: .env exists and is not read by Varlatch, which cannot tell whether its values are stored already (or older copies). To compare names, without values: varlatch --assisted import .env -e development --dry-run --json",
+      );
+      expect(r.stderr).not.toMatch(/not in Varlatch yet|move them in|once moved in/);
+      expect(r.stdout + r.stderr).not.toContain("dotenv-content-never-read-58");
+      // Not in assisted mode: no notices, the human's output is unchanged.
+      stored = [];
+      const plain = await run([]);
+      expect(plain.stderr).not.toMatch(/is not read by Varlatch|no values are stored/);
+    } finally {
+      rmSync(file, { force: true });
+    }
+    const none = await run(["--assisted"]);
+    expect(none.stderr).not.toMatch(/is not read by Varlatch/);
+  });
+});
+
+describe("init in a repository that is already set up", () => {
+  it("says so and names the next steps, assisted forms in assisted mode", async () => {
+    const assisted = await cli(["--assisted", "init"]);
+    expect(assisted.code).toBe(1);
+    expect(assisted.stderr).toMatch(/varlatch\.toml already exists at .*: this repository is already set up for Varlatch, so there is nothing to initialize\./);
+    expect(assisted.stderr).toContain("To compare a .env file's names with what Varlatch has, without values: varlatch --assisted import .env --dry-run --json");
+    expect(assisted.stderr).toContain("To see whether an environment is ready: varlatch --assisted validate -e <environment> --json");
+    const plain = await cli(["init"]);
+    expect(plain.code).toBe(1);
+    expect(plain.stderr).toContain("varlatch import .env --dry-run");
+    expect(plain.stderr).not.toContain("--assisted");
   });
 });
 
@@ -584,6 +643,82 @@ describe("varlatch import", () => {
     expect(r.stdout).toMatch(/Dry run: nothing was stored\./);
     expect(puts()).toEqual([]);
     noValues(r);
+  });
+
+  describe("an existing value is replaced only with the human's approval for that item", () => {
+    // The fake environment already has API_TOKEN (a Secret) and PORT=8080 (plain).
+    const revisions = () => requests.filter((r) => r.method === "POST" && r.url.endsWith("/contract/revisions"));
+
+    it("the dry run marks the names the environment already has, in every mode", async () => {
+      const r = await cli(["--assisted", "import", envFile(), "--dry-run", "--json"]);
+      expect(r.code).toBe(0);
+      const items = JSON.parse(r.stdout).items as { name: string; existing: boolean | null }[];
+      expect(Object.fromEntries(items.map((i) => [i.name, i.existing]))).toEqual({ API_TOKEN: true, DATABASE_URL: false, PORT: true, DEBUG: false, NEW_SECRET: false });
+      const human = await cli(["import", envFile(), "--dry-run"]);
+      expect(human.stdout).toMatch(/API_TOKEN\s+string\s+secret\s+in the Contract\s+already has a value/);
+      expect(human.stdout).toMatch(/development already has a value for API_TOKEN, PORT; importing replaces them\./);
+      noValues(r);
+    });
+
+    it("assisted: without --replace for each existing item, nothing is stored, pushed, or deleted (78)", async () => {
+      const file = envFile();
+      const r = await cli(["--assisted", "import", file, "--contract", "--delete-source"]);
+      expect(r.code).toBe(78);
+      expect(r.stderr).toMatch(/development already has a value for API_TOKEN, PORT; the file may be an older copy\./);
+      expect(r.stderr).toMatch(/Replacing a value is the human's decision, for each named item\. Ask them; with their approval for an item, add --replace <NAME> for it\./);
+      expect(r.stderr).toMatch(/Nothing was imported and .* was not deleted\./);
+      expect(puts()).toEqual([]);
+      expect(revisions()).toEqual([]);
+      expect(existsSync(file)).toBe(true);
+      // Approval for one item does not cover another.
+      const one = await cli(["--assisted", "import", file, "--replace", "API_TOKEN"]);
+      expect(one.code).toBe(78);
+      expect(one.stderr).toMatch(/already has a value for PORT;/);
+      expect(puts()).toEqual([]);
+      noValues(r);
+    });
+
+    it("assisted: with --replace for each existing item, the import stores every value", async () => {
+      const r = await cli(["--assisted", "import", envFile(), "--replace", "API_TOKEN", "--replace", "PORT"]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(puts().map((p) => p.url.split("/").at(-1))).toEqual(["API_TOKEN", "DATABASE_URL", "PORT", "DEBUG", "NEW_SECRET"]);
+    });
+
+    it("a plain value identical to the stored one is not a replacement; --replace must name an entry of the file", async () => {
+      const same = await cli(["--assisted", "import", envFile("PORT=8080\nFRESH_ITEM=fresh-value-canary-77\n")]);
+      expect(same.code, same.stderr).toBe(0);
+      expect(puts().map((p) => p.url.split("/").at(-1))).toEqual(["PORT", "FRESH_ITEM"]);
+      requests = [];
+      const unknown = await cli(["--assisted", "import", envFile(), "--replace", "NOT_IN_FILE"]);
+      expect(unknown.code).toBe(1);
+      expect(unknown.stderr).toMatch(/--replace names NOT_IN_FILE, which .* does not set/);
+      expect(puts()).toEqual([]);
+    });
+
+    it("after a partial import, the retry advice asks for approval again, and a value rotated meanwhile is not replaced", async () => {
+      const file = envFile("FIRST_KEY=first-key-from-file-21\nSECOND_KEY=second-key-from-file-22\n");
+      failPut.add("SECOND_KEY");
+      const partial = await cli(["--assisted", "import", file]);
+      expect(partial.code).toBe(1);
+      expect(partial.stderr).toMatch(/1 of 2 value\(s\) stored\. Fix the cause and run the import again: it now finds FIRST_KEY stored, and replaces it only with the human's approval for that item \(--replace <NAME>\)\./);
+      expect(partial.stderr).not.toMatch(/--replace FIRST_KEY/);
+      // FIRST_KEY is rotated before the retry; the file still holds the old value.
+      stored = stored.map((i) => (i.name === "FIRST_KEY" ? { ...i, value: "first-key-rotated-meanwhile-23" } : i));
+      failPut.clear();
+      requests = [];
+      const retry = await cli(["--assisted", "import", file]);
+      expect(retry.code).toBe(78);
+      expect(retry.stderr).toMatch(/development already has a value for FIRST_KEY;/);
+      expect(puts()).toEqual([]);
+      expect(stored.find((i) => i.name === "FIRST_KEY")?.value).toBe("first-key-rotated-meanwhile-23");
+      expect(partial.stdout + partial.stderr + retry.stdout + retry.stderr).not.toMatch(/first-key-from-file-21|second-key-from-file-22|first-key-rotated/);
+    });
+
+    it("outside assisted mode the import still replaces, as documented", async () => {
+      const r = await cli(["import", envFile()]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(puts().map((p) => p.url.split("/").at(-1))).toContain("API_TOKEN");
+    });
   });
 
   it("--dry-run works without a repository, listing names and inferred types", async () => {

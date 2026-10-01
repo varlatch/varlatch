@@ -169,7 +169,7 @@ describe("the embedded skill", () => {
         .replace("varlatch --assisted run -- npm test", "varlatch --assisted run --unmasked -- npm test")
         .replace("varlatch --assisted context --json", "varlatch --assisted contexts --json"),
     };
-    expect(unknownOptions(broken)).toEqual([
+    expect(unknownOptions(broken).sort()).toEqual([
       "SKILL.md: varlatch --assisted contexts --json: no command contexts",
       "SKILL.md: varlatch --assisted run --unmasked -- npm test: run has no --unmasked",
     ]);
