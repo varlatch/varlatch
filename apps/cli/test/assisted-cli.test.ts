@@ -297,10 +297,10 @@ describe("assisted run: a value too short to mask", () => {
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
     // Every remedy is the human's, for this item only; replacing overwrites.
     expect(r.stderr).toMatch(/Ask the human before changing anything\. Each choice is theirs, for PIN only:/);
-    expect(r.stderr).toMatch(/overwrites the current value: varlatch --assisted values set PIN --generate hex:32/);
+    expect(r.stderr).toMatch(/overwrites the current value: varlatch --assisted values set PIN -e development --generate hex:32/);
     expect(r.stderr).toMatch(/approval for one item does not cover another/);
     // The override is shown as a command with the option before `--`, where the CLI reads it.
-    expect(r.stderr).toMatch(/varlatch --assisted run --allow-unmasked PIN -- <command>/);
+    expect(r.stderr).toMatch(new RegExp(`varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
     expect(r.stderr).toMatch(/Nothing was started\./);
     expect(existsSync(marker)).toBe(false);
     expect(r.stdout + r.stderr).not.toContain(PIN);

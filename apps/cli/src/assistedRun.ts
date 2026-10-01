@@ -69,20 +69,34 @@ export function planAssistedRedaction(set: SecretEntry[], allowUnmasked: string[
 }
 
 /**
+ * What a remedy command needs to act on the same run from a new shell:
+ * `target` holds the context options (the resolved environment, and an
+ * overridden server), `runOptions` the run's own options to repeat in a
+ * retry (`--strict`, the allowances already given).
+ */
+export interface RemedyContext {
+  target: string;
+  runOptions?: string[];
+}
+
+/**
  * Why an assisted run did not start: names and remedies, never a value.
+ * Every command names the run's environment: without it, a remedy for a
+ * production refusal would replace or show the default environment's value.
  * Every remedy changes or exposes the human's configuration, so each is
  * theirs to approve, for the named item only: an agent reports and waits
  * (ADR-0043; the agent evaluation saw an agent regenerate other items).
  */
-export function unmaskableRefusal(items: string[]): string[] {
+export function unmaskableRefusal(items: string[], how: RemedyContext): string[] {
   const first = items[0] as string;
+  const retry = ["varlatch --assisted run", how.target, ...(how.runOptions ?? []), `--allow-unmasked ${first} -- <command>`].join(" ");
   return [
     `varlatch: ${items.length === 1 ? "this Secret is" : "these Secrets are"} shorter than ${MIN_LENGTH} bytes, so ` +
       `${items.length === 1 ? "its value" : "their values"} cannot be masked in the command's output: ${items.join(", ")}`,
     `  Ask the human before changing anything. Each choice is theirs, for ${items.length === 1 ? first : "each named item"} only:`,
-    `  - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set ${first} --generate hex:32`,
+    `  - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set ${first} ${how.target} --generate hex:32`,
     `  - if it is not a secret, correct its sensitivity in the Contract`,
-    `  - show it unmasked in this run only: varlatch --assisted run --allow-unmasked ${first} -- <command>`,
+    `  - show it unmasked in this run only: ${retry}`,
     "  An agent reports this and waits; approval for one item does not cover another.",
     "Nothing was started.",
   ];
@@ -92,7 +106,7 @@ export function unmaskableRefusal(items: string[]): string[] {
  * The run's verdict on its plan: false (after naming the items and the
  * remedies) when a short value nobody allowed would pass unmasked.
  */
-export function assistedGate(plan: AssistedPlan, log: (line: string) => void): boolean {
+export function assistedGate(plan: AssistedPlan, log: (line: string) => void, how: RemedyContext): boolean {
   if (plan.unusedAllowances.length > 0) {
     log(
       `varlatch: --allow-unmasked names ${plan.unusedAllowances.join(", ")}, which ${plan.unusedAllowances.length === 1 ? "is" : "are"} ` +
@@ -100,7 +114,8 @@ export function assistedGate(plan: AssistedPlan, log: (line: string) => void): b
     );
   }
   if (plan.refused.length > 0) {
-    for (const line of unmaskableRefusal(plan.refused)) log(line);
+    const runOptions = [...(how.runOptions ?? []), ...plan.allowed.map((name) => `--allow-unmasked ${name}`)];
+    for (const line of unmaskableRefusal(plan.refused, { ...how, runOptions })) log(line);
     return false;
   }
   return true;

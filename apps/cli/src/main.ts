@@ -90,6 +90,17 @@ function flag(args: string[], name: string): string | undefined {
   return i >= 0 ? args[i + 1] : undefined;
 }
 
+/**
+ * The options a suggested command needs to reach the same environment and
+ * server from a new shell: always the resolved environment, and the server
+ * when this command overrode it (by flag, or by VARLATCH_SERVER, which the
+ * next shell may not have). The project comes from the repository.
+ */
+function contextOptions(args: string[], ctx: ResolvedContext): string {
+  const overridden = flag(args, "--server") !== undefined || Boolean(process.env.VARLATCH_SERVER);
+  return `-e ${ctx.environment}${overridden ? ` --server ${ctx.server}` : ""}`;
+}
+
 function has(args: string[], name: string): boolean {
   return args.includes(name);
 }
@@ -307,14 +318,15 @@ async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: st
 async function obtainValue(
   sub: "set" | "rotate",
   item: string,
-  environment: string,
+  where: string,
   args: string[],
   mode: AssistedMode,
   sensitive: () => Promise<boolean>,
 ): Promise<{ value: string; generated?: GenerateSpec }> {
-  // Every command names the environment: a handoff without -e would target
-  // the default one. The human's command has no --assisted, so it prompts.
-  const target = `${item} -e ${environment}`;
+  // Every command names the environment (and an overridden server): a
+  // handoff without -e would target the default one. The human's command
+  // has no --assisted, so it prompts.
+  const target = `${item} ${where}`;
   const safeForms = [
     "  A value from elsewhere (a provider's key, a password) is the human's to enter. Ask them to run this",
     "  in their own terminal, where it prompts without showing the value, or to use the dashboard:",
@@ -798,7 +810,7 @@ async function main(): Promise<void> {
               start: async (env, secrets, secretNames) => {
                 if (!assistedRedaction) return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
                 const plan = planAssistedRedaction(assistedRedactionSet(secrets, env, process.env, secretNames), allowUnmasked);
-                if (!assistedGate(plan, log)) return STRICT_EXIT;
+                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: ["--strict", ...flags(preArgs, "--allow-inherited").map((n) => `--allow-inherited ${n}`)] })) return STRICT_EXIT;
                 return runChild(cmd, cmdArgs, env, plan.entries, "assisted");
               },
               log,
@@ -891,7 +903,7 @@ async function main(): Promise<void> {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);
           const plan = planAssistedRedaction(set, allowUnmasked);
-          if (!assistedGate(plan, log)) process.exit(STRICT_EXIT);
+          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx) })) process.exit(STRICT_EXIT);
           process.exit(await runChild(cmd, cmdArgs, env, plan.entries, "assisted"));
         }
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
@@ -948,7 +960,7 @@ async function main(): Promise<void> {
               ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
               : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
           const item = args[1] && !args[1].startsWith("-") ? args[1] : usageError(usage);
-          const obtained = await obtainValue(sub, item, ctx.environment, args, assisted, () => sensitiveItem(api, ctx, item));
+          const obtained = await obtainValue(sub, item, contextOptions(args, ctx), args, assisted, () => sensitiveItem(api, ctx, item));
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";

@@ -73,7 +73,10 @@ fixes.
 - The exit-78 message for a Secret too short to mask now says every remedy
   is the human's decision, for that item only (replacing the value
   overwrites it), and shows the override as a command with the option
-  before `--`.
+  before `--`. Both suggested commands name the refused run's environment,
+  and its server when overridden; the retry also keeps `--strict`,
+  `--allow-inherited`, and earlier allowances. Before, a remedy for a
+  production refusal replaced or showed the default environment's value.
 - The skill tells a coding agent that status 69 can come from a sandbox
   blocking the connection, and to ask the human to allow it rather than
   work around it.

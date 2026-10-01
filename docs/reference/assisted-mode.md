@@ -53,17 +53,22 @@ varlatch --assisted <command> [args...]
 - **A Secret too short to mask stops the run.** Values shorter than 8 bytes
   cannot be masked (masking them would corrupt unrelated output, and the
   masks would give the value away). The run names those items and exits
-  with status 78 before the command starts:
+  with status 78 before the command starts. For `run -e production`:
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
     Ask the human before changing anything. Each choice is theirs, for PIN only:
-    - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set PIN --generate hex:32
+    - replace the value with a longer one, which overwrites the current value: varlatch --assisted values set PIN -e production --generate hex:32
     - if it is not a secret, correct its sensitivity in the Contract
-    - show it unmasked in this run only: varlatch --assisted run --allow-unmasked PIN -- <command>
+    - show it unmasked in this run only: varlatch --assisted run -e production --allow-unmasked PIN -- <command>
     An agent reports this and waits; approval for one item does not cover another.
   Nothing was started.
   ```
+
+  Both commands act on the refused run's values: they name its environment
+  (always, even when it came from the default), its server when the run
+  overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
+  `--strict`, `--allow-inherited`, and earlier `--allow-unmasked` options.
 
   `--allow-unmasked <NAME>` (repeatable) lets that item through unmasked in
   this run, and the run says so. It is refused outside assisted mode.

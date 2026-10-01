@@ -24,10 +24,10 @@ const dir = mkdtempSync(join(tmpdir(), "varlatch-skill-commands-"));
 const bundle = join(dir, "varlatch.cjs");
 let server: http.Server;
 let origin = "";
-let state: { values: Record<string, string>; revisions: Record<string, unknown>[]; active: Record<string, unknown> | null };
+// `values` is development's; `production` lets a test check which environment a command reached.
+let state: { values: Record<string, string>; production: Record<string, string>; revisions: Record<string, unknown>[]; active: Record<string, unknown> | null };
 let n = 0;
 
-const ENV = "/v1/organizations/acme/projects/web/environments/development";
 const API_TOKEN = "skill-commands-canary-token-42";
 
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -58,19 +58,24 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       state.active = { ...rev, active: true };
       return json(200, state.active);
     }
-    const put = new RegExp(`^${ENV}/values/([A-Z_]+)$`).exec(url);
+    const scoped = /^\/v1\/organizations\/acme\/projects\/web\/environments\/(development|production)(\/.*)$/.exec(url);
+    if (!scoped) return json(404, { error: { code: "NOT_FOUND", message: url, requestId: "r" } });
+    const values = scoped[1] === "production" ? state.production : state.values;
+    const rest = scoped[2] as string;
+    const put = /^\/values\/([A-Z_]+)$/.exec(rest);
     if (put && req.method === "PUT") {
-      state.values[put[1] as string] = body.value as string;
+      values[put[1] as string] = body.value as string;
       return json(200, { versionId: `ver_${put[1]}` });
     }
     const sensitive = (name: string) => ((state.active?.contract as { items: { name: string; sensitive: boolean }[] } | undefined)?.items.find((i) => i.name === name)?.sensitive ?? true);
-    const items = Object.entries(state.values).map(([name, value]) => ({ name, value, sensitive: sensitive(name), source: "self", versionId: `ver_${name}` }));
-    const manifest = { manifestVersion: 1, projectId: "prj_1", environment: { id: "env_1", rootId: "env_1", parentId: null, tier: "development", expiresAt: null }, contract: null, items: items.map((i) => ({ name: i.name, source: "self", valueRowId: `v_${i.name}`, versionId: i.versionId })) };
-    if (url === `${ENV}/retrievals`) {
+    const items = Object.entries(values).map(([name, value]) => ({ name, value, sensitive: sensitive(name), source: "self", versionId: `ver_${name}` }));
+    const pinned = state.active ? { revisionId: state.active.id, contentHash: state.active.contentHash, semanticsVersion: 3 } : null;
+    const manifest = { manifestVersion: 1, projectId: "prj_1", environment: { id: "env_1", rootId: "env_1", parentId: null, tier: "development", expiresAt: null }, contract: pinned, items: items.map((i) => ({ name: i.name, source: "self", valueRowId: `v_${i.name}`, versionId: i.versionId })) };
+    if (rest === "/retrievals") {
       return json(200, { environmentId: "env_1", manifest, stateDigest: `sha256:${"0".repeat(64)}`, contract: state.active?.contract ?? null, items, callerView: { withheld: [], unexpanded: [], contractWithheld: false }, validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] } });
     }
-    if (url === `${ENV}/disclosures`) return json(200, { items: items.map(({ name, versionId, value }) => ({ name, versionId, value })), withheld: [] });
-    if (url.startsWith(`${ENV}/effective-configuration`)) return json(200, { environmentId: "env_1", items: items.map((i) => ({ ...i, value: null })), manifest });
+    if (rest === "/disclosures") return json(200, { items: items.map(({ name, versionId, value }) => ({ name, versionId, value })), withheld: [] });
+    if (rest.startsWith("/effective-configuration")) return json(200, { environmentId: "env_1", items: items.map((i) => ({ ...i, value: null })), manifest });
     json(404, { error: { code: "NOT_FOUND", message: url, requestId: "r" } });
   });
 }
@@ -88,7 +93,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  state = { values: {}, revisions: [], active: null };
+  state = { values: {}, production: {}, revisions: [], active: null };
 });
 
 /** A fresh project with a .env holding a long Secret and a short non-secret. */
@@ -100,11 +105,11 @@ function project(): string {
   return repo;
 }
 
-function cli(args: string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function cli(args: string[], cwd: string, extraEnv: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [bundle, ...args], {
       cwd,
-      env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), VARLATCH_TOKEN: "vlt_test" },
+      env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), VARLATCH_TOKEN: "vlt_test", ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -148,7 +153,7 @@ describe("documented import commands run as written", () => {
     expect(commands.length).toBeGreaterThanOrEqual(4);
     expect(commands.map((c) => c.line)).toContain("varlatch --assisted import <file> --dry-run");
     for (const c of commands) {
-      state = { values: {}, revisions: [], active: null };
+      state = { values: {}, production: {}, revisions: [], active: null };
       const repo = project();
       const r = await cli(fill(c.line), repo);
       expect(r.code, `${c.file}: ${c.line}\n${r.stderr}`).toBe(0);
@@ -167,7 +172,7 @@ describe("documented import commands run as written", () => {
       ["--assisted", "import", ".env", "--contract", "--plain"],
       ["--assisted", "import", "--dry-run"],
     ]) {
-      state = { values: {}, revisions: [], active: null };
+      state = { values: {}, production: {}, revisions: [], active: null };
       const repo = project();
       const r = await cli(args, repo);
       expect(r.code, args.join(" ")).toBe(EXIT.usage);
@@ -205,11 +210,70 @@ describe("the override the exit-78 message prints", () => {
     state.values = { PIN: "1234567" };
     const refused = await cli(["--assisted", "run", "--", "node", "-e", "console.log('ok')"], repo);
     expect(refused.code, refused.stderr).toBe(78);
-    const printed = /(varlatch --assisted run --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
+    const printed = /(varlatch --assisted run -e development --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
     expect(printed, refused.stderr).toBeDefined();
     const r = await cli(fill(printed as string, { "<command>": "node" }).concat(["-e", "console.log('ran')"]), repo);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("ran");
+  });
+});
+
+describe("the exit-78 remedies keep the run's environment", () => {
+  const DEV_PIN = "development-pin-long-enough";
+
+  /** A production run refused on a short PIN, development's PIN long; returns the two printed remedies. */
+  async function refusedInProduction(repo: string, extra: string[] = [], env: Record<string, string> = {}) {
+    state.values = { PIN: DEV_PIN };
+    state.production = { PIN: "1234567" };
+    const r = await cli(["--assisted", "run", "-e", "production", ...extra, "--", "node", "-e", "console.log('ok')"], repo, env);
+    expect(r.code, r.stderr).toBe(78);
+    return {
+      replace: /: (varlatch --assisted values set PIN .*--generate hex:32)$/m.exec(r.stderr)?.[1],
+      unmask: /: (varlatch --assisted run .*--allow-unmasked PIN -- <command>)$/m.exec(r.stderr)?.[1],
+    };
+  }
+
+  it.each([
+    ["a default run", []],
+    ["a strict run", ["--strict"]],
+  ] as const)("%s: the printed override shows production's value and changes nothing", async (_name, extra) => {
+    const repo = project();
+    // Strict startup needs an active Contract.
+    const contract = normalizeContract({ schemaVersion: 1, semanticsVersion: 3, items: [{ name: "PIN", type: "string", sensitive: true, required: { kind: "always" } }] as never });
+    state.active = { id: "crv_pin", projectId: "prj_1", contentHash: contractHash(contract), semanticsVersion: 3, active: true, contract, createdAt: "2026-10-01T00:00:00.000Z" };
+    const { unmask } = await refusedInProduction(repo, [...extra]);
+    expect(unmask).toBe(`varlatch --assisted run -e production ${extra.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`);
+    const r = await cli(fill(unmask as string, { "<command>": "node" }).concat(["-e", "console.log('PIN=' + process.env.PIN)"]), repo);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=1234567");
+    expect(state.values.PIN).toBe(DEV_PIN);
+  });
+
+  it("the printed replacement replaces production's value, leaves development's, and the refused run then starts", async () => {
+    const repo = project();
+    const { replace } = await refusedInProduction(repo);
+    expect(replace).toBe("varlatch --assisted values set PIN -e production --generate hex:32");
+    const r = await cli(fill(replace as string), repo);
+    expect(r.code, r.stderr).toBe(0);
+    expect(state.production.PIN).toMatch(/^[0-9a-f]{64}$/);
+    expect(state.values.PIN).toBe(DEV_PIN);
+    const again = await cli(["--assisted", "run", "-e", "production", "--", "node", "-e", "console.log('ran')"], repo);
+    expect(again.code, again.stderr).toBe(0);
+    expect(again.stdout).toContain("ran");
+  });
+
+  it("an overridden server, by flag or VARLATCH_SERVER, is kept in every suggested command; otherwise none is added", async () => {
+    const repo = project();
+    for (const [extra, env] of [[["--server", origin], {}], [[], { VARLATCH_SERVER: origin }]] as const) {
+      const { replace, unmask } = await refusedInProduction(repo, [...extra], env);
+      expect(replace).toBe(`varlatch --assisted values set PIN -e production --server ${origin} --generate hex:32`);
+      expect(unmask).toBe(`varlatch --assisted run -e production --server ${origin} --allow-unmasked PIN -- <command>`);
+    }
+    const handoff = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production", "--server", origin], repo);
+    expect(handoff.code).toBe(64);
+    expect(handoff.stderr).toContain(`    varlatch values set STRIPE_KEY -e production --server ${origin}\n`);
+    const plain = await refusedInProduction(repo);
+    expect(`${plain.replace} ${plain.unmask}`).not.toContain("--server");
   });
 });
 
