@@ -62,7 +62,9 @@ long as you follow these rules.
    not name, even to make a command run. In assisted mode, `values set`,
    `values rotate`, and `import` refuse (78) to replace an existing value
    unless that item is named with `--replace <NAME>`; add it only with the
-   human's approval for that item. It records the override, not an approval.
+   human's approval for that item. A value inherited from a parent
+   environment counts: setting it in the child overrides it. `--replace`
+   records the override, not an approval.
 6. **To find out whether an environment is ready** (to deploy, or what is
    missing or invalid), run `varlatch --assisted validate -e <environment> --json`.
    Listing values does not check the Contract. **When a value is missing**,

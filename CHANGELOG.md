@@ -133,16 +133,22 @@ fixes.
   `varlatch run --allow-unmasked <NAME> -- <command>` is that override: it
   shows only the named short Secrets and keeps every other known Secret,
   inherited ones included, masked; another short one still stops the run.
-  Before, `--allow-unmasked` applied only in assisted mode. The exit-78
-  message now presents every remedy as the human's command for their own
-  terminal (no `--assisted`), with the run's environment, server, and retry
-  options, and says the agent stops and waits.
+  Before, `--allow-unmasked` applied only in assisted mode. The option is
+  checked strictly in every mode: a missing name or the
+  `--allow-unmasked=<NAME>` spelling exits 64 before anything is fetched,
+  never a run without masking. The exit-78 message and this refusal present
+  every remedy as the human's command for their own terminal (no
+  `--assisted`), with the run's environment, server, and startup options
+  (`--strict`, `--allow-inherited`, `--export-context`), and say the agent
+  stops and waits.
 - **Behaviour change:** in assisted mode, `values set` and `values rotate`
   refuse (78, nothing stored) to replace an existing value unless the item
-  is named with `--replace <ITEM>`, checked before any value is read,
-  prompted for, generated, or written; when existence cannot be checked, it
-  counts as existing. `--replace` records the override's intent, not an
-  approval. Outside assisted mode they replace as before.
+  is named with `--replace <ITEM>`. The check comes after the command line
+  (value source, `--generate` form, a missing value: 64, no request) and
+  before any value is read, prompted for, generated, or written. A value
+  inherited from the parent environment counts as existing, and so does one
+  whose existence cannot be checked. `--replace` records the override's
+  intent, not an approval. Outside assisted mode they replace as before.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

@@ -45,7 +45,9 @@ some-tool --print-key | varlatch --assisted values set API_KEY --stdin
 Replacing an existing value is the human's decision for that item: in
 assisted mode `values set` and `values rotate` refuse (78) to replace one
 unless it is named with `--replace <NAME>`, added only with their approval.
-The check comes before any value is read, prompted for, or generated.
+A value the environment inherits from its parent counts too: setting it
+here overrides it. The check comes before any value is read, prompted for,
+or generated.
 
 A non-secret value may go on the command line:
 

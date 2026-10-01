@@ -75,16 +75,25 @@ varlatch --assisted <command> [args...]
   `--assisted`). They act on the refused run's values: they name its
   environment (always, even when it came from the default), its server when
   the run overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
-  `--strict`, `--allow-inherited`, and earlier `--allow-unmasked` options.
+  `--strict`, `--allow-inherited`, `--export-context`, and earlier
+  `--allow-unmasked` options.
 - **`--allow-unmasked` and `--no-redact` are refused** in assisted mode
   (status 64, nothing started): showing a Secret is the human's decision.
-  The refusal prints the human's override for their own terminal.
+  The refusal prints the human's override for their own terminal, with the
+  same environment, server, and startup options (`--strict`,
+  `--allow-inherited`, `--export-context`), so the override never weakens
+  the run's policy.
 - **The human's override,** outside assisted mode:
   `varlatch run --allow-unmasked <NAME> -- <command>` (repeatable) lets the
   named short Secrets through unmasked in that run, and keeps everything else
   assisted mode protects: every other known Secret, inherited ones included,
   stays masked, and another Secret too short to mask still stops the run.
   It is not an unmasked run, and it cannot be combined with `--no-redact`.
+  The option is checked strictly, in every mode, before anything is fetched:
+  each `--allow-unmasked` needs an item's name after it, and the
+  `--allow-unmasked=<NAME>` spelling is not supported. A malformed form
+  exits with status 64 and starts nothing; it never falls back to a run
+  without masking.
 - These are protections against accidents, not a boundary: an agent that
   deliberately turns assisted mode off is outside what they cover.
 - **`--agent-safe` runs are unchanged:** the Agent holds Placeholders, not
@@ -106,10 +115,15 @@ varlatch --assisted <command> [args...]
   environment. The human's command has no `--assisted`, so it prompts
   without showing the value.
 - **Replacing an existing value needs `--replace <ITEM>`** (status 78
-  otherwise, nothing stored). The check runs after the command line is
-  checked and before any value is read from a file or standard input,
-  prompted for, generated, or written. When the server cannot say whether
-  the item has a value (denied, for instance), it counts as existing.
+  otherwise, nothing stored). The command line is checked first, including
+  the value source (one only) and the `--generate` form, and a missing value
+  (assisted mode never prompts): any of these is status 64, with no request.
+  The existence check comes next, before any value is read from a file or
+  standard input, prompted for, generated, or written. A value the
+  environment inherits from its parent environment counts as existing:
+  setting the item in the child overrides it, which changes what the child
+  uses. When the server cannot say whether the item has a value (denied,
+  for instance), it counts as existing.
   `--replace` must name the item the command sets or rotates; approval for
   one item never covers another. It records the override's intent: it is
   not proof that a human approved, nor an authentication or a permission.

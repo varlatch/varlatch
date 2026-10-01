@@ -46,6 +46,7 @@ interface StoredItem {
 let stored: StoredItem[];
 let requests: { method: string; url: string; auth: string; body: unknown }[];
 let denyEffective = false;
+let noActiveContract = false;
 let failPut: Set<string>;
 
 const CONTRACT = [
@@ -80,17 +81,21 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     const active = revision(CONTRACT, { id: "crv_active" });
     if (url === "/v1/meta") return json(200, { serverVersion: "0.13.0", capabilities: ["retrieval.strict"], semanticsVersions: [1, 2, 3] });
     if (url === "/v1/organizations/acme/projects/web/contract" && req.method === "GET") return json(200, active);
+    if (url === `/v1/organizations/acme/projects/web/contract/revisions/${active.id}` && req.method === "GET") return json(200, active);
     if (url === "/v1/organizations/acme/projects/web/contract/revisions" && req.method === "POST") {
       return json(201, { ...active, id: "crv_imported", active: false });
     }
     const effectiveIn = /^\/v1\/organizations\/acme\/projects\/web\/environments\/([a-z]+)\/effective-configuration/.exec(url);
     if (effectiveIn) {
       if (denyEffective) return json(403, { error: { code: "PERMISSION_DENIED", message: "metadata read denied", requestId: "req_d" } });
-      const inEnv = effectiveIn[1] === "development" ? stored : [];
+      // "preview" is a child of development, with no values of its own: it inherits development's.
+      const inEnv = effectiveIn[1] === "development" || effectiveIn[1] === "preview" ? stored : [];
+      const source = effectiveIn[1] === "preview" ? "parent" : "self";
       return json(200, {
         environmentId: "env_1",
         // As the daemon: metadata only, unless include=values, which returns non-sensitive values only.
-        items: inEnv.map((i) => ({ name: i.name, sensitive: i.sensitive, source: "self", value: !i.sensitive && url.includes("include=values") ? i.value : null })),
+        items: inEnv.map((i) => ({ name: i.name, sensitive: i.sensitive, source, value: !i.sensitive && url.includes("include=values") ? i.value : null })),
+        stateDigest: `sha256:${"0".repeat(64)}`,
         manifest: {
           manifestVersion: 1,
           projectId: "prj_1",
@@ -104,6 +109,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       return json(200, {
         items: stored.filter((i) => i.sensitive && !i.withheld).map((i) => ({ name: i.name, versionId: `ver_${i.name}`, value: i.value })),
         withheld: stored.filter((i) => i.withheld).map((i) => i.name),
+        stateDigest: `sha256:${"0".repeat(64)}`,
       });
     }
     if (url === `${ENV_PATH}/retrievals`) {
@@ -114,11 +120,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
           manifestVersion: 1,
           projectId: "prj_1",
           environment: { id: "env_1", rootId: "env_1", parentId: null, tier: "development", expiresAt: null },
-          contract: { revisionId: active.id, contentHash: active.contentHash, semanticsVersion: 2 },
+          contract: noActiveContract ? null : { revisionId: active.id, contentHash: active.contentHash, semanticsVersion: 2 },
           items: items.map((i) => ({ name: i.name, source: "self", valueRowId: `val_${i.name}`, versionId: i.versionId })),
         },
         stateDigest: `sha256:${"0".repeat(64)}`,
-        contract: active.contract,
+        contract: noActiveContract ? null : active.contract,
         items,
         callerView: { withheld: [], unexpanded: [], contractWithheld: false },
         validation: { invalid: [], unresolved: [], notEvaluated: [], missing: [] },
@@ -171,6 +177,7 @@ beforeEach(() => {
   requests = [];
   failPut = new Set();
   denyEffective = false;
+  noActiveContract = false;
 });
 
 /** No coding agent's marker and no VARLATCH_ASSISTED: every signal is added per test. */
@@ -304,6 +311,78 @@ describe("assisted run: output protection and precedence", () => {
     expect(agentSafe.code).toBe(64);
     expect(agentSafe.stderr).toMatch(/do not apply to --agent-safe runs/);
   });
+
+  // A malformed unmasking option must not leave the list of names empty and
+  // select a plain run, which masks nothing (review of #75: a missing name
+  // printed every Secret raw).
+  const malformed: [string, string[], RegExp][] = [
+    ["no name before --", ["--allow-unmasked"], /--allow-unmasked needs an item's name: --allow-unmasked <NAME>/],
+    ["the = spelling", ["--allow-unmasked=PIN"], /--allow-unmasked=\.\.\. is not supported; write --allow-unmasked <NAME>/],
+    ["an option where the name goes", ["--allow-unmasked", "--strict"], /--allow-unmasked needs an item's name, not --strict/],
+    ["a name no item can have", ["--allow-unmasked", "pin"], /--allow-unmasked needs an item's name, not pin/],
+    ["--no-redact=", ["--no-redact=1"], /--no-redact=\.\.\. is not supported; write --no-redact/],
+  ];
+  const leaky = (marker: string) => [process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, ''); console.log(process.env.API_TOKEN, process.env.PIN)`];
+
+  it.each(malformed)("a malformed unmasking option (%s) exits 64 before any request, in either mode, and the command never starts", async (_name, options, message) => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+    for (const mode of [[], ["--assisted"]]) {
+      const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+      requests = [];
+      const r = await cli([...mode, "run", ...options, "--", ...leaky(marker)]);
+      expect(r.code, `${mode.join(" ")} ${r.stderr}`).toBe(64);
+      expect(r.stderr).toMatch(message);
+      expect(r.stderr).toContain("Nothing was started.");
+      expect(requests).toEqual([]);
+      expect(existsSync(marker)).toBe(false);
+      expect(r.stdout + r.stderr).not.toContain(TOKEN);
+      expect(r.stdout + r.stderr).not.toContain(PIN);
+    }
+  });
+
+  it("control: the well-formed override, same child, makes its requests and starts, showing only PIN", async () => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+    const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+    const r = await cli(["run", "--allow-unmasked", "PIN", "--", ...leaky(marker)]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(r.stdout).toContain(`[REDACTED:API_TOKEN] ${PIN}`);
+  });
+
+  it("the refusal's handoff keeps the run's policy: run as printed, a strict override still validates strictly", async () => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+    // Only LEGACY_KEY is inherited, and allowed: strict startup refuses any other inherited Secret.
+    const refused = await cli(["--assisted", "run", "--strict", "--allow-inherited", "LEGACY_KEY", "--allow-unmasked", "PIN", "--", "true"], { env: { LEGACY_KEY: LEGACY } });
+    expect(refused.code).toBe(64);
+    const printed = /^ {2}(varlatch run .* -- <command>)$/m.exec(refused.stderr)?.[1];
+    expect(printed).toBe("varlatch run -e development --strict --allow-inherited LEGACY_KEY --allow-unmasked PIN -- <command>");
+    const human = (printed as string).split(" ").slice(1, -1);
+    // With LEGACY_KEY inherited, as the agent's run had it: strict passes, PIN shown, every other Secret masked.
+    const passes = await cli([...human, process.execPath, printer()], { env: { LEGACY_KEY: LEGACY } });
+    expect(passes.code, passes.stderr).toBe(0);
+    expect(passes.stderr).toContain(`pin=${PIN}`);
+    expect(passes.stdout).toContain("legacy=[REDACTED:LEGACY_KEY]");
+    expect(passes.stdout + passes.stderr).not.toContain(TOKEN);
+    expect(passes.stdout + passes.stderr).not.toContain(LEGACY);
+    // A strict violation (no active Contract) stops the printed command before it starts.
+    noActiveContract = true;
+    const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+    const stops = await cli([...human, ...leaky(marker)], { env: { LEGACY_KEY: LEGACY } });
+    expect(stops.code).toBe(78);
+    expect(stops.stderr).toMatch(/no active Contract/);
+    expect(existsSync(marker)).toBe(false);
+    // Control: the handoff with the policy dropped, as before this fix, starts the command.
+    const weakened = await cli(["run", "-e", "development", "--allow-unmasked", "PIN", "--", ...leaky(marker)], { env: { LEGACY_KEY: LEGACY } });
+    expect(weakened.code).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("the refusal's handoff keeps --export-context, as the exit-78 remedy does", async () => {
+    const refused = await cli(["--assisted", "run", "--export-context", "--no-redact", "--", "true"]);
+    expect(refused.code).toBe(64);
+    expect(refused.stderr).toContain("  varlatch run -e development --export-context --allow-unmasked <NAME> -- <command>");
+  });
 });
 
 describe("assisted run: notices before the command starts", () => {
@@ -398,6 +477,16 @@ describe("assisted run: a value too short to mask", () => {
     expect(r.stdout).toContain("legacy=[REDACTED:LEGACY_KEY]");
     expect(r.stdout + r.stderr).not.toContain(TOKEN);
     expect(r.stdout + r.stderr).not.toContain(LEGACY);
+  });
+
+  it("a default run's remedy keeps --export-context: run as printed, the command gets its run context", async () => {
+    const r = await cli(["--assisted", "run", "--export-context", "--", process.execPath, printer()]);
+    expect(r.code, r.stderr).toBe(78);
+    const printed = /every other Secret still masked: (varlatch run .* -- <command>)/.exec(r.stderr)?.[1];
+    expect(printed).toBe("varlatch run -e development --export-context --allow-unmasked PIN -- <command>");
+    const human = await cli([...(printed as string).split(" ").slice(1, -1), process.execPath, "-e", "console.log(process.env.VARLATCH_RUN_CONTEXT ? 'run context given' : 'no run context')"]);
+    expect(human.code, human.stderr).toBe(0);
+    expect(human.stdout).toContain("run context given");
   });
 
   it("the human's override names one item: another short Secret still stops the run", async () => {
@@ -608,9 +697,9 @@ describe("values set and values rotate: Secret input", () => {
 describe("values set and values rotate in assisted mode: replacing an existing value needs --replace <ITEM>", () => {
   const writes = () => requests.filter((r) => r.method === "PUT" || r.url.endsWith("/rotations"));
 
-  it("refused (78) before any value is read, prompted for, generated, or written: from a file, from stdin, generated, or none", async () => {
+  it("refused (78) before any value is read, prompted for, generated, or written: from a file, from stdin, or generated", async () => {
     const missingFile = join(dir, "does-not-exist.txt");
-    for (const source of [["--from-file", missingFile], ["--stdin"], ["--generate", "hex:32"], []]) {
+    for (const source of [["--from-file", missingFile], ["--stdin"], ["--generate", "hex:32"]]) {
       const r = await cli(["--assisted", "values", "set", "API_TOKEN", ...source], { input: "stdin-value-never-read-66\n" });
       expect(r.code, source.join(" ")).toBe(78);
       // The file is never opened: no "cannot read" error, only the replacement refusal.
@@ -621,6 +710,47 @@ describe("values set and values rotate in assisted mode: replacing an existing v
     expect(rotate.code).toBe(78);
     expect(rotate.stderr).toMatch(/varlatch values rotate: API_TOKEN already has a value in development; rotating it replaces that value\./);
     expect(writes()).toEqual([]);
+  });
+
+  it("a wrong command line is reported first (64), before the existence check: with or without a credential, existing or not", async () => {
+    const forms: [string[], RegExp][] = [
+      [["set", "API_TOKEN", "--stdin", "--generate", "hex:32"], /give the value one way only/],
+      [["set", "API_TOKEN", "--generate", "nonsense"], /--generate expects hex:<bytes>/],
+      [["set", "API_TOKEN", "--generate", "hex:4"], /from 16 to 4096 bytes/],
+      [["set", "API_TOKEN", "value-and-file", "--from-file", "x"], /give the value one way only/],
+      [["rotate", "API_TOKEN", "--stdin", "--from-file", "x"], /give the value one way only/],
+      [["set", "BRAND_NEW_ITEM", "--generate", "alnum:5"], /from 22 to 4096 characters/],
+      // No value in assisted mode: there is no prompt, whatever the server has.
+      [["set", "API_TOKEN"], /assisted mode never prompts/],
+    ];
+    for (const [args, message] of forms) {
+      for (const env of [{}, { VARLATCH_TOKEN: "" }]) {
+        requests = [];
+        const r = await cli(["--assisted", "values", ...args], { env, input: "stdin-value-never-read-67\n" });
+        expect(r.code, `${args.join(" ")} ${JSON.stringify(env)}: ${r.stderr}`).toBe(64);
+        expect(r.stderr).toMatch(message);
+        expect(requests).toEqual([]);
+      }
+    }
+    // Control: without a credential, a well-formed command gets as far as the server (77), so the forms above were refused first.
+    const signedOut = await cli(["--assisted", "values", "set", "API_TOKEN", "--generate", "hex:32"], { env: { VARLATCH_TOKEN: "" } });
+    expect(signedOut.code).toBe(77);
+    expect(writes()).toEqual([]);
+  });
+
+  it("a value inherited from the parent environment counts as existing: overriding it in the child needs --replace", async () => {
+    const refused = await cli(["--assisted", "values", "set", "API_TOKEN", "-e", "preview", "--generate", "hex:32"]);
+    expect(refused.code).toBe(78);
+    expect(refused.stderr).toContain(
+      "varlatch values set: preview inherits a value for API_TOKEN from its parent environment; setting it here overrides that value in preview. Replacing it is the human's decision, for this item only: ask them, and with their approval add --replace API_TOKEN. Nothing was stored.",
+    );
+    expect(writes()).toEqual([]);
+    const approved = await cli(["--assisted", "values", "set", "API_TOKEN", "-e", "preview", "--replace", "API_TOKEN", "--generate", "hex:32"]);
+    expect(approved.code, approved.stderr).toBe(0);
+    expect(writes().map((w) => w.url)).toEqual(["/v1/organizations/acme/projects/web/environments/preview/values/API_TOKEN"]);
+    // An item the parent does not have is new in the child too: no approval needed.
+    const fresh = await cli(["--assisted", "values", "set", "BRAND_NEW_ITEM", "-e", "preview", "--generate", "hex:32"]);
+    expect(fresh.code, fresh.stderr).toBe(0);
   });
 
   it("with --replace naming the item it proceeds; --replace naming another item is a usage error; a new item needs none", async () => {
