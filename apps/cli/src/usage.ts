@@ -50,7 +50,7 @@ Usage:
                (a Model Context Protocol server over stdio, for MCP hosts without a shell: read tools; --allow-writes
                 adds non-secret writes; no tool returns or writes a Secret's value)
   varlatch validate [-e <env>] [--json]  (exit 1 invalid; 2 incomplete: items this identity may not read)
-  varlatch values <set <ITEM> [<value>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>> [-e <env>]
+  varlatch values <set <ITEM> [<value> | -- <value>]|list [--json]|delete <ITEM>|rotate <ITEM> [<new-value>] [--grace <s>]|rotate-complete <ITEM>> [-e <env>]
                   set/rotate: --stdin | --from-file <path> | --generate <hex|base64|base64url:<bytes>|alnum:<chars>>,
                   or no value in a terminal for a hidden prompt
   varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--delete-source] [--json]

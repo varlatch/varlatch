@@ -27,4 +27,24 @@ describe("parseOptions", () => {
     for (const [args, message] of cases) expect(() => parseOptions(args, spec), args.join(" ")).toThrow(message);
     expect(() => parseOptions(["x"], {})).toThrow(OptionsError);
   });
+
+  it("an alias is the same option: either name, once", () => {
+    const aliased = { values: ["--environment"], aliases: { "-e": "--environment" }, positionals: 1 };
+    expect(parseOptions(["x", "-e", "prod"], aliased).values.get("--environment")).toBe("prod");
+    expect(parseOptions(["x", "--environment", "prod"], aliased).values.get("--environment")).toBe("prod");
+    for (const args of [["-e", "a", "--environment", "b"], ["-e", "a", "-e", "a"], ["--environment", "a", "-e", "b"]]) {
+      expect(() => parseOptions(args, aliased), args.join(" ")).toThrow(/--environment \(or -e\) given twice/);
+    }
+    expect(() => parseOptions(["-e"], aliased)).toThrow(/--environment needs a value/);
+  });
+
+  it("with endOfOptions, -- makes the rest positional, so a value may begin with a dash", () => {
+    const spec2 = { booleans: ["--stdin"], positionals: 2, endOfOptions: true };
+    expect(parseOptions(["x", "--", "-5"], spec2).positionals).toEqual(["x", "-5"]);
+    expect(parseOptions(["--", "--stdin"], spec2).booleans.has("--stdin")).toBe(false);
+    expect(() => parseOptions(["x", "-5"], spec2)).toThrow(/unknown option -5 \(a value that begins with "-" goes after --\)/);
+    expect(() => parseOptions(["x", "--", "a", "b"], spec2)).toThrow(/unexpected argument b/);
+    // Without it, -- stays an unknown option (as above).
+    expect(() => parseOptions(["--", "x"], { positionals: 1 })).toThrow(/unknown option --/);
+  });
 });

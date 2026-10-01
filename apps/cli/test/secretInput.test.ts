@@ -11,29 +11,27 @@ import {
   isWellFormedText,
   generateValue,
   parseGenerateSpec,
-  parseValueSource,
+  valueSourceOf,
   readValueFile,
   valueFromBytes,
 } from "../src/secretInput.js";
 
-describe("parseValueSource", () => {
+describe("valueSourceOf", () => {
   it("takes exactly one source", () => {
-    expect(parseValueSource(["set", "API_KEY", "v"])).toEqual({ kind: "argument", value: "v" });
-    expect(parseValueSource(["set", "API_KEY", "--stdin"])).toEqual({ kind: "stdin" });
-    expect(parseValueSource(["set", "API_KEY", "--from-file", "k.pem"])).toEqual({ kind: "file", path: "k.pem" });
-    expect(parseValueSource(["set", "API_KEY", "--generate", "hex:32"])).toEqual({ kind: "generate", spec: { encoding: "hex", size: 32 } });
-    expect(parseValueSource(["set", "API_KEY"])).toEqual({ kind: "prompt" });
-    expect(parseValueSource(["set", "API_KEY", "-e", "prod"])).toEqual({ kind: "prompt" });
-    expect(parseValueSource(["rotate", "API_KEY", "--grace", "60", "--stdin"])).toEqual({ kind: "stdin" });
+    expect(valueSourceOf({ value: "v", stdin: false })).toEqual({ kind: "argument", value: "v" });
+    expect(valueSourceOf({ stdin: true })).toEqual({ kind: "stdin" });
+    expect(valueSourceOf({ stdin: false, file: "k.pem" })).toEqual({ kind: "file", path: "k.pem" });
+    expect(valueSourceOf({ stdin: false, generate: "hex:32" })).toEqual({ kind: "generate", spec: { encoding: "hex", size: 32 } });
+    expect(valueSourceOf({ stdin: false })).toEqual({ kind: "prompt" });
   });
 
-  it("keeps a value that starts with a dash", () => {
-    expect(parseValueSource(["set", "API_KEY", "-x9-value", "-e", "dev"])).toEqual({ kind: "argument", value: "-x9-value" });
+  it("keeps a value that starts with a dash (given after --)", () => {
+    expect(valueSourceOf({ value: "-x9-value", stdin: false })).toEqual({ kind: "argument", value: "-x9-value" });
   });
 
   it("refuses two sources", () => {
-    expect(() => parseValueSource(["set", "API_KEY", "v", "--stdin"])).toThrow(SecretInputError);
-    expect(() => parseValueSource(["set", "API_KEY", "--stdin", "--generate", "hex:32"])).toThrow(/one way only/);
+    expect(() => valueSourceOf({ value: "v", stdin: true })).toThrow(SecretInputError);
+    expect(() => valueSourceOf({ stdin: true, generate: "hex:32" })).toThrow(/one way only/);
   });
 });
 

@@ -65,6 +65,17 @@ fixes.
   showed it) and now refuses an unknown option, a missing option value, or
   a second filename with status 64; before, it ignored an option it did not
   know.
+- **Behaviour change:** `varlatch values set` and `values rotate` check
+  their command line strictly, in every mode, before anything is read,
+  prompted for, or written. An unknown option, an option without its value,
+  an option given twice (`-e` and `--environment` count as one), an extra
+  argument, or a `--grace` that is not a whole number exits 64 and stores
+  nothing. Before, an unknown option was taken as the value: in a terminal,
+  `values set STRIPE_KEY --env production` stored the literal `--env` in
+  the default environment. A value that begins with `-` now goes after
+  `--` (`values set OFFSET -- -1`); `--json`, which these commands never
+  supported, is refused. `import` also counts `-e` and `--environment` as
+  one option.
 - `values set` and `values rotate` refusals in assisted mode (a value on
   the command line, or no value) now name the environment in every command
   they suggest, and put first the human-terminal command for a value from

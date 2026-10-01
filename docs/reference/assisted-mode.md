@@ -119,6 +119,14 @@ varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
   and function keys are ignored rather than stored.
 - **Give the value one way only.** Two sources are refused. A value that is
   not well-formed Unicode text is refused from every source.
+- **The command line is checked strictly**, in every mode, before anything
+  is read, prompted for, or written. An unknown option (`--env`, or
+  `--environment=production`, which is not supported), an option without
+  its value, an option given twice (`-e` and `--environment` count as one),
+  or an extra argument exits with status 64 and stores nothing. A typo can
+  never become the stored value. A value that begins with `-` goes after
+  `--`: `varlatch values set OFFSET -- -1`. `--grace` (rotate only) takes a
+  whole number of seconds.
 
 ## Limits
 

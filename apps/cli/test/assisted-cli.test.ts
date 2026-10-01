@@ -498,6 +498,60 @@ describe("values set and values rotate: Secret input", () => {
   });
 });
 
+describe("values set and values rotate: a strict command line", () => {
+  // Each exits 64 before anything is read, prompted, or written: no request
+  // reaches the server. Before, `values set STRIPE_KEY --env production` in
+  // a terminal stored the literal "--env" in the default environment.
+  const both: [string, string[], RegExp][] = [
+    ["an unknown option", ["--env", "production"], /unknown option --env/],
+    ["--environment=, which is not parsed", ["--environment=production"], /unknown option --environment=production/],
+    ["--json, which these commands do not take", ["--json"], /unknown option --json/],
+    ["-e without a value", ["-e"], /--environment needs a value/],
+    ["--from-file without a path", ["--from-file"], /--from-file needs a value/],
+    ["--generate without a spec", ["--generate"], /--generate needs a value/],
+    ["--server followed by another option", ["--server", "--stdin"], /--server needs a value/],
+    ["-e and --environment both", ["-e", "production", "--environment", "development"], /--environment \(or -e\) given twice/],
+    ["-e twice", ["-e", "development", "-e", "development"], /--environment \(or -e\) given twice/],
+    ["--from-file twice", ["--from-file", "a", "--from-file", "b"], /--from-file given twice/],
+    ["an extra argument", ["value", "extra"], /unexpected argument extra/],
+    ["a value that begins with a dash, before --", ["-x9-value"], /unknown option -x9-value \(a value that begins with "-" goes after --\)/],
+  ];
+  const cases: [string, string, string[], RegExp][] = [
+    ...both.flatMap(([name, extra, message]): [string, string, string[], RegExp][] => [["set", name, extra, message], ["rotate", name, extra, message]]),
+    ["rotate", "--grace without a value", ["--grace"], /--grace needs a value/],
+    ["rotate", "--grace that is not a number", ["--grace", "soon"], /--grace needs a whole number of seconds, not soon/],
+    ["rotate", "--grace twice", ["--grace", "60", "--grace", "60"], /--grace given twice/],
+    ["set", "--grace, which only rotate takes", ["--grace", "60"], /unknown option --grace/],
+  ];
+
+  it.each(cases)("values %s, %s: assisted, exit 64 and nothing sent", async (sub, _name, extra, message) => {
+    const r = await cli(["--assisted", "values", sub, "API_TOKEN", ...extra]);
+    expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(message);
+    expect(requests).toEqual([]);
+  });
+
+  describe.skipIf(!hasScript)("in the human's terminal", () => {
+    it.each(cases)("values %s, %s: exit 64 without a prompt, and nothing sent", async (sub, _name, extra, message) => {
+      const { code, terminal } = await underTerminal(["values", sub, "API_TOKEN", ...extra], {}, { after: "(input hidden): ", text: "typed-after-a-typo-91\r" });
+      expect(code).toBe(64);
+      expect(terminal).toMatch(message);
+      expect(terminal).not.toContain("(input hidden)");
+      expect(requests).toEqual([]);
+    });
+  });
+
+  it("the documented forms still work: options on either side of the value, -- before a value that begins with a dash, rotate's --grace", async () => {
+    expect((await cli(["--assisted", "values", "set", "PORT", "-e", "development", "9090"])).code).toBe(0);
+    expect((await cli(["values", "set", "PORT", "--", "-1"])).code).toBe(0);
+    expect((await cli(["--assisted", "values", "set", "API_TOKEN", "--environment", "development", "--stdin"], { input: "from-stdin-value-27\n" })).code).toBe(0);
+    expect(requests.filter((r) => r.method === "PUT").map((r) => r.body)).toEqual([{ value: "9090" }, { value: "-1" }, { value: "from-stdin-value-27" }]);
+    const rotated = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--grace", "60", "--stdin"], { input: "rotated-value-303\n" });
+    expect(rotated.code).toBe(0);
+    expect(requests.find((r) => r.url.endsWith("/rotations"))?.body).toEqual({ value: "rotated-value-303", graceSeconds: 60 });
+  });
+});
+
 describe("varlatch import", () => {
   const ENV_FILE = [
     "# local development",

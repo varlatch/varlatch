@@ -35,7 +35,7 @@ import {
   describeGenerated,
   generateValue,
   isWellFormedText,
-  parseValueSource,
+  valueSourceOf,
   promptHidden,
   readAll,
   readValueFile,
@@ -319,7 +319,7 @@ async function obtainValue(
   sub: "set" | "rotate",
   item: string,
   where: string,
-  args: string[],
+  parsed: ParsedOptions,
   mode: AssistedMode,
   sensitive: () => Promise<boolean>,
 ): Promise<{ value: string; generated?: GenerateSpec }> {
@@ -337,7 +337,12 @@ async function obtainValue(
     `    <command> | varlatch --assisted values ${sub} ${target} --stdin     from another command's output`,
   ].join("\n");
   try {
-    const source = parseValueSource(args);
+    const source = valueSourceOf({
+      value: parsed.positionals[2],
+      stdin: parsed.booleans.has("--stdin"),
+      file: parsed.values.get("--from-file"),
+      generate: parsed.values.get("--generate"),
+    });
     switch (source.kind) {
       case "argument":
         if (mode.on && (await sensitive())) {
@@ -675,6 +680,8 @@ async function main(): Promise<void> {
           console.log(`Selected ${name} for this repository${tier ? ` (tier ${tier})` : ""}.`);
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const ctx = context(args);
           const envs = await client(ctx).listEnvironments(ctx.organization, ctx.project);
@@ -952,15 +959,38 @@ async function main(): Promise<void> {
 
       case "values": {
         const sub = args[0];
-        const ctx = context(args);
-        const api = client(ctx);
         if (sub === "set" || sub === "rotate") {
           const usage =
             sub === "set"
-              ? "Usage: varlatch values set <ITEM> [<value> | --stdin | --from-file <path> | --generate <spec>]"
-              : "Usage: varlatch values rotate <ITEM> [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
-          const item = args[1] && !args[1].startsWith("-") ? args[1] : usageError(usage);
-          const obtained = await obtainValue(sub, item, contextOptions(args, ctx), args, assisted, () => sensitiveItem(api, ctx, item));
+              ? "Usage: varlatch values set <ITEM> [-e <environment>] [--server <url>] [<value> | --stdin | --from-file <path> | --generate <spec>]"
+              : "Usage: varlatch values rotate <ITEM> [-e <environment>] [--server <url>] [<new-value> | --stdin | --from-file <path> | --generate <spec>] [--grace <seconds>]";
+          // Strict (ADR-0043 Decision 10), before anything is read, prompted
+          // or written: an option typo such as `--env production` must never
+          // become the stored value. A value that begins with "-" goes after `--`.
+          const parsed = strictOptions(
+            `values ${sub}`,
+            args,
+            {
+              values: ["--environment", "--server", "--from-file", "--generate", ...(sub === "rotate" ? ["--grace"] : [])],
+              booleans: ["--stdin"],
+              aliases: { "-e": "--environment" },
+              positionals: 3,
+              endOfOptions: true,
+            },
+            usage,
+          );
+          const item = parsed.positionals[1];
+          if (item === undefined || item.startsWith("-")) usageError(usage);
+          const grace = parsed.values.get("--grace");
+          if (grace !== undefined && !/^\d+$/.test(grace)) usageError(`varlatch values rotate: --grace needs a whole number of seconds, not ${grace}\n${usage}`);
+          // The context from the parsed options only: nothing after `--` is read as an option.
+          const where = [
+            ...(parsed.values.has("--environment") ? ["--environment", parsed.values.get("--environment") as string] : []),
+            ...(parsed.values.has("--server") ? ["--server", parsed.values.get("--server") as string] : []),
+          ];
+          const ctx = context(where);
+          const api = client(ctx);
+          const obtained = await obtainValue(sub, item, contextOptions(where, ctx), parsed, assisted, () => sensitiveItem(api, ctx, item));
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
           const how = obtained.generated ? ` to a generated value (${describeGenerated(obtained.generated)}; not shown)` : "";
@@ -969,16 +999,17 @@ async function main(): Promise<void> {
             console.log(`${item} set (version ${version.versionId})${how}.`);
             return;
           }
-          const graceStr = flag(args, "--grace");
           const rot = await api.beginRotation(ctx.organization, ctx.project, ctx.environment, item, {
             value: obtained.value,
-            ...(graceStr ? { graceSeconds: Number(graceStr) } : {}),
+            ...(grace !== undefined ? { graceSeconds: Number(grace) } : {}),
           });
           console.log(
             `${item} rotating${how} — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
           );
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment);
           if (has(args, "--json")) {
@@ -1075,7 +1106,7 @@ async function main(): Promise<void> {
         const opts = strictOptions(
           "import",
           args,
-          { values: ["-e", "--environment", "--server"], lists: ["--plain"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
+          { values: ["--environment", "--server"], aliases: { "-e": "--environment" }, lists: ["--plain"], booleans: ["--dry-run", "--contract", "--delete-source", "--json"], positionals: 1 },
           usage,
         );
         const file = opts.positionals[0] ?? usageError(usage);
@@ -1394,6 +1425,8 @@ async function main(): Promise<void> {
           console.log(`Set up a repo with: varlatch init --org ${org} --project ${project.slug} --server ${server}`);
           return;
         }
+        const ctx = context(args);
+        const api = client(ctx);
         if (sub === "list") {
           const ctx = context(args);
           const page = await client(ctx).listProjects(ctx.organization);
