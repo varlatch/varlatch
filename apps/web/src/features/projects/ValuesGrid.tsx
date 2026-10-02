@@ -445,11 +445,11 @@ export function ValuesGrid() {
           role="grid"
           aria-label={`${slug} values`}
           className="w-full table-fixed border-collapse text-sm"
-          style={{ minWidth: 260 + roots.length * 280 }}
+          style={{ minWidth: 240 + roots.length * 280 }}
           onKeyDown={onGridKey}
         >
           <colgroup>
-            <col style={{ width: "max(25%, 260px)" }} />
+            <col style={{ width: "max(22%, 240px)" }} />
             {roots.map((env) => (
               <col key={env.id} />
             ))}
@@ -640,8 +640,8 @@ function ColumnHeader({
   onOpenDerived: (env: Environment) => void;
 }) {
   return (
-    <th className="h-12 border-b border-l border-bd px-4 text-left font-normal" data-column={env.name}>
-      <div className="flex min-w-0 items-center gap-2">
+    <th className="h-12 border-b border-l border-bd pl-4 pr-3 text-left font-normal" data-column={env.name}>
+      <div className="flex min-w-0 items-center gap-1.5">
         <TierDot tier={env.tier as Tier} className="size-2.5 shrink-0" />
         <Link
           to={envPath(org, project, env.name)}
@@ -673,7 +673,7 @@ function ColumnHeader({
             data-testid={`derived-${env.name}`}
             width="w-64"
             header={<p className="text-xs text-muted">Derived from {env.name}: inherit its values, override some.</p>}
-            buttonClassName="h-6 shrink-0 gap-1 whitespace-nowrap rounded-md px-1.5 text-xs font-medium"
+            buttonClassName="h-6 shrink-0 gap-1 whitespace-nowrap rounded-md px-1.5 text-[11.5px] font-medium"
             items={derived.map((d) => ({
               label: <span className="font-mono text-[13px]">{d.name}</span>,
               hint: d.kind,

@@ -78,7 +78,8 @@ export function ValuesGridCell({
 }) {
   const kind = draftKind(draft, server);
   const editable = !loading && !unavailable;
-  const copyValue = sensitive ? disclosed?.value : !withheld ? (server?.value ?? undefined) : undefined;
+  // Copy offers the saved value only; with a draft pending it would mislead.
+  const copyValue = draft ? undefined : sensitive ? disclosed?.value : !withheld ? (server?.value ?? undefined) : undefined;
 
   let content: React.ReactNode;
   if (editing) {
