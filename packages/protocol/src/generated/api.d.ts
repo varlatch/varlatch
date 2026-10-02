@@ -575,11 +575,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List the organization's invitations, newest first by creation time and ID (capability invitations.manage). Only pending invitations unless status is all. Never returns an invitation's token or anything derived from it. Requires identity.manage, like creating one; existence-hiding. */
+        get: operations["listInvitations"];
         put?: never;
         /** Mint a one-time human enrollment invitation. The caller composes the browser URL as <dashboard-origin>/enroll#<token>; the invitee enrolls a passkey on their own device — no shared secret ever exists. */
         post: operations["createInvitation"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/invitations/{invitation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending invitation (capability invitations.manage). Its token stops working at once, also for an enrollment already started with it. The audit event invitation.revoked records it. An invitation that is consumed, expired, or already revoked is refused with VERSION_CONFLICT, its status in details.status. Requires identity.manage; existence-hiding. */
+        delete: operations["revokeInvitation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1461,6 +1479,33 @@ export interface components {
              * @description Expiry of the issued credential when credentialTtlSeconds was given.
              */
             credentialExpiresAt?: string | null;
+        };
+        /**
+         * @description pending: can still be accepted. consumed: accepted, the invitee enrolled. expired: not accepted before expiresAt. revoked: revoked while pending. Every state but pending is final.
+         * @enum {string}
+         */
+        InvitationStatus: "pending" | "consumed" | "expired" | "revoked";
+        /** @description An organization invitation (capability invitations.manage). Never contains the invitation's token or anything derived from it: the token is returned once, at creation, and stored only hashed. */
+        Invitation: {
+            id: string;
+            /** @description The invitee's display name, as given at creation. */
+            name: string;
+            /**
+             * @description The Organization Role the invitee receives on enrolling.
+             * @enum {string}
+             */
+            orgRole: "admin" | "member";
+            status: components["schemas"]["InvitationStatus"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @description The identity that created it; null for invitations created before 0.14.0. */
+            createdByIdentityId: string | null;
+            /** Format: date-time */
+            consumedAt: string | null;
+            /** Format: date-time */
+            revokedAt: string | null;
         };
         Capability: {
             id: string;
@@ -3244,6 +3289,39 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listInvitations: {
+        parameters: {
+            query?: {
+                /** @description pending (the default) lists invitations that can still be accepted; all adds consumed, expired, and revoked ones. */
+                status?: "pending" | "all";
+                limit?: components["parameters"]["limit"];
+                /** @description Opaque cursor from a previous response; never parse. */
+                cursor?: components["parameters"]["cursor"];
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invitations, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Invitation"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createInvitation: {
         parameters: {
             query?: never;
@@ -3271,11 +3349,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description The invitation's ID, as listed and revoked (absent on servers without invitations.manage). */
+                        id?: string;
                         token: string;
                         /** Format: date-time */
                         expiresAt: string;
                     };
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };

@@ -66,6 +66,7 @@ export const CAPABILITIES = [
   "capabilities.targets",
   "contracts.revision-by-id",
   "projects.rename",
+  "invitations.manage",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

@@ -57,6 +57,7 @@ import {
   retireIdentity,
 } from "../domain/identities.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
+import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import {
   createConnection,
   createTarget,
@@ -212,6 +213,30 @@ const serialize = {
     };
   },
 };
+
+function serializeInvitation(r: InvitationRow) {
+  return {
+    id: r.id,
+    name: r.invite_name ?? "Invited user",
+    orgRole: r.invite_role,
+    status: invitationStatus(r),
+    createdAt: iso(r.created_at),
+    expiresAt: iso(r.expires_at),
+    createdByIdentityId: r.created_by ?? null,
+    consumedAt: r.consumed_at ? iso(r.consumed_at) : null,
+    revokedAt: r.revoked_at ? iso(r.revoked_at) : null,
+  };
+}
+
+/** A list's `limit` query parameter: an integer in 1..500, 100 when absent. */
+function parseLimit(raw: string | undefined): number {
+  if (raw === undefined) return 100;
+  const limit = Number(raw);
+  if (!/^\d{1,3}$/.test(raw) || limit < 1 || limit > 500) {
+    throw new DomainError("VALIDATION_FAILED", "limit must be an integer in 1..500");
+  }
+  return limit;
+}
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
@@ -1810,7 +1835,41 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       principal.identity.id,
     );
     // The caller composes the browser URL: <dashboard-origin>/enroll#<token>.
-    return c.json({ token: invite.token, expiresAt: invite.expiresAt }, 201);
+    return c.json({ id: invite.id, token: invite.token, expiresAt: invite.expiresAt }, 201);
+  });
+
+  // Listing and revocation (capability invitations.manage) are authorized
+  // like creation. Metadata only: no token, nothing derived from one.
+  app.get("/v1/organizations/:org/invitations", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    const status = c.req.query("status") ?? "pending";
+    if (status !== "pending" && status !== "all") {
+      throw new DomainError("VALIDATION_FAILED", "status must be pending or all");
+    }
+    const limit = parseLimit(c.req.query("limit"));
+    const cursor = c.req.query("cursor");
+    const after = cursor === undefined ? null : decodeCursor(cursor);
+    if (cursor !== undefined && after?.length !== 2) throw new DomainError("VALIDATION_FAILED", "Invalid cursor");
+    const { rows, more } = await listInvitations(ctx, org.id, {
+      status,
+      limit,
+      after: after as [string, string] | null,
+    });
+    const last = rows[rows.length - 1];
+    return c.json({
+      items: rows.map(serializeInvitation),
+      nextCursor: more && last ? encodeCursor([last.cursor_time, last.id]) : null,
+    });
+  });
+
+  app.delete("/v1/organizations/:org/invitations/:invitation", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    await revokeInvitation(ctx, org.id, routeParam(c, "invitation"), principal.identity.id);
+    return c.body(null, 204);
   });
 
   // ---- Grants

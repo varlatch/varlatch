@@ -223,14 +223,15 @@ export async function issueInviteGrant(
   ctx: AppCtx,
   input: { organizationId: string; role: "admin" | "member"; name: string },
   actorIdentityId: string,
-): Promise<{ token: string; expiresAt: string }> {
+): Promise<{ id: string; token: string; expiresAt: string }> {
   return withTx(ctx.db, async (db) => {
+    const id = newId("setupGrant");
     const token = generateToken("cli").replace("vlt_cli_", "vlt_invite_");
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
     await db.query(
-      `INSERT INTO setup_grants (id, kind, token_hash, expires_at, invite_organization_id, invite_role, invite_name)
-       VALUES ($1,'invite',$2,$3,$4,$5,$6)`,
-      [newId("setupGrant"), hashToken(token), expiresAt, input.organizationId, input.role, input.name],
+      `INSERT INTO setup_grants (id, kind, token_hash, expires_at, invite_organization_id, invite_role, invite_name, created_by)
+       VALUES ($1,'invite',$2,$3,$4,$5,$6,$7)`,
+      [id, hashToken(token), expiresAt, input.organizationId, input.role, input.name, actorIdentityId],
     );
     await recordAuditEvent(db, {
       eventType: "invitation.issued",
@@ -238,9 +239,12 @@ export async function issueInviteGrant(
       actorIdentityId,
       organizationId: input.organizationId,
       action: "identity.manage",
+      // The invitation's ID (never anything token-derived) links this event
+      // to a later invitation.revoked or invitation.accepted.
+      resource: { invitationId: id },
       metadata: { role: input.role, inviteeName: input.name, expiresAt },
     });
-    return { token, expiresAt };
+    return { id, token, expiresAt };
   });
 }
 
@@ -269,7 +273,7 @@ export async function peekSetupGrant(
   const res = await ctx.db.query(
     `SELECT g.id, g.kind, g.invite_name, i.name AS subject_name
        FROM setup_grants g LEFT JOIN identities i ON i.id = g.subject_identity_id
-      WHERE g.token_hash = $1 AND g.consumed_at IS NULL AND g.expires_at > now()`,
+      WHERE g.token_hash = $1 AND g.consumed_at IS NULL AND g.revoked_at IS NULL AND g.expires_at > now()`,
     [hashToken(token)],
   );
   const row = res.rows[0] as
@@ -314,9 +318,12 @@ export async function consumeSetupGrant(
           invite_organization_id: string | null;
           invite_role: "admin" | "member" | null;
           invite_name: string | null;
+          revoked_at: string | null;
         }
       | undefined;
-    if (!grant || grant.consumed_at || new Date(grant.expires_at).getTime() <= Date.now()) {
+    // A revoked invitation is dead at once, even for a ceremony that
+    // started before the revocation (the row lock orders the two).
+    if (!grant || grant.consumed_at || grant.revoked_at || new Date(grant.expires_at).getTime() <= Date.now()) {
       return null;
     }
     await db.query("UPDATE setup_grants SET consumed_at = now() WHERE id = $1", [grant.id]);
@@ -352,7 +359,7 @@ export async function consumeSetupGrant(
       decision: "info",
       actorIdentityId: identityId,
       organizationId: grant.invite_organization_id,
-      resource: { identityId },
+      resource: grant.kind === "invite" ? { identityId, invitationId: grant.id } : { identityId },
     });
     if (onConsumed) await onConsumed(db, identityId, grant.id);
     return { identityId, kind: grant.kind, grantId: grant.id };

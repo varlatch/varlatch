@@ -1315,6 +1315,39 @@ paths:
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/invitations:
+    get:
+      tags: [identities]
+      operationId: listInvitations
+      summary: >
+        List the organization's invitations, newest first by creation time
+        and ID (capability invitations.manage). Only pending invitations
+        unless status is all. Never returns an invitation's token or
+        anything derived from it. Requires identity.manage, like creating
+        one; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: status
+          in: query
+          description: >
+            pending (the default) lists invitations that can still be
+            accepted; all adds consumed, expired, and revoked ones.
+          schema: { type: string, enum: [pending, all], default: pending }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Invitations, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invitation" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
       operationId: createInvitation
@@ -1342,8 +1375,31 @@ paths:
                 type: object
                 required: [token, expiresAt]
                 properties:
+                  id:
+                    type: string
+                    description: >
+                      The invitation's ID, as listed and revoked (absent on
+                      servers without invitations.manage).
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/invitations/{invitation}:
+    delete:
+      tags: [identities]
+      operationId: revokeInvitation
+      summary: >
+        Revoke a pending invitation (capability invitations.manage). Its
+        token stops working at once, also for an enrollment already started
+        with it. The audit event invitation.revoked records it. An
+        invitation that is consumed, expired, or already revoked is refused
+        with VERSION_CONFLICT, its status in details.status. Requires
+        identity.manage; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: invitation, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
 
   /me/profile:
@@ -3129,6 +3185,39 @@ components:
               type: [string, "null"]
               format: date-time
               description: Expiry of the issued credential when credentialTtlSeconds was given.
+
+    InvitationStatus:
+      type: string
+      enum: [pending, consumed, expired, revoked]
+      description: >
+        pending: can still be accepted. consumed: accepted, the invitee
+        enrolled. expired: not accepted before expiresAt. revoked: revoked
+        while pending. Every state but pending is final.
+
+    Invitation:
+      type: object
+      required: [id, name, orgRole, status, createdAt, expiresAt, createdByIdentityId, consumedAt, revokedAt]
+      description: >
+        An organization invitation (capability invitations.manage). Never
+        contains the invitation's token or anything derived from it: the
+        token is returned once, at creation, and stored only hashed.
+      properties:
+        id: { type: string }
+        name:
+          type: string
+          description: The invitee's display name, as given at creation.
+        orgRole:
+          type: string
+          enum: [admin, member]
+          description: The Organization Role the invitee receives on enrolling.
+        status: { $ref: "#/components/schemas/InvitationStatus" }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        createdByIdentityId:
+          type: [string, "null"]
+          description: The identity that created it; null for invitations created before 0.14.0.
+        consumedAt: { type: [string, "null"], format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
 
     Capability:
       type: object

@@ -254,6 +254,23 @@ fixes.
   with the run's environment, Placeholders included, and discloses nothing;
   other commands use the `--agent-metadata` credential or stop.
 
+### API
+
+- Invitations can be listed and revoked (capability `invitations.manage`).
+  `GET /v1/organizations/{org}/invitations` lists the pending ones, newest
+  first; `?status=all` adds consumed, expired, and revoked ones. It never
+  returns a token or anything derived from one. `DELETE
+  /v1/organizations/{org}/invitations/{invitation}` revokes a pending
+  invitation: its link stops working at once, also for an enrollment
+  already started with it, and the audit event `invitation.revoked`
+  records it. A consumed, expired, or already revoked invitation is
+  refused with `VERSION_CONFLICT`, its status in the error's details. Both
+  need `identity.manage`, like creating an invitation. Creating one now
+  also returns its `id`, which `invitation.issued` and
+  `invitation.accepted` record. SDK: `listInvitations()`,
+  `revokeInvitation()`. Database migration 23 adds the revocation and the
+  invitation's creator (unknown for invitations created before it).
+
 ### Fixes
 
 - An agent-safe run's Broker no longer stops when a client resets its

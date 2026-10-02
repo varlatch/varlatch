@@ -18,6 +18,7 @@ import type {
   ErrorCode,
   Grant,
   GrantScope,
+  Invitation,
   Group,
   Role,
   Meta,
@@ -464,11 +465,37 @@ export class VarlatchClient {
     );
   }
 
+  /** The token is returned once; `id` (servers with invitations.manage) is what list and revoke use. */
   createInvitation(
     org: string,
     input: { name: string; role: "admin" | "member" },
-  ): Promise<{ token: string; expiresAt: string }> {
+  ): Promise<{ id?: string; token: string; expiresAt: string }> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/invitations`, input);
+  }
+
+  /**
+   * The organization's invitations, newest first (capability
+   * invitations.manage): pending only unless `status` is "all". Metadata
+   * only, never a token.
+   */
+  listInvitations(
+    org: string,
+    opts: { status?: "pending" | "all"; limit?: number; cursor?: string } = {},
+  ): Promise<{ items: Invitation[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    const query = params.size ? `?${params}` : "";
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/invitations${query}`);
+  }
+
+  /** Revoke a pending invitation; its token stops working at once (capability invitations.manage). */
+  revokeInvitation(org: string, invitationId: string): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/v1/organizations/${encodeURIComponent(org)}/invitations/${encodeURIComponent(invitationId)}`,
+    );
   }
 
   listRequirements(org: string): Promise<Page<Requirement>> {
