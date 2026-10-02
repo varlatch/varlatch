@@ -64,20 +64,39 @@ varlatch --assisted <command> [args...]
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    Stop and ask the human. Each choice is theirs, for PIN only, made in their own terminal:
-    - replace the value with a longer one, which overwrites the current value: varlatch values set PIN -e production --generate hex:32
-    - if it is not a secret, correct its sensitivity in the Contract
-    - show it unmasked in one run, every other Secret still masked: varlatch run -e production --allow-unmasked PIN -- <command>
-    An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another.
+    Stop and ask the human what to do about PIN. Approval for one item or action never covers another.
+    - Only if they approve replacing PIN with a new random value (it overwrites the current one):
+        varlatch --assisted values set PIN -e production --replace PIN --generate hex:32
+      A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set PIN -e production
+    - Only if they approve marking PIN as not secret (a Contract change, for the whole project): varlatch --assisted agents guide contract
+    - Showing it unmasked is the human's alone, in their own terminal (assisted mode refuses it; every other Secret stays masked):
+        varlatch run -e production --allow-unmasked PIN -- <command>
   Nothing was started.
   ```
 
-  The remedies are the human's commands, for their own terminal (no
-  `--assisted`). They act on the refused run's values: they name its
-  environment (always, even when it came from the default), its server when
-  the run overrode it (`--server` or `VARLATCH_SERVER`), and for a retry its
-  `--strict`, `--allow-inherited`, `--export-context`, and earlier
-  `--allow-unmasked` options.
+  First the agent stops and asks. Each remedy is the human's decision, for
+  the named item (and environment) only. After that approval, a safe remedy
+  is the agent's own command, with `--assisted`: a new random value
+  replaces the item with `--replace` naming it. A credential a provider
+  issued is the human's to enter, in their own terminal, and showing a
+  Secret unmasked stays the human's alone. Every command names the refused
+  run's environment (always, even when it came from the default), its
+  server when the run overrode it (`--server` or `VARLATCH_SERVER`), and
+  for the human's retry its `--strict`, `--allow-inherited`,
+  `--export-context`, and earlier `--allow-unmasked` options.
+- **Marking an item as not secret** changes the Contract, for every
+  environment of the project: show the active revision
+  (`contract show`), write its `contract` field to a file in a new
+  temporary directory, change only that item's `sensitive`, push the file
+  (`contract push --file <contract.json> --json`), and activate the
+  returned revision. When the refused run overrode the server, the message
+  says so (`add --server <url> to every contract command`): every contract
+  command needs it, or it changes the default server's Contract. The
+  coding-agent guide prints the steps: `varlatch agents guide contract`.
+- The CLI cannot tell a human from a coding agent that leaves out
+  `--assisted` in a shell without a marker. A command printed for the
+  human's own terminal is theirs; the instructions tell agents never to run
+  one. This is guidance, not an enforced boundary.
 - **`--allow-unmasked` and `--no-redact` are refused** in assisted mode
   (status 64, nothing started): showing a Secret is the human's decision.
   The refusal prints the human's override for their own terminal, with the
