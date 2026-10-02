@@ -19,14 +19,16 @@ import { EXIT } from "../src/exitCodes.js";
  */
 
 const dir = mkdtempSync(join(tmpdir(), "varlatch-device-login-"));
+/** Each test spawns the CLI one or more times; a slow CI runner needs more than vitest's 5 s. */
+const SPAWNS = 60_000;
 const bundle = join(dir, "varlatch.cjs");
 const DEVICE_CODE = "dc_canary_" + "x".repeat(33);
 const USER_CODE = "WDJB-MJHT";
 const ISSUED = { id: "crd_issued", token: "vlt_cli_issued-canary", expiresAt: "2030-01-01T00:00:00.000Z" };
 const OLD = { token: "vlt_cli_old-canary", credentialId: "crd_old" };
 
-type Answer = { status: number; body?: unknown; headers?: Record<string, string>; stall?: boolean };
-interface Seen { method: string; path: string; body: string; at: number; authorization: string }
+type Answer = { status: number; body?: unknown; headers?: Record<string, string>; stall?: boolean; delayMs?: number };
+interface Seen { method: string; path: string; body: string; at: number; authorization: string; answeredAt?: number }
 
 /** A fake Varlatch server: scripted answers for the device endpoints, a credential check, and a request log. */
 function fakeServer(host = "127.0.0.1") {
@@ -44,12 +46,18 @@ function fakeServer(host = "127.0.0.1") {
     let body = "";
     req.on("data", (d: Buffer) => (body += d.toString()));
     req.on("end", () => {
-      seen.push({ method: req.method ?? "", path: req.url ?? "", body, at: Date.now(), authorization: req.headers.authorization ?? "" });
+      const entry: Seen = { method: req.method ?? "", path: req.url ?? "", body, at: Date.now(), authorization: req.headers.authorization ?? "" };
+      seen.push(entry);
       state.onRequest(req.url ?? "");
       const send = (answer: Answer) => {
         if (answer.stall) return; // never answers
-        res.writeHead(answer.status, { "Content-Type": "application/json", ...answer.headers });
-        res.end(answer.body === undefined ? "" : JSON.stringify(answer.body));
+        const reply = () => {
+          entry.answeredAt = Date.now();
+          res.writeHead(answer.status, { "Content-Type": "application/json", ...answer.headers });
+          res.end(answer.body === undefined ? "" : JSON.stringify(answer.body));
+        };
+        if (answer.delayMs) setTimeout(reply, answer.delayMs);
+        else reply();
       };
       if (req.method === "POST" && req.url === "/v1/auth/device") {
         return send(state.start.body === null
@@ -164,7 +172,7 @@ function expectNoSecrets(r: Result) {
 }
 
 describe("login --start", () => {
-  it("prints the address and, separately, the code; keeps the device code only in a 0600 file in a 0700 directory", async () => {
+  it("prints the address and, separately, the code; keeps the device code only in a 0600 file in a 0700 directory", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const config = home();
     mkdirSync(join(config, "varlatch"), { mode: 0o755 });
@@ -185,7 +193,7 @@ describe("login --start", () => {
     expect(readdirSync(join(config, "varlatch")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 
-  it("prints only the documented JSON fields, never the device code", async () => {
+  it("prints only the documented JSON fields, never the device code", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const r = await cli(["login", "--server", fake.origin, "--start", "--json"], home());
     expect(r.code).toBe(EXIT.ok);
@@ -195,7 +203,7 @@ describe("login --start", () => {
     expectNoSecrets(r);
   });
 
-  it("a second --start for the same server replaces the entry atomically and says the earlier code no longer completes", async () => {
+  it("a second --start for the same server replaces the entry atomically and says the earlier code no longer completes", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const config = home();
     await cli(["login", "--server", fake.origin, "--start"], config);
@@ -212,7 +220,7 @@ describe("login --start", () => {
     expect(mode(pendingPath(config))).toBe(0o600);
   });
 
-  it("explains an older server without device sign-in, and stores nothing", async () => {
+  it("explains an older server without device sign-in, and stores nothing", { timeout: SPAWNS }, async () => {
     fake = await serve();
     fake.state.start = apiError(404, "RESOURCE_NOT_FOUND");
     const config = home();
@@ -222,7 +230,7 @@ describe("login --start", () => {
     expect(pendingFile(config)).toBeNull();
   });
 
-  it("refuses a verification address that is not HTTPS", async () => {
+  it("refuses a verification address that is not HTTPS", { timeout: SPAWNS }, async () => {
     fake = await serve();
     fake.state.start = { status: 201, body: { deviceCode: DEVICE_CODE, userCode: USER_CODE, verificationUri: "http://phish.example/device", expiresIn: 600, interval: 1 } };
     const config = home();
@@ -240,7 +248,7 @@ describe("login --wait", () => {
     return config;
   }
 
-  it("polls until approved, verifies and stores the credential, removes the pending entry, exits 0", async () => {
+  it("polls until approved, verifies and stores the credential, removes the pending entry, exits 0", { timeout: SPAWNS }, async () => {
     const config = await started();
     fake.state.polls = [pending(1), issued];
     const r = await cli(["login", "--server", fake.origin, "--wait"], config);
@@ -256,7 +264,7 @@ describe("login --wait", () => {
     expect(fake.seen.some((s) => s.path === "/v1/organizations" && s.authorization === `Bearer ${ISSUED.token}`)).toBe(true);
   });
 
-  it("keeps the existing credential until the new one is verified and saved; revokes it only after (control)", async () => {
+  it("keeps the existing credential until the new one is verified and saved; revokes it only after (control)", { timeout: SPAWNS }, async () => {
     const config = home();
     mkdirSync(join(config, "varlatch"), { recursive: true });
     const seed = () => writeFileSync(join(config, "varlatch", "credentials.json"), JSON.stringify({ servers: { [fake.origin]: OLD } }));
@@ -281,7 +289,7 @@ describe("login --wait", () => {
     expect(deletes.map((d) => [d.path, d.authorization])).toEqual([[`/v1/me/credentials/${OLD.credentialId}`, `Bearer ${OLD.token}`]]);
   });
 
-  it("keeps the pending entry, naming the collected credential, when verification is interrupted; the next --wait names it", async () => {
+  it("keeps the pending entry, naming the collected credential, when verification is interrupted; the next --wait names it", { timeout: SPAWNS }, async () => {
     const config = home();
     mkdirSync(join(config, "varlatch"), { recursive: true });
     await started(config);
@@ -305,7 +313,7 @@ describe("login --wait", () => {
     expectNoSecrets(next);
   });
 
-  it("names the collected credential from its own record when the server no longer knows the sign-in", async () => {
+  it("names the collected credential from its own record when the server no longer knows the sign-in", { timeout: SPAWNS }, async () => {
     const config = await started();
     fake.state.polls = [issued];
     fake.state.acceptedTokens.delete(ISSUED.token); // verification fails
@@ -317,7 +325,7 @@ describe("login --wait", () => {
     expect(later.stderr).toMatch(/Revoke credential crd_issued/);
   });
 
-  it("reports a failed save with the credential to revoke, keeps the pending entry, and exits 1", async () => {
+  it("reports a failed save with the credential to revoke, keeps the pending entry, and exits 1", { timeout: SPAWNS }, async () => {
     const config = await started();
     // The credentials file's path is taken by a directory: no write can succeed, for any user.
     mkdirSync(join(config, "varlatch", "credentials.json"), { recursive: true });
@@ -329,7 +337,7 @@ describe("login --wait", () => {
     expectNoSecrets(r);
   });
 
-  it.skipIf(process.getuid?.() === 0)("a failed save leaves the old stored credential as it was (read-only directory)", async () => {
+  it.skipIf(process.getuid?.() === 0)("a failed save leaves the old stored credential as it was (read-only directory)", { timeout: SPAWNS }, async () => {
     const config = home();
     mkdirSync(join(config, "varlatch"), { recursive: true });
     await started(config);
@@ -351,7 +359,7 @@ describe("login --wait", () => {
     }
   });
 
-  it("treats CONSUMED as done when the stored credential is that sign-in's (an entry left behind)", async () => {
+  it("treats CONSUMED as done when the stored credential is that sign-in's (an entry left behind)", { timeout: SPAWNS }, async () => {
     const config = home();
     mkdirSync(join(config, "varlatch"), { recursive: true });
     await started(config);
@@ -363,7 +371,7 @@ describe("login --wait", () => {
     expect(pendingFile(config)).toBeNull();
   });
 
-  it("exits 75 at the deadline with the entry kept, and says to run --wait again; --json reports the pending state", async () => {
+  it("exits 75 at the deadline with the entry kept, and says to run --wait again; --json reports the pending state", { timeout: SPAWNS }, async () => {
     const config = await started();
     const r = await cli(["login", "--server", fake.origin, "--wait", "--timeout", "3"], config);
     expect(r.code).toBe(75);
@@ -376,7 +384,17 @@ describe("login --wait", () => {
     expectNoSecrets(json);
   });
 
-  it("honours SLOW_DOWN: the next poll waits the grown interval", async () => {
+  it("times the interval from the answer: after a slow answer, the next poll still waits the full interval", { timeout: SPAWNS }, async () => {
+    const config = await started();
+    fake.state.polls = [{ ...pending(1), delayMs: 800 }, issued];
+    const r = await cli(["login", "--server", fake.origin, "--wait", "--timeout", "10"], config);
+    expect(r.code).toBe(EXIT.ok);
+    const polls = fake.seen.filter((s) => s.path === "/v1/auth/device/token");
+    // The server times polls by when it handled them: measured from the request, the next poll would arrive 200 ms after this answer.
+    expect(polls[1]!.at - polls[0]!.answeredAt!).toBeGreaterThanOrEqual(950);
+  });
+
+  it("honours SLOW_DOWN: the next poll waits the grown interval", { timeout: SPAWNS }, async () => {
     const config = await started();
     fake.state.polls = [apiError(429, "SLOW_DOWN", { interval: 3 }), issued];
     const r = await cli(["login", "--server", fake.origin, "--wait", "--timeout", "10"], config);
@@ -385,7 +403,7 @@ describe("login --wait", () => {
     expect(polls[1]!.at - polls[0]!.at).toBeGreaterThanOrEqual(2_950);
   });
 
-  it("handles denial, expiry, and a lost collection (CONSUMED): exit 77, nothing stored, existing credential kept", async () => {
+  it("handles denial, expiry, and a lost collection (CONSUMED): exit 77, nothing stored, existing credential kept", { timeout: SPAWNS }, async () => {
     for (const [answer, message, state] of [
       [apiError(403, "ACCESS_DENIED"), /denied in the browser/, { state: "denied" }],
       [apiError(410, "EXPIRED"), /expired before it was approved/, { state: "expired" }],
@@ -407,7 +425,7 @@ describe("login --wait", () => {
     }
   });
 
-  it("keeps the pending entry on a transport failure: unreachable, maintenance, a 5xx (exit 69)", async () => {
+  it("keeps the pending entry on a transport failure: unreachable, maintenance, a 5xx (exit 69)", { timeout: SPAWNS }, async () => {
     for (const answer of [apiError(503, "MAINTENANCE"), apiError(502, "INTERNAL"), null]) {
       const config = await started();
       if (answer) fake.state.polls = [answer];
@@ -419,7 +437,7 @@ describe("login --wait", () => {
     }
   });
 
-  it("bounds a stalled poll by the deadline: 75 once the sign-in was seen pending", async () => {
+  it("bounds a stalled poll by the deadline: 75 once the sign-in was seen pending", { timeout: SPAWNS }, async () => {
     const config = await started();
     fake.state.polls = [pending(1), { status: 0, stall: true }];
     const r = await cli(["login", "--server", fake.origin, "--wait", "--timeout", "4"], config);
@@ -440,7 +458,7 @@ describe("login --wait", () => {
     expect(pendingFile(config)!.servers[fake.origin]).toBeTruthy();
   });
 
-  it("refuses --wait with no sign-in started from this CLI", async () => {
+  it("refuses --wait with no sign-in started from this CLI", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const r = await cli(["login", "--server", fake.origin, "--wait"], home());
     expect(r.code).toBe(EXIT.usage);
@@ -452,7 +470,7 @@ describe("login --wait", () => {
 describe("transport", () => {
   const lan = Object.values(networkInterfaces()).flat().find((i) => i && i.family === "IPv4" && !i.internal)?.address;
 
-  it.skipIf(!lan)("refuses http:// to a non-loopback server before any request (the server records none)", async () => {
+  it.skipIf(!lan)("refuses http:// to a non-loopback server before any request (the server records none)", { timeout: SPAWNS }, async () => {
     const remote = await serve(lan);
     const config = home();
     for (const args of [["--start"], ["--wait"]]) {
@@ -464,12 +482,12 @@ describe("transport", () => {
     expect(pendingFile(config)).toBeNull();
   });
 
-  it("allows http:// to loopback, the local-development exception (control)", async () => {
+  it("allows http:// to loopback, the local-development exception (control)", { timeout: SPAWNS }, async () => {
     fake = await serve();
     expect((await cli(["login", "--server", fake.origin, "--start"], home())).code).toBe(EXIT.ok);
   });
 
-  it("does not follow a 307 or 308 from the token endpoint, to another origin or to http://: the device code reaches no second server", async () => {
+  it("does not follow a 307 or 308 from the token endpoint, to another origin or to http://: the device code reaches no second server", { timeout: SPAWNS }, async () => {
     for (const status of [307, 308]) {
       const config = home();
       fake = await serve();
@@ -488,7 +506,7 @@ describe("transport", () => {
     }
   });
 
-  it("does not follow a redirect from the start endpoint either", async () => {
+  it("does not follow a redirect from the start endpoint either", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const elsewhere = await serve();
     fake.state.start = { status: 308, headers: { Location: `${elsewhere.origin}/v1/auth/device` } };
@@ -501,7 +519,7 @@ describe("transport", () => {
 });
 
 describe("assisted mode", () => {
-  it("starts a device sign-in when no method is given, and hands the address and code to the human", async () => {
+  it("starts a device sign-in when no method is given, and hands the address and code to the human", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const config = home();
     const r = await cli(["--assisted", "login", "--server", fake.origin], config);
@@ -513,7 +531,7 @@ describe("assisted mode", () => {
     expectNoSecrets(r);
   });
 
-  it("keeps --token-stdin's behaviour (control)", async () => {
+  it("keeps --token-stdin's behaviour (control)", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const config = home();
     const r = await cli(["--assisted", "login", "--server", fake.origin, "--token-stdin"], config, { stdin: OLD.token });
@@ -534,7 +552,7 @@ describe("inside an agent-safe run", () => {
     ["--oidc", ["--oidc", "--org", "acme", "--oidc-token", "eyJ.e30.sig"]],
   ];
 
-  it("refuses every sign-in method with 64 before any request, without reading or writing the pending state, whatever VARLATCH_CONFIG_DIR says", async () => {
+  it("refuses every sign-in method with 64 before any request, without reading or writing the pending state, whatever VARLATCH_CONFIG_DIR says", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const config = home();
     // Pending state the refusal must not touch: unreadable, so reading it would fail differently.
@@ -560,7 +578,7 @@ describe("inside an agent-safe run", () => {
 });
 
 describe("the command line", () => {
-  it("is parsed strictly before anything is sent", async () => {
+  it("is parsed strictly before anything is sent", { timeout: SPAWNS }, async () => {
     fake = await serve();
     const cases: [string[], RegExp][] = [
       [["--start", "--wait"], /not more than one/],
@@ -584,7 +602,7 @@ describe("the command line", () => {
     expect(fake.seen).toEqual([]);
   });
 
-  it("documents exit 75 and the device sign-in forms in --help", async () => {
+  it("documents exit 75 and the device sign-in forms in --help", { timeout: SPAWNS }, async () => {
     const r = await cli(["login", "--help"], home());
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/login --server <url> --start/);

@@ -264,11 +264,15 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
     let polled: DeviceSignInPoll;
     try {
       const client = new VarlatchClient({ server, userAgent: io.userAgent, maintenanceRetryMs: 0 });
-      lastPolledAt = now();
       polled = await client.pollDeviceSignIn(entry.deviceCode, { signal: AbortSignal.timeout(Math.max(1, remaining)) });
     } catch (err) {
+      lastPolledAt = now();
       return waitFailure(err, { server, io, keep: () => keep(lastPolledAt), deadlinePassed: now() >= pollDeadline, seenPending, stillPending: () => stillPending(lastPolledAt) });
     }
+    // The interval runs from the answer, not the request: the server times
+    // polls by when it processed them, so the next one must arrive a full
+    // interval after this answer, however long this request took.
+    lastPolledAt = now();
     switch (polled.state) {
       case "pending":
         seenPending = true;
