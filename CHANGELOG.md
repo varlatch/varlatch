@@ -177,6 +177,25 @@ fixes.
   existing. A new plain value needs no `replace`; a Secret stays
   unwritable with or without it; `replace` naming another item is refused
   before any request. `replace` records intent, not an approval.
+- From the fourth agent evaluation (it failed): the exit-78 rule is the
+  same everywhere (the CLI message, the AGENTS.md block, the skill and its
+  references): first stop and ask; after the human approves a remedy for
+  the named item and environment, the agent may carry it out with
+  `--assisted`. An approved new random value is
+  `varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32`.
+  The exit-78 message no longer prints a generated replacement without
+  `--assisted`, says a provider's credential is the human's to enter, keeps
+  showing a Secret unmasked as the human's alone, and points to a new
+  guide topic, `varlatch agents guide contract`, for marking an item as not
+  secret (show the Contract, change only that item, `contract push --file`,
+  activate; project-wide; in a new temporary directory, so no project file
+  is overwritten; with the refused run's `--server` on every contract
+  command, which the exit-78 message names). The usage now lists
+  `--server` for `varlatch contract`. The instructions also say: generate a value
+  only when the human asks for a new random one; never run a command
+  printed for the human's own terminal; quote a Placeholder variable in a
+  `varlatch request` header with double quotes (single quotes send the
+  literal `$NAME`).
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

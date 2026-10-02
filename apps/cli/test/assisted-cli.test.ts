@@ -532,13 +532,14 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
-    // Every remedy is the human's, for this item only, made in their own terminal; replacing overwrites.
-    expect(r.stderr).toMatch(/Stop and ask the human\. Each choice is theirs, for PIN only, made in their own terminal:/);
-    expect(r.stderr).toMatch(/overwrites the current value: varlatch values set PIN -e development --generate hex:32/);
-    expect(r.stderr).toMatch(/An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another\./);
+    // First stop and ask; each remedy is the human's decision, for this item only.
+    expect(r.stderr).toMatch(/Stop and ask the human what to do about PIN\. Approval for one item or action never covers another\./);
+    // After approval, the replacement is the agent's own command, with --assisted and --replace.
+    expect(r.stderr).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e development --replace PIN --generate hex:32\n/);
+    expect(r.stderr).not.toMatch(/^\s*varlatch values set PIN .*--generate/m);
     // The human's override: outside assisted mode (no --assisted), the option before `--`.
-    expect(r.stderr).toMatch(new RegExp(`every other Secret still masked: varlatch run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
-    expect(r.stderr).not.toMatch(/varlatch --assisted (run|values)/);
+    expect(r.stderr).toMatch(new RegExp(`Showing it unmasked is the human's alone, in their own terminal .*\\n {6}varlatch run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
+    expect(r.stderr).not.toMatch(/varlatch --assisted run/);
     expect(r.stderr).toMatch(/Nothing was started\./);
     expect(existsSync(marker)).toBe(false);
     expect(r.stdout + r.stderr).not.toContain(PIN);
@@ -546,7 +547,7 @@ describe("assisted run: a value too short to mask", () => {
 
   it("the human's override, run exactly as the refusal prints it, shows only PIN: every other known Secret, inherited ones included, stays masked", async () => {
     const refused = await cli(["--assisted", "run", "--", process.execPath, printer()]);
-    const printed = /every other Secret still masked: (varlatch run -e development --allow-unmasked PIN -- <command>)/.exec(refused.stderr)?.[1];
+    const printed = /^ {6}(varlatch run -e development --allow-unmasked PIN -- <command>)$/m.exec(refused.stderr)?.[1];
     expect(printed, refused.stderr).toBeDefined();
     // The human's terminal: no --assisted, no marker.
     const args = (printed as string).split(" ").slice(1, -1).concat([process.execPath, printer()]);
@@ -563,7 +564,7 @@ describe("assisted run: a value too short to mask", () => {
   it("a default run's remedy keeps --export-context: run as printed, the command gets its run context", async () => {
     const r = await cli(["--assisted", "run", "--export-context", "--", process.execPath, printer()]);
     expect(r.code, r.stderr).toBe(78);
-    const printed = /every other Secret still masked: (varlatch run .* -- <command>)/.exec(r.stderr)?.[1];
+    const printed = /^ {6}(varlatch run .* -- <command>)$/m.exec(r.stderr)?.[1];
     expect(printed).toBe("varlatch run -e development --export-context --allow-unmasked PIN -- <command>");
     const human = await cli([...(printed as string).split(" ").slice(1, -1), process.execPath, "-e", "console.log(process.env.VARLATCH_RUN_CONTEXT ? 'run context given' : 'no run context')"]);
     expect(human.code, human.stderr).toBe(0);

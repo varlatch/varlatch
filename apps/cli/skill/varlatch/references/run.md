@@ -16,20 +16,33 @@ varlatch --assisted run --strict -- node server.js
 - `--strict` checks the configuration against the active Contract first and
   starts nothing on a violation (exit 78, naming the items).
 - Exit 78 also means a Secret is shorter than 8 bytes and cannot be masked.
-  Report the item to the human and wait. Each remedy is theirs, for that
-  item only, run in their own terminal: replace it (overwriting the current
-  value, which suits development values), correct its sensitivity in the
-  Contract, or show it unmasked in one run, every other Secret still masked.
-  The refusal prints their commands with the refused run's environment and
-  options, for example:
+  Report the item to the human and ask. Each remedy is their decision, for
+  that item only, and approval for one item or action never covers another.
+  The refusal prints the remedies with the refused run's environment and
+  options:
+  - With their approval to replace it with a new random value (overwriting
+    the current one), run it yourself:
 
-  ```text
-  varlatch values set <NAME> -e <environment> --generate hex:32
-  varlatch run -e <environment> --allow-unmasked <NAME> -- <command>
-  ```
+    ```sh
+    varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32
+    ```
 
-  Never run them yourself: assisted mode refuses `--allow-unmasked` and
-  `--no-redact`, and approval for one item does not cover another.
+    A credential a provider issued is never generated: the human enters it
+    in their own terminal, where it prompts without showing the value:
+
+    ```text
+    varlatch values set <NAME> -e <environment>
+    ```
+  - With their approval to mark it as not secret: change the Contract, for
+    the whole project, as `varlatch --assisted agents guide contract`
+    describes.
+  - Showing it unmasked is the human's alone, in their own terminal; never
+    run it yourself (assisted mode refuses `--allow-unmasked` and
+    `--no-redact`):
+
+    ```text
+    varlatch run -e <environment> --allow-unmasked <NAME> -- <command>
+    ```
 - Once the command has started, `run` exits with the command's own status.
 
 ## Storing values
