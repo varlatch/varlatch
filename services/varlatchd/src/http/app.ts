@@ -13,6 +13,7 @@ import { CAPABILITIES } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
 import { recordAuditEvent } from "../audit/events.js";
+import { auditFilterConditions, parseAuditFilters } from "../audit/filters.js";
 import { serializeAuditEvent } from "../audit/serialize.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError, notFound } from "../domain/errors.js";
@@ -2902,14 +2903,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const cursor = c.req.query("cursor");
     const decoded = cursor ? decodeCursor(cursor) : null;
     if (cursor && !decoded) throw new DomainError("VALIDATION_FAILED", "Invalid cursor");
+    // Filters (capability audit.filters) only add conditions: the order,
+    // and so every cursor, is the same with or without them.
+    const filters = parseAuditFilters((name) => c.req.queries(name));
     const params: unknown[] = [org.id, limit + 1];
-    let where = "organization_id = $1";
+    const where = ["organization_id = $1"];
     if (decoded) {
-      where += " AND (occurred_at, id) < ($3::timestamptz, $4)";
       params.push(decoded[0], decoded[1]);
+      where.push("(occurred_at, id) < ($3::timestamptz, $4)");
     }
+    where.push(...auditFilterConditions(filters, params));
     const res = await ctx.db.query(
-      `SELECT *, occurred_at::text AS cursor_time FROM audit_events WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT $2`,
+      `SELECT *, occurred_at::text AS cursor_time FROM audit_events WHERE ${where.join(" AND ")} ORDER BY occurred_at DESC, id DESC LIMIT $2`,
       params,
     );
     const rows = res.rows as Record<string, unknown>[];
@@ -2925,15 +2930,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
+    // Validated before the stream starts, so a bad filter is an ordinary error response.
+    const filters = parseAuditFilters((name) => c.req.queries(name));
     const highWater = await ctx.db.query("SELECT COALESCE(max(event_order), 0)::text AS value FROM audit_events WHERE organization_id = $1", [org.id]);
     const upper = (highWater.rows[0] as { value: string }).value;
     let cursor = "0";
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
+        const params: unknown[] = [org.id, cursor, upper];
+        const where = [
+          "organization_id = $1 AND event_order > $2::bigint AND event_order <= $3::bigint",
+          ...auditFilterConditions(filters, params),
+        ];
         const batch = await ctx.db.query(
-          "SELECT *, event_order::text AS position FROM audit_events WHERE organization_id = $1 AND event_order > $2::bigint AND event_order <= $3::bigint ORDER BY event_order LIMIT 250",
-          [org.id, cursor, upper],
+          `SELECT *, event_order::text AS position FROM audit_events WHERE ${where.join(" AND ")} ORDER BY event_order LIMIT 250`,
+          params,
         );
         const rows = batch.rows as Record<string, unknown>[];
         if (rows.length === 0) { controller.close(); return; }

@@ -962,6 +962,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** List the organization's Security Audit Events, newest first. Optional filters (capability audit.filters) are ANDed; each only narrows what audit.read already shows, and the order, and so every cursor, is the same with or without them. Pass the same filters with each cursor. A filter that is malformed, empty, or given twice is refused with VALIDATION_FAILED. Requires audit.read; existence-hiding. */
         get: operations["listAuditEvents"];
         put?: never;
         post?: never;
@@ -978,7 +979,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream the organization's Security Audit Events as NDJSON */
+        /** Stream the organization's Security Audit Events as NDJSON, oldest first. Takes the same optional filters as the listing (capability audit.filters), validated before the stream starts. Requires audit.read; existence-hiding. */
         get: operations["exportAuditEvents"];
         put?: never;
         post?: never;
@@ -1892,6 +1893,22 @@ export interface components {
         limit: number;
         /** @description Opaque cursor from a previous response; never parse. */
         cursor: string;
+        /** @description Only events with this decision (capability audit.filters). */
+        auditDecision: "allow" | "deny" | "info";
+        /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+        auditEventType: string;
+        /** @description Only events whose actor is this identity ID (capability audit.filters). */
+        auditActorIdentityId: string;
+        /** @description Only events whose resource names this project ID (capability audit.filters). */
+        auditProjectId: string;
+        /** @description Only events whose resource names this environment ID (capability audit.filters). */
+        auditEnvironmentId: string;
+        /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+        auditItem: string;
+        /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+        auditSince: string;
+        /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+        auditUntil: string;
         /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
         idempotencyKey: string;
     };
@@ -4390,6 +4407,22 @@ export interface operations {
                 limit?: components["parameters"]["limit"];
                 /** @description Opaque cursor from a previous response; never parse. */
                 cursor?: components["parameters"]["cursor"];
+                /** @description Only events with this decision (capability audit.filters). */
+                decision?: components["parameters"]["auditDecision"];
+                /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+                eventType?: components["parameters"]["auditEventType"];
+                /** @description Only events whose actor is this identity ID (capability audit.filters). */
+                actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description Only events whose resource names this project ID (capability audit.filters). */
+                projectId?: components["parameters"]["auditProjectId"];
+                /** @description Only events whose resource names this environment ID (capability audit.filters). */
+                environmentId?: components["parameters"]["auditEnvironmentId"];
+                /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+                item?: components["parameters"]["auditItem"];
+                /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+                since?: components["parameters"]["auditSince"];
+                /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+                until?: components["parameters"]["auditUntil"];
             };
             header?: never;
             path: {
@@ -4417,7 +4450,24 @@ export interface operations {
     };
     exportAuditEvents: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only events with this decision (capability audit.filters). */
+                decision?: components["parameters"]["auditDecision"];
+                /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+                eventType?: components["parameters"]["auditEventType"];
+                /** @description Only events whose actor is this identity ID (capability audit.filters). */
+                actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description Only events whose resource names this project ID (capability audit.filters). */
+                projectId?: components["parameters"]["auditProjectId"];
+                /** @description Only events whose resource names this environment ID (capability audit.filters). */
+                environmentId?: components["parameters"]["auditEnvironmentId"];
+                /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+                item?: components["parameters"]["auditItem"];
+                /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+                since?: components["parameters"]["auditSince"];
+                /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+                until?: components["parameters"]["auditUntil"];
+            };
             header?: never;
             path: {
                 /** @description Organization slug or ID */

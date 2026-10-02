@@ -276,6 +276,17 @@ fixes.
   `organization.manage`. The slug never changes. The audit event
   `organization.renamed` records the previous and the new name. SDK:
   `renameOrganization()`.
+- The audit listing and the NDJSON export filter on the server (capability
+  `audit.filters`): `decision` (`allow`, `deny`, `info`), `eventType` (an
+  exact type, or a prefix such as `value.*`), `actorIdentityId`,
+  `projectId`, `environmentId`, `item` (a Config Item named in the event's
+  resource, or in the item list of a disclosure or Capability event), and
+  `since` (inclusive) and `until` (exclusive) as RFC 3339 timestamps. All
+  given filters must match. Cursors work as before, newest first by
+  occurrence time and event ID; pass the same filters with each cursor. A
+  malformed, empty, or repeated filter is refused with
+  `VALIDATION_FAILED`. Who may read the audit log does not change. SDK:
+  `listAuditEvents()` and `exportAuditEventsNdjson()` take the filters.
 
 ### Fixes
 

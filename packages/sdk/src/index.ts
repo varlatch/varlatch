@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  AuditEventFilters,
   InstallationBackups,
   ApiError,
   CapabilityExercise,
@@ -122,7 +123,25 @@ export interface IdentityCredential {
   lastUsedAt: string | null;
 }
 
-export type { OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+export type { AuditEventFilters, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+
+const AUDIT_FILTERS = [
+  "decision",
+  "eventType",
+  "actorIdentityId",
+  "projectId",
+  "environmentId",
+  "item",
+  "since",
+  "until",
+] as const satisfies readonly (keyof AuditEventFilters)[];
+
+function setAuditFilters(params: URLSearchParams, filters: AuditEventFilters): void {
+  for (const name of AUDIT_FILTERS) {
+    const value = filters[name];
+    if (value) params.set(name, value);
+  }
+}
 
 export class VarlatchClient {
   readonly server: string;
@@ -1049,20 +1068,30 @@ export class VarlatchClient {
     return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamId)}/projects/${encodeURIComponent(projectId)}`);
   }
 
+  /**
+   * Security Audit Events, newest first. The filters (capability
+   * audit.filters) are ANDed; pass the same ones with each cursor. A server
+   * without the capability ignores them, so check /v1/meta first.
+   */
   listAuditEvents(
     org: string,
-    opts: { limit?: number; cursor?: string } = {},
+    opts: { limit?: number; cursor?: string } & AuditEventFilters = {},
   ): Promise<Page<Record<string, unknown>>> {
     const params = new URLSearchParams();
     if (opts.limit) params.set("limit", String(opts.limit));
     if (opts.cursor) params.set("cursor", opts.cursor);
+    setAuditFilters(params, opts);
     const query = params.size ? `?${params}` : "";
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/audit-events${query}`);
   }
 
-  async exportAuditEventsNdjson(org: string): Promise<string> {
+  /** Every matching event as NDJSON, oldest first; same filters as {@link listAuditEvents}. */
+  async exportAuditEventsNdjson(org: string, opts: AuditEventFilters = {}): Promise<string> {
+    const params = new URLSearchParams();
+    setAuditFilters(params, opts);
+    const query = params.size ? `?${params}` : "";
     const res = await this.fetchImpl(
-      `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export`,
+      `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export${query}`,
       { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} },
     );
     if (!res.ok) {
