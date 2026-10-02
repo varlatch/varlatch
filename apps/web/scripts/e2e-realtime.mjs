@@ -43,7 +43,7 @@ const createProject = (slug) =>
     headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
     body: JSON.stringify({ slug, name: slug, contractAuthority: "git" }),
   }).then((r) => r.status);
-const card = (slug) => `[data-testid="project-card"][data-slug="${slug}"]`;
+const card = (slug) => `[data-testid="project-row"][data-slug="${slug}"]`;
 const indicator = '[data-testid="live-updates-status"]';
 const since = (t) => `${Math.round((Date.now() - t) / 100) / 10} s`;
 
@@ -68,7 +68,7 @@ try {
   await page.click("#enroll");
   await page.waitForFunction(() => /API credential|failed/.test(document.getElementById("status").textContent), null, { timeout: 20000 });
   await page.goto(`${base}/o/acme/projects`);
-  await page.waitForSelector('[data-testid="project-card"]', { timeout: 20000 });
+  await page.waitForSelector('[data-testid="project-row"]', { timeout: 20000 });
   await page.evaluate(() => { window.__varlatchNoReload = true; });
   await page.waitForTimeout(6000); // past the grace period
   check("no indicator while live updates work", (await page.locator(indicator).count()) === 0);
@@ -87,8 +87,12 @@ try {
   check("a change made elsewhere shows up by polling /v1", true, since(t));
 
   const byUi = `rt-ui-${suffix}`;
+  await page.click('[data-testid="new-project"]');
   await page.fill('[data-testid="new-project-slug"]', byUi);
   await page.click('[data-testid="create-project"]');
+  // Creating opens the new project; come back in-app (no reload).
+  await page.waitForURL(`**/o/acme/p/${byUi}`, { timeout: 15000 });
+  await page.click('nav a[href="/o/acme/projects"]');
   await page.waitForSelector(card(byUi), { timeout: 15000 });
   check("the dashboard writes while Convex is down", true);
 

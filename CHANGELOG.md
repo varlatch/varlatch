@@ -254,6 +254,51 @@ fixes.
   with the run's environment, Placeholders included, and discloses nothing;
   other commands use the `--agent-metadata` credential or stop.
 
+### API
+
+- Invitations can be listed and revoked (capability `invitations.manage`).
+  `GET /v1/organizations/{org}/invitations` lists the pending ones, newest
+  first; `?status=all` adds consumed, expired, and revoked ones. It never
+  returns a token or anything derived from one. `DELETE
+  /v1/organizations/{org}/invitations/{invitation}` revokes a pending
+  invitation: its link stops working at once, also for an enrollment
+  already started with it, and the audit event `invitation.revoked`
+  records it. A consumed, expired, or already revoked invitation is
+  refused with `VERSION_CONFLICT`, its status in the error's details. Both
+  need `identity.manage`, like creating an invitation. Creating one now
+  also returns its `id`, which `invitation.issued` and
+  `invitation.accepted` record. SDK: `listInvitations()`,
+  `revokeInvitation()`. Database migration 23 adds the revocation and the
+  invitation's creator (unknown for invitations created before it).
+- An organization's display name can now be changed: `PATCH
+  /v1/organizations/{org}` with `{"name": ...}` (capability
+  `organizations.rename`), trimmed, 1 to 200 characters. It needs
+  `organization.manage`. The slug never changes. The audit event
+  `organization.renamed` records the previous and the new name. SDK:
+  `renameOrganization()`.
+- The audit listing and the NDJSON export filter on the server (capability
+  `audit.filters`): `decision` (`allow`, `deny`, `info`), `eventType` (an
+  exact type, or a prefix such as `value.*`), `actorIdentityId`,
+  `projectId`, `environmentId`, `item` (a Config Item named in the event's
+  resource, or in the item list of a disclosure or Capability event), and
+  `since` (inclusive) and `until` (exclusive) as RFC 3339 timestamps. All
+  given filters must match. Cursors work as before, newest first by
+  occurrence time and event ID; pass the same filters with each cursor. A
+  malformed, empty, or repeated filter is refused with
+  `VALIDATION_FAILED`. Who may read the audit log does not change. SDK:
+  `listAuditEvents()` and `exportAuditEventsNdjson()` take the filters.
+- Credentials carry a readable `client` label, so you can tell your
+  sessions apart: a short summary of the client that requested a browser
+  session or a CLI login, such as `Firefox on Linux` or `varlatch CLI
+  0.14.0 on Linux`. Only the summary is stored, never the User-Agent
+  itself, and it names no browser or system version. It is `null` when the
+  client is not recognized, for every other credential kind, and for
+  credentials issued before this release. `GET /v1/me/credentials` and the
+  identity credential listing return it. `varlatch login` now sends
+  `varlatch-cli/<version> (<platform>; <arch>)` as its User-Agent when it
+  exchanges the browser session; the SDK takes a `userAgent` option.
+  Database migration 24 adds the column.
+
 ### Fixes
 
 - An agent-safe run's Broker no longer stops when a client resets its

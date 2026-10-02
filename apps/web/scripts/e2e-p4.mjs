@@ -322,6 +322,30 @@ check(
     (await page.getAttribute('[data-row="DATABASE_URL"]', "aria-selected")) === "true",
 );
 
+// 5c. Palette actions: the theme switch and the shortcuts sheet.
+const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+const themeBefore = await theme();
+await page.keyboard.press("ControlOrMeta+k");
+await page.waitForSelector('[data-testid="command-palette"]', { timeout: 5000 });
+await page.fill('[data-testid="palette-input"]', "theme");
+await page.waitForSelector('[data-palette-entry="action:theme"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+check("palette action switches the theme", (await theme()) !== themeBefore, `${themeBefore} -> ${await theme()}`);
+await page.keyboard.press("ControlOrMeta+k");
+await page.fill('[data-testid="palette-input"]', "theme");
+await page.waitForSelector('[data-palette-entry="action:theme"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+await page.keyboard.press("ControlOrMeta+k");
+await page.fill('[data-testid="palette-input"]', "shortcuts");
+await page.waitForSelector('[data-palette-entry="action:shortcuts"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+check(
+  "palette opens the keyboard shortcuts",
+  await page.waitForSelector('[data-testid="shortcuts-dialog"]', { timeout: 5000 }).then(() => true, () => false),
+);
+await page.keyboard.press("Escape");
+check("theme restored", (await theme()) === themeBefore);
+
 // 6. Settings.
 await page.goto(`${base}/o/acme/settings`);
 await page.waitForSelector('[data-testid="settings-server"]', { timeout: 20000 });

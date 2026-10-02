@@ -95,6 +95,7 @@ export interface CredentialMetadataRow {
   expires_at: string | null;
   revoked_at: string | null;
   last_used_at: string | null;
+  client: string | null;
 }
 
 /**
@@ -106,7 +107,7 @@ export async function listIdentityCredentials(
   identityId: string,
 ): Promise<CredentialMetadataRow[]> {
   const res = await ctx.db.query(
-    `SELECT id, kind, name, created_at, expires_at, revoked_at, last_used_at
+    `SELECT id, kind, name, created_at, expires_at, revoked_at, last_used_at, client
      FROM credentials WHERE identity_id = $1 ORDER BY created_at DESC, id`,
     [identityId],
   );

@@ -58,6 +58,44 @@ export async function createOrganization(
   });
 }
 
+/**
+ * Rename is display-plane only, like a project's: the slug is what the CLI,
+ * URLs, and configuration use, and it never changes. The name is trimmed;
+ * the audit event carries both names so older audit lines stay
+ * interpretable. The Mirror picks the new name up through the
+ * organization change signal and its next full sync.
+ */
+export async function renameOrganization(
+  ctx: AppCtx,
+  organizationId: string,
+  name: string,
+  actorIdentityId: string,
+): Promise<OrgRow> {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 200) {
+    throw new DomainError("VALIDATION_FAILED", "Organization name must be 1 to 200 characters, not counting surrounding spaces");
+  }
+  return withTx(ctx.db, async (db) => {
+    const prev = await db.query(
+      "SELECT slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+      [organizationId],
+    );
+    const row = prev.rows[0] as { slug: string; name: string } | undefined;
+    if (!row) throw notFound("Organization");
+    await db.query("UPDATE organizations SET name = $1 WHERE id = $2", [trimmed, organizationId]);
+    await recordAuditEvent(db, {
+      eventType: "organization.renamed",
+      decision: "info",
+      actorIdentityId,
+      organizationId,
+      action: "organization.manage",
+      resource: { organizationSlug: row.slug },
+      metadata: { previousName: row.name, name: trimmed },
+    });
+    return getOrganization(ctx, organizationId, db);
+  });
+}
+
 export async function getOrganization(
   ctx: AppCtx,
   slugOrId: string,

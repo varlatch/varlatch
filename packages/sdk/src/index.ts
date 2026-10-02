@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  AuditEventFilters,
   InstallationBackups,
   ApiError,
   CapabilityExercise,
@@ -18,6 +19,7 @@ import type {
   ErrorCode,
   Grant,
   GrantScope,
+  Invitation,
   Group,
   Role,
   Meta,
@@ -79,6 +81,13 @@ export interface VarlatchClientOptions {
   maintenanceRetryMs?: number;
   /** Called before each maintenance wait, e.g. to tell a user why nothing happens. */
   onMaintenance?: (wait: MaintenanceWait) => void;
+  /**
+   * A User-Agent header for every request, for clients that identify
+   * themselves (the CLI sends `varlatch-cli/<version> (<platform>; <arch>)`,
+   * which the server summarizes as a credential's client label). Browsers
+   * may ignore it; omit it there.
+   */
+  userAgent?: string;
 }
 
 export interface MaintenanceWait {
@@ -119,9 +128,32 @@ export interface IdentityCredential {
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  /**
+   * Readable client summary, such as "Firefox on Linux"; null when unknown
+   * or for kinds other than browser and cli, absent from older servers.
+   */
+  client?: string | null;
 }
 
-export type { OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+export type { AuditEventFilters, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+
+const AUDIT_FILTERS = [
+  "decision",
+  "eventType",
+  "actorIdentityId",
+  "projectId",
+  "environmentId",
+  "item",
+  "since",
+  "until",
+] as const satisfies readonly (keyof AuditEventFilters)[];
+
+function setAuditFilters(params: URLSearchParams, filters: AuditEventFilters): void {
+  for (const name of AUDIT_FILTERS) {
+    const value = filters[name];
+    if (value) params.set(name, value);
+  }
+}
 
 export class VarlatchClient {
   readonly server: string;
@@ -129,6 +161,7 @@ export class VarlatchClient {
   private readonly fetchImpl: typeof fetch;
   private readonly maintenanceRetryMs: number;
   private readonly onMaintenance: ((wait: MaintenanceWait) => void) | undefined;
+  private readonly userAgent: string | undefined;
   /** End of the current maintenance budget; null while the server answers normally. */
   private maintenanceDeadline: number | null = null;
 
@@ -137,6 +170,7 @@ export class VarlatchClient {
     this.token = options.token;
     this.maintenanceRetryMs = options.maintenanceRetryMs ?? 180_000;
     this.onMaintenance = options.onMaintenance;
+    this.userAgent = options.userAgent;
     // Bind to globalThis: browsers throw "Illegal invocation" when window
     // fetch is called with a foreign `this`.
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -187,6 +221,7 @@ export class VarlatchClient {
       method,
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
         ...headers,
       },
@@ -236,6 +271,11 @@ export class VarlatchClient {
 
   getOrganization(org: string): Promise<Organization> {
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}`);
+  }
+
+  /** Rename an organization's display name; its slug never changes (capability organizations.rename). */
+  renameOrganization(org: string, name: string): Promise<Organization> {
+    return this.request("PATCH", `/v1/organizations/${encodeURIComponent(org)}`, { name });
   }
 
   listProjects(org: string): Promise<Page<Project>> {
@@ -464,11 +504,37 @@ export class VarlatchClient {
     );
   }
 
+  /** The token is returned once; `id` (servers with invitations.manage) is what list and revoke use. */
   createInvitation(
     org: string,
     input: { name: string; role: "admin" | "member" },
-  ): Promise<{ token: string; expiresAt: string }> {
+  ): Promise<{ id?: string; token: string; expiresAt: string }> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/invitations`, input);
+  }
+
+  /**
+   * The organization's invitations, newest first (capability
+   * invitations.manage): pending only unless `status` is "all". Metadata
+   * only, never a token.
+   */
+  listInvitations(
+    org: string,
+    opts: { status?: "pending" | "all"; limit?: number; cursor?: string } = {},
+  ): Promise<{ items: Invitation[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    const query = params.size ? `?${params}` : "";
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/invitations${query}`);
+  }
+
+  /** Revoke a pending invitation; its token stops working at once (capability invitations.manage). */
+  revokeInvitation(org: string, invitationId: string): Promise<void> {
+    return this.request(
+      "DELETE",
+      `/v1/organizations/${encodeURIComponent(org)}/invitations/${encodeURIComponent(invitationId)}`,
+    );
   }
 
   listRequirements(org: string): Promise<Page<Requirement>> {
@@ -1017,21 +1083,36 @@ export class VarlatchClient {
     return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/teams/${encodeURIComponent(teamId)}/projects/${encodeURIComponent(projectId)}`);
   }
 
+  /**
+   * Security Audit Events, newest first. The filters (capability
+   * audit.filters) are ANDed; pass the same ones with each cursor. A server
+   * without the capability ignores them, so check /v1/meta first.
+   */
   listAuditEvents(
     org: string,
-    opts: { limit?: number; cursor?: string } = {},
+    opts: { limit?: number; cursor?: string } & AuditEventFilters = {},
   ): Promise<Page<Record<string, unknown>>> {
     const params = new URLSearchParams();
     if (opts.limit) params.set("limit", String(opts.limit));
     if (opts.cursor) params.set("cursor", opts.cursor);
+    setAuditFilters(params, opts);
     const query = params.size ? `?${params}` : "";
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/audit-events${query}`);
   }
 
-  async exportAuditEventsNdjson(org: string): Promise<string> {
+  /** Every matching event as NDJSON, oldest first; same filters as {@link listAuditEvents}. */
+  async exportAuditEventsNdjson(org: string, opts: AuditEventFilters = {}): Promise<string> {
+    const params = new URLSearchParams();
+    setAuditFilters(params, opts);
+    const query = params.size ? `?${params}` : "";
     const res = await this.fetchImpl(
-      `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export`,
-      { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} },
+      `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export${query}`,
+      {
+        headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+        },
+      },
     );
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as ApiError | undefined;

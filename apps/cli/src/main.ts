@@ -566,7 +566,11 @@ async function main(): Promise<void> {
           // bearer is revoked server-side by the exchange).
           const handoff = await browserLogin(server);
           const ttlFlag = flag(args, "--ttl");
-          const issued = await new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: handoff }).exchangeCliCredential(
+          // Identifies the CLI so the server can label the credential
+          // ("varlatch CLI 0.14.0 on Linux"); it stores only that summary.
+          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+          const userAgent = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`;
+          const issued = await new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: handoff, userAgent }).exchangeCliCredential(
             ttlFlag ? { ttlSeconds: Number(ttlFlag) } : {},
           );
           token = issued.token;

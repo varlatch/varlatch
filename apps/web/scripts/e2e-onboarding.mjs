@@ -60,7 +60,8 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 
-// 1. Fresh org: card visible, all four required steps pending.
+// 1. Fresh org: the getting-started steps replace the empty list, all four
+//    required steps pending.
 await page.goto(`${base}/o/onboard-co/projects`);
 await page.waitForSelector('[data-testid="onboarding"]', { timeout: 20000 });
 const pending = await page
@@ -79,17 +80,32 @@ check(
 );
 check(
   "workload + invite are recommended, not required",
-  (await page.locator('[data-testid="onboarding-workload"] >> text=recommended').count()) === 1 &&
-    (await page.locator('[data-testid="onboarding-invite"] >> text=recommended').count()) === 1,
+  (await page.locator('[data-testid="onboarding-recommended"] [data-testid="onboarding-workload"]').count()) === 1 &&
+    (await page.locator('[data-testid="onboarding-recommended"] [data-testid="onboarding-invite"]').count()) === 1,
 );
+check("no empty project list", (await page.locator('[data-testid="project-row"]').count()) === 0);
 
-// 2. Create a git-authority project through the UI — step checks off live.
+// 2. Create a git-authority project through the New project dialog, with no
+//    environments yet: the project step checks off live, the page stays.
+await page.click('[data-testid="onboarding-new-project"]');
+await page.waitForSelector('[data-testid="new-project-dialog"]', { timeout: 5000 });
 await page.fill('[data-testid="new-project-slug"]', "web");
+check(
+  "git is the default contract location",
+  (await page.getAttribute('[data-testid="contract-authority-git"]', "aria-checked")) === "true",
+);
+for (const tier of ["development", "staging", "production"]) {
+  await page.click(`[data-testid="new-project-env-${tier}"]`);
+}
 await page.click('[data-testid="create-project"]');
 await page.waitForSelector('[data-testid="onboarding-project"][data-done="true"]', {
   timeout: 15000,
 });
 check("project step checks off from authoritative state", true);
+check(
+  "environments step still pending (all environment toggles were off)",
+  (await page.getAttribute('[data-testid="onboarding-environments"]', "data-done")) === "false",
+);
 const contractStep = await page.textContent('[data-testid="onboarding-contract"]');
 check(
   "git authority branches to CLI contract push snippet",
@@ -97,21 +113,29 @@ check(
   contractStep.slice(0, 80),
 );
 
-// 3. Add an environment through the project card ("…" menu) — step checks off live.
-await page.click('[data-testid="project-menu"]');
-await page.click('[data-testid="menu-add-environment"]');
-await page.fill('input[placeholder="environment name"]', "development");
-await page.click("text=add environment");
+// 3. "Create all three" on the environments step: it checks off live.
+await page.click('[data-testid="onboarding-create-environments"]');
 await page.waitForSelector('[data-testid="onboarding-environments"][data-done="true"]', {
   timeout: 15000,
 });
 check("environments step checks off from authoritative state", true);
+await page.waitForSelector('[data-testid="project-row"][data-slug="web"] [data-env="production"]', { timeout: 15000 });
+check("the project row lists the new environments", true);
 
-// 3b. Rename the display name through the same menu; the slug stays.
-page.once("dialog", (dialog) => void dialog.accept("Web storefront"));
-await page.click('[data-testid="project-menu"]');
+// 3b. Another environment from the row's "…" menu.
+await page.click('[data-testid="project-row"][data-slug="web"] [data-testid="project-menu"]');
+await page.click('[data-testid="menu-new-environment"]');
+await page.fill('[data-testid="new-environment-name"]', "qa");
+await page.click('[data-testid="create-environment"]');
+await page.waitForSelector('[data-testid="project-row"][data-slug="web"] [data-env="qa"]', { timeout: 15000 });
+check("new environment from the project menu", true);
+
+// 3c. Rename the display name through the same menu; the slug stays.
+await page.click('[data-testid="project-row"][data-slug="web"] [data-testid="project-menu"]');
 await page.click('[data-testid="menu-rename-project"]');
-await page.waitForSelector('[data-testid="project-card"][data-slug="web"] >> text=Web storefront', {
+await page.fill('[data-testid="prompt-input"]', "Web storefront");
+await page.click('[data-testid="prompt-ok"]');
+await page.waitForSelector('[data-testid="project-row"][data-slug="web"] >> text=Web storefront', {
   timeout: 15000,
 });
 check("rename from the project menu shows the new display name", true);
@@ -145,7 +169,7 @@ await api("PUT", "/organizations/onboard-co/projects/web/environments/developmen
   value: "postgres://onboard-db",
 });
 await page.reload();
-await page.waitForSelector("table td", { timeout: 15000 });
+await page.waitForSelector('[data-testid="project-row"]', { timeout: 15000 });
 await page
   .waitForSelector('[data-testid="onboarding"]', { state: "detached", timeout: 15000 })
   .catch(() => {});
@@ -155,7 +179,8 @@ check(
 );
 check(
   "projects page still renders normally",
-  (await page.locator("text=web").count()) > 0,
+  (await page.locator('[data-testid="project-row"][data-slug="web"]').count()) === 1 &&
+    (await page.locator('[data-testid="project-filter"]').count()) === 1,
 );
 
 await browser.close();

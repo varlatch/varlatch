@@ -188,7 +188,11 @@ export function useListNavigation<T>(items: T[], onOpen: (item: T, e: { newTab: 
     setActive((a) => (count === 0 ? 0 : Math.min(a, count - 1)));
   }, [count]);
   const listRef = useRef<HTMLElement | null>(null);
+  const shown = useRef(active);
   useEffect(() => {
+    // Follow the selection when it moves; never scroll the page on mount.
+    if (shown.current === active) return;
+    shown.current = active;
     listRef.current?.querySelector<HTMLElement>(`[data-nav-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
   }, [active]);
 

@@ -1,36 +1,34 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useParams, useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useOrgRealtime } from "../../lib/realtime";
-import { cn } from "../../components/ui";
+import { useSession } from "../../lib/session";
+import { PageHeader, Tabs } from "../../components/PageHeader";
+import { useOrgName } from "../projects/hooks";
 import { HowAccessWorks } from "./HowAccessWorks";
 import { MembersTab } from "./MembersTab";
 import { MachinesTab } from "./MachinesTab";
 import { RolesTab } from "./RolesTab";
 import { GrantsTab } from "./GrantsTab";
 import { AdvancedTab } from "./AdvancedTab";
+import { useIdentities } from "./shared";
 
 /**
- * P3 Access, restructured as an internal tabbed page (`?tab=`; no router
- * routes). Default-deny made visible: Members and Machines answer "who
- * exists", Roles & teams keep grants tidy (ADR-0028), Grants are the single
- * source of permission (ADR-0015/0029), and Advanced holds the mechanisms
- * that only narrow or observe (ADR-0014 requirements, ADR-0022 capabilities).
+ * Access: who exists (People, Machines), how to avoid repeating yourself
+ * (Roles & teams), who may do what (Grants), and the mechanisms that only
+ * narrow or observe (Advanced). Tabs live in `?tab=` so links can deep-link.
  */
 
-const TABS = [
-  { key: "members", label: "Members", hint: "People in this organization" },
-  { key: "machines", label: "Machines", hint: "Services, CI, brokers, agents + OIDC" },
-  { key: "roles", label: "Roles & teams", hint: "Reusable bundles: roles, groups, teams" },
-  { key: "grants", label: "Grants", hint: "Who may do what, where — the core" },
-  { key: "advanced", label: "Advanced", hint: "Broker capabilities, tailnet requirements" },
-] as const;
-type TabKey = (typeof TABS)[number]["key"];
+const TABS = ["members", "machines", "roles", "grants", "advanced"] as const;
+type TabKey = (typeof TABS)[number];
 
 export function AccessPage() {
-  const { org } = useParams();
+  const { org } = useParams() as { org: string };
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get("tab");
-  const tab: TabKey = TABS.some((t) => t.key === raw) ? (raw as TabKey) : "members";
+  const tab: TabKey = (TABS as readonly string[]).includes(raw ?? "") ? (raw as TabKey) : "members";
+  const orgName = useOrgName(org);
+  const { api } = useSession();
   useOrgRealtime(
     org,
     ["identity", "invitation", "oidc_binding", "grant", "capability", "requirement", "credential", "role", "group", "team"],
@@ -43,55 +41,54 @@ export function AccessPage() {
       ["roles", org],
       ["groups", org],
       ["teams", org],
+      ["invitations", org],
     ],
   );
+  const identities = useIdentities(org);
+  const grants = useQuery({ queryKey: ["grants", org], queryFn: () => api.listGrants(org) });
+  const people = identities.data?.items.filter((i) => i.kind === "human" && !i.disabled).length;
+  const machines = identities.data?.items.filter((i) => i.kind !== "human" && !i.disabled).length;
+
+  const select = (key: string) =>
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams();
+        next.set("tab", key);
+        // Builder preselection (?subject=) only applies to the tab it targets.
+        if (key === "grants") for (const k of ["subject", "project"]) if (prev.get(k)) next.set(k, prev.get(k)!);
+        return next;
+      },
+      { replace: true },
+    );
+
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Access</h1>
-        <p className="text-muted text-sm">
-          Who exists, and what each of them may do. Everything is default-deny: identities convey
-          no access by themselves — Grants do.
-        </p>
-      </div>
+    <>
+      <PageHeader
+        breadcrumbs={[{ label: orgName, to: `/o/${org}/projects` }, { label: "Access" }]}
+        title="Access"
+        subtitle="Default-deny. Everything anyone can do comes from grants: explicit ones, plus the built-in grants of a person's organization role."
+      />
       <HowAccessWorks />
-      <div role="tablist" aria-label="Access sections" className="flex flex-wrap gap-1 border-b border-bd">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.key}
-            title={t.hint}
-            data-testid={`access-tab-${t.key}`}
-            onClick={() =>
-              setSearchParams(
-                (prev) => {
-                  const next = new URLSearchParams(prev);
-                  next.set("tab", t.key);
-                  return next;
-                },
-                { replace: true },
-              )
-            }
-            className={cn(
-              "-mb-px cursor-pointer rounded-t-md border-b-2 px-3 py-2 text-sm transition-colors",
-              tab === t.key
-                ? "border-accent font-medium text-fg"
-                : "border-transparent text-muted hover:text-fg hover:bg-raised",
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+      <Tabs
+        aria-label="Access sections"
+        className="mb-6"
+        active={tab}
+        onSelect={select}
+        items={[
+          { key: "members", label: "People", ...(people !== undefined ? { count: people } : {}), "data-testid": "access-tab-members" },
+          { key: "machines", label: "Machines", ...(machines !== undefined ? { count: machines } : {}), "data-testid": "access-tab-machines" },
+          { key: "roles", label: "Roles & teams", "data-testid": "access-tab-roles" },
+          { key: "grants", label: "Grants", ...(grants.data ? { count: grants.data.items.length } : {}), "data-testid": "access-tab-grants" },
+          { key: "advanced", label: "Advanced", "data-testid": "access-tab-advanced" },
+        ]}
+      />
+      <div role="tabpanel">
+        {tab === "members" && <MembersTab org={org} onGrant={(id) => setSearchParams({ tab: "grants", subject: id })} />}
+        {tab === "machines" && <MachinesTab org={org} onGrant={(id) => setSearchParams({ tab: "grants", subject: id })} />}
+        {tab === "roles" && <RolesTab org={org} />}
+        {tab === "grants" && <GrantsTab org={org} />}
+        {tab === "advanced" && <AdvancedTab org={org} />}
       </div>
-      <div role="tabpanel" aria-label={TABS.find((t) => t.key === tab)!.label}>
-        {tab === "members" && <MembersTab org={org as string} />}
-        {tab === "machines" && <MachinesTab org={org as string} />}
-        {tab === "roles" && <RolesTab org={org as string} />}
-        {tab === "grants" && <GrantsTab org={org as string} />}
-        {tab === "advanced" && <AdvancedTab org={org as string} />}
-      </div>
-    </div>
+    </>
   );
 }

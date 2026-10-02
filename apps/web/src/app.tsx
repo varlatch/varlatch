@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { LiveUpdatesStatus } from "./components/LiveUpdatesStatus";
 import { SessionProvider, useSession } from "./lib/session";
-import { applyTheme, initialTheme } from "./lib/theme";
+import { showPreferredTheme } from "./lib/theme";
 import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toast";
 import { Shell, lastOrg } from "./shell/Shell";
@@ -40,7 +40,7 @@ const SettingsPage = lazy(() => import("./features/settings/SettingsPage").then(
 const AccountLayout = lazy(() => import("./features/account/AccountLayout").then((m) => ({ default: m.AccountLayout })));
 const ProfilePage = lazy(() => import("./features/settings/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 const SecurityPage = lazy(() => import("./features/account/SecurityPage").then((m) => ({ default: m.SecurityPage })));
-const SessionsPage = lazy(() => import("./features/access/CredentialsPage").then((m) => ({ default: m.CredentialsPage })));
+const SessionsPage = lazy(() => import("./features/account/SessionsPage").then((m) => ({ default: m.SessionsPage })));
 const InstallationPage = lazy(() =>
   import("./features/installation/InstallationPage").then((m) => ({ default: m.InstallationPage })),
 );
@@ -175,7 +175,7 @@ const router = createBrowserRouter([
 ]);
 
 export function App() {
-  useEffect(() => applyTheme(initialTheme()), []);
+  useEffect(() => showPreferredTheme(), []);
   return (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
