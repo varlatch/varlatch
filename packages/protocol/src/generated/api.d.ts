@@ -673,6 +673,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/device": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start a device-authorization sign-in (capability auth.device; RFC 8628 adapted): a pending sign-in a person approves in the dashboard at verificationUri by typing userCode. The deviceCode is the CLI's bearer for collecting the credential: keep it private, never show it. Pending sign-ins expire after expiresIn seconds and are capped per peer and in total (RATE_LIMITED). Served only when the server's public URL is HTTPS, or a loopback address (RESOURCE_NOT_FOUND otherwise). Cache-Control no-store. */
+        post: operations["startDeviceSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll a device-authorization sign-in, at most once per interval. 428 AUTHORIZATION_PENDING (details.interval) while it waits; 429 SLOW_DOWN when polled sooner, the interval growing by 5 seconds; 403 ACCESS_DENIED once denied; 410 EXPIRED once expired (or for an unknown device code); 201 with a CLI credential of the approving person, exactly once; 410 CONSUMED (details.credentialId, never the token) once collected. Cache-Control no-store. */
+        post: operations["collectDeviceSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The pending sign-in a person typed the code of, for the confirmation screen, with a fresh passkey challenge for approving it (bound to the sign-in, the person, and their dashboard session; single use; 5 minutes). Requires a human's dashboard session bearer. Wrong codes count against persistent limits per person, per peer, and in total (RESOURCE_NOT_FOUND per wrong code, RATE_LIMITED with details.retryAt once a limit is reached). Cache-Control no-store. */
+        post: operations["lookupDeviceSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve or deny a pending device-authorization sign-in. Requires a human's dashboard session bearer; approving also requires a passkey assertion over the challenge lookupDeviceSignIn issued for this sign-in and session (PERMISSION_DENIED otherwise). STATE_CHANGED when the sign-in is no longer pending. The code counts against the same limits as lookupDeviceSignIn. Cache-Control no-store. */
+        post: operations["decideDeviceSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/grants": {
         parameters: {
             query?: never;
@@ -1224,7 +1292,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -1731,6 +1799,40 @@ export interface components {
             token: string;
             /** Format: date-time */
             expiresAt: string;
+        };
+        DeviceSignInStarted: {
+            /** @description The collecting bearer; returned once, never shown to anyone. */
+            deviceCode: string;
+            /** @description Eight letters shown as XXXX-XXXX */
+            userCode: string;
+            /** @description Where the person types the code */
+            verificationUri: string;
+            /** @description Seconds until the pending sign-in expires */
+            expiresIn: number;
+            /** @description Minimum seconds between polls */
+            interval: number;
+        };
+        DeviceSignInLookup: {
+            signIn: {
+                userCode: string;
+                /** @description Lifetime of the credential approval issues */
+                ttlSeconds: number;
+                name: string | null;
+                /** @description The peer address the server saw */
+                requesterIp: string | null;
+                requesterUserAgent: string | null;
+                /** Format: date-time */
+                requestedAt: string;
+                /** Format: date-time */
+                expiresAt: string;
+            };
+            /** @description Null when the person has no passkey to approve with. */
+            approval: {
+                /** @description WebAuthn request options (PublicKeyCredentialRequestOptionsJSON). */
+                publicKey: {
+                    [key: string]: unknown;
+                };
+            } | null;
         };
         OidcBinding: {
             id: string;
@@ -3554,6 +3656,129 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssuedCliCredential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startDeviceSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Lifetime of the CLI credential the sign-in issues.
+                     * @default 43200
+                     */
+                    ttlSeconds?: number;
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Pending sign-in created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceSignInStarted"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    collectDeviceSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    deviceCode: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Issued CLI credential (token shown exactly once) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedCliCredential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    lookupDeviceSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description As shown by the CLI; case-insensitive, the dash optional. */
+                    userCode: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The pending sign-in and an approval challenge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceSignInLookup"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    decideDeviceSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    userCode: string;
+                    /** @enum {string} */
+                    decision: "approve" | "deny";
+                    /** @description WebAuthn authentication response (AuthenticationResponseJSON); required to approve. */
+                    assertion?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Decision recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        decision: "approved" | "denied";
+                    };
                 };
             };
             default: components["responses"]["Error"];

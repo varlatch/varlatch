@@ -27,6 +27,8 @@ const PREFIXES = {
   team: "tem",
   platformConnection: "pcn",
   syncTarget: "snt",
+  deviceSignIn: "dsi",
+  deviceSignInChallenge: "dsc",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;

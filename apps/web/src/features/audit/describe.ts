@@ -265,10 +265,40 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return {
         icon: "shield",
         title: "Sign-in failed",
-        segments: [str(m.method) === "oidc" ? "failed to sign in with OIDC" : "failed to sign in", ...(str(m.reason) ? [` (${str(m.reason)!.replace(/[-_]/g, " ")})`] : [])],
+        segments: [
+          str(m.method) === "oidc"
+            ? "failed to sign in with OIDC"
+            : str(m.method) === "device-approval"
+              ? "failed to confirm a CLI sign-in with a passkey"
+              : "failed to sign in",
+          ...(str(m.reason) ? [` (${str(m.reason)!.replace(/[-_]/g, " ")})`] : []),
+        ],
       };
     case "authentication.passkey_enrollment_started":
       return { icon: "key", title: "Passkey enrollment", segments: ["started adding a passkey"] };
+    // ---- device sign-in (a CLI signs in after a person approves its code)
+    case "authentication.device_requested":
+      return { icon: "login", title: "CLI sign-in requested", segments: ["a CLI asked to sign in with a code"] };
+    case "authentication.device_approved":
+      return { icon: "login", title: "CLI sign-in approved", segments: ["approved a CLI sign-in with a passkey"] };
+    case "authentication.device_denied":
+      return { icon: "shield", title: "CLI sign-in denied", segments: ["denied a CLI sign-in"] };
+    case "authentication.device_collected":
+      return { icon: "key", title: "CLI signed in", segments: ["signed in a CLI with an approved code"] };
+    case "authentication.device_code_rejected":
+      return { icon: "shield", title: "Wrong sign-in code", segments: ["entered a sign-in code that matches no pending sign-in"] };
+    case "authentication.device_code_locked":
+      return {
+        icon: "alert",
+        title: "Sign-in code entry paused",
+        segments: [
+          str(m.scope) === "global"
+            ? "reached the limit of wrong sign-in codes for everyone; code entry is paused"
+            : str(m.scope) === "peer"
+              ? "reached the limit of wrong sign-in codes from one address; code entry from it is paused"
+              : "entered too many wrong sign-in codes; their code entry is paused",
+        ],
+      };
     case "capability.issued":
       return {
         icon: "key",

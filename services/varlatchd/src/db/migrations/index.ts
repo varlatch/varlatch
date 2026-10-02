@@ -24,6 +24,7 @@ import { sql as dropEnvironmentNameMapping } from "./0021_drop_environment_name_
 import { sql as capabilityTargets } from "./0022_capability_targets.js";
 import { sql as invitationRevocation } from "./0023_invitation_revocation.js";
 import { sql as credentialClient } from "./0024_credential_client.js";
+import { sql as deviceSignIn } from "./0025_device_sign_in.js";
 
 export interface Migration {
   id: number;
@@ -57,4 +58,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 22, name: "capability_targets", sql: capabilityTargets },
   { id: 23, name: "invitation_revocation", sql: invitationRevocation },
   { id: 24, name: "credential_client", sql: credentialClient },
+  { id: 25, name: "device_sign_in", sql: deviceSignIn },
 ];

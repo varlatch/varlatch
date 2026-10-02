@@ -13,6 +13,7 @@
   "dependencies": {
     "@better-auth/passkey": "1.7.3",
     "@hono/node-server": "1.19.17",
+    "@simplewebauthn/server": "13.3.3",
     "@varlatch/contract": "workspace:*",
     "@varlatch/protocol": "workspace:*",
     "@varlatch/sync": "workspace:*",

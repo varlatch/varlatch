@@ -29,6 +29,11 @@ export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   MAINTENANCE: 503,
   INTERNAL: 500,
   STATE_CHANGED: 409,
+  AUTHORIZATION_PENDING: 428,
+  SLOW_DOWN: 429,
+  ACCESS_DENIED: 403,
+  EXPIRED: 410,
+  CONSUMED: 410,
 };
 
 export function requestId(): string {
@@ -43,6 +48,8 @@ export interface Principal {
   identity: IdentityRow;
   credentialId: string;
   credentialKind: CredentialRow["kind"];
+  /** Browser bearers: the Better Auth session the bearer was minted from. */
+  authSessionId?: string | null;
 }
 
 /**

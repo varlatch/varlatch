@@ -119,6 +119,7 @@ async function serveCommand(): Promise<void> {
   const app = buildApp(ctx, {
     clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
     issuer,
+    publicUrl: issuer,
     humanAuth,
     enrollBundlePath: fileURLToPath(new URL("./enroll.js", import.meta.url)),
     sync: config.sync,

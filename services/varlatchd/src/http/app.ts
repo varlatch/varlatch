@@ -111,6 +111,15 @@ import { strictRetrieval } from "../domain/strict.js";
 import { mintConvexToken, publicJwks } from "../auth/jwt.js";
 import { issueCredential, revokeCredential } from "../auth/credentials.js";
 import { ENROLL_HTML } from "../enroll/page.js";
+import { relyingPartyOf } from "../auth/approval-assertion.js";
+import {
+  approveDeviceSignIn,
+  denyDeviceSignIn,
+  findSignInByCode,
+  issueApprovalChallenge,
+  pollDeviceSignIn,
+  requestDeviceSignIn,
+} from "../domain/device-sign-in.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -171,12 +180,32 @@ export interface BuildAppOptions {
   oidcFetch?: typeof fetch;
   clientAddress?: (c: Context) => string;
   /**
+   * The browser-visible base URL (the dashboard's origin). Device sign-in
+   * builds its verification address from it and runs only when it is
+   * HTTPS, or a loopback address in local development.
+   */
+  publicUrl?: string;
+  /**
    * Outbound sync installation switch (ADR-0031 §9). Undefined = enabled,
    * all bundled adapters; null = disabled (creation hidden, delivery
    * stopped, the UI points at the CLI mode); otherwise an optional adapter
    * allowlist narrowing.
    */
   sync?: { adapters: string[] | null } | null;
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+
+/**
+ * The base URL device sign-in runs on, or null when it must not run: the
+ * device code and the issued credential travel only over HTTPS, except to
+ * a loopback server in local development.
+ */
+function deviceSignInBase(publicUrl: string | undefined): URL | null {
+  if (!publicUrl) return null;
+  const url = new URL(publicUrl);
+  if (url.protocol === "https:") return url;
+  return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname) ? url : null;
 }
 
 function iso(v: string | Date): string {
@@ -443,10 +472,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // httpOnly session mints a short-lived opaque /v1 bearer. Cookies still
     // never authenticate /v1 itself.
     app.post("/auth/varlatch-token", async (c) => {
-      const identityId = await humanAuth.identityForSession(c.req.raw.headers);
-      if (!identityId) {
+      const session = await humanAuth.sessionFor(c.req.raw.headers);
+      if (!session) {
         throw new DomainError("AUTHENTICATION_REQUIRED", "No authenticated session");
       }
+      const { identityId } = session;
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
       const issued = await issueCredential(ctx.db, {
         identityId,
@@ -455,6 +485,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         expiresAt,
         actorIdentityId: identityId,
         client: clientLabel(c.req.header("User-Agent")),
+        // Binds device sign-in approval challenges to this session.
+        authSessionId: session.sessionId,
       });
       return c.json({ token: issued.token, identityId, expiresAt });
     });
@@ -472,17 +504,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
   }
 
+  const deviceBase = deviceSignInBase(options.publicUrl);
+
   app.get("/v1/meta", async (c) => {
     const inst = await getInstallation(ctx.db).catch(() => null);
     // sync.targets is advertised only when the installation switch is on;
     // syncAdapters lets the dashboard offer exactly what varlatchd will push.
     const syncOn = options.sync !== null;
+    // auth.device only where device sign-in can run (an HTTPS public URL).
+    const hidden = new Set([...(syncOn ? [] : ["sync.targets"]), ...(deviceBase ? [] : ["auth.device"])]);
     return c.json({
       apiMajor: 1,
       serverVersion: SERVER_VERSION,
       // Contract Semantics versions this server evaluates (ADR-0038).
       semanticsVersions: [...SEMANTICS_VERSIONS],
-      capabilities: syncOn ? [...CAPABILITIES] : CAPABILITIES.filter((cap) => cap !== "sync.targets"),
+      capabilities: CAPABILITIES.filter((cap) => !hidden.has(cap)),
       ...(syncOn
         ? { syncAdapters: options.sync?.adapters ?? [...SYNC_PLATFORMS] }
         : {}),
@@ -495,6 +531,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     if (c.req.path === "/v1/meta") return next();
     // The OIDC exchange authenticates with the external token itself.
     if (c.req.path === "/v1/oidc/token" && c.req.method === "POST") return next();
+    // Device sign-in's CLI calls: the device code is their only bearer.
+    if ((c.req.path === "/v1/auth/device" || c.req.path === "/v1/auth/device/token") && c.req.method === "POST") return next();
     const header = c.req.header("Authorization");
     if (!header?.startsWith("Bearer ")) {
       throw new DomainError("AUTHENTICATION_REQUIRED", "Provide a Varlatch bearer credential");
@@ -524,6 +562,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       identity: result.identity,
       credentialId: result.credential.id,
       credentialKind: result.credential.kind,
+      authSessionId: result.credential.auth_session_id ?? null,
     });
     return next();
   });
@@ -724,6 +763,152 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
     c.header("Cache-Control", "no-store");
     return c.json({ id: issued.credentialId, token: issued.token, expiresAt }, 201);
+  });
+
+  // ---- Device-authorization sign-in (ADR-0043 Decision 2; design notes
+  // "Device-authorization sign-in"). The CLI's two calls are
+  // unauthenticated: the device code, kept in the CLI's private state, is
+  // their bearer. Deciding takes the dashboard's session-derived browser
+  // bearer of a human (an Authorization header, never an ambient cookie, so
+  // no cross-site request can carry it), and approving also a fresh passkey
+  // assertion bound to the sign-in, the identity, and the session.
+  const deviceAvailable = (): URL => {
+    if (!deviceBase) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Device sign-in is not available: this server's public URL is not HTTPS");
+    }
+    return deviceBase;
+  };
+  const devicePeer = (c: Context) => options.clientAddress?.(c) ?? "local";
+
+  app.post("/v1/auth/device", async (c) => {
+    const base = deviceAvailable();
+    c.header("Cache-Control", "no-store");
+    const body = parseBody(
+      z.object({
+        ttlSeconds: z.number().int().min(60).max(86_400).optional(),
+        name: z.string().min(1).max(200).optional(),
+      }),
+      await c.req.json().catch(() => ({})),
+    );
+    const created = await requestDeviceSignIn(ctx, {
+      ttlSeconds: body.ttlSeconds,
+      name: body.name,
+      peer: devicePeer(c),
+      userAgent: c.req.header("User-Agent") ?? null,
+      requestId: c.get("requestId"),
+    });
+    return c.json({
+      deviceCode: created.deviceCode,
+      userCode: created.userCode,
+      verificationUri: `${base.origin}${base.pathname.replace(/\/+$/, "")}/device`,
+      expiresIn: created.expiresIn,
+      interval: created.interval,
+    }, 201);
+  });
+
+  app.post("/v1/auth/device/token", async (c) => {
+    deviceAvailable();
+    c.header("Cache-Control", "no-store");
+    const body = parseBody(z.object({ deviceCode: z.string().min(1).max(200) }), await c.req.json().catch(() => ({})));
+    const outcome = await pollDeviceSignIn(ctx, {
+      deviceCode: body.deviceCode,
+      userAgent: c.req.header("User-Agent") ?? null,
+      requestId: c.get("requestId"),
+    });
+    const reqId = c.get("requestId");
+    switch (outcome.kind) {
+      case "issued":
+        return c.json({ id: outcome.id, token: outcome.token, expiresAt: outcome.expiresAt }, 201);
+      case "pending":
+        c.header("Retry-After", String(outcome.interval));
+        return c.json(errorBody("AUTHORIZATION_PENDING", "Waiting for the person to approve this sign-in", reqId, { interval: outcome.interval }), 428);
+      case "slow_down":
+        c.header("Retry-After", String(outcome.interval));
+        return c.json(errorBody("SLOW_DOWN", `Polled too soon; wait ${outcome.interval} seconds between polls`, reqId, { interval: outcome.interval }), 429);
+      case "denied":
+        return c.json(errorBody("ACCESS_DENIED", "The sign-in was denied", reqId), 403);
+      case "consumed":
+        return c.json(errorBody("CONSUMED", "The credential of this sign-in was already collected", reqId, { credentialId: outcome.credentialId }), 410);
+      case "expired":
+      case "unknown":
+        return c.json(errorBody("EXPIRED", "The sign-in expired, or no sign-in has this device code", reqId), 410);
+    }
+  });
+
+  const approver = (c: Context) => {
+    const principal = c.get("principal") as Principal;
+    if (principal.identity.kind !== "human" || principal.credentialKind !== "browser" || !principal.authSessionId) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person signed in to the dashboard may decide a device sign-in");
+    }
+    return { identityId: principal.identity.id, authSessionId: principal.authSessionId };
+  };
+  const pendingForCode = async (c: Context, identityId: string, userCode: string) => {
+    const found = await findSignInByCode(ctx, { identityId, peer: devicePeer(c), userCode, requestId: c.get("requestId") });
+    if (found.kind === "locked") {
+      throw new DomainError("RATE_LIMITED", `Too many wrong codes; code entry is paused until ${found.retryAt}`, { retryAt: found.retryAt });
+    }
+    if (found.kind === "wrong") {
+      throw new DomainError("RESOURCE_NOT_FOUND", "No pending sign-in has this code: check the code the CLI shows (it expires after 10 minutes)");
+    }
+    return found.signIn;
+  };
+  const userCodeField = z.string().min(1).max(64);
+
+  // The typed code's sign-in, for the confirmation screen, with a fresh
+  // approval challenge. Wrong codes count against the attempt limits.
+  app.post("/v1/auth/device/lookup", async (c) => {
+    const base = deviceAvailable();
+    c.header("Cache-Control", "no-store");
+    const who = approver(c);
+    const body = parseBody(z.object({ userCode: userCodeField }), await c.req.json().catch(() => ({})));
+    const signIn = await pendingForCode(c, who.identityId, body.userCode);
+    const publicKey = await issueApprovalChallenge(ctx, relyingPartyOf(base.toString()), {
+      signInId: signIn.id,
+      identityId: who.identityId,
+      authSessionId: who.authSessionId,
+    });
+    return c.json({
+      signIn: {
+        userCode: signIn.userCode,
+        ttlSeconds: signIn.requestedTtl,
+        name: signIn.requestedName,
+        requesterIp: signIn.requesterIp,
+        requesterUserAgent: signIn.requesterUserAgent,
+        requestedAt: signIn.createdAt,
+        expiresAt: signIn.expiresAt,
+      },
+      approval: publicKey ? { publicKey } : null,
+    });
+  });
+
+  app.post("/v1/auth/device/approve", async (c) => {
+    const base = deviceAvailable();
+    c.header("Cache-Control", "no-store");
+    const who = approver(c);
+    const body = parseBody(
+      z.object({
+        userCode: userCodeField,
+        decision: z.enum(["approve", "deny"]),
+        assertion: z.record(z.string(), z.unknown()).optional(),
+      }),
+      await c.req.json().catch(() => ({})),
+    );
+    if (body.decision === "approve" && !body.assertion) {
+      throw new DomainError("VALIDATION_FAILED", "assertion: approving needs a fresh passkey assertion");
+    }
+    const signIn = await pendingForCode(c, who.identityId, body.userCode);
+    if (body.decision === "deny") {
+      await denyDeviceSignIn(ctx, { signInId: signIn.id, identityId: who.identityId, requestId: c.get("requestId") });
+      return c.json({ decision: "denied" });
+    }
+    await approveDeviceSignIn(ctx, relyingPartyOf(base.toString()), {
+      signInId: signIn.id,
+      identityId: who.identityId,
+      authSessionId: who.authSessionId,
+      assertion: body.assertion,
+      requestId: c.get("requestId"),
+    });
+    return c.json({ decision: "approved" });
   });
 
   // ---- Organizations

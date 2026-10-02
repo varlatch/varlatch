@@ -30,8 +30,11 @@ export interface HumanAuthDeps {
 
 export interface HumanAuth {
   handler: (request: Request) => Promise<Response>;
-  /** Resolve a request's Better Auth session to a Varlatch Identity ID. */
-  identityForSession: (headers: Headers) => Promise<string | null>;
+  /**
+   * Resolve a request's Better Auth session to a Varlatch Identity ID and
+   * the session's id (which device sign-in approval challenges bind to).
+   */
+  sessionFor: (headers: Headers) => Promise<{ identityId: string; sessionId: string } | null>;
 }
 
 function deriveSecret(rootKek: Buffer): string {
@@ -178,14 +181,15 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
 
   return {
     handler: (request) => auth.handler(request),
-    identityForSession: async (headers) => {
+    sessionFor: async (headers) => {
       const session = await auth.api.getSession({ headers });
-      if (!session?.user?.id) return null;
+      if (!session?.user?.id || !session.session?.id) return null;
       const res = await ctx.db.query(
         "SELECT identity_id FROM auth_user_links WHERE better_auth_user_id = $1",
         [session.user.id],
       );
-      return (res.rows[0] as { identity_id: string } | undefined)?.identity_id ?? null;
+      const identityId = (res.rows[0] as { identity_id: string } | undefined)?.identity_id;
+      return identityId ? { identityId, sessionId: session.session.id } : null;
     },
   };
 }

@@ -1534,6 +1534,144 @@ paths:
               schema: { $ref: "#/components/schemas/IssuedCliCredential" }
         default: { $ref: "#/components/responses/Error" }
 
+  /auth/device:
+    post:
+      tags: [identities]
+      operationId: startDeviceSignIn
+      security: []
+      summary: >
+        Start a device-authorization sign-in (capability auth.device; RFC
+        8628 adapted): a pending sign-in a person approves in the dashboard
+        at verificationUri by typing userCode. The deviceCode is the CLI's
+        bearer for collecting the credential: keep it private, never show
+        it. Pending sign-ins expire after expiresIn seconds and are capped
+        per peer and in total (RATE_LIMITED). Served only when the server's
+        public URL is HTTPS, or a loopback address (RESOURCE_NOT_FOUND
+        otherwise). Cache-Control no-store.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttlSeconds:
+                  type: integer
+                  minimum: 60
+                  maximum: 86400
+                  default: 43200
+                  description: Lifetime of the CLI credential the sign-in issues.
+                name: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Pending sign-in created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceSignInStarted" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/device/token:
+    post:
+      tags: [identities]
+      operationId: collectDeviceSignIn
+      security: []
+      summary: >
+        Poll a device-authorization sign-in, at most once per interval.
+        428 AUTHORIZATION_PENDING (details.interval) while it waits; 429
+        SLOW_DOWN when polled sooner, the interval growing by 5 seconds;
+        403 ACCESS_DENIED once denied; 410 EXPIRED once expired (or for an
+        unknown device code); 201 with a CLI credential of the approving
+        person, exactly once; 410 CONSUMED (details.credentialId, never the
+        token) once collected. Cache-Control no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceCode]
+              properties:
+                deviceCode: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Issued CLI credential (token shown exactly once)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedCliCredential" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/device/lookup:
+    post:
+      tags: [identities]
+      operationId: lookupDeviceSignIn
+      summary: >
+        The pending sign-in a person typed the code of, for the
+        confirmation screen, with a fresh passkey challenge for approving
+        it (bound to the sign-in, the person, and their dashboard session;
+        single use; 5 minutes). Requires a human's dashboard session bearer.
+        Wrong codes count against persistent limits per person, per peer,
+        and in total (RESOURCE_NOT_FOUND per wrong code, RATE_LIMITED with
+        details.retryAt once a limit is reached). Cache-Control no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userCode]
+              properties:
+                userCode:
+                  type: string
+                  minLength: 1
+                  maxLength: 64
+                  description: As shown by the CLI; case-insensitive, the dash optional.
+      responses:
+        "200":
+          description: The pending sign-in and an approval challenge
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceSignInLookup" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /auth/device/approve:
+    post:
+      tags: [identities]
+      operationId: decideDeviceSignIn
+      summary: >
+        Approve or deny a pending device-authorization sign-in. Requires a
+        human's dashboard session bearer; approving also requires a passkey
+        assertion over the challenge lookupDeviceSignIn issued for this
+        sign-in and session (PERMISSION_DENIED otherwise). STATE_CHANGED
+        when the sign-in is no longer pending. The code counts against the
+        same limits as lookupDeviceSignIn. Cache-Control no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userCode, decision]
+              properties:
+                userCode: { type: string, minLength: 1, maxLength: 64 }
+                decision: { type: string, enum: [approve, deny] }
+                assertion:
+                  type: object
+                  additionalProperties: true
+                  description: >
+                    WebAuthn authentication response (AuthenticationResponseJSON);
+                    required to approve.
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision]
+                properties:
+                  decision: { type: string, enum: [approved, denied] }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/grants:
     get:
       tags: [grants]
@@ -2865,6 +3003,11 @@ components:
         - MAINTENANCE
         - INTERNAL
         - STATE_CHANGED
+        - AUTHORIZATION_PENDING
+        - SLOW_DOWN
+        - ACCESS_DENIED
+        - EXPIRED
+        - CONSUMED
 
     NextCursor:
       type: [string, "null"]
@@ -3710,6 +3853,43 @@ components:
           type: string
           description: Returned exactly once; never retrievable again.
         expiresAt: { type: string, format: date-time }
+
+    DeviceSignInStarted:
+      type: object
+      required: [deviceCode, userCode, verificationUri, expiresIn, interval]
+      properties:
+        deviceCode:
+          type: string
+          description: The collecting bearer; returned once, never shown to anyone.
+        userCode: { type: string, description: "Eight letters shown as XXXX-XXXX" }
+        verificationUri: { type: string, description: Where the person types the code }
+        expiresIn: { type: integer, description: Seconds until the pending sign-in expires }
+        interval: { type: integer, description: Minimum seconds between polls }
+
+    DeviceSignInLookup:
+      type: object
+      required: [signIn, approval]
+      properties:
+        signIn:
+          type: object
+          required: [userCode, ttlSeconds, name, requesterIp, requesterUserAgent, requestedAt, expiresAt]
+          properties:
+            userCode: { type: string }
+            ttlSeconds: { type: integer, description: Lifetime of the credential approval issues }
+            name: { type: [string, "null"] }
+            requesterIp: { type: [string, "null"], description: The peer address the server saw }
+            requesterUserAgent: { type: [string, "null"] }
+            requestedAt: { type: string, format: date-time }
+            expiresAt: { type: string, format: date-time }
+        approval:
+          type: [object, "null"]
+          description: Null when the person has no passkey to approve with.
+          required: [publicKey]
+          properties:
+            publicKey:
+              type: object
+              additionalProperties: true
+              description: WebAuthn request options (PublicKeyCredentialRequestOptionsJSON).
 
     OidcBinding:
       type: object

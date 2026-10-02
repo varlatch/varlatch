@@ -23,6 +23,12 @@ export const ERROR_CODES = [
   "MAINTENANCE",
   "INTERNAL",
   "STATE_CHANGED",
+  // Device-authorization sign-in (RFC 8628 §3.5): the CLI's poll answers.
+  "AUTHORIZATION_PENDING",
+  "SLOW_DOWN",
+  "ACCESS_DENIED",
+  "EXPIRED",
+  "CONSUMED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -69,6 +75,7 @@ export const CAPABILITIES = [
   "invitations.manage",
   "organizations.rename",
   "audit.filters",
+  "auth.device",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
