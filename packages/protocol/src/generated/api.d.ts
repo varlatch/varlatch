@@ -69,7 +69,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename an organization's display name (capability organizations.rename). The name is trimmed. The slug, which the CLI, URLs, and configuration use, does not change. The audit event organization.renamed records the previous and the new name. Requires organization.manage; existence-hiding. */
+        patch: operations["renameOrganization"];
         trace?: never;
     };
     "/organizations/{org}/config-items": {
@@ -575,11 +576,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List the organization's invitations, newest first by creation time and ID (capability invitations.manage). Only pending invitations unless status is all. Never returns an invitation's token or anything derived from it. Requires identity.manage, like creating one; existence-hiding. */
+        get: operations["listInvitations"];
         put?: never;
         /** Mint a one-time human enrollment invitation. The caller composes the browser URL as <dashboard-origin>/enroll#<token>; the invitee enrolls a passkey on their own device — no shared secret ever exists. */
         post: operations["createInvitation"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/invitations/{invitation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a pending invitation (capability invitations.manage). Its token stops working at once, also for an enrollment already started with it. The audit event invitation.revoked records it. An invitation that is consumed, expired, or already revoked is refused with VERSION_CONFLICT, its status in details.status. Requires identity.manage; existence-hiding. */
+        delete: operations["revokeInvitation"];
         options?: never;
         head?: never;
         patch?: never;
@@ -943,6 +962,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** List the organization's Security Audit Events, newest first. Optional filters (capability audit.filters) are ANDed; each only narrows what audit.read already shows, and the order, and so every cursor, is the same with or without them. Pass the same filters with each cursor. A filter that is malformed, empty, or given twice is refused with VALIDATION_FAILED. Requires audit.read; existence-hiding. */
         get: operations["listAuditEvents"];
         put?: never;
         post?: never;
@@ -959,7 +979,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream the organization's Security Audit Events as NDJSON */
+        /** Stream the organization's Security Audit Events as NDJSON, oldest first. Takes the same optional filters as the listing (capability audit.filters), validated before the stream starts. Requires audit.read; existence-hiding. */
         get: operations["exportAuditEvents"];
         put?: never;
         post?: never;
@@ -1462,6 +1482,33 @@ export interface components {
              */
             credentialExpiresAt?: string | null;
         };
+        /**
+         * @description pending: can still be accepted. consumed: accepted, the invitee enrolled. expired: not accepted before expiresAt. revoked: revoked while pending. Every state but pending is final.
+         * @enum {string}
+         */
+        InvitationStatus: "pending" | "consumed" | "expired" | "revoked";
+        /** @description An organization invitation (capability invitations.manage). Never contains the invitation's token or anything derived from it: the token is returned once, at creation, and stored only hashed. */
+        Invitation: {
+            id: string;
+            /** @description The invitee's display name, as given at creation. */
+            name: string;
+            /**
+             * @description The Organization Role the invitee receives on enrolling.
+             * @enum {string}
+             */
+            orgRole: "admin" | "member";
+            status: components["schemas"]["InvitationStatus"];
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string;
+            /** @description The identity that created it; null for invitations created before 0.14.0. */
+            createdByIdentityId: string | null;
+            /** Format: date-time */
+            consumedAt: string | null;
+            /** Format: date-time */
+            revokedAt: string | null;
+        };
         Capability: {
             id: string;
             brokerIdentityId: string;
@@ -1494,6 +1541,8 @@ export interface components {
              * @description Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
              */
             lastUsedAt: string | null;
+            /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
+            client?: string | null;
         };
         IssuedAgentCredential: {
             id: string;
@@ -1673,6 +1722,8 @@ export interface components {
             useCount: number;
             /** @description True for the credential authenticating this request. */
             current: boolean;
+            /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
+            client?: string | null;
         };
         IssuedCliCredential: {
             id: string;
@@ -1846,6 +1897,22 @@ export interface components {
         limit: number;
         /** @description Opaque cursor from a previous response; never parse. */
         cursor: string;
+        /** @description Only events with this decision (capability audit.filters). */
+        auditDecision: "allow" | "deny" | "info";
+        /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+        auditEventType: string;
+        /** @description Only events whose actor is this identity ID (capability audit.filters). */
+        auditActorIdentityId: string;
+        /** @description Only events whose resource names this project ID (capability audit.filters). */
+        auditProjectId: string;
+        /** @description Only events whose resource names this environment ID (capability audit.filters). */
+        auditEnvironmentId: string;
+        /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+        auditItem: string;
+        /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+        auditSince: string;
+        /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+        auditUntil: string;
         /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
         idempotencyKey: string;
     };
@@ -1971,6 +2038,37 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Organization */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 1 to 200 characters once surrounding whitespace is trimmed. */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed organization */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3244,6 +3342,39 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listInvitations: {
+        parameters: {
+            query?: {
+                /** @description pending (the default) lists invitations that can still be accepted; all adds consumed, expired, and revoked ones. */
+                status?: "pending" | "all";
+                limit?: components["parameters"]["limit"];
+                /** @description Opaque cursor from a previous response; never parse. */
+                cursor?: components["parameters"]["cursor"];
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Invitations, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Invitation"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     createInvitation: {
         parameters: {
             query?: never;
@@ -3271,11 +3402,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description The invitation's ID, as listed and revoked (absent on servers without invitations.manage). */
+                        id?: string;
                         token: string;
                         /** Format: date-time */
                         expiresAt: string;
                     };
                 };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    revokeInvitation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                invitation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             default: components["responses"]["Error"];
         };
@@ -4255,6 +4411,22 @@ export interface operations {
                 limit?: components["parameters"]["limit"];
                 /** @description Opaque cursor from a previous response; never parse. */
                 cursor?: components["parameters"]["cursor"];
+                /** @description Only events with this decision (capability audit.filters). */
+                decision?: components["parameters"]["auditDecision"];
+                /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+                eventType?: components["parameters"]["auditEventType"];
+                /** @description Only events whose actor is this identity ID (capability audit.filters). */
+                actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description Only events whose resource names this project ID (capability audit.filters). */
+                projectId?: components["parameters"]["auditProjectId"];
+                /** @description Only events whose resource names this environment ID (capability audit.filters). */
+                environmentId?: components["parameters"]["auditEnvironmentId"];
+                /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+                item?: components["parameters"]["auditItem"];
+                /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+                since?: components["parameters"]["auditSince"];
+                /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+                until?: components["parameters"]["auditUntil"];
             };
             header?: never;
             path: {
@@ -4282,7 +4454,24 @@ export interface operations {
     };
     exportAuditEvents: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Only events with this decision (capability audit.filters). */
+                decision?: components["parameters"]["auditDecision"];
+                /** @description Only events of this type, such as value.written; a value ending in .* is a prefix, so value.* matches value.written and value.rotation_started but not values.x (capability audit.filters). */
+                eventType?: components["parameters"]["auditEventType"];
+                /** @description Only events whose actor is this identity ID (capability audit.filters). */
+                actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description Only events whose resource names this project ID (capability audit.filters). */
+                projectId?: components["parameters"]["auditProjectId"];
+                /** @description Only events whose resource names this environment ID (capability audit.filters). */
+                environmentId?: components["parameters"]["auditEnvironmentId"];
+                /** @description Only events about this Config Item: its name is the resource's itemName (value writes, deletions, rotations) or listed in the metadata's items (disclosures, validations, Capabilities) (capability audit.filters). */
+                item?: components["parameters"]["auditItem"];
+                /** @description Only events at or after this RFC 3339 timestamp, with a time zone (capability audit.filters). */
+                since?: components["parameters"]["auditSince"];
+                /** @description Only events before this RFC 3339 timestamp, with a time zone; must not be before since (capability audit.filters). */
+                until?: components["parameters"]["auditUntil"];
+            };
             header?: never;
             path: {
                 /** @description Organization slug or ID */

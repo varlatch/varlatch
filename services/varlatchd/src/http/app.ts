@@ -12,13 +12,22 @@ import {
 import { CAPABILITIES } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
+import { clientLabel } from "../auth/client-label.js";
 import { recordAuditEvent } from "../audit/events.js";
+import { auditFilterConditions, parseAuditFilters } from "../audit/filters.js";
 import { serializeAuditEvent } from "../audit/serialize.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError, notFound } from "../domain/errors.js";
 import { schemaIsCurrent } from "../db/migrate.js";
 import { getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
-import { createOrganization, getOrganization, getOrgRole, listOrganizationsFor, type OrgRow } from "../domain/orgs.js";
+import {
+  createOrganization,
+  getOrganization,
+  getOrgRole,
+  listOrganizationsFor,
+  renameOrganization,
+  type OrgRow,
+} from "../domain/orgs.js";
 import { createProject, renameProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
 import {
   createEnvironment,
@@ -57,6 +66,7 @@ import {
   retireIdentity,
 } from "../domain/identities.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
+import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import {
   createConnection,
   createTarget,
@@ -212,6 +222,30 @@ const serialize = {
     };
   },
 };
+
+function serializeInvitation(r: InvitationRow) {
+  return {
+    id: r.id,
+    name: r.invite_name ?? "Invited user",
+    orgRole: r.invite_role,
+    status: invitationStatus(r),
+    createdAt: iso(r.created_at),
+    expiresAt: iso(r.expires_at),
+    createdByIdentityId: r.created_by ?? null,
+    consumedAt: r.consumed_at ? iso(r.consumed_at) : null,
+    revokedAt: r.revoked_at ? iso(r.revoked_at) : null,
+  };
+}
+
+/** A list's `limit` query parameter: an integer in 1..500, 100 when absent. */
+function parseLimit(raw: string | undefined): number {
+  if (raw === undefined) return 100;
+  const limit = Number(raw);
+  if (!/^\d{1,3}$/.test(raw) || limit < 1 || limit > 500) {
+    throw new DomainError("VALIDATION_FAILED", "limit must be an integer in 1..500");
+  }
+  return limit;
+}
 
 function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   const parsed = schema.safeParse(body);
@@ -420,6 +454,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         name: "dashboard session bearer",
         expiresAt,
         actorIdentityId: identityId,
+        client: clientLabel(c.req.header("User-Agent")),
       });
       return c.json({ token: issued.token, identityId, expiresAt });
     });
@@ -610,7 +645,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.get("/v1/me/credentials", async (c) => {
     const principal = c.get("principal");
     const res = await ctx.db.query(
-      `SELECT id, kind, name, created_at, expires_at, revoked_at, max_uses, use_count
+      `SELECT id, kind, name, created_at, expires_at, revoked_at, max_uses, use_count, client
        FROM credentials
        WHERE identity_id = $1 ORDER BY created_at DESC`,
       [principal.identity.id],
@@ -626,6 +661,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         maxUses: r.max_uses ?? null,
         useCount: r.use_count ?? 0,
         current: r.id === principal.credentialId,
+        client: r.client ?? null,
       })),
       nextCursor: null,
     });
@@ -682,6 +718,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       expiresAt,
       actorIdentityId: principal.identity.id,
       metadata: { exchangedFromCredentialId: principal.credentialId, ttlSeconds },
+      // The CLI's own User-Agent: this request comes from the CLI, not the browser.
+      client: clientLabel(c.req.header("User-Agent")),
     });
     });
     c.header("Cache-Control", "no-store");
@@ -713,6 +751,17 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json(serialize.org(org));
+  });
+
+  // Display name only (capability organizations.rename); the slug never
+  // changes. Organization administration, like the org's webhooks.
+  app.patch("/v1/organizations/:org", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ name: z.string().trim().min(1).max(200) }), await c.req.json());
+    const renamed = await renameOrganization(ctx, org.id, body.name, principal.identity.id);
+    return c.json(serialize.org(renamed));
   });
 
   // ---- Cross-project Config Item name search (ADR-0030, capability
@@ -1673,6 +1722,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         expiresAt: cr.expires_at ? iso(cr.expires_at) : null,
         revokedAt: cr.revoked_at ? iso(cr.revoked_at) : null,
         lastUsedAt: cr.last_used_at ? iso(cr.last_used_at) : null,
+        client: cr.client ?? null,
       })),
       nextCursor: null,
     });
@@ -1810,7 +1860,41 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       principal.identity.id,
     );
     // The caller composes the browser URL: <dashboard-origin>/enroll#<token>.
-    return c.json({ token: invite.token, expiresAt: invite.expiresAt }, 201);
+    return c.json({ id: invite.id, token: invite.token, expiresAt: invite.expiresAt }, 201);
+  });
+
+  // Listing and revocation (capability invitations.manage) are authorized
+  // like creation. Metadata only: no token, nothing derived from one.
+  app.get("/v1/organizations/:org/invitations", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    const status = c.req.query("status") ?? "pending";
+    if (status !== "pending" && status !== "all") {
+      throw new DomainError("VALIDATION_FAILED", "status must be pending or all");
+    }
+    const limit = parseLimit(c.req.query("limit"));
+    const cursor = c.req.query("cursor");
+    const after = cursor === undefined ? null : decodeCursor(cursor);
+    if (cursor !== undefined && after?.length !== 2) throw new DomainError("VALIDATION_FAILED", "Invalid cursor");
+    const { rows, more } = await listInvitations(ctx, org.id, {
+      status,
+      limit,
+      after: after as [string, string] | null,
+    });
+    const last = rows[rows.length - 1];
+    return c.json({
+      items: rows.map(serializeInvitation),
+      nextCursor: more && last ? encodeCursor([last.cursor_time, last.id]) : null,
+    });
+  });
+
+  app.delete("/v1/organizations/:org/invitations/:invitation", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    await revokeInvitation(ctx, org.id, routeParam(c, "invitation"), principal.identity.id);
+    return c.body(null, 204);
   });
 
   // ---- Grants
@@ -2825,14 +2909,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const cursor = c.req.query("cursor");
     const decoded = cursor ? decodeCursor(cursor) : null;
     if (cursor && !decoded) throw new DomainError("VALIDATION_FAILED", "Invalid cursor");
+    // Filters (capability audit.filters) only add conditions: the order,
+    // and so every cursor, is the same with or without them.
+    const filters = parseAuditFilters((name) => c.req.queries(name));
     const params: unknown[] = [org.id, limit + 1];
-    let where = "organization_id = $1";
+    const where = ["organization_id = $1"];
     if (decoded) {
-      where += " AND (occurred_at, id) < ($3::timestamptz, $4)";
       params.push(decoded[0], decoded[1]);
+      where.push("(occurred_at, id) < ($3::timestamptz, $4)");
     }
+    where.push(...auditFilterConditions(filters, params));
     const res = await ctx.db.query(
-      `SELECT *, occurred_at::text AS cursor_time FROM audit_events WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT $2`,
+      `SELECT *, occurred_at::text AS cursor_time FROM audit_events WHERE ${where.join(" AND ")} ORDER BY occurred_at DESC, id DESC LIMIT $2`,
       params,
     );
     const rows = res.rows as Record<string, unknown>[];
@@ -2848,15 +2936,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
+    // Validated before the stream starts, so a bad filter is an ordinary error response.
+    const filters = parseAuditFilters((name) => c.req.queries(name));
     const highWater = await ctx.db.query("SELECT COALESCE(max(event_order), 0)::text AS value FROM audit_events WHERE organization_id = $1", [org.id]);
     const upper = (highWater.rows[0] as { value: string }).value;
     let cursor = "0";
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
+        const params: unknown[] = [org.id, cursor, upper];
+        const where = [
+          "organization_id = $1 AND event_order > $2::bigint AND event_order <= $3::bigint",
+          ...auditFilterConditions(filters, params),
+        ];
         const batch = await ctx.db.query(
-          "SELECT *, event_order::text AS position FROM audit_events WHERE organization_id = $1 AND event_order > $2::bigint AND event_order <= $3::bigint ORDER BY event_order LIMIT 250",
-          [org.id, cursor, upper],
+          `SELECT *, event_order::text AS position FROM audit_events WHERE ${where.join(" AND ")} ORDER BY event_order LIMIT 250`,
+          params,
         );
         const rows = batch.rows as Record<string, unknown>[];
         if (rows.length === 0) { controller.close(); return; }

@@ -156,6 +156,29 @@ export async function latestEventCursor(ctx: AppCtx): Promise<MirrorCursor> {
  * audit stream a complete change feed: the signal carries the event-type
  * prefixes ("grant", "project", …) seen in the batch, metadata only.
  */
+/**
+ * Audit events that record a read or a decision, not a change. They still
+ * advance a signal's lastEventId (the audit log refreshes on every event) but
+ * touch no domain: a page re-reading after its own audited read would
+ * otherwise read again forever.
+ */
+const READ_ONLY_EVENTS = new Set([
+  "value.disclosed",
+  "value.validated",
+  "secret.disclosed",
+  "secret.validated",
+  "authorization.denied",
+  "authentication.failed",
+  "authentication.passkey_enrollment_started",
+  "capability.exercised",
+  "capability.denied",
+]);
+
+/** The domain an event changes ("grant", "project", …), or null for reads and decisions. */
+export function changedDomain(eventType: string): string | null {
+  return READ_ONLY_EVENTS.has(eventType) ? null : (eventType.split(".")[0] as string);
+}
+
 export async function syncNewMirrorEvents(
   ctx: AppCtx,
   config: MirrorConfig,
@@ -209,7 +232,8 @@ export async function syncNewMirrorEvents(
           lastEventId: "",
           occurredAt: "",
         };
-        signal.domains.add((ev.event_type as string).split(".")[0] as string);
+        const domain = changedDomain(ev.event_type as string);
+        if (domain) signal.domains.add(domain);
         signal.lastEventId = ev.id as string;
         signal.occurredAt = ev.occurred_at as string;
         identitySignals.set(identityId, signal);
@@ -232,7 +256,8 @@ export async function syncNewMirrorEvents(
       lastEventId: "",
       occurredAt: "",
     };
-    signal.domains.add((ev.event_type as string).split(".")[0] as string);
+    const domain = changedDomain(ev.event_type as string);
+    if (domain) signal.domains.add(domain);
     signal.lastEventId = ev.id as string;
     signal.occurredAt = ev.occurred_at as string;
     signals.set(orgId, signal);

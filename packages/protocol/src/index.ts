@@ -2,7 +2,7 @@
 export * from "./errors.js";
 export type { paths, components, operations } from "./generated/api.js";
 
-import type { components } from "./generated/api.js";
+import type { components, operations } from "./generated/api.js";
 
 /** Convenience aliases over the generated OpenAPI component schemas. */
 export type Organization = components["schemas"]["Organization"];
@@ -25,6 +25,8 @@ export type ContractRevision = components["schemas"]["ContractRevision"];
 export type Identity = components["schemas"]["Identity"];
 export type Profile = components["schemas"]["Profile"];
 export type CreatedIdentity = components["schemas"]["CreatedIdentity"];
+export type Invitation = components["schemas"]["Invitation"];
+export type InvitationStatus = components["schemas"]["InvitationStatus"];
 export type Action = components["schemas"]["Action"];
 export type GrantScope = components["schemas"]["GrantScope"];
 export type Grant = components["schemas"]["Grant"];
@@ -36,6 +38,11 @@ export type RequirementTarget = components["schemas"]["RequirementTarget"];
 export type TailnetSelector = components["schemas"]["TailnetSelector"];
 export type ConfigItemSearchResult = components["schemas"]["ConfigItemSearchResult"];
 export type AuditEvent = components["schemas"]["AuditEvent"];
+/** Server-side audit filters (capability audit.filters): the listing's and export's optional query parameters. */
+export type AuditEventFilters = Omit<
+  NonNullable<operations["listAuditEvents"]["parameters"]["query"]>,
+  "limit" | "cursor"
+>;
 export type Meta = components["schemas"]["Meta"];
 export type CapabilitySummary = components["schemas"]["Capability"];
 export type IssuedCapability = components["schemas"]["IssuedCapability"];
