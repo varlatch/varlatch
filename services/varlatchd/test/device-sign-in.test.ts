@@ -305,6 +305,17 @@ describe("approval needs a fresh passkey assertion bound to the sign-in, the ide
     expect((await signInRow()).status).toBe("pending");
   });
 
+  it("refuses a challenge issued to another identity under the same session id (the identity binding alone)", async () => {
+    const human = await approvingHuman(ctx, "Admin", adminId);
+    const other = await approvingHuman(ctx, "Other");
+    const started = (await client.start()).body;
+    const { challenge } = (await client.lookup(human.token, started.userCode)).body.approval.publicKey;
+    // The other identity's bearer carries the same session id, so only the identity binding tells them apart.
+    const sameSessionId = await other.session(`session-${adminId}`);
+    expect((await client.decide(sameSessionId, started.userCode, "approve", other.passkey.assert(challenge))).status).toBe(403);
+    expect((await signInRow()).status).toBe("pending");
+  });
+
   it("refuses an assertion for another origin or relying party", async () => {
     const human = await approvingHuman(ctx, "Admin", adminId);
     const started = (await client.start()).body;
