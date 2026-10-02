@@ -44,10 +44,10 @@ export function LiveUpdatesStatus() {
       aria-live="polite"
       data-testid="live-updates-status"
       data-status={state.status}
-      className="fixed top-3 right-4 z-50 flex items-center gap-2 rounded-full border border-bd bg-raised px-3 py-1.5 text-xs text-muted shadow-sm"
+      className="fixed right-5 top-3 z-50 flex items-center gap-2 rounded-full border border-bd bg-raised px-3.5 py-1.5 text-xs text-muted shadow-pop"
       title="The dashboard stays correct: it reloads what is on screen from the server until live updates return."
     >
-      <span className="size-2 rounded-full bg-muted animate-pulse" aria-hidden="true" />
+      <span className="size-2 animate-pulse rounded-full bg-warn" aria-hidden="true" />
       {state.status === "reconnecting" ? "Live updates reconnecting" : "Live updates unavailable"}
       {every}
     </div>
