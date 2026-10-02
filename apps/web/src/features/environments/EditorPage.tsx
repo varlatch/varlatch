@@ -210,7 +210,7 @@ export function EditorPage() {
     if (!selected) return;
     const el = listRef.current?.querySelector(`[data-row="${CSS.escape(selected)}"]`);
     const r = el?.getBoundingClientRect();
-    if (el && r && (r.top < 0 || r.bottom > window.innerHeight - 80)) el.scrollIntoView({ block: "center" });
+    if (el && r && (r.top < 0 || r.bottom > window.innerHeight)) el.scrollIntoView({ block: "center" });
   }, [selected, values.data]);
 
   const select = (name: string | null) => {
