@@ -9,6 +9,10 @@ import { useSession } from "../../lib/session";
 import { Button, Card, Input, Mono, Select, cn } from "../../components/ui";
 import { PlatformLogo } from "../../components/brand-logos";
 import { platformMeta } from "./platform-meta";
+import { destinationLabel, syncTargetItemStatus } from "./syncStatus";
+
+// Moved to ./syncStatus; re-exported for existing importers.
+export { syncTargetItemStatus } from "./syncStatus";
 
 /**
  * Environment integrations (ADR-0031 §9): the UI face of Sync Targets.
@@ -21,21 +25,6 @@ const STATE_LABEL: Record<string, { label: string; className: string; icon: type
   paused: { label: "paused", className: "text-muted", icon: Pause },
   disabled: { label: "disabled", className: "text-deny", icon: TriangleAlert },
 };
-
-export function syncTargetItemStatus(
-  target: SyncTarget,
-  names: { name: string; state: string }[] | undefined,
-  itemName: string,
-): "synced" | "pending" | "failed" {
-  const destName =
-    target.mapping.kind === "explicit"
-      ? (target.mapping.items.find((i) => i.name === itemName)?.rename ?? itemName)
-      : itemName;
-  const entry = names?.find((n) => n.name.toLowerCase() === destName.toLowerCase());
-  if (entry?.state.startsWith("failed")) return "failed";
-  if (entry?.state === "written" && !target.needsSync) return "synced";
-  return "pending";
-}
 
 /**
  * Per-target synced/pending/failed for one rotating item (ADR-0031 §5):
@@ -77,14 +66,6 @@ export function RotationSyncStatus({ item }: { item: string }) {
       })}
     </span>
   );
-}
-
-function destinationLabel(t: SyncTarget): string {
-  // convex targets have an empty destination: the Connection's deployment
-  // URL is the destination.
-  return t.destination.repo
-    ? `${t.destination.repo}${t.destination.environment ? `#${t.destination.environment}` : ""}`
-    : (t.destination.applicationUuid ?? "deployment");
 }
 
 function mappingLabel(t: SyncTarget): string {
