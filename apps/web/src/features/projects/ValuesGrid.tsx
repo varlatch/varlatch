@@ -445,7 +445,7 @@ export function ValuesGrid() {
           role="grid"
           aria-label={`${slug} values`}
           className="w-full table-fixed border-collapse text-sm"
-          style={{ minWidth: 260 + roots.length * 250 }}
+          style={{ minWidth: 260 + roots.length * 280 }}
           onKeyDown={onGridKey}
         >
           <colgroup>

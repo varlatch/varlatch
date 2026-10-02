@@ -256,6 +256,8 @@ export function EditorPage() {
     reveal: () => void reveal([row.name]),
     hide: () => disclosure.toggleLocal(envName, row.name),
     edit: () => {
+      // On narrow screens the panel is a modal drawer: close it to edit in the list.
+      if (!wide) select(null);
       setActive(row.name);
       setEditing(row.name);
     },
@@ -401,11 +403,7 @@ export function EditorPage() {
         />
         <div className="flex-1" />
         {authorizedSecrets.length > 0 &&
-          (revealedHere ? (
-            <Button icon={<EyeOff size={14} />} onClick={() => disclosure.maskEnv(envName)}>
-              Mask all
-            </Button>
-          ) : (
+          !revealedHere && (
             <Button
               icon={<Eye size={14} />}
               data-testid="reveal-all"
@@ -415,7 +413,7 @@ export function EditorPage() {
             >
               Reveal all secrets <span className="text-xs text-muted">audited</span>
             </Button>
-          ))}
+          )}
       </div>
 
       <DisclosureNotice envs={revealedHere ? [envName] : []} onMaskAll={disclosure.maskAll} />

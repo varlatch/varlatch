@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Link, Outlet, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ellipsis, KeyRound, RefreshCw, ScrollText, ShieldOff, Trash2 } from "lucide-react";
+import { Ellipsis, KeyRound, Layers, RefreshCw, ScrollText, ShieldOff, Trash2 } from "lucide-react";
 import type { Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
@@ -96,9 +96,22 @@ export function EnvironmentLayout() {
 
   const deleteEnvironment = async () => {
     if (children.length > 0) {
-      toast.info(`Delete the derived environments first`, {
-        description: `${listNames(children.map((c) => c.name))} ${children.length === 1 ? "derives" : "derive"} from ${envName}.`,
+      // The server deletes an environment only once nothing derives from it.
+      const open = await confirm({
+        title: `Delete the derived environments first`,
+        description: `${plural(children.length, "environment")} derive${children.length === 1 ? "s" : ""} from ${envName}. Delete ${children.length === 1 ? "it" : "them"}, then ${envName}.`,
+        consequences: children.map((c) => ({
+          icon: <Layers size={15} />,
+          text: (
+            <span>
+              <span className="font-mono">{c.name}</span> <span className="text-muted">({c.kind})</span>
+            </span>
+          ),
+        })),
+        confirmLabel: `Open ${children[0]!.name}`,
+        cancelLabel: "Close",
       });
+      if (open) navigate(envPath(org, slug, children[0]!.name));
       return;
     }
     const current = await api.effectiveConfiguration(org, slug, envName).catch(() => null);
