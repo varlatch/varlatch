@@ -265,6 +265,17 @@ fixes.
 - **Behaviour change:** `varlatch login` checks its options strictly: an
   unknown option, or two sign-in methods, exit 64. Before, an unknown
   option was ignored.
+- **Self-hosting: client addresses behind proxies.** varlatchd now reads a
+  caller's address from `X-Forwarded-For`, but only when the request comes
+  from a proxy named in the new `VARLATCH_TRUSTED_PROXIES`. It reads the
+  header from the right, so an address a caller writes into it is never
+  used. The Compose files set the variable to the dashboard's nginx and
+  their TLS proxy (Caddy, Tailscale serve, or Coolify's Traefik), and the
+  dashboard's nginx now passes the header on. The per-client limits (600
+  requests a minute; device sign-in's pending and wrong-code caps) and the
+  device sign-in confirmation now see each caller's own address instead of
+  the proxy's. Behind your own reverse proxy, add it to the variable; see
+  "Client addresses behind proxies" in `infra/compose/README.md`.
 - The agent evaluation of commit `b61a791` (under Coding agents) predates
   device sign-in and does not cover it.
 

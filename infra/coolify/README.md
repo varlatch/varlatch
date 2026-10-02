@@ -129,6 +129,14 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
    loaded **and** canary-verified, so a wrong KEK fails here instead of
    silently starting.
 
+   varlatchd's log should also show `trusted proxy coolify-proxy is <address>`.
+   varlatchd needs it to tell callers apart behind Coolify's Traefik, for its
+   per-client limits and the device sign-in confirmation. If the log says
+   `coolify-proxy does not resolve`, set `VARLATCH_TRUSTED_PROXIES` to
+   `varlatch-web,<Traefik's address on this stack's network>`. Until then,
+   every public caller counts as one client (see "Client addresses behind
+   proxies" in `infra/compose/README.md`).
+
 6. Nothing to do for the Application Plane. The `convex-deploy` one-shot
    runs on **every** deploy of this Compose file (it carries no `deploy`
    profile here, unlike the plain Compose file) and reconciles the

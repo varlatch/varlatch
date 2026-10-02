@@ -7,6 +7,7 @@ import { MirrorStatusReporter } from "./mirror/status.js";
 import { readFileSync, writeFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
+import { TrustedProxies, clientAddressResolver } from "./http/client-address.js";
 import { whois } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
@@ -116,8 +117,11 @@ async function serveCommand(): Promise<void> {
     publicUrl: issuer,
   });
   startBackupControl(ctx, maintenance, config.convexUrl ? { convexUrl: config.convexUrl, issuer } : null);
+  // The ordinary listener sits behind the dashboard's nginx (and often a TLS
+  // ingress): believe X-Forwarded-For from the configured proxies only.
+  const trustedProxies = config.trustedProxies ? await new TrustedProxies(config.trustedProxies).start() : null;
   const app = buildApp(ctx, {
-    clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
+    clientAddress: clientAddressResolver(c => getConnInfo(c).remote.address ?? "unknown", trustedProxies),
     issuer,
     publicUrl: issuer,
     humanAuth,

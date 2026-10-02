@@ -6,6 +6,13 @@
 # Edit this file, never the generated one, then run `pnpm compose:generate`.
 
 services:
+  varlatchd:
+    environment:
+      # Coolify's Traefik (container coolify-proxy) sets X-Forwarded-For;
+      # nginx appends Traefik's address. A name that does not resolve from
+      # varlatchd is logged at startup and trusted only once it resolves.
+      VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web,coolify-proxy}
+
   varlatch-web:
     # Explicit default-network membership: Coolify swaps the implicit default
     # network for its own on services without a networks key, which separates

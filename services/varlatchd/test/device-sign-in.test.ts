@@ -12,6 +12,7 @@ import { buildApp, type BuildAppOptions } from "../src/http/app.js";
 import { PUBLIC_URL, RP, approvingHuman, deviceClient } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { registerSoftPasskey } from "./helpers/soft-authenticator.js";
+import { TrustedProxies, clientAddressResolver } from "../src/http/client-address.js";
 
 /**
  * Device-authorization sign-in (design notes "Device-authorization
@@ -427,6 +428,96 @@ describe("persistent attempt limits on code entry", () => {
       .toEqual(["global"]);
     await ctx.db.query("UPDATE device_code_attempt_windows SET window_started_at = now() - interval '11 minutes' WHERE scope = 'global'");
     expect((await client.lookup(bystander.token, started.userCode)).status).toBe(200);
+  });
+});
+
+describe("client addresses behind trusted proxies", () => {
+  // nginx (10.0.0.2) in front of varlatchd, a TLS ingress (10.0.0.3) in front of nginx.
+  const NGINX = "10.0.0.2";
+  const INGRESS = "10.0.0.3";
+  let proxies: TrustedProxies;
+  beforeEach(async () => {
+    proxies = await new TrustedProxies(`${NGINX},${INGRESS}`).start();
+    // The test's socket peer comes from a header only the test sets; the real one is getConnInfo.
+    app = buildApp(ctx, {
+      publicUrl: PUBLIC_URL,
+      clientAddress: clientAddressResolver((c) => c.req.header("x-test-socket-peer") ?? "203.0.113.250", proxies),
+    });
+  });
+  /** A request as nginx forwards it: the client's address (with anything the client forged) and the ingress's. */
+  const viaProxies = (client: string, forged = "") => ({
+    "x-test-socket-peer": NGINX,
+    "X-Forwarded-For": `${forged ? `${forged}, ` : ""}${client}, ${INGRESS}`,
+  });
+  const start = (headers: Record<string, string>) =>
+    app.request("/v1/auth/device", { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: "{}" });
+
+  it("caps pending sign-ins per client: client A's cap does not block client B", async () => {
+    for (let i = 0; i < 10; i++) expect((await start(viaProxies("192.0.2.10"))).status).toBe(201);
+    expect((await start(viaProxies("192.0.2.10"))).status).toBe(429);
+    expect((await start(viaProxies("192.0.2.20"))).status).toBe(201);
+    expect((await rows("SELECT DISTINCT requester_ip FROM device_sign_ins ORDER BY 1")).map((r) => r.requester_ip)).toEqual(["192.0.2.10", "192.0.2.20"]);
+  });
+
+  it("forged forwarding headers cannot evade the cap: through the proxies, and directly", async () => {
+    // Through the proxies, the client forges a different address every time.
+    for (let i = 0; i < 10; i++) expect((await start(viaProxies("192.0.2.10", `198.18.0.${i}`))).status).toBe(201);
+    expect((await start(viaProxies("192.0.2.10", "198.18.0.99"))).status).toBe(429);
+    // Directly to varlatchd (not a trusted proxy): its header is ignored entirely.
+    for (let i = 0; i < 10; i++) {
+      expect((await start({ "x-test-socket-peer": "198.51.100.9", "X-Forwarded-For": `198.18.1.${i}` })).status).toBe(201);
+    }
+    expect((await start({ "x-test-socket-peer": "198.51.100.9", "X-Forwarded-For": "198.18.1.99" })).status).toBe(429);
+    expect((await rows("SELECT DISTINCT requester_ip FROM device_sign_ins ORDER BY 1")).map((r) => r.requester_ip)).toEqual(["192.0.2.10", "198.51.100.9"]);
+  });
+
+  it("keeps the deliberate global cap across clients", async () => {
+    await ctx.db.query(
+      `INSERT INTO device_sign_ins (id, device_code_hash, user_code, requested_ttl, requester_ip, expires_at)
+       SELECT 'dsi_' || g, md5(g::text), translate(lpad(g::text, 8, '0'), '0123456789', 'BCDFGHJKLM'), 60, 'peer-' || g,
+              clock_timestamp() + interval '10 minutes'
+       FROM generate_series(1, 1000) g`,
+    );
+    expect((await start(viaProxies("192.0.2.30"))).status).toBe(429);
+  });
+
+  it("shows the resolved requester address on the confirmation", async () => {
+    const human = await approvingHuman(ctx, "Admin", adminId);
+    const started = await (await start({ ...viaProxies("192.0.2.10", "6.6.6.6"), "User-Agent": "varlatch-cli/0.14.0 (linux; x64)" })).json();
+    const found = await app.request("/v1/auth/device/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${human.token}`, ...viaProxies("192.0.2.77") },
+      body: JSON.stringify({ userCode: started.userCode }),
+    });
+    expect((await found.json()).signIn.requesterIp).toBe("192.0.2.10");
+  });
+
+  it("limits wrong codes per client: client A's lockout does not block client B", async () => {
+    const started = (await client.start()).body;
+    const wrong = async (token: string, from: string) =>
+      (await app.request("/v1/auth/device/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...viaProxies(from) },
+        body: JSON.stringify({ userCode: "BBBB-BBBB" }),
+      })).status;
+    const humans = await Promise.all(Array.from({ length: 5 }, (_, i) => approvingHuman(ctx, `W${i}`)));
+    for (const h of humans) for (let i = 0; i < 4; i++) expect(await wrong(h.token, "192.0.2.10")).toBe(404);
+    const fresh = await approvingHuman(ctx, "Fresh");
+    const lookupFrom = (from: string) =>
+      app.request("/v1/auth/device/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${fresh.token}`, ...viaProxies(from) },
+        body: JSON.stringify({ userCode: started.userCode }),
+      });
+    expect((await lookupFrom("192.0.2.10")).status).toBe(429);
+    expect((await lookupFrom("192.0.2.20")).status).toBe(200);
+  });
+
+  it("applies the per-client request window to the resolved client", async () => {
+    const meta = (from: string) => app.request("/v1/meta", { headers: viaProxies(from) });
+    for (let i = 0; i < 600; i++) await meta("192.0.2.10");
+    expect((await meta("192.0.2.10")).status).toBe(429);
+    expect((await meta("192.0.2.20")).status).toBe(200);
   });
 });
 

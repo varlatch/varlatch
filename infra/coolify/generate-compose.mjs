@@ -128,6 +128,10 @@ function normalize(config) {
         return i < 0 ? [e, null] : [e.slice(0, i), e.slice(i + 1)];
       }));
     }
+    // A mapping has no order, and docker places a key an overlay sets differently in the two spellings.
+    if (s.environment && typeof s.environment === "object") {
+      s.environment = Object.fromEntries(Object.entries(s.environment).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+    }
     for (const list of ["volumes", "ports", "secrets"]) {
       if (Array.isArray(s[list])) s[list] = [...s[list]].map((v) => JSON.stringify(v)).sort();
     }
