@@ -42,6 +42,12 @@ export const REGION_END = "# varlatch:end";
 export const TOML_PARTS = ["[shell_environment_policy.set]", "[mcp_servers.varlatch]"] as const;
 export type TomlPart = (typeof TOML_PARTS)[number];
 
+/** Where each of the CLI's tables lives in the parsed document. */
+const PART_PATHS: Readonly<Record<TomlPart, readonly [string, string]>> = {
+  "[shell_environment_policy.set]": ["shell_environment_policy", "set"],
+  "[mcp_servers.varlatch]": ["mcp_servers", "varlatch"],
+};
+
 interface Region {
   start: number;
   /** Just after the end marker. */
@@ -67,6 +73,8 @@ function regionOf(text: string): Region | null | "damaged" {
   let current: string[] | null = null;
   for (const line of text.slice(innerStart, endAt).split(/\r?\n/)) {
     if ((TOML_PARTS as readonly string[]).includes(line)) {
+      // A table given twice is not TOML, and keeping the last would drop the first (perhaps the human's).
+      if (parts.has(line)) return "damaged";
       current = [];
       parts.set(line, current);
     } else if (/^\s*\[/.test(line)) {
@@ -125,21 +133,36 @@ export function withTomlPart(
 }
 
 /**
- * `current` without the CLI's table `header`, when it holds exactly `owned`
- * (the lines the CLI writes); the region goes with the line breaks install
- * added once it is empty. A damaged region, or a table whose lines differ
- * from `owned`, is left to the human: taking it out would take the
- * human's edits with it.
+ * `current` without the CLI's table `header`, when that table is exactly
+ * what the CLI writes: both its lines in the region and the whole table as
+ * the parser reads it. The end marker is a comment, so a setting the human
+ * appends after it still belongs to the region's last table; comparing the
+ * parsed table catches that. The region goes with the line breaks install
+ * added once it is empty. Anything else is left to the human, byte for
+ * byte: a damaged region, a customized table, a file that does not parse,
+ * or a removal after which the rest of the file would say something else.
  */
 export function withoutTomlPart(current: string, header: TomlPart, owned: readonly string[]): TomlEdit {
   const region = regionOf(current);
   if (region === "damaged") return { refused: DAMAGED };
   if (region === null || !region.parts.has(header)) return { next: current };
-  if (canonicalData(region.parts.get(header)) !== canonicalData([...owned])) {
-    return { refused: `its ${header} table holds lines the CLI did not write` };
-  }
+  const customized = { refused: `its ${header} table holds settings the CLI did not write` };
+  if (canonicalData(region.parts.get(header)) !== canonicalData([...owned])) return customized;
+  const before = parseTomlOrNull(current);
+  if (before === null) return { refused: "it does not parse as TOML" };
+  const [parent, key] = PART_PATHS[header];
+  const parentTable = before[parent];
+  if (!isTable(parentTable) || canonicalData(parentTable[key]) !== canonicalData(parseTomlOrNull(owned.join("\n")))) return customized;
   region.parts.delete(header);
-  if (region.parts.size === 0) return { next: withoutOwned(current, region.start, region.end) };
   const eol = ownedEol(current, region.start, region.end);
-  return { next: current.slice(0, region.start) + regionText(region.parts, eol) + current.slice(region.end) };
+  const next =
+    region.parts.size === 0 ? withoutOwned(current, region.start, region.end) : current.slice(0, region.start) + regionText(region.parts, eol) + current.slice(region.end);
+  // The rest of the file must say exactly what it said: the document without the table (and without its parent
+  // table when the CLI's header was all that made it).
+  const { [key]: _ours, ...siblings } = parentTable;
+  const { [parent]: _parent, ...rest } = before;
+  const allowed = [canonicalData({ ...rest, [parent]: siblings }), ...(Object.keys(siblings).length === 0 ? [canonicalData(rest)] : [])];
+  const after = parseTomlOrNull(next ?? "");
+  if (after === null || !allowed.includes(canonicalData(after))) return { refused: "taking it out would change what the rest of the file says" };
+  return { next };
 }

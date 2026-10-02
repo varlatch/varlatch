@@ -209,7 +209,10 @@ describe("the CLI's TOML region", () => {
 
   it("leaves a table the human edited inside the region, rather than taking their lines with it", () => {
     const edited = `model = "o5"\n\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\nenv = { X = "1" }\n${REGION_END}\n`;
-    expect(withoutTomlPart(edited, "[mcp_servers.varlatch]", OWNED["[mcp_servers.varlatch]"])).toEqual({ refused: "its [mcp_servers.varlatch] table holds lines the CLI did not write" });
+    expect(withoutTomlPart(edited, "[mcp_servers.varlatch]", OWNED["[mcp_servers.varlatch]"])).toEqual({ refused: "its [mcp_servers.varlatch] table holds settings the CLI did not write" });
+    // After the end marker (a comment), a setting still belongs to the region's last table.
+    const appended = `model = "o5"\n\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\n${REGION_END}\nenv = { X = "1" }\n`;
+    expect(withoutTomlPart(appended, "[mcp_servers.varlatch]", OWNED["[mcp_servers.varlatch]"])).toEqual({ refused: "its [mcp_servers.varlatch] table holds settings the CLI did not write" });
   });
 });
 
@@ -312,6 +315,60 @@ describe("--remove and install never lose a human's TOML (review of #68), throug
     expect(r.stdout + r.stderr).not.toMatch(/TypeError|not iterable|\bat \w+ \(/);
     expect(r.stdout).toMatch(/already has an mcp_servers\.varlatch entry that differs from "varlatch mcp"; the CLI leaves it/);
     expect(text(root, CONFIG)).toBe(own);
+  });
+
+  it("a setting appended after the end marker belongs to the last table: removal refuses, for the MCP table and the guardrail table", async () => {
+    const keep = 'model = "keep"\n';
+    for (const [flags, appended, path] of [
+      [["--mcp"], 'env = { CUSTOM_SETTING = "keep-me" }\n', ["mcp_servers", "varlatch", "env"]],
+      [["--guardrails"], 'CUSTOM_SETTING = "keep-me"\n', ["shell_environment_policy", "set", "CUSTOM_SETTING"]],
+    ] as [string[], string, string[]][]) {
+      const root = project({ [CONFIG]: keep });
+      const installed = await cli(["agents", "install", "--agent", "codex", ...flags], root);
+      expect(installed.code, installed.stderr).toBe(0);
+      const customized = `${text(root, CONFIG)}${appended}`;
+      writeFileSync(join(root, CONFIG), customized);
+      const r = await cli(["agents", "install", "--remove"], root);
+      expect(r.code, r.stderr).toBe(0);
+      expect(text(root, CONFIG), flags.join(" ")).toBe(customized);
+      expect(r.stdout).toMatch(/Left in place: .*\.codex\/config\.toml .*holds settings the CLI did not write/);
+      const parsed = parseToml(text(root, CONFIG)) as Record<string, Record<string, Record<string, unknown>>>;
+      const value = path.reduce<unknown>((at, k) => (at as Record<string, unknown>)?.[k], parsed);
+      expect(JSON.stringify(value)).toMatch(/keep-me/);
+      expect(parsed.model).toBe("keep");
+    }
+  });
+
+  it("combined removal: the untouched table goes, the customized one stays with the human's setting, meaning unchanged", async () => {
+    const root = project({ [CONFIG]: 'model = "keep"\n' });
+    expect((await cli(["agents", "install", "--agent", "codex", "--guardrails", "--mcp"], root)).code).toBe(0);
+    writeFileSync(join(root, CONFIG), `${text(root, CONFIG)}env = { CUSTOM_SETTING = "keep-me" }\n`);
+    const r = await cli(["agents", "install", "--remove"], root);
+    expect(r.code, r.stderr).toBe(0);
+    const parsed = parseToml(text(root, CONFIG)) as { model: string; shell_environment_policy?: unknown; mcp_servers: { varlatch: { command: string; args: string[]; env: { CUSTOM_SETTING: string } } } };
+    expect(parsed.shell_environment_policy).toBeUndefined();
+    expect(parsed.mcp_servers.varlatch).toEqual({ command: "varlatch", args: ["mcp"], env: { CUSTOM_SETTING: "keep-me" } });
+    expect(parsed.model).toBe("keep");
+    expect(r.stdout).toMatch(/Left in place: \[mcp_servers\.varlatch\] in \.codex\/config\.toml/);
+  });
+
+  it("a known table given twice in the region (the human's edited copy first): left byte for byte, never silently deleted", async () => {
+    const twice = `model = "keep"\n\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\nenv = { MINE = "1" }\n\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\n${REGION_END}\n`;
+    const root = project({ [CONFIG]: twice });
+    const r = await cli(["agents", "install", "--remove"], root);
+    expect(r.code, r.stderr).toBe(0);
+    expect(text(root, CONFIG)).toBe(twice);
+    expect(r.stdout).toMatch(/Left in place: \[mcp_servers\.varlatch\] in \.codex\/config\.toml \(its varlatch:begin\/varlatch:end block is damaged/);
+  });
+
+  it("control: an unrelated table added after the untouched region does not stop the removal", async () => {
+    const root = project({ [CONFIG]: 'model = "keep"\n' });
+    expect((await cli(["agents", "install", "--agent", "codex", "--guardrails", "--mcp"], root)).code).toBe(0);
+    writeFileSync(join(root, CONFIG), `${text(root, CONFIG)}\n[profiles.mine]\nmodel = "x"\n`);
+    const r = await cli(["agents", "install", "--remove"], root);
+    expect(r.code, r.stderr).toBe(0);
+    expect(parseToml(text(root, CONFIG))).toEqual({ model: "keep", profiles: { mine: { model: "x" } } });
+    expect(r.stdout).not.toMatch(/Left in place: .*config\.toml/);
   });
 
   it("control: a region the CLI wrote, untouched, is still taken out byte for byte", async () => {
