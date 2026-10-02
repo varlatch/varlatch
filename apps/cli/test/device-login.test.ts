@@ -35,12 +35,17 @@ function fakeServer(host = "127.0.0.1") {
     start: { status: 201, body: null as unknown } as Answer,
     polls: [] as Answer[],
     acceptedTokens: new Set([ISSUED.token, OLD.token]),
+    /** Paths that never answer. */
+    stalled: new Set<string>(),
+    /** Called with each request's path before it is answered. */
+    onRequest: (_path: string) => {},
   };
   const server = http.createServer((req, res) => {
     let body = "";
     req.on("data", (d: Buffer) => (body += d.toString()));
     req.on("end", () => {
       seen.push({ method: req.method ?? "", path: req.url ?? "", body, at: Date.now(), authorization: req.headers.authorization ?? "" });
+      state.onRequest(req.url ?? "");
       const send = (answer: Answer) => {
         if (answer.stall) return; // never answers
         res.writeHead(answer.status, { "Content-Type": "application/json", ...answer.headers });
@@ -52,6 +57,7 @@ function fakeServer(host = "127.0.0.1") {
           : state.start);
       }
       if (req.method === "POST" && req.url === "/v1/auth/device/token") return send(state.polls.shift() ?? pending(1));
+      if (state.stalled.has(req.url ?? "")) return;
       const bearer = (req.headers.authorization ?? "").replace(/^Bearer /, "");
       if (!state.acceptedTokens.has(bearer)) return send(apiError(401, "INVALID_CREDENTIAL"));
       if (req.url === "/v1/meta") return send({ status: 200, body: { serverVersion: "0.14.0", apiMajor: 1, capabilities: ["auth.device"] } });
@@ -116,28 +122,35 @@ function home(): string {
 }
 
 function cli(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string } = {}): Promise<Result> {
+  return spawned(args, config, options).done;
+}
+
+/** The CLI as a child process, to signal it mid-flight; `done` settles when it exits. */
+function spawned(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string } = {}) {
   const started = Date.now();
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [bundle, ...args], {
+  let child!: ReturnType<typeof spawn>;
+  const done = new Promise<Result>((resolve, reject) => {
+    child = spawn(process.execPath, [bundle, ...args], {
       cwd: dir,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: config, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    child.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
+    child.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
     child.on("error", reject);
     child.on("close", (code) => resolve({ code, stdout, stderr, ms: Date.now() - started }));
-    child.stdin.end(options.stdin ?? "");
+    child.stdin!.end(options.stdin ?? "");
   });
+  return { child, done };
 }
 
 const pendingPath = (config: string) => join(config, "varlatch", "pending-sign-ins.json");
 const pendingFile = (config: string) =>
   existsSync(pendingPath(config)) ? (JSON.parse(readFileSync(pendingPath(config), "utf8")) as { servers: Record<string, any> }) : null;
 const credentials = (config: string) =>
-  existsSync(join(config, "varlatch", "credentials.json"))
+  existsSync(join(config, "varlatch", "credentials.json")) && statSync(join(config, "varlatch", "credentials.json")).isFile()
     ? (JSON.parse(readFileSync(join(config, "varlatch", "credentials.json"), "utf8")) as { servers: Record<string, any> }).servers
     : {};
 const devicePosts = (s: ReturnType<typeof fakeServer>) => s.seen.filter((r) => r.path.startsWith("/v1/auth/device"));
@@ -266,6 +279,88 @@ describe("login --wait", () => {
     expect(credentials(config)[fake.origin].token).toBe(ISSUED.token);
     const deletes = fake.seen.filter((s) => s.method === "DELETE");
     expect(deletes.map((d) => [d.path, d.authorization])).toEqual([[`/v1/me/credentials/${OLD.credentialId}`, `Bearer ${OLD.token}`]]);
+  });
+
+  it("keeps the pending entry, naming the collected credential, when verification is interrupted; the next --wait names it", async () => {
+    const config = home();
+    mkdirSync(join(config, "varlatch"), { recursive: true });
+    await started(config);
+    writeFileSync(join(config, "varlatch", "credentials.json"), JSON.stringify({ servers: { [fake.origin]: OLD } }));
+    fake.state.polls = [issued];
+    fake.state.stalled.add("/v1/meta");
+    const run = spawned(["login", "--server", fake.origin, "--wait", "--timeout", "30"], config);
+    for (let i = 0; i < 200 && !fake.seen.some((s) => s.path === "/v1/meta"); i++) await new Promise((r) => setTimeout(r, 25));
+    run.child.kill("SIGKILL"); // interrupted during verification
+    await run.done;
+    expect(pendingFile(config)!.servers[fake.origin]).toMatchObject({ deviceCode: DEVICE_CODE, collectedCredentialId: ISSUED.id });
+    expect(credentials(config)[fake.origin]).toEqual(OLD);
+    // The next --wait learns from the server that it was collected, and names it.
+    fake.state.stalled.clear();
+    fake.state.polls = [apiError(410, "CONSUMED", { credentialId: ISSUED.id })];
+    const next = await cli(["login", "--server", fake.origin, "--wait"], config);
+    expect(next.code).toBe(EXIT.denied);
+    expect(next.stderr).toMatch(/never stored by this CLI .* Revoke credential crd_issued/);
+    expect(credentials(config)[fake.origin]).toEqual(OLD);
+    expect(pendingFile(config)).toBeNull();
+    expectNoSecrets(next);
+  });
+
+  it("names the collected credential from its own record when the server no longer knows the sign-in", async () => {
+    const config = await started();
+    fake.state.polls = [issued];
+    fake.state.acceptedTokens.delete(ISSUED.token); // verification fails
+    expect((await cli(["login", "--server", fake.origin, "--wait"], config)).code).toBe(EXIT.denied);
+    expect(pendingFile(config)!.servers[fake.origin].collectedCredentialId).toBe(ISSUED.id);
+    fake.state.polls = [apiError(410, "EXPIRED")]; // deleted a day after expiry
+    const later = await cli(["login", "--server", fake.origin, "--wait"], config);
+    expect(later.code).toBe(EXIT.denied);
+    expect(later.stderr).toMatch(/Revoke credential crd_issued/);
+  });
+
+  it("reports a failed save with the credential to revoke, keeps the pending entry, and exits 1", async () => {
+    const config = await started();
+    // The credentials file's path is taken by a directory: no write can succeed, for any user.
+    mkdirSync(join(config, "varlatch", "credentials.json"), { recursive: true });
+    fake.state.polls = [issued];
+    const r = await cli(["login", "--server", fake.origin, "--wait"], config);
+    expect(r.code).toBe(EXIT.failure);
+    expect(r.stderr).toMatch(/verified, but it could not be stored .* Revoke credential crd_issued/);
+    expect(pendingFile(config)!.servers[fake.origin].collectedCredentialId).toBe(ISSUED.id);
+    expectNoSecrets(r);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("a failed save leaves the old stored credential as it was (read-only directory)", async () => {
+    const config = home();
+    mkdirSync(join(config, "varlatch"), { recursive: true });
+    await started(config);
+    writeFileSync(join(config, "varlatch", "credentials.json"), JSON.stringify({ servers: { [fake.origin]: OLD } }));
+    // Read-only once verification starts, after the collected credential was recorded.
+    fake.state.onRequest = (path) => {
+      if (path === "/v1/meta") chmodSync(join(config, "varlatch"), 0o500);
+    };
+    try {
+      fake.state.polls = [issued];
+      const r = await cli(["login", "--server", fake.origin, "--wait"], config);
+      expect(r.code).toBe(EXIT.failure);
+      expect(r.stderr).toMatch(/could not be stored .* Revoke credential crd_issued/);
+      expect(credentials(config)[fake.origin]).toEqual(OLD);
+      expect(pendingFile(config)!.servers[fake.origin].deviceCode).toBe(DEVICE_CODE);
+      expect(fake.seen.some((s) => s.method === "DELETE")).toBe(false);
+    } finally {
+      chmodSync(join(config, "varlatch"), 0o700);
+    }
+  });
+
+  it("treats CONSUMED as done when the stored credential is that sign-in's (an entry left behind)", async () => {
+    const config = home();
+    mkdirSync(join(config, "varlatch"), { recursive: true });
+    await started(config);
+    writeFileSync(join(config, "varlatch", "credentials.json"), JSON.stringify({ servers: { [fake.origin]: { token: ISSUED.token, credentialId: ISSUED.id } } }));
+    fake.state.polls = [apiError(410, "CONSUMED", { credentialId: ISSUED.id })];
+    const r = await cli(["login", "--server", fake.origin, "--wait"], config);
+    expect(r.code).toBe(EXIT.ok);
+    expect(r.stdout).toMatch(/Already logged in/);
+    expect(pendingFile(config)).toBeNull();
   });
 
   it("exits 75 at the deadline with the entry kept, and says to run --wait again; --json reports the pending state", async () => {

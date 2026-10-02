@@ -288,23 +288,45 @@ export async function waitDeviceLogin(server: string, options: WaitOptions, io: 
         return EXIT.denied;
       case "expired":
         deletePendingSignIn(server);
+        if (entry.collectedCredentialId) return collectedButNotStored(entry.collectedCredentialId, io, startNext);
         if (io.json) io.json({ state: "expired" });
         io.err(`varlatch login: the sign-in expired before it was approved and collected (a code lasts 10 minutes). Nothing was stored. Start again: ${startNext}`);
         return EXIT.denied;
-      case "consumed":
+      case "consumed": {
+        const credentialId = polled.credentialId ?? entry.collectedCredentialId ?? null;
+        // An earlier --wait stored it and only failed to remove this entry.
+        if (credentialId && loadCredential(server)?.credentialId === credentialId) {
+          deletePendingSignIn(server);
+          if (io.json) io.json({ state: "signed-in", credentialId, expiresAt: loadCredential(server)?.expiresAt ?? null });
+          else io.out(`Already logged in to ${server} with this sign-in's credential.`);
+          return EXIT.ok;
+        }
         deletePendingSignIn(server);
-        if (io.json) io.json({ state: "consumed", credentialId: polled.credentialId });
-        io.err(
-          "varlatch login: this sign-in's credential was already collected, but its answer never reached this CLI. " +
-            `Nothing was stored; the credential this CLI had, if any, is unchanged. Revoke credential ${polled.credentialId ?? "(id unknown)"} ` +
-            `in the dashboard (Account, Sessions), then start again: ${startNext}`,
-        );
-        return EXIT.denied;
+        return collectedButNotStored(credentialId, io, startNext);
+      }
       case "issued":
-        deletePendingSignIn(server);
+        // Before anything else can fail or be interrupted: record which
+        // credential was collected. The entry stays until the credential is
+        // stored, so a later --wait can still name it for revocation.
+        try {
+          savePendingSignIn({ ...entry, interval, collectedCredentialId: polled.credential.id });
+        } catch {
+          // The messages below name the credential either way.
+        }
         return storeCollected(server, polled.credential, deadline, io, startNext);
     }
   }
+}
+
+/** The sign-in's credential was collected, but never stored here: name it for revocation. */
+function collectedButNotStored(credentialId: string | null, io: DeviceLoginIO, startNext: string): number {
+  if (io.json) io.json({ state: "consumed", credentialId });
+  io.err(
+    "varlatch login: this sign-in's credential was already collected, but never stored by this CLI (its answer was lost, " +
+      "or an earlier --wait was interrupted or failed). The credential this CLI had, if any, is unchanged. " +
+      `Revoke credential ${credentialId ?? "(id unknown)"} in the dashboard (Account, Sessions), then start again: ${startNext}`,
+  );
+  return EXIT.denied;
 }
 
 function waitFailure(
@@ -367,16 +389,32 @@ async function storeCollected(
       `varlatch login: the sign-in was approved, but the new credential could not be verified (${why}); it was not stored. ` +
         `Revoke credential ${credential.id} in the dashboard (Account, Sessions), then start again: ${startNext}`,
     );
+    // The pending entry stays, naming the credential: a later --wait says it again.
     if (err instanceof VarlatchApiError) return err.status === 401 || err.status === 403 ? EXIT.denied : EXIT.unavailable;
     return EXIT.unavailable;
   }
   const replaced = replacedCredential(loadCredential(server), credential.token);
-  saveCredential(server, {
-    token: credential.token,
-    issuedAt: new Date((io.now ?? Date.now)()).toISOString(),
-    expiresAt: credential.expiresAt,
-    credentialId: credential.id,
-  });
+  try {
+    saveCredential(server, {
+      token: credential.token,
+      issuedAt: new Date((io.now ?? Date.now)()).toISOString(),
+      expiresAt: credential.expiresAt,
+      credentialId: credential.id,
+    });
+  } catch (err) {
+    io.err(
+      `varlatch login: the sign-in was approved and its credential verified, but it could not be stored ` +
+        `(${err instanceof Error ? err.message : String(err)}). The credential this CLI had, if any, is unchanged. ` +
+        `Revoke credential ${credential.id} in the dashboard (Account, Sessions), fix the problem, then start again: ${startNext}`,
+    );
+    return EXIT.failure;
+  }
+  // Only now, with the credential stored, is the pending entry done with.
+  try {
+    deletePendingSignIn(server);
+  } catch (err) {
+    io.err(`varlatch: the pending sign-in could not be removed (${err instanceof Error ? err.message : String(err)}); the credential is stored.`);
+  }
   if (io.json) io.json({ state: "signed-in", credentialId: credential.id, expiresAt: credential.expiresAt });
   else io.out(`Logged in to ${server} (server ${meta.serverVersion}, API v${meta.apiMajor}). The credential expires at ${credential.expiresAt}.`);
   if (replaced) {

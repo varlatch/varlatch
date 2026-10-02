@@ -254,8 +254,36 @@ function writeCredentialsFile(file: CredentialsFile, env: NodeJS.ProcessEnv): vo
   }
   const path = credentialsPath(env);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
-  chmodSync(path, 0o600);
+  // Replaced atomically: a failed write (a full disk, a read-only
+  // directory) leaves the stored credentials exactly as they were.
+  writePrivateFile(path, `${JSON.stringify(file, null, 2)}\n`);
+}
+
+/**
+ * Write `text` to `path` readable by the owner only: a temporary file in
+ * the same directory, created 0600 and flushed, then renamed over `path`.
+ * Readers see the old file or the new one, never a partial write, and the
+ * new file is never readable by anyone else, not even briefly.
+ */
+function writePrivateFile(path: string, text: string): void {
+  const temporary = join(dirname(path), `.${parsePath(path).base}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    writeSync(fd, text);
+    fsyncSync(fd);
+  } catch (err) {
+    closeSync(fd);
+    try { unlinkSync(temporary); } catch { /* already gone */ }
+    throw err;
+  }
+  closeSync(fd);
+  try {
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, path);
+  } catch (err) {
+    try { unlinkSync(temporary); } catch { /* already gone */ }
+    throw err;
+  }
 }
 
 export function loadToken(server: string, env: NodeJS.ProcessEnv = process.env): string | null {
@@ -334,6 +362,12 @@ export interface PendingSignIn {
   startedAt: string;
   /** When the last `--wait` polled, so the next one keeps the interval. */
   lastPolledAt?: string;
+  /**
+   * The credential a `--wait` collected, recorded before it is verified and
+   * stored: if that is interrupted or fails, the entry still names the live
+   * credential to revoke.
+   */
+  collectedCredentialId?: string;
 }
 
 interface PendingSignInsFile {
@@ -373,24 +407,7 @@ function writePendingFile(file: PendingSignInsFile, env: NodeJS.ProcessEnv): voi
     if (existsSync(path)) unlinkSync(path);
     return;
   }
-  // A temporary file in the same directory, then a rename: readers see the
-  // old file or the new one, never a partial write, and the new file is
-  // never readable by anyone else, not even briefly.
-  const temporary = join(dir, `.pending-sign-ins.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
-  const fd = openSync(temporary, "wx", 0o600);
-  try {
-    writeSync(fd, `${JSON.stringify(file, null, 2)}\n`);
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-  try {
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, path);
-  } catch (err) {
-    try { unlinkSync(temporary); } catch { /* already gone */ }
-    throw err;
-  }
+  writePrivateFile(path, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 export function loadPendingSignIn(server: string, env: NodeJS.ProcessEnv = process.env): PendingSignIn | null {
