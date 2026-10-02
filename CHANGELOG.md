@@ -196,6 +196,15 @@ fixes.
   printed for the human's own terminal; quote a Placeholder variable in a
   `varlatch request` header with double quotes (single quotes send the
   literal `$NAME`).
+- From the fifth agent evaluation (it failed): the skill, its references,
+  and the AGENTS.md block tell a coding agent to work in the environment
+  the human named, or else the project's default
+  (`varlatch --assisted context --json` shows it), never another
+  environment or server to get around missing configuration; and to create
+  values only when the task asks for it (setting up, importing, a requested
+  new value), in the environment it is for, or after the human approves
+  that item there. Starting or checking an app never authorizes creating
+  values. The CLI's behaviour is unchanged.
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,

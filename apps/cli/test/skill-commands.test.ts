@@ -539,6 +539,39 @@ describe("correcting an item's sensitivity: references/contract.md, run as writt
   });
 });
 
+describe("the environment and creation scope (after the fifth agent evaluation)", () => {
+  it("every instruction file says: the named environment or the resolved default; create only what the task asks for", () => {
+    const block = agentsBlock();
+    const skill = SKILL_FILES["SKILL.md"] as string;
+    const run = SKILL_FILES["references/run.md"] as string;
+    const setup = SKILL_FILES["references/setup.md"] as string;
+    expect(block).toMatch(/Work in the environment the human named; otherwise the project's default \(`varlatch --assisted context --json`\s+shows `environment` and `server`\)\. Never switch to another environment or server to get around missing configuration\./);
+    expect(block).toMatch(/Create values only when the task asks for it \(setting up, importing, a requested new value\), in the environment it\s+is for, or after the human approves that item there; such a task needs no second approval\. Starting or checking an\s+app never authorizes creating values: report a missing one and hand it over\. Never invent configuration to make a\s+run succeed\./);
+    expect(skill).toMatch(/Work in the environment the human named; otherwise in the project's\s+default\*\*, which `varlatch --assisted context --json` shows/);
+    expect(skill).toMatch(/Never switch to\s+another environment or server to get around missing configuration\./);
+    expect(skill).toMatch(/\*\*Create values only when the\s+task asks for it\*\*/);
+    expect(skill).toMatch(/A task that already asks for the creation needs no second\s+approval/);
+    expect(skill).toMatch(/Starting or checking an app that is already configured\s+never authorizes creating values/);
+    expect(skill).toMatch(/Never invent configuration to make a run succeed\./);
+    expect(run).toMatch(/never run\s+in another environment or server instead, and never add values just to\s+make the run work/);
+    expect(run).toMatch(/Create a value only when the task asks for it/);
+    expect(setup).toMatch(/A task to move the file in authorizes creating its items in the\s+intended environment/);
+  });
+
+  it("the command the instructions name resolves the environment: the default, or the one named", async () => {
+    const repo = project();
+    const resolved = await cli(["--assisted", "context", "--json"], repo);
+    expect(resolved.code, resolved.stderr).toBe(0);
+    const ctx = JSON.parse(resolved.stdout) as { environment: string; environmentSource: string; server: string };
+    expect(ctx.environment).toBe("development");
+    expect(ctx.environmentSource).toBeTruthy();
+    expect(ctx.server).toBe(origin);
+    const named = JSON.parse((await cli(["--assisted", "context", "-e", "production", "--json"], repo)).stdout) as { environment: string; environmentSource: string };
+    expect(named.environment).toBe("production");
+    expect(named.environmentSource).not.toBe(ctx.environmentSource);
+  });
+});
+
 describe("completion gaps from the second agent evaluation", () => {
   it("the AGENTS.md block: no init, the full onboarding, readiness is validate, the human-terminal handoff, named replacement, no agent-added unmasking, listed Placeholders only", () => {
     const block = agentsBlock();

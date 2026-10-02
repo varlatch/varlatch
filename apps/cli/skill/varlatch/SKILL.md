@@ -44,7 +44,11 @@ long as you follow these rules.
    chose) is the human's to enter: hand it over, and never invent one.
    (Inside an agent-safe run your variables hold Placeholders, not secrets:
    see rule 8.)
-4. **Run anything that needs configuration with**
+4. **Work in the environment the human named; otherwise in the project's
+   default**, which `varlatch --assisted context --json` shows
+   (`environment`, with `environmentSource`, and `server`). Never switch to
+   another environment or server to get around missing configuration.
+   **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too
    short to mask. Report the names in the error, then stop and ask. Each
@@ -79,7 +83,15 @@ long as you follow these rules.
    unless that item is named with `--replace <NAME>`; add it only with the
    human's approval for that item. A value inherited from a parent
    environment counts: setting it in the child overrides it. `--replace`
-   records the override, not an approval. An item's sensitivity is part of
+   records the override, not an approval. **Create values only when the
+   task asks for it** (setting up, importing, or a requested new value), in
+   the environment it is for, or after the human approves that item in that
+   environment. A task that already asks for the creation needs no second
+   approval: an import may create the file's items in the intended
+   environment, and a requested new random value is generated without
+   asking again. Starting or checking an app that is already configured
+   never authorizes creating values: report a missing one and hand it over
+   (rule 6). Never invent configuration to make a run succeed. An item's sensitivity is part of
    the Contract and applies to the whole project: approval to change it
    covers that item, in every environment, and nothing else. **Never delete a value without
    the human's approval for that item in that environment.** In assisted
