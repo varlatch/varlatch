@@ -104,6 +104,38 @@ describe("incremental mirror publishing", () => {
     expect(again).toHaveLength(0);
   });
 
+  it("moves the signal on reads without touching a domain", async () => {
+    const created = await post("/v1/organizations", { name: "Reads", slug: "reads" });
+    const org = (await created.json()) as { id: string };
+    const cursor = await latestEventCursor(ctx);
+    // A page reading values records value.disclosed: the audit log must see
+    // it, but pages watching the "value" domain must not re-read on it.
+    await recordAuditEvent(ctx.db, {
+      eventType: "value.disclosed",
+      decision: "allow",
+      actorIdentityId: "idn_reader",
+      organizationId: org.id,
+      action: "config.value.read",
+    });
+    const reads: Upsert[] = [];
+    const first = await syncNewMirrorEvents(ctx, config, cursor, fakeConvex(reads));
+    const readSignal = reads.filter((u) => u.kind === "changeSignal");
+    expect(readSignal).toHaveLength(1);
+    expect(readSignal[0]!.data.domains).toEqual([]);
+    expect(readSignal[0]!.data.lastEventId).toBeTruthy();
+
+    await recordAuditEvent(ctx.db, {
+      eventType: "value.written",
+      decision: "info",
+      actorIdentityId: "idn_writer",
+      organizationId: org.id,
+      action: "config.value.write",
+    });
+    const writes: Upsert[] = [];
+    await syncNewMirrorEvents(ctx, config, first.cursor, fakeConvex(writes));
+    expect(writes.filter((u) => u.kind === "changeSignal")[0]!.data.domains).toEqual(["value"]);
+  });
+
   it("skips events without an organization but still advances the cursor", async () => {
     const cursor = await latestEventCursor(ctx);
     // An org-less audit event with no actor (e.g. bootstrap/setup flows).
