@@ -89,6 +89,13 @@ export function Shell() {
     if (orgParam) rememberOrg(orgParam);
   }, [orgParam]);
 
+  // The palette's "Keyboard shortcuts" action.
+  useEffect(() => {
+    const onShortcuts = () => setShortcutsOpen(true);
+    window.addEventListener("varlatch:shortcuts", onShortcuts);
+    return () => window.removeEventListener("varlatch:shortcuts", onShortcuts);
+  }, []);
+
   useHotkeys(
     {
       "?": () => setShortcutsOpen(true),
