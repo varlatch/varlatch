@@ -86,9 +86,12 @@ varlatch --assisted <command> [args...]
   `--export-context`, and earlier `--allow-unmasked` options.
 - **Marking an item as not secret** changes the Contract, for every
   environment of the project: show the active revision
-  (`contract show`), write its `contract` field to a file, change only
-  that item's `sensitive`, push the file (`contract push --file
-  <contract.json> --json`), and activate the returned revision. The
+  (`contract show`), write its `contract` field to a file in a new
+  temporary directory, change only that item's `sensitive`, push the file
+  (`contract push --file <contract.json> --json`), and activate the
+  returned revision. When the refused run overrode the server, the message
+  says so (`add --server <url> to every contract command`): every contract
+  command needs it, or it changes the default server's Contract. The
   coding-agent guide prints the steps: `varlatch agents guide contract`.
 - The CLI cannot tell a human from a coding agent that leaves out
   `--assisted` in a shell without a marker. A command printed for the

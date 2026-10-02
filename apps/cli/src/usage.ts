@@ -59,7 +59,7 @@ Usage:
   varlatch import <file> [--dry-run] [--contract [--plain <NAME>]...] [--replace <NAME>]... [--delete-source] [--json] [-e <env>]
                (store a dotenv file's values without printing them; --contract adds new items to a Contract
                 revision, Secrets unless --plain; --delete-source removes the file once every value is stored)
-  varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show>
+  varlatch contract <push --schema <.env.schema> | push --file <json> | activate <rev> | show> [--server <url>]
                    push [--semantics <version|latest>]   (pin Contract Semantics; default keeps the active version)
                    push [--json]                         (the new revision as JSON; show always prints JSON)
   varlatch types --out <file.ts|file.py> [--revision <id>] [--check]

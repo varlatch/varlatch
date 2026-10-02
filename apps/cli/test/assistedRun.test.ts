@@ -82,6 +82,10 @@ describe("planAssistedRedaction", () => {
     expect(lines).toMatch(/Showing it unmasked is the human's alone, in their own terminal .*\n {6}varlatch run -e production --strict --allow-unmasked PIN -- <command>/);
     expect(lines).toMatch(/marking PIN as not secret \(a Contract change, for the whole project\): varlatch --assisted agents guide contract/);
     expect(lines).not.toMatch(/contract update/);
+    // The Contract is the server's: an overridden server is named for every contract command.
+    expect(lines).not.toMatch(/add --server/);
+    const overridden = unmaskableRefusal(["PIN"], { target: "-e production --server https://b.example" }).join("\n");
+    expect(overridden).toMatch(/varlatch --assisted agents guide contract \(add --server https:\/\/b\.example to every contract command\)/);
     expect(lines).not.toMatch(/1234567|abcdefg/);
   });
 });

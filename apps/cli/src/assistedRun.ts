@@ -94,6 +94,8 @@ export interface RemedyContext {
 export function unmaskableRefusal(items: string[], how: RemedyContext): string[] {
   const first = items[0] as string;
   const several = items.length > 1;
+  // The Contract is the server's: an overridden server must reach every contract command, or they change another server's.
+  const server = /(?:^|\s)--server (\S+)/.exec(how.target)?.[1];
   // The human's override, for their own terminal: no --assisted (assisted mode refuses it).
   const retry = ["varlatch run", how.target, ...(how.runOptions ?? []), `--allow-unmasked ${first} -- <command>`].join(" ");
   return [
@@ -103,7 +105,8 @@ export function unmaskableRefusal(items: string[], how: RemedyContext): string[]
     `  - Only if they approve replacing ${first} with a new random value (it overwrites the current one):`,
     `      varlatch --assisted values set ${first} ${how.target} --replace ${first} --generate hex:32` + (several ? "   (each item needs its own approval)" : ""),
     `    A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set ${first} ${how.target}`,
-    `  - Only if they approve marking ${first} as not secret (a Contract change, for the whole project): varlatch --assisted agents guide contract`,
+    `  - Only if they approve marking ${first} as not secret (a Contract change, for the whole project): varlatch --assisted agents guide contract` +
+      (server ? ` (add --server ${server} to every contract command)` : ""),
     `  - Showing it unmasked is the human's alone, in their own terminal (assisted mode refuses it; every other Secret stays masked):`,
     `      ${retry}`,
     "Nothing was started.",

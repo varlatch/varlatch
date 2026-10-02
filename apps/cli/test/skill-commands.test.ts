@@ -340,15 +340,63 @@ describe("correcting an item's sensitivity: references/contract.md, run as writt
   const hasJq = spawnSync("jq", ["--version"]).status === 0;
   const items = () => (state.active?.contract as { items: { name: string; sensitive: boolean }[] }).items;
 
-  it("the guide's steps are show, extract, push --file --json, activate: no invented command", () => {
+  /**
+   * The guide's steps, in order, as an agent runs them: the scratch directory
+   * from `mktemp -d`, each varlatch command (with `--server <url>` added when
+   * the exit-78 message named one), the jq extraction, the one-item edit, the
+   * returned revision activated, and the directory removed.
+   */
+  async function runGuide(repo: string, opts: { server?: string; env?: Record<string, string> } = {}): Promise<{ scratch: string; activated: number | null }> {
+    let scratch = "";
+    let revision = "";
+    let activated: number | null = null;
+    // "$dir/…" as the shell expands it (mktemp's path has no spaces).
+    const sub = (line: string) => line.replace(/"\$dir([^"]*)"/g, (_m, rest: string) => `${scratch}${rest}`);
+    for (const step of steps) {
+      if (step === "dir=$(mktemp -d)") {
+        scratch = spawnSync("mktemp", ["-d"], { encoding: "utf8" }).stdout.trim();
+      } else if (step.startsWith("varlatch ")) {
+        const [command, redirect] = sub(step).split(" > ") as [string, string | undefined];
+        const args = fill(command, revision ? { "<revision>": revision } : {}).concat(opts.server ? ["--server", opts.server] : []);
+        const r = await cli(args, repo, opts.env);
+        if (redirect) writeFileSync(redirect, r.stdout);
+        if (args.includes("push")) {
+          revision = r.code === 0 ? (JSON.parse(r.stdout) as { revision: { id: string } }).revision.id : "";
+          expect(r.code, r.stderr).toBe(0);
+        }
+        if (args.includes("activate")) activated = r.code;
+      } else if (step.startsWith("jq ")) {
+        if (hasJq) {
+          const extracted = spawnSync("sh", ["-c", sub(step)], { cwd: repo, encoding: "utf8" });
+          expect(extracted.status, extracted.stderr).toBe(0);
+        } else {
+          writeFileSync(join(scratch, "contract.json"), JSON.stringify((JSON.parse(readFileSync(join(scratch, "revision.json"), "utf8")) as { contract: unknown }).contract, null, 2));
+        }
+        // The one edit the guide asks for: "sensitive" on the approved item, nothing else.
+        const contract = JSON.parse(readFileSync(join(scratch, "contract.json"), "utf8")) as { items: { name: string; sensitive: boolean }[] };
+        for (const item of contract.items) if (item.name === "LOG_LEVEL") item.sensitive = false;
+        writeFileSync(join(scratch, "contract.json"), JSON.stringify(contract, null, 2));
+      } else if (step === 'rm -r "$dir"') {
+        expect(spawnSync("sh", ["-c", sub(step)], { cwd: repo }).status).toBe(0);
+      } else {
+        throw new Error(`a guide step this test does not know: ${step}`);
+      }
+    }
+    return { scratch, activated };
+  }
+
+  it("the guide's steps: a new scratch directory, show, extract, push --file --json, activate, remove only that directory", () => {
     expect(steps).toEqual([
-      "varlatch --assisted contract show > revision.json",
-      "jq '.contract' revision.json > contract.json",
-      "varlatch --assisted contract push --file contract.json --json",
+      "dir=$(mktemp -d)",
+      'varlatch --assisted contract show > "$dir/revision.json"',
+      'jq \'.contract\' "$dir/revision.json" > "$dir/contract.json"',
+      'varlatch --assisted contract push --file "$dir/contract.json" --json',
       "varlatch --assisted contract activate <revision>",
+      'rm -r "$dir"',
     ]);
     expect(guide).toMatch(/applies to the item in every environment of the project/);
     expect(guide).toMatch(/change only `"sensitive"` on the approved item/);
+    expect(guide).toMatch(/add that\s+`--server <url>` to `contract show`, `contract push`, and\s+`contract activate`/);
   });
 
   it("changes only the approved item's sensitivity, keeps every other definition and the Semantics version, and the run then starts", async () => {
@@ -357,34 +405,12 @@ describe("correcting an item's sensitivity: references/contract.md, run as writt
     const before = await cli(["--assisted", "run", "--", "node", "-e", "console.log('started')"], repo);
     expect(before.code).toBe(78);
     expect(before.stderr).toMatch(/cannot be masked in the command's output: LOG_LEVEL/);
-    expect(before.stderr).toMatch(/marking LOG_LEVEL as not secret \(a Contract change, for the whole project\): varlatch --assisted agents guide contract/);
+    expect(before.stderr).toMatch(/marking LOG_LEVEL as not secret \(a Contract change, for the whole project\): varlatch --assisted agents guide contract$/m);
     const activeBefore = JSON.parse(JSON.stringify(state.active)) as { contract: { items: { name: string; sensitive: boolean }[] } };
 
-    // 1. show, written to revision.json as the redirect would.
-    const shown = await cli((steps[0] as string).split(" > ")[0]!.split(" ").slice(1), repo);
-    expect(shown.code, shown.stderr).toBe(0);
-    writeFileSync(join(repo, "revision.json"), shown.stdout);
-    // 2. the `contract` field, unchanged, in its own file.
-    if (hasJq) {
-      const extracted = spawnSync("sh", ["-c", steps[1] as string], { cwd: repo, encoding: "utf8" });
-      expect(extracted.status, extracted.stderr).toBe(0);
-    } else {
-      writeFileSync(join(repo, "contract.json"), JSON.stringify((JSON.parse(shown.stdout) as { contract: unknown }).contract, null, 2));
-    }
-    const extracted = JSON.parse(readFileSync(join(repo, "contract.json"), "utf8")) as { items: { name: string; sensitive: boolean }[]; semanticsVersion?: number };
-    expect(extracted).toEqual(activeBefore.contract);
-    // 3. only the approved item's "sensitive".
-    for (const item of extracted.items) if (item.name === "LOG_LEVEL") item.sensitive = false;
-    writeFileSync(join(repo, "contract.json"), JSON.stringify(extracted, null, 2));
-    // 4. push, then activate the returned revision.
-    const pushedRev = await cli((steps[2] as string).split(" ").slice(1), repo);
-    expect(pushedRev.code, pushedRev.stderr).toBe(0);
-    const id = (JSON.parse(pushedRev.stdout) as { revision: { id: string } }).revision.id;
-    expect(state.active?.id).toBe("crv_import");
-    const activated = await cli(fill(steps[3] as string, { "<revision>": id }), repo);
-    expect(activated.code, activated.stderr).toBe(0);
-
-    expect(state.active?.id).toBe(id);
+    const { scratch, activated } = await runGuide(repo);
+    expect(activated).toBe(0);
+    expect(existsSync(scratch)).toBe(false);
     expect(state.active?.semanticsVersion).toBe(2);
     const changed = items().filter((i) => i.sensitive !== activeBefore.contract.items.find((b) => b.name === i.name)?.sensitive).map((i) => i.name);
     expect(changed).toEqual(["LOG_LEVEL"]);
@@ -394,6 +420,72 @@ describe("correcting an item's sensitivity: references/contract.md, run as writt
     const after = await cli(["--assisted", "run", "--", "node", "-e", "console.log('started')"], repo);
     expect(after.code, after.stderr).toBe(0);
     expect(after.stdout).toContain("started");
+  });
+
+  it("existing contract.json and revision.json in the project keep their bytes, and stay", async () => {
+    const repo = project();
+    withSecretLogLevel(repo);
+    const local = JSON.stringify({ schemaVersion: 1, items: [{ name: "LOCAL_ONLY", type: "string", sensitive: false, required: { kind: "never" } }] }, null, 2) + "\n";
+    writeFileSync(join(repo, "contract.json"), local);
+    writeFileSync(join(repo, "revision.json"), "unrelated project file\n");
+    const { activated } = await runGuide(repo);
+    expect(activated).toBe(0);
+    expect(readFileSync(join(repo, "contract.json"), "utf8")).toBe(local);
+    expect(readFileSync(join(repo, "revision.json"), "utf8")).toBe("unrelated project file\n");
+    expect(items().some((i) => i.name === "LOCAL_ONLY")).toBe(false);
+  });
+
+  describe("an overridden server reaches every contract command", () => {
+    // The project's default server: records every request and answers none.
+    let decoy: http.Server;
+    let decoyOrigin = "";
+    let decoyRequests: string[] = [];
+    beforeAll(async () => {
+      decoy = http.createServer((req, res) => {
+        decoyRequests.push(`${req.method} ${req.url}`);
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { code: "NOT_FOUND", message: "decoy", requestId: "d" } }));
+      });
+      await new Promise<void>((resolve) => decoy.listen(0, "127.0.0.1", resolve));
+      decoyOrigin = `http://127.0.0.1:${(decoy.address() as AddressInfo).port}`;
+    });
+    afterAll(async () => {
+      await new Promise((resolve) => decoy.close(resolve));
+    });
+    function decoyProject(): string {
+      const repo = project();
+      writeFileSync(join(repo, "varlatch.toml"), `organization = "acme"\nproject = "web"\nserver = "${decoyOrigin}"\ndefault_environment = "development"\n`);
+      withSecretLogLevel(repo);
+      decoyRequests = [];
+      return repo;
+    }
+
+    it.each([
+      ["by --server", ["--server"], {}],
+      ["by VARLATCH_SERVER, then a fresh shell", [], { VARLATCH_SERVER: "<origin>" }],
+    ] as const)("%s: the message names it, the guide with it changes only that server's Contract", async (_name, flag, env) => {
+      const repo = decoyProject();
+      const refusedEnv = Object.fromEntries(Object.entries(env).map(([k, v]) => [k, v === "<origin>" ? origin : v]));
+      const refused = await cli(["--assisted", "run", ...(flag.length > 0 ? [...flag, origin] : []), "--", "node", "-e", "console.log('started')"], repo, refusedEnv);
+      expect(refused.code).toBe(78);
+      expect(refused.stderr).toContain(`varlatch --assisted agents guide contract (add --server ${origin} to every contract command)`);
+      // A fresh shell: no VARLATCH_SERVER; the server comes from the message.
+      const { activated } = await runGuide(repo, { server: origin });
+      expect(activated).toBe(0);
+      expect(items().find((i) => i.name === "LOG_LEVEL")?.sensitive).toBe(false);
+      expect(decoyRequests).toEqual([]);
+      const after = await cli(["--assisted", "run", "--server", origin, "--", "node", "-e", "console.log('started')"], repo);
+      expect(after.code, after.stderr).toBe(0);
+    });
+
+    it("control: the guide without --server goes to the default server, and the overridden server's Contract is unchanged", async () => {
+      const repo = decoyProject();
+      const shown = await cli(["--assisted", "contract", "show"], repo);
+      expect(shown.code).not.toBe(0);
+      expect(decoyRequests.some((r) => r.includes("/contract"))).toBe(true);
+      expect(items().find((i) => i.name === "LOG_LEVEL")?.sensitive).toBe(true);
+      expect(state.active?.id).toBe("crv_import");
+    });
   });
 
   it("negative controls: an invented contract update, and re-importing with --plain, change nothing", async () => {
