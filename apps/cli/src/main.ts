@@ -676,7 +676,9 @@ async function main(): Promise<void> {
       case "agents": {
         // ADR-0043 Decision 7: the agent-neutral skill, printed or installed.
         const [sub, ...rest] = args;
-        const usage = "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]>";
+        const usage =
+          "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--check|--remove] [--json]" +
+          "|hook --format <claude|codex>>";
         if (sub === "guide") {
           const opts = strictOptions("agents guide", rest, { positionals: 1 }, usage);
           const { GuideTopicError, guide } = await import("./agents/skill.js");
@@ -688,11 +690,29 @@ async function main(): Promise<void> {
           }
           return;
         }
+        if (sub === "hook") {
+          // ADR-0043 Decision 8: the handler every guardrail hook calls. It
+          // reads one pre-tool-use event on stdin and answers on stdout; an
+          // event it cannot read gets no decision, so the tool call proceeds.
+          const opts = strictOptions("agents hook", rest, { values: ["--format"] }, usage);
+          const { HOOK_FORMATS, runHook } = await import("./agents/hook.js");
+          const format = opts.values.get("--format");
+          if (format === undefined || !(HOOK_FORMATS as readonly string[]).includes(format)) {
+            usageError(`varlatch agents hook: --format must be one of ${HOOK_FORMATS.join(", ")}\n${usage}`);
+          }
+          const stdin = (await readAll(process.stdin)).toString("utf8");
+          try {
+            process.stdout.write(runHook(format as (typeof HOOK_FORMATS)[number], stdin, process.env, process.cwd()));
+          } catch (err) {
+            console.error(`varlatch agents hook: ${err instanceof Error ? err.message : String(err)}; no decision`);
+          }
+          return;
+        }
         if (sub !== "install") usageError(usage);
         const opts = strictOptions("agents install", rest, {
           values: ["--scope"],
           lists: ["--agent"],
-          booleans: ["--check", "--remove", "--json"],
+          booleans: ["--check", "--remove", "--json", "--guardrails"],
         }, usage);
         if (opts.booleans.has("--check") && opts.booleans.has("--remove")) usageError("varlatch agents install: --check and --remove do not combine");
         const scope = opts.values.get("--scope") ?? "project";
@@ -709,6 +729,7 @@ async function main(): Promise<void> {
             version: EMBEDDED_RELEASE.version,
             agents: opts.lists.get("--agent") ?? [],
             mode,
+            guardrails: opts.booleans.has("--guardrails"),
           });
         } catch (err) {
           if (err instanceof AgentsInstallError) fail(`varlatch agents install: ${err.message}`, err.usage ? EXIT.usage : EXIT.config);

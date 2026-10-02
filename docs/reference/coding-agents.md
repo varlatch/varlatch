@@ -107,6 +107,59 @@ Prints the skill, or one of its references, on stdout. A coding agent with a
 shell but no skill support can read the instructions this way, and the
 `AGENTS.md` block points to it.
 
+## Guardrails (opt-in)
+
+```
+varlatch agents install --guardrails [--agent claude-code|codex]...
+```
+
+Guardrails add hooks and settings to coding agents' own files, as a second
+line against accidents. They are opt-in because they change those agents'
+settings, and some agents ask you to review project hooks before running
+them. They cover Claude Code and Codex: the ones named with `--agent`, or
+else Claude Code, and Codex when the project has a `.codex` directory.
+
+- **Claude Code**, in `.claude/settings.json`: `VARLATCH_ASSISTED=1` under
+  `env`, so every command it runs is in [assisted mode](assisted-mode.md);
+  `permissions.deny` rules for `.env`, `.env.local`, `.env.*.local`, and the
+  credential store, which hold when the hook cannot run; and a `PreToolUse`
+  hook for the shell, file, and MCP tools.
+- **Codex**: a `PreToolUse` hook in `.codex/hooks.json`, and
+  `VARLATCH_ASSISTED = "1"` in `[shell_environment_policy.set]` in
+  `.codex/config.toml`, as a marked block. Codex reads a project's `.codex`
+  settings and hooks only once you trust the project, and runs each hook
+  after you review it (`/hooks`).
+
+Every hook runs one handler, `varlatch agents hook --format <claude|codex>`.
+It reads the tool call the agent is about to make and denies:
+
+- reading a `.env*` file other than `.env.example` and `.env.schema`, with a
+  file tool or a shell command (`cat`, `grep`, `source`, `git show`, an
+  interpreter's inline code, and so on). Commands that only name a file
+  (`echo .env >> .gitignore`, `ls`, `rm`, `find -name`), a `.env` that is
+  the destination of `cp`, a directory called `.env` (a Python
+  virtualenv), and `varlatch import` are allowed;
+- reading the Varlatch credential store, wherever it is configured;
+- printing the environment of a `varlatch run`: `env`, `printenv`, `export
+  -p`, or inline code that reads the environment, as the run's command.
+
+The denial tells the agent what to do instead. The handler gives no
+decision for a call it does not understand, so the agent goes ahead.
+
+The CLI merges into the settings files only when they are two-space JSON,
+as with Gemini CLI; otherwise it prints the entries to add. `--remove`
+takes out the hooks, and the marked block in `.codex/config.toml` byte for
+byte; it leaves `VARLATCH_ASSISTED` and the deny rules in
+`.claude/settings.json`, which JSON cannot mark as the CLI's, and names
+them. `--check --guardrails` includes the guardrails; without
+`--guardrails`, `install` and `--check` leave them alone.
+
+**Guardrails are accident prevention, not a boundary.** The handler reads
+commands the way a careful person would, not the way a shell runs them: a
+script file, an unusual reader, or a pipe through `xargs` gets past it. A
+hook fails open when `varlatch` is not on the agent's `PATH`. What Varlatch
+protects, it protects in the CLI and the server.
+
 ## What this does not do
 
 The skill and the agent files tell a coding agent how to use Varlatch; they
