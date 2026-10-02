@@ -1,407 +1,502 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MoreHorizontal, Search } from "lucide-react";
-import type { Environment, Project, Tier, ValidationReport } from "@varlatch/protocol";
-import { validationSummary } from "./validationSummary";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowUpRight, Check, MoreHorizontal, Pencil, Plus, TriangleAlert } from "lucide-react";
+import type { Project, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
-import { Button, Card, InfoTip, Input, Menu, Mono, Select, TierChip } from "../../components/ui";
-import { OnboardingChecklist } from "./Onboarding";
+import { timeAgo, formatDateTime, useNow } from "../../lib/time";
+import { Avatar, Badge, Button, Callout, Count, Kbd, Menu, Skeleton, TierDot, cn } from "../../components/ui";
+import { usePrompt } from "../../components/Dialog";
+import { useToast } from "../../components/Toast";
+import { PageHeader } from "../../components/PageHeader";
+import { FilterInput, Highlight, isTypingTarget, matchesFilter, useListNavigation } from "../../components/FilterInput";
+import { errorMessage } from "../../shell/Shell";
+import { keys, useCapability, useOrgName, useProjects } from "./hooks";
+import type { EnvHealth } from "./health";
+import { useProjectSummary, useSeen } from "./projectSummary";
+import { useAuditFilters, useIdentityNames, useProjectLastChange } from "./lastChange";
+import { NewProjectDialog } from "./NewProjectDialog";
+import { NewEnvironmentDialog } from "./NewEnvironmentDialog";
+import { Onboarding, useOnboarding } from "./Onboarding";
 
 /**
- * P1 Projects landing: list + create + per-project environments with
- * validation. P2 replaces the per-project block with the config matrix.
+ * Projects landing: one compact row per project with environment health
+ * from metadata, and the house filter as the way in ("/" focuses, ↑↓ select,
+ * ↵ opens). A new organization sees the getting-started steps instead.
  */
 export function ProjectsPage() {
-  const { org } = useParams();
-  useOrgRealtime(org, ["project", "environment"], [["projects", org], ["environments", org]]);
-  const { api } = useSession();
-  const qc = useQueryClient();
-  const projects = useQuery({
-    queryKey: ["projects", org],
-    queryFn: () => api.listProjects(org as string),
-  });
-  // Feature-detect via capability rather than probing the route.
-  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.meta() });
-  const canRename = (meta.data?.capabilities ?? []).includes("projects.rename");
-  const [slug, setSlug] = useState("");
-  const [authority, setAuthority] = useState<"git" | "managed">("git");
-  const [filter, setFilter] = useState("");
-  const create = useMutation({
-    mutationFn: () =>
-      api.createProject(org as string, { slug, name: slug, contractAuthority: authority }),
-    onSuccess: () => {
-      setSlug("");
-      void qc.invalidateQueries({ queryKey: ["projects", org] });
-    },
-  });
+  const { org } = useParams() as { org: string };
+  useOrgRealtime(org, ["project", "environment", "contract", "value"], [
+    keys.projects(org),
+    ["environments", org],
+    ["contract", org],
+    ["effective-meta", org],
+    ["project-last-change", org],
+  ]);
+  const orgName = useOrgName(org);
+  const projects = useProjects(org);
+  const all = useMemo(() => projects.data?.items ?? [], [projects.data]);
+  const onboarding = useOnboarding(org, projects.data ? all : undefined);
+  // Create from the header opens the new project; from the getting-started
+  // steps it stays here so the next step is in view.
+  const [creating, setCreating] = useState<null | "open" | "stay">(null);
 
-  const all = projects.data?.items ?? [];
-  /** Client-side filter over name + slug only — same posture as the palette:
-      no server-side search surface, never any value or secret content. */
-  const matches = useMemo(() => {
-    const sorted = [...all].sort((a, b) =>
-      a.name.localeCompare(b.name) || a.slug.localeCompare(b.slug),
+  const breadcrumbs = [{ label: orgName ?? org, to: `/o/${org}/projects` }, { label: "Projects" }];
+  const newButton = (
+    <Button
+      variant="primary"
+      icon={<Plus size={15} />}
+      data-testid="new-project"
+      aria-label="New project"
+      title="New project"
+      onClick={() => setCreating("open")}
+    >
+      <span className="max-lg:sr-only">New project</span>
+    </Button>
+  );
+  const dialog = (
+    <NewProjectDialog
+      org={org}
+      open={creating !== null}
+      onClose={() => setCreating(null)}
+      onCreated={creating === "stay" ? () => undefined : undefined}
+    />
+  );
+
+  if (projects.isPending || (!onboarding.ready && all.length <= 1)) {
+    return (
+      <>
+        <PageHeader breadcrumbs={breadcrumbs} title="Projects" />
+        <ListSkeleton />
+        {dialog}
+      </>
     );
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return sorted;
-    return sorted.filter(
-      (p) =>
-        p.name.toLowerCase().includes(needle) || p.slug.toLowerCase().includes(needle),
+  }
+  if (projects.isError) {
+    return (
+      <>
+        <PageHeader breadcrumbs={breadcrumbs} title="Projects" />
+        <Callout tone="danger" title="Projects could not be loaded">
+          {errorMessage(projects.error)}
+        </Callout>
+      </>
     );
-  }, [all, filter]);
+  }
+
+  // A new organization gets the steps as its page; an established one with
+  // an unfinished loop keeps its list and shows the steps above it.
+  if (onboarding.visible && all.length <= 1) {
+    return (
+      <>
+        <PageHeader
+          breadcrumbs={breadcrumbs}
+          title={`Welcome to ${orgName ?? org}`}
+          subtitle="Four steps to your first secret-free deploy."
+          actions={all.length > 0 ? newButton : undefined}
+        />
+        <Onboarding org={org} state={onboarding} variant="page" onNewProject={() => setCreating("stay")} />
+        {all.length > 0 && (
+          <section className="mt-10">
+            <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
+              Projects <Count>{all.length}</Count>
+            </h2>
+            <ProjectList org={org} projects={all} />
+          </section>
+        )}
+        {dialog}
+      </>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <h1 className="text-lg font-semibold">Projects</h1>
-        <div className="flex gap-2 items-center">
-          <Input
-            data-testid="new-project-slug"
-            placeholder="project-slug"
-            value={slug}
-            onChange={(e) => setSlug(e.target.value.toLowerCase())}
-          />
-          <Select
-            aria-label="Contract authority"
-            value={authority}
-            onChange={(v) => setAuthority(v as "git" | "managed")}
-            options={[
-              {
-                value: "git",
-                label: "git contract",
-                description:
-                  "Git: the schema lives in your repo as .env.schema, pushed with `varlatch contract push` — the repo is the source of truth.",
-              },
-              {
-                value: "managed",
-                label: "managed contract",
-                description:
-                  "Managed: edit and publish the contract in this dashboard — Varlatch is the source of truth.",
-              },
-            ]}
-          />
-          <InfoTip text="Each project has exactly one contract authority; there is never bidirectional sync between them. Pick git when the schema should live and be reviewed next to code; pick managed when the dashboard is the authoring surface." />
-          <Button data-testid="create-project" disabled={!slug || create.isPending} onClick={() => create.mutate()}>
-            Create project
-          </Button>
-        </div>
-      </div>
-      {create.error && <p className="text-deny text-sm">{String(create.error)}</p>}
-      {projects.data && <OnboardingChecklist org={org as string} projects={all} />}
-      {all.length > 0 && (
-        <ProjectFilter value={filter} onChange={setFilter} shown={matches.length} total={all.length} />
+    <>
+      <PageHeader
+        breadcrumbs={breadcrumbs}
+        title="Projects"
+        badges={<Count className="h-6 min-w-6 px-2 text-xs">{all.length}</Count>}
+        actions={newButton}
+      />
+      {onboarding.visible && (
+        <Onboarding org={org} state={onboarding} variant="card" onNewProject={() => setCreating("stay")} />
       )}
-      {projects.data?.items.length === 0 && (
-        <Card>
-          <p className="font-medium mb-2">No projects yet</p>
-          <p className="text-muted text-sm">
-            Create one above, then connect a repository:{" "}
-            <Mono className="text-accent">varlatch init --org {org} --project &lt;slug&gt;</Mono>
-          </p>
-        </Card>
-      )}
-      {all.length > 0 && matches.length === 0 && (
-        <Card>
-          <p className="text-muted text-sm">
-            No project matches <Mono className="text-fg">{filter}</Mono>.{" "}
-            <button className="text-accent hover:underline cursor-pointer" onClick={() => setFilter("")}>
-              Clear filter
-            </button>
-          </p>
-        </Card>
-      )}
-      {matches.map((p) => (
-        <ProjectCard key={p.id} org={org as string} project={p} highlight={filter.trim()} canRename={canRename} />
-      ))}
-    </div>
+      <ProjectList org={org} projects={all} />
+      {dialog}
+    </>
   );
 }
 
-/** Filter box for the project list. "/" focuses it from anywhere on the page,
-    matching the Cmd+K palette's keyboard-first posture (design R2). */
-function ProjectFilter({
-  value,
-  onChange,
-  shown,
-  total,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  shown: number;
-  total: number;
-}) {
-  const ref = useRef<HTMLInputElement>(null);
+/** The filter, the rows and the keyboard hints. */
+function ProjectList({ org, projects }: { org: string; projects: Project[] }) {
+  const navigate = useNavigate();
+  const now = useNow(60_000);
+  const canRename = useCapability("projects.rename");
+  const showUpdated = useAuditFilters();
+  const names = useIdentityNames(org, showUpdated);
+  const [filter, setFilter] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [keyboard, setKeyboard] = useState(false);
+
+  const sorted = useMemo(() => [...projects].sort((a, b) => a.slug.localeCompare(b.slug)), [projects]);
+  const matches = useMemo(() => sorted.filter((p) => matchesFilter(filter, p.slug, p.name)), [sorted, filter]);
+  const open = useCallback(
+    (p: Project, { newTab }: { newTab: boolean }) => {
+      const to = `/o/${org}/p/${p.slug}`;
+      if (newTab) window.open(to, "_blank", "noopener");
+      else navigate(to);
+    },
+    [org, navigate],
+  );
+  const nav = useListNavigation(matches, open);
+  const keyboardRef = useRef(false);
+
+  // ↑↓↵ also work while nothing in particular has focus.
+  const { onKeyDown } = nav;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
-      const el = e.target as HTMLElement | null;
-      const tag = el?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
-      e.preventDefault();
-      ref.current?.focus();
+      if (!["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) return;
+      if (isTypingTarget(e.target) || (document.activeElement && document.activeElement !== document.body)) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (!keyboardRef.current) {
+        // The first arrow shows the selection where it is; Enter needs a shown selection.
+        if (e.key === "Enter") return;
+        e.preventDefault();
+        setKeyboard(true);
+        keyboardRef.current = true;
+        return;
+      }
+      onKeyDown(e as unknown as React.KeyboardEvent);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [onKeyDown]);
+
+  const selecting = focused || keyboard;
+  const grid = showUpdated
+    ? "@min-[860px]:grid-cols-[auto_minmax(0,max-content)_auto_minmax(0,1fr)_auto_auto_auto]"
+    : "@min-[860px]:grid-cols-[auto_minmax(0,max-content)_auto_minmax(0,1fr)_auto_auto]";
 
   return (
-    <div className="flex items-center gap-2">
-      <div className="relative flex-1">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
-        <Input
-          ref={ref}
-          data-testid="project-filter"
+    <div>
+      <div
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onMouseDown={() => {
+          setKeyboard(false);
+          keyboardRef.current = false;
+        }}
+      >
+        <FilterInput
+          size="lg"
+          value={filter}
+          onChange={setFilter}
+          shown={matches.length}
+          total={projects.length}
+          noun="project"
+          placeholder="Filter projects…"
           aria-label="Filter projects"
-          className="w-full pl-8"
-          placeholder="Filter projects by name or slug…   /"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              onChange("");
-              e.currentTarget.blur();
-            }
-          }}
+          data-testid="project-filter"
+          countTestId="project-filter-count"
+          onKeyDown={nav.onKeyDown}
         />
       </div>
-      <span className="text-xs text-muted tabular-nums shrink-0" data-testid="project-filter-count">
-        {value.trim() ? `${shown} of ${total}` : `${total} project${total === 1 ? "" : "s"}`}
-      </span>
+      <div className="@container mt-4 overflow-hidden rounded-xl border border-bd bg-raised">
+        {matches.length === 0 ? (
+          <div className="px-5 py-10 text-center text-[13px] text-muted" data-testid="project-filter-empty">
+            No project matches <span className="font-mono text-fg">{filter.trim()}</span>.{" "}
+            <button type="button" className="link cursor-pointer" onClick={() => setFilter("")}>
+              Clear the filter
+            </button>
+          </div>
+        ) : (
+          <ul
+            ref={(el) => {
+              nav.listRef.current = el;
+            }}
+            aria-label="Projects"
+            className={cn("@min-[860px]:grid", grid)}
+          >
+            {matches.map((p, i) => (
+              <ProjectRow
+                key={p.id}
+                org={org}
+                project={p}
+                filter={filter}
+                active={selecting && i === nav.active}
+                navProps={nav.itemProps(i)}
+                canRename={canRename}
+                showUpdated={showUpdated}
+                names={names}
+                now={now}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+      <p className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted" aria-hidden="true">
+        <span className="inline-flex items-center gap-1.5">
+          <Kbd>↑</Kbd>
+          <Kbd>↓</Kbd> select
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Kbd>↵</Kbd> open
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Kbd>esc</Kbd> clear
+        </span>
+      </p>
     </div>
   );
 }
 
-/** Renders `text` with every case-insensitive occurrence of `needle` marked. */
-function Highlight({ text, needle }: { text: string; needle: string }) {
-  if (!needle) return <>{text}</>;
-  const parts: React.ReactNode[] = [];
-  const hay = text.toLowerCase();
-  const find = needle.toLowerCase();
-  let at = 0;
-  for (let i = hay.indexOf(find); i >= 0; i = hay.indexOf(find, at)) {
-    if (i > at) parts.push(text.slice(at, i));
-    parts.push(
-      <mark key={i} className="bg-accent-dim text-fg rounded-sm px-0.5">
-        {text.slice(i, i + needle.length)}
-      </mark>,
-    );
-    at = i + needle.length;
-  }
-  parts.push(text.slice(at));
-  return <>{parts}</>;
-}
-
-function ProjectCard({
+function ProjectRow({
   org,
   project,
-  highlight,
+  filter,
+  active,
+  navProps,
   canRename,
+  showUpdated,
+  names,
+  now,
 }: {
   org: string;
   project: Project;
-  highlight: string;
+  filter: string;
+  active: boolean;
+  navProps: { "data-nav-index": number; "data-active": true | undefined; onMouseMove: () => void };
   canRename: boolean;
+  showUpdated: boolean;
+  names: Map<string, string> | null;
+  now: number;
 }) {
+  const [seenRef, seen] = useSeen<HTMLLIElement>();
+  const summary = useProjectSummary(org, project, seen);
+  const last = useProjectLastChange(org, project, seen);
+  const [addingEnv, setAddingEnv] = useState(false);
+  const prompt = usePrompt();
+  const toast = useToast();
   const { api } = useSession();
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const to = `/o/${org}/p/${project.slug}`;
+
   const rename = useMutation({
     mutationFn: (name: string) => api.renameProject(org, project.slug, name),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["projects", org] }),
-    onError: (err) => window.alert(err instanceof Error ? err.message : String(err)),
-  });
-  const promptRename = () => {
-    const next = window.prompt(`Display name for ${project.slug} (its slug stays ${project.slug}):`, project.name)?.trim();
-    if (!next || next === project.name) return;
-    rename.mutate(next);
-  };
-  const envs = useQuery({
-    queryKey: ["environments", org, project.slug],
-    queryFn: () => api.listEnvironments(org, project.slug),
-  });
-  const [reports, setReports] = useState<Record<string, ValidationReport>>({});
-  const [envName, setEnvName] = useState("");
-  const [tier, setTier] = useState<Tier>("development");
-  const [addingEnv, setAddingEnv] = useState(false);
-  const createEnv = useMutation({
-    mutationFn: () => api.createEnvironment(org, project.slug, { name: envName, tier }),
-    onSuccess: () => {
-      setEnvName("");
-      setAddingEnv(false);
-      void qc.invalidateQueries({ queryKey: ["environments", org, project.slug] });
+    onSuccess: async (p) => {
+      await qc.invalidateQueries({ queryKey: keys.projects(org) });
+      toast.success(`Renamed to ${p.name}`, { description: `The slug stays ${project.slug}.` });
     },
+    onError: (err) => toast.error("Could not rename the project", { description: errorMessage(err) }),
   });
-  const validate = async (env: Environment) => {
-    const report = await api.validateEnvironment(org, project.slug, env.name);
-    setReports((r) => ({ ...r, [env.id]: report }));
-  };
-  const deleteEnv = useMutation({
-    mutationFn: (env: Environment) => api.deleteEnvironment(org, project.slug, env.name),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["environments", org, project.slug] }),
-    onError: (err) => window.alert(err instanceof Error ? err.message : String(err)),
-  });
-  const confirmDelete = (env: Environment) => {
-    // ADR-0025: production-tier roots require re-typing the name; everything
-    // else gets a plain confirm. Deletion is final — no undelete.
-    if (env.tier === "production" && !env.parentEnvironmentId) {
-      const typed = window.prompt(
-        `${env.name} is production-tier. Type the environment name to delete it permanently:`,
-      );
-      if (typed !== env.name) return;
-    } else if (!window.confirm(`Delete environment ${env.name}? This cannot be undone.`)) {
-      return;
-    }
-    deleteEnv.mutate(env);
+  const promptRename = async () => {
+    const next = await prompt({
+      title: `Rename ${project.slug}`,
+      description: `This changes the display name only. The slug stays ${project.slug} in URLs, the CLI and contracts.`,
+      label: "Display name",
+      initialValue: project.name,
+      confirmLabel: "Rename",
+    });
+    if (next && next !== project.name) rename.mutate(next);
   };
 
-  const envCount = envs.data?.items.length;
+  const actor = last.data?.actorIdentityId ? (names?.get(last.data.actorIdentityId) ?? null) : null;
+  const cell = "@min-[860px]:flex @min-[860px]:items-center";
 
   return (
-    <Card data-testid="project-card" data-slug={project.slug}>
-      <div className="flex items-baseline gap-2 flex-wrap mb-3">
-        {/* The slug is the identity the CLI, URLs and contracts all use, so it
-            leads; the display name follows only when it adds something. */}
-        <h2 className="text-base font-semibold font-mono">
-          <Link className="hover:text-accent" to={`/o/${org}/p/${project.slug}`}>
-            <Highlight text={project.slug} needle={highlight} />
-          </Link>
-        </h2>
-        {project.name !== project.slug && (
-          <span className="text-sm text-muted">
-            <Highlight text={project.name} needle={highlight} />
-          </span>
+    <li
+      ref={seenRef}
+      {...navProps}
+      data-testid="project-row"
+      data-slug={project.slug}
+      className={cn(
+        "group relative flex items-start gap-2 border-b border-bd px-4 py-3.5 transition-colors last:border-b-0",
+        "@min-[860px]:col-span-full @min-[860px]:grid @min-[860px]:grid-cols-subgrid @min-[860px]:items-center @min-[860px]:gap-x-5 @min-[860px]:py-3",
+        active ? "bg-hover" : "hover:bg-hover/50",
+      )}
+    >
+      {active && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" />}
+      <Link
+        to={to}
+        data-testid="project-link"
+        className={cn(
+          "flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2.5 rounded-md",
+          "@min-[860px]:col-[1/-2] @min-[860px]:grid @min-[860px]:grid-cols-subgrid @min-[860px]:gap-x-5",
         )}
-        <span className="text-xs text-muted border border-bd rounded-full px-2 py-0.5">
-          {project.contractAuthority}
+      >
+        <span className="min-w-0 max-w-64 truncate font-mono text-[15px] font-semibold text-fg">
+          <Highlight text={project.slug} needle={filter} />
         </span>
-        {envCount !== undefined && (
-          <span className="text-xs text-muted ml-auto">
-            {envCount} environment{envCount === 1 ? "" : "s"}
+        <span className={cn("min-w-0 truncate text-[13.5px] text-muted", project.name === project.slug && "@max-[859px]:hidden")}>
+          {project.name !== project.slug && <Highlight text={project.name} needle={filter} />}
+        </span>
+        <span className={cell}>
+          <Badge className="h-[22px] px-2 text-xs" title={project.contractAuthority === "git" ? "The contract lives in git" : "The contract is edited in Varlatch"}>
+            {project.contractAuthority}
+          </Badge>
+        </span>
+        <span className="order-2 flex basis-full flex-wrap items-center gap-2 @min-[860px]:order-none @min-[860px]:basis-auto">
+          <EnvironmentPills summary={summary} />
+        </span>
+        <span className="order-1 ml-auto text-[13px] tabular-nums text-muted @min-[860px]:order-none @min-[860px]:ml-0 @min-[860px]:text-right">
+          {summary.items === undefined ? (
+            <Skeleton className="inline-block h-3.5 w-14 align-middle" />
+          ) : summary.items === 0 && summary.contract === "none" ? (
+            "no contract"
+          ) : (
+            `${summary.items} item${summary.items === 1 ? "" : "s"}`
+          )}
+        </span>
+        {showUpdated && (
+          <span className="order-1 hidden min-w-0 items-center gap-2 text-[13px] text-muted @min-[600px]:flex @min-[860px]:order-none">
+            {last.data ? (
+              <span className="inline-flex items-center gap-2" title={`${formatDateTime(last.data.at)}${actor ? ` by ${actor}` : ""}`}>
+                {actor && <Avatar name={actor} size="xs" />}
+                updated {timeAgo(last.data.at, now)}
+              </span>
+            ) : last.isPending && seen ? (
+              <Skeleton className="h-3.5 w-24" />
+            ) : null}
           </span>
         )}
+      </Link>
+      <div className="flex shrink-0 items-center justify-end gap-2 @min-[860px]:col-[-2/-1]">
+        {/* Always laid out so selecting a row never shifts the columns. */}
+        <span
+          aria-hidden="true"
+          className={cn(
+            "hidden items-center gap-1 rounded-md border border-bd bg-inset px-1.5 py-0.5 text-[11px] text-muted @min-[860px]:inline-flex",
+            !active && "invisible",
+          )}
+        >
+          ↵ open
+        </span>
         <Menu
           data-testid="project-menu"
           label={`Actions for ${project.slug}`}
-          className="self-center"
+          width="w-52"
+          buttonClassName="size-8 justify-center border border-bd bg-raised hover:border-bd-strong"
           items={[
             {
-              label: "Add environment",
-              "data-testid": "menu-add-environment",
+              label: "Open",
+              icon: <ArrowUpRight size={15} />,
+              "data-testid": "menu-open-project",
+              onSelect: () => navigate(to),
+            },
+            {
+              label: "New environment…",
+              icon: <Plus size={15} />,
+              "data-testid": "menu-new-environment",
+              disabled: summary.envsLoading,
               onSelect: () => setAddingEnv(true),
             },
             ...(canRename
-              ? [{ label: "Rename", "data-testid": "menu-rename-project", onSelect: promptRename }]
+              ? [
+                  {
+                    label: "Rename…",
+                    icon: <Pencil size={14} />,
+                    "data-testid": "menu-rename-project",
+                    onSelect: () => void promptRename(),
+                  },
+                ]
               : []),
           ]}
         >
           <MoreHorizontal size={16} />
         </Menu>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-muted border-b border-bd">
-            <th className="py-1.5 font-medium">Environment</th>
-            <th className="py-1.5 font-medium">Tier</th>
-            <th className="py-1.5 font-medium">Kind</th>
-            <th className="py-1.5 font-medium">Contract</th>
-            <th className="py-1.5" />
-          </tr>
-        </thead>
-        <tbody>
-          {envs.data?.items.map((env) => {
-            const report = reports[env.id];
-            return (
-              <tr key={env.id} className="border-b border-bd/50">
-                <td className="py-1.5">
-                  <Link className="font-mono text-[13px] hover:text-accent" to={`/o/${org}/p/${project.slug}/e/${encodeURIComponent(env.name)}`}>
-                    {env.name}
-                  </Link>
-                </td>
-                <td className="py-1.5"><TierChip tier={env.tier as Tier} /></td>
-                <td className="py-1.5 text-muted">{env.kind}</td>
-                <td className="py-1.5">
-                  {report ? (
-                    <ValidationCell report={report} />
-                  ) : (
-                    <Button variant="ghost" onClick={() => void validate(env)}>validate</Button>
-                  )}
-                </td>
-                <td className="py-1.5 text-right">
-                  <Button variant="ghost" disabled={deleteEnv.isPending} onClick={() => confirmDelete(env)}>
-                    delete
-                  </Button>
-                </td>
-              </tr>
-            );
-          })}
-          {addingEnv && (
-            <tr>
-              <td className="py-2">
-                <Input
-                  autoFocus
-                  placeholder="environment name"
-                  value={envName}
-                  onChange={(e) => setEnvName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Escape") setAddingEnv(false);
-                  }}
-                />
-              </td>
-              <td className="py-2">
-                <Select
-                  aria-label="Environment tier"
-                  value={tier}
-                  onChange={(v) => setTier(v as Tier)}
-                  options={[
-                    { value: "development", label: "development" },
-                    { value: "staging", label: "staging" },
-                    { value: "production", label: "production" },
-                  ]}
-                />
-              </td>
-              <td colSpan={3} className="py-2">
-                <Button variant="ghost" disabled={!envName || createEnv.isPending} onClick={() => createEnv.mutate()}>
-                  add environment
-                </Button>
-                <Button variant="ghost" className="ml-1" onClick={() => setAddingEnv(false)}>
-                  cancel
-                </Button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </Card>
+      {addingEnv && (
+        <NewEnvironmentDialog
+          org={org}
+          project={project.slug}
+          environments={summary.environments}
+          open
+          onClose={() => setAddingEnv(false)}
+        />
+      )}
+    </li>
   );
 }
 
-function ValidationCell({ report }: { report: ValidationReport }) {
-  const summary = validationSummary(report);
-  if (summary.state === "valid") return <span className="allow text-allow">valid</span>;
-  const notEvaluated =
-    summary.notEvaluated.length > 0 ? (
-      <span
-        className="text-muted"
-        title="Your access does not cover these values (Secrets need secret.reveal), so they were not checked."
-      >
-        {" "}
-        · not evaluated: {summary.notEvaluated.join(", ")}
-      </span>
-    ) : null;
-  if (summary.state === "invalid") {
+function EnvironmentPills({ summary }: { summary: ReturnType<typeof useProjectSummary> }) {
+  if (summary.envsLoading) {
     return (
-      <span>
-        <span className="deny text-deny">invalid: {summary.failing.join(", ")}</span>
-        {notEvaluated}
-      </span>
+      <>
+        <Skeleton className="h-7 w-28" />
+        <Skeleton className="h-7 w-24" />
+      </>
     );
   }
+  if (summary.envsError) return <span className="text-[13px] text-subtle">Environments unavailable</span>;
+  if (summary.roots.length === 0) return <span className="text-[13px] text-subtle">No environments</span>;
   return (
-    <span>
-      <span className="text-muted">incomplete</span>
-      {notEvaluated}
+    <>
+      {summary.health.map(({ env, health }) => (
+        <EnvPill key={env.id} name={env.name} tier={env.tier as Tier} health={health} />
+      ))}
+      {summary.derived > 0 && (
+        <span
+          className="text-xs text-muted"
+          title={`${summary.derived} personal or preview environment${summary.derived === 1 ? "" : "s"}`}
+        >
+          +{summary.derived}
+        </span>
+      )}
+    </>
+  );
+}
+
+function EnvPill({ name, tier, health }: { name: string; tier: Tier; health: EnvHealth }) {
+  const title =
+    health.state === "ok"
+      ? `${name}: every required item has a value`
+      : health.state === "missing"
+        ? `${name}: no value for ${health.items.join(", ")}`
+        : health.state === "no-contract"
+          ? `${name}: no active contract yet`
+          : `${name} (${tier})`;
+  return (
+    <span
+      title={title}
+      data-env={name}
+      data-health={health.state}
+      className="inline-flex h-7 max-w-full items-center gap-2 rounded-md border border-bd bg-inset/50 px-2.5 text-[12.5px] text-fg"
+    >
+      <TierDot tier={tier} />
+      <span className="truncate">{name}</span>
+      {health.state === "ok" && (
+        <>
+          <Check size={14} className="shrink-0 text-allow" aria-hidden="true" />
+          <span className="sr-only">ready</span>
+        </>
+      )}
+      {health.state === "missing" && (
+        <span className="inline-flex shrink-0 items-center gap-1 text-deny">
+          <TriangleAlert size={13} aria-hidden="true" />
+          {health.items.length} missing
+        </span>
+      )}
+      {health.state === "loading" && <Skeleton className="h-3 w-3 rounded-full" />}
     </span>
+  );
+}
+
+function ListSkeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading projects">
+      <Skeleton className="h-11 w-full rounded-lg" />
+      <div className="mt-4 overflow-hidden rounded-xl border border-bd bg-raised">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-5 border-b border-bd px-4 py-4 last:border-b-0">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-6 w-14" />
+            <Skeleton className="h-7 w-28" />
+            <Skeleton className="h-7 w-24" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
