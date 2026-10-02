@@ -39,11 +39,14 @@ export function NewEnvironmentDialog({
   const [kind, setKind] = useState<"shared" | "personal" | "preview">("shared");
   const [parentId, setParentId] = useState(roots[0]?.id ?? "");
   const derived = kind !== "shared";
-  const validName = /^[a-z0-9][a-z0-9._-]*$/.test(name);
+  const parent = roots.find((e) => e.id === parentId);
+  // Derived environments are named parent/suffix (e.g. development/alex).
+  const fullName = derived && parent ? `${parent.name}/${name}` : name;
+  const validName = /^[a-z0-9][a-z0-9._-]{0,62}$/.test(name);
   const create = useMutation({
     mutationFn: () =>
       api.createEnvironment(org, project, {
-        name,
+        name: fullName,
         ...(derived ? { kind, parentEnvironmentId: parentId } : { tier }),
       }),
     onSuccess: async (env) => {
@@ -86,16 +89,30 @@ export function NewEnvironmentDialog({
           if (validName && (!derived || parentId)) create.mutate();
         }}
       >
-        <Field label="Name" hint="Lowercase letters, digits, dots, dashes and underscores.">
-          <Input
-            data-autofocus
-            data-testid="new-environment-name"
-            mono
-            className="w-full"
-            value={name}
-            placeholder={derived ? "dev-alex" : "staging"}
-            onChange={(e) => setName(e.target.value.toLowerCase())}
-          />
+        <Field
+          label="Name"
+          hint={
+            derived
+              ? `Created as ${parent?.name ?? "parent"}/${name || "name"}. Lowercase letters, digits, dots, dashes and underscores.`
+              : "Lowercase letters, digits, dots, dashes and underscores."
+          }
+        >
+          <div className="flex items-center">
+            {derived && parent && (
+              <span className="flex h-8 items-center rounded-l-md border border-r-0 border-bd bg-hover px-2.5 font-mono text-[13px] text-muted">
+                {parent.name}/
+              </span>
+            )}
+            <Input
+              data-autofocus
+              data-testid="new-environment-name"
+              mono
+              className={derived && parent ? "w-full rounded-l-none" : "w-full"}
+              value={name}
+              placeholder={derived ? "alex" : "staging"}
+              onChange={(e) => setName(e.target.value.toLowerCase())}
+            />
+          </div>
         </Field>
         <Field label="Kind">
           <Segmented
