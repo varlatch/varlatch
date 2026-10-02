@@ -19,6 +19,11 @@ import { DomainError } from "./errors.js";
  * fresh passkey assertion; the CLI collects one `cli` credential for that
  * human. Every state change is one conditional update or happens under the
  * row's lock, so decisions and collection are single under concurrency.
+ *
+ * Time is PostgreSQL's live clock, clock_timestamp(), never now(): now() is
+ * the transaction's start, so a transaction that waited for a row lock past
+ * an expiry would still see the sign-in, or its challenge, as live. Each
+ * expiry is read in a statement that runs after the lock is held.
  */
 
 export const DEVICE_SIGN_IN = {
@@ -71,10 +76,10 @@ export function formatUserCode(code: string): string {
  * (which also frees their user codes) and delete rows a day after expiry.
  */
 async function sweep(db: Querier): Promise<void> {
-  await db.query("UPDATE device_sign_ins SET status = 'expired' WHERE status IN ('pending', 'approved') AND expires_at <= now()");
-  await db.query("DELETE FROM device_sign_ins WHERE expires_at < now() - interval '1 day'");
-  await db.query("DELETE FROM device_sign_in_challenges WHERE expires_at < now() - interval '1 day'");
-  await db.query("DELETE FROM device_code_attempt_windows WHERE window_started_at < now() - interval '1 day'");
+  await db.query("UPDATE device_sign_ins SET status = 'expired' WHERE status IN ('pending', 'approved') AND expires_at <= clock_timestamp()");
+  await db.query("DELETE FROM device_sign_ins WHERE expires_at < clock_timestamp() - interval '1 day'");
+  await db.query("DELETE FROM device_sign_in_challenges WHERE expires_at < clock_timestamp() - interval '1 day'");
+  await db.query("DELETE FROM device_code_attempt_windows WHERE window_started_at < clock_timestamp() - interval '1 day'");
 }
 
 export interface DeviceSignInRequest {
@@ -96,7 +101,7 @@ export async function requestDeviceSignIn(
     await sweep(db);
     const counts = (await db.query(
       `SELECT count(*) FILTER (WHERE requester_ip = $1)::int AS peer, count(*)::int AS total
-       FROM device_sign_ins WHERE status = 'pending' AND expires_at > now()`,
+       FROM device_sign_ins WHERE status = 'pending' AND expires_at > clock_timestamp()`,
       [input.peer],
     )).rows[0] as { peer: number; total: number };
     if (counts.peer >= DEVICE_SIGN_IN.pendingPerPeer) {
@@ -113,8 +118,8 @@ export async function requestDeviceSignIn(
       const inserted = await db.query(
         `INSERT INTO device_sign_ins
            (id, device_code_hash, user_code, requested_ttl, requested_name, requester_ip, requester_user_agent,
-            expires_at, poll_interval)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + make_interval(secs => $8), $9)
+            created_at, expires_at, poll_interval)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), clock_timestamp() + make_interval(secs => $8), $9)
          ON CONFLICT DO NOTHING RETURNING id`,
         [id, sha256(deviceCode), userCode, ttlSeconds, input.name ?? null, input.peer,
           input.userAgent ? input.userAgent.slice(0, 512) : null, DEVICE_SIGN_IN.lifetimeSeconds, DEVICE_SIGN_IN.intervalSeconds],
@@ -172,14 +177,20 @@ export async function pollDeviceSignIn(
 ): Promise<PollOutcome> {
   if (!DEVICE_CODE.test(input.deviceCode)) return { kind: "unknown" };
   return withTx(ctx.db, async (db) => {
+    const locked = (await db.query("SELECT id FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE", [
+      sha256(input.deviceCode),
+    ])).rows[0] as { id: string } | undefined;
+    if (!locked) return { kind: "unknown" };
+    // Read after the lock is held, on the live clock: waiting for the lock
+    // may have crossed the expiry.
     const row = (await db.query(
-      `SELECT id, status, expires_at <= now() AS lapsed,
-              (last_polled_at IS NOT NULL AND last_polled_at > now() - make_interval(secs => poll_interval)) AS polled_too_soon,
+      `SELECT id, status, expires_at <= clock_timestamp() AS lapsed,
+              (last_polled_at IS NOT NULL
+               AND last_polled_at > clock_timestamp() - make_interval(secs => poll_interval)) AS polled_too_soon,
               poll_interval, requested_ttl, requested_name, approved_by_identity_id, issued_credential_id
-       FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE`,
-      [sha256(input.deviceCode)],
-    )).rows[0] as SignInRow | undefined;
-    if (!row) return { kind: "unknown" };
+       FROM device_sign_ins WHERE id = $1`,
+      [locked.id],
+    )).rows[0] as SignInRow;
     if (row.status === "consumed") return { kind: "consumed", credentialId: row.issued_credential_id };
     if (row.status === "denied") return { kind: "denied" };
     if (row.status === "expired") return { kind: "expired" };
@@ -191,17 +202,17 @@ export async function pollDeviceSignIn(
     if (row.status === "pending") {
       if (row.polled_too_soon) {
         const slowed = (await db.query(
-          "UPDATE device_sign_ins SET poll_interval = poll_interval + $2, last_polled_at = now() WHERE id = $1 RETURNING poll_interval",
+          "UPDATE device_sign_ins SET poll_interval = poll_interval + $2, last_polled_at = clock_timestamp() WHERE id = $1 RETURNING poll_interval",
           [row.id, DEVICE_SIGN_IN.slowDownSeconds],
         )).rows[0] as { poll_interval: number };
         return { kind: "slow_down", interval: slowed.poll_interval };
       }
-      await db.query("UPDATE device_sign_ins SET last_polled_at = now() WHERE id = $1", [row.id]);
+      await db.query("UPDATE device_sign_ins SET last_polled_at = clock_timestamp() WHERE id = $1", [row.id]);
       return { kind: "pending", interval: row.poll_interval };
     }
     const claimed = (await db.query(
-      `UPDATE device_sign_ins SET status = 'consumed', last_polled_at = now()
-       WHERE id = $1 AND status = 'approved' AND expires_at > now()
+      `UPDATE device_sign_ins SET status = 'consumed', last_polled_at = clock_timestamp()
+       WHERE id = $1 AND status = 'approved' AND expires_at > clock_timestamp()
        RETURNING approved_by_identity_id`,
       [row.id],
     )).rows[0] as { approved_by_identity_id: string } | undefined;
@@ -265,15 +276,22 @@ export async function findSignInByCode(
   return withTx(ctx.db, async (db) => {
     await db.query(
       `INSERT INTO device_code_attempt_windows (scope, key, window_started_at, failures)
-       VALUES ($1, $2, now(), 0), ($3, $4, now(), 0), ($5, $6, now(), 0) ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, clock_timestamp(), 0), ($3, $4, clock_timestamp(), 0), ($5, $6, clock_timestamp(), 0)
+       ON CONFLICT DO NOTHING`,
       keys.flat(),
     );
-    const windows = (await db.query(
-      `SELECT scope, failures, window_started_at > now() - make_interval(secs => $7) AS current,
-              window_started_at + make_interval(secs => $7) AS ends_at
-       FROM device_code_attempt_windows
+    await db.query(
+      `SELECT 1 FROM device_code_attempt_windows
        WHERE (scope, key) IN (($1, $2), ($3, $4), ($5, $6))
        ORDER BY scope, key FOR UPDATE`,
+      keys.flat(),
+    );
+    // Read after the locks are held, on the live clock.
+    const windows = (await db.query(
+      `SELECT scope, failures, window_started_at > clock_timestamp() - make_interval(secs => $7) AS current,
+              window_started_at + make_interval(secs => $7) AS ends_at
+       FROM device_code_attempt_windows
+       WHERE (scope, key) IN (($1, $2), ($3, $4), ($5, $6))`,
       [...keys.flat(), DEVICE_SIGN_IN.attemptWindowSeconds],
     )).rows as { scope: AttemptScope; failures: number; current: boolean; ends_at: Date | string }[];
     const locked = windows.filter((w) => w.current && w.failures >= DEVICE_SIGN_IN.wrongCodes[w.scope]);
@@ -285,7 +303,7 @@ export async function findSignInByCode(
     const row = code
       ? ((await db.query(
           `SELECT id, user_code, requested_ttl, requested_name, requester_ip, requester_user_agent, created_at, expires_at
-           FROM device_sign_ins WHERE user_code = $1 AND status = 'pending' AND expires_at > now()`,
+           FROM device_sign_ins WHERE user_code = $1 AND status = 'pending' AND expires_at > clock_timestamp()`,
           [code],
         )).rows[0] as
           | { id: string; user_code: string; requested_ttl: number; requested_name: string | null; requester_ip: string | null;
@@ -309,8 +327,9 @@ export async function findSignInByCode(
     }
     const counted = (await db.query(
       `UPDATE device_code_attempt_windows SET
-         failures = CASE WHEN window_started_at > now() - make_interval(secs => $7) THEN failures + 1 ELSE 1 END,
-         window_started_at = CASE WHEN window_started_at > now() - make_interval(secs => $7) THEN window_started_at ELSE now() END
+         failures = CASE WHEN window_started_at > clock_timestamp() - make_interval(secs => $7) THEN failures + 1 ELSE 1 END,
+         window_started_at = CASE WHEN window_started_at > clock_timestamp() - make_interval(secs => $7)
+                                  THEN window_started_at ELSE clock_timestamp() END
        WHERE (scope, key) IN (($1, $2), ($3, $4), ($5, $6))
        RETURNING scope, failures, window_started_at + make_interval(secs => $7) AS ends_at`,
       [...keys.flat(), DEVICE_SIGN_IN.attemptWindowSeconds],
@@ -356,7 +375,7 @@ export async function issueApprovalChallenge(
     );
     await db.query(
       `INSERT INTO device_sign_in_challenges (id, device_sign_in_id, identity_id, auth_session_id, challenge, expires_at)
-       VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))`,
+       VALUES ($1, $2, $3, $4, $5, clock_timestamp() + make_interval(secs => $6))`,
       [newId("deviceSignInChallenge"), input.signInId, input.identityId, input.authSessionId, options.challenge, DEVICE_SIGN_IN.challengeSeconds],
     );
     return options;
@@ -367,14 +386,29 @@ function noLongerPending(): DomainError {
   return new DomainError("STATE_CHANGED", "This sign-in is no longer pending: it was decided or it expired");
 }
 
+/**
+ * Lock the sign-in, then check, in a statement that runs after the lock is
+ * held, that it is still pending and unexpired on the live clock (a
+ * concurrent decision, or the wait itself crossing the expiry, ends it).
+ */
+async function lockPending(db: Querier, signInId: string): Promise<void> {
+  await db.query("SELECT id FROM device_sign_ins WHERE id = $1 FOR UPDATE", [signInId]);
+  const current = (await db.query(
+    "SELECT status = 'pending' AND expires_at > clock_timestamp() AS pending FROM device_sign_ins WHERE id = $1",
+    [signInId],
+  )).rows[0] as { pending: boolean } | undefined;
+  if (!current?.pending) throw noLongerPending();
+}
+
 export async function denyDeviceSignIn(
   ctx: AppCtx,
   input: { signInId: string; identityId: string; requestId: string },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockPending(db, input.signInId);
     const denied = await db.query(
-      `UPDATE device_sign_ins SET status = 'denied', decided_at = now()
-       WHERE id = $1 AND status = 'pending' AND expires_at > now() RETURNING id`,
+      `UPDATE device_sign_ins SET status = 'denied', decided_at = clock_timestamp()
+       WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp() RETURNING id`,
       [input.signInId],
     );
     if (!denied.rows[0]) throw noLongerPending();
@@ -407,18 +441,22 @@ export async function approveDeviceSignIn(
     // Decided or expired meanwhile (a concurrent denial wins, say): say so,
     // and leave the challenge and the audit log alone. The row lock orders
     // this approval after any decision in flight.
-    const current = (await db.query(
-      "SELECT status = 'pending' AND expires_at > now() AS pending FROM device_sign_ins WHERE id = $1 FOR UPDATE",
-      [input.signInId],
-    )).rows[0] as { pending: boolean } | undefined;
-    if (!current?.pending) throw noLongerPending();
-    const consumed = challenge
-      ? (await db.query(
-          `UPDATE device_sign_in_challenges SET consumed_at = now()
+    await lockPending(db, input.signInId);
+    const bound = challenge
+      ? ((await db.query(
+          `SELECT id FROM device_sign_in_challenges
            WHERE challenge = $1 AND device_sign_in_id = $2 AND identity_id = $3 AND auth_session_id = $4
-             AND consumed_at IS NULL AND expires_at > now()
-           RETURNING id`,
+           FOR UPDATE`,
           [challenge, input.signInId, input.identityId, input.authSessionId],
+        )).rows[0] as { id: string } | undefined)
+      : undefined;
+    // Consumed only if unused and unexpired on the live clock, after its lock is held.
+    const consumed = bound
+      ? (await db.query(
+          `UPDATE device_sign_in_challenges SET consumed_at = clock_timestamp()
+           WHERE id = $1 AND consumed_at IS NULL AND expires_at > clock_timestamp()
+           RETURNING id`,
+          [bound.id],
         )).rows[0]
       : undefined;
     const verified = consumed && challenge
@@ -436,8 +474,8 @@ export async function approveDeviceSignIn(
       return verified.reason;
     }
     const approved = await db.query(
-      `UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = $2, decided_at = now()
-       WHERE id = $1 AND status = 'pending' AND expires_at > now() RETURNING id`,
+      `UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = $2, decided_at = clock_timestamp()
+       WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp() RETURNING id`,
       [input.signInId, input.identityId],
     );
     if (!approved.rows[0]) throw noLongerPending();

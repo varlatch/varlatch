@@ -149,6 +149,131 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
     expect(await deviceCredentials()).toHaveLength(0);
   });
 
+  describe("a wait for a lock that crosses an expiry", () => {
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    /** Hold `sql`'s row locks in another connection until released. */
+    async function hold(sql: string, params: unknown[]) {
+      const client = await db.connect();
+      await client.query("BEGIN");
+      await client.query(sql, params);
+      return async () => {
+        await client.query("COMMIT");
+        client.release();
+      };
+    }
+    /** Resolve once a request in this database waits for a lock. */
+    async function untilWaiting() {
+      for (let i = 0; i < 250; i++) {
+        const [r] = await rows("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'");
+        if (r.n > 0) return;
+        await sleep(20);
+      }
+      throw new Error("no request waited for the lock");
+    }
+    /** Resolve once the database's live clock is past `sql`'s timestamp. */
+    async function untilPast(sql: string, params: unknown[]) {
+      for (let i = 0; i < 250; i++) {
+        const [r] = await rows(`SELECT (${sql}) <= clock_timestamp() AS past`, params);
+        if (r.past) return;
+        await sleep(20);
+      }
+      throw new Error("the expiry never passed");
+    }
+    const signInId = async (userCode: string) =>
+      (await rows("SELECT id FROM device_sign_ins WHERE user_code = $1", [userCode.replace("-", "")]))[0].id as string;
+    const expireSoon = (id: string) => db.query("UPDATE device_sign_ins SET expires_at = clock_timestamp() + interval '1500 milliseconds' WHERE id = $1", [id]);
+    const lockSignIn = "SELECT id FROM device_sign_ins WHERE id = $1 FOR UPDATE";
+    const signInExpiry = "SELECT expires_at FROM device_sign_ins WHERE id = $1";
+
+    for (const crossesExpiry of [true, false]) {
+      const label = crossesExpiry ? "past the expiry: no credential" : "before the expiry (control): issued";
+      it(`collection waiting for the sign-in's lock, released ${label}`, async () => {
+        const human = await approvingHuman(ctx, "Admin", adminId);
+        const started = (await client.start()).body;
+        expect((await client.approve(human.token, started.userCode, human.passkey)).status).toBe(200);
+        const id = await signInId(started.userCode);
+        await expireSoon(id);
+        const release = await hold(lockSignIn, [id]);
+        const polled = client.poll(started.deviceCode);
+        await untilWaiting();
+        if (crossesExpiry) await untilPast(signInExpiry, [id]);
+        await release();
+        const answer = await polled;
+        if (crossesExpiry) {
+          expect(answer.status).toBe(410);
+          expect(answer.body.error.code).toBe("EXPIRED");
+          expect(await deviceCredentials()).toHaveLength(0);
+          expect((await rows("SELECT status FROM device_sign_ins WHERE id = $1", [id]))[0].status).toBe("expired");
+        } else {
+          expect(answer.status).toBe(201);
+          expect(await deviceCredentials()).toHaveLength(1);
+        }
+      });
+
+      for (const decision of ["approve", "deny"] as const) {
+        it(`${decision} waiting for the sign-in's lock, released ${crossesExpiry ? "past the expiry: no decision" : "before the expiry (control): decided"}`, async () => {
+          const human = await approvingHuman(ctx, "Admin", adminId);
+          const started = (await client.start()).body;
+          const { challenge } = (await client.lookup(human.token, started.userCode)).body.approval.publicKey;
+          const id = await signInId(started.userCode);
+          await expireSoon(id);
+          const release = await hold(lockSignIn, [id]);
+          const decided = client.decide(human.token, started.userCode, decision, decision === "approve" ? human.passkey.assert(challenge) : undefined);
+          await untilWaiting();
+          if (crossesExpiry) await untilPast(signInExpiry, [id]);
+          await release();
+          const answer = await decided;
+          const [row] = await rows("SELECT status FROM device_sign_ins WHERE id = $1", [id]);
+          if (crossesExpiry) {
+            expect(answer.status).toBe(409);
+            expect(answer.body.error.code).toBe("STATE_CHANGED");
+            expect(row.status).toBe("pending");
+            expect(await rows("SELECT id FROM audit_events WHERE event_type IN ('authentication.device_approved', 'authentication.device_denied')")).toEqual([]);
+          } else {
+            expect(answer.status).toBe(200);
+            expect(row.status).toBe(decision === "approve" ? "approved" : "denied");
+          }
+        });
+      }
+
+      it(`approval waiting for the lock while its challenge expires, released ${crossesExpiry ? "past the challenge's expiry: refused" : "before it (control): approved"}`, async () => {
+        const human = await approvingHuman(ctx, "Admin", adminId);
+        const started = (await client.start()).body;
+        const { challenge } = (await client.lookup(human.token, started.userCode)).body.approval.publicKey;
+        const id = await signInId(started.userCode);
+        await db.query("UPDATE device_sign_in_challenges SET expires_at = clock_timestamp() + interval '1500 milliseconds' WHERE challenge = $1", [challenge]);
+        const release = await hold(lockSignIn, [id]);
+        const decided = client.decide(human.token, started.userCode, "approve", human.passkey.assert(challenge));
+        await untilWaiting();
+        if (crossesExpiry) await untilPast("SELECT expires_at FROM device_sign_in_challenges WHERE challenge = $1", [challenge]);
+        await release();
+        const answer = await decided;
+        const [row] = await rows("SELECT status FROM device_sign_ins WHERE id = $1", [id]);
+        if (crossesExpiry) {
+          expect(answer.status).toBe(403);
+          expect(row.status).toBe("pending");
+        } else {
+          expect(answer.status).toBe(200);
+          expect(row.status).toBe("approved");
+        }
+      });
+
+      it(`code lookup waiting for the attempt counters, released ${crossesExpiry ? "past the sign-in's expiry: not found" : "before it (control): found"}`, async () => {
+        const human = await approvingHuman(ctx, "Admin", adminId);
+        const started = (await client.start()).body;
+        const id = await signInId(started.userCode);
+        await db.query("INSERT INTO device_code_attempt_windows (scope, key, window_started_at) VALUES ('global', 'all', clock_timestamp()) ON CONFLICT DO NOTHING");
+        await expireSoon(id);
+        const release = await hold("SELECT 1 FROM device_code_attempt_windows WHERE scope = 'global' FOR UPDATE", []);
+        const found = client.lookup(human.token, started.userCode);
+        await untilWaiting();
+        if (crossesExpiry) await untilPast(signInExpiry, [id]);
+        await release();
+        expect((await found).status).toBe(crossesExpiry ? 404 : 200);
+      });
+    }
+  });
+
   it("concurrent wrong codes from several sessions of one identity cannot exceed five; another identity is not locked (control)", async () => {
     const human = await approvingHuman(ctx, "Admin", adminId);
     const started = (await client.start()).body;
