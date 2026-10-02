@@ -53,7 +53,7 @@ try {
   await page.click("#enroll");
   await page.waitForFunction(() => /API credential|failed/.test(document.getElementById("status").textContent), null, { timeout: 20000 });
   await page.goto(`${base}/o/acme/projects`);
-  await page.waitForSelector('[data-testid="project-card"]', { timeout: 20000 });
+  await page.waitForSelector('[data-testid="project-row"]', { timeout: 20000 });
   await page.evaluate(() => { window.__varlatchNoReload = true; });
 
   const cfg = mkdtempSync(join(tmpdir(), "maint-e2e-cfg-"));
@@ -93,7 +93,7 @@ try {
   check("…saying so once, on stderr only", notices === 1 && !/maintenance/.test(run.stdout), run.stderr.trim().slice(0, 160));
 
   // ---- The window has closed: both pages continue without a reload.
-  await fresh.waitForSelector('[data-testid="project-card"]', { timeout: LEASE_MS + 30000 });
+  await fresh.waitForSelector('[data-testid="project-row"]', { timeout: LEASE_MS + 30000 });
   check("the page opened during maintenance continues into the app by itself", await fresh.evaluate(() => window.__varlatchNoReload === true), since(opened));
   await page.waitForSelector('[data-testid="maintenance-status"]', { state: "detached", timeout: 30000 });
   check("the banner clears once the installation answers again", await page.evaluate(() => window.__varlatchNoReload === true), since(opened));

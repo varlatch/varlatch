@@ -127,18 +127,18 @@ try {
   check(2, 'enrollment link carries the ts.net origin', firstLink?.startsWith(`${url}/enroll#`), firstLink?.split('#')[0]);
   check(2, 'passkey enrollment on the ts.net origin', await enroll(first.page, firstLink));
   await first.page.goto(`${url}/o/spike/projects`);
-  await first.page.waitForSelector('[data-testid="project-card"]', { timeout: 30000 });
+  await first.page.waitForSelector('[data-testid="project-row"]', { timeout: 30000 });
   // Live updates through Serve → nginx /convex → convex-backend (criterion 1).
   await sleep(6000);
   check(1, 'live updates connected (/convex WebSocket through Serve)', (await first.page.locator('[data-testid="live-updates-status"]').count()) === 0);
   await api.createProject('spike', { slug: 'live', name: 'Live', contractAuthority: 'git' });
-  await first.page.waitForSelector('[data-testid="project-card"][data-slug="live"]', { timeout: 20000 });
+  await first.page.waitForSelector('[data-testid="project-row"][data-slug="live"]', { timeout: 20000 });
   check(1, 'a change arrives by live signal over wss', true);
   // A later sign-in: clear the session, sign in with the same passkey.
   await first.context.clearCookies();
   await first.page.goto(`${url}/o/spike/projects`);
   await first.page.getByText('Sign in with passkey').click();
-  await first.page.waitForSelector('[data-testid="project-card"]', { timeout: 30000 });
+  await first.page.waitForSelector('[data-testid="project-row"]', { timeout: 30000 });
   check(2, 'later sign-in with the enrolled passkey', true);
   // Host-authorized recovery onto a new authenticator.
   const second = await passkeyContext();
