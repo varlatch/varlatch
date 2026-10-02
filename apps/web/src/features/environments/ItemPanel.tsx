@@ -359,7 +359,13 @@ const EVENT_LABEL: Record<string, string> = {
   "value.disclosed": "read it",
   "secret.validated": "validated it",
   "value.validated": "validated it",
+  "sync.push_attempted": "pushed it to an integration",
+  "capability.issued": "issued a capability for it",
+  "capability.exercised": "used it through a capability",
 };
+
+/** Bookkeeping that accompanies another event in the list; shown once, not twice. */
+const COMPANION = new Set(["sync.values_decrypted"]);
 
 type AuditEvent = {
   eventId: string;
@@ -378,7 +384,9 @@ function History({ org, env, name }: { org: string; env: Environment; name: stri
     enabled: supported,
     retry: false,
     queryFn: async () =>
-      (await api.listAuditEvents(org, { item: name, environmentId: env.id, limit: 10 })).items as AuditEvent[],
+      ((await api.listAuditEvents(org, { item: name, environmentId: env.id, limit: 25 })).items as AuditEvent[])
+        .filter((e) => !COMPANION.has(e.eventType))
+        .slice(0, 10),
   });
   const identities = useQuery({
     queryKey: ["identities", org],
@@ -402,7 +410,7 @@ function History({ org, env, name }: { org: string; env: Environment; name: stri
               <Avatar name={who(e.actorIdentityId)} size="sm" />
               <span className="min-w-0 flex-1 truncate">
                 <span className="text-fg">{who(e.actorIdentityId)}</span>{" "}
-                <span className="text-muted">{EVENT_LABEL[e.eventType] ?? e.eventType}</span>
+                <span className="text-muted">{EVENT_LABEL[e.eventType] ?? e.eventType.replace(/[._]/g, " ")}</span>
               </span>
               <span className="shrink-0 text-xs text-muted" title={e.occurredAt}>
                 {timeAgo(e.occurredAt, now)}

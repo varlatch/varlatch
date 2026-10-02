@@ -698,7 +698,7 @@ function ValueRow({
         </span>
         <TypeBadge type={contract?.type} />
       </span>
-      <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
         {sensitive && !editing && <Lock size={13} className="shrink-0 text-muted" aria-label="Secret" />}
         {value}
         {!editing && server?.rawValue !== undefined && !draft && <RefHint item={name} expanded={server.value} />}
@@ -711,12 +711,15 @@ function ValueRow({
         <DraftMarker kind={kind} />
       </span>
       {changedAt && !editing && (
-        <span className="hidden shrink-0 text-xs text-muted md:inline" title={formatDateTime(changedAt)}>
+        <span
+          className="hidden shrink-0 text-xs text-muted group-hover:invisible group-focus-within:invisible group-aria-selected:invisible md:inline"
+          title={formatDateTime(changedAt)}
+        >
           changed {timeAgo(changedAt, now)}
         </span>
       )}
       {!editing && (
-        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
+        <span className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border border-bd bg-raised p-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
           {sensitive && server && !draft && (
             <IconButton
               size="sm"
@@ -738,7 +741,7 @@ function ValueRow({
               <Pencil size={13} />
             </IconButton>
           )}
-          <Kbd className="ml-1 hidden group-aria-selected:inline-flex">E</Kbd>
+          <Kbd className="mx-1 hidden group-aria-selected:inline-flex">E</Kbd>
         </span>
       )}
     </div>

@@ -99,14 +99,15 @@ export function useEnvSyncTargets(org: string, project: string, env: string) {
   });
 }
 
-/** Writes, deletions and rotations; reads, reveals and denials are not changes. */
-const VALUE_CHANGE = /^value\.(written|deleted|rotation_started|rotation_completed)$/;
+/** Event types that change a value here; reads, reveals and denials are not changes. */
+const VALUE_CHANGES = ["value.written", "value.rotation_started"] as const;
 
 /**
- * When each item last changed in this environment, from one filtered audit
- * query (servers with audit.filters, callers who may read the audit log).
- * Items whose last change is older than the newest 200 value events have no
- * entry: the screen shows nothing rather than a guess.
+ * When each item last changed in this environment, from filtered audit
+ * queries by exact event type (servers with audit.filters, callers who may
+ * read the audit log), so frequent reads never crowd changes out. Items
+ * whose last change is older than the newest 200 of a type have no entry:
+ * the screen shows nothing rather than a guess.
  */
 export function useItemChanges(org: string, environmentId: string) {
   const { api } = useSession();
@@ -117,14 +118,14 @@ export function useItemChanges(org: string, environmentId: string) {
     retry: false,
     staleTime: 30_000,
     queryFn: async () => {
-      const page = await api.listAuditEvents(org, { environmentId, eventType: "value.*", limit: 200 });
+      const pages = await Promise.all(
+        VALUE_CHANGES.map((eventType) => api.listAuditEvents(org, { environmentId, eventType, limit: 200 })),
+      );
       const changed: Record<string, string> = {};
-      for (const e of page.items) {
+      for (const e of pages.flatMap((p) => p.items)) {
         const item = (e.resource as { itemName?: unknown } | undefined)?.itemName;
         if (e.decision === "deny" || typeof item !== "string" || typeof e.occurredAt !== "string") continue;
-        if (typeof e.eventType === "string" && VALUE_CHANGE.test(e.eventType) && !(item in changed)) {
-          changed[item] = e.occurredAt;
-        }
+        if (!changed[item] || e.occurredAt > changed[item]) changed[item] = e.occurredAt;
       }
       return changed;
     },
