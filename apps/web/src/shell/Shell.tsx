@@ -388,7 +388,6 @@ export function errorMessage(err: unknown): string {
 function UserFooter({ collapsed }: { collapsed: boolean }) {
   const { api, identityId, signOut } = useSession();
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => {
     const onTheme = (e: Event) => setTheme((e as CustomEvent<Theme>).detail);
     window.addEventListener("varlatch:theme", onTheme);
@@ -401,7 +400,7 @@ function UserFooter({ collapsed }: { collapsed: boolean }) {
       type="button"
       aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
       title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={() => applyTheme(theme === "dark" ? "light" : "dark")}
       className="flex size-8 cursor-pointer items-center justify-center rounded-md border border-bd text-muted hover:bg-hover hover:text-fg"
     >
       {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
