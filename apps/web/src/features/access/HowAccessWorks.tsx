@@ -35,21 +35,21 @@ export function HowAccessWorks() {
       </button>
       {open && (
         <div className="border-t border-bd px-5 pb-5 pt-5">
-          <div className="grid grid-cols-1 items-stretch gap-2 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
+          <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
             <Node tone="info" title="Who" icons={[User, Bot]} text="People and machines. Machines start with zero access; people get their role's built-in grants." />
             <Arrow />
             <Node tone="warn" title="Bundles" icons={[Users]} text="Roles, groups and teams. Fewer grants, no extra power." />
             <Arrow />
-            <Node tone="accent" title="Grants" icons={[KeyRound]} text="Who, what, where. Explicit grants plus the built-in Admin and Member ones: the only source of permission." highlight />
+            <Node tone="accent" title="Grants" icons={[KeyRound]} text="Who, what and where. Explicit, or built into the Admin and Member roles." highlight />
             <Arrow />
             <Node tone="danger" title="Every request" icons={[ShieldCheck]} text="Checked fresh. Revoking takes effect on the next request." />
             <Arrow />
             <Node tone="info" title="Audit" icons={[ScrollText]} text="Every allow and every deny is recorded." />
           </div>
-          <div className="mt-2 grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
-            <div className="hidden md:col-span-6 md:block" />
-            <div className="flex flex-col items-center md:col-span-1">
-              <span className="h-4 w-px border-l border-dashed border-bd-strong" aria-hidden="true" />
+          <div className="mt-2 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
+            <div className="hidden lg:col-span-6 lg:block" />
+            <div className="flex flex-col items-center lg:col-span-1">
+              <span className="hidden h-4 w-px border-l border-dashed border-bd-strong lg:block" aria-hidden="true" />
               <div className="flex items-center gap-2.5 rounded-lg border border-dashed border-bd-strong px-3 py-2 text-[12.5px]">
                 <CircleMinus size={15} className="shrink-0 text-muted" />
                 <span>
@@ -115,7 +115,7 @@ function Node({
 
 function Arrow() {
   return (
-    <div className="hidden items-center justify-center text-subtle md:flex" aria-hidden="true">
+    <div className="hidden items-center justify-center text-subtle lg:flex" aria-hidden="true">
       <ArrowRight size={18} />
     </div>
   );
