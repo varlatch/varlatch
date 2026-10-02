@@ -65,15 +65,6 @@ export function ProjectsPage() {
     />
   );
 
-  if (projects.isPending || (!onboarding.ready && all.length <= 1)) {
-    return (
-      <>
-        <PageHeader breadcrumbs={breadcrumbs} title="Projects" />
-        <ListSkeleton />
-        {dialog}
-      </>
-    );
-  }
   if (projects.isError) {
     return (
       <>
@@ -81,6 +72,15 @@ export function ProjectsPage() {
         <Callout tone="danger" title="Projects could not be loaded">
           {errorMessage(projects.error)}
         </Callout>
+      </>
+    );
+  }
+  if (projects.isPending || (!onboarding.ready && all.length <= 1)) {
+    return (
+      <>
+        <PageHeader breadcrumbs={breadcrumbs} title="Projects" />
+        <ListSkeleton />
+        {dialog}
       </>
     );
   }
@@ -115,7 +115,7 @@ export function ProjectsPage() {
       <PageHeader
         breadcrumbs={breadcrumbs}
         title="Projects"
-        badges={<Count className="h-6 min-w-6 px-2 text-xs">{all.length}</Count>}
+        badges={<Count>{all.length}</Count>}
         actions={newButton}
       />
       {onboarding.visible && (
