@@ -1,23 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, KeyRound, Upload } from "lucide-react";
+import { ImagePlus, Lock, Trash2 } from "lucide-react";
 import { useSession } from "../../lib/session";
-import { Avatar, Button, Card, Input, Mono } from "../../components/ui";
+import { displayEmail } from "../../lib/identity";
+import { chooseThemePreference, themePreference, type ThemePreference } from "../../lib/theme";
+import { Avatar, Button, Input, Kbd, SectionCard, Segmented, cn } from "../../components/ui";
+import { useToast } from "../../components/Toast";
+import { errorMessage } from "../../shell/Shell";
 
 /**
- * /me profile editor (humans only). Machines get RESOURCE_NOT_FOUND from
- * GET /v1/me/profile; the page then shows facts only and hides the editing
- * affordances instead of failing.
+ * Profile (humans only). Machines get RESOURCE_NOT_FOUND from
+ * GET /v1/me/profile; the page then says so instead of failing.
  */
 
 const MAX_IMAGE_BYTES = 100 * 1024;
 
-/** Downscale + re-encode a picked file until the data URL fits ≤100KB. */
+/** Downscale and re-encode a picked file until the data URL fits in 100KB. */
 async function fileToDataUrl(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file);
-  // Avatars render at ≤48px; 256px keeps them crisp on high-DPI displays.
+  // Avatars render at up to 64px; 256px keeps them crisp on high-DPI displays.
   let edge = Math.min(256, Math.max(bitmap.width, bitmap.height));
   for (;;) {
     const scale = edge / Math.max(bitmap.width, bitmap.height);
@@ -28,9 +30,9 @@ async function fileToDataUrl(file: File): Promise<string> {
     if (!ctx) throw new Error("canvas unavailable");
     ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const url = canvas.toDataURL("image/jpeg", 0.85);
-    // Data-URL length ≈ bytes × 4/3; compare on the encoded string itself.
+    // Data-URL length is about bytes × 4/3; compare on the encoded string itself.
     if (url.length <= MAX_IMAGE_BYTES || edge <= 32) {
-      if (url.length > MAX_IMAGE_BYTES) throw new Error("image cannot be compressed under 100KB");
+      if (url.length > MAX_IMAGE_BYTES) throw new Error("This image cannot be compressed under 100KB.");
       return url;
     }
     edge = Math.floor(edge / 2);
@@ -40,18 +42,13 @@ async function fileToDataUrl(file: File): Promise<string> {
 export function ProfilePage() {
   const { api, identityId } = useSession();
   const qc = useQueryClient();
-  const profile = useQuery({
-    queryKey: ["me-profile"],
-    queryFn: () => api.getMyProfile(),
-    retry: false,
-  });
-  // Machine identities (404) simply have no profile to edit.
-  const isMachine = profile.isError;
-
+  const toast = useToast();
+  const profile = useQuery({ queryKey: ["me-profile"], queryFn: () => api.getMyProfile(), retry: false });
   const [name, setName] = useState("");
   const [image, setImage] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -62,17 +59,14 @@ export function ProfilePage() {
   }, [profile.data, dirty]);
 
   const save = useMutation({
-    mutationFn: () => {
-      setError("");
-      return api.updateMyProfile({ name, image });
-    },
+    mutationFn: () => api.updateMyProfile({ name: name.trim(), image }),
     onSuccess: (updated) => {
       qc.setQueryData(["me-profile"], updated);
       setDirty(false);
+      toast.success("Profile saved");
     },
-    onError: (err) => setError(String(err)),
+    onError: (err) => setError(errorMessage(err)),
   });
-
   const pickFile = async (file: File | undefined) => {
     if (!file) return;
     setError("");
@@ -80,125 +74,156 @@ export function ProfilePage() {
       setImage(await fileToDataUrl(file));
       setDirty(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     }
   };
 
-  const displayName = dirty ? name : (profile.data?.name ?? identityId ?? "");
-
+  if (profile.isError) {
+    return (
+      <SectionCard title="Profile" data-testid="profile-unavailable">
+        <p className="px-5 py-4 text-[13px] text-muted">
+          This identity ({identityId}) is a machine and has no editable profile. Its credentials are managed under Access.
+        </p>
+      </SectionCard>
+    );
+  }
+  const email = displayEmail(profile.data?.email);
   return (
-    <main className="p-6 max-w-3xl mx-auto space-y-4">
-      <Link to="/" className="text-muted hover:text-fg inline-flex items-center gap-1 text-sm no-underline">
-        <ArrowLeft size={14} /> Back to dashboard
-      </Link>
-      <h1 className="text-lg font-semibold">Profile</h1>
-
-      <Card data-testid="profile-card" className="space-y-4">
-        <div className="flex items-center gap-4">
-          <Avatar name={displayName || "?"} image={dirty ? image : (profile.data?.image ?? null)} size="lg" />
-          <div className="min-w-0">
-            <p className="font-medium truncate">{displayName || "—"}</p>
-            {profile.data?.email && <p className="text-sm text-muted truncate">{profile.data.email}</p>}
-            <p className="text-xs text-muted truncate" title={identityId ?? ""}>
-              <Mono>{identityId}</Mono>
-            </p>
-          </div>
-        </div>
-
-        {profile.isLoading && <p className="text-sm text-muted">Loading…</p>}
-        {isMachine && (
-          <p className="text-sm text-muted" data-testid="profile-unavailable">
-            This identity has no editable profile.
-          </p>
-        )}
-
-        {profile.data && (
-          <form
-            className="space-y-3 text-sm"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (name.trim()) save.mutate();
-            }}
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="text-muted w-28" htmlFor="profile-name">Display name</label>
-              <Input
-                id="profile-name"
-                data-testid="profile-name"
-                className="w-72"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setDirty(true);
+    <div className="space-y-6">
+      <SectionCard title="Profile" description="How you appear to others in this installation." data-testid="profile-card">
+        <form
+          className="divide-y divide-bd"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (dirty && name.trim()) save.mutate();
+          }}
+        >
+          <FormRow label="Avatar">
+            <div className="flex flex-wrap items-center gap-4">
+              <Avatar name={name || "?"} image={image} size="xl" />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
                 }}
-              />
-            </div>
-            <div className="flex flex-wrap items-start gap-2">
-              <label className="text-muted w-28 pt-1.5" htmlFor="profile-image-url">Avatar</label>
-              <div className="space-y-2">
-                <Input
-                  id="profile-image-url"
-                  data-testid="profile-image-url"
-                  className="w-96"
-                  placeholder="https://… image URL (or upload below)"
-                  value={image && !image.startsWith("data:") ? image : ""}
-                  onChange={(e) => {
-                    setImage(e.target.value || null);
+                onDragLeave={() => setDragging(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragging(false);
+                  void pickFile(e.dataTransfer.files[0]);
+                }}
+                className={cn(
+                  "flex min-w-64 flex-1 cursor-pointer items-center gap-3 rounded-lg border border-dashed px-4 py-3 text-left transition-colors",
+                  dragging ? "border-accent bg-accent/[0.06]" : "border-bd-strong hover:border-accent/60 hover:bg-hover/50",
+                )}
+              >
+                <ImagePlus size={18} className="text-muted" />
+                <span>
+                  <span className="block text-[13px] font-medium">Drop an image or click to upload</span>
+                  <span className="block text-xs text-muted">PNG or JPG, resized in your browser to fit 100KB</span>
+                </span>
+              </button>
+              {image && (
+                <Button
+                  variant="secondary"
+                  icon={<Trash2 size={14} />}
+                  onClick={() => {
+                    setImage(null);
                     setDirty(true);
                   }}
-                />
-                <div className="flex items-center gap-2">
-                  <Button type="button" variant="ghost" onClick={() => fileRef.current?.click()}>
-                    <Upload size={13} className="inline mr-1" /> Upload image…
-                  </Button>
-                  {image?.startsWith("data:") && (
-                    <span className="text-xs text-muted">uploaded image set</span>
-                  )}
-                  {image && (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => {
-                        setImage(null);
-                        setDirty(true);
-                      }}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    data-testid="profile-image-file"
-                    onChange={(e) => void pickFile(e.target.files?.[0])}
-                  />
-                </div>
-                <p className="text-xs text-muted">
-                  Uploads are downscaled in your browser and stored inline (≤100KB); nothing is
-                  fetched server-side.
-                </p>
-              </div>
+                >
+                  Remove
+                </Button>
+              )}
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void pickFile(e.target.files?.[0])} />
             </div>
-            <div className="flex items-center gap-2">
-              <Button type="submit" data-testid="profile-save" disabled={!dirty || !name.trim() || save.isPending}>
-                Save profile
+          </FormRow>
+          <FormRow label="Display name">
+            <Input
+              id="profile-name"
+              data-testid="profile-name"
+              className="w-full max-w-md"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setDirty(true);
+              }}
+            />
+          </FormRow>
+          {email && (
+            <FormRow label="Email" hint="Managed by your sign-in">
+              <span className="inline-flex items-center gap-2 text-[13px] text-muted">
+                <Lock size={13} /> {email}
+              </span>
+            </FormRow>
+          )}
+          <div className="flex items-center gap-3 px-5 py-3.5">
+            {error && <p className="text-sm text-deny">{error}</p>}
+            <span className="flex-1" />
+            {dirty && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  setDirty(false);
+                  setError("");
+                }}
+              >
+                Cancel
               </Button>
-              {save.isSuccess && !dirty && <span className="text-xs text-allow">Saved.</span>}
-            </div>
-            {error && <p className="text-deny">{error}</p>}
-          </form>
-        )}
-      </Card>
+            )}
+            <Button type="submit" variant="primary" data-testid="profile-save" disabled={!dirty || !name.trim()} loading={save.isPending}>
+              Save
+            </Button>
+          </div>
+        </form>
+      </SectionCard>
+      <Preferences />
+    </div>
+  );
+}
 
-      <Card>
-        <p className="text-sm">
-          <KeyRound size={14} className="inline mr-1.5 text-muted" />
-          Passkeys and CLI credentials live on{" "}
-          <Link to="/credentials">My credentials</Link>.
-        </p>
-      </Card>
-    </main>
+function FormRow({ label, hint, children }: { label: string; hint?: string | undefined; children: React.ReactNode }) {
+  return (
+    <div className="grid items-center gap-x-6 gap-y-2 px-5 py-4 sm:grid-cols-[160px_1fr]">
+      <div>
+        <p className="text-[13px] font-medium">{label}</p>
+        {hint && <p className="text-xs text-muted">{hint}</p>}
+      </div>
+      <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+function Preferences() {
+  const [pref, setPref] = useState<ThemePreference>(themePreference);
+  useEffect(() => {
+    const on = (e: Event) => setPref((e as CustomEvent<ThemePreference>).detail);
+    window.addEventListener("varlatch:theme-preference", on);
+    return () => window.removeEventListener("varlatch:theme-preference", on);
+  }, []);
+  return (
+    <SectionCard title="Preferences" description="Stored in this browser.">
+      <div className="divide-y divide-bd">
+        <FormRow label="Theme">
+          <Segmented
+            value={pref}
+            onChange={(p) => chooseThemePreference(p)}
+            aria-label="Theme"
+            options={[
+              { value: "dark", label: "Dark" },
+              { value: "light", label: "Light" },
+              { value: "system", label: "System" },
+            ]}
+          />
+        </FormRow>
+        <FormRow label="Keyboard shortcuts" hint="Press ? anywhere">
+          <Button variant="secondary" onClick={() => window.dispatchEvent(new CustomEvent("varlatch:shortcuts"))}>
+            View all <Kbd>?</Kbd>
+          </Button>
+        </FormRow>
+      </div>
+    </SectionCard>
   );
 }
