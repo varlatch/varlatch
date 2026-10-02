@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { isCanonicalJson, type Staging } from "./files.js";
-import { isTable, parseTomlOrNull, withTomlPart } from "./toml.js";
+import { isTable, parseTomlOrNull, withoutTomlPart, withTomlPart, type TomlEdit } from "./toml.js";
 import type { HookFormat } from "./hook.js";
 
 /**
@@ -111,22 +111,24 @@ export function withCodexHook(hooksFile: Json): Json | string {
  * shell_environment_policy.set, in the CLI's marked region, or null with a
  * reason (see withTomlPart: the parser judges whether the change is safe).
  */
-export function withCodexEnv(current: string | null): { next: string | null; reason?: string } {
+const CODEX_ENV_BODY = ['VARLATCH_ASSISTED = "1"'];
+
+export function withCodexEnv(current: string | null): TomlEdit {
   const before = parseTomlOrNull(current ?? "");
-  if (before === null) return { next: null, reason: "it does not parse as TOML" };
+  if (before === null) return { refused: "it does not parse as TOML" };
   const policy = before.shell_environment_policy;
   const set = isTable(policy) ? policy.set : undefined;
   if (isTable(set) && set.VARLATCH_ASSISTED === "1") return { next: current };
-  if (set !== undefined) return { next: null, reason: "it already has a shell_environment_policy.set" };
-  return withTomlPart(current, "[shell_environment_policy.set]", ['VARLATCH_ASSISTED = "1"'], (b) => ({
+  if (set !== undefined) return { refused: "it already has a shell_environment_policy.set" };
+  return withTomlPart(current, "[shell_environment_policy.set]", CODEX_ENV_BODY, (b) => ({
     ...b,
     shell_environment_policy: { ...(isTable(b.shell_environment_policy) ? b.shell_environment_policy : {}), set: { VARLATCH_ASSISTED: "1" } },
   }));
 }
 
-/** config.toml without the CLI's environment table (null: nothing else was in the file). */
-export function withoutCodexEnv(current: string): string | null {
-  return withTomlPart(current, "[shell_environment_policy.set]", null).next;
+/** config.toml without the CLI's environment table (next null: nothing else was in the file), or why it is left. */
+export function withoutCodexEnv(current: string): TomlEdit {
+  return withoutTomlPart(current, "[shell_environment_policy.set]", CODEX_ENV_BODY);
 }
 
 interface JsonFile {
@@ -220,15 +222,16 @@ export function planGuardrails(root: string, agents: string[], mode: "install" |
     const config = staging.read(configPath);
     if (remove) {
       if (typeof config === "string") {
-        const next = withoutCodexEnv(config);
-        if (next !== config) staging.write(configPath, next);
+        const edit = withoutCodexEnv(config);
+        if (edit.refused !== undefined) plan.leftInPlace.push(`VARLATCH_ASSISTED in .codex/config.toml (${edit.refused}; take it out by hand)`);
+        else if (edit.next !== config) staging.write(configPath, edit.next);
       }
     } else if (config === undefined) {
       plan.manual.push('.codex/config.toml is not a UTF-8 text file, so the CLI leaves it as it is: set VARLATCH_ASSISTED = "1" in [shell_environment_policy.set]');
     } else {
-      const { next, reason } = withCodexEnv(config);
-      if (next === null) plan.manual.push(`set VARLATCH_ASSISTED = "1" in shell_environment_policy.set in .codex/config.toml (${reason})`);
-      else if (next !== config) staging.write(configPath, next);
+      const edit = withCodexEnv(config);
+      if (edit.refused !== undefined) plan.manual.push(`set VARLATCH_ASSISTED = "1" in shell_environment_policy.set in .codex/config.toml (${edit.refused})`);
+      else if (edit.next !== config) staging.write(configPath, edit.next);
     }
     if (!remove) plan.notices.push("Codex reads a project's .codex/ settings and hooks only once you trust the project, and runs each hook after you review it (/hooks)");
   }

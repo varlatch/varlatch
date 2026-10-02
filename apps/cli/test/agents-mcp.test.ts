@@ -9,7 +9,7 @@ import { parse as parseToml } from "smol-toml";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EXIT } from "../src/exitCodes.js";
 import { runInstall, type InstallOptions } from "../src/agents/install.js";
-import { REGION_BEGIN, REGION_END, withTomlPart } from "../src/agents/toml.js";
+import { REGION_BEGIN, REGION_END, withoutTomlPart, withTomlPart } from "../src/agents/toml.js";
 
 /**
  * `varlatch agents install --mcp` (ADR-0043 Decisions 7 and 9): a
@@ -155,7 +155,8 @@ describe("Codex's TOML", () => {
 describe("the CLI's TOML region", () => {
   const env = (t: string | null) => withTomlPart(t, "[shell_environment_policy.set]", ['VARLATCH_ASSISTED = "1"'], (b) => ({ ...b, shell_environment_policy: { set: { VARLATCH_ASSISTED: "1" } } })).next;
   const mcp = (t: string | null) => withTomlPart(t, "[mcp_servers.varlatch]", ['command = "varlatch"', 'args = ["mcp"]'], (b) => ({ ...b, mcp_servers: { varlatch: ENTRY } })).next;
-  const drop = (t: string, h: "[shell_environment_policy.set]" | "[mcp_servers.varlatch]") => withTomlPart(t, h, null).next;
+  const OWNED = { "[shell_environment_policy.set]": ['VARLATCH_ASSISTED = "1"'], "[mcp_servers.varlatch]": ['command = "varlatch"', 'args = ["mcp"]'] } as const;
+  const drop = (t: string, h: "[shell_environment_policy.set]" | "[mcp_servers.varlatch]") => withoutTomlPart(t, h, OWNED[h]).next;
 
   it("holds both tables in one region, in the same order whichever came first", () => {
     const original = 'model = "o5"\n';
@@ -189,15 +190,26 @@ describe("the CLI's TOML region", () => {
   it("refuses a change that parses but does not say what was expected", () => {
     // The guard behind every add: the file after must equal the file before plus the intended value.
     const wrong = withTomlPart('model = "o5"\n', "[mcp_servers.varlatch]", ['command = "varlatch"'], (b) => ({ ...b, mcp_servers: { varlatch: ENTRY } }));
-    expect(wrong).toEqual({ next: null, reason: "adding to it would change what it says" });
+    expect(wrong).toEqual({ refused: "adding to it would change what it says" });
     const right = withTomlPart('model = "o5"\n', "[mcp_servers.varlatch]", ['command = "varlatch"', 'args = ["mcp"]'], (b) => ({ ...b, mcp_servers: { varlatch: ENTRY } }));
     expect(right.next).toContain("[mcp_servers.varlatch]");
   });
 
-  it("leaves a file whose region is damaged", () => {
-    for (const damaged of [`model = "o5"\n${REGION_BEGIN}\n[mcp_servers.varlatch]\n`, `model = "o5"\n${REGION_END}\n`, `${REGION_BEGIN}\nstray = 1\n${REGION_END}\n`]) {
-      expect(withTomlPart(damaged, "[mcp_servers.varlatch]", ['command = "varlatch"'], (b) => b)).toEqual({ next: null, reason: expect.stringMatching(/damaged/) });
+  it("leaves a file whose region is damaged, or holds a table the CLI did not write: a refusal, never a deletion", () => {
+    const foreign = `model = "o5"\n\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\n\n[my_own_table]\nkey = 1\n${REGION_END}\n`;
+    for (const damaged of [`model = "o5"\n${REGION_BEGIN}\n[mcp_servers.varlatch]\n`, `model = "o5"\n${REGION_END}\n`, `${REGION_BEGIN}\nstray = 1\n${REGION_END}\n`, foreign]) {
+      const set = withTomlPart(damaged, "[mcp_servers.varlatch]", ['command = "varlatch"'], (b) => b);
+      const removed = withoutTomlPart(damaged, "[mcp_servers.varlatch]", OWNED["[mcp_servers.varlatch]"]);
+      for (const edit of [set, removed]) {
+        expect(edit, JSON.stringify(damaged)).toEqual({ refused: expect.stringMatching(/damaged, or holds a table the CLI did not write/) });
+        expect("next" in edit).toBe(false);
+      }
     }
+  });
+
+  it("leaves a table the human edited inside the region, rather than taking their lines with it", () => {
+    const edited = `model = "o5"\n\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\nenv = { X = "1" }\n${REGION_END}\n`;
+    expect(withoutTomlPart(edited, "[mcp_servers.varlatch]", OWNED["[mcp_servers.varlatch]"])).toEqual({ refused: "its [mcp_servers.varlatch] table holds lines the CLI did not write" });
   });
 });
 
@@ -257,6 +269,59 @@ function cli(args: string[], cwd: string): Promise<Result> {
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
 }
+
+describe("--remove and install never lose a human's TOML (review of #68), through the planner and the CLI", () => {
+  const CONFIG = join(".codex", "config.toml");
+  const human = 'model = "o5"\napproval_policy = "never"\n';
+
+  it("a damaged region: --remove leaves the file byte for byte and names it; it is never deleted", async () => {
+    for (const damaged of [
+      `${human}\n${REGION_BEGIN}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = ["mcp"]\n`,
+      `${human}\n${REGION_BEGIN}\n[shell_environment_policy.set]\nVARLATCH_ASSISTED = "1"\n`,
+    ]) {
+      const planned = project({ [CONFIG]: damaged });
+      const result = install(planned, { mode: "remove", mcp: false });
+      expect(text(planned, CONFIG)).toBe(damaged);
+      expect(result.leftInPlace.join("\n")).toMatch(/\.codex\/config\.toml \(its varlatch:begin\/varlatch:end block is damaged/);
+      const viaCli = project({ [CONFIG]: damaged });
+      const r = await cli(["agents", "install", "--remove"], viaCli);
+      expect(r.code, r.stderr).toBe(0);
+      expect(existsSync(join(viaCli, CONFIG))).toBe(true);
+      expect(text(viaCli, CONFIG)).toBe(damaged);
+      expect(r.stdout).toMatch(/Left in place: .*\.codex\/config\.toml/);
+    }
+  });
+
+  it("a table the human put inside the region: --remove refuses, and the file keeps their table", async () => {
+    const root = project({ [CONFIG]: human });
+    expect((await cli(["agents", "install", "--agent", "codex", "--mcp"], root)).code).toBe(0);
+    const withTheirs = text(root, CONFIG).replace(REGION_END, `\n[my_own_table]\nkey = 1\n${REGION_END}`);
+    writeFileSync(join(root, CONFIG), withTheirs);
+    const r = await cli(["agents", "install", "--remove"], root);
+    expect(r.code, r.stderr).toBe(0);
+    expect(text(root, CONFIG)).toBe(withTheirs);
+    expect((parseToml(text(root, CONFIG)) as { my_own_table?: { key: number } }).my_own_table?.key).toBe(1);
+    expect(r.stdout).toMatch(/Left in place: \[mcp_servers\.varlatch\] in \.codex\/config\.toml/);
+  });
+
+  it("an existing varlatch entry with args of another type is the human's: named, untouched, no stack trace", async () => {
+    const own = `${human}\n[mcp_servers.varlatch]\ncommand = "varlatch"\nargs = 12\n`;
+    const root = project({ [CONFIG]: own });
+    const r = await cli(["agents", "install", "--agent", "codex", "--mcp"], root);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/TypeError|not iterable|\bat \w+ \(/);
+    expect(r.stdout).toMatch(/already has an mcp_servers\.varlatch entry that differs from "varlatch mcp"; the CLI leaves it/);
+    expect(text(root, CONFIG)).toBe(own);
+  });
+
+  it("control: a region the CLI wrote, untouched, is still taken out byte for byte", async () => {
+    const root = project({ [CONFIG]: human });
+    expect((await cli(["agents", "install", "--agent", "codex", "--mcp"], root)).code).toBe(0);
+    expect(text(root, CONFIG)).toContain("[mcp_servers.varlatch]");
+    expect((await cli(["agents", "install", "--remove"], root)).code).toBe(0);
+    expect(text(root, CONFIG)).toBe(human);
+  });
+});
 
 describe("the CLI", () => {
   it("agents install --mcp writes .mcp.json, and the command it names is one the CLI runs", async () => {

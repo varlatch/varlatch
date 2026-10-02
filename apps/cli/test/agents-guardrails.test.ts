@@ -182,13 +182,14 @@ describe("Codex", () => {
       ['[shell_environment_policy.set]\nVARLATCH_ASSISTED = "1"\n', "unchanged"],
     ];
     for (const [text, expected] of cases) {
-      const { next } = withCodexEnv(text);
-      if (expected === null) expect(next, text).toBeNull();
+      const { next, refused } = withCodexEnv(text);
+      // A refusal names its reason and carries no text: never mistaken for "delete the file".
+      if (expected === null) expect({ next, refused: typeof refused }, text).toEqual({ next: undefined, refused: "string" });
       else if (expected === "unchanged") expect(next, text).toBe(text);
       else {
         expect(next?.startsWith(text), text).toBe(true);
         expect((parseToml(next as string) as { shell_environment_policy: { set: unknown } }).shell_environment_policy.set, text).toEqual({ VARLATCH_ASSISTED: "1" });
-        expect(withoutCodexEnv(next as string), text).toBe(text);
+        expect(withoutCodexEnv(next as string).next, text).toBe(text);
       }
     }
   });

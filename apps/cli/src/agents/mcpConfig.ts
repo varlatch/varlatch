@@ -2,7 +2,7 @@
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { isCanonicalJson, type Staging } from "./files.js";
-import { isTable, parseTomlOrNull, withTomlPart } from "./toml.js";
+import { isTable, parseTomlOrNull, withoutTomlPart, withTomlPart } from "./toml.js";
 
 /**
  * `varlatch agents install --mcp` (ADR-0043 Decisions 7 and 9): a
@@ -100,8 +100,10 @@ export function planMcp(root: string, agents: string[], mode: "install" | "check
     if (target.format === "toml") {
       if (remove) {
         if (raw !== null) {
-          const { next } = withTomlPart(raw, "[mcp_servers.varlatch]", null);
-          if (next !== raw) staging.write(at(path), next);
+          // A refusal leaves the file as it is: it is never read as "delete the file".
+          const edit = withoutTomlPart(raw, "[mcp_servers.varlatch]", CODEX_MCP_BODY);
+          if (edit.refused !== undefined) plan.leftInPlace.push(`[mcp_servers.varlatch] in ${display(path)} (${edit.refused}; take it out by hand)`);
+          else if (edit.next !== raw) staging.write(at(path), edit.next);
         }
         continue;
       }
@@ -109,17 +111,18 @@ export function planMcp(root: string, agents: string[], mode: "install" | "check
       const servers = before === null ? undefined : before.mcp_servers;
       const existing = isTable(servers) ? servers[SERVER] : undefined;
       if (existing !== undefined) {
-        if (!(isTable(existing) && existing.command === "varlatch" && isDeepStrictEqual([...((existing.args as unknown[]) ?? [])], ["mcp"]))) {
+        // A differing entry, whatever its types (args = 12 included), is the human's.
+        if (!(isTable(existing) && existing.command === "varlatch" && Array.isArray(existing.args) && isDeepStrictEqual(existing.args, ["mcp"]))) {
           plan.manual.push(`${display(path)} already has an mcp_servers.varlatch entry that differs from "varlatch mcp"; the CLI leaves it`);
         }
         continue;
       }
-      const { next, reason } = withTomlPart(raw, "[mcp_servers.varlatch]", CODEX_MCP_BODY, (b) => ({
+      const edit = withTomlPart(raw, "[mcp_servers.varlatch]", CODEX_MCP_BODY, (b) => ({
         ...b,
         mcp_servers: { ...(isTable(b.mcp_servers) ? b.mcp_servers : {}), [SERVER]: { command: "varlatch", args: ["mcp"] } },
       }));
-      if (next === null) plan.manual.push(`add [mcp_servers.varlatch] with command = "varlatch" and args = ["mcp"] to ${display(path)} (${reason})`);
-      else staging.write(at(path), next);
+      if (edit.refused !== undefined) plan.manual.push(`add [mcp_servers.varlatch] with command = "varlatch" and args = ["mcp"] to ${display(path)} (${edit.refused})`);
+      else staging.write(at(path), edit.next);
       plan.notices.push("Codex uses a project's MCP servers only once you trust the project");
       continue;
     }

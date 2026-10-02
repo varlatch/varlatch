@@ -49,7 +49,12 @@ interface Region {
   parts: Map<string, string[]>;
 }
 
-/** The CLI's region, its tables by header; null when there is none; "damaged" when a marker is missing or it holds something else. */
+/**
+ * The CLI's region, its tables by header; null when there is none;
+ * "damaged" when a marker is missing or it holds something else: a line
+ * before the first table, or a table header the CLI does not write (taking
+ * the region out would take that table with it).
+ */
 function regionOf(text: string): Region | null | "damaged" {
   const begin = new RegExp(`(^|\\n)${REGION_BEGIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?\\n`).exec(text);
   const hasEnd = text.includes(REGION_END);
@@ -64,6 +69,8 @@ function regionOf(text: string): Region | null | "damaged" {
     if ((TOML_PARTS as readonly string[]).includes(line)) {
       current = [];
       parts.set(line, current);
+    } else if (/^\s*\[/.test(line)) {
+      return "damaged";
     } else if (line !== "") {
       if (current === null) return "damaged";
       current.push(line);
@@ -78,29 +85,31 @@ function regionText(parts: Map<string, string[]>, eol: string): string {
 }
 
 /**
+ * An edit of a TOML file: the text to write (null: delete the file, which
+ * held only what the CLI added), or why the CLI leaves the file to the
+ * human. A refusal is never a null `next`, so no caller can mistake it for
+ * permission to delete the file.
+ */
+export type TomlEdit = { next: string | null; refused?: undefined } | { next?: undefined; refused: string };
+
+const DAMAGED = "its varlatch:begin/varlatch:end block is damaged, or holds a table the CLI did not write";
+
+/**
  * `current` with the CLI's table `header` set to `body` (its lines after
- * the header), or taken out when `body` is null; or null with the reason
- * the CLI leaves the file to the human. `expected` gives what the whole
- * file must parse to after setting the table.
+ * the header), or the reason the CLI leaves the file to the human.
+ * `expected` gives what the whole file must parse to after setting it.
  */
 export function withTomlPart(
   current: string | null,
   header: TomlPart,
-  body: readonly string[] | null,
+  body: readonly string[],
   expected: (before: Table) => Table = (b) => b,
-): { next: string | null; reason?: string } {
+): TomlEdit {
   const text = current ?? "";
   const region = regionOf(text);
-  if (region === "damaged") return { next: null, reason: "its varlatch:begin/varlatch:end block is damaged" };
-  if (body === null) {
-    if (region === null || !region.parts.has(header)) return { next: current };
-    region.parts.delete(header);
-    if (region.parts.size === 0) return { next: withoutOwned(text, region.start, region.end) };
-    const eol = ownedEol(text, region.start, region.end);
-    return { next: text.slice(0, region.start) + regionText(region.parts, eol) + text.slice(region.end) };
-  }
+  if (region === "damaged") return { refused: DAMAGED };
   const before = parseTomlOrNull(text);
-  if (before === null) return { next: null, reason: "it does not parse as TOML" };
+  if (before === null) return { refused: "it does not parse as TOML" };
   if (region !== null && canonicalData(region.parts.get(header)) === canonicalData([...body])) return { next: current };
   const parts = new Map(region === null ? [] : region.parts);
   parts.set(header, [...body]);
@@ -110,7 +119,27 @@ export function withTomlPart(
       : text.slice(0, region.start) + regionText(parts, ownedEol(text, region.start, region.end)) + text.slice(region.end);
   const after = parseTomlOrNull(next);
   if (after === null || canonicalData(after) !== canonicalData(expected(before))) {
-    return { next: null, reason: "adding to it would change what it says" };
+    return { refused: "adding to it would change what it says" };
   }
   return { next };
+}
+
+/**
+ * `current` without the CLI's table `header`, when it holds exactly `owned`
+ * (the lines the CLI writes); the region goes with the line breaks install
+ * added once it is empty. A damaged region, or a table whose lines differ
+ * from `owned`, is left to the human: taking it out would take the
+ * human's edits with it.
+ */
+export function withoutTomlPart(current: string, header: TomlPart, owned: readonly string[]): TomlEdit {
+  const region = regionOf(current);
+  if (region === "damaged") return { refused: DAMAGED };
+  if (region === null || !region.parts.has(header)) return { next: current };
+  if (canonicalData(region.parts.get(header)) !== canonicalData([...owned])) {
+    return { refused: `its ${header} table holds lines the CLI did not write` };
+  }
+  region.parts.delete(header);
+  if (region.parts.size === 0) return { next: withoutOwned(current, region.start, region.end) };
+  const eol = ownedEol(current, region.start, region.end);
+  return { next: current.slice(0, region.start) + regionText(region.parts, eol) + current.slice(region.end) };
 }
