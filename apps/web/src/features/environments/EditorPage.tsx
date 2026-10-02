@@ -207,7 +207,7 @@ export function EditorPage() {
     listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(name)}"]`)?.focus();
   });
   useEffect(() => {
-    if (!selected) return;
+    if (!selected || !values.data) return;
     const el = listRef.current?.querySelector(`[data-row="${CSS.escape(selected)}"]`);
     const r = el?.getBoundingClientRect();
     if (el && r && (r.top < 0 || r.bottom > window.innerHeight)) el.scrollIntoView({ block: "center" });
@@ -462,7 +462,7 @@ export function EditorPage() {
                 {filter ? `No item matches “${filter}”.` : segment === "missing" ? "Nothing is missing." : "No secrets."}
               </p>
             )}
-            {visible.map((row) => (
+            {!values.isLoading && visible.map((row) => (
               <ValueRow
                 key={row.name}
                 row={row}
