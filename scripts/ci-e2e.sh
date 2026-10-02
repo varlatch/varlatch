@@ -19,12 +19,20 @@ BUILD
 COMPOSE=(docker compose --project-name "$E2E_PROJECT" --env-file "$E2E_DIR/.env" -f "$E2E_DIR/docker-compose.yml" -f "$E2E_DIR/build.json")
 cleanup() {
   result=$?
-  if [ "$result" -ne 0 ]; then "${COMPOSE[@]}" logs --tail 50; fi
+  if [ "$result" -ne 0 ]; then "${COMPOSE[@]}" logs --tail 50; budget report || true; fi
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$E2E_DIR"
   exit "$result"
 }
 trap cleanup EXIT
+# varlatchd's request window (600 requests per 60 s per client) is a
+# production limit and stays one; every suite reaches varlatchd through the
+# dashboard's nginx from this host, so they share one budget. `budget wait`
+# holds the next suite until the window has room; `budget report` replays the
+# windows from nginx's log and fails when one went over (apps/web/scripts/e2e-request-budget.mjs).
+budget() {
+  "${COMPOSE[@]}" logs --no-log-prefix varlatch-web 2>/dev/null | node "$REPO_ROOT"/apps/web/scripts/e2e-request-budget.mjs "$@"
+}
 cd "$E2E_DIR"
 # Ask the kernel for three unused loopback ports.
 read -r VARLATCH_WEB_PORT VARLATCHD_PORT CONVEX_PORT < <(python3 - <<'PORTS'
@@ -98,14 +106,17 @@ curl -fsS -X PUT "${WEB_ORIGIN}/v1/organizations/acme/projects/api/environments/
 
 echo "--- dashboard E2E (production container)"
 GRANT1=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "dashboard"
 node "$REPO_ROOT"/apps/web/scripts/e2e-web.mjs "$GRANT1"
 
 echo "--- values/matrix E2E (production container)"
 GRANT_V=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "values"
 node "$REPO_ROOT"/apps/web/scripts/e2e-values.mjs "$GRANT_V" "$TOKEN"
 
 echo "--- access E2E (production container)"
 GRANT_A=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "access"
 node "$REPO_ROOT"/apps/web/scripts/e2e-access.mjs "$GRANT_A"
 
 echo "--- P4 audit/contract/palette E2E (production container)"
@@ -113,18 +124,22 @@ GRANT_P=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --ide
 # A disposable same-identity credential the suite revokes live to assert the
 # me-scoped identitySignal refreshes /credentials without a reload.
 TOKEN_DISPOSABLE=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" --cli-credential </dev/null | tail -1)
+budget wait "P4"
 node "$REPO_ROOT"/apps/web/scripts/e2e-p4.mjs "$GRANT_P" "$TOKEN" "$TOKEN_DISPOSABLE"
 
 echo "--- onboarding E2E (production container)"
 GRANT_O=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "onboarding"
 node "$REPO_ROOT"/apps/web/scripts/e2e-onboarding.mjs "$GRANT_O" "$TOKEN"
 
 echo "--- degraded realtime: Convex down (ADR-0035 D10), incl. the credential broker E2E (ADR-0022)"
 GRANT_R=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "realtime"
 node "$REPO_ROOT"/apps/web/scripts/e2e-realtime.mjs "$GRANT_R" "$TOKEN" -- "${COMPOSE[@]}"
 
 echo "--- isolating maintenance: dashboard and CLI ride it out (ADR-0036 D6)"
 GRANT_M=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "maintenance"
 node "$REPO_ROOT"/apps/web/scripts/e2e-maintenance.mjs "$GRANT_M" "$TOKEN" -- "${COMPOSE[@]}"
 # No secret plaintext may reach application logs (design doc Phase 3 §1.18).
 if "${COMPOSE[@]}" logs varlatchd 2>/dev/null | grep -q "postgres://dev-db"; then
@@ -133,10 +148,12 @@ fi
 
 echo "--- CLI browser-handoff login E2E"
 GRANT2=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "CLI login"
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-cli-login.mjs "$GRANT2"
 
 echo "--- device sign-in E2E (login --start/--wait, dashboard /device approval with a passkey)"
 GRANT_D=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+budget wait "device sign-in"
 node "$REPO_ROOT"/apps/web/scripts/e2e-device.mjs "$GRANT_D"
 
 echo "--- device sign-in behind the dashboard's nginx: the caller's own address, forged headers ignored"
@@ -145,6 +162,7 @@ PROBE_NAME="proxy-probe-$(openssl rand -hex 6)"
 # A known start: no sign-in pending from anyone, so exactly ten probe requests can succeed.
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d varlatch -Atqc \
   "UPDATE device_sign_ins SET expires_at = clock_timestamp() - interval '1 second' WHERE status = 'pending'" </dev/null
+budget wait "proxy probe"
 node "$REPO_ROOT"/apps/web/scripts/e2e-proxy-probe.mjs send "$WEB_ORIGIN" "$PROBE_NAME" 12 > "$E2E_DIR/probe-responses.json"
 "${COMPOSE[@]}" exec -T postgres psql -U postgres -d varlatch -Atc \
   "SELECT coalesce(json_agg(json_build_object('requesterIp', requester_ip)), '[]') FROM device_sign_ins WHERE requested_name = '$PROBE_NAME'" \
@@ -153,9 +171,11 @@ node "$REPO_ROOT"/apps/web/scripts/e2e-proxy-probe.mjs send "$WEB_ORIGIN" "$PROB
 node "$REPO_ROOT"/apps/web/scripts/e2e-proxy-probe.mjs check "$E2E_DIR/probe-responses.json" "$E2E_DIR/probe-rows.json" $WEB_IPS
 
 echo "--- client runtime E2E (run --redact, run --export-context, types, scan; bundled CLI)"
+budget wait "client runtime"
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-client-runtime.mjs "$WEB_ORIGIN" "$TOKEN" -- "${COMPOSE[@]}"
 
 echo "--- strict startup E2E (varlatch run --strict, bundled CLI)"
+budget wait "strict run"
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-strict-run.mjs "$WEB_ORIGIN" "$TOKEN"
 
 echo "--- read-only doctor (ADR-0035 D8)"
@@ -206,4 +226,5 @@ echo "web=$DOWN_WEB api=$DOWN_API convex=$DOWN_CVX (${CVX_SECONDS}s) web-after-r
 [ "$CVX_SECONDS" -le 10 ] || { echo "FAIL: /convex must fail fast while the backend is down (${CVX_SECONDS}s)"; exit 1; }
 echo "PASS  dashboard and /v1 serve while Convex is down; /convex recovers when it returns"
 
+budget report
 echo "ALL E2E SUITES PASSED"
