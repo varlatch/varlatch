@@ -48,6 +48,13 @@ import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
 import {
+  WAIT_DEFAULT_SECONDS,
+  WAIT_MAX_SECONDS,
+  startDeviceLogin,
+  waitDeviceLogin,
+  type DeviceLoginIO,
+} from "./deviceLogin.js";
+import {
   STATUS_SCHEMA_VERSION,
   expiryWarning,
   formatStatusHuman,
@@ -327,6 +334,30 @@ async function probeServer(
   }
 }
 
+const LOGIN_USAGE = commandHelp("login") ?? "Usage: varlatch login --server <url>";
+
+/** login is parsed strictly: a misspelled option must not start a different sign-in. */
+const LOGIN_OPTIONS: OptionSpec = {
+  values: ["--server", "--token", "--ttl", "--org", "--audience", "--oidc-token", "--timeout"],
+  booleans: ["--token-stdin", "--oidc", "--start", "--wait", "--json"],
+};
+
+/** --ttl for a device sign-in: whole seconds, within ADR-0024's bounds. */
+function ttlSeconds(value: string): number {
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 60 || n > 86_400) usageError(`varlatch login: --ttl takes whole seconds from 60 to 86400, not ${value}`);
+  return n;
+}
+
+/** --timeout for --wait: whole seconds, at most 600. */
+function waitSeconds(value: string): number {
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 1 || n > WAIT_MAX_SECONDS) {
+    usageError(`varlatch login: --timeout takes whole seconds from 1 to ${WAIT_MAX_SECONDS}, not ${value}`);
+  }
+  return n;
+}
+
 async function browserLogin(server: string): Promise<string> {
   const { createServer } = await import("node:http");
   const { spawn } = await import("node:child_process");
@@ -535,14 +566,62 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case "login": {
-        const server =
-          flag(args, "--server") ?? usageError("Usage: varlatch login --server <url> [--token-stdin|--token <credential>|--oidc]");
-        let token = flag(args, "--token");
-        if (has(args, "--token-stdin")) {
+        // No human sign-in inside an agent-safe run (ADR-0043 Decision 5;
+        // device sign-in design Q7), whatever the method, and whatever
+        // VARLATCH_CONFIG_DIR says: refused before any request and before
+        // the pending sign-in state is read or written.
+        const agentRun = agentRunOf();
+        if (agentRun) {
+          usageError(
+            `varlatch login: this command runs inside agent-safe run ${agentRun}, which has no human sign-in, and a ` +
+              "human's credential never replaces the run's agent identity. Nothing was requested, and no sign-in state " +
+              "was read or written.\nFor read access to configuration metadata, the operator relaunches the run with --agent-metadata.",
+          );
+        }
+        const login = strictOptions("login", args, LOGIN_OPTIONS, LOGIN_USAGE);
+        const server = login.values.get("--server") ?? usageError(LOGIN_USAGE);
+        const given = (["--token", "--token-stdin", "--oidc", "--start", "--wait"] as const).filter((m) =>
+          m === "--token" ? login.values.has(m) : login.booleans.has(m),
+        );
+        if (given.length > 1) {
+          usageError(`varlatch login: give one of --token-stdin, --token, --oidc, --start, or --wait, not more than one (${given.join(", ")})`);
+        }
+        // Assisted mode (design Q6): with no method given, a coding agent
+        // cannot wait for the browser loopback, so login starts a device sign-in.
+        const device = given[0] === "--start" || given[0] === "--wait" ? given[0] : given.length === 0 && assisted.on ? "--start" : null;
+        const ttlFlag = login.values.get("--ttl");
+        if (device) {
+          for (const option of ["--org", "--audience", "--oidc-token"]) {
+            if (login.values.has(option)) usageError(`varlatch login: ${option} applies to --oidc, not to ${device}\n${LOGIN_USAGE}`);
+          }
+          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+          const io: DeviceLoginIO = {
+            out: (line) => console.log(line),
+            err: (line) => console.error(line),
+            json: login.booleans.has("--json") ? printJson : null,
+            cli: assisted.on ? "varlatch --assisted" : "varlatch",
+            assisted: assisted.on,
+            userAgent: `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`,
+          };
+          let code: number;
+          if (device === "--start") {
+            if (login.values.has("--timeout")) usageError("varlatch login: --timeout applies to --wait");
+            code = await startDeviceLogin(server, ttlFlag === undefined ? undefined : ttlSeconds(ttlFlag), io);
+          } else {
+            if (ttlFlag !== undefined) usageError("varlatch login: --ttl applies to --start; the sign-in's lifetime was set when it started");
+            const timeout = login.values.get("--timeout");
+            code = await waitDeviceLogin(server, { timeoutSeconds: timeout === undefined ? WAIT_DEFAULT_SECONDS : waitSeconds(timeout) }, io);
+          }
+          if (code !== EXIT.ok) process.exit(code);
+          return;
+        }
+        if (login.booleans.has("--json")) usageError("varlatch login: --json applies to --start and --wait");
+        if (login.values.has("--timeout")) usageError("varlatch login: --timeout applies to --wait");
+        let token = login.values.get("--token");
+        if (login.booleans.has("--token-stdin")) {
           // ADR-0043 Decision 2: a credential from a pipe or file, never the
           // command line, where process lists, shell history, and a coding
           // agent's transcript would keep it.
-          if (token !== undefined || has(args, "--oidc")) usageError("varlatch login: give --token-stdin, --token, or --oidc, not more than one");
           if (process.stdin.isTTY) {
             usageError("varlatch login: --token-stdin reads the credential from a pipe or a file; in a terminal, leave it out to sign in in the browser");
           }
@@ -554,16 +633,15 @@ async function main(): Promise<void> {
         // Issuance metadata (ADR-0032): stored so expiry is knowable offline.
         // Explicit --token has none — its entry stays metadata-free.
         let issuedMeta: { id: string; expiresAt: string } | undefined;
-        if (!token && has(args, "--oidc")) {
+        if (!token && login.booleans.has("--oidc")) {
           // CI federation (capability auth.oidc): exchange the platform's
           // OIDC ID token for a short-lived credential; nothing stored in
           // the pipeline's secrets at all.
-          const organization = flag(args, "--org") ?? usageError("OIDC login requires --org <organization>");
+          const organization = login.values.get("--org") ?? usageError("OIDC login requires --org <organization>");
           const idToken = await obtainOidcIdToken({
-            explicitToken: flag(args, "--oidc-token"),
-            audience: flag(args, "--audience"),
+            explicitToken: login.values.get("--oidc-token"),
+            audience: login.values.get("--audience"),
           });
-          const ttlFlag = flag(args, "--ttl");
           const anonymous = new VarlatchClient({ onMaintenance: maintenanceNotice, server });
           const issued = await anonymous.exchangeOidcToken({
             token: idToken,
@@ -580,7 +658,6 @@ async function main(): Promise<void> {
           // immediately for a longer-lived CLI credential (ADR-0024; the
           // bearer is revoked server-side by the exchange).
           const handoff = await browserLogin(server);
-          const ttlFlag = flag(args, "--ttl");
           // Identifies the CLI so the server can label the credential
           // ("varlatch CLI 0.14.0 on Linux"); it stores only that summary.
           const { EMBEDDED_RELEASE } = await import("@varlatch/backup");

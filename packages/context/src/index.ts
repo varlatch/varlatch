@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, parse as parsePath, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -289,4 +302,115 @@ export function deleteCredential(server: string, env: NodeJS.ProcessEnv = proces
   delete parsed.servers[key];
   writeCredentialsFile(parsed, env);
   return true;
+}
+
+// ---- Pending device sign-ins (design notes "Device-authorization sign-in") -
+//
+// `varlatch login --start` keeps the device code here and nowhere else: it
+// is the bearer that collects the credential, so it never appears in
+// output, argv, or logs. A 0600 file in a 0700 directory, replaced
+// atomically, one entry per server.
+
+export function pendingSignInsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "pending-sign-ins.json");
+}
+
+/** The key a server's entries are stored under: scheme, host, port (default ports dropped), path without trailing slashes. */
+export function serverKey(server: string): string {
+  const url = new URL(server);
+  return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+export interface PendingSignIn {
+  /** The server URL as given to --start. */
+  server: string;
+  /** The collecting bearer: never shown. */
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  expiresAt: string;
+  /** Seconds between polls; grows when the server answers SLOW_DOWN. */
+  interval: number;
+  startedAt: string;
+  /** When the last `--wait` polled, so the next one keeps the interval. */
+  lastPolledAt?: string;
+}
+
+interface PendingSignInsFile {
+  servers: Record<string, PendingSignIn>;
+}
+
+/**
+ * Never inside an agent-safe run, whatever VARLATCH_CONFIG_DIR says: a run
+ * has no human sign-in (ADR-0043 Decision 5). The CLI refuses before it
+ * gets here; this keeps a mistake from reading or writing the state.
+ */
+function refuseInAgentRun(env: NodeJS.ProcessEnv): void {
+  const run = agentRunOf(env);
+  if (run) throw new ContextError(`This command runs inside agent-safe run ${run}, which has no human sign-in.`);
+}
+
+function readPendingFile(env: NodeJS.ProcessEnv): PendingSignInsFile {
+  refuseInAgentRun(env);
+  const path = pendingSignInsPath(env);
+  if (!existsSync(path)) return { servers: {} };
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<PendingSignInsFile>;
+    return { servers: parsed.servers && typeof parsed.servers === "object" ? parsed.servers : {} };
+  } catch {
+    // Unreadable state holds nothing to keep: a pending sign-in expires within minutes.
+    return { servers: {} };
+  }
+}
+
+function writePendingFile(file: PendingSignInsFile, env: NodeJS.ProcessEnv): void {
+  refuseInAgentRun(env);
+  const path = pendingSignInsPath(env);
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  chmodSync(dir, 0o700);
+  if (Object.keys(file.servers).length === 0) {
+    if (existsSync(path)) unlinkSync(path);
+    return;
+  }
+  // A temporary file in the same directory, then a rename: readers see the
+  // old file or the new one, never a partial write, and the new file is
+  // never readable by anyone else, not even briefly.
+  const temporary = join(dir, `.pending-sign-ins.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(temporary, "wx", 0o600);
+  try {
+    writeSync(fd, `${JSON.stringify(file, null, 2)}\n`);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+  try {
+    chmodSync(temporary, 0o600);
+    renameSync(temporary, path);
+  } catch (err) {
+    try { unlinkSync(temporary); } catch { /* already gone */ }
+    throw err;
+  }
+}
+
+export function loadPendingSignIn(server: string, env: NodeJS.ProcessEnv = process.env): PendingSignIn | null {
+  return readPendingFile(env).servers[serverKey(server)] ?? null;
+}
+
+/** Stores the server's entry, replacing an earlier one; returns the replaced entry. */
+export function savePendingSignIn(entry: PendingSignIn, env: NodeJS.ProcessEnv = process.env): PendingSignIn | null {
+  const file = readPendingFile(env);
+  const key = serverKey(entry.server);
+  const replaced = file.servers[key] ?? null;
+  file.servers[key] = entry;
+  writePendingFile(file, env);
+  return replaced;
+}
+
+export function deletePendingSignIn(server: string, env: NodeJS.ProcessEnv = process.env): void {
+  const file = readPendingFile(env);
+  const key = serverKey(server);
+  if (!file.servers[key]) return;
+  delete file.servers[key];
+  writePendingFile(file, env);
 }

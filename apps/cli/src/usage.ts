@@ -13,10 +13,16 @@ Usage:
                run masks Secrets in the command's output by default and refuses one too short to mask
                (exit 78), and refuses --allow-unmasked and --no-redact; values set/rotate never take a
                Secret's value from the command line, and replace an existing value only with --replace <ITEM>;
-               values delete deletes only with --confirm <ITEM>
+               values delete deletes only with --confirm <ITEM>; login with no method starts a device sign-in
   varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
                the named short Secrets; every other known Secret stays masked
-  varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in
+  varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in, in a browser on this machine
+  varlatch login --server <url> --start [--ttl <s>] [--json]
+               (device sign-in: prints an address and a code; approve it with your passkey in a browser on any
+                device, then run --wait. The code lasts 10 minutes)
+  varlatch login --server <url> --wait [--timeout <s>] [--json]
+               (collects the approved sign-in and stores the credential; waits up to 60 seconds, at most 600;
+                exit 75 when it is still pending: run --wait again)
   varlatch login --server <url> --token-stdin            # a credential from a pipe or file, e.g. from a password manager
   varlatch login --server <url> --token <credential>
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
@@ -108,7 +114,8 @@ Usage:
                    # backup-gated compose upgrade on this host (run where docker-compose.yml lives)
 
 Exit status: 0 success; 1 failure; 64 the command line is wrong; 69 the server cannot be reached or is in
-maintenance; 77 not authenticated or denied; 78 strict startup violation, or assisted mode cannot mask a Secret.
+maintenance; 75 login --wait reached its deadline with the sign-in still pending; 77 not authenticated or denied;
+78 strict startup violation, or assisted mode cannot mask a Secret.
 Kept as before: validate 1 invalid, 2 incomplete; scan 1 findings, 2 not everything scanned; types --check 1 stale;
 run returns the command's own status once the command has started. agents install --check exits 1 when the files differ.`;
 

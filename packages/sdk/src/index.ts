@@ -8,6 +8,8 @@ import type {
   ConfigItemSearchResult,
   ContractRevision,
   CreatedIdentity,
+  DeviceSignInLookup,
+  DeviceSignInStarted,
   GrantReplacement,
   IssuedCliCredential,
   OwnCredential,
@@ -64,6 +66,28 @@ export class VarlatchApiError extends Error {
     this.details = body.details;
   }
 }
+
+/**
+ * A device sign-in request answered with a redirect (ADR-0043 device
+ * sign-in transport rule). The device code is a bearer, so the body is
+ * never resent to another location; `location` is where the server
+ * pointed, for the message.
+ */
+export class DeviceSignInRedirectError extends Error {
+  override name = "DeviceSignInRedirectError";
+  constructor(readonly status: number, readonly location: string | null) {
+    super(`The server answered ${status} with a redirect${location ? ` to ${location}` : ""}; device sign-in follows no redirect`);
+  }
+}
+
+/** One poll of a device sign-in (POST /v1/auth/device/token). */
+export type DeviceSignInPoll =
+  | { state: "issued"; credential: IssuedCliCredential }
+  | { state: "pending"; interval: number }
+  | { state: "slow_down"; interval: number }
+  | { state: "denied" }
+  | { state: "expired" }
+  | { state: "consumed"; credentialId: string | null };
 
 export interface VarlatchClientOptions {
   server: string;
@@ -742,6 +766,81 @@ export class VarlatchClient {
    */
   exchangeCliCredential(input: { ttlSeconds?: number; name?: string } = {}): Promise<IssuedCliCredential> {
     return this.request("POST", "/v1/me/credentials/cli", input);
+  }
+
+  /**
+   * The CLI's device sign-in calls (capability auth.device). One request
+   * each: no maintenance retry, and no redirect followed (the body carries
+   * the device code, a bearer), so a redirect throws
+   * DeviceSignInRedirectError. `signal` bounds the request.
+   */
+  private async deviceRequest(path: string, body: unknown, signal: AbortSignal | undefined): Promise<Response> {
+    const res = await this.fetchImpl(`${this.server}${path}`, {
+      method: "POST",
+      headers: {
+        ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      redirect: "manual",
+      ...(signal ? { signal } : {}),
+    });
+    // Browsers report a manual redirect as an opaque response (status 0).
+    if ((res.status >= 300 && res.status < 400) || res.type === "opaqueredirect") {
+      throw new DeviceSignInRedirectError(res.status, res.headers.get("Location"));
+    }
+    return res;
+  }
+
+  /** Start a device sign-in. Unauthenticated; keep `deviceCode` private. */
+  async startDeviceSignIn(
+    input: { ttlSeconds?: number; name?: string } = {},
+    options: { signal?: AbortSignal } = {},
+  ): Promise<DeviceSignInStarted> {
+    return this.finish(await this.deviceRequest("/v1/auth/device", input, options.signal));
+  }
+
+  /** Poll a device sign-in once: its state, or the issued credential (exactly once). */
+  async pollDeviceSignIn(deviceCode: string, options: { signal?: AbortSignal } = {}): Promise<DeviceSignInPoll> {
+    const res = await this.deviceRequest("/v1/auth/device/token", { deviceCode }, options.signal);
+    if (res.status === 201) return { state: "issued", credential: await this.finish<IssuedCliCredential>(res) };
+    if (res.ok) {
+      throw new VarlatchApiError(res.status, {
+        code: "INTERNAL",
+        message: `HTTP ${res.status}; not a device sign-in answer`,
+        requestId: res.headers.get("X-Request-Id") ?? "unknown",
+      });
+    }
+    try {
+      return await this.finish<never>(res);
+    } catch (err) {
+      if (!(err instanceof VarlatchApiError)) throw err;
+      const interval = Number(err.details?.interval);
+      switch (err.code) {
+        case "AUTHORIZATION_PENDING":
+          return { state: "pending", interval: Number.isFinite(interval) && interval > 0 ? interval : 5 };
+        case "SLOW_DOWN":
+          return { state: "slow_down", interval: Number.isFinite(interval) && interval > 0 ? interval : 10 };
+        case "ACCESS_DENIED":
+          return { state: "denied" };
+        case "EXPIRED":
+          return { state: "expired" };
+        case "CONSUMED":
+          return { state: "consumed", credentialId: typeof err.details?.credentialId === "string" ? err.details.credentialId : null };
+        default:
+          throw err;
+      }
+    }
+  }
+
+  /** The dashboard's lookup of a typed code: the pending sign-in and a fresh approval challenge. */
+  lookupDeviceSignIn(userCode: string): Promise<DeviceSignInLookup> {
+    return this.request("POST", "/v1/auth/device/lookup", { userCode });
+  }
+
+  /** Approve (with a passkey assertion over the lookup's challenge) or deny a device sign-in. */
+  decideDeviceSignIn(input: { userCode: string; decision: "approve" | "deny"; assertion?: unknown }): Promise<{ decision: "approved" | "denied" }> {
+    return this.request("POST", "/v1/auth/device/approve", input);
   }
 
   /** Unauthenticated: the external OIDC token is the proof of identity. */
