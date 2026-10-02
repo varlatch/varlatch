@@ -15,6 +15,7 @@ export const GUIDE_TOPICS: Readonly<Record<string, string>> = {
   run: "references/run.md",
   "agent-run": "references/agent-run.md",
   "self-hosting": "references/self-hosting.md",
+  contract: "references/contract.md",
 };
 
 /** A reference file's first line: it is generated, and installing again overwrites edits. */

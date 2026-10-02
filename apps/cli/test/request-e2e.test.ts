@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { canonicalTargets } from "@varlatch/protocol";
 import { build } from "esbuild";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { SKILL_FILES } from "../src/agents/skillFiles.generated.js";
 
 /**
  * `varlatch request` end to end (ADR-0043 Decision 6): a real
@@ -145,6 +146,12 @@ request("plainHttp", ["-H", "Authorization: Bearer " + ph, "http://" + dest + "/
 const outside = { ...e };
 delete outside.VARLATCH_AGENT_RUN;
 request("outside", ["https://" + dest + "/outside"], outside);
+// The documented request example, through a shell: double quotes expand $STRIPE_KEY to the Placeholder;
+// the same command in single quotes (the negative control) sends the literal text.
+for (const [name, command] of [["docDouble", e.DOC_DOUBLE], ["docSingle", e.DOC_SINGLE]]) {
+  const r = spawnSync("sh", ["-c", command], { env: e, encoding: "utf8", timeout: 20000 });
+  record.probes[name] = { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
 // A CONNECT tunnel, as curl, fetch, and most SDKs open for HTTPS through a proxy.
 const proxy = new URL(e.HTTPS_PROXY);
 const auth = Buffer.from(decodeURIComponent(proxy.username) + ":" + decodeURIComponent(proxy.password)).toString("base64");
@@ -198,6 +205,11 @@ beforeAll(async () => {
   mkdirSync(repo);
   writeFileSync(join(repo, "varlatch.toml"), `organization = "acme"\nproject = "web"\nserver = "${origin}"\ndefault_environment = "development"\n`);
   writeFileSync(join(dir, "agent.cjs"), AGENT);
+  // `varlatch` on PATH, so the documented command runs as written.
+  mkdirSync(join(dir, "bin"));
+  writeFileSync(join(dir, "bin", "varlatch"), `#!/bin/sh\nexec "${process.execPath}" "${bundle}" "$@"\n`, { mode: 0o755 });
+  const documented = /^(varlatch --assisted request -X POST -H "Authorization: Bearer \$STRIPE_KEY" .*) https:\/\/api\.stripe\.com\/v1\/charges$/m.exec(SKILL_FILES["references/agent-run.md"] as string)?.[1];
+  if (!documented) throw new Error("the documented request example is not in references/agent-run.md");
 
   const out = join(dir, "record.json");
   const args = [
@@ -207,7 +219,9 @@ beforeAll(async () => {
     "--", process.execPath, join(dir, "agent.cjs"),
   ];
   const env = {
-    PATH: process.env.PATH,
+    PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+    DOC_DOUBLE: `${documented} https://127.0.0.1:${upstreamPort}/doc-double`,
+    DOC_SINGLE: `${documented.replace('"Authorization: Bearer $STRIPE_KEY"', "'Authorization: Bearer $STRIPE_KEY'")} https://127.0.0.1:${upstreamPort}/doc-single`,
     HOME: dir,
     VARLATCH_CONFIG_DIR: join(dir, "config"),
     VARLATCH_TOKEN: "vlt_operator",
@@ -299,8 +313,8 @@ describe("varlatch request through the Broker of an agent-safe run", () => {
     const [got] = at("/stray-query");
     expect(got!.url).toBe(`/stray-query?note=${record.placeholder}`);
     expect(outer.output).toMatch(/STRIPE_KEY placeholder forwarded unchanged in the query/);
-    // Two exercises: the JSON request and the --data @file request; none for any stray.
-    expect(exercises).toHaveLength(2);
+    // Three exercises: the JSON request, the --data @file request, and the documented example; none for any stray.
+    expect(exercises).toHaveLength(3);
   });
 
   it("negative control (stated scope): a response to a request that carried no Secret is relayed unscrubbed", () => {
@@ -322,6 +336,23 @@ describe("varlatch request through the Broker of an agent-safe run", () => {
     expect(probe.stderr).toMatch(/varlatch-broker: secret substitution requires an HTTPS destination with verified TLS/);
     expect(probe.stderr).toMatch(/the Broker refused the request \(502\)/);
     expect(at("/plain")).toEqual([]);
+  });
+
+  it("the documented request example, run in a shell as written, reaches the API with the real key", () => {
+    const probe = record.probes.docDouble!;
+    expect(probe.code, probe.stderr).toBe(0);
+    const [got] = at("/doc-double");
+    expect(got?.headers.authorization).toBe(`Bearer ${CANARY}`);
+    expect(probe.stdout).not.toContain(CANARY);
+  });
+
+  it("negative control: the same command in single quotes sends the literal $STRIPE_KEY, and nothing is substituted", () => {
+    const probe = record.probes.docSingle!;
+    const [got] = at("/doc-single");
+    expect(got?.headers.authorization).toBe("Bearer $STRIPE_KEY");
+    expect(JSON.stringify(got)).not.toContain(CANARY);
+    // Exit 0: the destination answered. Whether the call was authenticated is the API's answer, not the CLI's status.
+    expect(probe.code).toBe(0);
   });
 
   it("refuses outside an agent-safe run (64), sending nothing", () => {

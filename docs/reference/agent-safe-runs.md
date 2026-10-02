@@ -222,7 +222,13 @@ varlatch request -X POST -H "Authorization: Bearer $STRIPE_KEY" \
   `@-` (standard input) send the bytes as they are.
 - The shell expands `$STRIPE_KEY` to its Placeholder; the Broker substitutes
   the Secret only at its targets, originates TLS to the destination, and
-  scrubs the response before `varlatch request` prints it.
+  scrubs the response before `varlatch request` prints it. Use double
+  quotes: in single quotes the shell passes the literal text `$STRIPE_KEY`,
+  which holds no Placeholder, so nothing is substituted. A program that
+  starts `varlatch request` without a shell passes the Placeholder itself;
+  `varlatch request` never expands variables.
+- Exit 0 means the destination answered, whatever it answered: an
+  authentication error from the API is still exit 0. Read the response.
 - It needs no Varlatch credential and holds no Secret. Outside an
   agent-safe run, or in one without Secrets (no Broker), it refuses.
 - The Broker marks the replies it generates itself and strips that marker

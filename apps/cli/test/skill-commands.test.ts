@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -40,14 +40,18 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
     };
-    const revisionOf = (items: unknown[], id: string) => {
-      const contract = normalizeContract({ schemaVersion: 1, semanticsVersion: 3, items: items as never });
-      return { id, projectId: "prj_1", contentHash: contractHash(contract), semanticsVersion: 3, active: false, contract, createdAt: "2026-10-01T00:00:00.000Z" };
+    // As the server: a pushed Contract keeps its own Semantics version, or the active revision's when it names none.
+    const revisionOf = (items: unknown[], id: string, semantics?: number) => {
+      const version = semantics ?? (state.active?.semanticsVersion as number | undefined) ?? 3;
+      const contract = normalizeContract({ schemaVersion: 1, semanticsVersion: version, items: items as never });
+      return { id, projectId: "prj_1", contentHash: contractHash(contract), semanticsVersion: version, active: false, contract, createdAt: "2026-10-01T00:00:00.000Z" };
     };
     if (url === "/v1/meta") return json(200, { serverVersion: "0.14.0", apiMajor: 1, capabilities: ["retrieval.strict"], semanticsVersions: [1, 2, 3] });
     if (url === "/v1/organizations/acme/projects/web/contract") return state.active ? json(200, state.active) : json(404, { error: { code: "RESOURCE_NOT_FOUND", message: "none", requestId: "r" } });
     if (url === "/v1/organizations/acme/projects/web/contract/revisions" && req.method === "POST") {
-      const rev = revisionOf(((body.contract as { items?: unknown[] })?.items ?? []) as unknown[], `crv_${state.revisions.length + 1}`);
+      pushed.push(body);
+      const sent = body.contract as { items?: unknown[]; semanticsVersion?: number };
+      const rev = revisionOf((sent?.items ?? []) as unknown[], `crv_${state.revisions.length + 1}`, sent?.semanticsVersion);
       state.revisions.push(rev);
       return json(201, rev);
     }
@@ -97,8 +101,11 @@ afterAll(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+let pushed: Record<string, unknown>[] = [];
+
 beforeEach(() => {
   state = { values: {}, production: {}, revisions: [], active: null };
+  pushed = [];
 });
 
 /** A fresh project with a .env holding a long Secret and a short non-secret. */
@@ -256,8 +263,9 @@ describe("the exit-78 remedies keep the run's environment", () => {
     const r = await cli(["--assisted", "run", "-e", "production", ...extra, "--", "node", "-e", "console.log('ok')"], repo, env);
     expect(r.code, r.stderr).toBe(78);
     return {
-      replace: /: (varlatch values set PIN .*--generate hex:32)$/m.exec(r.stderr)?.[1],
-      unmask: /: (varlatch run .*--allow-unmasked PIN -- <command>)$/m.exec(r.stderr)?.[1],
+      replace: /^ {6}(varlatch --assisted values set PIN .*--generate hex:32)$/m.exec(r.stderr)?.[1],
+      unmask: /^ {6}(varlatch run .*--allow-unmasked PIN -- <command>)$/m.exec(r.stderr)?.[1],
+      stderr: r.stderr,
     };
   }
 
@@ -277,10 +285,15 @@ describe("the exit-78 remedies keep the run's environment", () => {
     expect(state.values.PIN).toBe(DEV_PIN);
   });
 
-  it("the printed replacement replaces production's value, leaves development's, and the refused run then starts", async () => {
+  it("after approval, the printed assisted replacement replaces production's value, leaves development's, and the refused run then starts", async () => {
     const repo = project();
-    const { replace } = await refusedInProduction(repo);
-    expect(replace).toBe("varlatch values set PIN -e production --generate hex:32");
+    const { replace, stderr } = await refusedInProduction(repo);
+    expect(stderr).toMatch(/Only if they approve replacing PIN with a new random value/);
+    expect(replace).toBe("varlatch --assisted values set PIN -e production --replace PIN --generate hex:32");
+    // Control: without --replace, as the remedy was printed before, assisted mode refuses to replace (78).
+    const unapproved = await cli(fill((replace as string).replace(" --replace PIN", "")), repo);
+    expect(unapproved.code).toBe(78);
+    expect(state.production.PIN).toBe("1234567");
     const r = await cli(fill(replace as string), repo);
     expect(r.code, r.stderr).toBe(0);
     expect(state.production.PIN).toMatch(/^[0-9a-f]{64}$/);
@@ -294,7 +307,7 @@ describe("the exit-78 remedies keep the run's environment", () => {
     const repo = project();
     for (const [extra, env] of [[["--server", origin], {}], [[], { VARLATCH_SERVER: origin }]] as const) {
       const { replace, unmask } = await refusedInProduction(repo, [...extra], env);
-      expect(replace).toBe(`varlatch values set PIN -e production --server ${origin} --generate hex:32`);
+      expect(replace).toBe(`varlatch --assisted values set PIN -e production --server ${origin} --replace PIN --generate hex:32`);
       expect(unmask).toBe(`varlatch run -e production --server ${origin} --allow-unmasked PIN -- <command>`);
     }
     const handoff = await cli(["--assisted", "values", "set", "STRIPE_KEY", "-e", "production", "--server", origin], repo);
@@ -302,6 +315,97 @@ describe("the exit-78 remedies keep the run's environment", () => {
     expect(handoff.stderr).toContain(`    varlatch values set STRIPE_KEY -e production --server ${origin}\n`);
     const plain = await refusedInProduction(repo);
     expect(`${plain.replace} ${plain.unmask}`).not.toContain("--server");
+  });
+});
+
+describe("correcting an item's sensitivity: references/contract.md, run as written", () => {
+  // The Contract an import made with LOG_LEVEL as a Secret (no --plain), on Semantics version 2.
+  function withSecretLogLevel(repo: string): void {
+    const contract = normalizeContract({
+      schemaVersion: 1,
+      semanticsVersion: 2,
+      items: [
+        { name: "API_TOKEN", type: "string", sensitive: true, required: { kind: "always" } },
+        { name: "LOG_LEVEL", type: "string", sensitive: true, required: { kind: "never" } },
+        { name: "PORT", type: "number", sensitive: false, required: { kind: "never" }, defaultValue: "8080" },
+      ] as never,
+    });
+    state.active = { id: "crv_import", projectId: "prj_1", contentHash: contractHash(contract), semanticsVersion: 2, active: true, contract, createdAt: "2026-10-01T00:00:00.000Z" };
+    state.revisions.push(state.active);
+    state.values = { API_TOKEN, LOG_LEVEL: "debug" };
+    rmSync(join(repo, ".env"), { force: true });
+  }
+  const guide = SKILL_FILES["references/contract.md"] as string;
+  const steps = (/^```sh\n([\s\S]*?)^```$/m.exec(guide)?.[1] ?? "").trim().split("\n");
+  const hasJq = spawnSync("jq", ["--version"]).status === 0;
+  const items = () => (state.active?.contract as { items: { name: string; sensitive: boolean }[] }).items;
+
+  it("the guide's steps are show, extract, push --file --json, activate: no invented command", () => {
+    expect(steps).toEqual([
+      "varlatch --assisted contract show > revision.json",
+      "jq '.contract' revision.json > contract.json",
+      "varlatch --assisted contract push --file contract.json --json",
+      "varlatch --assisted contract activate <revision>",
+    ]);
+    expect(guide).toMatch(/applies to the item in every environment of the project/);
+    expect(guide).toMatch(/change only `"sensitive"` on the approved item/);
+  });
+
+  it("changes only the approved item's sensitivity, keeps every other definition and the Semantics version, and the run then starts", async () => {
+    const repo = project();
+    withSecretLogLevel(repo);
+    const before = await cli(["--assisted", "run", "--", "node", "-e", "console.log('started')"], repo);
+    expect(before.code).toBe(78);
+    expect(before.stderr).toMatch(/cannot be masked in the command's output: LOG_LEVEL/);
+    expect(before.stderr).toMatch(/marking LOG_LEVEL as not secret \(a Contract change, for the whole project\): varlatch --assisted agents guide contract/);
+    const activeBefore = JSON.parse(JSON.stringify(state.active)) as { contract: { items: { name: string; sensitive: boolean }[] } };
+
+    // 1. show, written to revision.json as the redirect would.
+    const shown = await cli((steps[0] as string).split(" > ")[0]!.split(" ").slice(1), repo);
+    expect(shown.code, shown.stderr).toBe(0);
+    writeFileSync(join(repo, "revision.json"), shown.stdout);
+    // 2. the `contract` field, unchanged, in its own file.
+    if (hasJq) {
+      const extracted = spawnSync("sh", ["-c", steps[1] as string], { cwd: repo, encoding: "utf8" });
+      expect(extracted.status, extracted.stderr).toBe(0);
+    } else {
+      writeFileSync(join(repo, "contract.json"), JSON.stringify((JSON.parse(shown.stdout) as { contract: unknown }).contract, null, 2));
+    }
+    const extracted = JSON.parse(readFileSync(join(repo, "contract.json"), "utf8")) as { items: { name: string; sensitive: boolean }[]; semanticsVersion?: number };
+    expect(extracted).toEqual(activeBefore.contract);
+    // 3. only the approved item's "sensitive".
+    for (const item of extracted.items) if (item.name === "LOG_LEVEL") item.sensitive = false;
+    writeFileSync(join(repo, "contract.json"), JSON.stringify(extracted, null, 2));
+    // 4. push, then activate the returned revision.
+    const pushedRev = await cli((steps[2] as string).split(" ").slice(1), repo);
+    expect(pushedRev.code, pushedRev.stderr).toBe(0);
+    const id = (JSON.parse(pushedRev.stdout) as { revision: { id: string } }).revision.id;
+    expect(state.active?.id).toBe("crv_import");
+    const activated = await cli(fill(steps[3] as string, { "<revision>": id }), repo);
+    expect(activated.code, activated.stderr).toBe(0);
+
+    expect(state.active?.id).toBe(id);
+    expect(state.active?.semanticsVersion).toBe(2);
+    const changed = items().filter((i) => i.sensitive !== activeBefore.contract.items.find((b) => b.name === i.name)?.sensitive).map((i) => i.name);
+    expect(changed).toEqual(["LOG_LEVEL"]);
+    expect({ ...(state.active?.contract as object), items: undefined }).toEqual({ ...activeBefore.contract, items: undefined });
+    expect(items().map((i) => ({ ...i, sensitive: undefined }))).toEqual(activeBefore.contract.items.map((i) => ({ ...i, sensitive: undefined })));
+    expect(state.values).toEqual({ API_TOKEN, LOG_LEVEL: "debug" });
+    const after = await cli(["--assisted", "run", "--", "node", "-e", "console.log('started')"], repo);
+    expect(after.code, after.stderr).toBe(0);
+    expect(after.stdout).toContain("started");
+  });
+
+  it("negative controls: an invented contract update, and re-importing with --plain, change nothing", async () => {
+    const repo = project();
+    withSecretLogLevel(repo);
+    const invented = await cli(["--assisted", "contract", "update", "--correct-sensitivity", "LOG_LEVEL"], repo);
+    expect(invented.code).toBe(64);
+    writeFileSync(join(repo, ".env"), "LOG_LEVEL=debug\n");
+    await cli(["--assisted", "import", ".env", "--contract", "--plain", "LOG_LEVEL", "--replace", "LOG_LEVEL", "--json"], repo);
+    expect(items().find((i) => i.name === "LOG_LEVEL")?.sensitive).toBe(true);
+    expect(state.active?.id).toBe("crv_import");
+    expect(pushed).toEqual([]);
   });
 });
 
@@ -318,11 +422,21 @@ describe("completion gaps from the second agent evaluation", () => {
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
     expect(block).toMatch(/no `--assisted`; add `--server <url>` when the server was overridden\), or point them to the dashboard:\n\n  ```text\n  varlatch values set <NAME> -e <environment>\n  ```/);
     expect(block).toMatch(/in assisted mode `values set`, `values rotate`, and `import` refuse to replace one without `--replace <NAME>`/);
-    expect(block).toMatch(/Never add `--allow-unmasked` or `--no-redact` yourself \(assisted mode refuses both\)\. When a Secret is too short to\s+mask \(exit 78\), report the item and wait: every remedy is the human's, run in their own terminal/);
+    expect(block).toMatch(/When a Secret is too short to mask \(exit 78\), stop and ask the human\. Only after they approve a remedy for that\s+item and environment may you carry it out, with `--assisted`; for a new random value:\s+`varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32` \(keep `--server <url>`\s+when it was overridden\)\. A credential a provider issued is the human's to enter\./);
+    expect(block).toMatch(/Marking an item as not secret\s+changes the Contract for the whole project: `varlatch --assisted agents guide contract`\./);
+    expect(block).toMatch(/Showing a Secret unmasked\s+is the human's alone: never add `--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)\./);
+    expect(block).toMatch(/When the human asks for a new random value, generate it \(`--generate hex:32`\); a credential issued elsewhere is\s+theirs to enter\. Never run a command printed for the human's own terminal yourself\./);
+    expect(block).toMatch(/\(double quotes: in single quotes the literal `\$STRIPE_KEY` is sent, and nothing is substituted\)/);
+    expect(block).not.toMatch(/every remedy is the human's, run in their own terminal/);
     expect(block).toMatch(/`varlatch --assisted context --json` under `agentRun\.placeholders`/);
     // The skill says the same.
-    expect(skill).toMatch(/Never add `--allow-unmasked` or `--no-redact` yourself:\s+assisted mode refuses both/);
+    expect(skill).toMatch(/never add\s+`--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)/);
+    expect(skill).toMatch(/After they approve one, you may carry it out yourself, with\s+`--assisted`/);
+    expect(skill).toMatch(/`varlatch --assisted values set\s+<NAME> -e <environment> --replace <NAME> --generate hex:32`/);
+    expect(skill).toMatch(/A command printed for the human's own terminal\s+\(without `--assisted`\) is theirs: never run it yourself\./);
+    expect(skill).not.toMatch(/Every\s+remedy is the human's, run in their own terminal/);
     expect(skill).toMatch(/```text\n   varlatch run -e <environment> --allow-unmasked <NAME> -- <command>\n   ```/);
+    expect(skill).toMatch(/applies to the whole project: approval to change it\s+covers that item, in every environment, and nothing else/);
     expect(skill).toMatch(/refuse \(78\) to replace an existing value\s+unless that item is named with `--replace <NAME>`/);
     expect(skill).toMatch(/add\s+`--server <url>` when the server was overridden/);
     expect(skill).toMatch(/If the import created a revision, activate it/);

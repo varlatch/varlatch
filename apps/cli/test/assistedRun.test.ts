@@ -71,10 +71,17 @@ describe("planAssistedRedaction", () => {
     const lines = unmaskableRefusal(["PIN", "REDIS_PASSWORD"], { target: "-e production", runOptions: ["--strict"] }).join("\n");
     expect(lines).toMatch(/shorter than 8 bytes.*: PIN, REDIS_PASSWORD/);
     // Every command names the run's environment, so it acts on the same values.
-    // The human's commands, for their own terminal: no --assisted.
-    expect(lines).toMatch(/: varlatch values set PIN -e production --generate hex:32/);
-    expect(lines).toMatch(/: varlatch run -e production --strict --allow-unmasked PIN -- <command>/);
-    expect(lines).not.toMatch(/varlatch --assisted/);
+    // First stop and ask; an approved replacement is the agent's own command, with --assisted.
+    expect(lines).toMatch(/Stop and ask the human what to do about each named item\. Approval for one item or action never covers another\./);
+    expect(lines).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e production --replace PIN --generate hex:32 {3}\(each item needs its own approval\)/);
+    // No generated replacement is printed without --assisted: an agent could run it outside assisted mode.
+    expect(lines).not.toMatch(/^\s*varlatch values set .*--generate/m);
+    expect(lines).not.toMatch(/: varlatch values set \S+ -e production --generate/);
+    // The human's alone: a provider's credential, and showing a Secret unmasked.
+    expect(lines).toMatch(/the human enters it, in their own terminal: varlatch values set PIN -e production$/m);
+    expect(lines).toMatch(/Showing it unmasked is the human's alone, in their own terminal .*\n {6}varlatch run -e production --strict --allow-unmasked PIN -- <command>/);
+    expect(lines).toMatch(/marking PIN as not secret \(a Contract change, for the whole project\): varlatch --assisted agents guide contract/);
+    expect(lines).not.toMatch(/contract update/);
     expect(lines).not.toMatch(/1234567|abcdefg/);
   });
 });

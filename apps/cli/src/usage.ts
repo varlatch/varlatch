@@ -23,7 +23,7 @@ Usage:
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
   varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
                (also writes the files coding agents read, as agents install does; --no-agent-files skips them)
-  varlatch agents guide [setup|run|agent-run|self-hosting]
+  varlatch agents guide [setup|run|agent-run|self-hosting|contract]
                (print the skill for coding agents, or one of its references: for any coding agent with a shell)
   varlatch agents install [--scope project|user] [--agent <name>]... [--check|--remove] [--json]
                (write the skill to .agents/skills/varlatch and .claude/skills/varlatch, a marked block in AGENTS.md,
