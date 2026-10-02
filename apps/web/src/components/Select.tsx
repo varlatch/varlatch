@@ -32,6 +32,7 @@ export function Select({
   className,
   buttonClassName,
   size = "md",
+  prefix,
   "data-testid": testId,
   "aria-label": ariaLabel,
   id,
@@ -44,6 +45,8 @@ export function Select({
   className?: string | undefined;
   buttonClassName?: string | undefined;
   size?: "sm" | "md" | undefined;
+  /** Muted label inside the trigger before the value, e.g. "Decision:" on a facet chip. */
+  prefix?: React.ReactNode | undefined;
   "data-testid"?: string | undefined;
   "aria-label"?: string | undefined;
   id?: string | undefined;
@@ -193,6 +196,7 @@ export function Select({
         )}
       >
         <span className="flex min-w-0 items-center gap-2">
+          {prefix && <span className="-mr-0.5 shrink-0 text-muted">{prefix}</span>}
           {selected?.icon && <span className="flex shrink-0 items-center text-muted">{selected.icon}</span>}
           <span className={cn("truncate", !selected && "text-subtle")}>
             {selected ? selected.label : (placeholder ?? "Select…")}
