@@ -10,6 +10,11 @@ varlatch --assisted run --strict -- node server.js
 
 - The command gets the environment's configuration in its environment
   variables. Nothing is written to disk.
+- Run in the environment the human named, or the project's default
+  (`varlatch --assisted context --json` shows `environment` and `server`).
+  When values are missing there, report them and hand them over; never run
+  in another environment or server instead, and never add values just to
+  make the run work.
 - Assisted mode masks the Secrets it delivered, and inherited values under
   names it knows as Secrets, in the command's output: you see
   `[REDACTED:NAME]`.
@@ -47,7 +52,11 @@ varlatch --assisted run --strict -- node server.js
 
 ## Storing values
 
-Never put a secret value in a command. Store a Secret without seeing it:
+Create a value only when the task asks for it (setting up, importing, or a
+requested new value), in the environment it is for, or after the human
+approves that item in that environment; such a task needs no second
+approval. Never put a secret value in a command. Store a Secret without
+seeing it:
 
 ```sh
 varlatch --assisted values set SESSION_SECRET --generate hex:32

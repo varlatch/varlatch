@@ -29,7 +29,9 @@ environment with `varlatch --assisted env list --json` and
 ## Moving `.env` files in
 
 `varlatch import` reads the file itself: its values never appear in your
-output. Look first, then import:
+output. A task to move the file in authorizes creating its items in the
+intended environment: the one the human named, or the project's default
+(`varlatch --assisted context --json`). Look first, then import:
 
 ```sh
 varlatch --assisted import .env --dry-run --json
