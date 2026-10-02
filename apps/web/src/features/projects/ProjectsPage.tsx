@@ -150,6 +150,9 @@ function ProjectList({ org, projects }: { org: string; projects: Project[] }) {
   );
   const nav = useListNavigation(matches, open);
   const keyboardRef = useRef(false);
+  // A new filter selects its best (first) match.
+  const { setActive } = nav;
+  useEffect(() => setActive(0), [filter, setActive]);
 
   // ↑↓↵ also work while nothing in particular has focus.
   const { onKeyDown } = nav;
