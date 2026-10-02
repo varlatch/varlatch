@@ -191,7 +191,7 @@ fixes.
   activate; project-wide; in a new temporary directory, so no project file
   is overwritten; with the refused run's `--server` on every contract
   command, which the exit-78 message names). The usage now lists
-  `--server`. The instructions also say: generate a value
+  `--server` for `varlatch contract`. The instructions also say: generate a value
   only when the human asks for a new random one; never run a command
   printed for the human's own terminal; quote a Placeholder variable in a
   `varlatch request` header with double quotes (single quotes send the
