@@ -267,9 +267,17 @@ function writeCredentialsFile(file: CredentialsFile, env: NodeJS.ProcessEnv): vo
  */
 function writePrivateFile(path: string, text: string): void {
   const temporary = join(dirname(path), `.${parsePath(path).base}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  const data = Buffer.from(text, "utf8");
   const fd = openSync(temporary, "wx", 0o600);
   try {
-    writeSync(fd, text);
+    // writeSync may write fewer bytes than asked without an error: continue
+    // until every byte is written, and treat no progress as a failure, so a
+    // partial file is never renamed over the old one.
+    for (let offset = 0; offset < data.length; ) {
+      const written = writeSync(fd, data, offset, data.length - offset);
+      if (written <= 0) throw new Error(`could not write ${path}: ${offset} of ${data.length} bytes written`);
+      offset += written;
+    }
     fsyncSync(fd);
   } catch (err) {
     closeSync(fd);
