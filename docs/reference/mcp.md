@@ -16,6 +16,12 @@ Register it with an MCP host, for example:
 claude mcp add varlatch -- varlatch mcp --org acme --project api -e development
 ```
 
+Or let the CLI add it to the project's MCP files (`.mcp.json`,
+`.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`,
+`opencode.json`, `.codex/config.toml`) with
+`varlatch agents install --mcp`; see
+[coding agents](coding-agents.md#mcp-opt-in).
+
 ## Tools
 
 - **Always:** server and context information, organizations, projects,

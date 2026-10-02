@@ -677,7 +677,7 @@ async function main(): Promise<void> {
         // ADR-0043 Decision 7: the agent-neutral skill, printed or installed.
         const [sub, ...rest] = args;
         const usage =
-          "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--check|--remove] [--json]" +
+          "Usage: varlatch agents <guide [topic]|install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]" +
           "|hook --format <claude|codex>>";
         if (sub === "guide") {
           const opts = strictOptions("agents guide", rest, { positionals: 1 }, usage);
@@ -712,7 +712,7 @@ async function main(): Promise<void> {
         const opts = strictOptions("agents install", rest, {
           values: ["--scope"],
           lists: ["--agent"],
-          booleans: ["--check", "--remove", "--json", "--guardrails"],
+          booleans: ["--check", "--remove", "--json", "--guardrails", "--mcp"],
         }, usage);
         if (opts.booleans.has("--check") && opts.booleans.has("--remove")) usageError("varlatch agents install: --check and --remove do not combine");
         const scope = opts.values.get("--scope") ?? "project";
@@ -730,6 +730,7 @@ async function main(): Promise<void> {
             agents: opts.lists.get("--agent") ?? [],
             mode,
             guardrails: opts.booleans.has("--guardrails"),
+            mcp: opts.booleans.has("--mcp"),
           });
         } catch (err) {
           if (err instanceof AgentsInstallError) fail(`varlatch agents install: ${err.message}`, err.usage ? EXIT.usage : EXIT.config);

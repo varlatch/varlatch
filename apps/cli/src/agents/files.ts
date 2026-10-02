@@ -101,3 +101,25 @@ export function isCanonicalJson(raw: string, parsed: unknown): boolean {
   const canonical = JSON.stringify(parsed, null, 2);
   return raw === canonical || raw === `${canonical}\n`;
 }
+
+/**
+ * The edits one run plans, on top of each other: a later edit of a file
+ * reads what an earlier one wrote (the Gemini CLI adapter and the MCP entry
+ * both edit .gemini/settings.json, guardrails and the MCP entry both edit
+ * .codex/config.toml). Nothing touches the disk until the run applies them.
+ */
+export class Staging {
+  private readonly staged = new Map<string, string | null>();
+
+  read(path: string): string | null | undefined {
+    return this.staged.has(path) ? (this.staged.get(path) as string | null) : readText(path);
+  }
+
+  write(path: string, desired: string | null): void {
+    this.staged.set(path, desired);
+  }
+
+  entries(): { path: string; desired: string | null }[] {
+    return [...this.staged].map(([path, desired]) => ({ path, desired }));
+  }
+}

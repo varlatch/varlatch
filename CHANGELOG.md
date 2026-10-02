@@ -213,6 +213,11 @@ fixes.
   denies reading `.env` files or the credential store, and printing the
   environment of a `varlatch run`. Accident prevention, not a boundary. See
   [coding agents](docs/reference/coding-agents.md#guardrails-opt-in).
+- New, opt-in `varlatch agents install --mcp` adds a `varlatch` server
+  running `varlatch mcp` to the project's MCP files (`.mcp.json`,
+  `.cursor/mcp.json`, `.vscode/mcp.json`, `.gemini/settings.json`,
+  `opencode.json`, `.codex/config.toml`), for coding agents that should use
+  MCP. See [coding agents](docs/reference/coding-agents.md#mcp-opt-in).
 - **Behaviour change:** `varlatch init` now also writes the agent files. Pass
   `--no-agent-files` to skip them. `init` and `agents` refuse an unknown
   option, a missing option value, or an extra argument with status 64,
