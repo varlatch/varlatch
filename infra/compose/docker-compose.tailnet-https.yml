@@ -17,11 +17,11 @@ services:
   tailscale:
     environment:
       TS_SERVE_CONFIG: /serve/serve.json
+    volumes:
+      - ./tailscale-serve.json:/serve/serve.json:ro
 
   varlatchd:
     environment:
       # Tailscale serve sets X-Forwarded-For to the tailnet client's address;
       # nginx appends the sidecar's (the name `tailscale`).
       VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web,tailscale}
-    volumes:
-      - ./tailscale-serve.json:/serve/serve.json:ro

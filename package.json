@@ -13,7 +13,7 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "compose:generate": "node infra/coolify/generate-compose.mjs",
-    "compose:check": "node infra/coolify/generate-compose.mjs --check --verify-docker",
+    "compose:check": "node infra/coolify/generate-compose.mjs --check --verify-docker && node infra/compose/check-overlays.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "notices:check": "node scripts/generate-third-party-notices.mjs --check",
     "license:check": "node scripts/check-licenses.mjs",
