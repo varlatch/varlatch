@@ -182,6 +182,35 @@ fixes.
   option, a missing option value, or an extra argument with status 64,
   before writing anything; before, `init` ignored an option it did not know.
 
+### Dashboard
+
+- **Redesigned dashboard.** A new design system in both themes (Inter and
+  JetBrains Mono bundled), a collapsible sidebar, breadcrumbs on every page,
+  and keyboard shortcuts throughout: `/` filters the current list, arrow
+  keys and Enter move through and open rows, `?` lists every shortcut, and
+  `g p`, `g a`, `g c`, `g l`, `g s` navigate. The command palette groups
+  environments, projects, Config Items and pages, and runs actions.
+- The project page is a **values grid**: Config Items across environments,
+  non-secret values in place, Secrets masked until an audited reveal,
+  missing required values marked, and cells editable in place. Edits stay
+  drafts until Review and Save, which saves one atomic change set per
+  environment and keeps the checkbox for production.
+- Each environment has its own page with an item panel (description,
+  reveal, rotation, sync status and history), plus Integrations and
+  Activity tabs. The project has Contract, Integrations and Activity tabs;
+  a managed contract is edited like a spreadsheet and published from a diff.
+- The audit log reads as sentences grouped by day, with names instead of
+  ids, filters on the server, and a detail panel that explains decisions.
+- Access is organized as People, Machines, Roles and teams, Grants (written
+  as sentences, built with a sentence builder) and Advanced. Pending
+  invitations can be renewed or revoked, and organization roles are shown
+  with the grants they carry.
+- New account pages (profile, passkeys, sessions), organization settings
+  with a rename, an installation backups page, and a branded passkey
+  enrollment page.
+- Confirmations, prompts and errors are in-app dialogs and toasts; the
+  dashboard no longer uses the browser's native dialogs.
+
 ### MCP
 
 - The MCP server ships inside the CLI as `varlatch mcp`, in every release
