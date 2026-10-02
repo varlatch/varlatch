@@ -11,11 +11,8 @@ import { useCapability } from "./hooks";
  * everywhere else this stays off and the column is not shown.
  */
 
-/** The audit list options on servers with `audit.filters`. */
-type FilteredAuditList = (
-  org: string,
-  opts: { limit?: number; cursor?: string; projectId?: string },
-) => Promise<{ items: Record<string, unknown>[] }>;
+/** Event types that change a project; reads, reveals and denials do not count. */
+const CHANGE = /^(value\.(written|deleted|rotation)|contract\.(revision_pushed|activated)|environment\.(created|deleted)|project\.(created|renamed)|sync\.target_)/;
 
 export type ProjectLastChange = { at: string; actorIdentityId: string | null };
 
@@ -32,13 +29,11 @@ export function useProjectLastChange(org: string, project: Project, enabled: boo
     retry: false,
     staleTime: 60_000,
     queryFn: async (): Promise<ProjectLastChange | null> => {
-      const list = api.listAuditEvents.bind(api) as FilteredAuditList;
-      const page = await list(org, { projectId: project.id, limit: 1 });
-      const event = page.items[0];
-      // Trust only an event about this project: a client that drops the
-      // filter would otherwise attribute another project's change.
-      const resource = event?.resource as { projectId?: unknown } | null | undefined;
-      if (!event || resource?.projectId !== project.id || typeof event.occurredAt !== "string") return null;
+      const page = await api.listAuditEvents(org, { projectId: project.id, limit: 25 });
+      const event = page.items.find(
+        (e) => typeof e.eventType === "string" && CHANGE.test(e.eventType) && e.decision !== "deny",
+      );
+      if (!event || typeof event.occurredAt !== "string") return null;
       const actor = event.actorIdentityId;
       return { at: event.occurredAt, actorIdentityId: typeof actor === "string" ? actor : null };
     },
