@@ -3,7 +3,6 @@ import React from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Braces, CircleAlert, CircleCheck, CircleDashed, Eye, EyeOff, Lock, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import type { Environment, PlatformConnection, SyncTarget } from "@varlatch/protocol";
-import type { Page } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { shortId } from "../../lib/identity";
 import { timeAgo, timeUntil, useNow } from "../../lib/time";
@@ -367,14 +366,7 @@ type AuditEvent = {
   eventType: string;
   occurredAt: string;
   actorIdentityId?: string | null;
-  resource?: { environmentId?: string; itemName?: string } | null;
-  metadata?: { items?: string } | null;
 };
-
-type FilteredAuditList = (
-  org: string,
-  opts: { item?: string; environmentId?: string; limit?: number },
-) => Promise<Page<Record<string, unknown>>>;
 
 /** Item history: only on servers that can filter the audit log by item. */
 function History({ org, env, name }: { org: string; env: Environment; name: string }) {
@@ -385,16 +377,8 @@ function History({ org, env, name }: { org: string; env: Environment; name: stri
     queryKey: ["audit-item", org, env.id, name],
     enabled: supported,
     retry: false,
-    queryFn: async () => {
-      const list = api.listAuditEvents.bind(api) as unknown as FilteredAuditList;
-      const page = await list(org, { item: name, environmentId: env.id, limit: 10 });
-      // Defensive: keep only this item's events even if a filter was ignored.
-      return (page.items as AuditEvent[]).filter(
-        (e) =>
-          e.resource?.environmentId === env.id &&
-          (e.resource.itemName === name || (e.metadata?.items ?? "").split(",").some((s) => s.startsWith(`${name}@`))),
-      );
-    },
+    queryFn: async () =>
+      (await api.listAuditEvents(org, { item: name, environmentId: env.id, limit: 10 })).items as AuditEvent[],
   });
   const identities = useQuery({
     queryKey: ["identities", org],

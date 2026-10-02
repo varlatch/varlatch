@@ -81,6 +81,8 @@ export function useReviewSave({
   const invalidate = useCallback(async () => {
     await qc.invalidateQueries({ queryKey: ["effective-values", org, project] });
     await qc.invalidateQueries({ queryKey: ["effective-meta", org, project] });
+    void qc.invalidateQueries({ queryKey: ["item-changes", org] });
+    void qc.invalidateQueries({ queryKey: ["audit-item", org] });
   }, [qc, org, project]);
 
   const save = useCallback(async () => {

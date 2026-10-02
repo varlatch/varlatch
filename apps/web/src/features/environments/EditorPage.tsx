@@ -11,6 +11,7 @@ import { Drawer, SidePanel } from "../../components/Drawer";
 import { CopyButton } from "../../components/CodeBlock";
 import { Button, Callout, EmptyState, IconButton, Kbd, Segmented, Skeleton, cn } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
+import { formatDateTime, timeAgo, useNow } from "../../lib/time";
 import { keys, useEnvironmentContext } from "../projects/hooks";
 import {
   cellStateOf,
@@ -24,7 +25,7 @@ import {
   type ContractItemMeta,
   type ServerItem,
 } from "../values/model";
-import { useContractItems, useEnvSyncTargets, useEnvValues, usePlatformConnections } from "../values/queries";
+import { useContractItems, useEnvSyncTargets, useEnvValues, useItemChanges, usePlatformConnections } from "../values/queries";
 import { useDisclosure } from "../values/useDisclosure";
 import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
 import { useReviewSave } from "../values/useReviewSave";
@@ -72,7 +73,14 @@ export function EditorPage() {
   useOrgRealtime(
     org,
     ["value", "contract", "sync"],
-    [["effective-values", org, slug], ["effective-meta", org, slug], keys.contract(org, slug), keys.syncTargets(org, slug, envName)],
+    [
+      ["effective-values", org, slug],
+      ["effective-meta", org, slug],
+      keys.contract(org, slug),
+      keys.syncTargets(org, slug, envName),
+      ["item-changes", org, environment.id],
+      ["audit-item", org, environment.id],
+    ],
   );
   const { api } = useSession();
   const qc = useQueryClient();
@@ -83,6 +91,8 @@ export function EditorPage() {
   const contract = useContractItems(org, slug);
   const targets = useEnvSyncTargets(org, slug, envName);
   const connections = usePlatformConnections(org);
+  const changes = useItemChanges(org, environment.id);
+  const now = useNow(60_000);
   const drafts = useDrafts();
   const disclosure = useDisclosure(org, slug);
 
@@ -475,6 +485,8 @@ export function EditorPage() {
                 active={active === row.name || (!active && row === visible[0])}
                 editing={editing === row.name}
                 conflict={review.conflicts.has(`${envName}\u0000${row.name}`)}
+                changedAt={row.server?.source === "self" ? changes.data?.[row.name] : undefined}
+                now={now}
                 onSelect={() => select(row.name)}
                 onEdit={() => {
                   setActive(row.name);
@@ -567,6 +579,8 @@ function ValueRow({
   active,
   editing,
   conflict,
+  changedAt,
+  now,
   onSelect,
   onEdit,
   onCommit,
@@ -583,6 +597,9 @@ function ValueRow({
   active: boolean;
   editing: boolean;
   conflict: boolean;
+  /** Last write, deletion or rotation here, when the audit log can say. */
+  changedAt: string | undefined;
+  now: number;
   onSelect: () => void;
   onEdit: () => void;
   onCommit: (value: string, how: CommitHow) => void;
@@ -693,6 +710,11 @@ function ValueRow({
         )}
         <DraftMarker kind={kind} />
       </span>
+      {changedAt && !editing && (
+        <span className="hidden shrink-0 text-xs text-muted md:inline" title={formatDateTime(changedAt)}>
+          changed {timeAgo(changedAt, now)}
+        </span>
+      )}
       {!editing && (
         <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
           {sensitive && server && !draft && (

@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import type { EffectiveConfiguration, Environment, SyncTarget } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
-import { keys } from "../projects/hooks";
+import { keys, useCapability } from "../projects/hooks";
 import { contractItemsOf, type ContractItemMeta, type ServerItem } from "./model";
 
 /**
@@ -96,6 +96,38 @@ export function useEnvSyncTargets(org: string, project: string, env: string) {
     queryKey: keys.syncTargets(org, project, env),
     queryFn: () => api.listSyncTargets(org, project, env),
     retry: false,
+  });
+}
+
+/** Writes, deletions and rotations; reads, reveals and denials are not changes. */
+const VALUE_CHANGE = /^value\.(written|deleted|rotation_started|rotation_completed)$/;
+
+/**
+ * When each item last changed in this environment, from one filtered audit
+ * query (servers with audit.filters, callers who may read the audit log).
+ * Items whose last change is older than the newest 200 value events have no
+ * entry: the screen shows nothing rather than a guess.
+ */
+export function useItemChanges(org: string, environmentId: string) {
+  const { api } = useSession();
+  const supported = useCapability("audit.filters");
+  return useQuery({
+    queryKey: ["item-changes", org, environmentId],
+    enabled: supported,
+    retry: false,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const page = await api.listAuditEvents(org, { environmentId, eventType: "value.*", limit: 200 });
+      const changed: Record<string, string> = {};
+      for (const e of page.items) {
+        const item = (e.resource as { itemName?: unknown } | undefined)?.itemName;
+        if (e.decision === "deny" || typeof item !== "string" || typeof e.occurredAt !== "string") continue;
+        if (typeof e.eventType === "string" && VALUE_CHANGE.test(e.eventType) && !(item in changed)) {
+          changed[item] = e.occurredAt;
+        }
+      }
+      return changed;
+    },
   });
 }
 

@@ -155,6 +155,10 @@ await page.waitForSelector('[data-testid="values-table"]', { timeout: 20000 });
 await page.waitForSelector('[data-row="PORT"]');
 check("non-sensitive value visible", (await rowText("PORT")).includes("4000"));
 check("secret masked by default", (await rowText("DATABASE_URL")).includes("••••"));
+const changedShown = await page
+  .waitForFunction(() => document.querySelector('[data-row="PORT"]')?.textContent.includes("changed"), null, { timeout: 10000 })
+  .then(() => true, () => false);
+check("row says when the value last changed (filtered audit log)", changedShown, await rowText("PORT"));
 
 // 5. Per-item reveal is audited and does not over-disclose.
 await page.click('[data-testid="eye-DATABASE_URL"]');
@@ -281,10 +285,14 @@ await untilDisclosures(4);
 check("?reveal=1 reveals once, audited", disclosures.length === 4 && disclosureRequests[3]?.scope === "all-authorized-secrets");
 check("?reveal=1 leaves the URL", !page.url().includes("reveal=1"), page.url());
 
-// 9. ?item= deep link (palette) selects the item.
-await page.goto(`${base}/o/acme/p/api/e/production?item=PORT`);
+// 9. ?item= deep link (palette) selects the item; its panel shows the item history.
+await page.goto(`${base}/o/acme/p/api/e/production?item=DATABASE_URL`);
 await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
-check("?item= opens the item panel", ((await page.textContent('[data-testid="item-panel"]')) ?? "").includes("PORT"));
+check("?item= opens the item panel", ((await page.textContent('[data-testid="item-panel"]')) ?? "").includes("DATABASE_URL"));
+const history = await page
+  .waitForSelector('[data-testid="panel-history"]', { timeout: 10000 })
+  .then((el) => el.textContent(), () => "");
+check("item history lists this item's changes (filtered audit log)", (history ?? "").includes("set the value"), history?.slice(0, 120));
 
 // 10. Export .env: non-secret values only unless secrets are explicitly included.
 await page.goto(`${base}/o/acme/p/api`);
