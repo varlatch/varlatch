@@ -270,6 +270,12 @@ fixes.
   `invitation.accepted` record. SDK: `listInvitations()`,
   `revokeInvitation()`. Database migration 23 adds the revocation and the
   invitation's creator (unknown for invitations created before it).
+- An organization's display name can now be changed: `PATCH
+  /v1/organizations/{org}` with `{"name": ...}` (capability
+  `organizations.rename`), trimmed, 1 to 200 characters. It needs
+  `organization.manage`. The slug never changes. The audit event
+  `organization.renamed` records the previous and the new name. SDK:
+  `renameOrganization()`.
 
 ### Fixes
 

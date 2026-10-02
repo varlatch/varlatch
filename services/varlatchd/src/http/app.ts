@@ -18,7 +18,14 @@ import type { AppCtx } from "../domain/ctx.js";
 import { DomainError, notFound } from "../domain/errors.js";
 import { schemaIsCurrent } from "../db/migrate.js";
 import { getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
-import { createOrganization, getOrganization, getOrgRole, listOrganizationsFor, type OrgRow } from "../domain/orgs.js";
+import {
+  createOrganization,
+  getOrganization,
+  getOrgRole,
+  listOrganizationsFor,
+  renameOrganization,
+  type OrgRow,
+} from "../domain/orgs.js";
 import { createProject, renameProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
 import {
   createEnvironment,
@@ -738,6 +745,17 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json(serialize.org(org));
+  });
+
+  // Display name only (capability organizations.rename); the slug never
+  // changes. Organization administration, like the org's webhooks.
+  app.patch("/v1/organizations/:org", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ name: z.string().trim().min(1).max(200) }), await c.req.json());
+    const renamed = await renameOrganization(ctx, org.id, body.name, principal.identity.id);
+    return c.json(serialize.org(renamed));
   });
 
   // ---- Cross-project Config Item name search (ADR-0030, capability

@@ -109,6 +109,36 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
         default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [organizations]
+      operationId: renameOrganization
+      summary: >
+        Rename an organization's display name (capability
+        organizations.rename). The name is trimmed. The slug, which the CLI,
+        URLs, and configuration use, does not change. The audit event
+        organization.renamed records the previous and the new name.
+        Requires organization.manage; existence-hiding.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: 1 to 200 characters once surrounding whitespace is trimmed.
+      responses:
+        "200":
+          description: Renamed organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/config-items:
     get:

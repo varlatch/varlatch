@@ -69,7 +69,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename an organization's display name (capability organizations.rename). The name is trimmed. The slug, which the CLI, URLs, and configuration use, does not change. The audit event organization.renamed records the previous and the new name. Requires organization.manage; existence-hiding. */
+        patch: operations["renameOrganization"];
         trace?: never;
     };
     "/organizations/{org}/config-items": {
@@ -2016,6 +2017,37 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Organization */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Organization"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    renameOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 1 to 200 characters once surrounding whitespace is trimmed. */
+                    name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Renamed organization */
             200: {
                 headers: {
                     [name: string]: unknown;
