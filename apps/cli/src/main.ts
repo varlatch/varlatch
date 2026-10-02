@@ -1206,6 +1206,44 @@ async function main(): Promise<void> {
           );
           return;
         }
+        if (sub === "delete") {
+          const usage = "Usage: varlatch values delete <ITEM> [-e <environment>] [--server <url>] [--confirm <ITEM>]";
+          // Strict, in every mode, before any request (ADR-0043 Decision 10): a
+          // typo such as `--env production` must not delete the default
+          // environment's value.
+          const parsed = strictOptions(
+            "values delete",
+            args,
+            { values: ["--environment", "--server", "--confirm"], aliases: { "-e": "--environment" }, positionals: 2 },
+            usage,
+          );
+          const item = parsed.positionals[1];
+          if (item === undefined) usageError(usage);
+          const confirm = parsed.values.get("--confirm");
+          if (confirm !== undefined && confirm !== item) {
+            usageError(`varlatch values delete: --confirm names ${confirm}, but this command deletes ${item}; approval for one item never covers another.\n${usage}`);
+          }
+          const where = [
+            ...(parsed.values.has("--environment") ? ["--environment", parsed.values.get("--environment") as string] : []),
+            ...(parsed.values.has("--server") ? ["--server", parsed.values.get("--server") as string] : []),
+          ];
+          const ctx = context(where);
+          // Assisted mode: every deletion, of a plain value or a Secret, needs the
+          // item named with --confirm, checked before any request. Nothing is
+          // inferred from the item's existence or sensitivity. --confirm records
+          // the deletion's intent; it does not prove that a human approved it.
+          if (assisted.on && confirm === undefined) {
+            fail(
+              `varlatch values delete: deleting ${item} from ${ctx.environment} is the human's decision, for this item in this environment. ` +
+                `Ask them, and with their approval for ${item} in ${ctx.environment}, add --confirm ${item}. ` +
+                `Or the human runs, in their own terminal:\n  varlatch values delete ${item} ${contextOptions(where, ctx)}\nNothing was deleted.`,
+              EXIT.config,
+            );
+          }
+          await client(ctx).deleteValue(ctx.organization, ctx.project, ctx.environment, item);
+          console.log(`${item} deleted from ${ctx.environment}.`);
+          return;
+        }
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
@@ -1221,12 +1259,6 @@ async function main(): Promise<void> {
           for (const i of effective.items ?? []) {
             console.log(`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
           }
-          return;
-        }
-        if (sub === "delete") {
-          const item = args[1] ?? usageError("Usage: varlatch values delete <ITEM>");
-          await api.deleteValue(ctx.organization, ctx.project, ctx.environment, item);
-          console.log(`${item} deleted from ${ctx.environment}.`);
           return;
         }
         if (sub === "rotate-complete") {

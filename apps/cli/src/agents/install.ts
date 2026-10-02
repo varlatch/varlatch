@@ -122,6 +122,8 @@ export function agentsBlock(): string {
     "",
     "- Never replace an existing value or change an item's sensitivity without the human's approval for that item:",
     "  in assisted mode `values set`, `values rotate`, and `import` refuse to replace one without `--replace <NAME>`.",
+    "- Never delete a value without the human's approval for that item in that environment: in assisted mode",
+    "  `values delete` refuses without `--confirm <NAME>`, which you add only after that approval.",
     "- Never add `--allow-unmasked` or `--no-redact` yourself (assisted mode refuses both). When a Secret is too short to",
     "  mask (exit 78), report the item and wait: every remedy is the human's, run in their own terminal.",
     "- Inside an agent-safe run, the run's Secrets are Placeholders, not secrets, listed (names only) by",

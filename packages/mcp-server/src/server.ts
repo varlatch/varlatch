@@ -52,6 +52,55 @@ export function secretWriteRefusal(item: string): string {
   );
 }
 
+/**
+ * Why a deletion through MCP is refused, or null when `confirm` names the
+ * item. Every deletion needs the item named again, plain value or Secret
+ * alike; the confirmation records the intent to delete, not proof that a
+ * human approved it (ADR-0043).
+ */
+export function deleteConfirmationRefusal(item: string, environment: string, confirm: string | undefined): string | null {
+  if (confirm === item) return null;
+  const why =
+    confirm === undefined
+      ? `deleting ${item} from ${environment} is the human's decision, for this item in this environment`
+      : `confirm names ${confirm}, but this call deletes ${item}; approval for one item never covers another`;
+  return `${why}. Ask the human, and with their approval for ${item} in ${environment}, pass confirm: "${item}". Nothing was deleted.`;
+}
+
+/**
+ * Whether the environment already has a value for `item`, from its effective
+ * configuration's metadata (names only). A value inherited from a parent
+ * environment counts: a value set here overrides it. When the server cannot
+ * say, the answer is unknown, never "absent".
+ */
+export async function valuePresence(
+  client: VarlatchClient,
+  organization: string,
+  project: string,
+  environment: string,
+  item: string,
+): Promise<"present" | "inherited" | "absent" | { unknown: string }> {
+  try {
+    const effective = await client.effectiveConfiguration(organization, project, environment);
+    const found = (effective.items ?? []).find((i) => i.name === item);
+    return found === undefined ? "absent" : found.source === "parent" ? "inherited" : "present";
+  } catch (err) {
+    if (err instanceof VarlatchApiError) return { unknown: `${err.status} ${err.code}` };
+    throw err;
+  }
+}
+
+/** Why replacing an existing (or possibly existing) value through MCP is refused without `replace` naming the item. */
+export function replaceRefusal(item: string, environment: string, presence: "present" | "inherited" | { unknown: string }): string {
+  const why =
+    presence === "present"
+      ? `${item} already has a value in ${environment}; setting it replaces that value`
+      : presence === "inherited"
+        ? `${environment} inherits a value for ${item} from its parent environment; setting it here overrides that value in ${environment}`
+        : `whether ${item} already has a value in ${environment} cannot be checked (${presence.unknown}), so it counts as existing`;
+  return `${why}. Replacing it is the human's decision, for this item only: ask them, and with their approval pass replace: "${item}". Nothing was stored.`;
+}
+
 const orgArg = {
   organization: z.string().optional().describe("Organization slug (defaults to the resolved repo context)"),
 };
@@ -240,12 +289,19 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
         title: "Set value",
         description:
           "Set a non-secret configuration value in an environment. A Secret's value is refused (Secrets, and items " +
-          "outside the Contract, never pass through MCP). Pass expectedVersionId for optimistic concurrency.",
+          "outside the Contract, never pass through MCP), with or without replace. Replacing a value the environment " +
+          "already has, or inherits from its parent, is the human's decision: ask them first, and with their approval " +
+          "pass the item's name again as replace. Pass expectedVersionId for optimistic concurrency; it does not stand " +
+          "in for replace.",
         inputSchema: {
           ...envArg,
           item: z.string().describe("Item name from the contract, e.g. DATABASE_URL"),
           value: z.string(),
           expectedVersionId: z.string().optional(),
+          replace: z
+            .string()
+            .optional()
+            .describe("Required to replace an existing value: the item's name again, given only after the human approved replacing it"),
         },
       },
       async (args) => {
@@ -253,8 +309,20 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
           const organization = required("organization", args.organization);
           const project = required("project", args.project);
           const environment = required("environment", args.environment);
-          // Checked before anything is written; an unreadable Contract counts as a Secret.
+          // replace names the one item this call replaces, checked before any request.
+          if (args.replace !== undefined && args.replace !== args.item) {
+            return toolError(
+              `replace names ${args.replace}, but this call sets ${args.item}; approval for one item never covers another. Nothing was stored.`,
+            );
+          }
+          // Checked before anything is written; an unreadable Contract counts as a Secret. replace does not change this.
           if (await isSecretItem(client, organization, project, args.item)) return toolError(secretWriteRefusal(args.item));
+          // Replacing an existing value needs replace naming the item. It records the intent, not proof that a human
+          // approved; expectedVersionId guards against a concurrent change, and is no substitute for it.
+          if (args.replace !== args.item) {
+            const presence = await valuePresence(client, organization, project, environment, args.item);
+            if (presence !== "absent") return toolError(replaceRefusal(args.item, environment, presence));
+          }
           return ok(
             await client.setValue(organization, project, environment, args.item, {
               value: args.value,
@@ -271,19 +339,33 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
       "varlatch_delete_value",
       {
         title: "Delete value",
-        description: "Delete a configuration value from an environment.",
-        inputSchema: { ...envArg, item: z.string() },
+        description:
+          "Delete a configuration value from an environment. Deleting is the human's decision, for that item in that " +
+          "environment: ask them first, and with their approval pass the item's name again as confirm. Without it, " +
+          "nothing is deleted.",
+        inputSchema: {
+          ...envArg,
+          item: z.string(),
+          confirm: z
+            .string()
+            .optional()
+            .describe("Required: the item's name again, given only after the human approved deleting it in this environment"),
+        },
       },
-      (args) =>
-        run(async () => {
-          await client.deleteValue(
-            required("organization", args.organization),
-            required("project", args.project),
-            required("environment", args.environment),
-            args.item,
-          );
-          return { deleted: args.item };
-        }),
+      async (args) => {
+        try {
+          const organization = required("organization", args.organization);
+          const project = required("project", args.project);
+          const environment = required("environment", args.environment);
+          // Checked before any request: --allow-writes enables the tool, it does not record the intent to delete.
+          const refusal = deleteConfirmationRefusal(args.item, environment, args.confirm);
+          if (refusal) return toolError(refusal);
+          await client.deleteValue(organization, project, environment, args.item);
+          return ok({ deleted: args.item, environment });
+        } catch (err) {
+          return errorResult(err);
+        }
+      },
     );
   }
 

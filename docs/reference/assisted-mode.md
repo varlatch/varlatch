@@ -9,6 +9,7 @@ of that output by accident-proofing the commands an agent uses:
   refuses to start when it cannot mask one.
 - `values set` and `values rotate` never take a Secret's value from the
   command line, and never prompt.
+- `values delete` deletes only an item named again with `--confirm`.
 
 Assisted mode changes only what the CLI does on your machine. It never
 changes what you are allowed to do, and the server never sees it.
@@ -130,6 +131,30 @@ varlatch --assisted <command> [args...]
   one item never covers another. It records the override's intent: it is
   not proof that a human approved, nor an authentication or a permission.
   Outside assisted mode, `values set` and `values rotate` replace as before.
+
+## `values delete`
+
+```
+varlatch --assisted values delete <ITEM> [-e <environment>] --confirm <ITEM>
+```
+
+- **Every deletion needs `--confirm <ITEM>`** in assisted mode, for a
+  plain value and a Secret alike (status 78 otherwise, with no request and
+  nothing deleted). Nothing is inferred from whether the item has a value
+  or how the Contract classifies it.
+- **`--confirm` must name the item** the command deletes; another name is
+  status 64. Approval for one item never covers another.
+- **It records the deletion's intent.** It is not proof that a human
+  approved, nor an authentication or a permission. A coding agent adds it
+  only after the human approved deleting that item in that environment.
+- The refusal names the environment, and gives the human's command for
+  their own terminal, with the environment and an overridden server.
+- **The command line is checked strictly**, in every mode, before any
+  request: an unknown option (`--env`), an option without its value, an
+  option given twice, or an extra argument is status 64. Outside assisted
+  mode a deletion needs no `--confirm`, as before.
+- The MCP server's `varlatch_delete_value` tool has the same rule: see
+  [MCP](mcp.md).
 
 ## Giving a value without the command line
 
