@@ -92,6 +92,8 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
       expect(decided).toHaveLength(1);
       // The losers find the sign-in decided: it is no longer pending (409), or its code no longer matches (404).
       for (const r of results.filter((r) => r.status !== 200)) expect([404, 409]).toContain(r.status);
+      // A lost race is not a failed passkey confirmation.
+      expect(await rows("SELECT id FROM audit_events WHERE event_type = 'authentication.failed'")).toEqual([]);
       const [row] = await rows("SELECT status FROM device_sign_ins WHERE user_code = $1", [started.userCode.replace("-", "")]);
       expect(row.status).toBe(decided[0]!.body.decision);
       const events = await rows(
@@ -111,6 +113,9 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => client.decide(human.token, started.userCode, "approve", assertion)));
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
     for (const r of results.filter((r) => r.status !== 200)) expect([403, 404, 409]).toContain(r.status);
+    // Losers that arrive after the approval find no pending sign-in for the
+    // code, which counts as a wrong code: seven may lock this identity out.
+    await db.query("DELETE FROM device_code_attempt_windows");
     // Replayed against a new sign-in of the same human: the challenge belongs to the old one.
     const next = (await client.start()).body;
     await client.lookup(human.token, next.userCode);

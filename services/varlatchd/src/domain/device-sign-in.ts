@@ -390,10 +390,11 @@ export async function denyDeviceSignIn(
 }
 
 /**
- * Approve with a fresh passkey assertion. In one transaction: consume the
+ * Approve with a fresh passkey assertion. In one transaction, under the
+ * sign-in's row lock: check it is still pending and unexpired, consume the
  * challenge (only one issued for this sign-in, identity, and session, unused
  * and unexpired), verify the assertion with one of the identity's passkeys,
- * and move the sign-in from pending to approved while it is still pending
+ * and move the sign-in from pending to approved, again only while pending
  * and unexpired. A refused challenge or assertion stays consumed.
  */
 export async function approveDeviceSignIn(
@@ -403,6 +404,14 @@ export async function approveDeviceSignIn(
 ): Promise<void> {
   const challenge = assertionChallenge(input.assertion);
   const refusal = await withTx(ctx.db, async (db) => {
+    // Decided or expired meanwhile (a concurrent denial wins, say): say so,
+    // and leave the challenge and the audit log alone. The row lock orders
+    // this approval after any decision in flight.
+    const current = (await db.query(
+      "SELECT status = 'pending' AND expires_at > now() AS pending FROM device_sign_ins WHERE id = $1 FOR UPDATE",
+      [input.signInId],
+    )).rows[0] as { pending: boolean } | undefined;
+    if (!current?.pending) throw noLongerPending();
     const consumed = challenge
       ? (await db.query(
           `UPDATE device_sign_in_challenges SET consumed_at = now()
