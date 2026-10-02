@@ -1541,6 +1541,8 @@ export interface components {
              * @description Last successful authentication, throttled to ~60s granularity. An operational signal, never evidence of what was accessed.
              */
             lastUsedAt: string | null;
+            /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
+            client?: string | null;
         };
         IssuedAgentCredential: {
             id: string;
@@ -1720,6 +1722,8 @@ export interface components {
             useCount: number;
             /** @description True for the credential authenticating this request. */
             current: boolean;
+            /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
+            client?: string | null;
         };
         IssuedCliCredential: {
             id: string;

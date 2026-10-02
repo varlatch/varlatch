@@ -81,6 +81,13 @@ export interface VarlatchClientOptions {
   maintenanceRetryMs?: number;
   /** Called before each maintenance wait, e.g. to tell a user why nothing happens. */
   onMaintenance?: (wait: MaintenanceWait) => void;
+  /**
+   * A User-Agent header for every request, for clients that identify
+   * themselves (the CLI sends `varlatch-cli/<version> (<platform>; <arch>)`,
+   * which the server summarizes as a credential's client label). Browsers
+   * may ignore it; omit it there.
+   */
+  userAgent?: string;
 }
 
 export interface MaintenanceWait {
@@ -121,6 +128,11 @@ export interface IdentityCredential {
   expiresAt: string | null;
   revokedAt: string | null;
   lastUsedAt: string | null;
+  /**
+   * Readable client summary, such as "Firefox on Linux"; null when unknown
+   * or for kinds other than browser and cli, absent from older servers.
+   */
+  client?: string | null;
 }
 
 export type { AuditEventFilters, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
@@ -149,6 +161,7 @@ export class VarlatchClient {
   private readonly fetchImpl: typeof fetch;
   private readonly maintenanceRetryMs: number;
   private readonly onMaintenance: ((wait: MaintenanceWait) => void) | undefined;
+  private readonly userAgent: string | undefined;
   /** End of the current maintenance budget; null while the server answers normally. */
   private maintenanceDeadline: number | null = null;
 
@@ -157,6 +170,7 @@ export class VarlatchClient {
     this.token = options.token;
     this.maintenanceRetryMs = options.maintenanceRetryMs ?? 180_000;
     this.onMaintenance = options.onMaintenance;
+    this.userAgent = options.userAgent;
     // Bind to globalThis: browsers throw "Illegal invocation" when window
     // fetch is called with a foreign `this`.
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -207,6 +221,7 @@ export class VarlatchClient {
       method,
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+        ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
         ...headers,
       },
@@ -1092,7 +1107,12 @@ export class VarlatchClient {
     const query = params.size ? `?${params}` : "";
     const res = await this.fetchImpl(
       `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export${query}`,
-      { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} },
+      {
+        headers: {
+          ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+          ...(this.userAgent ? { "User-Agent": this.userAgent } : {}),
+        },
+      },
     );
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as ApiError | undefined;

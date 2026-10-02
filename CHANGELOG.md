@@ -287,6 +287,17 @@ fixes.
   malformed, empty, or repeated filter is refused with
   `VALIDATION_FAILED`. Who may read the audit log does not change. SDK:
   `listAuditEvents()` and `exportAuditEventsNdjson()` take the filters.
+- Credentials carry a readable `client` label, so you can tell your
+  sessions apart: a short summary of the client that requested a browser
+  session or a CLI login, such as `Firefox on Linux` or `varlatch CLI
+  0.14.0 on Linux`. Only the summary is stored, never the User-Agent
+  itself, and it names no browser or system version. It is `null` when the
+  client is not recognized, for every other credential kind, and for
+  credentials issued before this release. `GET /v1/me/credentials` and the
+  identity credential listing return it. `varlatch login` now sends
+  `varlatch-cli/<version> (<platform>; <arch>)` as its User-Agent when it
+  exchanges the browser session; the SDK takes a `userAgent` option.
+  Database migration 24 adds the column.
 
 ### Fixes
 

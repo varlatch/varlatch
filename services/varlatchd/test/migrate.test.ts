@@ -140,7 +140,7 @@ it("upgrades existing audit history and removes legacy idempotency hashes", asyn
   await db.query("INSERT INTO idempotency_keys(identity_id,endpoint,idempotency_key,body_hash,response) VALUES ('legacy','write','key','guessable','{}')");
   await db.query(`INSERT INTO audit_events(id,event_type,decision,occurred_at) VALUES
     ('older','test','info','2026-01-01T00:00:00.123455Z'), ('newer','test','info','2026-01-01T00:00:00.123456Z')`);
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20, 21, 22, 23]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([17, 18, 19, 20, 21, 22, 23, 24]);
   expect((await db.query("SELECT id FROM audit_events ORDER BY event_order")).rows).toEqual([{ id: "older" }, { id: "newer" }]);
   expect((await db.query("SELECT * FROM idempotency_keys")).rows).toEqual([]);
   await db.query("INSERT INTO audit_events(id,event_type,decision) VALUES ('latest','test','info')");
@@ -168,7 +168,7 @@ it("drops the environment-name mapping, leaving contract revisions and audit his
   const beforeRevisions = await revisions();
   const beforeAudit = await audit();
 
-  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([21, 22, 23]);
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([21, 22, 23, 24]);
   expect((await db.query("SELECT to_regclass('varlock_env_mappings') AS t")).rows).toEqual([{ t: null }]);
   expect(await revisions()).toEqual(beforeRevisions);
   expect(await audit()).toEqual(beforeAudit);

@@ -12,6 +12,7 @@ import {
 import { CAPABILITIES } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
+import { clientLabel } from "../auth/client-label.js";
 import { recordAuditEvent } from "../audit/events.js";
 import { auditFilterConditions, parseAuditFilters } from "../audit/filters.js";
 import { serializeAuditEvent } from "../audit/serialize.js";
@@ -453,6 +454,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         name: "dashboard session bearer",
         expiresAt,
         actorIdentityId: identityId,
+        client: clientLabel(c.req.header("User-Agent")),
       });
       return c.json({ token: issued.token, identityId, expiresAt });
     });
@@ -643,7 +645,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.get("/v1/me/credentials", async (c) => {
     const principal = c.get("principal");
     const res = await ctx.db.query(
-      `SELECT id, kind, name, created_at, expires_at, revoked_at, max_uses, use_count
+      `SELECT id, kind, name, created_at, expires_at, revoked_at, max_uses, use_count, client
        FROM credentials
        WHERE identity_id = $1 ORDER BY created_at DESC`,
       [principal.identity.id],
@@ -659,6 +661,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         maxUses: r.max_uses ?? null,
         useCount: r.use_count ?? 0,
         current: r.id === principal.credentialId,
+        client: r.client ?? null,
       })),
       nextCursor: null,
     });
@@ -715,6 +718,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       expiresAt,
       actorIdentityId: principal.identity.id,
       metadata: { exchangedFromCredentialId: principal.credentialId, ttlSeconds },
+      // The CLI's own User-Agent: this request comes from the CLI, not the browser.
+      client: clientLabel(c.req.header("User-Agent")),
     });
     });
     c.header("Cache-Control", "no-store");
@@ -1717,6 +1722,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         expiresAt: cr.expires_at ? iso(cr.expires_at) : null,
         revokedAt: cr.revoked_at ? iso(cr.revoked_at) : null,
         lastUsedAt: cr.last_used_at ? iso(cr.last_used_at) : null,
+        client: cr.client ?? null,
       })),
       nextCursor: null,
     });

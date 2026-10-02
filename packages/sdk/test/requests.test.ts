@@ -81,3 +81,20 @@ describe("audit filters", () => {
     ]);
   });
 });
+
+describe("userAgent", () => {
+  it("sends the User-Agent on every request when given, and none otherwise", async () => {
+    const seen: (string | undefined)[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      seen.push((init?.headers as Record<string, string>)["User-Agent"]);
+      return new Response("{}");
+    };
+    const ua = "varlatch-cli/0.14.0 (linux; x64)";
+    const client = new VarlatchClient({ server: "https://v.example", token: "t", fetch: fetchImpl, userAgent: ua });
+    await client.exchangeCliCredential();
+    await client.meta();
+    await client.exportAuditEventsNdjson("acme");
+    await new VarlatchClient({ server: "https://v.example", fetch: fetchImpl }).meta();
+    expect(seen).toEqual([ua, ua, ua, undefined]);
+  });
+});
