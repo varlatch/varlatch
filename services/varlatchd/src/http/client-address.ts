@@ -97,20 +97,28 @@ const resolveAll: Resolve = async (name) => (await lookup(name, { all: true })).
 /**
  * The trusted proxies, with host names (compose service names, such as
  * varlatch-web) resolved now and again every `refreshMs`, since a
- * container's address changes when it is recreated. A name that does not
- * resolve trusts nothing until it does; the last good addresses of a name
- * stay trusted while a refresh fails.
+ * container's address changes when it is recreated and may then belong to
+ * another container. Trust from a name lasts only as long as its
+ * resolution: a refresh that fails drops the name's addresses at once (a
+ * proxy that no longer resolves is never trusted at an address it used to
+ * have), and a resolution older than three refresh periods counts for
+ * nothing even if refreshing stalls. Literal addresses and ranges are
+ * trusted as configured.
  */
 export class TrustedProxies {
   private readonly literal = new BlockList();
   private readonly names: string[] = [];
-  private resolved = new Map<string, string[]>();
+  private resolved = new Map<string, { addresses: string[]; at: number }>();
+  private readonly failing = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
+  private refreshing: Promise<void> | null = null;
+  private maxAgeMs = 30_000;
 
   constructor(
     spec: string,
     private readonly resolve: Resolve = resolveAll,
     private readonly log: (message: string) => void = (m) => console.warn(m),
+    private readonly now: () => number = Date.now,
   ) {
     for (const entry of parseTrustedProxies(spec)) {
       if (entry.kind === "name") this.names.push(entry.name);
@@ -121,6 +129,7 @@ export class TrustedProxies {
 
   /** Resolve the names once, then keep refreshing them in the background. */
   async start(refreshMs = 10_000): Promise<this> {
+    this.maxAgeMs = 3 * refreshMs;
     await this.refresh();
     if (this.names.length > 0) {
       this.timer = setInterval(() => void this.refresh(), refreshMs);
@@ -134,27 +143,46 @@ export class TrustedProxies {
     this.timer = null;
   }
 
-  async refresh(): Promise<void> {
-    const next = new Map(this.resolved);
+  /** Resolve every name again; one refresh at a time. */
+  refresh(): Promise<void> {
+    this.refreshing ??= this.refreshNames().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async refreshNames(): Promise<void> {
     for (const name of this.names) {
+      const previous = this.resolved.get(name)?.addresses ?? [];
       try {
         const addresses = (await this.resolve(name)).map((a) => normalizeAddress(a)).filter((a): a is string => a !== null);
-        if (JSON.stringify(addresses) !== JSON.stringify(this.resolved.get(name) ?? [])) {
+        if (JSON.stringify(addresses) !== JSON.stringify(previous) || this.failing.has(name)) {
           this.log(`varlatchd: trusted proxy ${name} is ${addresses.join(", ") || "(no address)"}`);
         }
-        next.set(name, addresses);
-      } catch {
-        if (!this.resolved.has(name)) this.log(`varlatchd: trusted proxy ${name} does not resolve; its forwarded addresses are not used until it does`);
+        this.failing.delete(name);
+        this.resolved.set(name, { addresses, at: this.now() });
+      } catch (err) {
+        this.resolved.delete(name);
+        if (this.failing.has(name)) continue;
+        this.failing.add(name);
+        const why = (err as { code?: string }).code ?? (err instanceof Error ? err.message : String(err));
+        this.log(
+          previous.length > 0
+            ? `varlatchd: trusted proxy ${name} no longer resolves (${why}); ${previous.join(", ")} are no longer trusted`
+            : `varlatchd: trusted proxy ${name} does not resolve (${why}); its forwarded addresses are not used until it does`,
+        );
       }
     }
-    this.resolved = next;
   }
 
   trusts = (address: string): boolean => {
     const normalized = normalizeAddress(address);
     if (!normalized) return false;
     if (this.literal.check(normalized, isIP(normalized) === 4 ? "ipv4" : "ipv6")) return true;
-    for (const addresses of this.resolved.values()) if (addresses.includes(normalized)) return true;
+    const oldest = this.now() - this.maxAgeMs;
+    for (const { addresses, at } of this.resolved.values()) {
+      if (at >= oldest && addresses.includes(normalized)) return true;
+    }
     return false;
   };
 }

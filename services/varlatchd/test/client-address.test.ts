@@ -68,14 +68,14 @@ describe("VARLATCH_TRUSTED_PROXIES", () => {
     const logs: string[] = [];
     const proxies = await new TrustedProxies("varlatch-web, coolify-proxy, 10.9.0.0/24", async (name) => {
       if (name === "varlatch-web") return web;
-      throw new Error("ENOTFOUND");
+      throw Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
     }, (m) => logs.push(m)).start(60_000);
     try {
       expect(proxies.trusts("172.18.0.4")).toBe(true);
       expect(proxies.trusts("::ffff:172.18.0.4")).toBe(true);
       expect(proxies.trusts("10.9.0.77")).toBe(true);
       expect(proxies.trusts("172.18.0.1")).toBe(false); // the network's gateway: host callers are not proxies
-      expect(logs.some((l) => /coolify-proxy does not resolve/.test(l))).toBe(true);
+      expect(logs.some((l) => /coolify-proxy does not resolve \(ENOTFOUND\)/.test(l))).toBe(true);
       web = ["172.18.0.9"]; // recreated container
       await proxies.refresh();
       expect(proxies.trusts("172.18.0.9")).toBe(true);
@@ -85,15 +85,50 @@ describe("VARLATCH_TRUSTED_PROXIES", () => {
     }
   });
 
-  it("keeps a name's last good addresses while a refresh fails", async () => {
-    let fail = false;
+  it("drops a name's addresses when a refresh fails: forwarding from the old address is ignored, until it resolves again", async () => {
+    let answer: string[] | "ENOTFOUND" = ["172.18.0.4"];
+    const logs: string[] = [];
+    const proxies = await new TrustedProxies("varlatch-web, 10.9.0.0/24", async () => {
+      if (answer === "ENOTFOUND") throw Object.assign(new Error("getaddrinfo ENOTFOUND varlatch-web"), { code: "ENOTFOUND" });
+      return answer;
+    }, (m) => logs.push(m)).start(60_000);
+    try {
+      expect(clientAddressOf("172.18.0.4", "198.51.100.99", proxies.trusts)).toBe("198.51.100.99");
+      answer = "ENOTFOUND"; // the container is gone; its address may be reused by another
+      await proxies.refresh();
+      expect(proxies.trusts("172.18.0.4")).toBe(false);
+      expect(clientAddressOf("172.18.0.4", "198.51.100.99", proxies.trusts)).toBe("172.18.0.4");
+      expect(logs.some((l) => /varlatch-web no longer resolves \(ENOTFOUND\); 172\.18\.0\.4 are no longer trusted/.test(l))).toBe(true);
+      expect(proxies.trusts("10.9.0.5")).toBe(true); // literal ranges are not affected
+      await proxies.refresh(); // still failing: logged once
+      expect(logs.filter((l) => /no longer resolves|does not resolve/.test(l))).toHaveLength(1);
+      answer = ["172.18.0.11"]; // back, at a new address
+      await proxies.refresh();
+      expect(clientAddressOf("172.18.0.11", "198.51.100.99", proxies.trusts)).toBe("198.51.100.99");
+      expect(proxies.trusts("172.18.0.4")).toBe(false);
+      expect(logs.at(-1)).toMatch(/varlatch-web is 172\.18\.0\.11/);
+    } finally {
+      proxies.stop();
+    }
+  });
+
+  it("stops trusting a resolution older than three refresh periods, even if refreshing stalls", async () => {
+    let clock = 1_000_000;
+    let stall = false;
     const proxies = await new TrustedProxies("varlatch-web", async () => {
-      if (fail) throw new Error("EAI_AGAIN");
+      if (stall) return new Promise<string[]>(() => {}); // a lookup that never returns
       return ["172.18.0.4"];
-    }, () => {}).start(60_000);
-    fail = true;
-    await proxies.refresh();
-    expect(proxies.trusts("172.18.0.4")).toBe(true);
-    proxies.stop();
+    }, () => {}, () => clock).start(10_000);
+    try {
+      expect(proxies.trusts("172.18.0.4")).toBe(true);
+      stall = true;
+      void proxies.refresh();
+      clock += 29_000;
+      expect(proxies.trusts("172.18.0.4")).toBe(true);
+      clock += 2_000; // past 3 x 10 s
+      expect(proxies.trusts("172.18.0.4")).toBe(false);
+    } finally {
+      proxies.stop();
+    }
   });
 });
