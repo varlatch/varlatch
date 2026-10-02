@@ -98,7 +98,7 @@ describe("credential listing", () => {
     expect(items[0]!.revokedAt).toBeNull();
     expect(JSON.stringify(items)).not.toContain("vlt_");
     expect(Object.keys(items[0]!).sort()).toEqual(
-      ["createdAt", "expiresAt", "id", "kind", "lastUsedAt", "name", "revokedAt"],
+      ["client", "createdAt", "expiresAt", "id", "kind", "lastUsedAt", "name", "revokedAt"],
     );
   });
 

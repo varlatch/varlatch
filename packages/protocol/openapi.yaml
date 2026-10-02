@@ -109,6 +109,36 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Organization" }
         default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [organizations]
+      operationId: renameOrganization
+      summary: >
+        Rename an organization's display name (capability
+        organizations.rename). The name is trimmed. The slug, which the CLI,
+        URLs, and configuration use, does not change. The audit event
+        organization.renamed records the previous and the new name.
+        Requires organization.manage; existence-hiding.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: 1 to 200 characters once surrounding whitespace is trimmed.
+      responses:
+        "200":
+          description: Renamed organization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Organization" }
+        default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/config-items:
     get:
@@ -1315,6 +1345,39 @@ paths:
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/invitations:
+    get:
+      tags: [identities]
+      operationId: listInvitations
+      summary: >
+        List the organization's invitations, newest first by creation time
+        and ID (capability invitations.manage). Only pending invitations
+        unless status is all. Never returns an invitation's token or
+        anything derived from it. Requires identity.manage, like creating
+        one; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: status
+          in: query
+          description: >
+            pending (the default) lists invitations that can still be
+            accepted; all adds consumed, expired, and revoked ones.
+          schema: { type: string, enum: [pending, all], default: pending }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: Invitations, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Invitation" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
       operationId: createInvitation
@@ -1342,8 +1405,31 @@ paths:
                 type: object
                 required: [token, expiresAt]
                 properties:
+                  id:
+                    type: string
+                    description: >
+                      The invitation's ID, as listed and revoked (absent on
+                      servers without invitations.manage).
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/invitations/{invitation}:
+    delete:
+      tags: [identities]
+      operationId: revokeInvitation
+      summary: >
+        Revoke a pending invitation (capability invitations.manage). Its
+        token stops working at once, also for an enrollment already started
+        with it. The audit event invitation.revoked records it. An
+        invitation that is consumed, expired, or already revoked is refused
+        with VERSION_CONFLICT, its status in details.status. Requires
+        identity.manage; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: invitation, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
 
   /me/profile:
@@ -2063,10 +2149,25 @@ paths:
     get:
       tags: [audit]
       operationId: listAuditEvents
+      summary: >
+        List the organization's Security Audit Events, newest first. Optional
+        filters (capability audit.filters) are ANDed; each only narrows what
+        audit.read already shows, and the order, and so every cursor, is the
+        same with or without them. Pass the same filters with each cursor.
+        A filter that is malformed, empty, or given twice is refused with
+        VALIDATION_FAILED. Requires audit.read; existence-hiding.
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/limit"
         - $ref: "#/components/parameters/cursor"
+        - $ref: "#/components/parameters/auditDecision"
+        - $ref: "#/components/parameters/auditEventType"
+        - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditProjectId"
+        - $ref: "#/components/parameters/auditEnvironmentId"
+        - $ref: "#/components/parameters/auditItem"
+        - $ref: "#/components/parameters/auditSince"
+        - $ref: "#/components/parameters/auditUntil"
       responses:
         "200":
           description: Security Audit Events, newest first (deterministic occurredAt+eventId ordering)
@@ -2086,8 +2187,21 @@ paths:
     get:
       tags: [audit]
       operationId: exportAuditEvents
-      summary: Stream the organization's Security Audit Events as NDJSON
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      summary: >
+        Stream the organization's Security Audit Events as NDJSON, oldest
+        first. Takes the same optional filters as the listing (capability
+        audit.filters), validated before the stream starts. Requires
+        audit.read; existence-hiding.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/auditDecision"
+        - $ref: "#/components/parameters/auditEventType"
+        - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditProjectId"
+        - $ref: "#/components/parameters/auditEnvironmentId"
+        - $ref: "#/components/parameters/auditItem"
+        - $ref: "#/components/parameters/auditSince"
+        - $ref: "#/components/parameters/auditUntil"
       responses:
         "200":
           description: One versioned AuditEvent JSON document per line
@@ -2611,6 +2725,57 @@ components:
       in: query
       description: Opaque cursor from a previous response; never parse.
       schema: { type: string }
+    auditDecision:
+      name: decision
+      in: query
+      description: Only events with this decision (capability audit.filters).
+      schema: { type: string, enum: [allow, deny, info] }
+    auditEventType:
+      name: eventType
+      in: query
+      description: >
+        Only events of this type, such as value.written; a value ending in
+        .* is a prefix, so value.* matches value.written and
+        value.rotation_started but not values.x (capability audit.filters).
+      schema: { type: string, maxLength: 202, pattern: "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)*(\\.\\*)?$" }
+    auditActorIdentityId:
+      name: actorIdentityId
+      in: query
+      description: Only events whose actor is this identity ID (capability audit.filters).
+      schema: { type: string, maxLength: 200 }
+    auditProjectId:
+      name: projectId
+      in: query
+      description: Only events whose resource names this project ID (capability audit.filters).
+      schema: { type: string, maxLength: 200 }
+    auditEnvironmentId:
+      name: environmentId
+      in: query
+      description: Only events whose resource names this environment ID (capability audit.filters).
+      schema: { type: string, maxLength: 200 }
+    auditItem:
+      name: item
+      in: query
+      description: >
+        Only events about this Config Item: its name is the resource's
+        itemName (value writes, deletions, rotations) or listed in the
+        metadata's items (disclosures, validations, Capabilities)
+        (capability audit.filters).
+      schema: { type: string, maxLength: 200, pattern: "^[A-Z][A-Z0-9_]*$" }
+    auditSince:
+      name: since
+      in: query
+      description: >
+        Only events at or after this RFC 3339 timestamp, with a time zone
+        (capability audit.filters).
+      schema: { type: string, format: date-time }
+    auditUntil:
+      name: until
+      in: query
+      description: >
+        Only events before this RFC 3339 timestamp, with a time zone; must
+        not be before since (capability audit.filters).
+      schema: { type: string, format: date-time }
     idempotencyKey:
       name: Idempotency-Key
       in: header
@@ -3130,6 +3295,39 @@ components:
               format: date-time
               description: Expiry of the issued credential when credentialTtlSeconds was given.
 
+    InvitationStatus:
+      type: string
+      enum: [pending, consumed, expired, revoked]
+      description: >
+        pending: can still be accepted. consumed: accepted, the invitee
+        enrolled. expired: not accepted before expiresAt. revoked: revoked
+        while pending. Every state but pending is final.
+
+    Invitation:
+      type: object
+      required: [id, name, orgRole, status, createdAt, expiresAt, createdByIdentityId, consumedAt, revokedAt]
+      description: >
+        An organization invitation (capability invitations.manage). Never
+        contains the invitation's token or anything derived from it: the
+        token is returned once, at creation, and stored only hashed.
+      properties:
+        id: { type: string }
+        name:
+          type: string
+          description: The invitee's display name, as given at creation.
+        orgRole:
+          type: string
+          enum: [admin, member]
+          description: The Organization Role the invitee receives on enrolling.
+        status: { $ref: "#/components/schemas/InvitationStatus" }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        createdByIdentityId:
+          type: [string, "null"]
+          description: The identity that created it; null for invitations created before 0.14.0.
+        consumedAt: { type: [string, "null"], format: date-time }
+        revokedAt: { type: [string, "null"], format: date-time }
+
     Capability:
       type: object
       required:
@@ -3171,6 +3369,16 @@ components:
           description: >
             Last successful authentication, throttled to ~60s granularity.
             An operational signal, never evidence of what was accessed.
+        client:
+          type: [string, "null"]
+          maxLength: 64
+          description: >
+            A short, readable summary of the client that requested a browser
+            session or CLI login credential, such as "Firefox on Linux" or
+            "varlatch CLI 0.14.0 on Linux". Only this summary is stored,
+            never the User-Agent itself. Null when the client was not
+            recognized, for every other kind, and for credentials issued
+            before 0.14.0; absent from older servers.
     IssuedAgentCredential:
       type: object
       required: [id, token, expiresAt]
@@ -3482,6 +3690,16 @@ components:
         current:
           type: boolean
           description: True for the credential authenticating this request.
+        client:
+          type: [string, "null"]
+          maxLength: 64
+          description: >
+            A short, readable summary of the client that requested a browser
+            session or CLI login credential, such as "Firefox on Linux" or
+            "varlatch CLI 0.14.0 on Linux". Only this summary is stored,
+            never the User-Agent itself. Null when the client was not
+            recognized, for every other kind, and for credentials issued
+            before 0.14.0; absent from older servers.
 
     IssuedCliCredential:
       type: object

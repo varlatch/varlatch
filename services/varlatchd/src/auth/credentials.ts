@@ -63,14 +63,16 @@ export async function issueCredential(
     maxUses?: number | undefined;
     actorIdentityId?: string;
     metadata?: Record<string, unknown>;
+    /** Readable client label (client-label.ts), never a raw User-Agent. */
+    client?: string | null;
   },
 ): Promise<{ credentialId: string; token: string }> {
   const token = generateToken(input.kind);
   const credentialId = newId("credential");
   return withTx(db, async (tx) => {
     await tx.query(
-      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
       [
         credentialId,
         input.identityId,
@@ -79,6 +81,7 @@ export async function issueCredential(
         hashToken(token),
         input.expiresAt ?? null,
         input.maxUses ?? null,
+        input.client ?? null,
       ],
     );
     await recordAuditEvent(tx, {
