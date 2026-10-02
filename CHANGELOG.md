@@ -320,6 +320,14 @@ fixes.
 
 ### Fixes
 
+- An open environment page no longer re-reads its values every two
+  seconds. Each read is audited, and the read's own audit event used to
+  count as a change to the values, so the page fetched them again,
+  recorded another read, and so on: the audit log filled with
+  `value.disclosed` events and busy dashboards could reach the request
+  limit. Reads, validations, denials and capability use now still refresh
+  the audit log but no longer count as changes.
+
 - An agent-safe run's Broker no longer stops when a client resets its
   connection after a refused `CONNECT` (407 without the proxy credential,
   502 for an allowed destination, 403 with `--agent-network strict`). curl
