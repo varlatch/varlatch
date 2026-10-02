@@ -154,9 +154,10 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
       status.className = "result";
       status.replaceChildren(
         el("div", { class: "section-title", text: "Sign in from your terminal" }),
-        el("div", { class: "code" }, [el("span", { text: login }), copyButton(login, "Copy")]),
+        el("div", { class: "code" }, [el("span", { text: login }), document.createTextNode(" "), copyButton(login, "Copy")]),
         el("div", { class: "section-title", text: "Short-lived API credential (for varlatch login)" }),
-        el("div", { class: "code" }, [tokenSpan, copyButton(r.token, "Copy credential")]),
+        // The space keeps the credential a separate word in #status text.
+        el("div", { class: "code" }, [tokenSpan, document.createTextNode(" "), copyButton(r.token, "Copy credential")]),
         el("div", { class: "row" }, [countdown]),
         el("a", { class: "button primary", href: "/", text: "Open the dashboard" }),
         el("div", { class: "who", text: "Authenticated as " + r.identityId }),
