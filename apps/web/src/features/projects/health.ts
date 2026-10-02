@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { Environment, Tier } from "@varlatch/protocol";
+import type { Environment } from "@varlatch/protocol";
+import { requiredHere, type ContractItemMeta } from "../values/model";
 
 /**
- * Environment health from metadata only (the same rules as the project
- * values matrix): a required Config Item with no value and no default is
+ * Environment health from metadata only, with the same rules as the values
+ * grid (`requiredHere` is shared): a required Config Item with no value and no default is
  * missing; a default covers it. Values are never read here.
  */
 
-export interface ContractItemMeta {
-  name: string;
-  sensitive?: boolean;
-  required: { kind: string; selector?: { kind: string; tier?: Tier; environmentIds?: string[] } };
-  defaultValue?: string;
-}
+export { requiredHere };
+export type { ContractItemMeta };
 
 /** The items of a contract revision's body, tolerating an absent body. */
 export function contractItems(contract: unknown): ContractItemMeta[] {
@@ -20,19 +17,10 @@ export function contractItems(contract: unknown): ContractItemMeta[] {
   return Array.isArray(items) ? (items as ContractItemMeta[]) : [];
 }
 
-export function requiredHere(item: ContractItemMeta, env: Pick<Environment, "id" | "tier">): boolean {
-  const r = item.required;
-  if (r.kind === "always") return true;
-  if (r.kind === "never") return false;
-  if (r.selector?.kind === "tier") return r.selector.tier === env.tier;
-  if (r.selector?.kind === "environments") return r.selector.environmentIds?.includes(env.id) ?? false;
-  return false;
-}
-
 /** Required items without a value or default in this environment. */
 export function missingRequired(
   items: ContractItemMeta[],
-  env: Pick<Environment, "id" | "tier">,
+  env: Environment,
   present: ReadonlySet<string>,
 ): string[] {
   return items
@@ -53,7 +41,7 @@ export type EnvHealth =
 export function environmentHealth(input: {
   contract: "loading" | "none" | "unreadable" | ContractItemMeta[];
   presence: "loading" | "unreadable" | ReadonlySet<string>;
-  env: Pick<Environment, "id" | "tier">;
+  env: Environment;
 }): EnvHealth {
   const { contract, presence, env } = input;
   if (contract === "unreadable" || presence === "unreadable") return { state: "unknown" };

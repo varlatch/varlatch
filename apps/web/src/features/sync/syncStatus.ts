@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { targetLabel as statusTargetLabel } from "./status";
 import type { PlatformConnection, SyncLedgerName, SyncTarget } from "@varlatch/protocol";
-import { platformMeta } from "./platform-meta";
+
 
 /**
  * Per-item sync evidence shared by the integrations page, the values grid
@@ -46,19 +47,9 @@ export function targetCoversItem(target: SyncTarget, itemName: string): boolean 
   return !exclude.some((p) => (p.endsWith("*") ? itemName.startsWith(p.slice(0, -1)) : p === itemName));
 }
 
-export function destinationLabel(t: SyncTarget): string {
-  // convex targets have an empty destination: the Connection's deployment
-  // URL is the destination.
-  return t.destination.repo
-    ? `${t.destination.repo}${t.destination.environment ? `#${t.destination.environment}` : ""}`
-    : (t.destination.applicationUuid ?? "deployment");
-}
-
-/** "GitHub Actions · api" */
+/** One canonical label per target, the same everywhere it is named. */
 export function targetLabel(t: SyncTarget, connections: PlatformConnection[] | undefined): string {
-  const connection = connections?.find((c) => c.id === t.connectionId);
-  const platform = connection ? platformMeta(connection.platform).label : "Integration";
-  return `${platform} · ${destinationLabel(t)}`;
+  return statusTargetLabel(t, connections?.find((c) => c.id === t.connectionId));
 }
 
 export function targetPlatform(t: SyncTarget, connections: PlatformConnection[] | undefined): string {
