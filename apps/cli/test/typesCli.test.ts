@@ -69,6 +69,15 @@ function cli(args: string[]): Promise<{ code: number; stdout: string; stderr: st
   });
 }
 
+/**
+ * Each test spawns the built CLI (a new Node process running the whole
+ * bundle) one to three times. That takes about 0.2 s each on an idle
+ * machine but several seconds on a loaded CI runner, as the 5 s default
+ * already proved too short for a spawn-heavy test (#73). A targeted limit
+ * per spawn, here only: the CLI-wide default stays 5 s for unit tests.
+ */
+const PER_SPAWN_MS = 10_000;
+
 describe("varlatch types, end to end", () => {
   it("makes one request, for the Contract, and writes the same file for every Environment", async () => {
     const out = join(repo, "config", "varlatch.ts");
@@ -91,7 +100,7 @@ describe("varlatch types, end to end", () => {
 
     // Without any Environment selected at all.
     expect((await cli(["types", "--out", "config/varlatch.ts", "--check"])).code).toBe(0);
-  });
+  }, 3 * PER_SPAWN_MS);
 
   it("--check exits 1 once the Contract changes, and leaves the file alone", async () => {
     const out = join(repo, "config", "check.ts");
@@ -103,7 +112,7 @@ describe("varlatch types, end to end", () => {
     expect(stale.code).toBe(1);
     expect(stale.stderr).toContain("is stale");
     expect(readFileSync(out).equals(before)).toBe(true);
-  });
+  }, 2 * PER_SPAWN_MS);
 
   it("refuses a version 1 Contract with the fix, and writes nothing", async () => {
     served = revision(ITEMS, { semanticsVersion: 1 });
@@ -111,5 +120,5 @@ describe("varlatch types, end to end", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("which defines no conversion");
     expect(existsSync(join(repo, "config", "v1.ts"))).toBe(false);
-  });
+  }, PER_SPAWN_MS);
 });
