@@ -26,7 +26,8 @@ long as you follow these rules.
 1. **Start every Varlatch command with `varlatch --assisted`**, in every
    shell, even if an earlier command used it. Assisted mode masks secrets in
    command output and refuses unsafe forms; a shell variable does not carry
-   over to the next command.
+   over to the next command. A command printed for the human's own terminal
+   (without `--assisted`) is theirs: never run it yourself.
 2. **Never read, print, or create `.env` files**, and never read the
    Varlatch credential store. To see which names a `.env` file sets, without
    their values: `varlatch --assisted import <file> --dry-run`. A `.env`
@@ -37,16 +38,30 @@ long as you follow these rules.
    with `varlatch.toml` is already set up: never run `varlatch init` there.
 3. **Never put a secret value in a command.** Store a secret with
    `varlatch --assisted import`, `values set <NAME> --generate hex:32`,
-   `--from-file <path>`, or `--stdin`, or ask the human to enter it. (Inside
-   an agent-safe run your variables hold Placeholders, not secrets: see rule 8.)
+   `--from-file <path>`, or `--stdin`, or ask the human to enter it. When the
+   human asks for a new random value, generate it with `--generate`. A
+   credential issued elsewhere (a provider's API key, a password someone
+   chose) is the human's to enter: hand it over, and never invent one.
+   (Inside an agent-safe run your variables hold Placeholders, not secrets:
+   see rule 8.)
 4. **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too
-   short to mask. Report the names in the error, then stop and wait. Every
-   remedy is the human's, run in their own terminal: the refusal prints
-   their commands. Never add `--allow-unmasked` or `--no-redact` yourself:
-   assisted mode refuses both. The human's override, outside assisted mode,
-   shows only the named item and keeps every other Secret masked:
+   short to mask. Report the names in the error, then stop and ask. Each
+   remedy is the human's decision, for the named item (and environment)
+   only. After they approve one, you may carry it out yourself, with
+   `--assisted`:
+   - a new random value replacing the item: `varlatch --assisted values set
+     <NAME> -e <environment> --replace <NAME> --generate hex:32` (keep
+     `--server <url>` when the server was overridden). A credential a
+     provider issued is the human's to enter instead;
+   - marking the item as not secret: a Contract change for the whole
+     project, done as `references/contract.md` describes.
+
+   Showing a Secret unmasked is the human's alone: never add
+   `--allow-unmasked` or `--no-redact` (assisted mode refuses both). Their
+   override, in their own terminal, shows only the named item and keeps
+   every other Secret masked:
 
    ```text
    varlatch run -e <environment> --allow-unmasked <NAME> -- <command>
@@ -64,7 +79,9 @@ long as you follow these rules.
    unless that item is named with `--replace <NAME>`; add it only with the
    human's approval for that item. A value inherited from a parent
    environment counts: setting it in the child overrides it. `--replace`
-   records the override, not an approval. **Never delete a value without
+   records the override, not an approval. An item's sensitivity is part of
+   the Contract and applies to the whole project: approval to change it
+   covers that item, in every environment, and nothing else. **Never delete a value without
    the human's approval for that item in that environment.** In assisted
    mode `values delete` refuses (78) without `--confirm <NAME>`; add it only
    after that approval. It records the intent, not an approval.
@@ -89,6 +106,10 @@ long as you follow these rules.
    secret there; a real secret value stays forbidden. curl and fetch are
    refused by the Broker. For example:
    `varlatch --assisted request -X POST -H "Authorization: Bearer $STRIPE_KEY" --json '{"amount": 500}' https://api.example.com/v1/charges`
+   The double quotes let the shell put the Placeholder in; in single quotes
+   the request would carry the literal text `$STRIPE_KEY`, which the Broker
+   cannot substitute. A tool that passes arguments without a shell must
+   pass the Placeholder itself.
    `varlatch --assisted context --json` lists the run's Placeholders (names
    only, under `agentRun.placeholders`). Showing a listed one discloses
    nothing: when the human asks you to check it, `varlatch --assisted run --
@@ -154,3 +175,5 @@ Read the reference for the task at hand. Each is also printed by
   Placeholders, and `varlatch request`.
 - `references/self-hosting.md` (topic `self-hosting`): installing and
   operating a Varlatch server.
+- `references/contract.md` (topic `contract`): correcting an item's
+  sensitivity in the Contract.

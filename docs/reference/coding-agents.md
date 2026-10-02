@@ -100,7 +100,7 @@ again.
 ## `varlatch agents guide`
 
 ```
-varlatch agents guide [setup|run|agent-run|self-hosting]
+varlatch agents guide [setup|run|agent-run|self-hosting|contract]
 ```
 
 Prints the skill, or one of its references, on stdout. A coding agent with a

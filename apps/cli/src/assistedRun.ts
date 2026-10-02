@@ -81,26 +81,34 @@ export interface RemedyContext {
 
 /**
  * Why an assisted run did not start: names and remedies, never a value.
- * The remedies are the human's, as commands for their own terminal (an
- * agent evaluation saw an agent run a printed remedy itself). Every command
- * names the run's environment: without it, a remedy for a production
- * refusal would replace or show the default environment's value.
- * Every remedy changes or exposes the human's configuration, so each is
- * theirs to approve, for the named item only: an agent reports and waits
- * (ADR-0043; the agent evaluation saw an agent regenerate other items).
+ * First the agent stops and asks; each remedy is the human's decision, for
+ * the named item and environment only (an agent evaluation saw an agent
+ * regenerate items nobody named). After that approval, a safe remedy is
+ * printed as the agent's own command, with --assisted (an evaluation saw an
+ * agent copy a human-only command into its own shell, outside assisted
+ * mode). Showing a Secret unmasked stays the human's alone, in their own
+ * terminal. Every command names the run's environment and an overridden
+ * server: without them, a remedy for a production refusal would act on the
+ * default environment.
  */
 export function unmaskableRefusal(items: string[], how: RemedyContext): string[] {
   const first = items[0] as string;
-  // The human's commands, for their own terminal: no --assisted (assisted mode refuses the override).
+  const several = items.length > 1;
+  // The Contract is the server's: an overridden server must reach every contract command, or they change another server's.
+  const server = /(?:^|\s)--server (\S+)/.exec(how.target)?.[1];
+  // The human's override, for their own terminal: no --assisted (assisted mode refuses it).
   const retry = ["varlatch run", how.target, ...(how.runOptions ?? []), `--allow-unmasked ${first} -- <command>`].join(" ");
   return [
-    `varlatch: ${items.length === 1 ? "this Secret is" : "these Secrets are"} shorter than ${MIN_LENGTH} bytes, so ` +
-      `${items.length === 1 ? "its value" : "their values"} cannot be masked in the command's output: ${items.join(", ")}`,
-    `  Stop and ask the human. Each choice is theirs, for ${items.length === 1 ? first : "each named item"} only, made in their own terminal:`,
-    `  - replace the value with a longer one, which overwrites the current value: varlatch values set ${first} ${how.target} --generate hex:32`,
-    `  - if it is not a secret, correct its sensitivity in the Contract`,
-    `  - show it unmasked in one run, every other Secret still masked: ${retry}`,
-    "  An agent reports this and waits: it runs none of these itself, and approval for one item does not cover another.",
+    `varlatch: ${several ? "these Secrets are" : "this Secret is"} shorter than ${MIN_LENGTH} bytes, so ` +
+      `${several ? "their values" : "its value"} cannot be masked in the command's output: ${items.join(", ")}`,
+    `  Stop and ask the human what to do about ${several ? "each named item" : first}. Approval for one item or action never covers another.`,
+    `  - Only if they approve replacing ${first} with a new random value (it overwrites the current one):`,
+    `      varlatch --assisted values set ${first} ${how.target} --replace ${first} --generate hex:32` + (several ? "   (each item needs its own approval)" : ""),
+    `    A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set ${first} ${how.target}`,
+    `  - Only if they approve marking ${first} as not secret (a Contract change, for the whole project): varlatch --assisted agents guide contract` +
+      (server ? ` (add --server ${server} to every contract command)` : ""),
+    `  - Showing it unmasked is the human's alone, in their own terminal (assisted mode refuses it; every other Secret stays masked):`,
+    `      ${retry}`,
     "Nothing was started.",
   ];
 }

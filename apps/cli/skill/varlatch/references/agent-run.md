@@ -30,7 +30,12 @@ varlatch run --agent-safe --agent <agent identity> \
 ## Calling an API inside the run
 
 Use `varlatch request`, a curl-like client. The shell expands the variable to
-its Placeholder, and the Broker substitutes the Secret at its target:
+its Placeholder, and the Broker substitutes the Secret at its target. Use
+double quotes: in single quotes the shell passes the literal text
+`$STRIPE_KEY`, which carries no Placeholder, so nothing is substituted and the
+API sees no valid key. A tool that runs commands without a shell must pass
+the Placeholder itself (`varlatch --assisted context --json` lists the names;
+the variable holds the Placeholder):
 
 ```sh
 varlatch --assisted request -H "Authorization: Bearer $STRIPE_KEY" https://api.stripe.com/v1/balance
