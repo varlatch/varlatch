@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { BUDGET, START_ALLOWANCE, WINDOW_MS, requestsIn, waitMs, windowsOf } from "../scripts/e2e-request-budget.mjs";
+import { START_ALLOWANCE, WINDOW_MS, assess, requestsIn, waitMs } from "../scripts/e2e-request-budget.mjs";
 
-/** The e2e harness's scheduling against varlatchd's request window (600 per 60 s per client). */
+/**
+ * The e2e harness's scheduling against varlatchd's request window (600 per
+ * 60 s per client). The regression against the production limiter itself is
+ * in services/varlatchd/test/e2e-request-budget.test.ts.
+ */
 
-const line = (client: string, time: string, path: string, status = 200) =>
-  `${client} - - [${time} +0000] "GET ${path} HTTP/1.1" ${status} 12 "-" "node" "-"`;
+const line = (client: string, time: string, path: string, status = 200, method = "GET", forwardedFor = "-") =>
+  `${client} - - [${time} +0000] "${method} ${path} HTTP/1.1" ${status} 12 "-" "node" "${forwardedFor}"`;
 const T0 = Date.UTC(2026, 9, 2, 19, 15, 0);
 
 describe("requestsIn", () => {
-  it("counts what nginx forwards to varlatchd's request window, with its time", () => {
+  it("reads what nginx forwards to varlatchd's request window: client, logged time, method, path, status, forwarded-for", () => {
     const log = [
       line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/organizations"),
-      line("172.27.0.1", "02/Oct/2026:19:15:01", "/auth/varlatch-token", 401),
+      line("172.27.0.1", "02/Oct/2026:19:15:01", "/auth/varlatch-token", 401, "POST"),
       line("172.27.0.1", "02/Oct/2026:19:15:02", "/enroll"),
       line("172.27.0.1", "02/Oct/2026:19:15:03", "/.well-known/jwks.json"),
       line("172.27.0.1", "02/Oct/2026:19:15:04", "/healthz"), // exempt from the window
@@ -22,12 +26,9 @@ describe("requestsIn", () => {
       line("172.27.0.1", "02/Oct/2026:19:15:08", "/authorize"), // not under /auth/
       "2026/10/02 19:15:09 [error] 29#29: *1 connect() failed",
     ].join("\n");
-    expect(requestsIn(log)).toEqual([
-      { client: "172.27.0.1", at: T0 },
-      { client: "172.27.0.1", at: T0 + 1000 },
-      { client: "172.27.0.1", at: T0 + 2000 },
-      { client: "172.27.0.1", at: T0 + 3000 },
-    ]);
+    const requests = requestsIn(log);
+    expect(requests.map((r: { at: number }) => r.at)).toEqual([T0, T0 + 1000, T0 + 2000, T0 + 3000]);
+    expect(requests[1]).toMatchObject({ client: "172.27.0.1", method: "POST", path: "/auth/varlatch-token", status: 401, forwardedFor: "-" });
   });
 
   it("applies the log's time zone", () => {
@@ -36,14 +37,29 @@ describe("requestsIn", () => {
   });
 });
 
-describe("windowsOf", () => {
-  it("replays varlatchd's fixed windows per client: a new one opens at the first request after the last ended", () => {
-    const requests = [
-      ...Array.from({ length: BUDGET + 1 }, (_, i) => ({ client: "a", at: T0 + i * 50 })), // 601 in about 30 s
-      { client: "a", at: T0 + WINDOW_MS }, // exactly one window later: a new window
-      { client: "b", at: T0 + 10 },
-    ].sort((x, y) => x.at - y.at); // as requestsIn returns them
-    expect(windowsOf(requests).map((w) => [w.client, w.count])).toEqual([["a", BUDGET + 1], ["b", 1], ["a", 1]]);
+describe("assess", () => {
+  it("fails on any 429 varlatchd answered, wherever it fell", () => {
+    const log = [line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/meta"), line("172.27.0.1", "02/Oct/2026:19:16:00", "/v1/meta", 429)].join("\n");
+    expect(assess(requestsIn(log)).refusals).toHaveLength(1);
+  });
+
+  it("leaves the proxy probe's pending-cap answers to the probe's own check, and only those", () => {
+    const probe = line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/auth/device", 429, "POST", "198.18.0.11");
+    expect(assess(requestsIn(probe)).refusals).toHaveLength(0);
+    // Not the probe: another path, another method, an unforged or other forwarded-for.
+    for (const other of [
+      line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/auth/device/token", 429, "POST", "198.18.0.11"),
+      line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/auth/device", 429, "GET", "198.18.0.11"),
+      line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/auth/device", 429, "POST"),
+      line("172.27.0.1", "02/Oct/2026:19:15:00", "/v1/auth/device", 429, "POST", "10.0.0.1"),
+    ]) {
+      expect(assess(requestsIn(other)).refusals, other).toHaveLength(1);
+    }
+  });
+
+  it("reports the busiest 61-second span of logged times as context", () => {
+    const log = Array.from({ length: 70 }, (_, i) => line("172.27.0.1", `02/Oct/2026:19:15:${String(i % 60).padStart(2, "0")}`, "/v1/meta")).join("\n");
+    expect(assess(requestsIn(log)).busiest).toMatchObject({ client: "172.27.0.1", count: 70 });
   });
 });
 
