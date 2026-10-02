@@ -340,63 +340,101 @@ describe("correcting an item's sensitivity: references/contract.md, run as writt
   const hasJq = spawnSync("jq", ["--version"]).status === 0;
   const items = () => (state.active?.contract as { items: { name: string; sensitive: boolean }[] }).items;
 
+  /** One shell call, as a coding agent makes each: a new `sh -c` process that inherits no variable from the last. */
+  function shell(command: string, cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    const bin = join(dir, "shim-bin");
+    if (!existsSync(bin)) {
+      mkdirSync(bin);
+      writeFileSync(join(bin, "varlatch"), `#!/bin/sh\nexec "${process.execPath}" "${bundle}" "$@"\n`, { mode: 0o755 });
+    }
+    return new Promise((resolve, reject) => {
+      const child = spawn("sh", ["-c", command], {
+        cwd,
+        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: join(dir, "home"), XDG_CONFIG_HOME: join(dir, "xdg"), VARLATCH_TOKEN: "vlt_test" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+  }
+
   /**
-   * The guide's steps, in order, as an agent runs them: the scratch directory
-   * from `mktemp -d`, each varlatch command (with `--server <url>` added when
-   * the exit-78 message named one), the jq extraction, the one-item edit, the
-   * returned revision activated, and the directory removed.
+   * The guide's steps, in order, each in its own shell call: `mktemp -d`
+   * prints the scratch path, which later steps carry only as the literal
+   * path the agent read (`<dir>`), never as a variable; `--server <url>` is
+   * added to the varlatch commands when the exit-78 message named one; the
+   * one-item edit happens between the extraction and the push; the returned
+   * revision is activated; the directory is removed.
    */
-  async function runGuide(repo: string, opts: { server?: string; env?: Record<string, string> } = {}): Promise<{ scratch: string; activated: number | null }> {
+  async function runGuide(repo: string, opts: { server?: string } = {}): Promise<{ scratch: string; activated: number | null }> {
     let scratch = "";
     let revision = "";
     let activated: number | null = null;
-    // "$dir/…" as the shell expands it (mktemp's path has no spaces).
-    const sub = (line: string) => line.replace(/"\$dir([^"]*)"/g, (_m, rest: string) => `${scratch}${rest}`);
     for (const step of steps) {
-      if (step === "dir=$(mktemp -d)") {
-        scratch = spawnSync("mktemp", ["-d"], { encoding: "utf8" }).stdout.trim();
-      } else if (step.startsWith("varlatch ")) {
-        const [command, redirect] = sub(step).split(" > ") as [string, string | undefined];
-        const args = fill(command, revision ? { "<revision>": revision } : {}).concat(opts.server ? ["--server", opts.server] : []);
-        const r = await cli(args, repo, opts.env);
-        if (redirect) writeFileSync(redirect, r.stdout);
-        if (args.includes("push")) {
-          revision = r.code === 0 ? (JSON.parse(r.stdout) as { revision: { id: string } }).revision.id : "";
+      let command = step.replaceAll("<dir>", scratch).replace("<revision>", revision);
+      if (step.startsWith("varlatch ") && opts.server) {
+        const [run, redirect] = command.split(" > ");
+        command = `${run} --server ${opts.server}${redirect ? ` > ${redirect}` : ""}`;
+      }
+      if (step === "mktemp -d") {
+        const r = await shell(command, repo);
+        scratch = r.stdout.trim();
+        expect(scratch).toMatch(/^\/\S+$/);
+        continue;
+      }
+      if (step.startsWith("jq ") && !hasJq) {
+        writeFileSync(join(scratch, "contract.json"), JSON.stringify((JSON.parse(readFileSync(join(scratch, "revision.json"), "utf8")) as { contract: unknown }).contract, null, 2));
+      } else {
+        const r = await shell(command, repo);
+        if (step.includes(" push ")) {
           expect(r.code, r.stderr).toBe(0);
-        }
-        if (args.includes("activate")) activated = r.code;
-      } else if (step.startsWith("jq ")) {
-        if (hasJq) {
-          const extracted = spawnSync("sh", ["-c", sub(step)], { cwd: repo, encoding: "utf8" });
-          expect(extracted.status, extracted.stderr).toBe(0);
+          revision = (JSON.parse(r.stdout) as { revision: { id: string } }).revision.id;
+        } else if (step.includes(" activate ")) {
+          activated = r.code;
         } else {
-          writeFileSync(join(scratch, "contract.json"), JSON.stringify((JSON.parse(readFileSync(join(scratch, "revision.json"), "utf8")) as { contract: unknown }).contract, null, 2));
+          expect(r.code, `${command}: ${r.stderr}`).toBe(0);
         }
+      }
+      if (step.startsWith("jq ")) {
         // The one edit the guide asks for: "sensitive" on the approved item, nothing else.
         const contract = JSON.parse(readFileSync(join(scratch, "contract.json"), "utf8")) as { items: { name: string; sensitive: boolean }[] };
         for (const item of contract.items) if (item.name === "LOG_LEVEL") item.sensitive = false;
         writeFileSync(join(scratch, "contract.json"), JSON.stringify(contract, null, 2));
-      } else if (step === 'rm -r "$dir"') {
-        expect(spawnSync("sh", ["-c", sub(step)], { cwd: repo }).status).toBe(0);
-      } else {
-        throw new Error(`a guide step this test does not know: ${step}`);
       }
     }
     return { scratch, activated };
   }
 
-  it("the guide's steps: a new scratch directory, show, extract, push --file --json, activate, remove only that directory", () => {
+  it("the guide's steps: mktemp -d, then the printed path typed out in every later step, show, extract, push --file --json, activate, remove only that directory", () => {
     expect(steps).toEqual([
-      "dir=$(mktemp -d)",
-      'varlatch --assisted contract show > "$dir/revision.json"',
-      'jq \'.contract\' "$dir/revision.json" > "$dir/contract.json"',
-      'varlatch --assisted contract push --file "$dir/contract.json" --json',
+      "mktemp -d",
+      "varlatch --assisted contract show > <dir>/revision.json",
+      "jq '.contract' <dir>/revision.json > <dir>/contract.json",
+      "varlatch --assisted contract push --file <dir>/contract.json --json",
       "varlatch --assisted contract activate <revision>",
-      'rm -r "$dir"',
+      "rm -r <dir>",
     ]);
+    expect(guide).toMatch(/`mktemp -d` prints its\s+path: use that exact path wherever `<dir>` appears below, typed out in each\s+command\. A new shell does not keep a variable from the last one/);
     expect(guide).toMatch(/applies to the item in every environment of the project/);
     expect(guide).toMatch(/change only `"sensitive"` on the approved item/);
     expect(guide).toMatch(/add that\s+`--server <url>` to `contract show`, `contract push`, and\s+`contract activate`/);
+  });
+
+  it("negative control: a shell variable for the scratch path does not survive a new shell call; the push finds no file and pushes nothing", async () => {
+    const repo = project();
+    withSecretLogLevel(repo);
+    const made = await shell("dir=$(mktemp -d); echo \"$dir\"", repo);
+    const scratch = made.stdout.trim();
+    writeFileSync(join(scratch, "contract.json"), JSON.stringify((state.active as { contract: unknown }).contract));
+    const push = await shell('varlatch --assisted contract push --file "$dir/contract.json" --json', repo);
+    expect(push.code).not.toBe(0);
+    expect(push.stderr).toMatch(/\/contract\.json/);
+    expect(pushed).toEqual([]);
+    rmSync(scratch, { recursive: true, force: true });
   });
 
   it("changes only the approved item's sensitivity, keeps every other definition and the Semantics version, and the run then starts", async () => {

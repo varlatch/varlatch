@@ -9,15 +9,18 @@ be shown.
 
 There is no one-step command. Edit the Contract and push it as a new
 revision, then activate that revision. Work in a new temporary directory,
-so no file in the project is overwritten or deleted:
+so no file in the project is overwritten or deleted. `mktemp -d` prints its
+path: use that exact path wherever `<dir>` appears below, typed out in each
+command. A new shell does not keep a variable from the last one, and these
+steps span several commands with an edit in between.
 
 ```sh
-dir=$(mktemp -d)
-varlatch --assisted contract show > "$dir/revision.json"
-jq '.contract' "$dir/revision.json" > "$dir/contract.json"
-varlatch --assisted contract push --file "$dir/contract.json" --json
+mktemp -d
+varlatch --assisted contract show > <dir>/revision.json
+jq '.contract' <dir>/revision.json > <dir>/contract.json
+varlatch --assisted contract push --file <dir>/contract.json --json
 varlatch --assisted contract activate <revision>
-rm -r "$dir"
+rm -r <dir>
 ```
 
 1. **Keep the server.** When the exit-78 message names a server
@@ -32,7 +35,7 @@ rm -r "$dir"
    or any JSON tool). Do not push the whole revision.
 4. In that file, change only `"sensitive"` on the approved item. Keep every
    other item, field, and the `semanticsVersion` as they are.
-5. `contract push --file "$dir/contract.json" --json` creates a revision and
+5. `contract push --file <dir>/contract.json --json` creates a revision and
    prints its id (`revision.id`). Activate that id. Until then, the old
    revision stays active.
 6. Remove the temporary directory, and only it (the files hold no values),
