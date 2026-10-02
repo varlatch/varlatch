@@ -277,6 +277,11 @@ fixes.
 
 ### Values
 
+- `varlatch login --token-stdin` reads the credential from a pipe or file,
+  so it never appears on a command line, and refuses a terminal. The
+  "not authenticated" message now suggests browser sign-in or
+  `--token-stdin` instead of `--token <credential>`.
+
 - `values set` and `values rotate` take the value from `--stdin`,
   `--from-file <path>`, or `--generate hex|base64|base64url:<bytes>` or
   `alnum:<characters>` (from the system's secure random source, never

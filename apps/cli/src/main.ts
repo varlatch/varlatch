@@ -288,7 +288,8 @@ function connectClient(ctx: ResolvedContext): VarlatchClient {
   }
   if (!token) {
     fail(
-      `Not authenticated to ${ctx.server}.\nRun: varlatch login --server ${ctx.server} --token <credential>`,
+      `Not authenticated to ${ctx.server}.\nSign in: varlatch login --server ${ctx.server} (in the browser), ` +
+        `or pipe a credential to varlatch login --server ${ctx.server} --token-stdin`,
       EXIT.denied,
     );
   }
@@ -534,8 +535,22 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case "login": {
-        const server = flag(args, "--server") ?? usageError("Usage: varlatch login --server <url> [--token <credential>|--oidc]");
+        const server =
+          flag(args, "--server") ?? usageError("Usage: varlatch login --server <url> [--token-stdin|--token <credential>|--oidc]");
         let token = flag(args, "--token");
+        if (has(args, "--token-stdin")) {
+          // ADR-0043 Decision 2: a credential from a pipe or file, never the
+          // command line, where process lists, shell history, and a coding
+          // agent's transcript would keep it.
+          if (token !== undefined || has(args, "--oidc")) usageError("varlatch login: give --token-stdin, --token, or --oidc, not more than one");
+          if (process.stdin.isTTY) {
+            usageError("varlatch login: --token-stdin reads the credential from a pipe or a file; in a terminal, leave it out to sign in in the browser");
+          }
+          const piped = (await readAll(process.stdin)).toString("utf8").replace(/\r?\n$/, "");
+          if (piped === "") usageError("varlatch login: --token-stdin read no credential");
+          if (/\s/.test(piped)) usageError("varlatch login: the credential on stdin contains whitespace; give one credential on one line");
+          token = piped;
+        }
         // Issuance metadata (ADR-0032): stored so expiry is knowable offline.
         // Explicit --token has none — its entry stays metadata-free.
         let issuedMeta: { id: string; expiresAt: string } | undefined;

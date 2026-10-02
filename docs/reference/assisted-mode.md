@@ -186,6 +186,7 @@ varlatch values set TLS_KEY --from-file key.pem        # a file's content
 op read op://vault/item/key | varlatch values set API_KEY --stdin
 varlatch values set API_KEY                            # in a terminal: a hidden prompt
 varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
+op read op://vault/varlatch/token | varlatch login --server https://varlatch.example.com --token-stdin
 ```
 
 - **`--generate <encoding>:<size>`** creates the value from the operating
@@ -200,6 +201,10 @@ varlatch values rotate API_KEY --stdin --grace 3600 < new-key.txt
 - **The hidden prompt** shows nothing as you type. Backspace removes the
   last whole character (an emoji or an accented letter included), and arrow
   and function keys are ignored rather than stored.
+- **`login --token-stdin`** reads a credential the same way, removing one
+  trailing line break; it refuses a terminal, an empty credential, and one
+  with whitespace in it. Sign-in stays the human's step: in a terminal,
+  `varlatch login --server <url>` signs in in the browser.
 - **Give the value one way only.** Two sources are refused. A value that is
   not well-formed Unicode text is refused from every source.
 - **The command line is checked strictly**, in every mode, before anything
