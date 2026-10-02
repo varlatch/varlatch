@@ -1,433 +1,567 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useBlocker, useParams, useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Plug, Plus, RotateCcw, Trash2 } from "lucide-react";
-import type { Tier } from "@varlatch/protocol";
-import { VarlatchApiError } from "@varlatch/sdk";
+import { useSearchParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
+import { Eye, EyeOff, Lock, Pencil, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
-import { Button, Card, Input, Mono, TierChip, cn } from "../../components/ui";
-import { RotationSyncStatus } from "../sync/IntegrationsPage";
+import { useToast } from "../../components/Toast";
+import { FilterInput, Highlight, matchesFilter } from "../../components/FilterInput";
+import { Drawer, SidePanel } from "../../components/Drawer";
+import { CopyButton } from "../../components/CodeBlock";
+import { Button, Callout, EmptyState, IconButton, Kbd, Segmented, Skeleton, cn } from "../../components/ui";
+import { errorMessage } from "../../shell/Shell";
+import { formatDateTime, timeAgo, useNow } from "../../lib/time";
+import { keys, useEnvironmentContext } from "../projects/hooks";
+import {
+  cellStateOf,
+  draftKind,
+  editorKind,
+  isSensitive,
+  parseDotenv,
+  plural,
+  storedText,
+  type CellState,
+  type ContractItemMeta,
+  type ServerItem,
+} from "../values/model";
+import { useContractItems, useEnvSyncTargets, useEnvValues, useItemChanges, usePlatformConnections } from "../values/queries";
+import { useDisclosure } from "../values/useDisclosure";
+import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
+import { useReviewSave } from "../values/useReviewSave";
+import { ReviewDialog } from "../values/ReviewDialog";
+import { RotateDialog } from "../values/RotateDialog";
+import { ImportDialog } from "../values/TransferDialogs";
+import { AddItemForm } from "../values/AddItemForm";
+import { DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, SecretMask, TypeBadge } from "../values/bits";
+import { ValueEditor, type CommitHow } from "../values/ValueEditor";
+import { targetCoversItem, targetLabel } from "../sync/syncStatus";
+import { ItemPanelBody, panelHeading, type PanelActions } from "./ItemPanel";
 
 /**
- * The values editor (design R1 §Q2/Q3, R2): local drafts -> Review & Save as
- * one atomic change set; non-sensitive values display normally; Secrets are
- * masked and revealed only through the explicit audited disclosure operation.
- * Server-disclosed plaintext auto-remasks (a display/privacy feature) and
- * never survives the auth boundary; user-typed drafts live in memory only.
+ * One environment's values: a list of items with an inline panel for the
+ * selected one. Same draft -> review -> save flow as the project grid.
+ * `?item=NAME` selects an item (palette deep link); `?reveal=1` reveals all
+ * authorized Secrets here once, as the explicit action chosen in the palette.
  */
 
-const REMASK_MS = 5 * 60 * 1000;
-
-type Draft = { op: "set"; value: string } | { op: "delete" };
-
-interface ServerItem {
+type Row = {
   name: string;
+  server: ServerItem | undefined;
+  contract: ContractItemMeta | undefined;
   sensitive: boolean;
-  source: "self" | "parent";
-  versionId: string;
-  value: string | null; // non-sensitive plaintext (references expanded) or null
-  /** Literal stored text, present only when ${NAME} expansion changed value; edits write this. */
-  rawValue?: string;
-  /** True while a dual-phase rotation (ADR-0027) is active for this item. */
-  rotating?: boolean;
+  state: CellState;
+};
+type Segment = "all" | "missing" | "secrets";
+
+function useWide(): boolean {
+  const query = "(min-width: 1200px)";
+  const [wide, setWide] = useState(() => matchMedia(query).matches);
+  useEffect(() => {
+    const mq = matchMedia(query);
+    const on = () => setWide(mq.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return wide;
 }
 
 export function EditorPage() {
-  const { org, project, env } = useParams() as { org: string; project: string; env: string };
-  const envName = decodeURIComponent(env);
+  const { org, project, environment } = useEnvironmentContext();
+  const slug = project.slug;
+  const envName = environment.name;
   useOrgRealtime(
     org,
-    ["value", "environment", "contract"],
+    ["value", "contract", "sync"],
     [
-      ["environment", org, project],
-      ["effective-values", org, project],
-      ["effective-meta", org, project],
+      ["effective-values", org, slug],
+      ["effective-meta", org, slug],
+      keys.contract(org, slug),
+      keys.syncTargets(org, slug, envName),
+      ["item-changes", org, environment.id],
+      ["audit-item", org, environment.id],
     ],
   );
-  const { api, authEpoch } = useSession();
+  const { api } = useSession();
   const qc = useQueryClient();
+  const toast = useToast();
+  const wide = useWide();
 
-  const envQuery = useQuery({
-    queryKey: ["environment", org, project],
-    queryFn: () => api.listEnvironments(org, project),
-    select: (page) => page.items.find((e) => e.name === envName),
-  });
-  const itemsQuery = useQuery({
-    queryKey: ["effective-values", org, project, envName],
-    queryFn: async () => {
-      const result = await api.effectiveConfiguration(org, project, envName, { includeValues: true });
-      return (result.items ?? []) as ServerItem[];
-    },
-  });
+  const values = useEnvValues(org, slug, envName);
+  const contract = useContractItems(org, slug);
+  const targets = useEnvSyncTargets(org, slug, envName);
+  const connections = usePlatformConnections(org);
+  const changes = useItemChanges(org, environment.id);
+  const now = useNow(60_000);
+  const drafts = useDrafts();
+  const disclosure = useDisclosure(org, slug);
 
-  const [drafts, setDrafts] = useState<Map<string, Draft>>(new Map());
-  const [disclosed, setDisclosed] = useState<Map<string, string>>(new Map());
-  const [visible, setVisible] = useState<Set<string>>(new Set());
-  // ?item= deep-links (e.g. from the command palette's item search) land
-  // with the filter prefilled on the named Config Item.
-  const [searchParams] = useSearchParams();
-  const [filter, setFilter] = useState(searchParams.get("item") ?? "");
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [importPreview, setImportPreview] = useState<{ name: string; value: string }[] | null>(null);
+  const [params, setParams] = useSearchParams();
+  const [selected, setSelected] = useState<string | null>(() => params.get("item"));
+  const [active, setActive] = useState<string | null>(() => params.get("item"));
+  const [editing, setEditing] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const [segment, setSegment] = useState<Segment>("all");
   const [rotateItem, setRotateItem] = useState<string | null>(null);
-  const [error, setError] = useState("");
-  const [conflicts, setConflicts] = useState<string[]>([]);
-  const remaskTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const addNameRef = useRef<HTMLInputElement>(null);
+  const [deadlines, setDeadlines] = useState<Map<string, string>>(() => new Map());
+  const [importRows, setImportRows] = useState<{ name: string; value: string }[] | null>(null);
+  const [busy, setBusy] = useState<{ reveal?: boolean; finish?: boolean }>({});
+  const listRef = useRef<HTMLDivElement>(null);
+  const pendingFocus = useRef<string | null>(null);
 
-  const maskAll = useCallback(() => {
-    setDisclosed(new Map());
-    setVisible(new Set());
-  }, []);
+  // Deep links from the palette.
+  const itemParam = params.get("item");
+  useEffect(() => {
+    if (itemParam) {
+      setSelected(itemParam);
+      setActive(itemParam);
+    }
+  }, [itemParam]);
+  const revealParam = params.get("reveal") === "1";
+  const revealedOnce = useRef(false);
 
-  // Disclosed plaintext never survives re-auth or leaving this environment.
-  useEffect(() => maskAll(), [authEpoch, envName, maskAll]);
-  useEffect(() => () => maskAll(), [maskAll]);
+  const serverByName = values.data?.byName;
+  const serverOf = useCallback(() => serverByName, [serverByName]);
 
-  const armRemask = useCallback(() => {
-    if (remaskTimer.current) clearTimeout(remaskTimer.current);
-    remaskTimer.current = setTimeout(maskAll, REMASK_MS);
-  }, [maskAll]);
+  const rows: Row[] = useMemo(() => {
+    const names = new Set<string>([...contract.items.map((i) => i.name), ...(values.data?.items ?? []).map((i) => i.name)]);
+    const known = [...names].sort();
+    const added = [...(drafts.drafts.get(envName)?.keys() ?? [])].filter((n) => !names.has(n));
+    return [...known, ...added].map((name) => {
+      const server = serverByName?.get(name);
+      const c = contract.byName.get(name);
+      return { name, server, contract: c, sensitive: isSensitive(server, c), state: cellStateOf(server, c, environment) };
+    });
+  }, [contract.items, contract.byName, values.data, serverByName, drafts.drafts, envName, environment]);
 
-  const reveal = useCallback(
-    async (names: string[] | "all") => {
-      try {
-        setError("");
-        const result = await api.discloseSecrets(
-          org,
-          project,
-          envName,
-          names === "all" ? { scope: "all-authorized-secrets" } : { items: names },
-        );
-        setDisclosed((prev) => {
-          const next = new Map(prev);
-          for (const item of result.items) next.set(item.name, item.value);
-          return next;
-        });
-        setVisible((prev) => {
-          const next = new Set(prev);
-          for (const item of result.items) next.add(item.name);
-          return next;
-        });
-        armRemask();
-        if (result.withheld.length > 0) {
-          setError(`Withheld by policy: ${result.withheld.join(", ")}`);
-        }
-      } catch (err) {
-        setError(err instanceof VarlatchApiError ? `${err.code}: ${err.message}` : String(err));
-      }
-    },
-    [api, org, project, envName, armRemask],
+  const missingCount = rows.filter((r) => r.state === "missing_required").length;
+  const secretCount = rows.filter((r) => r.sensitive).length;
+  const visible = rows.filter(
+    (r) =>
+      matchesFilter(filter, r.name) &&
+      (segment === "all" || (segment === "missing" ? r.state === "missing_required" : r.sensitive)),
+  );
+  const authorizedSecrets = rows.filter((r) => r.sensitive && r.server).map((r) => r.name);
+
+  const envTargets = useMemo(() => targets.data?.items ?? [], [targets.data]);
+  const targetsFor = useCallback(
+    (items: string[]) =>
+      envTargets
+        .filter((t) => t.state === "active" && items.some((i) => targetCoversItem(t, i)))
+        .map((t) => targetLabel(t, connections.data?.items)),
+    [envTargets, connections.data],
   );
 
-  const setDraft = (name: string, draft: Draft | null) => {
-    setDrafts((prev) => {
-      const next = new Map(prev);
-      if (draft === null) next.delete(name);
-      else next.set(name, draft);
-      return next;
-    });
-  };
+  const review = useReviewSave({
+    org,
+    project: slug,
+    environments: [environment],
+    drafts,
+    serverOf,
+    sensitiveOf: (_env, item) => isSensitive(serverByName?.get(item), contract.byName.get(item)),
+    targetsOf: (_env, items) => targetsFor(items),
+    onSaved: () => disclosure.maskEnv(envName),
+  });
+  useUnsavedGuard(drafts.count > 0, `You have ${plural(drafts.count, "unsaved change")} in ${envName}.`);
 
-  const serverItems = itemsQuery.data ?? [];
-  const serverByName = useMemo(() => new Map(serverItems.map((i) => [i.name, i])), [serverItems]);
-  // What the review dialog showed, frozen when it opened. The server data
-  // refreshes live, so reading it at commit time would let a change another
-  // client made during review be overwritten without a conflict.
-  const [reviewed, setReviewed] = useState<Map<string, ServerItem> | null>(null);
-  const openReview = useCallback(() => {
-    const snapshot = new Map<string, ServerItem>();
-    for (const name of drafts.keys()) {
-      const server = serverByName.get(name);
-      if (server) snapshot.set(name, server);
-    }
-    setReviewed(snapshot);
-    setReviewOpen(true);
-  }, [drafts, serverByName]);
-  const closeReview = () => {
-    setReviewOpen(false);
-    setReviewed(null);
-  };
-  const addedNames = [...drafts.keys()].filter((n) => !serverByName.has(n));
-  const dirty = drafts.size > 0;
-
-  // Unsaved-changes protection (drafts may hold sensitive user-typed plaintext).
   useEffect(() => {
-    if (!dirty) return;
-    const handler = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-  const blocker = useBlocker(dirty);
-  useEffect(() => {
-    if (blocker.state === "blocked") {
-      if (confirm("Discard unsaved configuration changes?")) blocker.proceed();
-      else blocker.reset();
-    }
-  }, [blocker]);
-
-  // Cmd/Ctrl+S opens Review.
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        if (dirty) openReview();
-      }
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "s") return;
+      e.preventDefault();
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      review.openReview();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [dirty, openReview]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [review]);
 
-  const handlePaste = (text: string): boolean => {
-    const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith("#"));
-    const parsed: { name: string; value: string }[] = [];
-    for (const line of lines) {
-      const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line.trim());
-      if (!match) return false; // ambiguous input: no silent partial import
-      let value = match[2] as string;
-      if (
-        (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
-        (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
-      ) {
-        value = value.slice(1, -1);
+  const reveal = useCallback(
+    async (request: string[] | "all") => {
+      setBusy((b) => ({ ...b, reveal: true }));
+      try {
+        const result = await disclosure.reveal(envName, request);
+        if (result.withheld.length > 0) {
+          toast.error(`Not revealed: ${result.withheld.join(", ")}`, {
+            description: "Your access does not include revealing these secrets.",
+          });
+        }
+      } catch (err) {
+        toast.error("Could not reveal", { description: errorMessage(err) });
+      } finally {
+        setBusy((b) => ({ ...b, reveal: false }));
       }
-      parsed.push({ name: match[1] as string, value });
-    }
-    if (parsed.length < 2) return false; // single line: treat as ordinary typing
-    setImportPreview(parsed);
-    return true;
+    },
+    [disclosure, envName, toast],
+  );
+
+  // ?reveal=1: one audited reveal-all, then the flag leaves the URL.
+  useEffect(() => {
+    if (!revealParam || revealedOnce.current || !values.data) return;
+    revealedOnce.current = true;
+    void reveal("all");
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        next.delete("reveal");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [revealParam, values.data, reveal, setParams]);
+
+  // Focus follows keyboard moves; the selection scrolls into view.
+  useEffect(() => {
+    const name = pendingFocus.current;
+    if (!name) return;
+    pendingFocus.current = null;
+    listRef.current?.querySelector<HTMLElement>(`[data-row="${CSS.escape(name)}"]`)?.focus();
+  });
+  useEffect(() => {
+    if (!selected || !values.data) return;
+    const el = listRef.current?.querySelector(`[data-row="${CSS.escape(selected)}"]`);
+    const r = el?.getBoundingClientRect();
+    if (el && r && (r.top < 0 || r.bottom > window.innerHeight)) el.scrollIntoView({ block: "center" });
+  }, [selected, values.data]);
+
+  const select = (name: string | null) => {
+    setSelected(name);
+    if (name) setActive(name);
+    setParams(
+      (p) => {
+        const next = new URLSearchParams(p);
+        if (name) next.set("item", name);
+        else next.delete("item");
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const focusRow = (name: string) => {
+    setActive(name);
+    pendingFocus.current = name;
   };
 
-  const applyImport = () => {
-    for (const { name, value } of importPreview ?? []) setDraft(name, { op: "set", value });
-    setImportPreview(null);
-  };
-
-  const commit = async () => {
-    // Expected versions are the reviewed ones, never the live ones.
-    const baseline = reviewed ?? serverByName;
-    const changes = [...drafts.entries()].map(([item, draft]) => {
-      const server = baseline.get(item);
-      if (draft.op === "delete") {
-        return {
-          op: "delete" as const,
-          item,
-          ...(server ? { expectedVersionId: server.versionId } : {}),
-        };
-      }
-      return {
-        op: "set" as const,
-        item,
-        value: draft.value,
-        ...(server ? { expectedVersionId: server.versionId } : {}),
-      };
-    });
-    try {
-      setError("");
-      setConflicts([]);
-      await api.applyChangeSet(org, project, envName, changes, {
-        idempotencyKey: crypto.randomUUID(),
-      });
-      setDrafts(new Map());
-      closeReview();
-      maskAll();
-      await qc.invalidateQueries({ queryKey: ["effective-values", org, project, envName] });
-      await qc.invalidateQueries({ queryKey: ["effective-meta", org, project] });
-    } catch (err) {
-      if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
-        const items = ((err.details?.conflicts as { item: string }[]) ?? []).map((c) => c.item);
-        setConflicts(items);
-        setError(
-          `Changed since review: ${items.join(", ")}. Nothing was written — refresh shows the current values; your draft is preserved.`,
-        );
-        await qc.invalidateQueries({ queryKey: ["effective-values", org, project, envName] });
-      } else {
-        setError(err instanceof VarlatchApiError ? `${err.code}: ${err.message}` : String(err));
-      }
-      closeReview();
+  const commit = (row: Row, value: string, how: CommitHow) => {
+    if (row.sensitive && value === "") {
+      // Blind overwrite: an empty secret field means "no change".
+    } else if (!row.sensitive && row.server?.source === "self" && value === storedText(row.server)) {
+      drafts.setDraft(envName, row.name, null);
+    } else {
+      drafts.setDraft(envName, row.name, { op: "set", value });
     }
-  };
-
-  const refreshValues = async () => {
-    await qc.invalidateQueries({ queryKey: ["effective-values", org, project, envName] });
-    await qc.invalidateQueries({ queryKey: ["effective-meta", org, project] });
-  };
-  const beginRotation = async (item: string, value: string, graceSeconds?: number) => {
-    try {
-      setError("");
-      await api.beginRotation(org, project, envName, item, {
-        value,
-        ...(graceSeconds ? { graceSeconds } : {}),
-      });
-      setRotateItem(null);
-      await refreshValues();
-    } catch (err) {
-      setError(err instanceof VarlatchApiError ? `${err.code}: ${err.message}` : String(err));
-    }
-  };
-  const completeRotation = async (item: string) => {
-    try {
-      setError("");
-      await api.completeRotation(org, project, envName, item);
-      await refreshValues();
-    } catch (err) {
-      setError(err instanceof VarlatchApiError ? `${err.code}: ${err.message}` : String(err));
+    setEditing(null);
+    const i = visible.findIndex((r) => r.name === row.name);
+    if (how === "tab") focusRow(visible[Math.min(visible.length - 1, i + 1)]?.name ?? row.name);
+    else if (how === "shift-tab") focusRow(visible[Math.max(0, i - 1)]?.name ?? row.name);
+    else if (how === "enter") focusRow(row.name);
+    else if (how === "save") {
+      focusRow(row.name);
+      window.setTimeout(() => review.openReview(), 0);
     }
   };
 
-  const environment = envQuery.data;
-  const tier = (environment?.tier ?? "development") as Tier;
-  const rows = [
-    ...serverItems.map((item) => ({ item, draft: drafts.get(item.name) })),
-    ...addedNames.map((name) => ({
-      item: null as ServerItem | null,
-      name,
-      draft: drafts.get(name) as Draft,
-    })),
-  ].filter((row) => {
-    const name = row.item?.name ?? (row as { name: string }).name;
-    return name.toLowerCase().includes(filter.toLowerCase());
+  const refresh = () => qc.invalidateQueries({ queryKey: keys.effectiveValues(org, slug, envName) });
+
+  const panelActions = (row: Row): PanelActions => ({
+    reveal: () => void reveal([row.name]),
+    hide: () => disclosure.toggleLocal(envName, row.name),
+    edit: () => {
+      // On narrow screens the panel is a modal drawer: close it to edit in the list.
+      if (!wide) select(null);
+      setActive(row.name);
+      setEditing(row.name);
+    },
+    revert: () => drafts.setDraft(envName, row.name, null),
+    remove: () => drafts.setDraft(envName, row.name, { op: "delete" }),
+    rotate: () => setRotateItem(row.name),
+    finishRotation: () => {
+      setBusy((b) => ({ ...b, finish: true }));
+      void api
+        .completeRotation(org, slug, envName, row.name)
+        .then(async () => {
+          setDeadlines((m) => {
+            const next = new Map(m);
+            next.delete(row.name);
+            return next;
+          });
+          toast.success(`Finished rotating ${row.name}`, { description: "The previous value no longer works." });
+          await refresh();
+        })
+        .catch((err) => toast.error(`Could not finish rotating ${row.name}`, { description: errorMessage(err) }))
+        .finally(() => setBusy((b) => ({ ...b, finish: false })));
+    },
   });
 
-  const secretCount = serverItems.filter((i) => i.sensitive).length;
+  const onListKey = (e: React.KeyboardEvent) => {
+    if (editing) return;
+    const target = e.target as HTMLElement;
+    const name = target.getAttribute("data-row");
+    if (!name) return;
+    const i = visible.findIndex((r) => r.name === name);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = visible[Math.max(0, Math.min(visible.length - 1, i + (e.key === "ArrowDown" ? 1 : -1)))];
+      if (next) {
+        focusRow(next.name);
+        if (selected) select(next.name);
+      }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      select(name);
+    } else if (e.key === "e" || e.key === "E") {
+      e.preventDefault();
+      if (draftKind(drafts.get(envName, name), serverByName?.get(name)) !== "deleted") setEditing(name);
+    } else if (e.key === "Escape" && selected) {
+      e.preventDefault();
+      select(null);
+    }
+  };
+
+  const discard = () => {
+    const saved = drafts.drafts;
+    const n = drafts.count;
+    drafts.setDrafts(new Map());
+    setEditing(null);
+    toast.undo(`Discarded ${plural(n, "change")}`, () => drafts.setDrafts(saved));
+  };
+
+  const existsIn = (_env: string, name: string) => Boolean(serverByName?.get(name) || drafts.drafts.get(envName)?.has(name));
+  const selectedRow = selected ? rows.find((r) => r.name === selected) : undefined;
+  const revealedHere = disclosure.revealedEnvs.includes(envName);
+
+  const panel = selectedRow ? (
+    (() => {
+      const { icon, badges } = panelHeading(selectedRow.sensitive, selectedRow.contract?.type);
+      const body = (
+        <ItemPanelBody
+          org={org}
+          project={slug}
+          env={environment}
+          name={selectedRow.name}
+          server={selectedRow.server}
+          contract={selectedRow.contract}
+          sensitive={selectedRow.sensitive}
+          state={selectedRow.state}
+          draft={drafts.get(envName, selectedRow.name)}
+          disclosed={disclosure.shown(envName, selectedRow.name)}
+          withheld={values.data?.withheld.has(selectedRow.name) ?? false}
+          rotationDeadline={deadlines.get(selectedRow.name)}
+          targets={envTargets.filter((t) => targetCoversItem(t, selectedRow.name))}
+          connections={connections.data?.items}
+          busy={busy}
+          actions={panelActions(selectedRow)}
+        />
+      );
+      return wide ? (
+        <SidePanel
+          data-testid="item-panel"
+          title={selectedRow.name}
+          icon={icon}
+          badges={badges}
+          onClose={() => select(null)}
+          className="sticky top-4"
+        >
+          {body}
+        </SidePanel>
+      ) : (
+        <Drawer
+          open
+          data-testid="item-panel"
+          onClose={() => select(null)}
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              <span className="text-muted">{icon}</span>
+              <span className="font-mono">{selectedRow.name}</span>
+              {badges}
+            </span>
+          }
+        >
+          <div className="space-y-6">{body}</div>
+        </Drawer>
+      );
+    })()
+  ) : null;
 
   return (
-    <div className="space-y-4 pb-20">
-      <div className="flex items-center gap-3 flex-wrap">
-        <h1 className="text-lg font-semibold"><Mono>{envName}</Mono></h1>
-        {environment && <TierChip tier={tier} />}
-        {environment?.kind !== "shared" && (
-          <span className="text-xs text-muted">{environment?.kind}</span>
-        )}
-        <Link
-          to={`/o/${org}/p/${project}/e/${env}/integrations`}
-          className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg"
-          data-testid="integrations-link"
-        >
-          <Plug size={14} /> Integrations
-        </Link>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <FilterInput
+          className="w-full max-w-sm sm:w-72"
+          value={filter}
+          onChange={setFilter}
+          placeholder={`Filter ${plural(rows.length, "item")}…`}
+          aria-label="Filter items"
+          data-testid="values-filter"
+          {...(filter ? { shown: visible.length, total: rows.length } : {})}
+          onKeyDown={(e) => {
+            if ((e.key === "ArrowDown" || e.key === "Enter") && visible[0]) {
+              e.preventDefault();
+              focusRow(visible[0].name);
+              if (e.key === "Enter") select(visible[0].name);
+            }
+          }}
+        />
+        <Segmented
+          value={segment}
+          onChange={setSegment}
+          aria-label="Show"
+          options={[
+            { value: "all", label: "All" },
+            { value: "missing", label: "Missing", count: missingCount },
+            { value: "secrets", label: "Secrets", count: secretCount },
+          ]}
+        />
         <div className="flex-1" />
-        <Input placeholder="Filter items…" value={filter} onChange={(e) => setFilter(e.target.value)} />
-        {secretCount > 0 && (
-          <Button variant="ghost" data-testid="reveal-all" onClick={() => void reveal("all")}>
-            <Eye size={14} className="inline mr-1" />
-            Reveal all Secrets
-          </Button>
-        )}
-        {disclosed.size > 0 && (
-          <Button variant="ghost" onClick={maskAll}>
-            <EyeOff size={14} className="inline mr-1" />
-            Mask all
-          </Button>
-        )}
+        {authorizedSecrets.length > 0 &&
+          !revealedHere && (
+            <Button
+              icon={<Eye size={14} />}
+              data-testid="reveal-all"
+              loading={busy.reveal}
+              onClick={() => void reveal("all")}
+              title="Requests every secret you may reveal here. Recorded in the audit log."
+            >
+              Reveal all secrets <span className="text-xs text-muted">audited</span>
+            </Button>
+          )}
       </div>
 
-      {disclosed.size > 0 && (
-        <p className="text-xs text-muted" data-testid="disclosure-notice">
-          Secrets revealed — this disclosure was recorded in the audit log. Re-masking hides them
-          from the screen; it is not revocation.
-        </p>
+      <DisclosureNotice envs={revealedHere ? [envName] : []} onMaskAll={disclosure.maskAll} />
+      {review.error && (
+        <Callout
+          tone="danger"
+          icon={<TriangleAlert size={15} />}
+          data-testid="editor-error"
+          actions={
+            <Button size="sm" variant="ghost" onClick={review.clearError}>
+              Dismiss
+            </Button>
+          }
+        >
+          {review.error}
+        </Callout>
       )}
 
-      <Card className="p-0 overflow-hidden">
-        <table className="w-full text-sm" data-testid="values-table">
-          <thead>
-            <tr className="text-left text-muted border-b border-bd">
-              <th className="px-3 py-2 font-medium w-64">Config Item</th>
-              <th className="px-3 py-2 font-medium">Value</th>
-              <th className="px-3 py-2 font-medium w-28"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => {
-              const name = row.item?.name ?? (row as { name: string }).name;
-              return (
-                <ValueRow
-                  key={name}
-                  name={name}
-                  item={row.item ?? null}
-                  draft={row.draft}
-                  disclosedValue={disclosed.get(name)}
-                  visible={visible.has(name)}
-                  conflicted={conflicts.includes(name)}
-                  onToggleVisible={() => {
-                    if (disclosed.has(name)) {
-                      setVisible((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(name)) next.delete(name);
-                        else next.add(name);
-                        return next;
-                      });
-                    } else {
-                      void reveal([name]);
-                    }
-                  }}
-                  onDraft={(draft) => setDraft(name, draft)}
-                  onRotate={() => setRotateItem(name)}
-                  onCompleteRotation={() => void completeRotation(name)}
-                />
-              );
-            })}
-            <AddRow
-              inputRef={addNameRef}
-              existing={new Set([...serverByName.keys(), ...drafts.keys()])}
-              onAdd={(name, value) => setDraft(name, { op: "set", value })}
-              onPaste={handlePaste}
-            />
-          </tbody>
-        </table>
-      </Card>
-      {error && <p className="text-deny text-sm" data-testid="editor-error">{error}</p>}
-
-      {dirty && (
-        <div className="fixed bottom-0 left-60 right-0 border-t border-bd bg-raised px-6 py-3 flex items-center gap-3">
-          <span className="text-sm" data-testid="dirty-count">
-            {drafts.size} unsaved change{drafts.size === 1 ? "" : "s"}
-          </span>
-          <div className="flex-1" />
-          <Button variant="ghost" onClick={() => setDrafts(new Map())}>Discard</Button>
-          <Button data-testid="review-save" onClick={openReview}>Review &amp; Save</Button>
-        </div>
-      )}
-
-      {reviewOpen && (
-        <ReviewDialog
-          envName={envName}
-          tier={tier}
-          drafts={drafts}
-          serverByName={reviewed ?? serverByName}
-          disclosed={disclosed}
-          onCancel={closeReview}
-          onCommit={() => void commit()}
-        />
-      )}
-
-      {importPreview && (
-        <Modal title={`Import ${importPreview.length} configuration items as draft changes?`}>
-          <table className="w-full text-sm mb-4">
-            <tbody>
-              {importPreview.map((row) => (
-                <tr key={row.name} className="border-b border-bd/40">
-                  <td className="py-1 pr-4"><Mono>{row.name}</Mono></td>
-                  <td className="py-1"><Mono className="text-muted">{row.value.slice(0, 60)}</Mono></td>
-                </tr>
+      <div className={cn("grid items-start gap-5", wide && selectedRow && "grid-cols-[minmax(0,1fr)_440px]")}>
+        <div className="min-w-0 overflow-hidden rounded-xl border border-bd bg-raised">
+          <div
+            ref={listRef}
+            role="listbox"
+            aria-label={`${envName} values`}
+            data-testid="values-table"
+            onKeyDown={onListKey}
+          >
+            {values.isLoading &&
+              [0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex h-14 items-center gap-4 border-b border-bd px-5">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-28" />
+                </div>
               ))}
-            </tbody>
-          </table>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setImportPreview(null)}>Cancel</Button>
-            <Button data-testid="confirm-import" onClick={applyImport}>Import as drafts</Button>
+            {values.isError && (
+              <EmptyState title="Values unavailable" description={errorMessage(values.error)} />
+            )}
+            {!values.isLoading && rows.length === 0 && (
+              <EmptyState
+                title="No values yet"
+                description="Add an item below, paste a .env file into it, or push a contract with varlatch contract push."
+              />
+            )}
+            {rows.length > 0 && visible.length === 0 && (
+              <p className="px-5 py-8 text-center text-[13px] text-muted">
+                {filter ? `No item matches “${filter}”.` : segment === "missing" ? "Nothing is missing." : "No secrets."}
+              </p>
+            )}
+            {!values.isLoading && visible.map((row) => (
+              <ValueRow
+                key={row.name}
+                row={row}
+                filter={filter}
+                draft={drafts.get(envName, row.name)}
+                disclosed={disclosure.shown(envName, row.name)}
+                isDisclosed={disclosure.isDisclosed(envName, row.name)}
+                withheld={values.data?.withheld.has(row.name) ?? false}
+                selected={selected === row.name}
+                active={active === row.name || (!active && row === visible[0])}
+                editing={editing === row.name}
+                conflict={review.conflicts.has(`${envName}\u0000${row.name}`)}
+                changedAt={row.server?.source === "self" ? changes.data?.[row.name] : undefined}
+                now={now}
+                onSelect={() => select(row.name)}
+                onEdit={() => {
+                  setActive(row.name);
+                  setEditing(row.name);
+                }}
+                onCommit={(value, how) => commit(row, value, how)}
+                onCancel={() => {
+                  setEditing(null);
+                  focusRow(row.name);
+                }}
+                onEye={() =>
+                  disclosure.isDisclosed(envName, row.name)
+                    ? disclosure.toggleLocal(envName, row.name)
+                    : void reveal([row.name])
+                }
+              />
+            ))}
           </div>
-        </Modal>
-      )}
+          <div className="border-t border-bd bg-inset/30 px-5 py-3">
+            <AddItemForm
+              environments={[environment]}
+              initialEnv={envName}
+              exists={existsIn}
+              onAdd={(_env, name, value) => drafts.setDraft(envName, name, { op: "set", value })}
+              onPaste={(text) => {
+                const parsed = parseDotenv(text);
+                if (!parsed || parsed.length < 2) return false;
+                setImportRows(parsed);
+                return true;
+              }}
+            />
+          </div>
+        </div>
+        {panel}
+      </div>
 
+      <SaveBar count={drafts.count} envs={[envName]} onDiscard={discard} onReview={review.openReview} />
+
+      <ReviewDialog
+        open={review.reviewOpen}
+        groups={review.groups}
+        saving={review.saving}
+        onClose={review.closeReview}
+        onSave={() => void review.save()}
+      />
+      <ImportDialog
+        rows={importRows}
+        environments={[environment]}
+        initialEnv={envName}
+        isSensitive={(_env, name) => isSensitive(serverByName?.get(name), contract.byName.get(name))}
+        existing={existsIn}
+        onClose={() => setImportRows(null)}
+        onImport={() => {
+          for (const { name, value } of importRows ?? []) drafts.setDraft(envName, name, { op: "set", value });
+          setImportRows(null);
+        }}
+      />
       {rotateItem && (
         <RotateDialog
+          open
           item={rotateItem}
-          onCancel={() => setRotateItem(null)}
-          onConfirm={(value, grace) => void beginRotation(rotateItem, value, grace)}
+          project={slug}
+          env={envName}
+          defaultGraceSeconds={contract.byName.get(rotateItem)?.rotationGraceSeconds}
+          targets={targetsFor([rotateItem])}
+          onClose={() => setRotateItem(null)}
+          onRotate={async (value, graceSeconds) => {
+            const result = await api.beginRotation(org, slug, envName, rotateItem, { value, graceSeconds });
+            if (result.rotationDeadline) {
+              setDeadlines((m) => new Map(m).set(rotateItem, result.rotationDeadline as string));
+            }
+            toast.success(`Rotation of ${rotateItem} started`, { description: "Finish it once consumers use the new value." });
+            setRotateItem(null);
+            await refresh();
+          }}
         />
       )}
     </div>
@@ -435,377 +569,181 @@ export function EditorPage() {
 }
 
 function ValueRow({
-  name,
-  item,
+  row,
+  filter,
   draft,
-  disclosedValue,
-  visible,
-  conflicted,
-  onToggleVisible,
-  onDraft,
-  onRotate,
-  onCompleteRotation,
-}: {
-  name: string;
-  item: ServerItem | null;
-  draft: Draft | undefined;
-  disclosedValue: string | undefined;
-  visible: boolean;
-  conflicted: boolean;
-  onToggleVisible: () => void;
-  onDraft: (draft: Draft | null) => void;
-  onRotate: () => void;
-  onCompleteRotation: () => void;
-}) {
-  const isAdded = item === null;
-  const isDeleted = draft?.op === "delete";
-  const isChanged = draft?.op === "set" && !isAdded;
-  const editing = draft?.op === "set";
-
-  const displayValue = (() => {
-    if (editing) return draft.value;
-    if (!item) return "";
-    if (!item.sensitive) return item.value ?? "";
-    if (visible && disclosedValue !== undefined) return disclosedValue;
-    return null; // masked
-  })();
-
-  return (
-    <tr
-      className={cn(
-        "border-b border-bd/40 align-top",
-        isAdded && "bg-allow/5",
-        isChanged && "bg-tier-staging/5",
-        isDeleted && "bg-deny/5 opacity-60",
-        conflicted && "outline outline-1 outline-deny",
-      )}
-      data-row={name}
-    >
-      <td className="px-3 py-2">
-        <Mono>{name}</Mono>
-        <span className="ml-2 space-x-1">
-          {item?.sensitive && (
-            <span className="text-[10px] uppercase tracking-wide text-muted">secret</span>
-          )}
-          {item?.rotating && (
-            <>
-              <span
-                className="text-[10px] uppercase tracking-wide text-tier-staging"
-                title="Rotating: the previous value is still valid until the grace window closes (ADR-0027)"
-                data-testid={`rotating-${name}`}
-              >
-                rotating
-              </span>
-              {/* Per-target sync evidence (ADR-0031 §5): complete rotation on
-                  evidence, not hope. */}
-              <RotationSyncStatus item={name} />
-            </>
-          )}
-          {item?.rawValue !== undefined && (
-            <span
-              className="text-[10px] uppercase tracking-wide text-accent cursor-help"
-              title={`Stored as: ${item.rawValue} — editing shows this literal text; \${NAME} expands server-side`}
-              data-testid={`ref-${name}`}
-            >
-              ref
-            </span>
-          )}
-          {item?.source === "parent" && (
-            <span className="text-[10px] uppercase tracking-wide text-muted">inherited</span>
-          )}
-          {isAdded && <span className="text-[10px] uppercase text-allow">new</span>}
-          {isChanged && <span className="text-[10px] uppercase text-tier-staging">edited</span>}
-          {isDeleted && <span className="text-[10px] uppercase text-deny">deleted</span>}
-        </span>
-      </td>
-      <td className="px-3 py-1.5">
-        {editing ? (
-          <textarea
-            className="w-full rounded-md border border-bd bg-inset px-2 py-1 font-mono text-[13px] resize-y min-h-8 max-h-48 focus:outline-none focus:border-accent"
-            rows={Math.min(6, (draft.value.match(/\n/g)?.length ?? 0) + 1)}
-            value={draft.value}
-            autoFocus={!isAdded}
-            onChange={(e) => onDraft({ op: "set", value: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") onDraft(null);
-            }}
-          />
-        ) : displayValue === null ? (
-          <Mono className="text-muted select-none">••••••••</Mono>
-        ) : (
-          <Mono className="whitespace-pre-wrap break-all">{displayValue || <span className="text-muted">(empty)</span>}</Mono>
-        )}
-      </td>
-      <td className="px-3 py-1.5 whitespace-nowrap text-right">
-        {item?.sensitive && !editing && (
-          <button
-            className="text-muted hover:text-fg cursor-pointer mr-2"
-            title={visible ? "Mask" : "Reveal (audited)"}
-            data-testid={`eye-${name}`}
-            onClick={onToggleVisible}
-          >
-            {visible ? <EyeOff size={14} /> : <Eye size={14} />}
-          </button>
-        )}
-        {!editing && !isDeleted && (
-          <button
-            className="text-muted hover:text-fg cursor-pointer mr-2"
-            title={item?.sensitive ? "Overwrite (no reveal needed)" : "Edit"}
-            data-testid={`edit-${name}`}
-            onClick={() =>
-              // Reference-bearing values are edited as stored (${NAME} intact):
-              // drafting the expanded text would silently destroy the reference.
-              onDraft({ op: "set", value: item?.sensitive ? "" : (item?.rawValue ?? item?.value ?? "") })
-            }
-          >
-            edit
-          </button>
-        )}
-        {draft && (
-          <button
-            className="text-muted hover:text-fg cursor-pointer mr-2"
-            title="Revert draft"
-            onClick={() => onDraft(null)}
-          >
-            <RotateCcw size={13} />
-          </button>
-        )}
-        {item && item.source === "self" && !isDeleted && !editing && !item.rotating && (
-          <button
-            className="text-muted hover:text-fg cursor-pointer mr-2"
-            title="Rotate: overlap a new value with the current one for a grace window (ADR-0027)"
-            data-testid={`rotate-${name}`}
-            onClick={onRotate}
-          >
-            rotate
-          </button>
-        )}
-        {item?.rotating && !editing && (
-          <button
-            className="text-tier-staging hover:brightness-125 cursor-pointer mr-2"
-            title="Complete rotation: drop the previous value now"
-            data-testid={`complete-rotation-${name}`}
-            onClick={onCompleteRotation}
-          >
-            finish rotation
-          </button>
-        )}
-        {item && item.source === "self" && !isDeleted && !editing && (
-          <button
-            className="text-muted hover:text-deny cursor-pointer"
-            title="Delete (drafted)"
-            data-testid={`delete-${name}`}
-            onClick={() => onDraft({ op: "delete" })}
-          >
-            <Trash2 size={13} />
-          </button>
-        )}
-      </td>
-    </tr>
-  );
-}
-
-/** Collects the new value (and optional grace) to begin a rotation. */
-function RotateDialog({
-  item,
-  onCancel,
-  onConfirm,
-}: {
-  item: string;
-  onCancel: () => void;
-  onConfirm: (value: string, graceSeconds?: number) => void;
-}) {
-  const [value, setValue] = useState("");
-  const [graceHours, setGraceHours] = useState("");
-  return (
-    <Modal title={`Rotate ${item}`}>
-      <p className="text-sm text-muted mb-3">
-        The new value becomes the primary immediately; the current value stays valid until the
-        grace window closes, so running consumers migrate without an outage. Finish the rotation
-        once they have — then revoke the old credential upstream.
-      </p>
-      <label className="block text-xs text-muted mb-1">New value</label>
-      <textarea
-        data-testid="rotate-value"
-        className="w-full rounded-md border border-bd bg-inset px-2 py-1 font-mono text-[13px] resize-y min-h-16 mb-3 focus:outline-none focus:border-accent"
-        value={value}
-        autoFocus
-        onChange={(e) => setValue(e.target.value)}
-      />
-      <label className="block text-xs text-muted mb-1">Grace window (hours, optional)</label>
-      <Input
-        data-testid="rotate-grace"
-        className="w-32 mb-4"
-        placeholder="24"
-        value={graceHours}
-        onChange={(e) => setGraceHours(e.target.value.replace(/[^0-9]/g, ""))}
-      />
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button
-          data-testid="confirm-rotate"
-          disabled={!value}
-          onClick={() => onConfirm(value, graceHours ? Number(graceHours) * 3600 : undefined)}
-        >
-          Begin rotation
-        </Button>
-      </div>
-    </Modal>
-  );
-}
-
-function AddRow({
-  inputRef,
-  existing,
-  onAdd,
-  onPaste,
-}: {
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  existing: Set<string>;
-  onAdd: (name: string, value: string) => void;
-  onPaste: (text: string) => boolean;
-}) {
-  const [name, setName] = useState("");
-  const [value, setValue] = useState("");
-  const valid = /^[A-Z][A-Z0-9_]*$/.test(name) && !existing.has(name);
-  const submit = () => {
-    if (!valid) return;
-    onAdd(name, value);
-    setName("");
-    setValue("");
-    inputRef.current?.focus();
-  };
-  return (
-    <tr>
-      <td className="px-3 py-2">
-        <Input
-          ref={inputRef as React.Ref<HTMLInputElement>}
-          data-testid="add-name"
-          placeholder="NEW_ITEM"
-          value={name}
-          onChange={(e) => setName(e.target.value.toUpperCase())}
-          onPaste={(e) => {
-            const text = e.clipboardData.getData("text");
-            if (text.includes("\n") && onPaste(text)) e.preventDefault();
-          }}
-        />
-      </td>
-      <td className="px-3 py-2">
-        <Input
-          data-testid="add-value"
-          placeholder="value"
-          className="w-full"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
-      </td>
-      <td className="px-3 py-2 text-right">
-        <Button variant="ghost" data-testid="add-item" disabled={!valid} onClick={submit}>
-          <Plus size={14} className="inline" /> add
-        </Button>
-      </td>
-    </tr>
-  );
-}
-
-function Modal({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="fixed inset-0 bg-black/60 grid place-items-center z-50">
-      <Card className="w-[34rem] max-h-[80vh] overflow-y-auto">
-        <h2 className="font-semibold mb-3">{title}</h2>
-        {children}
-      </Card>
-    </div>
-  );
-}
-
-function ReviewDialog({
-  envName,
-  tier,
-  drafts,
-  serverByName,
   disclosed,
-  onCancel,
+  isDisclosed,
+  withheld,
+  selected,
+  active,
+  editing,
+  conflict,
+  changedAt,
+  now,
+  onSelect,
+  onEdit,
   onCommit,
+  onCancel,
+  onEye,
 }: {
-  envName: string;
-  tier: Tier;
-  drafts: Map<string, Draft>;
-  serverByName: Map<string, ServerItem>;
-  disclosed: Map<string, string>;
+  row: Row;
+  filter: string;
+  draft: ReturnType<ReturnType<typeof useDrafts>["get"]>;
+  disclosed: { value: string } | undefined;
+  isDisclosed: boolean;
+  withheld: boolean;
+  selected: boolean;
+  active: boolean;
+  editing: boolean;
+  conflict: boolean;
+  /** Last write, deletion or rotation here, when the audit log can say. */
+  changedAt: string | undefined;
+  now: number;
+  onSelect: () => void;
+  onEdit: () => void;
+  onCommit: (value: string, how: CommitHow) => void;
   onCancel: () => void;
-  onCommit: () => void;
+  onEye: () => void;
 }) {
-  const [confirmed, setConfirmed] = useState(tier !== "production");
+  const { name, server, contract, sensitive, state } = row;
+  const kind = draftKind(draft, server);
+  const flavour = editorKind(sensitive, contract);
+
+  let value: React.ReactNode;
+  if (editing) {
+    value = (
+      <ValueEditor
+        kind={flavour.kind}
+        options={flavour.kind === "options" ? flavour.options : undefined}
+        initial={draft?.op === "set" ? draft.value : (storedText(server) ?? "")}
+        placeholder={sensitive ? (server ? "New value (overwrites)" : "Secret value") : undefined}
+        aria-label={`${name} value`}
+        onCommit={onCommit}
+        onCancel={onCancel}
+        className="max-w-xl flex-1"
+      />
+    );
+  } else if (draft?.op === "set") {
+    value = sensitive ? (
+      <SecretMask className="text-fg/80" />
+    ) : (
+      <span className="min-w-0 truncate font-mono text-[13px]" title={draft.value}>
+        {draft.value || <em className="text-muted">(empty)</em>}
+      </span>
+    );
+  } else if (draft?.op === "delete") {
+    value = (
+      <span className="min-w-0 truncate font-mono text-[13px] text-muted line-through decoration-deny/70">
+        {sensitive ? "••••••••••" : (storedText(server) ?? "")}
+      </span>
+    );
+  } else if (state === "missing_required") {
+    value = (
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-deny/60 bg-deny/[0.05] px-2 py-0.5 text-[12.5px] font-medium text-deny">
+        <TriangleAlert size={12} /> missing · required
+      </span>
+    );
+  } else if (state === "covered_by_default") {
+    value = <span className="font-mono text-[13px] italic text-muted">default {contract?.defaultValue}</span>;
+  } else if (!server) {
+    value = <span className="text-muted">—</span>;
+  } else if (sensitive) {
+    value = disclosed ? (
+      <span className="min-w-0 truncate font-mono text-[13px]">{disclosed.value}</span>
+    ) : (
+      <SecretMask />
+    );
+  } else if (withheld) {
+    value = <span className="text-[12.5px] text-muted">set · value hidden</span>;
+  } else {
+    value = (
+      <span className="min-w-0 truncate font-mono text-[13px]" title={server.value ?? ""}>
+        {server.value === "" ? <em className="text-muted">(empty)</em> : server.value}
+      </span>
+    );
+  }
+
+  const copy = !draft && server ? (sensitive ? disclosed?.value : withheld ? undefined : (server.value ?? undefined)) : undefined;
+
   return (
-    <Modal title={`Review changes to ${envName}`}>
-      <p className="text-sm text-muted mb-3 flex items-center gap-2">
-        <TierChip tier={tier} />
-        {drafts.size} change{drafts.size === 1 ? "" : "s"} — applied as one atomic change set.
-      </p>
-      <table className="w-full text-sm mb-4">
-        <tbody>
-          {[...drafts.entries()].map(([name, draft]) => {
-            const server = serverByName.get(name);
-            const op = draft.op === "delete" ? "delete" : server ? "change" : "add";
-            return (
-              <tr key={name} className="border-b border-bd/40 align-top">
-                <td className="py-1.5 pr-3 whitespace-nowrap">
-                  <span
-                    className={cn(
-                      "text-[10px] uppercase tracking-wide mr-2",
-                      op === "add" && "text-allow",
-                      op === "change" && "text-tier-staging",
-                      op === "delete" && "text-deny",
-                    )}
-                  >
-                    {op}
-                  </span>
-                  <Mono>{name}</Mono>
-                </td>
-                <td className="py-1.5 text-muted">
-                  {draft.op === "delete" ? (
-                    server?.sensitive ? "Secret deleted" : `was: ${server?.value ?? "…"}`
-                  ) : server ? (
-                    server.sensitive && !disclosed.has(name) ? (
-                      // Review never triggers disclosure (design R1 §Q2).
-                      "Secret changed"
-                    ) : (
-                      <Mono className="break-all">
-                        {(disclosed.get(name) ?? server.value ?? "…") + " → " + draft.value}
-                      </Mono>
-                    )
-                  ) : (
-                    <Mono className="break-all">{draft.value}</Mono>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {tier === "production" && (
-        <label className="flex items-start gap-2 text-sm mb-4 cursor-pointer">
-          <input
-            type="checkbox"
-            data-testid="production-confirm"
-            checked={confirmed}
-            onChange={(e) => setConfirmed(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            These changes affect <strong className="text-tier-production">production</strong>-tier
-            configuration. I understand.
-          </span>
-        </label>
+    <div
+      role="option"
+      aria-selected={selected}
+      data-row={name}
+      tabIndex={active ? 0 : -1}
+      onClick={(e) => {
+        if (!e.currentTarget.contains(e.target as Node)) return;
+        if ((e.target as HTMLElement).closest("button, a, input, textarea")) return;
+        onSelect();
+      }}
+      onDoubleClick={(e) => {
+        if ((e.target as HTMLElement).closest("button, a, input, textarea")) return;
+        if (kind !== "deleted") onEdit();
+      }}
+      className={cn(
+        "group relative flex min-h-14 cursor-pointer items-center gap-4 border-b border-bd px-5 py-2 outline-none transition-colors last:border-b-0",
+        "focus-visible:bg-hover/70",
+        selected ? "bg-hover" : "hover:bg-hover/50",
+        kind === "edited" && "bg-warn/[0.05]",
+        kind === "new" && "bg-accent/[0.05]",
+        kind === "deleted" && "bg-deny/[0.04]",
+        conflict && "shadow-[inset_0_0_0_1.5px_var(--deny)]",
       )}
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button data-testid="commit-changes" disabled={!confirmed} onClick={onCommit}>
-          Save changes
-        </Button>
-      </div>
-    </Modal>
+    >
+      {selected && <span aria-hidden="true" className="absolute inset-y-0 left-0 w-[3px] bg-accent" />}
+      <span className="flex w-[34%] min-w-0 shrink-0 items-center gap-2">
+        <span className="truncate font-mono text-[13px] font-semibold">
+          <Highlight text={name} needle={filter} />
+        </span>
+        <TypeBadge type={contract?.type} />
+      </span>
+      <span className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
+        {sensitive && !editing && <Lock size={13} className="shrink-0 text-muted" aria-label="Secret" />}
+        {value}
+        {!editing && server?.rawValue !== undefined && !draft && <RefHint item={name} expanded={server.value} />}
+        {server?.rotating && <RotatingMarker item={name} />}
+        {server?.source === "parent" && !draft && (
+          <span className="shrink-0 text-[11px] text-muted" title="Inherited from the parent environment">
+            inherited
+          </span>
+        )}
+        <DraftMarker kind={kind} />
+      </span>
+      {changedAt && !editing && (
+        <span
+          className="hidden shrink-0 text-xs text-muted group-hover:invisible group-focus-within:invisible group-aria-selected:invisible md:inline"
+          title={formatDateTime(changedAt)}
+        >
+          changed {timeAgo(changedAt, now)}
+        </span>
+      )}
+      {!editing && (
+        <span className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border border-bd bg-raised p-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
+          {sensitive && server && !draft && (
+            <IconButton
+              size="sm"
+              label={disclosed ? "Hide" : isDisclosed ? "Show again" : "Reveal (audited)"}
+              data-testid={`eye-${name}`}
+              onClick={onEye}
+            >
+              {disclosed ? <EyeOff size={14} /> : <Eye size={14} />}
+            </IconButton>
+          )}
+          {copy !== undefined && copy !== null && <CopyButton value={copy} label={`Copy ${name}`} />}
+          {kind !== "deleted" && (
+            <IconButton
+              size="sm"
+              label={sensitive && server ? "Overwrite (no reveal needed)" : "Edit"}
+              data-testid={`edit-${name}`}
+              onClick={onEdit}
+            >
+              <Pencil size={13} />
+            </IconButton>
+          )}
+          <Kbd className="mx-1 hidden group-aria-selected:inline-flex">E</Kbd>
+        </span>
+      )}
+    </div>
   );
 }

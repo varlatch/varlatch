@@ -127,10 +127,27 @@ await page.click('[data-audit-row="identity.created"]');
 await page.waitForSelector('[data-testid="audit-drawer"]', { timeout: 10000 });
 const drawer = await page.textContent('[data-testid="audit-drawer"]');
 check("provenance drawer shows event + request ids", drawer.includes("evt_") || drawer.includes("Request"));
+check(
+  "timeline reads as sentences with names, not raw IDs",
+  !(await page.textContent('[data-testid="audit-feed"]')).match(/idn_[a-z0-9]{6,}/),
+);
 await page.fill('[data-testid="audit-filter"]', "");
+// The decision facet queries the server when it supports audit filters (and
+// filters the loaded pages otherwise): wait for the rows to settle.
 await page.selectOption('[data-testid="audit-decision"]', "info");
+const onlyInfo = await page
+  .waitForFunction(
+    () => {
+      const rows = [...document.querySelectorAll("[data-audit-row]")];
+      return rows.length > 0 && rows.every((r) => r.querySelector("[data-decision]")?.getAttribute("data-decision") === "info");
+    },
+    null,
+    { timeout: 10000 },
+  )
+  .then(() => true, () => false);
 const infoRows = await page.locator("[data-audit-row]").count();
-check("decision filter applies", infoRows > 0 && infoRows <= totalRows, `${infoRows} rows`);
+check("decision filter applies", onlyInfo && infoRows > 0, `${infoRows} rows`);
+await page.selectOption('[data-testid="audit-decision"]', "");
 
 // 1b. Audit webhooks: register (secret shown once), list, revoke.
 const whUrl = "https://ops.example.invalid/varlatch-audit";
@@ -167,6 +184,9 @@ check(
   (await page.locator('[data-testid="webhook-secret"]').count()) === 0,
 );
 await page.locator(`[data-webhook="${whUrl2}"] [data-testid^="revoke-webhook-"]`).click();
+// Revoking goes through the confirmation dialog.
+await page.waitForSelector('[data-testid="confirm-dialog"]', { timeout: 10000 });
+await page.click('[data-testid="confirm-ok"]');
 await page.waitForFunction(
   (url) => !document.querySelector(`[data-webhook="${url}"]`),
   whUrl2,
@@ -178,7 +198,11 @@ check("webhook revoked from dashboard", true);
 await page.goto(`${base}/o/acme/p/api/contract`);
 await page.waitForSelector('[data-testid="contract-items"]', { timeout: 20000 });
 check("git contract items render", (await page.locator('[data-contract-item="DATABASE_URL"]').count()) === 1);
-check("git authority shown", (await page.textContent('[data-testid="contract-authority"]')).includes("git"));
+check(
+  "git authority shown",
+  (await page.getAttribute('[data-testid="contract-authority"]', "data-authority")) === "git" &&
+    (await page.textContent('[data-testid="contract-authority"]')).includes("varlatch contract push"),
+);
 check("no managed editor for git projects", (await page.locator('[data-testid="managed-editor"]').count()) === 0);
 
 // 2b. Git project at an older semantics version: move to the newest rules.
@@ -214,12 +238,12 @@ await page.waitForSelector('[data-testid="move-rules"]', { timeout: 10000 });
 check(
   "cancel leaves the active revision in place",
   (await activeContract("legacy-git")).id === gitBefore.id &&
-    (await page.textContent('[data-testid="semantics-version"]')).includes("Semantics version 2"),
+    (await page.getAttribute('[data-testid="semantics-version"]', "data-version")) === "2",
 );
 await page.click('[data-testid="move-rules"]');
 await page.waitForSelector('[data-testid="move-rules-activate"]:enabled', { timeout: 10000 });
 await page.click('[data-testid="move-rules-activate"]');
-await page.waitForSelector(`[data-testid="semantics-version"]:has-text("Semantics version ${newestVersion}")`, {
+await page.waitForSelector(`[data-testid="semantics-version"][data-version="${newestVersion}"]`, {
   timeout: 10000,
 });
 check("git project moved to the newest version", (await page.locator('[data-testid="move-rules"]').count()) === 0);
@@ -230,20 +254,38 @@ check(
     JSON.stringify(gitAfter.contract.items) === JSON.stringify(gitBefore.contract.items),
 );
 
-// 3. Managed contract editor: add item, publish, see it active.
+// 3. Managed contract editor: add a row, publish through the review (adding
+// an item is security-relevant, so it needs the acknowledgement), see it active.
 await page.goto(`${base}/o/acme/p/managed-app/contract`);
 await page.waitForSelector('[data-testid="managed-editor"]', { timeout: 20000 });
 // Edits start from the active Contract: wait for it before adding an item.
 await page.waitForSelector('[data-contract-item="PORT"]', { timeout: 20000 });
+const publishDraft = async () => {
+  await page.click('[data-testid="contract-publish"]');
+  await page.waitForSelector('[data-testid="contract-diff"]', { timeout: 10000 });
+  check(
+    "publishing a security-relevant change asks for the acknowledgement",
+    await page.locator('[data-testid="contract-publish-confirm"]').isDisabled(),
+  );
+  await page.check('[data-testid="contract-publish-ack"]');
+  await page.click('[data-testid="contract-publish-confirm"]');
+};
 await page.fill('[data-testid="contract-item-name"]', "FEATURE_FLAG");
-await page.selectOption('[data-testid="managed-editor"] select >> nth=1', "never");
+await page.selectOption('[data-testid="contract-item-required"]', "never");
 await page.click('[data-testid="contract-add-item"]');
-await page.click('[data-testid="contract-publish"]');
-await page.waitForSelector('[data-contract-item="FEATURE_FLAG"]', { timeout: 10000 });
-check("managed publish activates a revision with the new item", true);
+check(
+  "the new row shows in the draft before publishing",
+  (await page.getAttribute('[data-contract-item="FEATURE_FLAG"]', "data-row-state")) === "new",
+);
+await publishDraft();
+await page.waitForSelector('[data-contract-item="FEATURE_FLAG"][data-row-state="unchanged"]', { timeout: 10000 });
+check(
+  "managed publish activates a revision with the new item",
+  (await activeContract("managed-app")).contract.items.some((i) => i.name === "FEATURE_FLAG" && i.required.kind === "never"),
+);
 check(
   "an edit keeps the semantics version",
-  (await page.textContent('[data-testid="semantics-version"]')).includes("Semantics version 1"),
+  (await page.getAttribute('[data-testid="semantics-version"]', "data-version")) === "1",
 );
 const integerOption = '[data-testid="contract-item-type"] option[value="integer"]';
 check("integer is not offered at version 1", await page.locator(integerOption).isDisabled());
@@ -272,7 +314,7 @@ check(
     !review.includes("Later pushes from your repository"),
 );
 await page.click('[data-testid="move-rules-activate"]');
-await page.waitForSelector(`[data-testid="semantics-version"]:has-text("Semantics version ${newestVersion}")`, {
+await page.waitForSelector(`[data-testid="semantics-version"][data-version="${newestVersion}"]`, {
   timeout: 10000,
 });
 check("managed project moved to the newest version", (await page.locator('[data-testid="move-rules"]').count()) === 0);
@@ -286,12 +328,28 @@ check("integer is offered at version 3", !(await page.locator(integerOption).isD
 await page.fill('[data-testid="contract-item-name"]', "WORKERS");
 await page.selectOption('[data-testid="contract-item-type"]', "integer");
 await page.click('[data-testid="contract-add-item"]');
-await page.click('[data-testid="contract-publish"]');
-await page.waitForSelector('[data-contract-item="WORKERS"]', { timeout: 10000 });
+await publishDraft();
+await page.waitForSelector('[data-contract-item="WORKERS"][data-row-state="unchanged"]', { timeout: 10000 });
+const managedFinal = await activeContract("managed-app");
 check(
   "an integer item publishes at version 3",
-  (await page.textContent('[data-contract-item="WORKERS"]')).includes("integer") &&
-    (await activeContract("managed-app")).semanticsVersion === newestVersion,
+  managedFinal.contract.items.some((i) => i.name === "WORKERS" && i.type === "integer") &&
+    managedFinal.semanticsVersion === newestVersion,
+);
+
+// 3c. Inline edit: a non-security change (description) publishes without the
+// acknowledgement and marks the row edited until then.
+await page.fill('[aria-label="Description of WORKERS"]', "Background worker processes");
+check(
+  "an edited row is marked in the draft",
+  (await page.getAttribute('[data-contract-item="WORKERS"]', "data-row-state")) === "edited",
+);
+await page.click('[data-testid="contract-publish"]');
+await page.waitForSelector('[data-contract-item="WORKERS"][data-row-state="unchanged"]', { timeout: 10000 });
+check(
+  "a description-only change publishes directly",
+  (await activeContract("managed-app")).contract.items.find((i) => i.name === "WORKERS")?.description ===
+    "Background worker processes",
 );
 
 // 4. The environment-name mapping was removed: no card on the contract tab.
@@ -307,7 +365,7 @@ await page.waitForURL("**/o/acme/p/api", { timeout: 10000 });
 check("palette navigates to a project", true);
 
 // 5b. Server-side Config Item name search (ADR-0030): metadata-only hits
-// that land in the editor with the filter prefilled via the ?item= link.
+// that land on the environment page with the item selected via ?item=.
 await page.keyboard.press("ControlOrMeta+k");
 await page.waitForSelector('[data-testid="command-palette"]', { timeout: 5000 });
 await page.fill('[data-testid="palette-input"]', "database");
@@ -315,11 +373,36 @@ await page.waitForSelector('[data-palette-entry="api:DATABASE_URL"]', { timeout:
 await page.click('[data-palette-entry="api:DATABASE_URL"]');
 await page.waitForURL("**/o/acme/p/api/e/**", { timeout: 10000 });
 check("palette item hit deep-links with the item name", page.url().includes("item=DATABASE_URL"));
-await page.waitForSelector('input[placeholder="Filter items…"]', { timeout: 20000 });
+await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
 check(
-  "editor filter prefilled from the deep link",
-  (await page.inputValue('input[placeholder="Filter items…"]')) === "DATABASE_URL",
+  "deep link selects the item",
+  ((await page.textContent('[data-testid="item-panel"]')) ?? "").includes("DATABASE_URL") &&
+    (await page.getAttribute('[data-row="DATABASE_URL"]', "aria-selected")) === "true",
 );
+
+// 5c. Palette actions: the theme switch and the shortcuts sheet.
+const theme = () => page.evaluate(() => document.documentElement.dataset.theme);
+const themeBefore = await theme();
+await page.keyboard.press("ControlOrMeta+k");
+await page.waitForSelector('[data-testid="command-palette"]', { timeout: 5000 });
+await page.fill('[data-testid="palette-input"]', "theme");
+await page.waitForSelector('[data-palette-entry="action:theme"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+check("palette action switches the theme", (await theme()) !== themeBefore, `${themeBefore} -> ${await theme()}`);
+await page.keyboard.press("ControlOrMeta+k");
+await page.fill('[data-testid="palette-input"]', "theme");
+await page.waitForSelector('[data-palette-entry="action:theme"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+await page.keyboard.press("ControlOrMeta+k");
+await page.fill('[data-testid="palette-input"]', "shortcuts");
+await page.waitForSelector('[data-palette-entry="action:shortcuts"][aria-selected="true"]', { timeout: 5000 });
+await page.keyboard.press("Enter");
+check(
+  "palette opens the keyboard shortcuts",
+  await page.waitForSelector('[data-testid="shortcuts-dialog"]', { timeout: 5000 }).then(() => true, () => false),
+);
+await page.keyboard.press("Escape");
+check("theme restored", (await theme()) === themeBefore);
 
 // 6. Settings.
 await page.goto(`${base}/o/acme/settings`);

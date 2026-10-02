@@ -1,162 +1,331 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Moon, Sun } from "lucide-react";
+import { Link, useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, Sun, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
-import { applyTheme, initialTheme, type Theme } from "../../lib/theme";
-import { Card, InfoTip, Mono, cn } from "../../components/ui";
+import { chooseThemePreference, themePreference, type ThemePreference } from "../../lib/theme";
+import { timeAgo, useNow } from "../../lib/time";
+import { Badge, Button, Input, Mono, SectionCard, cn } from "../../components/ui";
+import { CopyButton } from "../../components/CodeBlock";
+import { PageHeader } from "../../components/PageHeader";
+import { useToast } from "../../components/Toast";
+import { errorMessage } from "../../shell/Shell";
+import { useCapability, useMeta, useOrgName } from "../projects/hooks";
+import { backupHealth } from "../installation/backupHealth";
 
-/** Organization + installation facts; behavior settings live where they act. */
+/** Organization settings and facts about this installation. */
 
-function CopyableMono({ value }: { value: string | undefined }) {
-  const [copied, setCopied] = useState(false);
-  if (!value) return null;
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <Mono>{value}</Mono>
-      <button
-        type="button"
-        className="cursor-pointer text-muted hover:text-fg"
-        aria-label={`Copy ${value}`}
-        title="Copy to clipboard"
-        onClick={() => {
-          void navigator.clipboard.writeText(value).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          });
-        }}
-      >
-        {copied ? <Check size={12} className="text-allow" /> : <Copy size={12} />}
-      </button>
-    </span>
-  );
-}
-
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex gap-2">
-      <dt className="text-muted w-28 shrink-0">{label}</dt>
-      <dd className="min-w-0">{children}</dd>
-    </div>
-  );
-}
+const SECTIONS = [
+  { id: "general", label: "General", icon: Settings2 },
+  { id: "server", label: "Server", icon: Server },
+  { id: "backups", label: "Backups", icon: Archive },
+  { id: "appearance", label: "Appearance", icon: Palette },
+] as const;
 
 export function SettingsPage() {
-  const { org } = useParams();
+  const { org } = useParams() as { org: string };
   const { api } = useSession();
-  useOrgRealtime(org, ["organization"], [["org", org]]);
-  const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org as string), enabled: !!org });
+  useOrgRealtime(org, ["organization"], [["org", org], ["orgs"]]);
+  const orgName = useOrgName(org);
+  const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
-  const meta = useQuery({ queryKey: ["meta"], queryFn: () => api.meta() });
-  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [active, setActive] = useState<string>("general");
+
+  // Highlight the section in view.
   useEffect(() => {
-    const onTheme = (e: Event) => setTheme((e as CustomEvent<Theme>).detail);
-    window.addEventListener("varlatch:theme", onTheme);
-    return () => window.removeEventListener("varlatch:theme", onTheme);
-  }, []);
+    const els = SECTIONS.map((s) => document.getElementById(`settings-${s.id}`)).filter(Boolean) as HTMLElement[];
+    const io = new IntersectionObserver(
+      (entries) => {
+        const top = entries.filter((e) => e.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (top) setActive(top.target.id.replace("settings-", ""));
+      },
+      { rootMargin: "-20% 0px -60% 0px" },
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [backups.data]);
+
+  const sections = SECTIONS.filter((s) => s.id !== "backups" || backups.data);
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-lg font-semibold">{org ? "Settings" : "Installation settings"}</h1>
-
-      {org && <Card data-testid="settings-org">
-        <h2 className="font-medium">Organization</h2>
-        <p className="text-sm text-muted mb-3">
-          Identity of this organization — the slug appears in URLs and CLI commands.
-        </p>
-        <dl className="text-sm space-y-1.5">
-          <Row label="Name">{orgQuery.data?.name}</Row>
-          <Row label="Slug"><CopyableMono value={orgQuery.data?.slug} /></Row>
-          <Row label="ID"><CopyableMono value={orgQuery.data?.id} /></Row>
-        </dl>
-      </Card>}
-
-      <Card data-testid="settings-server">
-        <h2 className="font-medium">Server</h2>
-        <p className="text-sm text-muted mb-3">
-          Facts reported by this varlatchd installation; nothing here is editable from the
-          dashboard.
-        </p>
-        <dl className="text-sm space-y-1.5">
-          <Row label="Version"><Mono>{meta.data?.serverVersion}</Mono></Row>
-          <Row label="API"><Mono>{meta.data ? `v${meta.data.apiMajor}` : null}</Mono></Row>
-          <div className="flex gap-2">
-            <dt className="text-muted w-28 shrink-0 flex items-center gap-1">
-              Capabilities
-              <InfoTip text="Optional features this server advertises. The dashboard and CLI feature-detect against this list, so an older or trimmed-down installation simply hides what it cannot do." />
-            </dt>
-            <dd className="flex flex-wrap gap-1.5">
-              {meta.data?.capabilities?.map((c: string) => (
-                <Mono key={c} className="rounded-full border border-bd bg-inset px-2 py-0.5 text-xs">
-                  {c}
-                </Mono>
-              ))}
-            </dd>
-          </div>
-        </dl>
-      </Card>
-
-      {backups.isError && !org && <p role="alert" className="text-deny">Backup status is unavailable. Installation Admin authority is required.</p>}
-      {backups.data && <Card data-testid="settings-backups">
-        <h2 className="font-medium">Installation backups</h2>
-        <p className="text-sm text-muted mb-3">Managed by your Infrastructure Operator. Checks establish archive integrity, release compatibility, and a matching key; they do not replace a restore drill.</p>
-        {backups.data.warnings.map(warning => <p role="alert" className="text-sm text-deny mb-2" key={warning}>{warning}</p>)}
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead><tr><th>Archive / created</th><th>Release / KEK versions</th><th>Verification</th><th>Destination</th></tr></thead>
-            <tbody>{backups.data.archives.map(archive => <tr key={archive.archiveId} className="border-t border-bd">
-              <td className="py-2"><Mono>{archive.archiveId}</Mono><div>{new Date(archive.createdAt).toLocaleString()}</div></td>
-              <td>{archive.release} / {archive.requiredKeyVersions.join(", ")}</td>
-              <td>{archive.verification ? <>
-                <div>{archive.verification.integrity && archive.verification.compatibility && archive.verification.keyMatch ? "Checks passed" : "Checks failed"} against {archive.verification.targetRelease}</div>
-                <div>{new Date(archive.verification.checkedAt).toLocaleString()}</div>
-              </> : "Not verified"}</td>
-              <td>{archive.delivery ? <>
-                <div>Uploaded to {archive.delivery.destination} at {new Date(archive.delivery.uploadedAt).toLocaleString()}</div>
-                <div>{archive.delivery.remoteVerification ? (archive.delivery.remoteVerification.integrity && archive.delivery.remoteVerification.compatibility && archive.delivery.remoteVerification.keyMatch ? "Remote retrieval checks passed" : "Remote retrieval checks failed") : "Remote retrieval not verified"}</div>
-              </> : "No recorded delivery"}</td>
-            </tr>)}</tbody>
-          </table>
+    <>
+      <PageHeader breadcrumbs={[{ label: orgName, to: `/o/${org}/projects` }, { label: "Settings" }]} title="Settings" />
+      <div className="grid gap-8 lg:grid-cols-[200px_1fr]">
+        <nav className="hidden lg:block" aria-label="Settings sections">
+          <ul className="sticky top-6 space-y-0.5">
+            {sections.map(({ id, label, icon: Icon }) => (
+              <li key={id}>
+                <a
+                  href={`#settings-${id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    document.getElementById(`settings-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                    setActive(id);
+                  }}
+                  className={cn(
+                    "relative flex h-9 items-center gap-2.5 rounded-lg px-3 text-[14px] font-medium transition-colors",
+                    active === id ? "bg-accent-dim text-fg" : "text-muted hover:bg-hover hover:text-fg",
+                  )}
+                >
+                  {active === id && <span className="absolute inset-y-1.5 left-0 w-[3px] rounded-r bg-accent" aria-hidden="true" />}
+                  <Icon size={16} className={active === id ? "text-accent" : undefined} />
+                  {label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="min-w-0 space-y-6">
+          <OrganizationCard org={org} name={orgQuery.data?.name} slug={orgQuery.data?.slug} id={orgQuery.data?.id} />
+          <ServerCard />
+          {backups.data && <BackupsSummary data={backups.data} />}
+          <AppearanceCard />
         </div>
-        <p className="text-sm text-muted mt-3">Keep every required Root KEK version and the independent Backup Encryption Key while retaining its archives. Verification of a key does not establish separate off-host custody.</p>
-      </Card>}
+      </div>
+    </>
+  );
+}
 
-      <Card data-testid="settings-appearance">
-        <h2 className="font-medium">Appearance</h2>
-        <p className="text-sm text-muted mb-3">
-          Stored in this browser only; every viewer picks their own theme.
-        </p>
-        <div className="flex gap-2" role="radiogroup" aria-label="Theme">
-          {(
-            [
-              { value: "dark", label: "Dark", icon: Moon },
-              { value: "light", label: "Light", icon: Sun },
-            ] as const
-          ).map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={theme === value}
-              data-testid={`theme-${value}`}
-              onClick={() => {
-                setTheme(value);
-                applyTheme(value);
-              }}
-              className={cn(
-                "inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
-                theme === value
-                  ? "border-accent bg-accent-dim/40 text-fg"
-                  : "border-bd bg-inset text-muted hover:text-fg",
-              )}
-            >
-              <Icon size={13} /> {label}
-            </button>
-          ))}
-        </div>
-      </Card>
+function Row({ label, hint, children }: { label: string; hint?: string | undefined; children: React.ReactNode }) {
+  return (
+    <div className="grid items-center gap-x-6 gap-y-1.5 border-b border-bd px-5 py-3.5 last:border-b-0 sm:grid-cols-[180px_1fr]">
+      <div>
+        <p className="text-[13px] font-medium">{label}</p>
+        {hint && <p className="text-xs text-muted">{hint}</p>}
+      </div>
+      <div className="min-w-0">{children}</div>
     </div>
   );
 }
+
+function OrganizationCard({ org, name, slug, id }: { org: string; name: string | undefined; slug: string | undefined; id: string | undefined }) {
+  const { api } = useSession();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const canRename = useCapability("organizations.rename");
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? name ?? "";
+  const rename = useMutation({
+    mutationFn: () => api.renameOrganization(org, value.trim()),
+    onSuccess: async (updated) => {
+      setDraft(null);
+      await Promise.all([qc.invalidateQueries({ queryKey: ["orgs"] }), qc.invalidateQueries({ queryKey: ["org", org] })]);
+      toast.success("Organization renamed", { description: updated.name });
+    },
+    onError: (err) => toast.error("Could not rename the organization", { description: errorMessage(err) }),
+  });
+  const dirty = draft !== null && draft.trim() !== "" && draft.trim() !== name;
+  return (
+    <SectionCard id="settings-general" title="Organization" description="How this organization appears, and the identifiers the CLI and URLs use." className="scroll-mt-6" data-testid="settings-organization">
+      <Row label="Name" hint={canRename ? "Display name; the slug never changes." : undefined}>
+        {canRename ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (dirty) rename.mutate();
+            }}
+          >
+            <Input data-testid="org-name" className="w-full max-w-sm" value={value} onChange={(e) => setDraft(e.target.value)} />
+            <Button type="submit" variant={dirty ? "primary" : "secondary"} disabled={!dirty} loading={rename.isPending} data-testid="save-org-name">
+              Save
+            </Button>
+          </form>
+        ) : (
+          <span>{name}</span>
+        )}
+      </Row>
+      <Row label="Slug" hint="Used in URLs and CLI commands">
+        {slug && (
+          <span className="inline-flex items-center gap-1.5">
+            <Mono className="rounded-md border border-bd bg-inset px-2 py-1">{slug}</Mono>
+            <CopyButton value={slug} label="Copy slug" />
+          </span>
+        )}
+      </Row>
+      <Row label="ID">
+        {id && (
+          <span className="inline-flex items-center gap-1.5">
+            <Mono className="rounded-md border border-bd bg-inset px-2 py-1 text-muted">{id}</Mono>
+            <CopyButton value={id} label="Copy ID" />
+          </span>
+        )}
+      </Row>
+    </SectionCard>
+  );
+}
+
+function ServerCard() {
+  const meta = useMeta();
+  const [showCaps, setShowCaps] = useState(false);
+  const caps = meta.data?.capabilities ?? [];
+  return (
+    <SectionCard id="settings-server" title="Server" description="Facts this installation reports. Nothing here is editable from the dashboard." className="scroll-mt-6" data-testid="settings-server">
+      <Row label="Version">
+        <Mono className="rounded-md border border-bd bg-inset px-2 py-1">{meta.data?.serverVersion ?? "…"}</Mono>
+      </Row>
+      <Row label="API">
+        <Mono>{meta.data ? `v${meta.data.apiMajor}` : "…"}</Mono>
+      </Row>
+      <Row label="Capabilities" hint="Features this server supports">
+        <div>
+          <button
+            type="button"
+            data-testid="toggle-capabilities"
+            onClick={() => setShowCaps((v) => !v)}
+            className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-fg hover:text-accent"
+          >
+            <Badge className="font-mono">{caps.length} enabled</Badge>
+            {showCaps ? "Hide" : "Show"}
+            <ChevronDown size={13} className={cn("transition-transform", showCaps && "rotate-180")} />
+          </button>
+          {showCaps && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {caps.map((c) => (
+                <Badge key={c} className="font-mono">
+                  {c}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+      </Row>
+    </SectionCard>
+  );
+}
+
+function BackupsSummary({ data }: { data: Parameters<typeof backupHealth>[0] }) {
+  const now = useNow();
+  const health = backupHealth(data, now);
+  return (
+    <SectionCard
+      id="settings-backups"
+      title="Backups"
+      description="Encrypted archives of this whole installation, run by your operator."
+      className="scroll-mt-6"
+      data-testid="settings-backups"
+      actions={
+        <Link to="/installation/settings" className="inline-flex h-7 items-center rounded-md border border-bd px-2.5 text-xs font-medium text-fg hover:bg-hover">
+          Installation settings
+        </Link>
+      }
+    >
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 px-5 py-4">
+        <span className="flex items-center gap-3">
+          {health.tone === "ok" ? <CircleCheck size={20} className="text-accent" /> : <TriangleAlert size={20} className={health.tone === "error" ? "text-deny" : "text-warn"} />}
+          <span>
+            <span className="block text-[14px] font-medium">{health.headline}</span>
+            <span className="block text-xs text-muted">{health.detail}</span>
+          </span>
+        </span>
+        <span className="flex-1" />
+        <span className="flex items-center gap-3 text-xs text-muted">
+          Last 7 days
+          <span className="flex gap-1" aria-label="Archives per day, last 7 days">
+            {health.lastWeek.map((d) => (
+              <span
+                key={d.day}
+                title={`${d.day}: ${d.count} archive${d.count === 1 ? "" : "s"}`}
+                className={cn("size-3.5 rounded-[3px]", d.count > 0 ? "bg-accent" : "border border-bd bg-inset")}
+              />
+            ))}
+          </span>
+        </span>
+      </div>
+      {data.archives[0] && (
+        <p className="border-t border-bd px-5 py-2.5 text-xs text-muted">
+          Latest archive {timeAgo(data.archives[0].createdAt, now)}
+          {data.archives[0].delivery ? ` · delivered to ${data.archives[0].delivery.destination}` : " · not delivered off-host"}
+        </p>
+      )}
+    </SectionCard>
+  );
+}
+
+function AppearanceCard() {
+  const [pref, setPref] = useState<ThemePreference>(themePreference);
+  useEffect(() => {
+    const on = (e: Event) => setPref((e as CustomEvent<ThemePreference>).detail);
+    window.addEventListener("varlatch:theme-preference", on);
+    return () => window.removeEventListener("varlatch:theme-preference", on);
+  }, []);
+  return (
+    <SectionCard id="settings-appearance" title="Appearance" description="Stored in this browser only; everyone picks their own." className="scroll-mt-6" data-testid="settings-appearance">
+      <div className="px-5 py-4">
+        <ThemePicker value={pref} onChange={(p) => chooseThemePreference(p)} />
+      </div>
+    </SectionCard>
+  );
+}
+
+/** Three preview tiles: Dark, Light, System. */
+export function ThemePicker({ value, onChange }: { value: ThemePreference; onChange: (p: ThemePreference) => void }) {
+  const options: { value: ThemePreference; label: string; icon: React.ReactNode }[] = [
+    { value: "dark", label: "Dark", icon: <Moon size={14} /> },
+    { value: "light", label: "Light", icon: <Sun size={14} /> },
+    { value: "system", label: "System", icon: <Monitor size={14} /> },
+  ];
+  return (
+    <div role="radiogroup" aria-label="Theme" className="grid max-w-2xl gap-3 sm:grid-cols-3">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={value === o.value}
+          data-testid={`theme-${o.value}`}
+          onClick={() => onChange(o.value)}
+          className={cn(
+            "cursor-pointer overflow-hidden rounded-xl border text-left transition-colors",
+            value === o.value ? "border-accent ring-1 ring-accent/40" : "border-bd hover:border-bd-strong",
+          )}
+        >
+          <ThemeThumb kind={o.value} />
+          <span className="flex items-center gap-2 border-t border-bd px-3 py-2 text-[13px] font-medium">
+            <span className={cn("flex size-4 items-center justify-center rounded-full border", value === o.value ? "border-accent" : "border-bd-strong")}>
+              {value === o.value && <span className="size-2 rounded-full bg-accent" />}
+            </span>
+            {o.icon}
+            {o.label}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ThemeThumb({ kind }: { kind: ThemePreference }) {
+  const dark = { bg: "#0d0f14", side: "#151821", line: "#262b38", accent: "#7bd88f" };
+  const light = { bg: "#f6f7f9", side: "#ffffff", line: "#dde1e8", accent: "#1a7f37" };
+  const pane = (c: typeof dark) => (
+    <div className="flex h-full w-full" style={{ background: c.bg }}>
+      <div className="w-1/4 space-y-1 border-r p-1.5" style={{ background: c.side, borderColor: c.line }}>
+        <div className="h-1.5 w-3/4 rounded-sm" style={{ background: c.accent }} />
+        <div className="h-1 w-2/3 rounded-sm" style={{ background: c.line }} />
+        <div className="h-1 w-1/2 rounded-sm" style={{ background: c.line }} />
+      </div>
+      <div className="flex-1 space-y-1.5 p-2">
+        <div className="h-1.5 w-1/3 rounded-sm" style={{ background: c.line }} />
+        <div className="h-5 rounded border" style={{ borderColor: c.line, background: c.side }} />
+        <div className="h-5 rounded border" style={{ borderColor: c.line, background: c.side }} />
+      </div>
+    </div>
+  );
+  return (
+    <div className="h-24 overflow-hidden">
+      {kind === "system" ? (
+        <div className="relative h-full">
+          {pane(dark)}
+          <div className="absolute inset-0" style={{ clipPath: "polygon(55% 0, 100% 0, 100% 100%, 45% 100%)" }}>
+            {pane(light)}
+          </div>
+        </div>
+      ) : (
+        pane(kind === "dark" ? dark : light)
+      )}
+    </div>
+  );
+}
+

@@ -1,42 +1,257 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useState } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Filter, MoreHorizontal, Plus, Sparkles, Wifi } from "lucide-react";
 import type { Tier } from "@varlatch/protocol";
-import { Button, Card, InfoTip, Input, Mono, Select, TierChip, cn } from "../../components/ui";
 import { useSession } from "../../lib/session";
+import { countdown, timeAgo, useNow } from "../../lib/time";
+import {
+  Badge,
+  Button,
+  Callout,
+  EmptyState,
+  Field,
+  Input,
+  Menu,
+  SectionCard,
+  Select,
+  StatusDot,
+  TierDot,
+  cn,
+} from "../../components/ui";
+import { useConfirm } from "../../components/Dialog";
+import { useToast } from "../../components/Toast";
+import { errorMessage } from "../../shell/Shell";
 import { TIERS, useIdentities } from "./shared";
 
 /**
- * Advanced: mechanisms that never grant. Broker capabilities (ADR-0022) are
- * run-scoped oversight artifacts; tailnet requirements (ADR-0014) narrow
- * where secret retrieval may happen.
+ * Advanced: mechanisms that never grant. Network requirements narrow where
+ * secrets may be read from; agent capabilities are short-lived receipts a
+ * broker issues for one run, shown here for oversight and revocation.
  */
 export function AdvancedTab({ org }: { org: string }) {
   return (
-    <div className="space-y-4">
-      <p className="text-muted text-sm max-w-3xl">
-        Neither mechanism here ever adds access. <b>Broker capabilities</b>
-        <InfoTip className="mx-1" text="Short-lived receipts a broker issues so an AI agent can use specific secrets for one run, toward specific destinations, without ever seeing plaintext. The agent's own grant is re-checked on every exercise." />
-        are short-lived, run-scoped artifacts you can observe and revoke, and{" "}
-        <b>tailnet requirements</b>
-        <InfoTip className="mx-1" text="A requirement is restrictive-only: it demands that secret retrieval for a tier come from a verified device on your tailnet (matching tags). It sits on top of Grants and can only take access away." />
-        restrict where secret retrieval may happen. Grants stay the only source of permission.
-      </p>
-      <CapabilitiesSection org={org} />
+    <div className="space-y-6">
+      <Callout tone="info" icon={<Filter size={17} />}>
+        Nothing here grants access. These rules only narrow or observe it: grants stay the single source of
+        permission.
+      </Callout>
       <RequirementsSection org={org} />
+      <CapabilitiesSection org={org} />
     </div>
   );
 }
 
-/**
- * Broker Capabilities (ADR-0022): read-only oversight plus revocation. These
- * are ephemeral run-scoped artifacts issued by Brokers; nothing here grants —
- * revoking one denies its very next exercise.
- */
+type Requirement = {
+  id: string;
+  target: { kind: string; tier?: Tier; environmentIds?: string[] };
+  selector: { tailnet: string; tags?: string[] };
+  version: number;
+};
+
+function RequirementsSection({ org }: { org: string }) {
+  const { api } = useSession();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
+  const reqs = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org) });
+  const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const invalidate = () => void qc.invalidateQueries({ queryKey: ["requirements", org] });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteRequirement(org, id),
+    onSuccess: invalidate,
+    onError: (err) => toast.error("Could not remove the requirement", { description: errorMessage(err) }),
+  });
+  const items = (reqs.data?.items ?? []) as unknown as Requirement[];
+  return (
+    <SectionCard
+      title="Network requirements"
+      description="Secrets in a tier can only be read from verified devices on your tailnet. Restrictive only: a requirement can take access away, never add it."
+      data-testid="requirements-section"
+      actions={
+        !adding && (
+          <Button size="sm" variant="secondary" icon={<Plus size={13} />} data-testid="add-requirement" onClick={() => setAdding(true)}>
+            Add requirement
+          </Button>
+        )
+      }
+    >
+      {items.length === 0 && !adding && (
+        <EmptyState
+          icon={<Wifi size={20} />}
+          title="No network requirements"
+          description="Secret retrieval is governed by grants alone. Add one to require, for example, that production secrets are only read from devices tagged tag:prod."
+          className="py-8"
+        />
+      )}
+      <ul>
+        {items.map((req) =>
+          editing === req.id ? (
+            <li key={req.id} data-requirement={req.id} className="border-b border-bd px-5 py-4 last:border-b-0">
+              <RequirementForm
+                org={org}
+                initial={req}
+                onDone={() => {
+                  setEditing(null);
+                  invalidate();
+                }}
+                onCancel={() => setEditing(null)}
+              />
+            </li>
+          ) : (
+            <li key={req.id} data-requirement={req.id} className="group flex flex-wrap items-center gap-2 border-b border-bd px-5 py-3.5 text-[14px] last:border-b-0">
+              <span className="text-muted">Secrets in</span>
+              {req.target.tier ? (
+                <Chip>
+                  <TierDot tier={req.target.tier} />
+                  {req.target.tier}
+                </Chip>
+              ) : (
+                <Chip>{req.target.environmentIds?.length ?? 0} environments</Chip>
+              )}
+              <span className="text-muted">can only be read from devices on</span>
+              <Chip mono>{req.selector.tailnet}</Chip>
+              {(req.selector.tags ?? []).length > 0 && (
+                <>
+                  <span className="text-muted">tagged</span>
+                  {(req.selector.tags ?? []).map((t) => (
+                    <Chip key={t} mono>
+                      {t}
+                    </Chip>
+                  ))}
+                </>
+              )}
+              <span className="flex-1" />
+              <Button size="sm" variant="ghost" data-testid={`edit-requirement-${req.id}`} onClick={() => setEditing(req.id)}>
+                Edit
+              </Button>
+              <Menu
+                label="Requirement actions"
+                items={[
+                  {
+                    label: "Remove…",
+                    danger: true,
+                    "data-testid": `delete-requirement-${req.id}`,
+                    onSelect: async () => {
+                      const ok = await confirm({
+                        title: "Remove this requirement?",
+                        description: "This loosens access: secrets in this tier can then be read from anywhere a grant allows. The change is audited.",
+                        confirmLabel: "Remove requirement",
+                        tone: "danger",
+                      });
+                      if (ok) remove.mutate(req.id);
+                    },
+                  },
+                ]}
+              >
+                <MoreHorizontal size={16} />
+              </Menu>
+            </li>
+          ),
+        )}
+      </ul>
+      {adding && (
+        <div className="border-t border-bd px-5 py-4">
+          <RequirementForm
+            org={org}
+            onDone={() => {
+              setAdding(false);
+              invalidate();
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+function Chip({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 rounded-md border border-bd bg-inset px-2 py-0.5 text-[13px]", mono && "font-mono text-[12.5px]")}>
+      {children}
+    </span>
+  );
+}
+
+function RequirementForm({
+  org,
+  initial,
+  onDone,
+  onCancel,
+}: {
+  org: string;
+  initial?: Requirement;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const { api } = useSession();
+  const [tier, setTier] = useState<Tier>(initial?.target.tier ?? "production");
+  const [tailnet, setTailnet] = useState(initial?.selector.tailnet ?? "");
+  const [tags, setTags] = useState((initial?.selector.tags ?? []).join(","));
+  const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+  const save = useMutation({
+    mutationFn: async () => {
+      const target = { kind: "tier" as const, tier };
+      const selector = { tailnet: tailnet.trim(), tags: tagList };
+      if (initial) await api.updateRequirement(org, initial.id, { expectedVersion: initial.version, target, selector });
+      else await api.createTailnetRequirement(org, { target, selector });
+    },
+    onSuccess: onDone,
+  });
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (tailnet.trim() && tagList.length > 0) save.mutate();
+      }}
+    >
+      <div className="grid gap-3 sm:grid-cols-[180px_1fr_1fr]">
+        <Field label="Tier">
+          <Select
+            className="w-full"
+            value={tier}
+            onChange={(v) => setTier(v as Tier)}
+            aria-label="Tier"
+            options={TIERS.map((t) => ({ value: t, label: t, icon: <TierDot tier={t} /> }))}
+          />
+        </Field>
+        <Field label="Tailnet">
+          <Input data-testid="req-tailnet" mono className="w-full" placeholder="example.ts.net" value={tailnet} onChange={(e) => setTailnet(e.target.value)} />
+        </Field>
+        <Field label="Device tags" hint="Comma-separated, e.g. tag:prod,tag:deploy">
+          <Input data-testid="req-tags" mono className="w-full" placeholder="tag:prod" value={tags} onChange={(e) => setTags(e.target.value)} />
+        </Field>
+      </div>
+      {initial && <p className="text-xs text-muted">Edited in place. Loosening is audited exactly like tightening.</p>}
+      {save.error && <p className="text-sm text-deny">{errorMessage(save.error)}</p>}
+      <div className="flex justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          type="submit"
+          data-testid={initial ? `save-requirement-${initial.id}` : "create-requirement"}
+          loading={save.isPending}
+          disabled={!tailnet.trim() || tagList.length === 0}
+        >
+          {initial ? "Save" : "Add requirement"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function CapabilitiesSection({ org }: { org: string }) {
   const { api } = useSession();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const identities = useIdentities(org);
+  const now = useNow(1000);
   const projects = useQuery({ queryKey: ["projects", org], queryFn: () => api.listProjects(org) });
   const [projectSlug, setProjectSlug] = useState("");
   const envs = useQuery({
@@ -45,245 +260,132 @@ function CapabilitiesSection({ org }: { org: string }) {
     enabled: projectSlug !== "",
   });
   const [envName, setEnvName] = useState("");
+  const key = ["capabilities", org, projectSlug, envName];
   const capabilities = useQuery({
-    queryKey: ["capabilities", org, projectSlug, envName],
+    queryKey: key,
     queryFn: () => api.listCapabilities(org, projectSlug, envName),
     enabled: projectSlug !== "" && envName !== "",
+    refetchInterval: 15_000,
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeCapability(org, projectSlug, envName, id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["capabilities", org, projectSlug, envName] }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
   });
   const nameOf = (id: string) => identities.data?.items.find((i) => i.id === id)?.name ?? id;
-  const statusOf = (c: { revokedAt: string | null; expiresAt: string }) =>
-    c.revokedAt ? "revoked" : new Date(c.expiresAt).getTime() <= Date.now() ? "expired" : "active";
-
+  const items = capabilities.data?.items ?? [];
+  const active = items.filter((c) => !c.revokedAt && new Date(c.expiresAt).getTime() > now);
   return (
-    <Card data-testid="capabilities-section">
-      <h2 className="font-medium mb-1 flex items-center gap-1.5">
-        Broker capabilities
-        <InfoTip text="Issued by broker identities at run time, never from this page. This view is oversight: see what agents may currently exercise, and revoke anything suspicious — the revocation denies the very next exercise." />
-      </h2>
-      <p className="text-muted text-sm mb-3">
-        Run-scoped artifacts brokers issue for agent-safe runs. A capability never grants — the
-        agent's <Mono>secret.use</Mono> is re-checked on every exercise. Revoking one takes effect
-        on its next exercise.
-      </p>
-      <div className="flex flex-wrap gap-2 items-center mb-3">
-        <Select
-          data-testid="capability-project"
-          value={projectSlug}
-          onChange={(v) => {
-            setProjectSlug(v);
-            setEnvName("");
-          }}
-          options={[
-            { value: "", label: "Choose project…" },
-            ...(projects.data?.items.map((p) => ({ value: p.slug, label: p.slug })) ?? []),
-          ]}
-        />
-        {projectSlug !== "" && (
+    <SectionCard
+      title={
+        <span className="inline-flex items-center gap-2.5">
+          Agent capabilities
+          {envName && (
+            <span className="inline-flex items-center gap-1.5 text-[13px] font-normal text-accent">
+              <StatusDot tone="live" /> live
+            </span>
+          )}
+        </span>
+      }
+      description="Short-lived receipts brokers issue so AI agents can use secrets without seeing them. The agent's own grant is re-checked on every use."
+      data-testid="capabilities-section"
+      actions={
+        <div className="flex items-center gap-2">
+          <Select
+            data-testid="capability-project"
+            className="min-w-36"
+            value={projectSlug}
+            onChange={(v) => {
+              setProjectSlug(v);
+              setEnvName("");
+            }}
+            placeholder="Project…"
+            aria-label="Project"
+            options={(projects.data?.items ?? []).map((p) => ({ value: p.slug, label: p.slug }))}
+          />
           <Select
             data-testid="capability-environment"
+            className="min-w-40"
             value={envName}
-            onChange={(v) => setEnvName(v)}
-            options={[
-              { value: "", label: "Choose environment…" },
-              ...(envs.data?.items.map((env) => ({
-                value: env.name,
-                label: `${env.name} (${env.tier})`,
-              })) ?? []),
-            ]}
+            onChange={setEnvName}
+            disabled={projectSlug === ""}
+            placeholder="Environment…"
+            aria-label="Environment"
+            options={(envs.data?.items ?? []).map((env) => ({ value: env.name, label: env.name, icon: <TierDot tier={env.tier as Tier} /> }))}
           />
-        )}
-      </div>
-      {envName === "" && <p className="text-muted text-sm">Pick a project and environment to inspect.</p>}
-      {envName !== "" && capabilities.data?.items.length === 0 && (
-        <p className="text-muted text-sm" data-testid="capabilities-empty">
-          No capabilities issued for this environment. That's the normal state — they appear only
-          while a broker-mediated agent run is in flight.
+        </div>
+      }
+    >
+      {envName === "" ? (
+        <EmptyState icon={<Sparkles size={20} />} title="Pick a project and environment" description="Capabilities exist only while a broker-mediated agent run is in flight." className="py-8" />
+      ) : items.length === 0 ? (
+        <p className="px-5 py-6 text-center text-[13px] text-muted" data-testid="capabilities-empty">
+          No capabilities issued for this environment. That's the normal state: they appear only while a broker-mediated agent run is in flight.
+        </p>
+      ) : (
+        <ul>
+          {items.map((c) => {
+            const revoked = Boolean(c.revokedAt);
+            const expired = !revoked && new Date(c.expiresAt).getTime() <= now;
+            const live = !revoked && !expired;
+            return (
+              <li
+                key={c.id}
+                data-capability={c.id}
+                className={cn("flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-bd px-5 py-3 last:border-b-0", !live && "opacity-55")}
+              >
+                <span className="flex min-w-48 items-center gap-2.5">
+                  <Sparkles size={16} className={live ? "text-info" : "text-muted"} />
+                  <span>
+                    <span className={cn("font-medium", revoked && "line-through")}>{nameOf(c.agentIdentityId)}</span>
+                    <span className="block text-xs text-muted">
+                      via {nameOf(c.brokerIdentityId)} · run <span className="font-mono">{c.runId ?? "none"}</span>
+                    </span>
+                  </span>
+                </span>
+                <span className="flex flex-wrap gap-1.5">
+                  {c.items.map((i) => (
+                    <Badge key={i} className="font-mono">
+                      {i}
+                    </Badge>
+                  ))}
+                </span>
+                <span className="font-mono text-[12.5px] text-muted">→ {c.destinations.join(", ")}</span>
+                <span className="flex-1" />
+                {live ? (
+                  <>
+                    <span className="rounded-md border border-bd bg-inset px-2 py-0.5 font-mono text-xs tabular-nums text-fg" title={new Date(c.expiresAt).toLocaleString()}>
+                      expires in {countdown(c.expiresAt, now)}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      data-testid={`revoke-capability-${c.id}`}
+                      onClick={async () => {
+                        const ok = await confirm({
+                          title: "Revoke this capability?",
+                          description: `${nameOf(c.agentIdentityId)} can no longer use ${c.items.join(", ")} in this run. Its very next use is denied.`,
+                          confirmLabel: "Revoke capability",
+                          tone: "danger",
+                        });
+                        if (ok) revoke.mutate(c.id);
+                      }}
+                    >
+                      Revoke
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted">{revoked ? `revoked ${timeAgo(c.revokedAt, now)}` : "expired"}</span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {envName !== "" && items.length > 0 && (
+        <p className="border-t border-bd px-5 py-2.5 text-xs text-muted">
+          {active.length} active · refreshes every 15 seconds
         </p>
       )}
-      {(capabilities.data?.items ?? []).length > 0 && (
-        <table className="w-full text-sm">
-          <tbody>
-            {capabilities.data!.items.map((c) => {
-              const status = statusOf(c);
-              return (
-                <tr key={c.id} data-capability={c.id} className="border-t border-bd align-top">
-                  <td className="py-1.5 whitespace-nowrap">
-                    {nameOf(c.agentIdentityId)}
-                    <span className="text-muted"> via {nameOf(c.brokerIdentityId)}</span>
-                  </td>
-                  <td className="text-muted px-2">
-                    <Mono className="text-xs">{c.items.join(", ")}</Mono>
-                    <span className="mx-1">→</span>
-                    <Mono className="text-xs">{c.destinations.join(", ")}</Mono>
-                  </td>
-                  <td className="text-muted whitespace-nowrap px-2">
-                    {c.runId ?? "—"} · expires {new Date(c.expiresAt).toLocaleTimeString()}
-                  </td>
-                  <td className="text-right whitespace-nowrap">
-                    {status === "active" ? (
-                      <Button
-                        variant="danger"
-                        data-testid={`revoke-capability-${c.id}`}
-                        onClick={() => revoke.mutate(c.id)}
-                      >
-                        Revoke
-                      </Button>
-                    ) : (
-                      <span className={cn("text-xs", status === "revoked" ? "text-deny" : "text-muted")}>
-                        {status}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      {revoke.error && <p className="text-deny text-sm mt-2">{String(revoke.error)}</p>}
-    </Card>
-  );
-}
-
-function RequirementsSection({ org }: { org: string }) {
-  const { api } = useSession();
-  const qc = useQueryClient();
-  const reqs = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org) });
-  const [tier, setTier] = useState<Tier>("production");
-  const [tailnet, setTailnet] = useState("");
-  const [tags, setTags] = useState("");
-  const create = useMutation({
-    mutationFn: () =>
-      api.createTailnetRequirement(org, {
-        target: { kind: "tier", tier },
-        selector: { tailnet, tags: tags.split(",").map((t) => t.trim()).filter(Boolean) },
-      }),
-    onSuccess: () => {
-      setTailnet("");
-      setTags("");
-      void qc.invalidateQueries({ queryKey: ["requirements", org] });
-    },
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteRequirement(org, id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["requirements", org] }),
-  });
-  // In-place edit (ADR-0029): tier and selector are editable; loosening is
-  // exactly as audited as tightening.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [editTier, setEditTier] = useState<Tier>("production");
-  const [editTailnet, setEditTailnet] = useState("");
-  const [editTags, setEditTags] = useState("");
-  const update = useMutation({
-    mutationFn: (req: { id: string; version: number }) =>
-      api.updateRequirement(org, req.id, {
-        expectedVersion: req.version,
-        target: { kind: "tier", tier: editTier },
-        selector: { tailnet: editTailnet, tags: editTags.split(",").map((t) => t.trim()).filter(Boolean) },
-      }),
-    onSuccess: () => {
-      setEditing(null);
-      void qc.invalidateQueries({ queryKey: ["requirements", org] });
-    },
-  });
-
-  return (
-    <Card data-testid="requirements-section">
-      <h2 className="font-medium mb-1 flex items-center gap-1.5">
-        Tailnet requirements
-        <InfoTip text="Requirements narrow where a request may come from — e.g. production secrets only from a device on your tailnet carrying certain tags. They never add access on top of Grants." />
-      </h2>
-      <p className="text-muted text-sm mb-3">
-        Restrictive, never permissive: a requirement narrows where secret retrieval may happen (a
-        verified tailnet peer), on top of Grants — it can only take access away.
-      </p>
-      <div className="flex flex-wrap gap-2 items-center mb-2">
-        <span className="text-sm text-muted">Require tailnet for tier</span>
-        <Select
-          value={tier}
-          onChange={(v) => setTier(v as Tier)}
-          aria-label="Tier the requirement applies to"
-          options={TIERS.map((t) => ({ value: t, label: t }))}
-        />
-        <Input
-          data-testid="req-tailnet"
-          placeholder="example.ts.net"
-          value={tailnet}
-          onChange={(e) => setTailnet(e.target.value)}
-        />
-        <Input
-          data-testid="req-tags"
-          placeholder="tag:prod,tag:deploy"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-        />
-        <Button
-          data-testid="create-requirement"
-          disabled={!tailnet || !tags.trim() || create.isPending}
-          onClick={() => create.mutate()}
-        >
-          Add requirement
-        </Button>
-      </div>
-      {create.error && <p className="text-deny text-sm mb-2">{String(create.error)}</p>}
-      {reqs.data?.items.length === 0 && <p className="text-muted text-sm">None — retrieval is governed by Grants alone.</p>}
-      {(reqs.data?.items ?? []).map((r) => {
-        const req = r as {
-          id: string;
-          version: number;
-          target: { kind: string; tier?: Tier };
-          selector: { tailnet: string; tags?: string[] };
-        };
-        return (
-          <div key={req.id} data-requirement={req.id} className="border-t border-bd py-1.5 text-sm">
-            <div className="flex items-center gap-2">
-              {req.target.tier ? <TierChip tier={req.target.tier} /> : <span>{req.target.kind}</span>}
-              <Mono>{req.selector.tailnet}</Mono>
-              <span className="text-muted">{(req.selector.tags ?? []).join(", ")}</span>
-              <span className="flex-1" />
-              <Button
-                variant="ghost"
-                data-testid={`edit-requirement-${req.id}`}
-                onClick={() => {
-                  setEditing(editing === req.id ? null : req.id);
-                  setEditTier(req.target.tier ?? "production");
-                  setEditTailnet(req.selector.tailnet);
-                  setEditTags((req.selector.tags ?? []).join(","));
-                }}
-              >
-                {editing === req.id ? "Cancel" : "Edit"}
-              </Button>
-              <Button variant="danger" onClick={() => remove.mutate(req.id)}>
-                Remove
-              </Button>
-            </div>
-            {editing === req.id && (
-              <div className="mt-2 flex flex-wrap gap-2 items-center">
-                <Select
-                  value={editTier}
-                  onChange={(v) => setEditTier(v as Tier)}
-                  aria-label="Edited tier"
-                  options={TIERS.map((t) => ({ value: t, label: t }))}
-                />
-                <Input value={editTailnet} onChange={(e) => setEditTailnet(e.target.value)} />
-                <Input value={editTags} onChange={(e) => setEditTags(e.target.value)} />
-                <Button
-                  data-testid={`save-requirement-${req.id}`}
-                  disabled={!editTailnet || !editTags.trim() || update.isPending}
-                  onClick={() => update.mutate({ id: req.id, version: req.version })}
-                >
-                  Save
-                </Button>
-                {update.error && <p className="text-deny text-sm">{String(update.error)}</p>}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </Card>
+    </SectionCard>
   );
 }

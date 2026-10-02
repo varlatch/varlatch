@@ -3,7 +3,7 @@
 /**
  * Live dashboard E2E: enroll a passkey through the dashboard origin, then
  * verify the two-backend client — /v1 views (orgs, projects, environments,
- * validation) and the reactive Convex audit mirror. Usage:
+ * environment health) and the reactive Convex audit mirror. Usage:
  *   node scripts/e2e-web.mjs <enroll-url-on-dashboard-origin>
  */
 import { chromium } from "playwright";
@@ -55,26 +55,32 @@ await page.waitForSelector('[data-testid="whoami"]', { timeout: 20000 });
 // The footer shows the profile display name; the identity id lives in `title`.
 check("session resume + whoami", /Signed in as idn_/.test(await page.getAttribute('[data-testid="whoami"]', "title")));
 check("org deep link route", /\/o\/.+\/projects/.test(page.url()), page.url());
-await page.waitForSelector('[data-testid="org-switcher"]', { timeout: 10000 });
-const orgName = await page.textContent('[data-testid="org-switcher"] option');
+await page.waitForSelector('[data-testid="org-switcher-name"]', { timeout: 10000 });
+// The menu button names the current organization once /v1 has answered.
+const orgName = await page
+  .waitForFunction(() => {
+    const t = document.querySelector('[data-testid="org-switcher-name"]')?.textContent?.trim();
+    return t && t !== "…" ? t : null;
+  }, null, { timeout: 10000 })
+  .then((h) => h.jsonValue(), () => null);
 check("org switcher renders", Boolean(orgName), orgName ?? "");
-await page.waitForSelector("table td", { timeout: 10000 });
+await page.waitForSelector('[data-testid="project-row"]', { timeout: 10000 });
 
-// 3. Validation button drives POST /v1 :validate (wait out the env fetch).
-const validateButton = page.locator("button", { hasText: "validate" }).first();
+// 3. Each project row shows environment health from /v1 metadata (active
+//    contract + effective configuration), without a click.
 try {
-  await validateButton.waitFor({ timeout: 15000 });
-  await validateButton.click();
-  await page.waitForSelector(".allow, .deny", { timeout: 10000 });
-  check("environment validation renders a verdict", true);
+  await page.waitForSelector('[data-testid="project-row"] [data-health="ok"], [data-testid="project-row"] [data-health="missing"]', {
+    timeout: 15000,
+  });
+  check("environment health renders a verdict", true);
 } catch (err) {
-  check("environment validation renders a verdict", false, String(err).slice(0, 80));
+  check("environment health renders a verdict", false, String(err).slice(0, 80));
 }
 
 // 4. The reactive audit feed populates from the Convex mirror (Audit route).
 await page.click('a[href$="/audit"]');
-await page.waitForSelector('[data-testid="audit-feed"] tbody tr', { timeout: 30000 });
-const rows = await page.locator('[data-testid="audit-feed"] tbody tr').count();
+await page.waitForSelector('[data-testid="audit-feed"] [data-audit-row]', { timeout: 30000 });
+const rows = await page.locator('[data-testid="audit-feed"] [data-audit-row]').count();
 check("reactive audit mirror shows events", rows > 0, `${rows} rows`);
 
 await browser.close();

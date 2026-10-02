@@ -1,99 +1,126 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useState, type ReactNode } from "react";
-import { BookOpen, ChevronDown, ChevronRight } from "lucide-react";
-import { Card, Mono, cn } from "../../components/ui";
+import React, { useEffect, useState } from "react";
+import { ArrowRight, Bot, BookOpen, ChevronDown, CircleMinus, KeyRound, ScrollText, ShieldCheck, User, Users, type LucideIcon } from "lucide-react";
+import { cn } from "../../components/ui";
+
+const SEEN_KEY = "varlatch:access-explainer-seen";
 
 /**
- * Collapsible plain-language walkthrough of the access model:
- * identity → (roles / groups / teams) → grants → evaluation, consistent with
- * ADR-0015 (authorization), ADR-0028 (roles/groups/teams), ADR-0029 (updates),
- * ADR-0022 (broker capabilities), and ADR-0014 (tailnet requirements).
+ * The access model at a glance: who → bundles → grants → every request →
+ * audit, with requirements and capabilities hanging off the request check
+ * as narrowing-only mechanisms. Open on the first visit, collapsed after.
  */
 export function HowAccessWorks() {
-  const [open, setOpen] = useState(false);
+  // Open on the very first visit only; after that it starts collapsed.
+  const [open, setOpen] = useState(() => localStorage.getItem(SEEN_KEY) !== "1");
+  useEffect(() => localStorage.setItem(SEEN_KEY, "1"), []);
+  const toggle = () => setOpen((v) => !v);
   return (
-    <Card data-testid="how-access-works" className="p-0 overflow-hidden">
+    <section data-testid="how-access-works" className="mb-6 overflow-hidden rounded-xl border border-bd bg-raised">
       <button
         type="button"
         data-testid="how-access-works-toggle"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full cursor-pointer items-center gap-2 px-4 py-3 text-left text-sm font-medium hover:bg-inset/40"
+        onClick={toggle}
+        className="flex w-full cursor-pointer items-center gap-3 px-5 py-3.5 text-left hover:bg-hover/50"
       >
-        <BookOpen size={15} className="text-accent" aria-hidden="true" />
-        How access works
-        <span className="font-normal text-muted">— the model in five steps</span>
+        <BookOpen size={17} className="text-accent" aria-hidden="true" />
+        <span className="font-semibold">How access works</span>
+        {!open && <span className="text-[13px] text-muted">The model in five steps</span>}
         <span className="flex-1" />
-        {open ? (
-          <ChevronDown size={15} className="text-muted" aria-hidden="true" />
-        ) : (
-          <ChevronRight size={15} className="text-muted" aria-hidden="true" />
-        )}
+        <span className="inline-flex items-center gap-1 text-[13px] text-muted">
+          {open ? "Hide" : "Show"}
+          <ChevronDown size={15} className={cn("transition-transform", open && "rotate-180")} />
+        </span>
       </button>
       {open && (
-        <div className="border-t border-bd px-4 py-4 text-sm space-y-4">
-          <Step n={1} title="Everything starts default-deny">
-            Nobody — human or machine — can do anything until a grant says so. There are no
-            implicit permissions to hunt for: if it isn't granted, it's denied. That makes the
-            Grants tab the complete, readable answer to "who can do what?".
-          </Step>
-          <Step n={2} title="Identities are who; kinds say how they sign in">
-            An <b>identity</b> is anything that can act: a person (signs in with a passkey; no
-            passwords exist) or a machine (a CI job, server, broker, or AI agent that presents a
-            token or federates via OIDC). Being an identity by itself conveys zero access — it
-            only answers "who is asking?".
-          </Step>
-          <Step n={3} title="Grants are the only source of permission">
-            A <b>grant</b> is one sentence: <i>subject</i> (an identity, or a group/team of
-            identities) may perform <i>these actions</i> (picked directly, via a preset shortcut,
-            or via a reusable role) within <i>this scope</i> (whole organization, one project, a
-            tier, specific environments, or everything a team owns). Grants are additive — each
-            one only ever adds ability, and revoking one takes effect on the very next request.
-          </Step>
-          <Step n={4} title="Roles, groups, and teams keep grants tidy">
-            These three exist so you write fewer grants, not to add power of their own.
-            A <b>role</b> names a reusable bundle of actions (edit the role, every grant citing
-            it follows). A <b>group</b> collects identities so one grant covers all members.
-            A <b>team</b> is a group that also owns projects, so one grant can say "the backend
-            team, on the backend team's projects". Membership changes never require touching
-            grants.
-          </Step>
-          <Step n={5} title="Every request is evaluated fresh">
-            On each request the server expands the caller's groups/teams and roles into the full
-            set of applicable grants and checks the requested action against them. Two mechanisms
-            can then only <em>narrow</em> the outcome: <b>requirements</b> (e.g. "production
-            secrets only from a verified tailnet device") subtract access based on where the
-            request comes from, and <b>broker capabilities</b> are short-lived run receipts for
-            AI agents — the agent's own <Mono>secret.use</Mono> grant is still re-checked on
-            every exercise. Every decision, allow or deny, lands in the audit log.
-          </Step>
-          <p className="text-muted text-xs">
-            Rule of thumb: <b>Members / Machines</b> answer "who exists", <b>Roles &amp; teams</b>
-            {" "}answer "how do I avoid repeating myself", <b>Grants</b> answer "who may do what,
-            where", and <b>Advanced</b> narrows or observes — it never grants.
-          </p>
+        <div className="border-t border-bd px-5 pb-5 pt-5">
+          <div className="grid grid-cols-2 items-stretch gap-2 sm:grid-cols-3 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
+            <Node tone="info" title="Who" icons={[User, Bot]} text="People and machines. Machines start with zero access; people get their role's built-in grants." />
+            <Arrow />
+            <Node tone="warn" title="Bundles" icons={[Users]} text="Roles, groups and teams. Fewer grants, no extra power." />
+            <Arrow />
+            <Node tone="accent" title="Grants" icons={[KeyRound]} text="Who, what and where. Explicit, or built into the Admin and Member roles." highlight />
+            <Arrow />
+            <Node tone="danger" title="Every request" icons={[ShieldCheck]} text="Checked fresh. Revoking takes effect on the next request." />
+            <Arrow />
+            <Node tone="info" title="Audit" icons={[ScrollText]} text="Every allow and every deny is recorded." />
+          </div>
+          <div className="mt-2 grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto_1fr_auto_1fr_auto_1fr]">
+            <div className="hidden lg:col-span-6 lg:block" />
+            <div className="flex flex-col items-center lg:col-span-1">
+              <span className="hidden h-4 w-px border-l border-dashed border-bd-strong lg:block" aria-hidden="true" />
+              <div className="flex items-center gap-2.5 rounded-lg border border-dashed border-bd-strong px-3 py-2 text-[12.5px]">
+                <CircleMinus size={15} className="shrink-0 text-muted" />
+                <span>
+                  <span className="font-medium text-fg">Requirements and capabilities</span>
+                  <span className="block text-muted">can only narrow access, never grant it</span>
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap items-center gap-2 rounded-lg border border-bd bg-inset px-4 py-3 text-[13px] text-muted">
+            <span className="mr-1">Example:</span>
+            <Chip tone="info">github-actions-api</Chip>
+            can
+            <Chip tone="accent">Read config + use secrets</Chip>
+            on
+            <Chip tone="warn">api</Chip>
+            in
+            <Chip tone="danger">all environments</Chip>
+          </div>
         </div>
       )}
-    </Card>
+    </section>
   );
 }
 
-function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {
+const TONES = {
+  info: "border-info/50 text-info",
+  warn: "border-warn/50 text-warn",
+  accent: "border-accent/60 text-accent",
+  danger: "border-tier-production/50 text-tier-production",
+} as const;
+
+function Node({
+  title,
+  text,
+  icons,
+  tone,
+  highlight,
+}: {
+  title: string;
+  text: string;
+  icons: LucideIcon[];
+  tone: keyof typeof TONES;
+  highlight?: boolean;
+}) {
   return (
-    <div className="flex gap-3">
-      <span
-        aria-hidden="true"
-        className={cn(
-          "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
-          "border border-accent/50 text-accent text-[11px] font-semibold",
-        )}
-      >
-        {n}
+    <div
+      className={cn(
+        "flex flex-col items-center rounded-xl border bg-raised px-4 py-4 text-center",
+        highlight ? "border-accent/70 bg-accent/[0.05] ring-1 ring-accent/30" : "border-bd",
+      )}
+    >
+      <span className={cn("mb-2 flex items-center gap-2", TONES[tone].split(" ").pop())}>
+        {icons.map((Icon, i) => (
+          <Icon key={i} size={22} />
+        ))}
       </span>
-      <div>
-        <p className="font-medium mb-0.5">{title}</p>
-        <p className="text-muted">{children}</p>
-      </div>
+      <span className="font-semibold text-fg">{title}</span>
+      <span className="mt-1 text-[12.5px] leading-snug text-muted">{text}</span>
     </div>
   );
+}
+
+function Arrow() {
+  return (
+    <div className="hidden items-center justify-center text-subtle lg:flex" aria-hidden="true">
+      <ArrowRight size={18} />
+    </div>
+  );
+}
+
+function Chip({ tone, children }: { tone: keyof typeof TONES; children: React.ReactNode }) {
+  return <span className={cn("rounded-md border bg-raised px-2 py-0.5 font-mono text-[12.5px]", TONES[tone])}>{children}</span>;
 }

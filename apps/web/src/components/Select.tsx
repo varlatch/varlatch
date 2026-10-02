@@ -2,25 +2,25 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "./ui";
+import { Popover } from "./Popover";
 
 /**
- * Accessible custom listbox replacing native `<select>` (UI overhaul phase 1).
+ * Accessible custom listbox replacing native `<select>`.
  *
- * A visually-hidden native `<select>` is kept in sync with the custom control:
+ * A visually hidden native `<select>` is kept in sync with the custom control:
  * Playwright's `selectOption` (used throughout apps/web/scripts/e2e-*.mjs)
  * keeps driving `[data-testid=…]` / bare `select` locators unchanged, and the
  * options' text stays readable for tests that assert on `option` contents.
- * The native element is 1×1, transparent and not in the tab order, so users
- * only ever see the token-styled custom control — no browser blue anywhere.
+ * The native element is 1×1, transparent and not in the tab order.
  */
 
 export type SelectOption = {
   value: string;
   label: string;
   /** Optional muted second line under the label. */
-  description?: string;
-  icon?: React.ReactNode;
-  disabled?: boolean;
+  description?: string | undefined;
+  icon?: React.ReactNode | undefined;
+  disabled?: boolean | undefined;
 };
 
 export function Select({
@@ -31,6 +31,8 @@ export function Select({
   disabled,
   className,
   buttonClassName,
+  size = "md",
+  prefix,
   "data-testid": testId,
   "aria-label": ariaLabel,
   id,
@@ -42,12 +44,16 @@ export function Select({
   disabled?: boolean | undefined;
   className?: string | undefined;
   buttonClassName?: string | undefined;
+  size?: "sm" | "md" | undefined;
+  /** Muted label inside the trigger before the value, e.g. "Decision:" on a facet chip. */
+  prefix?: React.ReactNode | undefined;
   "data-testid"?: string | undefined;
   "aria-label"?: string | undefined;
   id?: string | undefined;
 }) {
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const selectedIndex = options.findIndex((o) => o.value === (value ?? ""));
@@ -55,44 +61,35 @@ export function Select({
   const typeahead = useRef<{ buffer: string; at: number }>({ buffer: "", at: 0 });
 
   const selected = selectedIndex >= 0 ? options[selectedIndex] : undefined;
-  // The hidden native select must always reflect `value`; when the current
-  // value (or an unset one behind a placeholder) has no matching option we add
-  // a hidden sentinel so the native control can't silently show option #0.
   const needsSentinel = selectedIndex < 0;
 
-  const close = () => {
-    setOpen(false);
-  };
-
+  const close = () => setOpen(false);
   const openList = (at?: number) => {
     if (disabled) return;
     setActiveIndex(at ?? (selectedIndex >= 0 ? selectedIndex : firstEnabled(options)));
     setOpen(true);
   };
-
   const commit = (index: number) => {
     const opt = options[index];
     if (!opt || opt.disabled) return;
     onChange?.(opt.value);
     close();
+    triggerRef.current?.focus();
   };
 
-  // Close on click/focus outside.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) close();
+      const t = e.target as Node;
+      if (!rootRef.current?.contains(t) && !listRef.current?.contains(t)) close();
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
-  // Keep the active option scrolled into view.
   useEffect(() => {
     if (!open) return;
-    listRef.current
-      ?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
-      ?.scrollIntoView({ block: "nearest" });
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)?.scrollIntoView({ block: "nearest" });
   }, [open, activeIndex]);
 
   const move = (delta: number) => {
@@ -138,6 +135,7 @@ export function Select({
         break;
       case "Escape":
         e.preventDefault();
+        e.stopPropagation();
         close();
         break;
       case "Tab":
@@ -149,9 +147,7 @@ export function Select({
           const t = typeahead.current;
           t.buffer = (now - t.at > 500 ? "" : t.buffer) + e.key.toLowerCase();
           t.at = now;
-          const hit = options.findIndex(
-            (o) => !o.disabled && o.label.toLowerCase().startsWith(t.buffer),
-          );
+          const hit = options.findIndex((o) => !o.disabled && o.label.toLowerCase().startsWith(t.buffer));
           if (hit >= 0) setActiveIndex(hit);
         }
       }
@@ -160,7 +156,7 @@ export function Select({
 
   return (
     <div ref={rootRef} className={cn("relative inline-block text-left", className)}>
-      {/* Hidden native fallback — Playwright drives this; users never see it. */}
+      {/* Hidden native fallback: Playwright drives this; users never see it. */}
       <select
         data-testid={testId}
         aria-hidden="true"
@@ -175,10 +171,10 @@ export function Select({
             {o.label}
           </option>
         ))}
-        {/* Last, so tests reading the first option's text see a real option. */}
         {needsSentinel && options.length > 0 && <option value={value ?? ""} hidden></option>}
       </select>
       <button
+        ref={triggerRef}
         type="button"
         id={id}
         data-testid={testId ? `${testId}-trigger` : undefined}
@@ -192,27 +188,29 @@ export function Select({
         onClick={() => (open ? close() : openList())}
         onKeyDown={onKeyDown}
         className={cn(
-          "flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-bd bg-inset px-2 py-1.5 text-left text-sm text-fg",
-          "focus:outline-none focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1",
-          disabled && "cursor-not-allowed opacity-40",
+          "flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-bd bg-inset text-left text-sm text-fg transition-colors hover:border-bd-strong",
+          size === "sm" ? "h-7 px-2 text-xs" : "h-8 px-2.5",
+          open && "border-accent ring-2 ring-accent/20",
+          disabled && "cursor-not-allowed opacity-45",
           buttonClassName,
         )}
       >
         <span className="flex min-w-0 items-center gap-2">
-          {selected?.icon && <span className="shrink-0 text-muted">{selected.icon}</span>}
-          <span className={cn("truncate", !selected && "text-muted")}>
+          {prefix && <span className="-mr-0.5 shrink-0 text-muted">{prefix}</span>}
+          {selected?.icon && <span className="flex shrink-0 items-center text-muted">{selected.icon}</span>}
+          <span className={cn("truncate", !selected && "text-subtle")}>
             {selected ? selected.label : (placeholder ?? "Select…")}
           </span>
         </span>
         <ChevronDown size={14} className="shrink-0 text-muted" aria-hidden="true" />
       </button>
-      {open && (
+      <Popover anchor={triggerRef} open={open} matchWidth>
         <ul
           ref={listRef}
           id={listboxId}
           role="listbox"
           aria-label={ariaLabel}
-          className="absolute left-0 top-full z-40 mt-1 max-h-64 w-full min-w-max overflow-y-auto rounded-md border border-bd bg-raised py-1 shadow-lg"
+          className="max-h-72 min-w-max animate-pop-in overflow-y-auto rounded-lg border border-bd bg-raised p-1 shadow-pop"
         >
           {options.map((o, i) => (
             <li
@@ -222,29 +220,27 @@ export function Select({
               role="option"
               aria-selected={i === selectedIndex}
               aria-disabled={o.disabled || undefined}
-              onMouseEnter={() => !o.disabled && setActiveIndex(i)}
+              onMouseMove={() => !o.disabled && setActiveIndex(i)}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => commit(i)}
               className={cn(
-                "flex cursor-pointer items-start gap-2 px-2.5 py-1.5 text-sm",
-                i === activeIndex && "bg-accent/10",
-                o.disabled && "cursor-not-allowed opacity-40",
+                "flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm",
+                i === activeIndex && "bg-hover",
+                o.disabled && "cursor-not-allowed opacity-45",
               )}
             >
-              <span className="flex w-4 shrink-0 items-center pt-0.5 text-accent">
-                {i === selectedIndex && <Check size={13} aria-hidden="true" />}
-              </span>
-              {o.icon && <span className="shrink-0 pt-0.5 text-muted">{o.icon}</span>}
-              <span className="min-w-0">
+              {o.icon && <span className="flex shrink-0 items-center pt-0.5 text-muted">{o.icon}</span>}
+              <span className="min-w-0 flex-1">
                 <span className="block truncate">{o.label}</span>
-                {o.description && (
-                  <span className="block text-xs text-muted">{o.description}</span>
-                )}
+                {o.description && <span className="block max-w-80 text-xs text-muted">{o.description}</span>}
+              </span>
+              <span className="flex w-4 shrink-0 items-center pt-0.5 text-accent">
+                {i === selectedIndex && <Check size={14} aria-hidden="true" />}
               </span>
             </li>
           ))}
         </ul>
-      )}
+      </Popover>
     </div>
   );
 }
@@ -260,48 +256,76 @@ function lastEnabled(options: SelectOption[]): number {
 export type MenuItem = {
   label: React.ReactNode;
   onSelect: () => void;
-  danger?: boolean;
-  icon?: React.ReactNode;
-  "data-testid"?: string;
+  danger?: boolean | undefined;
+  disabled?: boolean | undefined;
+  icon?: React.ReactNode | undefined;
+  /** Muted trailing text, e.g. a shortcut. */
+  hint?: React.ReactNode | undefined;
+  /** Draw a divider above this item. */
+  separatorBefore?: boolean | undefined;
+  "data-testid"?: string | undefined;
 };
 
-/** Trigger + items dropdown for row/entity actions (token palette only). */
+/** Trigger + items dropdown for row and entity actions. */
 export function Menu({
   items,
   label,
   children,
   className,
   buttonClassName,
+  align = "end",
+  header,
+  width = "w-52",
   "data-testid": testId,
 }: {
   items: MenuItem[];
   /** Accessible name for the trigger. */
   label: string;
-  /** Trigger contents; defaults to a horizontal-dots glyph via caller. */
+  /** Trigger contents. */
   children?: React.ReactNode | undefined;
   className?: string | undefined;
   buttonClassName?: string | undefined;
+  align?: "start" | "end" | undefined;
+  /** Optional non-interactive content above the items. */
+  header?: React.ReactNode | undefined;
+  width?: string | undefined;
   "data-testid"?: string | undefined;
 }) {
   const menuId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const enabled = items.map((it, i) => (it.disabled ? -1 : i)).filter((i) => i >= 0);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (!rootRef.current?.contains(t) && !listRef.current?.contains(t)) setOpen(false);
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
 
+  const step = (delta: number) => {
+    const pos = enabled.indexOf(activeIndex);
+    const next = enabled[Math.min(enabled.length - 1, Math.max(0, pos + delta))];
+    if (next !== undefined) setActiveIndex(next);
+  };
+  const choose = (i: number) => {
+    const item = items[i];
+    if (!item || item.disabled) return;
+    setOpen(false);
+    item.onSelect();
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (!open) {
       if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
         e.preventDefault();
-        setActiveIndex(0);
+        setActiveIndex(enabled[0] ?? 0);
         setOpen(true);
       }
       return;
@@ -309,32 +333,28 @@ export function Menu({
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        setActiveIndex((i) => Math.min(items.length - 1, i + 1));
+        step(1);
         break;
       case "ArrowUp":
         e.preventDefault();
-        setActiveIndex((i) => Math.max(0, i - 1));
+        step(-1);
         break;
       case "Home":
         e.preventDefault();
-        setActiveIndex(0);
+        setActiveIndex(enabled[0] ?? 0);
         break;
       case "End":
         e.preventDefault();
-        setActiveIndex(items.length - 1);
+        setActiveIndex(enabled[enabled.length - 1] ?? 0);
         break;
       case "Enter":
-      case " ": {
+      case " ":
         e.preventDefault();
-        const item = items[activeIndex];
-        if (item) {
-          setOpen(false);
-          item.onSelect();
-        }
+        choose(activeIndex);
         break;
-      }
       case "Escape":
         e.preventDefault();
+        e.stopPropagation();
         setOpen(false);
         break;
       case "Tab":
@@ -346,53 +366,63 @@ export function Menu({
   return (
     <div ref={rootRef} className={cn("relative inline-block", className)}>
       <button
+        ref={triggerRef}
         type="button"
         data-testid={testId}
         aria-label={label}
+        title={label}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setActiveIndex(enabled[0] ?? 0);
+          setOpen((v) => !v);
+        }}
         onKeyDown={onKeyDown}
         className={cn(
-          "cursor-pointer rounded-md p-1 text-muted hover:bg-inset hover:text-fg focus-visible:outline-2 focus-visible:outline-accent",
+          "inline-flex cursor-pointer items-center rounded-md text-muted transition-colors hover:bg-hover hover:text-fg",
+          children === undefined && "size-8 justify-center",
+          open && "bg-hover text-fg",
           buttonClassName,
         )}
       >
         {children ?? "⋯"}
       </button>
-      {open && (
-        <ul
-          id={menuId}
-          role="menu"
-          aria-label={label}
-          className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-bd bg-raised py-1 shadow-lg"
-        >
-          {items.map((item, i) => (
-            <li key={i} role="none">
-              <button
-                type="button"
-                role="menuitem"
-                data-testid={item["data-testid"]}
-                onMouseEnter={() => setActiveIndex(i)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  setOpen(false);
-                  item.onSelect();
-                }}
-                className={cn(
-                  "flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-sm",
-                  i === activeIndex && "bg-inset",
-                  item.danger ? "text-deny" : "text-fg",
-                )}
-              >
-                {item.icon && <span className="shrink-0 text-muted">{item.icon}</span>}
-                {item.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <Popover anchor={triggerRef} open={open} align={align}>
+        <div className={cn("animate-pop-in rounded-lg border border-bd bg-raised p-1 shadow-pop", width)}>
+          {header && <div className="border-b border-bd px-2 pb-2 pt-1 mb-1">{header}</div>}
+          <ul ref={listRef} id={menuId} role="menu" aria-label={label}>
+            {items.map((item, i) => (
+              <li key={i} role="none">
+                {item.separatorBefore && <div role="separator" className="-mx-1 my-1 h-px bg-bd" />}
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={item.disabled}
+                  data-testid={item["data-testid"]}
+                  onMouseMove={() => !item.disabled && setActiveIndex(i)}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => choose(i)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm",
+                    i === activeIndex && !item.disabled && (item.danger ? "bg-deny/10" : "bg-hover"),
+                    item.danger ? "text-deny" : "text-fg",
+                    item.disabled && "cursor-not-allowed opacity-45",
+                  )}
+                >
+                  {item.icon && (
+                    <span className={cn("flex shrink-0 items-center", item.danger ? "text-deny" : "text-muted")}>
+                      {item.icon}
+                    </span>
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                  {item.hint && <span className="shrink-0 text-xs text-muted">{item.hint}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </Popover>
     </div>
   );
 }
