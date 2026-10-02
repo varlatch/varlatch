@@ -112,9 +112,10 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
     const assertion = human.passkey.assert(challenge);
     const results = await Promise.all(Array.from({ length: 8 }, () => client.decide(human.token, started.userCode, "approve", assertion)));
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
-    for (const r of results.filter((r) => r.status !== 200)) expect([403, 404, 409]).toContain(r.status);
     // Losers that arrive after the approval find no pending sign-in for the
-    // code, which counts as a wrong code: seven may lock this identity out.
+    // code, which counts as a wrong code: after five, this identity is locked
+    // out (429) for the rest of the window.
+    for (const r of results.filter((r) => r.status !== 200)) expect([403, 404, 409, 429]).toContain(r.status);
     await db.query("DELETE FROM device_code_attempt_windows");
     // Replayed against a new sign-in of the same human: the challenge belongs to the old one.
     const next = (await client.start()).body;
