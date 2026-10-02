@@ -79,8 +79,8 @@ try {
 
 // 4. The reactive audit feed populates from the Convex mirror (Audit route).
 await page.click('a[href$="/audit"]');
-await page.waitForSelector('[data-testid="audit-feed"] tbody tr', { timeout: 30000 });
-const rows = await page.locator('[data-testid="audit-feed"] tbody tr').count();
+await page.waitForSelector('[data-testid="audit-feed"] [data-audit-row]', { timeout: 30000 });
+const rows = await page.locator('[data-testid="audit-feed"] [data-audit-row]').count();
 check("reactive audit mirror shows events", rows > 0, `${rows} rows`);
 
 await browser.close();

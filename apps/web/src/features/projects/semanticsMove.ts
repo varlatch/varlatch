@@ -54,7 +54,7 @@ export function typeOffer(type: string, version: number | undefined, newest: num
   if (version === undefined) return { enabled: false, reason: `Needs semantics version ${since}.` };
   return {
     enabled: false,
-    reason: `Needs semantics version ${since}. This Contract uses version ${version}: use "Move to the newest rules" above first. Edits keep the version.`,
+    reason: `Needs semantics version ${since}. This Contract uses version ${version}: use "Move to the newest rules" first. Edits keep the version.`,
   };
 }
 
