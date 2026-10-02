@@ -105,10 +105,12 @@ export async function requestDeviceSignIn(
       [input.peer],
     )).rows[0] as { peer: number; total: number };
     if (counts.peer >= DEVICE_SIGN_IN.pendingPerPeer) {
-      throw new DomainError("RATE_LIMITED", `At most ${DEVICE_SIGN_IN.pendingPerPeer} sign-ins may be pending from one address; let one complete or expire`);
+      throw new DomainError("RATE_LIMITED", `At most ${DEVICE_SIGN_IN.pendingPerPeer} sign-ins may be pending from one address; let one complete or expire`, {
+        cap: "pending-per-client",
+      });
     }
     if (counts.total >= DEVICE_SIGN_IN.pendingTotal) {
-      throw new DomainError("RATE_LIMITED", "Too many sign-ins are pending; try again in a few minutes");
+      throw new DomainError("RATE_LIMITED", "Too many sign-ins are pending; try again in a few minutes", { cap: "pending-total" });
     }
     const id = newId("deviceSignIn");
     const deviceCode = randomBytes(32).toString("base64url");

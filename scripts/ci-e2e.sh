@@ -141,25 +141,16 @@ node "$REPO_ROOT"/apps/web/scripts/e2e-device.mjs "$GRANT_D"
 
 echo "--- device sign-in behind the dashboard's nginx: the caller's own address, forged headers ignored"
 WEB_IPS=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$("${COMPOSE[@]}" ps -q varlatch-web)")
-STATUSES=""
-for i in $(seq 1 12); do
-  STATUSES="$STATUSES $(curl -s -o /dev/null -w '%{http_code}' -X POST "${WEB_ORIGIN}/v1/auth/device" \
-    -H 'Content-Type: application/json' -H "X-Forwarded-For: 198.18.0.$i" -d '{}')"
-done
-REQUESTERS=$("${COMPOSE[@]}" exec -T postgres psql -U postgres -d varlatch -Atc "SELECT DISTINCT requester_ip FROM device_sign_ins" </dev/null)
-python3 - "$STATUSES" "$REQUESTERS" "$WEB_IPS" <<'PY'
-import sys
-statuses, requesters, web_ips = sys.argv[1].split(), sys.argv[2].split(), sys.argv[3].split()
-failed = False
-def check(name, ok, detail=""):
-    global failed
-    print(("PASS  " if ok else "FAIL  ") + name + (f" ({detail})" if detail else ""))
-    failed |= not ok
-check("requests with a different forged address each reach one caller's cap of 10 pending", "429" in statuses, " ".join(statuses))
-check("no forged address is recorded as a requester", not any(r.startswith("198.18.") for r in requesters), " ".join(requesters))
-check("the recorded requester is the caller, not the dashboard's nginx", bool(requesters) and not set(requesters) & set(web_ips), f"requesters {requesters}, nginx {web_ips}")
-sys.exit(1 if failed else 0)
-PY
+PROBE_NAME="proxy-probe-$(openssl rand -hex 6)"
+# A known start: no sign-in pending from anyone, so exactly ten probe requests can succeed.
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d varlatch -Atqc \
+  "UPDATE device_sign_ins SET expires_at = clock_timestamp() - interval '1 second' WHERE status = 'pending'" </dev/null
+node "$REPO_ROOT"/apps/web/scripts/e2e-proxy-probe.mjs send "$WEB_ORIGIN" "$PROBE_NAME" 12 > "$E2E_DIR/probe-responses.json"
+"${COMPOSE[@]}" exec -T postgres psql -U postgres -d varlatch -Atc \
+  "SELECT coalesce(json_agg(json_build_object('requesterIp', requester_ip)), '[]') FROM device_sign_ins WHERE requested_name = '$PROBE_NAME'" \
+  </dev/null > "$E2E_DIR/probe-rows.json"
+# shellcheck disable=SC2086 # one argument per nginx address
+node "$REPO_ROOT"/apps/web/scripts/e2e-proxy-probe.mjs check "$E2E_DIR/probe-responses.json" "$E2E_DIR/probe-rows.json" $WEB_IPS
 
 echo "--- client runtime E2E (run --redact, run --export-context, types, scan; bundled CLI)"
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-client-runtime.mjs "$WEB_ORIGIN" "$TOKEN" -- "${COMPOSE[@]}"

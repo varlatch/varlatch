@@ -682,7 +682,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start a device-authorization sign-in (capability auth.device; RFC 8628 adapted): a pending sign-in a person approves in the dashboard at verificationUri by typing userCode. The deviceCode is the CLI's bearer for collecting the credential: keep it private, never show it. Pending sign-ins expire after expiresIn seconds and are capped per peer and in total (RATE_LIMITED). Served only when the server's public URL is HTTPS, or a loopback address (RESOURCE_NOT_FOUND otherwise). Cache-Control no-store. */
+        /** Start a device-authorization sign-in (capability auth.device; RFC 8628 adapted): a pending sign-in a person approves in the dashboard at verificationUri by typing userCode. The deviceCode is the CLI's bearer for collecting the credential: keep it private, never show it. Pending sign-ins expire after expiresIn seconds and are capped per client and in total (RATE_LIMITED with details.cap pending-per-client or pending-total). Served only when the server's public URL is HTTPS, or a loopback address (RESOURCE_NOT_FOUND otherwise). Cache-Control no-store. */
         post: operations["startDeviceSignIn"];
         delete?: never;
         options?: never;

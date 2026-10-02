@@ -81,7 +81,7 @@ describe("requesting a sign-in", () => {
     for (let i = 0; i < 10; i++) expect((await client.start()).status).toBe(201);
     const capped = await client.start();
     expect(capped.status).toBe(429);
-    expect(capped.body.error.code).toBe("RATE_LIMITED");
+    expect(capped.body.error).toMatchObject({ code: "RATE_LIMITED", details: { cap: "pending-per-client" } });
     peer = "198.51.100.1";
     expect((await client.start()).status).toBe(201);
   });
@@ -95,7 +95,7 @@ describe("requesting a sign-in", () => {
     );
     const capped = await client.start();
     expect(capped.status).toBe(429);
-    expect(capped.body.error.code).toBe("RATE_LIMITED");
+    expect(capped.body.error).toMatchObject({ code: "RATE_LIMITED", details: { cap: "pending-total" } });
     await ctx.db.query("UPDATE device_sign_ins SET expires_at = now() - interval '1 second' WHERE id = 'dsi_1'");
     expect((await client.start()).status).toBe(201);
   });
