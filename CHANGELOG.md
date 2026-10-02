@@ -9,12 +9,13 @@ fixes.
 
 ### Coding agents
 
-- **Evaluated with Claude Code 2.1.278 and Codex CLI 0.159.2.** With the
-  instructions this release installs, both passed all 36 cases of
-  Varlatch's agent evaluation (nine tasks, with and without the coding
-  agents' markers) on 2026-10-02, against a local test server, without
-  hooks. This is not a statement about other versions, other coding agents,
-  or the same vendors' editor or cloud agents; see
+- **Evaluated with Claude Code 2.1.278 and Codex CLI 0.159.2.** On
+  2026-10-02, Varlatch's agent evaluation of commit `b61a791` passed all 36
+  cases, 18 for each coding agent (nine tasks, with and without the agents'
+  markers), against a local test server, without hooks. The result belongs
+  to that commit: features added after it are tested separately. It is not
+  a statement about other versions, other coding agents, or the same
+  vendors' editor or cloud agents; see
   [coding agents](docs/reference/coding-agents.md#evaluated-coding-agents).
 - **Assisted mode** for a coding agent driving the CLI with your credential
   (Claude Code, Codex, Cursor, and others). Turn it on with `varlatch
