@@ -114,6 +114,7 @@ varlatch --assisted context --json
 | 1 | Any other failure |
 | 64 | The command line is wrong |
 | 69 | The server cannot be reached, or is in maintenance |
+| 75 | `login --wait`: the sign-in is still waiting for the human's approval |
 | 77 | Not signed in, or denied |
 | 78 | The configuration cannot run as it is |
 

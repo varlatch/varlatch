@@ -159,7 +159,7 @@ export interface IdentityCredential {
   client?: string | null;
 }
 
-export type { AuditEventFilters, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+export type { AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",

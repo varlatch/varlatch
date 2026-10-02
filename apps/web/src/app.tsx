@@ -41,6 +41,7 @@ const AccountLayout = lazy(() => import("./features/account/AccountLayout").then
 const ProfilePage = lazy(() => import("./features/settings/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 const SecurityPage = lazy(() => import("./features/account/SecurityPage").then((m) => ({ default: m.SecurityPage })));
 const SessionsPage = lazy(() => import("./features/account/SessionsPage").then((m) => ({ default: m.SessionsPage })));
+const DevicePage = lazy(() => import("./features/device/DevicePage").then((m) => ({ default: m.DevicePage })));
 const InstallationPage = lazy(() =>
   import("./features/installation/InstallationPage").then((m) => ({ default: m.InstallationPage })),
 );
@@ -116,6 +117,8 @@ const router = createBrowserRouter([
   // Old locations of the account pages.
   { path: "/credentials", element: <Navigate to="/account/sessions" replace /> },
   { path: "/profile", element: <Navigate to="/account" replace /> },
+  // Device sign-in's verification page: a CLI's code is approved here (outside the shell).
+  { path: "/device", element: <Lazy />, children: [{ index: true, element: <DevicePage /> }] },
   {
     element: <Shell />,
     children: [

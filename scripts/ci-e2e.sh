@@ -135,6 +135,10 @@ echo "--- CLI browser-handoff login E2E"
 GRANT2=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-cli-login.mjs "$GRANT2"
 
+echo "--- device sign-in E2E (login --start/--wait, dashboard /device approval with a passkey)"
+GRANT_D=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
+node "$REPO_ROOT"/apps/web/scripts/e2e-device.mjs "$GRANT_D"
+
 echo "--- client runtime E2E (run --redact, run --export-context, types, scan; bundled CLI)"
 node "$REPO_ROOT"/services/varlatchd/scripts/e2e-client-runtime.mjs "$WEB_ORIGIN" "$TOKEN" -- "${COMPOSE[@]}"
 

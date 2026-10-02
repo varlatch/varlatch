@@ -231,6 +231,43 @@ fixes.
   option, a missing option value, or an extra argument with status 64,
   before writing anything; before, `init` ignored an option it did not know.
 
+### Sign-in
+
+- **Device sign-in.** `varlatch login --server <url> --start` prints an
+  address and a short code and exits. Open the address in a browser on any
+  device, sign in with your passkey, enter the code, check who asks, and
+  approve with your passkey again (or deny). `varlatch login --server <url>
+  --wait` then collects the credential and stores it like any login: 12
+  hours by default, up to 24 with `--ttl` when starting. It works from SSH
+  sessions, containers, and hosts without a browser, and lets a coding agent
+  start a sign-in and finish it after you approve, without a command that
+  blocks. The code lasts 10 minutes and completes one sign-in. `--wait`
+  waits up to 60 seconds (`--timeout`, at most 600) and **exits 75** when
+  the sign-in is still waiting for approval, keeping it for the next
+  `--wait`; it exits 77 when the sign-in was denied, expired, or already
+  collected (naming that credential, to revoke). `--json` prints the
+  address, the code, and the expiry, or the state. The sign-in's private
+  code lives only in `pending-sign-ins.json` in the CLI's configuration
+  directory, readable only by you, and is never printed.
+- Device sign-in runs only over HTTPS, or to a loopback address in local
+  development: `--start` and `--wait` refuse an `http://` server before
+  sending anything (64), and follow no redirect.
+- In assisted mode, `varlatch --assisted login --server <url>` with no
+  sign-in method starts a device sign-in, since a coding agent cannot wait
+  for the browser; `--token-stdin`, `--token`, and `--oidc` work as before.
+  The skill and the `AGENTS.md` block tell the agent to give you the
+  address and the code, wait until you say you approved, and only then run
+  `--wait`.
+- **Behaviour change:** inside an agent-safe run, every `varlatch login`
+  (in the browser, `--token`, `--token-stdin`, `--oidc`, `--start`,
+  `--wait`) exits 64 before sending anything or touching the sign-in state.
+  The run's read access comes from `--agent-metadata`.
+- **Behaviour change:** `varlatch login` checks its options strictly: an
+  unknown option, or two sign-in methods, exit 64. Before, an unknown
+  option was ignored.
+- The agent evaluation of commit `b61a791` (under Coding agents) predates
+  device sign-in and does not cover it.
+
 ### Dashboard
 
 - **Redesigned dashboard.** A new design system in both themes (Inter and
@@ -250,6 +287,10 @@ fixes.
   a managed contract is edited like a spreadsheet and published from a diff.
 - The audit log reads as sentences grouped by day, with names instead of
   ids, filters on the server, and a detail panel that explains decisions.
+- The `/device` page approves a CLI's device sign-in: type the code the CLI
+  shows (it is never taken from the link), see the address and client that
+  asked and how long the credential lasts, then approve with your passkey
+  or deny.
 - Access is organized as People, Machines, Roles and teams, Grants (written
   as sentences, built with a sentence builder) and Advanced. Pending
   invitations can be renewed or revoked, and organization roles are shown
@@ -381,6 +422,27 @@ fixes.
   `varlatch-cli/<version> (<platform>; <arch>)` as its User-Agent when it
   exchanges the browser session; the SDK takes a `userAgent` option.
   Database migration 24 adds the column.
+- Device sign-in (capability `auth.device`, advertised when the public URL
+  is HTTPS or a loopback address). For the CLI, unauthenticated: `POST
+  /v1/auth/device` starts a sign-in (a private device code, a user code,
+  the verification address), and `POST /v1/auth/device/token` polls it:
+  `AUTHORIZATION_PENDING` (428), `SLOW_DOWN` (429, the interval grows by 5
+  seconds), `ACCESS_DENIED` (403), `EXPIRED` (410), the CLI credential once
+  (201), then `CONSUMED` (410, with the credential's id, never its token).
+  For the dashboard, with a person's browser session bearer: `POST
+  /v1/auth/device/lookup` returns the pending sign-in a typed code belongs
+  to and a fresh passkey challenge, bound to that sign-in, the person, and
+  their session, single use; `POST /v1/auth/device/approve` denies, or
+  approves with a passkey assertion over that challenge. Wrong codes are
+  limited per person (5), per address (20), and in total (100) every 10
+  minutes, in the database, so a new session or a restart does not reset
+  them; at most 10 sign-ins may be pending per address and 1,000 in total.
+  Audit events: `authentication.device_requested`, `_approved`, `_denied`,
+  `_collected`, `_code_rejected`, and `_code_locked`. SDK:
+  `startDeviceSignIn()`, `pollDeviceSignIn()` (one request, no redirect
+  followed), `lookupDeviceSignIn()`, `decideDeviceSignIn()`. Database
+  migration 25 adds the sign-ins, their challenges, the attempt counters,
+  and the session a browser bearer was minted from.
 
 ### Fixes
 

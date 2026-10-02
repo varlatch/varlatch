@@ -295,7 +295,8 @@ function connectClient(ctx: ResolvedContext): VarlatchClient {
   }
   if (!token) {
     fail(
-      `Not authenticated to ${ctx.server}.\nSign in: varlatch login --server ${ctx.server} (in the browser), ` +
+      `Not authenticated to ${ctx.server}.\nSign in: varlatch login --server ${ctx.server} (in a browser on this machine), ` +
+        `varlatch login --server ${ctx.server} --start (approve in a browser on any device), ` +
         `or pipe a credential to varlatch login --server ${ctx.server} --token-stdin`,
       EXIT.denied,
     );

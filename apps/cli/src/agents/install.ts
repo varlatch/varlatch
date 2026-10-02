@@ -157,6 +157,7 @@ export function agentsBlock(): string {
     "- Run anything that needs configuration with `varlatch --assisted run -- <command>`. If it says no values are",
     "  stored in Varlatch, the command gets only what it inherits: check what it needs (`validate`) and report that.",
     "- When a step needs the human (signing in, entering a secret), give them the exact command and wait.",
+    "- To sign in: run `varlatch --assisted login --server <url> --start`, give the human the address and code it prints, wait until they say they approved, then run `varlatch --assisted login --server <url> --wait`.",
     "- Everything else is in the `varlatch` skill (`.agents/skills/varlatch/SKILL.md`), also printed by",
     "  `varlatch --assisted agents guide`.",
     BLOCK_END,

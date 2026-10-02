@@ -10,6 +10,8 @@ of that output by accident-proofing the commands an agent uses:
 - `values set` and `values rotate` never take a Secret's value from the
   command line, and never prompt.
 - `values delete` deletes only an item named again with `--confirm`.
+- `login` with no sign-in method starts a device sign-in that the human
+  approves in a browser, instead of waiting for a browser on this machine.
 
 Assisted mode changes only what the CLI does on your machine. It never
 changes what you are allowed to do, and the server never sees it.
@@ -174,6 +176,41 @@ varlatch --assisted values delete <ITEM> [-e <environment>] --confirm <ITEM>
   mode a deletion needs no `--confirm`, as before.
 - The MCP server's `varlatch_delete_value` tool has the same rule: see
   [MCP](mcp.md).
+
+## Signing in
+
+```
+varlatch --assisted login --server <url> --start
+varlatch --assisted login --server <url> --wait [--timeout <seconds>]
+```
+
+A coding agent cannot wait for a browser sign-in on your machine: its shell
+commands time out, and the browser may be elsewhere. Device sign-in splits
+sign-in into two short commands:
+
+- **`--start`** prints an address and a code, and exits. In assisted mode,
+  `login` with no sign-in method does this. The agent gives you both; you
+  open the address in a browser on any device, sign in with your passkey,
+  enter the code, check who asks (the address and client that started it,
+  and how long the credential lasts), and approve with your passkey again,
+  or deny. The code lasts 10 minutes.
+- **`--wait`** collects the credential once you approved it, stores it like
+  every login, and exits 0. Still waiting for your approval after 60
+  seconds (`--timeout`, at most 600), it exits 75 and keeps the sign-in for
+  the next `--wait`. Denied, expired, or already collected: 77, and nothing
+  is stored. The skill tells the agent to run `--wait` only after you say
+  you approved.
+- **The sign-in's private code** never appears in output: the CLI keeps it
+  in `pending-sign-ins.json` in its configuration directory, readable only
+  by you. Device sign-in runs only over HTTPS, or to a loopback address in
+  local development, and follows no redirect.
+- **Approving signs that CLI in as you**, with your access. Approve only a
+  sign-in you started yourself, or one your coding agent started for you
+  just now; a code someone sends you is a phishing attempt.
+- `--token-stdin`, `--token`, and `--oidc` work as before in assisted mode.
+- **Inside an agent-safe run there is no sign-in:** every `login` exits 64
+  before sending anything. The run's read access comes from
+  `--agent-metadata`.
 
 ## Giving a value without the command line
 

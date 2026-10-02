@@ -2,12 +2,26 @@
 
 ## Signing in
 
-Signing in is the human's step: it opens a browser for a passkey. Give them
-this command, with the server's URL, and wait:
+Signing in is the human's step: they approve it with their passkey. You can
+start it, and finish it once they have approved:
 
-```text
-varlatch login --server https://varlatch.example.com
+```sh
+varlatch --assisted login --server https://varlatch.example.com --start
 ```
+
+It prints an address and a code. Give the human both: they open the
+address in a browser, on any device, sign in, enter the code, and approve.
+Then stop and wait until they say they approved it. Only then run:
+
+```sh
+varlatch --assisted login --server https://varlatch.example.com --wait
+```
+
+It stores the credential and exits 0. Exit 75 means it is still waiting
+for the approval: ask the human whether they approved, and run `--wait`
+again when they say so. Exit 77 means the sign-in was denied or expired (a
+code lasts 10 minutes): start again with `--start`. Never ask for the
+code's approval on the human's behalf, and never approve it yourself.
 
 A human who signs in with a credential instead (a service token, say)
 pipes it in, so it never appears on a command line:
@@ -15,6 +29,10 @@ pipes it in, so it never appears on a command line:
 ```text
 op read op://vault/varlatch/token | varlatch login --server https://varlatch.example.com --token-stdin
 ```
+
+Inside an agent-safe run (`VARLATCH_AGENT_RUN` is set) there is no
+sign-in: every `login` exits 64. The run's read-only access comes from the
+operator relaunching it with `--agent-metadata`.
 
 Check the result yourself:
 
