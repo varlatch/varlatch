@@ -510,8 +510,14 @@ function ReplaceCredentialDialog({
     >
       <div className="space-y-4">
         {targets.length > 0 && (
-          <Callout tone="warn" icon={<ShieldAlert size={16} />} title={`This re-authorizes all ${targets.length} integration${targets.length === 1 ? "" : "s"} at once`}>
-            You need integration authority over every one of them, otherwise nothing changes.
+          <Callout
+            tone="warn"
+            icon={<ShieldAlert size={16} />}
+            title={targets.length === 1 ? "This re-authorizes the integration that uses it" : `This re-authorizes all ${targets.length} integrations at once`}
+          >
+            {targets.length === 1
+              ? "You need integration authority over it, otherwise nothing changes."
+              : "You need integration authority over every one of them, otherwise nothing changes."}
             <span className="mt-2 grid gap-1.5">
               {targets.map((t) => (
                 <EnvChip key={t.id} org={org} target={t} envs={envs} />
@@ -519,7 +525,7 @@ function ReplaceCredentialDialog({
             </span>
           </Callout>
         )}
-        <Field label={`New ${meta.credentialLabel.toLowerCase()}`} hint={meta.credentialHelp}>
+        <Field label={meta.credentialLabel} hint={meta.credentialHelp}>
           <Input
             data-testid={`new-credential-${connection.id}`}
             mono

@@ -591,7 +591,7 @@ function StepTitle({ title, hint }: { title: string; hint?: string }) {
 }
 
 function Chip({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-md border border-bd bg-inset px-1.5 py-0.5 font-mono text-[13px] text-fg">{children}</span>;
+  return <span className="whitespace-nowrap rounded-md border border-bd bg-inset px-1.5 py-0.5 font-mono text-[13px] text-fg">{children}</span>;
 }
 
 function ChoiceCard({

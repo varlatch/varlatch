@@ -128,7 +128,7 @@ export function SentenceText({ segments, className }: { segments: Segment[]; cla
             {s.text}
           </span>
         ) : (
-          <span key={i} className="font-mono text-[12.5px] text-fg">
+          <span key={i} className={cn("font-mono text-[12.5px] text-fg", s.kind === "place" && "whitespace-nowrap")}>
             {s.text}
           </span>
         ),

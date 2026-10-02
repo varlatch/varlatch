@@ -232,17 +232,20 @@ export function TargetCard({
             </Button>
           )}
           {target.state === "active" ? (
-            <Button
-              size={compact ? "sm" : "md"}
+            <button
+              type="button"
               aria-label="Pause pushes"
               title="Pause pushes"
               data-testid={`pause-${target.id}`}
               disabled={busy}
               onClick={() => act.mutate("pause")}
-              className={compact ? "w-7 px-0" : "w-8 px-0"}
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-md border border-bd bg-raised text-muted transition-colors hover:border-bd-strong hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-45",
+                compact ? "size-7" : "size-8",
+              )}
             >
               <Pause size={14} />
-            </Button>
+            </button>
           ) : (
             target.disabledReason !== "connection-revoked" && (
               <Button size={compact ? "sm" : "md"} data-testid={`resume-${target.id}`} disabled={busy} onClick={() => act.mutate("resume")} icon={<Play size={13} />}>

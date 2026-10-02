@@ -337,7 +337,7 @@ export function AuditTimeline({
       <div className={cn("flex items-start gap-4")}>
         <section
           className={cn(
-            "min-w-0 flex-1 overflow-hidden rounded-xl border border-bd bg-raised transition-opacity",
+            "@container min-w-0 flex-1 overflow-hidden rounded-xl border border-bd bg-raised transition-opacity",
             history.isPlaceholderData && "opacity-60",
           )}
           aria-busy={history.isFetching}
@@ -389,7 +389,7 @@ export function AuditTimeline({
                         onClick={() => setSelectedId(isSelected ? null : e.eventId)}
                         aria-selected={isSelected}
                         className={cn(
-                          "relative grid cursor-pointer grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-x-3 border-b border-bd px-4 py-2.5 text-[13px] transition-colors last:border-b-0 md:grid-cols-[3rem_minmax(0,11.5rem)_minmax(0,1fr)_auto]",
+                          "relative grid cursor-pointer grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-x-3 border-b border-bd px-4 py-2.5 text-[13px] transition-colors last:border-b-0 @3xl:grid-cols-[3rem_minmax(0,11.5rem)_minmax(0,1fr)_auto]",
                           deny && "bg-deny/[0.05]",
                           isSelected ? "bg-active" : "hover:bg-hover/70 data-[active]:bg-hover/70",
                         )}
@@ -398,13 +398,13 @@ export function AuditTimeline({
                         <time className="font-mono text-xs tabular-nums text-muted" dateTime={e.occurredAt} title={new Date(e.occurredAt).toLocaleString()}>
                           {clock(e.occurredAt)}
                         </time>
-                        <span className="flex min-w-0 items-center gap-2 max-md:col-start-2 max-md:row-start-1">
+                        <span className="flex min-w-0 items-center gap-2 @max-3xl:col-start-2 @max-3xl:row-start-1">
                           <ActorMark actor={line.actor} />
                           <span className={cn("truncate font-medium", line.actor.known ? "text-fg" : "font-mono text-xs text-muted")}>
                             {line.actor.name}
                           </span>
                         </span>
-                        <span className="flex min-w-0 items-start gap-2 max-md:col-span-2 max-md:col-start-2 max-md:row-start-2 max-md:mt-1">
+                        <span className="flex min-w-0 items-start gap-2 @max-3xl:col-span-2 @max-3xl:col-start-2 @max-3xl:row-start-2 @max-3xl:mt-1">
                           <span className="mt-0.5">
                             <EventIconGlyph icon={line.described.icon} deny={deny} />
                           </span>
@@ -415,7 +415,7 @@ export function AuditTimeline({
                             </span>
                           )}
                         </span>
-                        <span className="max-md:col-start-3 max-md:row-start-1 max-md:justify-self-end">
+                        <span className="@max-3xl:col-start-3 @max-3xl:row-start-1 @max-3xl:justify-self-end">
                           <DecisionBadge decision={e.decision} />
                         </span>
                       </li>
