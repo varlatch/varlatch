@@ -19,7 +19,7 @@ import {
 
 const ProjectsPage = lazy(() => import("./features/projects/ProjectsPage").then((m) => ({ default: m.ProjectsPage })));
 const ProjectLayout = lazy(() => import("./features/projects/ProjectLayout").then((m) => ({ default: m.ProjectLayout })));
-const ProjectValues = lazy(() => import("./features/projects/MatrixPage").then((m) => ({ default: m.MatrixPage })));
+const ProjectValues = lazy(() => import("./features/projects/ValuesGrid").then((m) => ({ default: m.ValuesGrid })));
 const ContractPage = lazy(() => import("./features/projects/ContractPage").then((m) => ({ default: m.ContractPage })));
 const ProjectActivity = lazy(() => import("./features/projects/ProjectActivity").then((m) => ({ default: m.ProjectActivity })));
 const ProjectIntegrations = lazy(() =>

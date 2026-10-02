@@ -12,6 +12,10 @@ import { connectionsKey } from "./keys";
 import { AddIntegrationDialog } from "./AddIntegrationDialog";
 import { TargetCard } from "./TargetCard";
 import { targetDestination } from "./status";
+import { syncTargetItemStatus } from "./syncStatus";
+
+// Moved to ./syncStatus; re-exported for existing importers.
+export { syncTargetItemStatus } from "./syncStatus";
 
 /**
  * Environment integrations: each sync target is a standing, audited
@@ -19,20 +23,6 @@ import { targetDestination } from "./status";
  * goes through a review that names exactly what leaves and where.
  */
 
-export function syncTargetItemStatus(
-  target: SyncTarget,
-  names: { name: string; state: string }[] | undefined,
-  itemName: string,
-): "synced" | "pending" | "failed" {
-  const destName =
-    target.mapping.kind === "explicit"
-      ? (target.mapping.items.find((i) => i.name === itemName)?.rename ?? itemName)
-      : itemName;
-  const entry = names?.find((n) => n.name.toLowerCase() === destName.toLowerCase());
-  if (entry?.state.startsWith("failed")) return "failed";
-  if (entry?.state === "written" && !target.needsSync) return "synced";
-  return "pending";
-}
 
 /**
  * Per-target synced/pending/failed for one rotating item: the operator

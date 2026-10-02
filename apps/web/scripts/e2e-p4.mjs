@@ -365,7 +365,7 @@ await page.waitForURL("**/o/acme/p/api", { timeout: 10000 });
 check("palette navigates to a project", true);
 
 // 5b. Server-side Config Item name search (ADR-0030): metadata-only hits
-// that land in the editor with the filter prefilled via the ?item= link.
+// that land on the environment page with the item selected via ?item=.
 await page.keyboard.press("ControlOrMeta+k");
 await page.waitForSelector('[data-testid="command-palette"]', { timeout: 5000 });
 await page.fill('[data-testid="palette-input"]', "database");
@@ -373,10 +373,11 @@ await page.waitForSelector('[data-palette-entry="api:DATABASE_URL"]', { timeout:
 await page.click('[data-palette-entry="api:DATABASE_URL"]');
 await page.waitForURL("**/o/acme/p/api/e/**", { timeout: 10000 });
 check("palette item hit deep-links with the item name", page.url().includes("item=DATABASE_URL"));
-await page.waitForSelector('input[placeholder="Filter items…"]', { timeout: 20000 });
+await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
 check(
-  "editor filter prefilled from the deep link",
-  (await page.inputValue('input[placeholder="Filter items…"]')) === "DATABASE_URL",
+  "deep link selects the item",
+  ((await page.textContent('[data-testid="item-panel"]')) ?? "").includes("DATABASE_URL") &&
+    (await page.getAttribute('[data-row="DATABASE_URL"]', "aria-selected")) === "true",
 );
 
 // 5c. Palette actions: the theme switch and the shortcuts sheet.

@@ -1,13 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { Outlet, useParams } from "react-router-dom";
-import { GitBranch, Pencil } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { Outlet, useNavigate, useParams } from "react-router-dom";
+import { Ellipsis, GitBranch, Layers, Pencil, Type } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { Badge, EmptyState } from "../../components/ui";
+import { Menu, type MenuItem } from "../../components/Select";
+import { usePrompt } from "../../components/Dialog";
+import { useToast } from "../../components/Toast";
 import { PageHeader, Tabs } from "../../components/PageHeader";
 import { FullPageLoading } from "../../shell/AuthScreens";
-import { keys, sortEnvironments, useEnvironments, useOrgName, useProject, type ProjectContext } from "./hooks";
+import { errorMessage } from "../../shell/Shell";
+import { NewEnvironmentDialog } from "./NewEnvironmentDialog";
+import {
+  keys,
+  sortEnvironments,
+  useCapability,
+  useEnvironments,
+  useOrgName,
+  useProject,
+  type ProjectContext,
+} from "./hooks";
 
 /**
  * Project workspace: one header (breadcrumbs, slug, contract authority) and
@@ -26,6 +40,12 @@ export function ProjectLayout() {
   const envs = useEnvironments(org, slug);
   const { api } = useSession();
   const targets = useQuery({ queryKey: keys.orgSyncTargets(org), queryFn: () => api.listOrgSyncTargets(org), retry: false });
+  const canRename = useCapability("projects.rename");
+  const prompt = usePrompt();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [newEnvOpen, setNewEnvOpen] = useState(false);
 
   if (isLoading || envs.isLoading) return <FullPageLoading />;
   if (!project) {
@@ -40,6 +60,36 @@ export function ProjectLayout() {
   const targetCount = (targets.data?.items ?? []).filter((t) => t.projectId === project.id).length;
   const base = `/o/${org}/p/${slug}`;
   const context: ProjectContext = { org, project, environments };
+
+  const rename = async () => {
+    const name = await prompt({
+      title: "Rename project",
+      description: `Changes the display name. The slug ${project.slug} stays, so CLI commands and links keep working.`,
+      label: "Display name",
+      initialValue: project.name,
+      confirmLabel: "Rename",
+      validate: (v) => (v.length > 100 ? "Use at most 100 characters." : null),
+    });
+    if (!name || name === project.name) return;
+    try {
+      await api.renameProject(org, project.slug, name);
+      await qc.invalidateQueries({ queryKey: keys.projects(org) });
+      toast.success(`Renamed to ${name}`, { description: project.slug });
+    } catch (err) {
+      toast.error("Could not rename the project", { description: errorMessage(err) });
+    }
+  };
+  const menu: MenuItem[] = [
+    {
+      label: "New environment…",
+      icon: <Layers size={14} />,
+      onSelect: () => setNewEnvOpen(true),
+      "data-testid": "header-new-environment",
+    },
+    ...(canRename
+      ? [{ label: "Rename…", icon: <Type size={14} />, onSelect: () => void rename(), "data-testid": "header-rename-project" }]
+      : []),
+  ];
 
   return (
     <>
@@ -58,6 +108,16 @@ export function ProjectLayout() {
               {project.contractAuthority === "git" ? "git contract" : "managed contract"}
             </Badge>
           </>
+        }
+        actions={
+          <Menu
+            label={`${project.slug} actions`}
+            data-testid="project-header-menu"
+            items={menu}
+            buttonClassName="size-8 justify-center border border-bd bg-raised hover:border-bd-strong"
+          >
+            <Ellipsis size={16} />
+          </Menu>
         }
         tabs={
           <Tabs
@@ -78,6 +138,14 @@ export function ProjectLayout() {
         }
       />
       <Outlet context={context} />
+      <NewEnvironmentDialog
+        org={org}
+        project={project.slug}
+        environments={environments}
+        open={newEnvOpen}
+        onClose={() => setNewEnvOpen(false)}
+        onCreated={(env) => env.parentEnvironmentId && navigate(`/o/${org}/p/${project.slug}/e/${encodeURIComponent(env.name)}`)}
+      />
     </>
   );
 }
