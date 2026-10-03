@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.14.0)
+## 0.14.0 (2026-10-03)
 
 ### Coding agents
 
@@ -478,6 +478,36 @@ fixes.
   receives it, with U+FFFD in place of the surrogate. Before, building the
   matcher threw, so `varlatch run --redact` stopped before starting the
   command.
+
+### Upgrading
+
+Database schema: migrations 23, 24, and 25 (invitation revocation, the
+credentials' client label, and device sign-in).
+
+- From 0.13.0, 0.12.0, or 0.11.0: download `varlatch-cli-0.14.0.cjs` from
+  the `v0.14.0` release, check it against `SHA256SUMS`, and run `node
+  varlatch-cli-0.14.0.cjs upgrade 0.14.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. The upgrade captures and
+  verifies an archive while the installation keeps serving, applies
+  migrations 23 to 25, and completes only once the new release passes its
+  health gate. Then replace the host CLI with `varlatch-cli-0.14.0.cjs`, or
+  run `varlatch self-update`.
+- From 0.10.1 or older: follow the 0.11.0 instructions below with the
+  0.14.0 CLI and version.
+- 0.14.0 restores everything 0.13.0 restores, and archives from 0.13.0.
+- **Client addresses behind proxies.** The Compose files now set
+  `VARLATCH_TRUSTED_PROXIES` for the dashboard's nginx and the TLS proxy in
+  front of it. If your own reverse proxy sits in front of the dashboard,
+  add it to the variable in `.env`; see "Client addresses behind proxies" in
+  `infra/compose/README.md`. On Coolify, check varlatchd's log after the
+  upgrade for `trusted proxy coolify-proxy is <address>`. If it says the
+  name does not resolve, set the variable as `infra/coolify/README.md`
+  describes. Until then, every public caller counts as one client.
+- Scripts and coding agents that drive the CLI: see the behaviour changes
+  above. Exit statuses are now distinct (64, 69, 77, and 75 for `login
+  --wait`). `varlatch login` checks its options strictly and refuses every
+  method inside an agent-safe run. A coding agent's own shell marker turns
+  assisted mode on.
 
 ## 0.13.0 (2026-09-30)
 
