@@ -24,7 +24,8 @@ ISSUER=https://token.actions.githubusercontent.com
 ## Signed and unsigned releases
 
 The release workflow always signs a release published from a public
-repository: if signing fails, it publishes nothing. A private repository's
+repository: the GitHub release is not published if signing fails, although
+the release's images may already have been pushed. A private repository's
 releases are signed only when its `SIGN_PRIVATE_RELEASES` repository
 variable is `true`, because keyless signatures are recorded in Sigstore's
 public transparency log with the repository, tag, and digests they cover.
@@ -98,66 +99,105 @@ These checks are for a release whose notes say it is not signed. They show
 that your download is complete and consistent, and that the pinned images
 describe the expected build. They do not verify the release workflow's
 identity: read [what they cannot show](#what-unsigned-checks-cannot-show)
-before you rely on them. Run them in an empty directory.
+before you rely on them.
+
+The checks are one script. Save it as `verify-unsigned.sh` and run it with
+Bash, giving the version, and the repository if releases come from another
+one:
 
 ```sh
-V=0.14.0                                      # the release to verify
-REPO=varlatch/varlatch                        # the repository releases come from
-COMMIT=$(gh api "repos/$REPO/commits/v$V" --jq .sha)   # the commit the tag names
+bash verify-unsigned.sh 0.14.0
 ```
 
-### Assets and checksums
+It downloads the release into a new temporary directory and stops at the
+first failed check, with a nonzero status. Do not paste it into an
+interactive shell, where a failed check would not stop the commands after
+it. It runs the downloaded CLI only at the end, once every other check has
+passed; that runs code from the release, as installing it would.
 
-```sh
+```bash
+#!/usr/bin/env bash
+# Checks for a Varlatch release whose notes say it is not signed.
+# Usage: bash verify-unsigned.sh VERSION [REPOSITORY]
+set -euo pipefail
+shopt -s dotglob nullglob # "*" below also matches hidden files
+
+V=${1:?usage: bash verify-unsigned.sh VERSION [REPOSITORY]}
+REPO=${2:-varlatch/varlatch}
+WORKFLOW="$REPO/.github/workflows/release.yml@refs/tags/v$V"
+fail() { echo "FAILED: $*" >&2; exit 1; }
+
+COMMIT=$(gh api "repos/$REPO/commits/v$V" --jq .sha) # the commit the tag names
+dir=$(mktemp -d)
+cd "$dir"
+echo "v$V of $REPO, tagged at $COMMIT, downloading to $dir"
 gh release download "v$V" -R "$REPO"
-sha256sum --check --strict SHA256SUMS
+
+# Every file SHA256SUMS lists is present and matches it.
+sha256sum --check --strict --quiet SHA256SUMS
+# Every downloaded file, hidden or not, is listed in SHA256SUMS.
 for f in *; do
-  [ "$f" = SHA256SUMS ] || awk '{ print $2 }' SHA256SUMS | grep -qxF "$f" || echo "not in SHA256SUMS: $f"
+  if [ "$f" = SHA256SUMS ]; then continue; fi
+  F=$f awk '$2 == ENVIRON["F"] { found = 1 } END { exit !found }' SHA256SUMS \
+    || fail "$f is not listed in SHA256SUMS"
 done
+# Every file matches the digest GitHub recorded when it was uploaded.
 gh release view "v$V" -R "$REPO" --json assets \
-  --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' | sha256sum --check --strict
-tar -xzOf "varlatch-compose-$V.tar.gz" "varlatch-$V/varlatch-release.json" | cmp - varlatch-release.json
-node "varlatch-cli-$V.cjs" --version
-jq -r '"\(.version) at migration \(.migrationVersion)"' varlatch-release.json
-```
+  --jq '.assets[] | "\(.digest | ltrimstr("sha256:"))  \(.name)"' \
+  | sha256sum --check --strict --quiet
+# The first-install archive carries the same manifest, and it is for $V.
+tar -xzOf "varlatch-compose-$V.tar.gz" "varlatch-$V/varlatch-release.json" \
+  | cmp -s - varlatch-release.json || fail "the archive's manifest differs from varlatch-release.json"
+test "$(jq -r .version varlatch-release.json)" = "$V" || fail "the manifest is not for $V"
+echo "assets: complete, listed in SHA256SUMS, and as GitHub recorded them"
 
-`--ignore-missing` is left out on purpose: every file `SHA256SUMS` lists
-must be present, and the loop names any downloaded file it does not list.
-The release view compares each file with the digest GitHub recorded when it
-was uploaded. The manifest inside the first-install archive must be the same
-file as the one beside it, and the CLI and the manifest must both name the
-release you meant to download.
-
-### Images, provenance, and SBOMs
-
-The manifest pins each image by digest, and Compose pulls them by digest:
-the images you run are exactly the ones the manifest names, even if a tag is
-moved later. For Varlatch's own three images, check the platforms each
-pinned digest is published for, what its provenance says about its build,
-and its SBOMs:
-
-```sh
+# Varlatch's own images, by the digests the manifest pins: both platforms,
+# provenance naming the tag's commit and release workflow in one run, and an
+# SBOM for each platform (attested, or a release file checked above).
+run=
 for key in varlatchd varlatch-web convex-deploy; do
-  image=$(jq -r ".images[\"$key\"].digest" varlatch-release.json)
-  echo "$key: $image"
-  docker buildx imagetools inspect "$image" --raw \
-    | jq -r '.manifests[] | select(.platform.os != "unknown") | "  " + .platform.os + "/" + .platform.architecture'
+  image=$(jq -er --arg k "$key" '.images[$k].digest' varlatch-release.json)
+  name=${image%@*}
+  name=${name##*/}
+  platforms=$(docker buildx imagetools inspect "$image" --raw \
+    | jq -r '[.manifests[].platform | select(.os != "unknown") | .os + "/" + .architecture] | sort | join(" ")')
+  test "$platforms" = "linux/amd64 linux/arm64" || fail "$key is published for: $platforms"
   for platform in linux/amd64 linux/arm64; do
-    docker buildx imagetools inspect "$image" --format "{{ json (index .Provenance \"$platform\") }}" \
-      | jq -r --arg p "$platform" '.SLSA.buildDefinition.internalParameters as $gh
-          | "  \($p) built from " + ([.. | objects | .["vcs:revision"]? // empty] | unique | join(" "))
-            + " by \($gh.github_workflow_ref), run \($gh.github_run_id)"'
-    docker buildx imagetools inspect "$image" --format "{{ json (index .SBOM \"$platform\") }}" \
-      | jq -r --arg p "$platform" '"  \($p) SBOM: " + (if .SPDX then "\(.SPDX.packages | length) packages" else "none attached" end)'
+    provenance=$(docker buildx imagetools inspect "$image" --format "{{ json (index .Provenance \"$platform\") }}")
+    built=$(jq -r '[.. | objects | .["vcs:revision"]? // empty] | unique | join(" ")' <<<"$provenance")
+    by=$(jq -r '.SLSA.buildDefinition.internalParameters.github_workflow_ref' <<<"$provenance")
+    in_run=$(jq -r '.SLSA.buildDefinition.internalParameters.github_run_id' <<<"$provenance")
+    test "$built" = "$COMMIT" || fail "$key $platform was built from '$built', not $COMMIT"
+    test "$by" = "$WORKFLOW" || fail "$key $platform was built by '$by', not $WORKFLOW"
+    if [ -z "$run" ]; then run=$in_run; fi
+    test "$in_run" = "$run" || fail "$key $platform was built in run $in_run, not $run"
+    packages=$(docker buildx imagetools inspect "$image" --format "{{ json (index .SBOM \"$platform\") }}" \
+      | jq -r '.SPDX.packages // [] | length')
+    sbom_file="sbom-$name-$V-linux-${platform#linux/}.spdx.json"
+    if [ "$packages" -gt 0 ]; then
+      echo "$key $platform: built from $COMMIT in run $run, SBOM attested ($packages packages)"
+    elif [ -f "$sbom_file" ]; then
+      echo "$key $platform: built from $COMMIT in run $run, SBOM in $sbom_file"
+    else
+      fail "$key $platform has no SBOM"
+    fi
   done
 done
-echo "expected: built from $COMMIT by $REPO/.github/workflows/release.yml@refs/tags/v$V"
+
+# Only now, with every other check passed, run the downloaded CLI.
+cli=$(node "varlatch-cli-$V.cjs" --version)
+case $cli in "varlatch $V "*) ;; *) fail "the CLI reports '$cli'" ;; esac
+echo "$cli"
+echo "all checks passed; the release files are in $dir"
 ```
 
-Each image must list linux/amd64 and linux/arm64, and every provenance line
-must name the expected commit and workflow, all with the same run. Images
+`--ignore-missing` is left out, so every file `SHA256SUMS` lists must be
+present, and a downloaded file it does not list fails the check. GitHub's
+digests are the ones it recorded when each file was uploaded. The manifest
+pins each image by digest, and Compose pulls them by digest, so the images
+you run are the ones checked here even if a tag is moved later. Images
 built on a self-hosted runner have no SBOM attestation: their SBOMs are
-release files, which the asset checks cover.
+release files, covered by the asset checks.
 
 ### What unsigned checks cannot show
 
