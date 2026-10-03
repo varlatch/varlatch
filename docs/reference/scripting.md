@@ -30,6 +30,8 @@ change either: scripts that parse them keep working.
 | `varlatch scan --json` | findings and files not scanned; see [secret scanning](secret-scanning.md) |
 | `varlatch doctor --json` | the installation health report |
 | `varlatch self-update --check --json` | the available release |
+| `varlatch login --start --json` | `verificationUri`, `userCode`, `expiresAt` (never the sign-in's private device code) |
+| `varlatch login --wait --json` | `state`: `signed-in` (with `credentialId`, `expiresAt`), `pending`, `denied`, `expired`, or `consumed` (with `credentialId`) |
 
 `varlatch audit export` always prints NDJSON.
 
@@ -41,6 +43,7 @@ change either: scripts that parse them keep working.
 | 1 | Any other failure: a server error, a file that cannot be read, a failed write. |
 | 64 | The command line is wrong: an unknown command or subcommand, a missing argument, flags that conflict, or a value given the way assisted mode refuses. Checked before any credential is needed, so it is 64 whether or not you are signed in. Nothing was changed. |
 | 69 | The server cannot be reached, or is in maintenance or overloaded (502, 503, 504), including an error page from a proxy in front of it. Try again later. |
+| 75 | `varlatch login --wait` reached its deadline while the sign-in still waits for approval. The sign-in is kept: run `--wait` again. |
 | 77 | Not authenticated, or the server denied the request (401, 403). |
 | 78 | Strict startup found a violation, or assisted mode cannot mask a Secret shorter than 8 bytes. The command was not started. |
 
@@ -51,6 +54,11 @@ These keep the meanings they always had:
 - `varlatch scan`: 1 for findings or when the scan could not run, for any
   reason; 2 when some files were not scanned.
 - `varlatch types --check`: 1 when the file is stale or missing.
+- `varlatch login --wait`: 0 once the credential is stored; 75 when the
+  sign-in is still waiting for approval at the deadline (60 seconds, or
+  `--timeout` up to 600); 77 when it was denied, expired, or already
+  collected; 69 when the server cannot be reached (the sign-in is kept). It
+  never exits 0 before a credential is stored.
 - `varlatch request`: 0 when the destination answered, whatever the HTTP
   status (as curl), and the response was written whole; 1 when the Broker
   refused the request, or the response was cut off or could not be written;

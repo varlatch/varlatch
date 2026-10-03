@@ -90,6 +90,11 @@ services:
       VARLATCH_PORT: "8686"
       VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:-}
       VARLATCH_CONVEX_URL: ${VARLATCH_CONVEX_URL:-http://convex-backend:3210}
+      # The proxies whose X-Forwarded-For varlatchd believes, so per-client
+      # limits and the device sign-in confirmation see each caller's own
+      # address: the dashboard's nginx here; each ingress overlay adds its
+      # TLS proxy. Your own reverse proxy in front: add its name or address.
+      VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web}
     volumes:
       - varlatch-state:/var/lib/varlatch
       - ./backups:/backups

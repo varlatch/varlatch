@@ -170,6 +170,12 @@ const READ_ONLY_EVENTS = new Set([
   "authorization.denied",
   "authentication.failed",
   "authentication.passkey_enrollment_started",
+  "authentication.device_requested",
+  "authentication.device_approved",
+  "authentication.device_denied",
+  "authentication.device_collected",
+  "authentication.device_code_rejected",
+  "authentication.device_code_locked",
   "capability.exercised",
   "capability.denied",
 ]);

@@ -13,6 +13,11 @@
 # their own reverse proxy instead (design note, Q6).
 
 services:
+  varlatchd:
+    environment:
+      # Caddy replaces X-Forwarded-For with the client's address; nginx appends Caddy's.
+      VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web,caddy}
+
   caddy:
     image: caddy:2.10.2
     restart: unless-stopped

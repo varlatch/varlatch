@@ -112,7 +112,7 @@ describe("credentials carry the label", () => {
     // The session exchange needs human authentication; a stub session stands in for Better Auth.
     const humanAuth: HumanAuth = {
       handler: async () => new Response(null, { status: 404 }),
-      identityForSession: async () => adminId,
+      sessionFor: async () => ({ identityId: adminId, sessionId: "session-1" }),
     };
     app = buildApp(ctx, { humanAuth });
   });

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import { parseTrustedProxies } from "./http/client-address.js";
 
 /**
  * varlatchd runtime configuration. The root KEK is canonically supplied via a
@@ -35,6 +36,10 @@ const envSchema = z.object({
   VARLATCH_SYNC: optional(z.enum(["on", "off"])),
   // Optional adapter allowlist narrowing (comma-separated platform names).
   VARLATCH_SYNC_ADAPTERS: optional(z.string().min(1)),
+  // Proxies whose X-Forwarded-For the ordinary listener believes
+  // (http/client-address.ts): comma-separated IPs, CIDR ranges, and host
+  // names, such as the compose service varlatch-web. Unset: none.
+  VARLATCH_TRUSTED_PROXIES: optional(z.string()),
 });
 
 export interface VarlatchdConfig {
@@ -47,6 +52,8 @@ export interface VarlatchdConfig {
     | null;
   /** Outbound sync (ADR-0031): null when disabled on this Installation. */
   sync: { adapters: string[] | null } | null;
+  /** VARLATCH_TRUSTED_PROXIES, validated; null when no proxy is trusted. */
+  trustedProxies: string | null;
   /** Loads and validates the raw 32-byte root KEK. Never log its value. */
   loadRootKek: () => Buffer;
 }
@@ -133,7 +140,16 @@ export function loadConfig(
         "VARLATCH_TAILSCALE_TAILNET, and VARLATCH_TAILNET_PORT, or none.",
     );
   }
+  const trustedProxies = cfg.VARLATCH_TRUSTED_PROXIES?.trim() || null;
+  if (trustedProxies) {
+    try {
+      parseTrustedProxies(trustedProxies);
+    } catch (err) {
+      throw new ConfigError(err instanceof Error ? err.message : String(err));
+    }
+  }
   return {
+    trustedProxies,
     databaseUrl: withPasswordFile(cfg.VARLATCH_DATABASE_URL, cfg.VARLATCH_DATABASE_PASSWORD_FILE),
     port: cfg.VARLATCH_PORT,
     publicUrl: cfg.VARLATCH_PUBLIC_URL,

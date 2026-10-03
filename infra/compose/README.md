@@ -332,6 +332,21 @@ OIDC clients must now specify the intended organization (`varlatch login --serve
 
 If `convex-backend` is down, the dashboard keeps working: it shows "Live updates reconnecting", reloads what is on screen from `/v1` every 15 to 60 s, and refreshes everything when live updates return. The CLI, API and credential broker never depend on Convex.
 
+### Client addresses behind proxies
+
+varlatchd limits some requests per client: 600 requests a minute, and for device sign-in at most 10 pending sign-ins and 20 wrong codes every 10 minutes. The device sign-in confirmation also shows the address that asked. Every request reaches varlatchd through the dashboard's nginx, often with a TLS proxy in front, so varlatchd reads the caller's address from `X-Forwarded-For`. It believes that header only when the request comes from a proxy named in `VARLATCH_TRUSTED_PROXIES`. It reads the header from the right and takes the first address that is not a trusted proxy. An address a caller writes into the header is therefore never used, and a request that reaches varlatchd directly is limited by its own address.
+
+The Compose files set it for you:
+
+| Files | `VARLATCH_TRUSTED_PROXIES` |
+| --- | --- |
+| `docker-compose.yml` | `varlatch-web` |
+| with `docker-compose.caddy.yml` | `varlatch-web,caddy` |
+| with `docker-compose.tailnet-https.yml` | `varlatch-web,tailscale` |
+| `docker-compose.coolify-tailscale.yml` | `varlatch-web,coolify-proxy` |
+
+Entries are compose service or container names, which are resolved again every 10 seconds, IP addresses, or CIDR ranges. If you put your own reverse proxy in front of the dashboard, set the variable in `.env` and add your proxy's name or address. That proxy must replace `X-Forwarded-For` with the client's address or append the address to it. varlatchd logs each name's resolved address at startup, and warns when a name does not resolve. Until it resolves, every caller behind that proxy counts as one client. Trust from a name lasts only as long as its resolution. A refresh that fails drops the name's addresses at once, so a container that is gone is never trusted at the address it had. varlatchd never relies on a resolution more than 30 seconds old. Never list a range that contains a Docker network's gateway address: callers on the host reach containers from that address.
+
 `VARLATCH_SYNC=off` disables outbound sync. `VARLATCH_SYNC_ADAPTERS=github-actions,coolify` restricts adapters; an empty value allows the built-in set. Both settings are forwarded by canonical Compose.
 
 `varlatch upgrade` writes a pending manifest while applying a release and promotes it only when the upgrade gate passes. If it fails, retry the same target version; the original `*.pre-<version>` files are preserved.

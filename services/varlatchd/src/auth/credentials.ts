@@ -42,6 +42,8 @@ export interface CredentialRow {
   revoked_at: string | null;
   max_uses: number | null;
   use_count: number;
+  /** The Better Auth session a browser bearer was minted from (migration 0025). */
+  auth_session_id?: string | null;
 }
 
 export interface IdentityRow {
@@ -65,14 +67,16 @@ export async function issueCredential(
     metadata?: Record<string, unknown>;
     /** Readable client label (client-label.ts), never a raw User-Agent. */
     client?: string | null;
+    /** Browser bearers only: the Better Auth session it was minted from. */
+    authSessionId?: string | null;
   },
 ): Promise<{ credentialId: string; token: string }> {
   const token = generateToken(input.kind);
   const credentialId = newId("credential");
   return withTx(db, async (tx) => {
     await tx.query(
-      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
       [
         credentialId,
         input.identityId,
@@ -82,6 +86,7 @@ export async function issueCredential(
         input.expiresAt ?? null,
         input.maxUses ?? null,
         input.client ?? null,
+        input.authSessionId ?? null,
       ],
     );
     await recordAuditEvent(tx, {
@@ -147,7 +152,7 @@ export async function authenticateBearer(
   const digest = hashToken(token);
   const res = await db.query(
     `SELECT c.id, c.identity_id, c.kind, c.name, c.expires_at, c.revoked_at, c.token_hash,
-            c.max_uses, c.use_count,
+            c.max_uses, c.use_count, c.auth_session_id,
             i.kind AS identity_kind, i.name AS identity_name, i.disabled,
             i.installation_admin, i.organization_id
      FROM credentials c JOIN identities i ON i.id = c.identity_id
@@ -213,6 +218,7 @@ export async function authenticateBearer(
       revoked_at: row.revoked_at,
       max_uses: row.max_uses,
       use_count: row.use_count,
+      auth_session_id: row.auth_session_id ?? null,
     },
     identity: {
       id: row.identity_id,

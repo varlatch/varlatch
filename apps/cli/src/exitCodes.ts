@@ -5,9 +5,10 @@ import { VarlatchApiError } from "@varlatch/sdk";
  * The CLI's exit statuses (ADR-0043 Decision 10). Meanings scripts already
  * rely on are frozen: `validate` 1 (invalid) and 2 (incomplete), `scan` 1
  * (findings) and 2 (not everything scanned), `types --check` 1 (stale),
- * strict startup 78, and `varlatch run` passing the command's own status
- * through once the command has started. New distinctions follow sysexits.h,
- * as 78 (EX_CONFIG) already does. Any other failure is 1.
+ * strict startup 78, `varlatch run` passing the command's own status
+ * through once the command has started, and `login --wait` 75 for a
+ * sign-in still pending at its deadline. New distinctions follow
+ * sysexits.h, as 78 (EX_CONFIG) already does. Any other failure is 1.
  */
 export const EXIT = {
   ok: 0,
@@ -16,6 +17,8 @@ export const EXIT = {
   usage: 64,
   /** EX_UNAVAILABLE: the server cannot be reached, or is in maintenance or overloaded. */
   unavailable: 69,
+  /** EX_TEMPFAIL: `login --wait` reached its deadline with the sign-in still pending; run it again. */
+  tempfail: 75,
   /** EX_NOPERM: not authenticated, or the server denied the request. */
   denied: 77,
   /** EX_CONFIG: strict startup found a violation, or assisted mode cannot mask a Secret. */

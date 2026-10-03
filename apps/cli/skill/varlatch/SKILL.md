@@ -111,7 +111,10 @@ long as you follow these rules.
    ```
 7. **When a step needs the human** (signing in, entering a secret, approving
    a change to a value, launching an agent-safe run), give them the exact
-   command or URL, then stop and wait.
+   command or URL, then stop and wait. To sign in, run
+   `varlatch --assisted login --server <url> --start`, give them the address
+   and the code it prints, wait until they say they approved it, then run
+   `varlatch --assisted login --server <url> --wait` (see `references/setup.md`).
 8. **Inside an agent-safe run** (`VARLATCH_AGENT_RUN` is set), your
    variables hold Placeholders, not secret values. Putting a Placeholder in
    a `varlatch --assisted request` header or body target is how you use a
@@ -130,7 +133,8 @@ long as you follow these rules.
    and inherited values that are not Placeholders.
 9. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
-   be reached, 77 not signed in or denied, 78 configuration that cannot run.
+   be reached, 75 a sign-in still waiting for the human's approval, 77 not
+   signed in or denied, 78 configuration that cannot run.
    On 69, a sandbox around your commands may be blocking the connection: tell
    the human which server the command tried to reach (`varlatch --assisted
    context --json` shows it), and ask them to allow that connection. Do not
