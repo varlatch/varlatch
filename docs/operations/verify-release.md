@@ -128,6 +128,8 @@ WORKFLOW="$REPO/.github/workflows/release.yml@refs/tags/v$V"
 fail() { echo "FAILED: $*" >&2; exit 1; }
 
 COMMIT=$(gh api "repos/$REPO/commits/v$V" --jq .sha) # the commit the tag names
+case $COMMIT in *[!0-9a-f]*) fail "the tag v$V names no commit ('$COMMIT')" ;; esac
+[ "${#COMMIT}" -eq 40 ] || fail "the tag v$V names no commit ('$COMMIT')"
 dir=$(mktemp -d)
 cd "$dir"
 echo "v$V of $REPO, tagged at $COMMIT, downloading to $dir"
@@ -153,7 +155,13 @@ echo "assets: complete, listed in SHA256SUMS, and as GitHub recorded them"
 
 # Varlatch's own images, by the digests the manifest pins: both platforms,
 # provenance naming the tag's commit and release workflow in one run, and an
-# SBOM for each platform (attested, or a release file checked above).
+# SBOM for each platform, attested or as a release file.
+# An SBOM lists its packages: a non-empty array of objects, each named. A
+# release file must also be the SPDX 2.3 document the release workflow writes.
+sbom_packages='.packages | if type == "array" and length > 0
+  and all(.[]; type == "object" and (.name | type) == "string") then length else empty end'
+spdx_document='select(.spdxVersion == "SPDX-2.3" and .SPDXID == "SPDXRef-DOCUMENT"
+  and all(.packages[]?; (.SPDXID | type) == "string"))'
 run=
 for key in varlatchd varlatch-web convex-deploy; do
   image=$(jq -er --arg k "$key" '.images[$k].digest' varlatch-release.json)
@@ -166,20 +174,20 @@ for key in varlatchd varlatch-web convex-deploy; do
     provenance=$(docker buildx imagetools inspect "$image" --format "{{ json (index .Provenance \"$platform\") }}")
     built=$(jq -r '[.. | objects | .["vcs:revision"]? // empty] | unique | join(" ")' <<<"$provenance")
     by=$(jq -r '.SLSA.buildDefinition.internalParameters.github_workflow_ref' <<<"$provenance")
-    in_run=$(jq -r '.SLSA.buildDefinition.internalParameters.github_run_id' <<<"$provenance")
+    in_run=$(jq -r '.SLSA.buildDefinition.internalParameters.github_run_id // empty | tostring' <<<"$provenance")
     test "$built" = "$COMMIT" || fail "$key $platform was built from '$built', not $COMMIT"
     test "$by" = "$WORKFLOW" || fail "$key $platform was built by '$by', not $WORKFLOW"
+    case $in_run in '' | 0* | *[!0-9]*) fail "$key $platform names no build run ('$in_run')" ;; esac
     if [ -z "$run" ]; then run=$in_run; fi
     test "$in_run" = "$run" || fail "$key $platform was built in run $in_run, not $run"
-    packages=$(docker buildx imagetools inspect "$image" --format "{{ json (index .SBOM \"$platform\") }}" \
-      | jq -r '.SPDX.packages // [] | length')
+    attested=$(docker buildx imagetools inspect "$image" --format "{{ json (index .SBOM \"$platform\") }}")
     sbom_file="sbom-$name-$V-linux-${platform#linux/}.spdx.json"
-    if [ "$packages" -gt 0 ]; then
+    if packages=$(jq -e ".SPDX | $sbom_packages" <<<"$attested"); then
       echo "$key $platform: built from $COMMIT in run $run, SBOM attested ($packages packages)"
-    elif [ -f "$sbom_file" ]; then
-      echo "$key $platform: built from $COMMIT in run $run, SBOM in $sbom_file"
+    elif [ -f "$sbom_file" ] && packages=$(jq -e "$spdx_document | $sbom_packages" "$sbom_file"); then
+      echo "$key $platform: built from $COMMIT in run $run, SBOM in $sbom_file ($packages packages)"
     else
-      fail "$key $platform has no SBOM"
+      fail "$key $platform has no SBOM: none attested, and $sbom_file is missing or not an SPDX 2.3 SBOM with packages"
     fi
   done
 done
@@ -195,9 +203,11 @@ echo "all checks passed; the release files are in $dir"
 present, and a downloaded file it does not list fails the check. GitHub's
 digests are the ones it recorded when each file was uploaded. The manifest
 pins each image by digest, and Compose pulls them by digest, so the images
-you run are the ones checked here even if a tag is moved later. Images
-built on a self-hosted runner have no SBOM attestation: their SBOMs are
-release files, covered by the asset checks.
+you run are the ones checked here even if a tag is moved later. A missing,
+empty, or malformed build run in any provenance fails the check, as do runs
+that differ. Images built on a self-hosted runner have no SBOM attestation:
+their SBOMs are release files, which must be SPDX 2.3 documents listing
+packages; the asset checks cover their bytes.
 
 ### What unsigned checks cannot show
 
