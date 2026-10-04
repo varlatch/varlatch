@@ -17,7 +17,8 @@ name: Release
 # Keyless signatures are recorded in Sigstore's public transparency log with
 # the repository, tag, and digests they cover. A private repository's
 # releases are therefore not signed unless the SIGN_PRIVATE_RELEASES
-# repository variable is "true".
+# repository variable is "true". An unsigned release's notes say so, and
+# verify-release.md treats a release as unsigned only when they do.
 #
 # Runners: GitHub-hosted first. After validation (ci.yml, which decides for
 # itself), the hosted-runner probe runs; when hosted minutes have run out,
@@ -357,18 +358,35 @@ jobs:
 
       # The release notes are this version's CHANGELOG.md section, so what
       # changed and how to upgrade is written once and reviewed in the PR.
+      # An unsigned release says so first: verify-release.md treats a release
+      # as unsigned only when its notes do.
       - name: Release notes from the changelog
         env:
           ARM64_MODE: ${{ needs.arm64-e2e.outputs.mode }}
           SBOM: ${{ needs.images.outputs.hosted == 'true' }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
+          GUIDE="https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/operations/verify-release.md"
           awk -v v="$VERSION" 'index($0, "## " v " (") == 1 { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for $VERSION" >&2; exit 1; }
+          if [ "$SIGN" = true ]; then
+            COVERS="also covers signatures, provenance, and SBOMs"
+          else
+            COVERS="covers provenance and SBOMs, and signatures for signed releases"
+          fi
+          if [ "$SBOM" = true ]; then
+            ATTESTATIONS="build-provenance and SBOM attestations"
+          else
+            ATTESTATIONS="build-provenance attestations"
+          fi
           {
             echo
             echo "---"
             echo
+            if [ "$SIGN" != true ]; then
+              echo "**This release is not signed.** Varlatch ${VERSION} was published from a private repository that has not opted in to signing, so it has no \`SHA256SUMS.sigstore.json\` and its images have no Sigstore signatures. The signature checks in verifying a release do not apply to it. Its images do carry ${ATTESTATIONS} for linux/amd64 and linux/arm64. Check it as [unsigned releases](${GUIDE}#unsigned-releases) describes. Those checks show that the assets and images are complete, consistent, and name the expected commit and workflow run; they do not prove that the release workflow produced them."
+              echo
+            fi
             if [ "$ARM64_MODE" = emulated ]; then
               echo "The arm64 images passed the backup, restore, and recovery suite under emulation for this release, not on arm64 hardware."
               echo
@@ -377,7 +395,7 @@ jobs:
               echo "The images of this release were built on a self-hosted runner, where BuildKit cannot generate SBOM attestations: they carry provenance attestations, and their SBOMs are attached as release files instead (\`sbom-IMAGE-${VERSION}-linux-ARCH.spdx.json\`, listed in \`SHA256SUMS\`)."
               echo
             fi
-            echo "Digest-pinned release set for linux/amd64 and linux/arm64. Check every asset against \`SHA256SUMS\`; [verifying a release](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/operations/verify-release.md) also covers signatures, provenance, and SBOMs. The operator CLI, \`varlatch-cli-${VERSION}.cjs\` (Node 22+), is version-coupled to the installation: replace the host CLI before anything else. First installs: unpack \`varlatch-compose-${VERSION}.tar.gz\` and follow its README."
+            echo "Digest-pinned release set for linux/amd64 and linux/arm64. Check every asset against \`SHA256SUMS\`; [verifying a release](${GUIDE}) ${COVERS}. The operator CLI, \`varlatch-cli-${VERSION}.cjs\` (Node 22+), is version-coupled to the installation: replace the host CLI before anything else. First installs: unpack \`varlatch-compose-${VERSION}.tar.gz\` and follow its README."
           } >> notes.md
 
       - name: Create GitHub release with the deployment unit
