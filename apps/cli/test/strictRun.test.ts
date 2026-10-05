@@ -64,6 +64,62 @@ const plan = (r: StrictRetrieval, parent: NodeJS.ProcessEnv = {}, allow: string[
   planStrictRun(r, parent, new Set(allow));
 const kinds = (p: ReturnType<typeof plan>) => p.violations.map((v) => `${v.name}:${v.kind}`);
 
+describe("strict startup: --omit in a plain strict run", () => {
+  const contract = [
+    contractItem("PIN", { sensitive: true, required: { kind: "never" } }),
+    contractItem("DB_PASSWORD", { sensitive: true }),
+    contractItem("REGION", { required: { kind: "never" }, defaultValue: "eu" }),
+    contractItem("HIDDEN", { required: { kind: "never" } }),
+  ];
+  const r = retrieval({
+    contract,
+    items: [
+      { name: "PIN", sensitive: true, value: "1234567" },
+      { name: "DB_PASSWORD", sensitive: true, value: "db-password-value" },
+      { name: "HIDDEN", value: null },
+      { name: "OUTSIDE", value: "outside-value" },
+    ],
+    withheld: [{ name: "HIDDEN", reason: "permission", requires: "config.value.read" }],
+  });
+  const parent = { PIN: "7654321", HIDDEN: "shell", OUTSIDE: "shell", PATH: "/bin" };
+
+  it("an omitted item is absent whatever the server or the parent holds; no default replaces it; the context keeps the server's status", () => {
+    const p = planStrictRun(r, parent, new Set(["HIDDEN"]), undefined, new Set(["PIN", "REGION", "HIDDEN", "OUTSIDE"]));
+    expect(p.violations).toEqual([]);
+    for (const name of ["PIN", "REGION", "HIDDEN", "OUTSIDE"]) expect(p.env[name], name).toBeUndefined();
+    expect(p.env.DB_PASSWORD).toBe("db-password-value");
+    expect(p.env.PATH).toBe("/bin");
+    expect(p.outsideContract).toBe(0);
+    expect(p.context?.items.PIN).toEqual({ server: "delivered", delivery: "absent" });
+    expect(p.context?.items.REGION).toEqual({ server: "notStored", delivery: "absent" });
+    expect(p.context?.items.HIDDEN).toEqual({ server: "withheld", delivery: "absent" });
+    // Control, same input: without --omit each reaches the command (delivered, default, allowed inherited, outside the Contract).
+    const control = planStrictRun(r, parent, new Set(["HIDDEN"]));
+    expect([control.env.PIN, control.env.REGION, control.env.HIDDEN, control.env.OUTSIDE]).toEqual(["1234567", "eu", "shell", "outside-value"]);
+  });
+
+  it("omitting an item the Contract requires here is a violation", () => {
+    const p = planStrictRun(r, parent, new Set(["HIDDEN"]), undefined, new Set(["DB_PASSWORD"]));
+    expect(kinds(p)).toEqual(["DB_PASSWORD:omitted"]);
+    expect(p.violations[0]?.reason).toBe("required in this environment, and --omit leaves it out of the run");
+  });
+
+  it("runStrict refuses a name neither stored nor in the Contract before starting anything; a known one starts without it", async () => {
+    const start = vi.fn(async () => 0);
+    const opts = { organization: "acme", project: "api", environment: "production", allowInherited: [], parent, start, log: vi.fn() };
+    const api: StrictClient = { meta: async () => ({ serverVersion: "0.11.0", capabilities: ["retrieval.strict"] }), strictRetrieval: async () => r };
+    await expect(runStrict(api, { ...opts, omit: ["PINN"] })).rejects.toThrow(
+      new UsageError("--omit must name an item stored in this environment or in its Contract; not found: PINN"),
+    );
+    expect(start).not.toHaveBeenCalled();
+    // Withheld (HIDDEN), outside the Contract (OUTSIDE), and Contract-only (REGION) names are all known.
+    expect(await runStrict(api, { ...opts, omit: ["PIN", "HIDDEN", "OUTSIDE", "REGION"] })).toBe(0);
+    const [env, secrets] = start.mock.calls[0] as unknown as [NodeJS.ProcessEnv, { item: string }[]];
+    expect(env.PIN).toBeUndefined();
+    expect(secrets.map((s) => s.item)).toEqual(["DB_PASSWORD"]);
+  });
+});
+
 describe("strict startup: the delivery table", () => {
   it("a delivered value is used, overrides the parent, and is validated as received", () => {
     const p = plan(
@@ -346,13 +402,13 @@ describe("agent-safe strict startup", () => {
       ],
     });
     const parent = { API_KEY: "shell", DB_PASSWORD: "shell", EXTRA_TOKEN: "shell" };
-    const optional = planStrictRun(r, parent, new Set(), { ...facts(), omitted: new Set(["API_KEY", "EXTRA_TOKEN"]) });
+    const optional = planStrictRun(r, parent, new Set(), facts(), new Set(["API_KEY", "EXTRA_TOKEN"]));
     expect(optional.violations).toEqual([]);
     expect(optional.mediated).toEqual(["DB_PASSWORD"]);
     expect(optional.env.API_KEY).toBeUndefined();
     expect(optional.env.EXTRA_TOKEN).toBeUndefined();
     expect(optional.context?.items.API_KEY).toEqual({ server: "delivered", delivery: "absent" });
-    const required = planStrictRun(r, parent, new Set(), { ...facts(), omitted: new Set(["DB_PASSWORD"]) });
+    const required = planStrictRun(r, parent, new Set(), facts(), new Set(["DB_PASSWORD"]));
     expect(kinds(required)).toEqual(["DB_PASSWORD:omitted"]);
     expect(required.env.DB_PASSWORD).toBeUndefined();
   });

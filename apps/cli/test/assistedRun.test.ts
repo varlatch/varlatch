@@ -40,6 +40,22 @@ describe("assistedRedactionSet", () => {
     expect(assistedRedactionSet([], parent, parent, ["API_TOKEN"])).toEqual([]);
   });
 
+  it("holds only what the command holds: an item left out with --omit is neither delivered nor inherited, so a short one cannot stop the run", () => {
+    const short: SecretEntry[] = [...delivered, { item: "PIN", value: "1234567" }];
+    const parent = { PIN: "7654321", LEGACY_KEY: INHERITED };
+    // The command's environment without PIN, as buildEnv makes it for --omit PIN.
+    const child = { LEGACY_KEY: INHERITED, API_TOKEN: DELIVERED };
+    const set = assistedRedactionSet(short, child, parent, ["API_TOKEN", "LEGACY_KEY", "PIN"]);
+    expect(set).toEqual([
+      { item: "API_TOKEN", value: DELIVERED },
+      { item: "LEGACY_KEY", value: INHERITED },
+    ]);
+    expect(planAssistedRedaction(set, [])).toMatchObject({ refused: [], allowed: [] });
+    // Control, same input: with PIN in the command's environment, the delivered short value stops the run.
+    const control = assistedRedactionSet(short, { ...child, PIN: "1234567" }, parent, ["API_TOKEN", "LEGACY_KEY", "PIN"]);
+    expect(planAssistedRedaction(control, [])).toMatchObject({ refused: ["PIN"] });
+  });
+
   it("skips empty values, which carry nothing to mask and cannot be short", () => {
     const set = assistedRedactionSet([{ item: "EMPTY", value: "" }], { LEGACY_KEY: "" }, { LEGACY_KEY: "" }, ["LEGACY_KEY"]);
     expect(set).toEqual([]);
@@ -71,8 +87,12 @@ describe("planAssistedRedaction", () => {
     const lines = unmaskableRefusal(["PIN", "REDIS_PASSWORD"], { target: "-e production", runOptions: ["--strict"] }).join("\n");
     expect(lines).toMatch(/shorter than 8 bytes.*: PIN, REDIS_PASSWORD/);
     // Every command names the run's environment, so it acts on the same values.
-    // First stop and ask; an approved replacement is the agent's own command, with --assisted.
-    expect(lines).toMatch(/Stop and ask the human what to do about each named item\. Approval for one item or action never covers another\./);
+    // First the remedy that needs no approval: leaving the items out, as the agent's own command, keeping the run's options.
+    expect(lines).toMatch(
+      /^ {2}If the command does not need them, rerun with --omit PIN --omit REDIS_PASSWORD: the command then does not get them, and no approval is needed \(leave out only the ones it does not need\):\n {6}varlatch --assisted run -e production --strict --omit PIN --omit REDIS_PASSWORD -- <command>\n {2}If it needs one, stop and ask/m,
+    );
+    // Otherwise stop and ask; an approved replacement is the agent's own command, with --assisted.
+    expect(lines).toMatch(/stop and ask the human what to do about each item it needs\. Approval for one item or action never covers another\./);
     expect(lines).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e production --replace PIN --generate hex:32 {3}\(each item needs its own approval\)/);
     // No generated replacement is printed without --assisted: an agent could run it outside assisted mode.
     expect(lines).not.toMatch(/^\s*varlatch values set .*--generate/m);
@@ -87,6 +107,15 @@ describe("planAssistedRedaction", () => {
     const overridden = unmaskableRefusal(["PIN"], { target: "-e production --server https://b.example" }).join("\n");
     expect(overridden).toMatch(/varlatch --assisted agents guide contract \(add --server https:\/\/b\.example to every contract command\)/);
     expect(lines).not.toMatch(/1234567|abcdefg/);
+  });
+
+  it("the --omit remedy comes first; for the human's override it has no --assisted and keeps the allowances", () => {
+    const agent = unmaskableRefusal(["PIN"], { target: "-e production" });
+    expect(agent[1]).toBe("  If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:");
+    expect(agent[2]).toBe("      varlatch --assisted run -e production --omit PIN -- <command>");
+    expect(agent[3]).toMatch(/^ {2}If it needs it, stop and ask the human what to do about PIN\./);
+    const human = unmaskableRefusal(["PIN_TWO"], { target: "-e production", runOptions: ["--allow-unmasked PIN"], assisted: false });
+    expect(human[2]).toBe("      varlatch run -e production --allow-unmasked PIN --omit PIN_TWO -- <command>");
   });
 });
 
@@ -111,7 +140,7 @@ async function relay(entries: SecretEntry[], out: Buffer[], err: Buffer[]): Prom
  */
 describe("assisted output redaction across forms and chunk boundaries", () => {
   const parent = { LEGACY_KEY: INHERITED };
-  const set = assistedRedactionSet([{ item: "API_TOKEN", value: DELIVERED }], parent, parent, ["LEGACY_KEY"]);
+  const set = assistedRedactionSet([{ item: "API_TOKEN", value: DELIVERED }], { ...parent, API_TOKEN: DELIVERED }, parent, ["LEGACY_KEY"]);
   const cases = [
     ...labelledFormsOf(DELIVERED).map((f) => ({ item: "API_TOKEN", value: DELIVERED, ...f })),
     ...labelledFormsOf(INHERITED).map((f) => ({ item: "LEGACY_KEY", value: INHERITED, ...f })),

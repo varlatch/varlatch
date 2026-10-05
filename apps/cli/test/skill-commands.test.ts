@@ -585,7 +585,9 @@ describe("completion gaps from the second agent evaluation", () => {
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
     expect(block).toMatch(/no `--assisted`; add `--server <url>` when the server was overridden\), or point them to the dashboard:\n\n  ```text\n  varlatch values set <NAME> -e <environment>\n  ```/);
     expect(block).toMatch(/in assisted mode `values set`, `values rotate`, and `import` refuse to replace one without `--replace <NAME>`/);
-    expect(block).toMatch(/When a Secret is too short to mask \(exit 78\), stop and ask the human\. Only after they approve a remedy for that\s+item and environment may you carry it out, with `--assisted`; for a new random value:\s+`varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32` \(keep `--server <url>`\s+when it was overridden\)\. A credential a provider issued is the human's to enter\./);
+    // Leaving out an item the command does not need comes first, and needs no approval (ADR-0043 Decision 4, amended).
+    expect(block).toMatch(/When a Secret is too short to mask \(exit 78\) and the command does not need it, leave it out and rerun, with no\s+approval needed: `varlatch --assisted run -e <environment> --omit <NAME> -- <command>`\. When the command needs\s+it, stop and ask the human\./);
+    expect(block).toMatch(/Only after they approve a remedy for that item and environment may you carry it out,\s+with `--assisted`; for a new random value:\s+`varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32` \(keep `--server <url>`\s+when it was overridden\)\. A credential a provider issued is the human's to enter\./);
     expect(block).toMatch(/Marking an item as not secret\s+changes the Contract for the whole project: `varlatch --assisted agents guide contract`\./);
     expect(block).toMatch(/Showing a Secret unmasked\s+is the human's alone: never add `--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)\./);
     expect(block).toMatch(/When the human asks for a new random value, generate it \(`--generate hex:32`\); a credential issued elsewhere is\s+theirs to enter\. Never run a command printed for the human's own terminal yourself\./);
@@ -595,6 +597,8 @@ describe("completion gaps from the second agent evaluation", () => {
     // The skill says the same.
     expect(skill).toMatch(/never add\s+`--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)/);
     expect(skill).toMatch(/After they approve one, you may carry it out yourself, with\s+`--assisted`/);
+    expect(skill).toMatch(/When the command does not need a secret that is too short\s+to mask, leave it out and rerun, with no approval needed/);
+    expect(skill).toMatch(/`varlatch --assisted run -e <environment> --omit <NAME> -- <command>`/);
     expect(skill).toMatch(/`varlatch --assisted values set\s+<NAME> -e <environment> --replace <NAME> --generate hex:32`/);
     expect(skill).toMatch(/A command printed for the human's own terminal\s+\(without `--assisted`\) is theirs: never run it yourself\./);
     expect(skill).not.toMatch(/Every\s+remedy is the human's, run in their own terminal/);

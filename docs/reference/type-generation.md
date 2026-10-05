@@ -286,6 +286,11 @@ identifiers only.
   with status 1, naming no value. A Grant change in between cannot make the
   context wrong: each item's status comes from the response that delivered
   or withheld it.
+- An item left out with `--omit` is recorded with `delivery: "absent"`,
+  even when your shell sets it (the run removes that copy). An omitted
+  Secret was never asked for, so it is recorded as stored
+  (`server: "delivered"`), not as withheld; the accessor then reports an
+  omitted item that is required in this environment as absent.
 - A context larger than 64 KiB fails the run; it is never truncated.
 - It applies only to default runs. A `--strict` run always gives the command
   its run context.

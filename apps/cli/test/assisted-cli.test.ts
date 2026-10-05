@@ -106,9 +106,12 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       });
     }
     if (url === `${ENV_PATH}/disclosures`) {
+      // As the server: a request that names its items gets only those.
+      const asked = (body as { items?: string[] } | undefined)?.items;
+      const secrets = stored.filter((i) => i.sensitive && (!asked || asked.includes(i.name)));
       return json(200, {
-        items: stored.filter((i) => i.sensitive && !i.withheld).map((i) => ({ name: i.name, versionId: `ver_${i.name}`, value: i.value })),
-        withheld: stored.filter((i) => i.withheld).map((i) => i.name),
+        items: secrets.filter((i) => !i.withheld).map((i) => ({ name: i.name, versionId: `ver_${i.name}`, value: i.value })),
+        withheld: secrets.filter((i) => i.withheld).map((i) => i.name),
         stateDigest: `sha256:${"0".repeat(64)}`,
       });
     }
@@ -457,7 +460,7 @@ describe("run: a strict command line before --", () => {
   });
 
   it("every documented option is accepted, repeatable ones repeated", async () => {
-    const r = await cli(["run", "-e", "development", "--server", origin, "--export-context", "--redact", "--", "true"]);
+    const r = await cli(["run", "-e", "development", "--server", origin, "--export-context", "--redact", "--omit", "PORT", "--omit", "API_TOKEN", "--", "true"]);
     expect(r.code, r.stderr).toBe(0);
     stored.push({ name: "PIN", sensitive: true, value: PIN }, { name: "PIN_TWO", sensitive: true, value: "abcdefg" });
     const two = await cli(["run", "--strict", "--allow-inherited", "LEGACY_KEY", "--allow-inherited", "PORT", "--allow-unmasked", "PIN", "--allow-unmasked", "PIN_TWO", "--", "true"], { env: { LEGACY_KEY: LEGACY } });
@@ -532,14 +535,16 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
-    // First stop and ask; each remedy is the human's decision, for this item only.
-    expect(r.stderr).toMatch(/Stop and ask the human what to do about PIN\. Approval for one item or action never covers another\./);
+    // First the remedy that needs no approval: leaving the item out, as the agent's own command.
+    expect(r.stderr).toMatch(new RegExp(`If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:\\n {6}varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--omit PIN -- <command>\\n`));
+    // Otherwise stop and ask; each other remedy is the human's decision, for this item only.
+    expect(r.stderr).toMatch(/If it needs it, stop and ask the human what to do about PIN\. Approval for one item or action never covers another\./);
     // After approval, the replacement is the agent's own command, with --assisted and --replace.
     expect(r.stderr).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e development --replace PIN --generate hex:32\n/);
     expect(r.stderr).not.toMatch(/^\s*varlatch values set PIN .*--generate/m);
     // The human's override: outside assisted mode (no --assisted), the option before `--`.
     expect(r.stderr).toMatch(new RegExp(`Showing it unmasked is the human's alone, in their own terminal .*\\n {6}varlatch run -e development ${mode.length > 0 ? "--strict " : ""}--allow-unmasked PIN -- <command>`));
-    expect(r.stderr).not.toMatch(/varlatch --assisted run/);
+    expect(r.stderr).not.toMatch(/varlatch --assisted run .*--allow-unmasked/);
     expect(r.stderr).toMatch(/Nothing was started\./);
     expect(existsSync(marker)).toBe(false);
     expect(r.stdout + r.stderr).not.toContain(PIN);
@@ -583,6 +588,187 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["run", "--", process.execPath, printer()]);
     expect(r.code).toBe(0);
     expect(r.stderr).toContain(`pin=${PIN}`);
+  });
+});
+
+/**
+ * `varlatch run --omit <NAME>` (ADR-0043 Decision 4, amended): the item is
+ * not fetched or delivered, an inherited copy is removed, and so a Secret
+ * too short to mask that the command does not get no longer stops an
+ * assisted run. Each case has its control: the same run without --omit.
+ */
+describe("run --omit: an item left out of the run", () => {
+  const SHELL_PIN = "7654321";
+  /** A child that reports, for each name, whether it got a value: never the value itself. */
+  const reporter = (...names: string[]) => [
+    process.execPath,
+    "-e",
+    `for (const n of ${JSON.stringify(names)}) console.log(n + "=" + (process.env[n] === undefined ? "absent" : "present"))`,
+  ];
+  const disclosures = () => requests.filter((q) => q.url.endsWith("/disclosures")).map((q) => q.body);
+  const leaky = (marker: string) => [process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, ''); console.log(process.env.API_TOKEN, process.env.PIN)`];
+
+  beforeEach(() => {
+    stored.push({ name: "PIN", sensitive: true, value: PIN });
+  });
+
+  it("assisted: refused without --omit, which the refusal offers first; with --omit PIN the run starts, PIN is never fetched, and the child has no PIN, not even the parent's", async () => {
+    const control = await cli(["--assisted", "run", "--", ...reporter("PIN")], { env: { PIN: SHELL_PIN } });
+    expect(control.code).toBe(78);
+    expect(control.stderr).toContain(
+      "  If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:\n" +
+        "      varlatch --assisted run -e development --omit PIN -- <command>\n" +
+        "  If it needs it, stop and ask the human what to do about PIN.",
+    );
+    expect(control.stderr.indexOf("--omit PIN")).toBeLessThan(control.stderr.indexOf("stop and ask"));
+    requests = [];
+    const r = await cli(["--assisted", "run", "--omit", "PIN", "--", ...reporter("PIN", "API_TOKEN")], { env: { PIN: SHELL_PIN } });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=absent\nAPI_TOKEN=present\n");
+    // Not fetched: the disclosure names every other Secret, and not PIN.
+    expect(disclosures()).toEqual([{ items: ["API_TOKEN", "WITHHELD_KEY"] }]);
+    expect(r.stderr).toContain("varlatch: left out of this run (--omit), so the command does not get it, and not masked if the command obtains it another way: PIN\n");
+    expect(r.stdout + r.stderr).not.toContain(PIN);
+    expect(r.stdout + r.stderr).not.toContain(SHELL_PIN);
+  });
+
+  it("the --omit remedy, run as the refusal prints it, starts the command", async () => {
+    const refused = await cli(["--assisted", "run", "--", process.execPath, printer()]);
+    const printed = /^ {6}(varlatch --assisted run .* -- <command>)$/m.exec(refused.stderr)?.[1];
+    expect(printed).toBe("varlatch --assisted run -e development --omit PIN -- <command>");
+    const r = await cli([...(printed as string).split(" ").slice(1, -1), ...reporter("PIN")]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=absent");
+  });
+
+  it("several short Secrets: one --omit each, in one printed command; leaving out one still stops the run for the other", async () => {
+    stored.push({ name: "PIN_TWO", sensitive: true, value: "abcdefg" });
+    const refused = await cli(["--assisted", "run", "--", ...reporter("PIN")]);
+    expect(refused.code).toBe(78);
+    expect(refused.stderr).toContain("(leave out only the ones it does not need):\n      varlatch --assisted run -e development --omit PIN --omit PIN_TWO -- <command>\n");
+    const one = await cli(["--assisted", "run", "--omit", "PIN", "--", ...reporter("PIN")]);
+    expect(one.code).toBe(78);
+    expect(one.stderr).toMatch(/cannot be masked in the command's output: PIN_TWO\n/);
+    // The retry keeps the --omit already given.
+    expect(one.stderr).toContain("      varlatch --assisted run -e development --omit PIN --omit PIN_TWO -- <command>\n");
+    expect(one.stdout + one.stderr).not.toContain("abcdefg");
+    const both = await cli(["--assisted", "run", "--omit", "PIN", "--omit", "PIN_TWO", "--", ...reporter("PIN", "PIN_TWO")]);
+    expect(both.code, both.stderr).toBe(0);
+    expect(both.stdout).toContain("PIN=absent\nPIN_TWO=absent\n");
+  });
+
+  it("--omit never weakens masking of the other Secrets: delivered and inherited ones stay masked in every form", async () => {
+    const r = await cli(["--assisted", "run", "--omit", "PIN", "--", process.execPath, printer()], { env: INHERITED });
+    expect(r.code, r.stderr).toBe(0);
+    expect(leaked(r)).toEqual([]);
+    expect(r.stdout).toContain("token=[REDACTED:API_TOKEN]\n");
+    expect(r.stdout).toContain("legacy=[REDACTED:LEGACY_KEY] withheld=[REDACTED:WITHHELD_KEY]\n");
+    expect(r.stderr).toContain("pin=undefined");
+    // Negative control, same input: outside assisted mode --omit masks nothing; the masking is assisted mode's.
+    const plain = await cli(["run", "--omit", "PIN", "--", process.execPath, printer()], { env: INHERITED });
+    expect(plain.code, plain.stderr).toBe(0);
+    expect(leaked(plain)).toEqual(["token", "token-base64", "token-percent", "token-json", "legacy", "withheld"]);
+    expect(plain.stderr).toContain("pin=undefined");
+  });
+
+  it("--strict: an omitted item the Contract does not require is left out, and the run starts", async () => {
+    const r = await cli(["--assisted", "run", "--strict", "--omit", "PIN", "--", ...reporter("PIN", "API_TOKEN")], { env: { PIN: SHELL_PIN } });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=absent\nAPI_TOKEN=present\n");
+    expect(r.stdout + r.stderr).not.toContain(SHELL_PIN);
+  });
+
+  it("a name neither stored nor in the Contract is refused (64) before anything starts, and before any Secret is disclosed in a default run", async () => {
+    for (const [mode, flags] of [["default", []], ["strict", ["--strict"]], ["human", []]] as const) {
+      const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+      requests = [];
+      const r = await cli([...(mode === "human" ? [] : ["--assisted"]), "run", ...flags, "--omit", "PIM", "--", ...leaky(marker)]);
+      expect(r.code, `${mode}: ${r.stderr}`).toBe(64);
+      expect(r.stderr).toContain("varlatch: --omit must name an item stored in this environment or in its Contract; not found: PIM. Nothing was started.");
+      expect(existsSync(marker)).toBe(false);
+      expect(r.stdout + r.stderr).not.toContain(TOKEN);
+      if (mode !== "strict") expect(disclosures(), mode).toEqual([]);
+    }
+    // A malformed name is refused before any request.
+    requests = [];
+    const malformed = await cli(["run", "--omit", "pin", "--", "true"]);
+    expect(malformed.code).toBe(64);
+    expect(malformed.stderr).toContain("--omit needs an item's name, not pin");
+    expect(requests).toEqual([]);
+  });
+
+  it("a Contract item that is not stored, and a plain item, can be left out: the parent's copies are removed", async () => {
+    const r = await cli(["--assisted", "run", "--omit", "PIN", "--omit", "LEGACY_KEY", "--omit", "PORT", "--", ...reporter("LEGACY_KEY", "PORT", "UNKNOWN_TOKEN")], {
+      env: { ...INHERITED, PORT: "1" },
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("LEGACY_KEY=absent\nPORT=absent\nUNKNOWN_TOKEN=present\n");
+    // Control: without --omit, the inherited LEGACY_KEY and the delivered PORT reach the command.
+    const control = await cli(["--assisted", "run", "--omit", "PIN", "--", ...reporter("LEGACY_KEY", "PORT")], { env: { ...INHERITED, PORT: "1" } });
+    expect(control.stdout).toContain("LEGACY_KEY=present\nPORT=present\n");
+  });
+
+  it("--allow-unmasked and --no-redact stay refused in assisted mode with --omit; the handoff keeps the --omit; --omit and --allow-unmasked or --allow-inherited cannot name one item", async () => {
+    const marker = join(dir, `started-${Math.random().toString(36).slice(2)}`);
+    const allow = await cli(["--assisted", "run", "--omit", "PIN", "--allow-unmasked", "API_TOKEN", "--", ...leaky(marker)]);
+    expect(allow.code).toBe(64);
+    expect(allow.stderr).toContain("varlatch: --allow-unmasked is refused in assisted mode");
+    expect(allow.stderr).toContain("  varlatch run -e development --omit PIN --allow-unmasked API_TOKEN -- <command>");
+    const noRedact = await cli(["--assisted", "run", "--omit", "PIN", "--no-redact", "--", ...leaky(marker)], { env: { CLAUDECODE: "1" } });
+    expect(noRedact.code).toBe(64);
+    expect(noRedact.stderr).toContain("varlatch: --no-redact is refused in assisted mode");
+    for (const args of [["--omit", "PIN", "--allow-unmasked", "PIN"], ["--strict", "--omit", "PIN", "--allow-inherited", "PIN"]]) {
+      const both = await cli(["run", ...args, "--", ...leaky(marker)]);
+      expect(both.code).toBe(64);
+      expect(both.stderr).toMatch(/varlatch: --omit and --allow-(unmasked|inherited) cannot name the same item: PIN\. Nothing was started\./);
+    }
+    expect(requests.filter((q) => q.url.includes("/disclosures") || q.url.includes("/retrievals"))).toEqual([]);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("the human's override outside assisted mode: the --omit remedy has no --assisted and keeps the allowance, and runs as printed", async () => {
+    stored.push({ name: "PIN_TWO", sensitive: true, value: "abcdefg" });
+    const refused = await cli(["run", "--allow-unmasked", "PIN", "--", ...reporter("PIN")]);
+    expect(refused.code).toBe(78);
+    const printed = /^ {6}(varlatch run .*--omit PIN_TWO -- <command>)$/m.exec(refused.stderr)?.[1];
+    expect(printed).toBe("varlatch run -e development --allow-unmasked PIN --omit PIN_TWO -- <command>");
+    expect(refused.stderr).not.toMatch(/varlatch --assisted run/);
+    const r = await cli([...(printed as string).split(" ").slice(1, -1), ...reporter("PIN", "PIN_TWO")]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=present\nPIN_TWO=absent\n");
+  });
+
+  it("--export-context: the run context records the omitted item as absent, never as withheld", async () => {
+    const r = await cli(["--assisted", "run", "--export-context", "--omit", "PIN", "--", process.execPath, "-e", "console.log(JSON.stringify(JSON.parse(process.env.VARLATCH_RUN_CONTEXT).items.PIN))"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain('{"server":"delivered","delivery":"absent"}');
+  });
+
+  it("an omitted withheld item is not reported as withheld by policy; the notice names what was left out", async () => {
+    const control = await cli(["run", "--omit", "PIN", "--", "true"]);
+    expect(control.stderr).toContain("varlatch: 1 value(s) withheld by policy: WITHHELD_KEY");
+    const r = await cli(["run", "--omit", "PIN", "--omit", "WITHHELD_KEY", "--", "true"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).not.toContain("withheld by policy");
+    // Outside output redaction, the notice says nothing about masking.
+    expect(r.stderr).toContain("varlatch: left out of this run (--omit), so the command does not get them: PIN, WITHHELD_KEY\n");
+  });
+
+  it("only omitted Secrets in the environment: no disclosure is made at all", async () => {
+    stored = stored.filter((i) => !i.sensitive || i.name === "PIN");
+    requests = [];
+    const r = await cli(["--assisted", "run", "--omit", "PIN", "--", ...reporter("PIN", "PORT")]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("PIN=absent\nPORT=present\n");
+    expect(disclosures()).toEqual([]);
+  });
+
+  it("a nested run inside an agent-safe run removes the omitted names too", async () => {
+    const r = await cli(["run", "--omit", "API_TOKEN", "--", ...reporter("API_TOKEN", "PORT")], {
+      env: { VARLATCH_AGENT_RUN: "run_0123456789abcdef", API_TOKEN: "vlt_ph_placeholder", PORT: "8080" },
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("API_TOKEN=absent\nPORT=present\n");
   });
 });
 

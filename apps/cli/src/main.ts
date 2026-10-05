@@ -22,7 +22,7 @@ import {
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { TargetError, formatTarget, parseTarget, type EffectiveConfiguration } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
-import { RUN_CONTEXT, buildEnv, runChild, withheldItems } from "./inject.js";
+import { RUN_CONTEXT, buildEnv, omitProblem, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
@@ -43,7 +43,7 @@ import {
   type GenerateSpec,
   type ValueSource,
 } from "./secretInput.js";
-import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
+import { CONFIG_ITEM_NAME_PATTERN, type ConfigurationContract } from "@varlatch/contract";
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -128,6 +128,26 @@ function assistedRunNotices(ctx: ResolvedContext, effective: EffectiveConfigurat
 }
 
 /**
+ * The names `--omit` may use in a default run: every item stored in the
+ * environment, withheld ones included, and every item of the active
+ * Contract (a Contract Secret the command would only inherit). The
+ * Contract is read only when a name is not stored; an unreadable one adds
+ * nothing.
+ */
+async function namesForOmit(api: VarlatchClient, ctx: ResolvedContext, effective: EffectiveConfiguration, omit: string[]): Promise<Set<string>> {
+  const names = new Set([...(effective.items ?? []), ...(effective.manifest?.items ?? [])].map((i) => i.name));
+  // A server that reports its manifest says whether a Contract is active.
+  if (omit.every((name) => names.has(name)) || (effective.manifest && !effective.manifest.contract)) return names;
+  try {
+    const revision = await api.getActiveContract(ctx.organization, ctx.project);
+    for (const item of (revision.contract as ConfigurationContract | undefined)?.items ?? []) names.add(item.name);
+  } catch (err) {
+    if (!(err instanceof VarlatchApiError) || (err.status !== 404 && err.status !== 403)) throw err;
+  }
+  return names;
+}
+
+/**
  * The options a suggested command needs to reach the same environment and
  * server from a new shell: always the resolved environment, and the server
  * when this command overrode it (by flag, or by VARLATCH_SERVER, which the
@@ -206,6 +226,23 @@ function allowUnmaskedNames(args: string[]): string[] {
   return names;
 }
 
+/**
+ * The items named with `--omit`, checked before anything is fetched: each
+ * must be an item's name, and none may also be allowed unmasked or
+ * inherited, which would ask for the item and leave it out at once.
+ */
+function omitNames(args: string[]): string[] {
+  const names = flags(args, "--omit");
+  for (const name of names) {
+    if (!CONFIG_ITEM_NAME_PATTERN.test(name)) usageError(`varlatch: --omit needs an item's name, not ${name}: --omit <NAME>, before \`--\`. Nothing was started.`);
+  }
+  for (const option of ["--allow-unmasked", "--allow-inherited"]) {
+    const both = [...new Set(flags(args, option).filter((name) => names.includes(name)))].sort();
+    if (both.length > 0) usageError(`varlatch: --omit and ${option} cannot name the same item: ${both.join(", ")}. Nothing was started.`);
+  }
+  return [...new Set(names)];
+}
+
 /** Every option `varlatch run` takes before `--`, and nothing else (ADR-0043 Decision 10). */
 const RUN_OPTIONS: OptionSpec = {
   values: ["--environment", "--server", "--agent", "--broker-credential-file", "--agent-network", "--ttl"],
@@ -221,7 +258,20 @@ function runPolicyOptions(args: string[]): string[] {
     ...(has(args, "--strict") ? ["--strict"] : []),
     ...flags(args, "--allow-inherited").map((name) => `--allow-inherited ${name}`),
     ...(has(args, "--export-context") ? ["--export-context"] : []),
+    ...[...new Set(flags(args, "--omit"))].map((name) => `--omit ${name}`),
   ];
+}
+
+/**
+ * Said on stderr before the command starts: what `--omit` left out. With
+ * output redaction, also its limit: a value the run never handled is not
+ * masked if the command gets it some other way.
+ */
+function omittedNotice(omitted: string[], masking: boolean): string | null {
+  if (omitted.length === 0) return null;
+  const them = omitted.length === 1 ? "it" : "them";
+  return `varlatch: left out of this run (--omit), so the command does not get ${them}` +
+    `${masking ? `, and not masked if the command obtains ${them} another way` : ""}: ${[...omitted].sort().join(", ")}`;
 }
 
 /**
@@ -973,8 +1023,8 @@ async function main(): Promise<void> {
 
       case "run": {
         const runUsage =
-          "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... " +
-          "[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... --omit <NAME>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]";
+          "Usage: varlatch run [-e <environment>] [--server <url>] [--export-context | --strict [--allow-inherited <NAME>]...] [--redact | --no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]... " +
+          "[--agent-safe --agent <identity> --allow-host <host[:port]>... --target <NAME=kind:location>... [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>] [--agent-metadata]] -- <command> [args...]";
         const sep = args.indexOf("--");
         if (sep < 0 || sep === args.length - 1) usageError(runUsage);
         const preArgs = args.slice(0, sep);
@@ -985,6 +1035,10 @@ async function main(): Promise<void> {
         // are never read.
         allowUnmaskedNames(preArgs);
         strictOptions("run", preArgs, RUN_OPTIONS, runUsage);
+        // --omit (ADR-0043 Decision 4, amended): the named items never reach
+        // the command, delivered or inherited, in every mode.
+        const omit = omitNames(preArgs);
+        const omitted = new Set(omit);
         const agentRun = agentRunOf();
         if (agentRun) {
           // A `varlatch run` the Agent starts inside an agent-safe run
@@ -1007,7 +1061,9 @@ async function main(): Promise<void> {
           // The run's credentials never reach a nested command's output (an agent asked to check a variable).
           const { agentRunCredentials } = await import("./agentRun.js");
           const credentials = agentRunCredentials(process.env);
-          process.exit(await runChild(cmd, cmdArgs, process.env, credentials.length > 0 ? credentials : undefined));
+          const nested = { ...process.env };
+          for (const name of omitted) delete nested[name];
+          process.exit(await runChild(cmd, cmdArgs, nested, credentials.length > 0 ? credentials : undefined));
         }
         const agentSafe = has(preArgs, "--agent-safe");
         const noRedact = has(preArgs, "--no-redact");
@@ -1016,9 +1072,7 @@ async function main(): Promise<void> {
           usageError("--no-redact and --allow-unmasked do not apply to --agent-safe runs: the Agent receives Placeholders, not Secrets.");
         }
         if (noRedact && has(preArgs, "--redact")) usageError("--redact and --no-redact cannot be combined.");
-        if (!agentSafe && (has(preArgs, "--target") || has(preArgs, "--omit"))) {
-          usageError("--target and --omit apply only to --agent-safe runs.");
-        }
+        if (!agentSafe && has(preArgs, "--target")) usageError("--target applies only to --agent-safe runs.");
         if (has(preArgs, "--export-context") && (has(preArgs, "--strict") || has(preArgs, "--agent-safe"))) {
           usageError("--export-context applies only to default runs; a --strict run always gives the command its run context.");
         }
@@ -1103,11 +1157,17 @@ async function main(): Promise<void> {
               project: ctx.project,
               environment: ctx.environment,
               allowInherited: flags(preArgs, "--allow-inherited"),
+              omit,
               parent: process.env,
               start: async (env, secrets, secretNames) => {
-                if (!assistedRedaction) return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
+                const notice = omittedNotice(omit, assistedRedaction || redact);
+                if (!assistedRedaction) {
+                  if (notice) log(notice);
+                  return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
+                }
                 const plan = planAssistedRedaction(assistedRedactionSet(secrets, env, process.env, secretNames), allowUnmasked);
-                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs) })) return STRICT_EXIT;
+                if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs), assisted: assisted.on })) return STRICT_EXIT;
+                if (notice) log(notice);
                 return runChild(cmd, cmdArgs, env, plan.entries, "assisted");
               },
               log,
@@ -1158,16 +1218,29 @@ async function main(): Promise<void> {
             ctx.environment,
             { includeValues: true },
           );
+          // Before any Secret is disclosed: a misspelled --omit discloses nothing.
+          if (omit.length > 0) {
+            const problem = omitProblem(omit, await namesForOmit(api, ctx, effective, omit));
+            if (problem) usageError(`varlatch: ${problem}. Nothing was started.`);
+          }
           // Before any Secret is disclosed: a run that cannot export its context discloses nothing.
           const exportContext = exporting
             ? await exporting.prepareExportedContext(api, ctx.organization, ctx.project, effective)
             : null;
+          // An omitted Secret is never asked for: the disclosure names the others, and is skipped when none is left.
+          const wanted = (effective.items ?? []).filter((i) => i.sensitive && !omitted.has(i.name)).map((i) => i.name);
+          if (omit.length > 0 && wanted.length === 0) {
+            return { configurationDigest: effective.stateDigest, disclosureDigest: null, result: { effective, exportContext } };
+          }
           // Secrets require the explicit disclosure operation (design R2).
           let disclosureDigest: string | null | undefined = null;
           try {
-            const disclosed = await api.discloseSecrets(ctx.organization, ctx.project, ctx.environment, {
-              scope: "all-authorized-secrets",
-            });
+            const disclosed = await api.discloseSecrets(
+              ctx.organization,
+              ctx.project,
+              ctx.environment,
+              omit.length > 0 ? { items: wanted } : { scope: "all-authorized-secrets" },
+            );
             disclosureDigest = disclosed.stateDigest;
             const byName = new Map(disclosed.items.map((i) => [i.name, i.value]));
             for (const item of effective.items ?? []) {
@@ -1188,21 +1261,24 @@ async function main(): Promise<void> {
         const { effective, exportContext } = exporting
           ? await exporting.readConsistently(read, (line) => console.error(line))
           : (await read()).result;
-        const withheld = withheldItems(effective);
+        const withheld = withheldItems(effective, omitted);
         if (withheld.length > 0) {
           console.error(`varlatch: ${withheld.length} value(s) withheld by policy: ${withheld.join(", ")}`);
         }
         const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
-        const env = buildEnv(process.env, effective);
-        if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env);
+        const env = buildEnv(process.env, effective, omitted);
+        if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env, omitted);
         if (assisted.on) for (const line of assistedRunNotices(ctx, effective, cmd, contextOptions(preArgs, ctx))) log(line);
+        const notice = omittedNotice(omit, assistedRedaction || redact);
         if (assistedRedaction) {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);
           const plan = planAssistedRedaction(set, allowUnmasked);
-          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs) })) process.exit(STRICT_EXIT);
+          if (!assistedGate(plan, log, { target: contextOptions(preArgs, ctx), runOptions: runPolicyOptions(preArgs), assisted: assisted.on })) process.exit(STRICT_EXIT);
+          if (notice) log(notice);
           process.exit(await runChild(cmd, cmdArgs, env, plan.entries, "assisted"));
         }
+        if (notice) log(notice);
         const code = await runChild(cmd, cmdArgs, env, redact ? deliveredSecrets(effective.items ?? [], env) : undefined);
         process.exit(code);
         return;

@@ -51,6 +51,30 @@ const client = (fetched = REVISION, calls: string[] = []): ExportContextClient =
 });
 
 describe("the exported run context", () => {
+  it("--omit: an omitted item is absent, never inherited, and a Secret that was not asked for is not called withheld", () => {
+    const delivered = effective([
+      { name: "PORT", value: "8080" },
+      { name: "API_KEY", value: null, sensitive: true },
+      { name: "TOKEN", value: null, sensitive: true },
+    ]);
+    const omitted = new Set(["API_KEY", "PORT", "REGION"]);
+    const context = exportedRunContext(MANIFEST.contract!, MANIFEST.environment, REVISION.contract as never, delivered, { API_KEY: "shell", REGION: "eu" }, omitted);
+    expect(context.items).toMatchObject({
+      API_KEY: { server: "delivered", delivery: "absent" },
+      PORT: { server: "delivered", delivery: "absent" },
+      REGION: { server: "notStored", delivery: "absent" },
+      // Not omitted: a Secret the disclosure did not return is withheld, as before.
+      TOKEN: { server: "withheld", delivery: "absent" },
+    });
+    // Control, same input: without --omit the parent's copies are inherited and API_KEY is withheld.
+    const control = exportedRunContext(MANIFEST.contract!, MANIFEST.environment, REVISION.contract as never, delivered, { API_KEY: "shell", REGION: "eu" });
+    expect(control.items).toMatchObject({
+      API_KEY: { server: "withheld", delivery: "inherited" },
+      PORT: { server: "delivered", delivery: "varlatch" },
+      REGION: { server: "notStored", delivery: "inherited" },
+    });
+  });
+
   it("records what the server did and how a default run delivered each Contract item, names only", () => {
     const delivered = effective([
       { name: "PORT", value: "8080" },

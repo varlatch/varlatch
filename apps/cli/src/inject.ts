@@ -18,14 +18,22 @@ import { OutputRedaction, type RedactionMode } from "./redact.js";
  */
 export const RUN_CONTEXT = "VARLATCH_RUN_CONTEXT";
 
+/**
+ * The command's environment: `base` with every delivered value over it.
+ * An item named with `--omit` is not delivered, and an inherited copy under
+ * its name is removed, so the command never holds it (ADR-0043 Decision 4,
+ * amended).
+ */
 export function buildEnv(
   base: NodeJS.ProcessEnv,
   effective: EffectiveConfiguration,
+  omitted: ReadonlySet<string> = new Set(),
 ): NodeJS.ProcessEnv {
   const env = { ...base };
   delete env[RUN_CONTEXT];
+  for (const name of omitted) delete env[name];
   for (const item of effective.items ?? []) {
-    if (item.name === RUN_CONTEXT) continue;
+    if (item.name === RUN_CONTEXT || omitted.has(item.name)) continue;
     if (item.value !== null && item.value !== undefined) {
       env[item.name] = item.value;
     }
@@ -33,10 +41,23 @@ export function buildEnv(
   return env;
 }
 
-export function withheldItems(effective: EffectiveConfiguration): string[] {
+/** Items the server did not give this identity; an omitted item was not asked for, so it is not one of them. */
+export function withheldItems(effective: EffectiveConfiguration, omitted: ReadonlySet<string> = new Set()): string[] {
   return (effective.items ?? [])
-    .filter((i) => i.value === null || i.value === undefined)
+    .filter((i) => (i.value === null || i.value === undefined) && !omitted.has(i.name))
     .map((i) => i.name);
+}
+
+/**
+ * Why the `--omit` names cannot be used, or null. Each must name an item
+ * stored in the environment or defined in its Contract: a misspelled name
+ * is an error, never ignored, or the item the operator meant to keep from
+ * the command would reach it.
+ */
+export function omitProblem(omitted: Iterable<string>, known: ReadonlySet<string>): string | null {
+  const unknown = [...new Set(omitted)].filter((n) => !known.has(n)).sort();
+  if (unknown.length === 0) return null;
+  return `--omit must name an item stored in this environment or in its Contract; not found: ${unknown.join(", ")}`;
 }
 
 /**

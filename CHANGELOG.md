@@ -7,6 +7,27 @@ fixes.
 
 ## Unreleased (0.14.2)
 
+### Coding agents
+
+- **`varlatch run --omit <NAME>`** (repeatable) now works in every run,
+  not only with `--agent-safe`: the command does not get the item, neither
+  from Varlatch nor as a copy inherited from your shell, and in a default
+  run an omitted Secret is not fetched. An assisted run checks only the
+  Secrets the command gets, so a provider-issued Secret shorter than
+  8 bytes that the command does not need no longer stops it: before, the
+  only ways past that refusal were the human's `--allow-unmasked`, a new
+  value, or marking the item as not secret. A coding agent may add
+  `--omit` itself, and the exit-78 message now offers it first, with the
+  command to rerun; `--allow-unmasked` and `--no-redact` stay refused in
+  assisted mode, and every other Secret is masked as before. A name that is
+  neither stored in the environment nor in its Contract exits 64 before
+  anything is disclosed or started. With `--strict`, omitting an item the
+  Contract requires is a violation (78); with `--export-context`, the run
+  context records the item as absent. An omitted Secret is not masked if
+  the command reads it some other way. The skill and the `AGENTS.md` block
+  say the same: run `varlatch agents install` again to update them. See
+  [assisted mode](docs/reference/assisted-mode.md).
+
 ### Fixes
 
 - The web console no longer shows healthy Sync Targets as failing. A pass

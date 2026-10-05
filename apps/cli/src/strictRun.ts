@@ -11,7 +11,7 @@ import {
 } from "@varlatch/contract";
 import type { SecretEntry } from "@varlatch/matcher";
 import type { StrictRetrieval } from "@varlatch/protocol";
-import { RUN_CONTEXT } from "./inject.js";
+import { RUN_CONTEXT, omitProblem } from "./inject.js";
 import { deliveredSecrets } from "./redact.js";
 
 /**
@@ -32,6 +32,9 @@ import { deliveredSecrets } from "./redact.js";
  * | not stored                | set, not allowed        | violation: inherited             |
  * | not stored                | unset, default exists   | the Contract default             |
  * | not stored                | unset, no default       | violation if required, else absent |
+ *
+ * An item named with `--omit` comes before every row: it is absent whatever
+ * the server or the parent holds, and a violation where it is required.
  *
  * A default never stands in for a withheld value, and every value the child
  * will receive (delivered, inherited, or default) is validated exactly as it
@@ -86,8 +89,6 @@ export interface RunContext {
  */
 export interface AgentSafeFacts {
   agent: Map<string, { present: boolean; authorized: boolean; reason?: "permission" | "requirement" }> | null;
-  /** `--omit`: stored Secrets left out of the run and removed from the Agent's environment. */
-  omitted?: ReadonlySet<string>;
 }
 
 export interface StrictPlan {
@@ -135,17 +136,25 @@ function withheldReason(withheld: StrictRetrieval["callerView"]["withheld"][numb
     : `withheld by the server: this identity needs ${withheld.requires}`;
 }
 
+/**
+ * `omitted` (`--omit`) are items left out of the run: never delivered,
+ * never inherited (the parent's copy is removed), never given a default,
+ * and a violation where the Contract requires them. In an agent-safe run
+ * they are stored Secrets kept off the Capability.
+ */
 export function planStrictRun(
   retrieval: StrictRetrieval,
   parent: NodeJS.ProcessEnv,
   allowInherited: ReadonlySet<string>,
   agentSafe?: AgentSafeFacts,
+  omitted: ReadonlySet<string> = new Set(),
 ): StrictPlan {
   const violations: Violation[] = [];
   const mediated: string[] = [];
   const env: NodeJS.ProcessEnv = { ...parent };
   // Reserved launcher metadata: never inherited from an outer run.
   delete env[RUN_CONTEXT];
+  for (const name of omitted) delete env[name];
   const plan = (context: RunContext | null, outsideContract = 0): StrictPlan => ({
     env,
     mediated,
@@ -200,12 +209,9 @@ export function planStrictRun(
   // Items outside the Contract are delivered as a default run delivers them
   // (in an agent-safe run, a stored Secret as a Placeholder).
   let outsideContract = 0;
-  const omitted = agentSafe?.omitted ?? new Set<string>();
   for (const item of retrieval.items) {
-    if (contracted.has(item.name) || RESERVED_ITEM_NAMES.includes(item.name)) continue;
-    if (agentSafe && item.sensitive && omitted.has(item.name)) {
-      delete env[item.name];
-    } else if (agentSafe && item.sensitive) {
+    if (contracted.has(item.name) || RESERVED_ITEM_NAMES.includes(item.name) || omitted.has(item.name)) continue;
+    if (agentSafe && item.sensitive) {
       mediated.push(item.name);
       outsideContract++;
     } else if (item.value !== null) {
@@ -241,7 +247,12 @@ export function planStrictRun(
     const required = semantics.requiredApplies(item, envCtx);
     let delivery: Delivery = "absent";
 
-    if (server === "delivered") {
+    if (omitted.has(item.name)) {
+      // Left out: the server's status is recorded as it was, and nothing replaces the value.
+      if (required) {
+        violations.push({ name: item.name, kind: "omitted", reason: "required in this environment, and --omit leaves it out of the run" });
+      }
+    } else if (server === "delivered") {
       const references = unexpanded.get(item.name);
       if (references) {
         violations.push({
@@ -408,6 +419,8 @@ export interface StrictRunOptions {
   project: string;
   environment: string;
   allowInherited: string[];
+  /** `--omit`: items left out of the run; each must be stored here or in the Contract. */
+  omit?: string[];
   parent: NodeJS.ProcessEnv;
   /**
    * Starts the child with exactly this environment; returns its exit code.
@@ -446,7 +459,13 @@ export async function runStrict(api: StrictClient, opts: StrictRunOptions): Prom
   }
   const retrieval = await retryOnce(() => api.strictRetrieval(opts.organization, opts.project, opts.environment));
   if (retrieval.contract) checkAllowances(retrieval.contract as unknown as ConfigurationContract, opts.allowInherited);
-  const plan = planStrictRun(retrieval, opts.parent, new Set(opts.allowInherited));
+  const omitted = new Set(opts.omit ?? []);
+  const contract = retrieval.contract as unknown as ConfigurationContract | null;
+  // Stored: every resolved item the manifest lists, withheld ones included.
+  const known = [...retrieval.manifest.items, ...retrieval.items, ...retrieval.callerView.withheld, ...(contract?.items ?? [])];
+  const problem = omitProblem(omitted, new Set(known.map((i) => i.name)));
+  if (problem) throw new UsageError(problem);
+  const plan = planStrictRun(retrieval, opts.parent, new Set(opts.allowInherited), undefined, omitted);
   if (plan.violations.length > 0) {
     for (const line of formatViolations(plan.violations)) opts.log(line);
     return STRICT_EXIT;

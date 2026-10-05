@@ -72,8 +72,10 @@ These keep the meanings they always had:
   (a misspelling such as `--allow-unmask`, or `--environment=<name>`, which
   is not supported), an option without its value, an option given twice
   (`--allow-unmasked`, `--allow-inherited`, `--allow-host`, `--target`, and
-  `--omit` repeat), or an argument before `--` exits 64. Everything after
-  `--` goes to the command unchanged.
+  `--omit` repeat), or an argument before `--` exits 64. So does an
+  `--omit` name that is neither stored in the environment nor in its
+  Contract, checked before the command starts (in a default run, before any
+  Secret is disclosed). Everything after `--` goes to the command unchanged.
 
 ## Help
 

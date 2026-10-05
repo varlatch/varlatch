@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { constants } from "node:os";
 import { describe, expect, it } from "vitest";
-import { buildEnv, runChild, signalExitCode, withheldItems } from "../src/inject.js";
+import { buildEnv, omitProblem, runChild, signalExitCode, withheldItems } from "../src/inject.js";
 
 const effective = {
   environmentId: "env_1",
@@ -22,6 +22,26 @@ describe("environment injection", () => {
     // (varlatch never fabricates or clears what it was not authorized to see).
     expect(env.WITHHELD_SECRET).toBe("stale");
     expect(withheldItems(effective)).toEqual(["WITHHELD_SECRET"]);
+  });
+
+  it("--omit: an omitted item is not injected, an inherited copy is removed, and it is not reported as withheld", () => {
+    const omitted = new Set(["DATABASE_URL", "WITHHELD_SECRET"]);
+    const env = buildEnv({ PATH: "/bin", DATABASE_URL: "shell", WITHHELD_SECRET: "stale" }, effective, omitted);
+    expect(env.DATABASE_URL).toBeUndefined();
+    expect(env.WITHHELD_SECRET).toBeUndefined();
+    expect(env.PORT).toBe("3000");
+    expect(env.PATH).toBe("/bin");
+    expect(withheldItems(effective, omitted)).toEqual([]);
+    // Control: without --omit, the delivered value replaces the shell's and the withheld one is inherited.
+    expect(buildEnv({ DATABASE_URL: "shell" }, effective).DATABASE_URL).toBe("postgres://x");
+  });
+
+  it("--omit names must be known: a misspelled one is named, never ignored", () => {
+    const known = new Set(["DATABASE_URL", "PORT"]);
+    expect(omitProblem(["PORT", "DATABASE_URL"], known)).toBeNull();
+    expect(omitProblem(["PORT", "DATABSE_URL", "ZZ", "ZZ"], known)).toBe(
+      "--omit must name an item stored in this environment or in its Contract; not found: DATABSE_URL, ZZ",
+    );
   });
 
   it("forwards the child's exit code", async () => {
