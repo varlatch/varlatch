@@ -66,7 +66,9 @@ varlatch --assisted <command> [args...]
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    Stop and ask the human what to do about PIN. Approval for one item or action never covers another.
+    If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:
+        varlatch --assisted run -e production --omit PIN -- <command>
+    If it needs it, stop and ask the human what to do about PIN. Approval for one item or action never covers another.
     - Only if they approve replacing PIN with a new random value (it overwrites the current one):
         varlatch --assisted values set PIN -e production --replace PIN --generate hex:32
       A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set PIN -e production
@@ -76,7 +78,10 @@ varlatch --assisted <command> [args...]
   Nothing was started.
   ```
 
-  First the agent stops and asks. Each remedy is the human's decision, for
+  When the command does not need the item, the agent leaves it out with
+  `--omit` and runs again. That needs nobody's approval: the command then
+  never gets the value, so nothing passes unmasked. Otherwise the agent
+  stops and asks. Each other remedy is the human's decision, for
   the named item (and environment) only. After that approval, a safe remedy
   is the agent's own command, with `--assisted`: a new random value
   replaces the item with `--replace` naming it. A credential a provider
@@ -85,7 +90,24 @@ varlatch --assisted <command> [args...]
   run's environment (always, even when it came from the default), its
   server when the run overrode it (`--server` or `VARLATCH_SERVER`), and
   for the human's retry its `--strict`, `--allow-inherited`,
-  `--export-context`, and earlier `--allow-unmasked` options.
+  `--export-context`, `--omit`, and earlier `--allow-unmasked` options.
+- **`--omit <NAME>` leaves an item out of the run** (repeatable, in every
+  mode, not only in assisted mode). The command does not get it: Varlatch
+  does not deliver it, and removes a copy the command would inherit from
+  your shell under that name. In a default run an omitted Secret is not
+  fetched at all. The check for values too short to mask covers only what
+  the command gets, so a short Secret left out no longer stops the run;
+  every other Secret is masked as before. The name must be an item stored
+  in the environment or in its Contract: any other name exits with status
+  64 before any Secret is disclosed. `--omit` cannot name an item that
+  `--allow-unmasked` or `--allow-inherited` also names. Before the command
+  starts, the run says on stderr what it left out. A Secret left out is not
+  masked if the command reads it some other way (from a provider's own
+  settings, for example): the run never fetches a value only to mask it.
+  With `--strict`, `--export-context`, and `--redact`, see
+  [strict startup](strict-startup.md),
+  [type generation](type-generation.md#exporting-the-run-context-from-a-default-run),
+  and [output redaction](output-redaction.md).
 - **Marking an item as not secret** changes the Contract, for every
   environment of the project: show the active revision
   (`contract show`), write its `contract` field to a file in a new

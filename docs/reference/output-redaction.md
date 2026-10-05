@@ -122,7 +122,9 @@ differences:
   inherits from your shell that Varlatch knows to be a Secret, stored in the
   environment or marked sensitive in the active Contract.
 - **A Secret shorter than 8 bytes stops the run** with status 78 before the
-  command starts, naming the item. The remedies are the human's, in their
+  command starts, naming the item. When the command does not need it,
+  `--omit <NAME>` leaves it out: the command does not get it, so it no
+  longer stops the run. The other remedies are the human's, in their
   own terminal; there, `varlatch run --allow-unmasked <NAME> -- <command>`
   lets that item through unmasked and keeps every other Secret masked.
 - **A terminal is not refused:** the command writes to pipes instead.
@@ -131,6 +133,10 @@ differences:
 
 ## Limits
 
+- The filter holds only what the command gets. A Secret left out with
+  `--omit`, or withheld from you, is not in it, and is not masked if the
+  command reads it some other way. With `--redact`, `--omit` simply means
+  one Secret fewer to deliver and to mask.
 - Redaction protects where the output is written. It does not protect a
   Secret from the command itself, which holds the value in its environment.
   It guards against accidents, such as a Secret printed in a debug line or

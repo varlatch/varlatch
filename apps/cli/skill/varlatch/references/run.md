@@ -20,11 +20,26 @@ varlatch --assisted run --strict -- node server.js
   `[REDACTED:NAME]`.
 - `--strict` checks the configuration against the active Contract first and
   starts nothing on a violation (exit 78, naming the items).
+- `--omit <NAME>` (repeatable) leaves an item out of the run: the command
+  does not get it, not even a copy inherited from your shell. Use it only
+  for items the command does not need. A Secret left out is not masked if
+  the command reads it some other way (from a provider's own settings, for
+  example), so never leave a Secret out to hide it from a command that can
+  read it there. A name that is neither stored in the environment nor in
+  its Contract stops the run (exit 64); with `--strict`, leaving out an
+  item the Contract requires is a violation (exit 78).
 - Exit 78 also means a Secret is shorter than 8 bytes and cannot be masked.
-  Report the item to the human and ask. Each remedy is their decision, for
-  that item only, and approval for one item or action never covers another.
-  The refusal prints the remedies with the refused run's environment and
-  options:
+  If the command does not need that item, leave it out and rerun. That
+  needs no approval: the command then never gets the value.
+
+  ```sh
+  varlatch --assisted run -e <environment> --omit <NAME> -- <command>
+  ```
+
+  If the command needs it, report the item to the human and ask. Each
+  remedy is their decision, for that item only, and approval for one item
+  or action never covers another. The refusal prints the remedies with the
+  refused run's environment and options:
   - With their approval to replace it with a new random value (overwriting
     the current one), run it yourself:
 

@@ -614,7 +614,7 @@ export async function runAgentSafeStrict(
     const storedSecrets = retrieval.items.filter((i) => i.sensitive && i.name !== RUN_CONTEXT).map((i) => i.name);
     const { targets } = checkTargetFlags(storedSecrets, opts);
     const omitted = new Set(opts.omit);
-    const preliminary = planStrictRun(retrieval, process.env, allow, { agent: null, omitted });
+    const preliminary = planStrictRun(retrieval, process.env, allow, { agent: null }, omitted);
     const global = preliminary.violations.some((v) => v.kind === "contract" || v.kind === "semantics");
     if (global) return refuse(preliminary.violations);
 
@@ -659,7 +659,7 @@ export async function runAgentSafeStrict(
     }
 
     const agentFacts = new Map((cap.preflightItems ?? []).map((i) => [i.name, i]));
-    const plan = planStrictRun(retrieval, process.env, allow, { agent: agentFacts, omitted });
+    const plan = planStrictRun(retrieval, process.env, allow, { agent: agentFacts }, omitted);
     if (plan.violations.length > 0) {
       await revokeQuietly(brokerApi, ctx, cap.id);
       return refuse(plan.violations);

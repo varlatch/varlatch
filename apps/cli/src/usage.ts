@@ -11,7 +11,8 @@ Usage:
   varlatch <command> --help                            # one command's usage (also: varlatch help <command>)
   varlatch --assisted <command>...                      # a coding agent drives the CLI (or VARLATCH_ASSISTED=1):
                run masks Secrets in the command's output by default and refuses one too short to mask
-               (exit 78), and refuses --allow-unmasked and --no-redact; values set/rotate never take a
+               (exit 78; --omit <NAME> leaves it out when the command does not need it), and refuses
+               --allow-unmasked and --no-redact; values set/rotate never take a
                Secret's value from the command line, and replace an existing value only with --replace <ITEM>;
                values delete deletes only with --confirm <ITEM>; login with no method starts a device sign-in
   varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
@@ -43,13 +44,18 @@ Usage:
                 or the credential store, and printing the environment of a varlatch run)
   varlatch context [--json]
   varlatch env <use <name>|list [--json]>
-  varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... -- <command> [args...]
+  varlatch run [-e <env>] [--export-context] [--redact] [--no-redact] [--allow-unmasked <NAME>]... [--omit <NAME>]...
+               -- <command> [args...]
                (--export-context: also give the command VARLATCH_RUN_CONTEXT, names only, for the Typed Accessor;
                 --redact: mask the Secrets delivered to the command in its piped stdout and stderr,
-                refused when either is a terminal, and with --agent-safe)
-  varlatch run --strict [--allow-inherited <NAME>]... [--redact] -- <command> [args...]
+                refused when either is a terminal, and with --agent-safe;
+                --omit: leave an item stored here or in the Contract out of the command's environment, a copy
+                inherited from this shell included; a Secret left out is not fetched, so it is not masked
+                either, and a short one no longer stops an assisted run; another name exits 64)
+  varlatch run --strict [--allow-inherited <NAME>]... [--omit <NAME>]... [--redact] -- <command> [args...]
                (validate exactly what the command receives; exit 78 and start nothing on any violation;
-                combine with --agent-safe for the agent-safe preflight: Secrets stay placeholders)
+                --omit of an item required here is one; combine with --agent-safe for the agent-safe
+                preflight: Secrets stay placeholders)
   varlatch run --agent-safe --agent <identity> --allow-host <host[:port]>...
                --target <NAME=header:<name>|query:<name>|json:<pointer>|form:<name>>... --omit <NAME>...
                [--broker-credential-file <path>] [--agent-network strict] [--ttl <s>]

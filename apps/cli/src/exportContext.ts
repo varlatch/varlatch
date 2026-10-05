@@ -84,7 +84,10 @@ export async function readConsistently<T>(
  * For each Contract item, what the server did and how a default run
  * delivered it: a delivered value overrides the parent's, anything else is
  * inherited when the parent sets it, and a default run never applies a
- * Contract default.
+ * Contract default. An item left out with `--omit` is absent. A Secret left
+ * out was never asked for, so the server did not withhold it: it is
+ * recorded as stored (`delivered`), as an agent-safe strict run records an
+ * omitted Secret.
  */
 export function exportedRunContext(
   revision: ManifestContract,
@@ -92,14 +95,17 @@ export function exportedRunContext(
   contract: Pick<ConfigurationContract, "items">,
   delivered: EffectiveConfiguration,
   parent: NodeJS.ProcessEnv,
+  omitted: ReadonlySet<string> = new Set(),
 ): RunContext {
   const byName = new Map((delivered.items ?? []).map((i) => [i.name, i]));
   const items: RunContext["items"] = {};
   for (const item of contract.items) {
     if (RESERVED_ITEM_NAMES.includes(item.name)) continue;
     const got = byName.get(item.name);
-    const server: ServerStatus = !got ? "notStored" : got.value === null || got.value === undefined ? "withheld" : "delivered";
-    const delivery: Delivery = server === "delivered" ? "varlatch" : parent[item.name] !== undefined ? "inherited" : "absent";
+    const left = omitted.has(item.name);
+    const withheld = got !== undefined && (got.value === null || got.value === undefined) && !(left && got.sensitive);
+    const server: ServerStatus = !got ? "notStored" : withheld ? "withheld" : "delivered";
+    const delivery: Delivery = left ? "absent" : server === "delivered" ? "varlatch" : parent[item.name] !== undefined ? "inherited" : "absent";
     items[item.name] = { server, delivery };
   }
   return {
@@ -125,7 +131,7 @@ export async function prepareExportedContext(
   org: string,
   project: string,
   effective: EffectiveConfiguration,
-): Promise<(delivered: EffectiveConfiguration, parent: NodeJS.ProcessEnv) => string> {
+): Promise<(delivered: EffectiveConfiguration, parent: NodeJS.ProcessEnv, omitted?: ReadonlySet<string>) => string> {
   const manifest = effective.manifest;
   if (!manifest || !effective.stateDigest) {
     throw new ExportContextError(
@@ -153,8 +159,8 @@ export async function prepareExportedContext(
   if (encodeRunContext(exportedRunContext(revision, manifest.environment, contract, { environmentId: "", items: [] }, longest)) === null) {
     throw new ExportContextError(`the run context would exceed ${RUN_CONTEXT_MAX_BYTES} bytes; it is never truncated`);
   }
-  return (delivered, parent) => {
-    const encoded = encodeRunContext(exportedRunContext(revision, manifest.environment, contract, delivered, parent));
+  return (delivered, parent, omitted) => {
+    const encoded = encodeRunContext(exportedRunContext(revision, manifest.environment, contract, delivered, parent, omitted));
     if (encoded === null) {
       throw new ExportContextError(`the run context would exceed ${RUN_CONTEXT_MAX_BYTES} bytes; it is never truncated`);
     }

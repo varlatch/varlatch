@@ -54,6 +54,15 @@ For each Contract item, the first rule that applies decides:
   from your shell when Varlatch delivered none (not stored, or withheld). It
   never overrides a delivered value. It takes exact names, can be repeated,
   and a name that is not in the Contract is an error.
+- **`--omit NAME`** leaves an item out before any rule of the table
+  applies: the command does not get it, whatever the server delivered and
+  whatever your shell sets, and no Contract default replaces it. Leaving
+  out an item the Contract requires in this environment is a violation
+  (*omitted*). The run context records the item as `absent`, with the
+  server's status as it was. Strict startup reads every value in one
+  request, so the omitted value is part of that response (and its audit
+  event); it never reaches the command. The name must be stored in the
+  environment or be in the Contract; another name exits with status 64.
 - **Items outside the Contract** that Varlatch delivers are passed to the
   command as usual and counted. Other variables in your shell (`PATH`,
   `HOME`, and so on) pass through unchanged.
