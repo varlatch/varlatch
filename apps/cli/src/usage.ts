@@ -88,6 +88,13 @@ Usage:
                       | nothing for convex: --base is the deployment URL)
                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
                      # client-side push for installations without server egress (ADR-0031)
+  varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin>
+                      (--repo <name> [--gh-environment <name>] | --app <uuid> | nothing for convex)
+                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>] [--json]
+               (does the platform hold the Environment's values? compared in memory, one status per key of
+                the Contract: match, differs, missing-on-platform, extra-on-platform, unreadable, absent;
+                never a value or a hash, so assisted mode allows it; exit 0 in sync, 1 drift, 2 not
+                everything checked. Use it instead of printing the environment through varlatch run)
   varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
   varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
                  [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]
@@ -123,6 +130,7 @@ Exit status: 0 success; 1 failure; 64 the command line is wrong; 69 the server c
 maintenance; 75 login --wait reached its deadline with the sign-in still pending; 77 not authenticated or denied;
 78 strict startup violation, or assisted mode cannot mask a Secret.
 Kept as before: validate 1 invalid, 2 incomplete; scan 1 findings, 2 not everything scanned; types --check 1 stale;
+sync check 1 drift, 2 not everything checked;
 run returns the command's own status once the command has started. agents install --check exits 1 when the files differ.`;
 
 /**

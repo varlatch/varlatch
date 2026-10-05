@@ -46,6 +46,21 @@ fixes.
   already was, except shell variables such as `HOME` and `PATH`. The
   guardrails stay opt-in and are accident prevention, not a boundary.
 
+### Sync
+
+- **`varlatch sync check`** compares a platform's values with the
+  Environment's without revealing them: it reads Coolify or Convex through
+  the same adapters as `sync push`, compares in memory, and prints one
+  status per Contract key (`match`, `differs`, `missing-on-platform`,
+  `extra-on-platform`, `unreadable`, `absent`), never a value or a hash.
+  Coolify's preview rows are ignored. Exit 0 in sync, 1 drift, 2 not
+  everything checked; `--json` for scripts. The platform is read first, and
+  only the Secrets it also holds are disclosed, by name. Assisted mode
+  allows it, a Secret too short to mask included, so it replaces printing
+  the environment through `varlatch run` to compare it, which assisted mode
+  masks. GitHub Actions secrets are write-only and are reported as
+  `unreadable`. See [sync check](docs/reference/sync-check.md).
+
 ### Fixes
 
 - Dependency updates for three published advisories: `smol-toml` 1.9.0

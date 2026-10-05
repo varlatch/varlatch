@@ -252,6 +252,15 @@ const RUN_OPTIONS: OptionSpec = {
   aliases: { "-e": "--environment" },
 };
 
+/** Every option `varlatch sync check` takes, and nothing else (ADR-0044; strict as ADR-0043 Decision 10). */
+const SYNC_CHECK_OPTIONS: OptionSpec = {
+  values: ["--platform", "--base", "--repo", "--gh-environment", "--app", "--token-env", "--environment", "--server"],
+  lists: ["--map", "--exclude"],
+  booleans: ["--json"],
+  onceBooleans: true,
+  aliases: { "-e": "--environment" },
+};
+
 /** The run's startup options that a remedy repeats, so a handed-over command keeps the run's policy. */
 function runPolicyOptions(args: string[]): string[] {
   return [
@@ -1572,7 +1581,47 @@ async function main(): Promise<void> {
 
       case "sync": {
         const sub = args[0];
-        if (sub !== "push") usageError("Usage: varlatch sync push --platform <github-actions|coolify|convex> [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... ...");
+        if (sub === "check") {
+          // ADR-0044: statuses only, never a value, so assisted mode allows it.
+          // Strict (ADR-0043 Decision 10): a misspelled option is a usage
+          // error, never a check of something else.
+          const usage =
+            "Usage: varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin> " +
+            "(--repo <name> [--gh-environment <name>] | --app <uuid> | nothing for convex) [-e <env>] [--server <url>] " +
+            "[--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [--json]";
+          const opts = strictOptions("sync check", args.slice(1), SYNC_CHECK_OPTIONS, usage);
+          const value = (name: string) => opts.values.get(name);
+          const platform = value("--platform") ?? usageError(`varlatch sync check: --platform is required (github-actions, coolify, convex)\n${usage}`);
+          const base = value("--base") ?? usageError(`varlatch sync check: --base is required (a GitHub owner, or a Coolify/Convex https origin)\n${usage}`);
+          const ctx = context(args);
+          const { runSyncCheck, formatSyncCheck, syncCheckDocument, SyncCheckUsageError } = await import("./syncCheck.js");
+          let checked;
+          try {
+            checked = await runSyncCheck(client(ctx), ctx, {
+              platform,
+              base,
+              repo: value("--repo"),
+              ghEnvironment: value("--gh-environment"),
+              app: value("--app"),
+              tokenEnv: value("--token-env") ?? "VARLATCH_SYNC_TOKEN",
+              maps: opts.lists.get("--map") ?? [],
+              excludes: opts.lists.get("--exclude") ?? [],
+            }, { env: process.env });
+          } catch (err) {
+            if (err instanceof SyncCheckUsageError) usageError(`varlatch sync check: ${err.message}\n${usage}`);
+            throw err;
+          }
+          if (opts.booleans.has("--json")) {
+            for (const notice of checked.notices) console.error(`varlatch: ${notice}`);
+            printJson(syncCheckDocument(checked));
+          } else {
+            const out = formatSyncCheck(checked);
+            for (const line of out.stderr) console.error(line);
+            for (const line of out.stdout) console.log(line);
+          }
+          process.exit(checked.exitCode);
+        }
+        if (sub !== "push") usageError("Usage: varlatch sync <push|check> --platform <github-actions|coolify|convex> [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... ...");
         const ctx = context(args);
         const api = client(ctx);
         const platform = flag(args, "--platform") ?? usageError("--platform is required (github-actions, coolify, convex)");

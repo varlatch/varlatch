@@ -28,6 +28,7 @@ change either: scripts that parse them keep working.
 | `varlatch audit list --json` | `organization`, `events`: the audit events as the API returns them |
 | `varlatch tailnet requirements --json` | `organization`, `requirements`: as the API returns them |
 | `varlatch scan --json` | findings and files not scanned; see [secret scanning](secret-scanning.md) |
+| `varlatch sync check --json` | `result` (`match`, `drift`, `incomplete`, `unchecked`), `platform`, `base`, `destination`, `environment`, `keySet`, `counts`, `keys` (name, destination, status, reason), `exitCode` (never a value); see [sync check](sync-check.md) |
 | `varlatch doctor --json` | the installation health report |
 | `varlatch self-update --check --json` | the available release |
 | `varlatch login --start --json` | `verificationUri`, `userCode`, `expiresAt` (never the sign-in's private device code) |
@@ -54,6 +55,9 @@ These keep the meanings they always had:
 - `varlatch scan`: 1 for findings or when the scan could not run, for any
   reason; 2 when some files were not scanned.
 - `varlatch types --check`: 1 when the file is stale or missing.
+- `varlatch sync check`: 1 for drift (a key differs, or is missing on or
+  extra on the platform); 2 when not everything could be checked and no
+  drift was found. With `--json` too. See [sync check](sync-check.md).
 - `varlatch login --wait`: 0 once the credential is stored; 75 when the
   sign-in is still waiting for approval at the deadline (60 seconds, or
   `--timeout` up to 600); 77 when it was denied, expired, or already

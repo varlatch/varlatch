@@ -147,6 +147,11 @@ varlatch --assisted <command> [args...]
   starts nothing; it never falls back to a run without masking. (Every
   option of `varlatch run` is checked this way; see
   [scripting](scripting.md).)
+- **To compare a platform's values with Varlatch's,** do not print the
+  environment through `varlatch run`: every Secret is masked, so each one
+  would look different. [`varlatch sync check`](sync-check.md) compares
+  inside Varlatch and prints one status per key, never a value, so assisted
+  mode allows it, a Secret too short to mask included.
 - These are protections against accidents, not a boundary: an agent that
   deliberately turns assisted mode off is outside what they cover.
 - **`--agent-safe` runs are unchanged:** the Agent holds Placeholders, not

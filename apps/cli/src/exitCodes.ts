@@ -5,6 +5,7 @@ import { VarlatchApiError } from "@varlatch/sdk";
  * The CLI's exit statuses (ADR-0043 Decision 10). Meanings scripts already
  * rely on are frozen: `validate` 1 (invalid) and 2 (incomplete), `scan` 1
  * (findings) and 2 (not everything scanned), `types --check` 1 (stale),
+ * `sync check` 1 (drift) and 2 (not everything checked),
  * strict startup 78, `varlatch run` passing the command's own status
  * through once the command has started, and `login --wait` 75 for a
  * sign-in still pending at its deadline. New distinctions follow

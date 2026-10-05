@@ -149,7 +149,10 @@ long as you follow these rules.
 10. **Know the limits.** Output is masked only for values Varlatch delivered
     or knows by name, and only in the forms it recognises. Never print,
     encode, or transform environment values (the one exception: a listed
-    Placeholder inside an agent-safe run, rule 8).
+    Placeholder inside an agent-safe run, rule 8). To find out whether a
+    platform (Coolify, Convex) still holds Varlatch's values, never print an
+    environment to compare it: `varlatch --assisted sync check` compares
+    inside Varlatch and prints one status per key (`references/run.md`).
 
 ## Moving a project's `.env` into Varlatch
 
@@ -193,7 +196,8 @@ Read the reference for the task at hand. Each is also printed by
 - `references/setup.md` (topic `setup`): signing in, `init`, moving `.env`
   files in with `import`, Contracts, generated types, CI checks.
 - `references/run.md` (topic `run`): running commands, strict startup,
-  output masking, storing and rotating values, exit statuses.
+  output masking, comparing a platform's values with Varlatch, storing and
+  rotating values, exit statuses.
 - `references/agent-run.md` (topic `agent-run`): agent-safe runs,
   Placeholders, and `varlatch request`.
 - `references/self-hosting.md` (topic `self-hosting`): installing and

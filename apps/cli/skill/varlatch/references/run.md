@@ -73,6 +73,33 @@ varlatch --assisted run --strict -- node server.js
     ```
 - Once the command has started, `run` exits with the command's own status.
 
+## Comparing a platform with Varlatch
+
+To check whether a platform still holds the values Varlatch has, never print
+the environment through `varlatch run` and compare: assisted mode masks every
+Secret, so each one would look different, and a printed value is a leak.
+Compare inside Varlatch instead:
+
+```sh
+varlatch --assisted sync check --platform coolify --base https://coolify.example.com --app <uuid> -e production --token-env COOLIFY_TOKEN --json
+varlatch --assisted sync check --platform convex --base https://happy-animal-123.convex.cloud -e production --token-env CONVEX_DEPLOY_KEY --json
+```
+
+- It reads the platform's current values and compares them in memory with
+  the environment's, for every key of the Contract, and prints one status
+  per key: `match`, `differs`, `missing-on-platform`, `extra-on-platform`,
+  `unreadable`, or `absent`. Never a value or a hash, so it also works when
+  the environment holds a Secret too short to mask.
+- Exit 0: in sync. 1: drift. 2: not everything could be checked (the
+  platform could not be read, or a value is not readable). GitHub Actions
+  secrets are write-only, so they are never compared.
+- `--token-env` names the variable that holds the platform's credential.
+  When that credential is stored in Varlatch, start the check inside a run
+  that delivers it, in the project that stores it:
+  `varlatch --assisted run -e production -- varlatch --assisted sync check ... --token-env COOLIFY_TOKEN`.
+- Report the statuses. Fixing drift writes to the platform: do it only when
+  the task asks for it, or after the human approves.
+
 ## Storing values
 
 Create a value only when the task asks for it (setting up, importing, or a
