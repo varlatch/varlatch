@@ -47,6 +47,19 @@ describe("targetStatus", () => {
     expect(targetStatus(target({})).label).toBe("In sync");
   });
 
+  it("is in sync when a pass finds nothing to change", () => {
+    // varlatchd records "converged", not "ok", when the destination already matches.
+    expect(targetStatus(target({ lastResult: "converged" }))).toMatchObject({ tone: "ok", label: "In sync" });
+  });
+
+  it("warns, without failing, when the values landed but the redeploy did not", () => {
+    expect(targetStatus(target({ lastResult: "ok; redeploy failed (Coolify deploy failed (403))" }))).toMatchObject({
+      tone: "warn",
+      label: "Redeploy failed",
+      error: "Coolify deploy failed (403)",
+    });
+  });
+
   it("offers a credential replacement when the platform refuses it", () => {
     const s = targetStatus(target({ failureCount: 3, lastResult: "AdapterError: GitHub public key fetch failed (401)" }));
     expect(s).toMatchObject({ tone: "error", label: "Failing", detail: "3 attempts", fix: "replace-credential" });
@@ -99,6 +112,26 @@ describe("destinations and mappings", () => {
 describe("connectionHealth", () => {
   it("is healthy when every live target is in sync", () => {
     expect(connectionHealth([target({}), target({ state: "paused", failureCount: 4, lastResult: "401" })]).label).toBe("Healthy");
+  });
+
+  it("is healthy when passes find nothing to change", () => {
+    expect(connectionHealth([target({ lastResult: "converged" }), target({ lastResult: "converged" })])).toMatchObject({
+      tone: "ok",
+      label: "Healthy",
+    });
+  });
+
+  it("counts failed targets only", () => {
+    expect(connectionHealth([target({ lastResult: "converged" }), target({ failureCount: 1, lastResult: "TypeError: fetch failed" })]).label).toBe(
+      "1 target failing",
+    );
+  });
+
+  it("warns about a failed redeploy", () => {
+    expect(connectionHealth([target({ lastResult: "converged" }), target({ lastResult: "ok; redeploy failed (Coolify deploy failed (500))" })])).toMatchObject({
+      tone: "warn",
+      label: "1 redeploy failed",
+    });
   });
 
   it("reports a rejected credential", () => {

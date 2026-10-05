@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.14.2)
+
+### Fixes
+
+- The web console no longer shows healthy Sync Targets as failing. A pass
+  that finds the destination already current records `converged`, and the
+  console counted every result other than `ok` as a failure, so after the
+  first repair pass every connection reported all of its targets failing.
+  A target now fails only when a run failed or the target was stopped. A
+  push whose values landed but whose redeploy did not now shows as a
+  warning, "Redeploy failed", on the target and on its connection.
+
 ## 0.14.1 (2026-10-05)
 
 ### Fixes

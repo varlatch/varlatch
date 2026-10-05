@@ -41,6 +41,16 @@ export function cleanError(text: string | null | undefined): string | undefined 
     .trim();
 }
 
+/**
+ * The platform's error when a push landed but its redeploy did not:
+ * varlatchd records "ok; redeploy failed (<error>)" without counting a
+ * failure, because the values were stored.
+ */
+export function redeployError(result: string | null | undefined): string | undefined {
+  const match = /; redeploy failed \((.*?)\)?$/s.exec(result ?? "");
+  return match ? cleanError(match[1]) : undefined;
+}
+
 export function targetStatus(t: SyncTarget): TargetStatus {
   const reaffirm = (t.lastResult ?? "").includes("re-affirmation required");
   if (t.state === "paused") return { tone: "muted", label: "Paused", at: t.updatedAt ?? t.createdAt, fix: "resume" };
@@ -60,15 +70,21 @@ export function targetStatus(t: SyncTarget): TargetStatus {
   if (reaffirm) {
     return { tone: "warn", label: "Needs re-affirmation", detail: "a mapped item became a secret", fix: "reaffirm", at: t.lastAttemptAt };
   }
-  if (t.failureCount > 0 || (t.lastResult && t.lastResult !== "ok")) {
+  // Every failed run counts in failureCount; a successful one resets it and
+  // records "ok" (values written) or "converged" (nothing to change).
+  if (t.failureCount > 0) {
     return {
       tone: "error",
       label: "Failing",
-      detail: t.failureCount > 0 ? `${t.failureCount} attempt${t.failureCount === 1 ? "" : "s"}` : undefined,
+      detail: `${t.failureCount} attempt${t.failureCount === 1 ? "" : "s"}`,
       error: cleanError(t.lastResult),
       fix: isCredentialError(t.lastResult) ? "replace-credential" : "retry",
       at: t.lastAttemptAt,
     };
+  }
+  const redeploy = redeployError(t.lastResult);
+  if (redeploy) {
+    return { tone: "warn", label: "Redeploy failed", detail: "values pushed", error: redeploy, at: t.lastAttemptAt };
   }
   if (!t.lastAttemptAt) return { tone: "live", label: "Waiting for first push", at: null };
   if (t.needsSync) return { tone: "live", label: "Syncing", at: t.lastAttemptAt };
@@ -144,13 +160,22 @@ export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
   if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false };
   const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
   if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt };
-  const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0 || (t.lastResult && t.lastResult !== "ok"));
+  const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0);
   if (failing.length > 0) {
     return {
       tone: "error",
       label: `${failing.length} target${failing.length === 1 ? "" : "s"} failing`,
       credentialRejected: false,
       at: failing[0]!.lastAttemptAt,
+    };
+  }
+  const redeploys = live.filter((t) => redeployError(t.lastResult));
+  if (redeploys.length > 0) {
+    return {
+      tone: "warn",
+      label: `${redeploys.length} redeploy${redeploys.length === 1 ? "" : "s"} failed`,
+      credentialRejected: false,
+      at: redeploys[0]!.lastAttemptAt,
     };
   }
   if (live.every((t) => !t.lastAttemptAt)) return { tone: "live", label: "Waiting for first push", credentialRejected: false };
