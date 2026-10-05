@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.14.1)
+
+### Fixes
+
+- `varlatch types --check` no longer reports a generated file as stale when
+  the only difference is its Generator lines, the CLI release named in the
+  header. A file another release generated is current when that release
+  would produce exactly its bytes, so upgrading the CLI in CI no longer fails
+  every generated file, and `varlatch types` leaves such a file unchanged.
+  Any other difference, from the Contract or from a release that generates a
+  different module, is still stale.
+
 ## 0.14.0 (2026-10-03)
 
 ### Coding agents
