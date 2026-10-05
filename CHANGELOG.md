@@ -69,6 +69,20 @@ fixes.
   (GHSA-jqcg-44mw-7w3h, through the MCP server's dependencies, bundled in
   the CLI), and `source-map-js` 1.2.2 (GHSA-68fv-2mgg-jv7q, build and test
   tooling only).
+- `varlatch agents install` (and `varlatch init`) no longer breaks a
+  project whose `CLAUDE.md` is a symbolic link to `AGENTS.md`, as Astro's
+  template ships it (#93). The Claude Code adapter wrote its import line
+  through the link, over the block it had just added, so `AGENTS.md` lost
+  its Varlatch block and imported itself; `--check` then never passed. Now
+  a `CLAUDE.md` (or `.claude/CLAUDE.md`) that is `AGENTS.md` needs no
+  adapter and the output says so, and a second install changes nothing.
+  Running install again repairs a file an earlier release left this way,
+  and `--remove` gives back its original bytes. Nothing is written through
+  a symbolic link any more: an `AGENTS.md` that links to a file in the
+  project is resolved and that file edited, one that links outside the
+  project stops the command (78), and any other linked file is left as it
+  is with the edit printed. See
+  [coding agents](docs/reference/coding-agents.md).
 - The web console no longer shows healthy Sync Targets as failing. A pass
   that finds the destination already current records `converged`, and the
   console counted every result other than `ok` as a failure, so after the
