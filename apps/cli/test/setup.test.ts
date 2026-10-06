@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { bootstrapAction, ensureSecrets, escrowComplete, parseEnrollLink, renderEnv, SECRET_FILES, SetupError, validatePublicUrl, validatePublicHost, composeFiles, tailnetUrl, TAILNET_MACHINE } from "../src/setup.js";
+import { join, relative } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  bootstrapAction, checkComposeOverride, COMPOSE_OVERRIDE, composeFileSetting, ensureSecrets, escrowComplete, parseEnrollLink, renderEnv,
+  requireComposeVersion, runSetup, SECRET_FILES, SetupError, validatePublicUrl, validatePublicHost, composeFiles, tailnetUrl, TAILNET_MACHINE,
+} from "../src/setup.js";
 
 const config = { schemaVersion: 1 as const, publicUrl: "https://vault.example.com", webPort: 8787, bindAddress: "127.0.0.1" };
 
@@ -133,6 +136,189 @@ describe("ingress (ADR-0035 D6, Q6)", () => {
     expect(() => tailnetUrl({ ...joined, CertDomains: null })).toThrow(/enable HTTPS certificates/);
     expect(TAILNET_MACHINE.test("varlatch")).toBe(true);
     expect(TAILNET_MACHINE.test("Varlatch_1")).toBe(false);
+  });
+});
+
+describe("Docker Compose floor (2.24, every ingress)", () => {
+  it("accepts 2.24.0 and newer and returns the version it found", () => {
+    expect(requireComposeVersion("2.24.0")).toBe("2.24.0");
+    expect(requireComposeVersion("v2.29.7")).toBe("2.29.7");
+    expect(requireComposeVersion("2.29.7-desktop.1")).toBe("2.29.7");
+    expect(requireComposeVersion("5.5.1")).toBe("5.5.1");
+  });
+  it("refuses older, missing, or unreadable Compose, naming what it found and what it needs", () => {
+    expect(() => requireComposeVersion("2.23.3")).toThrow(SetupError);
+    expect(() => requireComposeVersion("2.23.3")).toThrow(
+      "Setup needs Docker Compose 2.24 or newer: found 2.23.3. Nothing was changed. Update Docker Compose to 2.24 or newer, then run `varlatch setup` again.",
+    );
+    expect(() => requireComposeVersion("v2.9.0")).toThrow(/found 2\.9\.0/);
+    expect(() => requireComposeVersion(null)).toThrow(/Setup needs Docker Compose 2\.24 or newer: .*Compose plugin is missing\. Nothing was changed\. Install Docker/);
+    expect(() => requireComposeVersion("dev")).toThrow(/found "dev", not a version number/);
+  });
+});
+
+// runSetup against a stand-in `docker` on PATH: it answers `compose version`
+// as told and fails every other command, so a run stops at its first real
+// Docker step (`docker compose up`) with everything before it in place.
+describe("runSetup preflight and COMPOSE_FILE", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  function useDocker(version: string | null): string {
+    const bin = mkdtempSync(join(tmpdir(), "setup-bin-"));
+    const calls = join(bin, "calls.log");
+    const answer = version === null ? `echo "docker: 'compose' is not a docker command." >&2; exit 1` : `echo "${version}"; exit 0`;
+    writeFileSync(join(bin, "docker"), `#!/bin/sh\necho "$*" >> "${calls}"\nif [ "$1" = compose ] && [ "$2" = version ]; then ${answer}; fi\nexit 1\n`, { mode: 0o755 });
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    return calls;
+  }
+  function installDir(extra: string[] = []): string {
+    const dir = mkdtempSync(join(tmpdir(), "setup-run-"));
+    writeFileSync(join(dir, "docker-compose.yml"), "name: vltest\nservices: {}\n");
+    for (const file of ["docker-compose.caddy.yml", "Caddyfile", ...extra]) writeFileSync(join(dir, file), "");
+    return dir;
+  }
+  const options = (dir: string, ingress: "public" | "external" = "public") =>
+    ({ dir, ingress, publicUrl: "https://vault.example.com", noWait: true, enrollTimeoutMs: 0, attest: false });
+  const composeFileLine = (dir: string) => readFileSync(join(dir, ".env"), "utf8").match(/^COMPOSE_FILE=.*$/m)?.[0] ?? null;
+  const quiet = () => vi.spyOn(console, "log").mockImplementation(() => {});
+
+  it("refuses Compose 2.23 before it changes anything", async () => {
+    quiet();
+    const calls = useDocker("2.23.3");
+    const dir = installDir();
+    const before = readdirSync(dir).sort();
+    await expect(runSetup(options(dir))).rejects.toThrow(/^Setup needs Docker Compose 2\.24 or newer: found 2\.23\.3\. Nothing was changed\./);
+    expect(readdirSync(dir).sort()).toEqual(before);
+    expect(readFileSync(calls, "utf8")).toBe("compose version --short\n");
+  });
+
+  it("refuses a Docker without the Compose plugin, and no Docker at all, the same way", async () => {
+    quiet();
+    const dir = installDir();
+    const before = readdirSync(dir).sort();
+    useDocker(null);
+    await expect(runSetup(options(dir))).rejects.toThrow(/Compose plugin is missing\. Nothing was changed\./);
+    vi.stubEnv("PATH", mkdtempSync(join(tmpdir(), "setup-empty-path-")));
+    await expect(runSetup(options(dir))).rejects.toThrow(/Compose plugin is missing\. Nothing was changed\./);
+    expect(readdirSync(dir).sort()).toEqual(before);
+  });
+
+  it("refuses an unreadable version instead of guessing", async () => {
+    quiet();
+    useDocker("dev");
+    const dir = installDir();
+    await expect(runSetup(options(dir))).rejects.toThrow(/found "dev", not a version number\. Nothing was changed\./);
+    expect(readdirSync(dir)).not.toContain(".env");
+  });
+
+  it("starts with 2.24.0, and lists docker-compose.override.yml last only while it exists", async () => {
+    const log = quiet();
+    useDocker("2.24.0");
+    const dir = installDir();
+    await expect(runSetup(options(dir))).rejects.toThrow(/docker compose up -d --remove-orphans failed/);
+    expect(log).toHaveBeenCalledWith("  ✓ Docker Compose 2.24.0");
+    expect(composeFileLine(dir)).toBe("COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml");
+    // The documented step: create the file, then run setup again.
+    writeFileSync(join(dir, COMPOSE_OVERRIDE), "services: {}\n");
+    expect(checkComposeOverride(dir, {})).toMatchObject({ status: "fail" });
+    await expect(runSetup(options(dir))).rejects.toThrow(/up -d --remove-orphans failed/);
+    expect(composeFileLine(dir)).toBe("COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml:docker-compose.override.yml");
+    expect(log).toHaveBeenCalledWith("  ✓ docker-compose.override.yml applies (last in COMPOSE_FILE)");
+    expect(checkComposeOverride(dir, {})).toMatchObject({ status: "pass" });
+    // Deleted again: the rerun drops it, since Compose refuses a listed file that is missing.
+    rmSync(join(dir, COMPOSE_OVERRIDE));
+    await expect(runSetup(options(dir))).rejects.toThrow(/up -d --remove-orphans failed/);
+    expect(composeFileLine(dir)).toBe("COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml");
+  });
+
+  it("starts with Compose 5.x and leaves COMPOSE_FILE unset for the external ingress, where Compose reads the override itself", async () => {
+    const log = quiet();
+    useDocker("5.5.1");
+    const dir = installDir([COMPOSE_OVERRIDE]);
+    await expect(runSetup(options(dir, "external"))).rejects.toThrow(/up -d --remove-orphans failed/);
+    expect(log).toHaveBeenCalledWith("  ✓ Docker Compose 5.5.1");
+    expect(composeFileLine(dir)).toBeNull();
+    expect(log).toHaveBeenCalledWith("  ✓ docker-compose.override.yml applies");
+    expect(checkComposeOverride(dir, {})).toMatchObject({ status: "pass", detail: "COMPOSE_FILE is not set, so Compose reads it" });
+  });
+});
+
+describe("docker-compose.override.yml", () => {
+  const publicConfig = { ...config, ingress: "public" as const };
+  const tailnetConfig = { ...config, publicUrl: "https://vault.tail1.ts.net", ingress: "tailnet" as const, tailnetMachine: "vault", tailnetName: "tail1.ts.net" };
+  const dirWith = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "setup-override-"));
+    for (const [file, text] of Object.entries(files)) writeFileSync(join(dir, file), text);
+    return dir;
+  };
+
+  it("comes last in COMPOSE_FILE for the public and tailnet ingress when it exists", () => {
+    expect(composeFiles("public", true)).toEqual(["docker-compose.yml", "docker-compose.caddy.yml", COMPOSE_OVERRIDE]);
+    expect(composeFiles("tailnet", true).at(-1)).toBe(COMPOSE_OVERRIDE);
+    expect(renderEnv(publicConfig, "", { override: true })).toContain("COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml:docker-compose.override.yml\n");
+    expect(renderEnv(tailnetConfig, "", { override: true }))
+      .toContain("COMPOSE_FILE=docker-compose.yml:docker-compose.tailscale.yml:docker-compose.tailnet-https.yml:docker-compose.override.yml\n");
+    expect(renderEnv(publicConfig, "", { override: false })).toBe(renderEnv(publicConfig));
+    // External: no COMPOSE_FILE, so Compose reads the file by itself.
+    expect(renderEnv(config, "", { override: true })).toBe(renderEnv(config));
+  });
+
+  it("reads COMPOSE_FILE the way Compose does", () => {
+    expect(composeFileSetting(dirWith({}), {})).toBeNull();
+    // Last line wins; export, quotes, and comments as in a dotenv file.
+    const dir = dirWith({ ".env": 'COMPOSE_FILE=a.yml\nexport COMPOSE_FILE="docker-compose.yml:b.yml" # mine\n' });
+    expect(composeFileSetting(dir, {})).toEqual({ files: ["docker-compose.yml", "b.yml"], source: ".env", setupLine: false, replacesSetup: false });
+    expect(composeFileSetting(relative(process.cwd(), dir), {})?.source).toBe(".env");
+    // The environment wins over .env, with its own separator.
+    expect(composeFileSetting(dir, { COMPOSE_FILE: "x.yml;y.yml", COMPOSE_PATH_SEPARATOR: ";" }))
+      .toEqual({ files: ["x.yml", "y.yml"], source: "the environment", setupLine: false, replacesSetup: false });
+    // COMPOSE_ENV_FILES replaces .env, and may set the separator itself.
+    const other = dirWith({ ".env": "COMPOSE_FILE=ignored.yml\n", "other.env": "COMPOSE_PATH_SEPARATOR=;\nCOMPOSE_FILE=a.yml;b.yml\n" });
+    expect(composeFileSetting(other, { COMPOSE_ENV_FILES: "other.env" })).toMatchObject({ files: ["a.yml", "b.yml"], source: join(other, "other.env") });
+  });
+
+  it("tells setup's own COMPOSE_FILE from one an operator added below the keep marker", () => {
+    expect(composeFileSetting(dirWith({ ".env": renderEnv(publicConfig) }), {})).toMatchObject({ setupLine: true, replacesSetup: false });
+    expect(composeFileSetting(dirWith({ ".env": renderEnv(publicConfig, "COMPOSE_FILE=docker-compose.yml\n") }), {}))
+      .toMatchObject({ files: ["docker-compose.yml"], setupLine: false, replacesSetup: true });
+    // The only COMPOSE_FILE (external ingress): the operator's own list, replacing nothing.
+    expect(composeFileSetting(dirWith({ ".env": renderEnv(config, "COMPOSE_FILE=docker-compose.yml:mine.yml\n") }), {}))
+      .toMatchObject({ setupLine: false, replacesSetup: false });
+  });
+
+  it("is a doctor finding only where the file exists, and passes where Compose reads it", () => {
+    expect(checkComposeOverride(dirWith({ ".env": renderEnv(publicConfig) }), {})).toBeNull();
+    expect(checkComposeOverride(dirWith({ [COMPOSE_OVERRIDE]: "" }), {})).toMatchObject({ id: "compose.override", status: "pass", class: "advisory" });
+    expect(checkComposeOverride(dirWith({ [COMPOSE_OVERRIDE]: "", ".env": renderEnv(publicConfig, "", { override: true }) }), {}))
+      .toMatchObject({ status: "pass", detail: "listed in COMPOSE_FILE (.env)" });
+    const dir = dirWith({ [COMPOSE_OVERRIDE]: "" });
+    expect(checkComposeOverride(dir, { COMPOSE_FILE: `docker-compose.yml:${join(dir, COMPOSE_OVERRIDE)}` })).toMatchObject({ status: "pass" });
+  });
+
+  it("warns, advisory, when COMPOSE_FILE leaves it out, with the remedy that fits where COMPOSE_FILE comes from", () => {
+    const warn = (files: Record<string, string>, env: NodeJS.ProcessEnv = {}) => {
+      const check = checkComposeOverride(dirWith({ [COMPOSE_OVERRIDE]: "", ...files }), env);
+      expect(check).toMatchObject({ id: "compose.override", status: "fail", class: "advisory" });
+      return check!;
+    };
+    const managed = warn({ ".env": renderEnv(publicConfig) });
+    expect(managed.detail).toBe("COMPOSE_FILE (.env) lists docker-compose.yml, docker-compose.caddy.yml, so Compose does not read docker-compose.override.yml");
+    expect(managed.remedy).toBe("Run `varlatch setup` again: it lists docker-compose.override.yml last in COMPOSE_FILE");
+    // Never advise writing a COMPOSE_FILE below the marker: one there pins its list across upgrades.
+    expect(warn({ ".env": renderEnv(publicConfig, "COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml\n") }).remedy)
+      .toBe("Remove the COMPOSE_FILE line below the keep marker in .env, which replaces the one setup writes, then run `varlatch setup` again");
+    expect(warn({ ".env": "POSTGRES_PASSWORD=x\nCOMPOSE_FILE=docker-compose.yml:docker-compose.tailscale.yml\n" }).remedy)
+      .toBe("List docker-compose.override.yml last in COMPOSE_FILE (.env)");
+    expect(warn({}, { COMPOSE_FILE: "docker-compose.yml" }).remedy).toBe("List docker-compose.override.yml last in COMPOSE_FILE (the environment)");
+  });
+
+  it("is unknown, not passed, when the env file cannot be read", () => {
+    const dir = dirWith({ [COMPOSE_OVERRIDE]: "" });
+    mkdirSync(join(dir, ".env"));
+    expect(checkComposeOverride(dir, {})).toMatchObject({ status: "unknown", class: "advisory" });
   });
 });
 

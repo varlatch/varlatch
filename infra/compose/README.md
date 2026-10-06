@@ -29,6 +29,10 @@ cd varlatch-<version>          # or infra/compose in a checkout
 varlatch setup
 ```
 
+It needs Docker with the Compose plugin, version 2.24 or newer, whichever
+ingress you choose. Setup checks this first and stops, changing nothing,
+when Compose is missing or older.
+
 It first asks how people will reach Varlatch (`--ingress`):
 
 | Choice | Public URL | You need |
@@ -234,7 +238,8 @@ starts the stack (`varlatch-migrate` gates `varlatchd`), waits for health,
 recreates `convex-backend` when the Convex supervisor file changed, reloads
 Caddy when the Caddyfile changed, then runs `convex-deploy` so the
 Application Plane functions can never go stale. Overlays are release files:
-put local changes in `.env` or a separate override file, not in them. Non-interactive:
+put local changes in `.env` or `docker-compose.override.yml` (see below),
+not in them. Non-interactive:
 `varlatch upgrade --yes --bek-file /secure/backup-key --kek-file /secure/root-kek-copy`.
 
 The upgrade is **complete only when the target release's upgrade gate
@@ -245,13 +250,25 @@ functions and the supervisor must each *pass*; a check that cannot run
 (unknown) blocks like a failure. Until then the release stays pending: fix
 what the gate names and rerun the same `varlatch upgrade <version>`; it
 resumes on the archive it already verified. Advisory findings (backups,
-custody) are listed but never block. `varlatch doctor --gate` shows the same
-verdict at any time. When your CLI is older than the release, the upgrade
-leaves the release's CLI as `varlatch-cli-<version>.cjs` here: use it from
-then on.
+custody, the Docker Compose version) are listed but never block.
+`varlatch doctor --gate` shows the same verdict at any time. When your CLI
+is older than the release, the upgrade leaves the release's CLI as
+`varlatch-cli-<version>.cjs` here: use it from then on.
 
 Local customization must live in `.env` or a `docker-compose.override.yml`,
-because the upgrade replaces `docker-compose.yml` wholesale.
+because the upgrade replaces `docker-compose.yml` and the overlays wholesale
+and leaves both of those alone. Compose reads `docker-compose.override.yml`
+by itself only while `COMPOSE_FILE` is not set. Setup sets `COMPOSE_FILE`
+for the public and tailnet ingress, and lists the override file last when it
+exists: after you create the file, run `varlatch setup` again, which adds it
+and starts the stack with it. To stop using it, delete it and run
+`varlatch setup` again; until then every `docker compose` command here
+fails, because a file that `COMPOSE_FILE` lists is missing. With the
+external ingress `COMPOSE_FILE` stays unset, and `docker compose up -d`
+applies the change. `varlatch doctor` warns when the file exists but
+`COMPOSE_FILE` leaves it out. Do not add your own `COMPOSE_FILE` line below the keep marker in
+`.env`: it replaces the list setup writes, and would keep an outdated one
+when a later setup run changes that list.
 
 For the published v0.7.0 release, use the 0.8.0 or newer CLI and plan an offline
 maintenance window: see the [first-upgrade bridge](../../docs/operations/backup.md#first-upgrade-from-the-published-v070-release).
@@ -284,7 +301,8 @@ varlatch doctor --dir /srv/varlatch --json   # for scripts; exit 1 on a mandator
 checks inside `varlatchd`: Secret Plane readiness (schema, Root KEK against
 the canary, maintenance state), the public URL, whether dashboard Mirrors
 have caught up (it waits up to `--wait` seconds, default 15), backup status,
-the release manifest and any unfinished upgrade, the host CLI version, and
+the release manifest and any unfinished upgrade, the host CLI and Docker
+Compose versions, whether a `docker-compose.override.yml` is in effect, and
 the dashboard's live-update endpoint. Each check is pass, fail, or unknown,
 and mandatory or advisory; "unknown" is never reported as pass. For example,
 browser reachability can only be measured from a browser, and off-host key

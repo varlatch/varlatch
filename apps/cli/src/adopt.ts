@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFile
 import { join, resolve } from "node:path";
 import { doctorExitCode, formatDoctor, runDoctor, type Check } from "./doctor.js";
 import {
-  CONFIG_FILE, docker, ENV_HEADER, ENV_KEEP, escrowComplete, escrowPhase, loadInstallConfig, renderEnv,
+  COMPOSE_OVERRIDE, CONFIG_FILE, docker, ENV_HEADER, ENV_KEEP, escrowComplete, escrowPhase, loadInstallConfig, renderEnv,
   SetupError, varlatchd, waitHealthy, type CustodyStatus, type EscrowMethod, type InstallConfig,
 } from "./setup.js";
 
@@ -441,7 +441,7 @@ export async function runAdopt(opts: AdoptOptions): Promise<number> {
       const additions = envText().split("\n")
         .filter((l) => { const k = l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/)?.[1]; return k && !managedKeys.has(k); })
         .join("\n");
-      const next = renderEnv(config, additions ? `${additions}\n` : "");
+      const next = renderEnv(config, additions ? `${additions}\n` : "", { override: existsSync(join(dir, COMPOSE_OVERRIDE)) });
       // The managed file must describe the same installation: compare the
       // resolved Compose configuration before and after, then keep or roll back.
       const before = composeConfig(dir);

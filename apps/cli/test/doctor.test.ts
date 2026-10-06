@@ -2,9 +2,10 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkCliVersion,
+  checkComposeVersion,
   checkRelease,
   checkServices,
   checkSupervisor,
@@ -14,10 +15,12 @@ import {
   doctorExitCode,
   formatDoctor,
   parseComposePs,
+  parseComposeVersion,
   runDoctor,
   type Runner,
   type ServiceState,
 } from "../src/doctor.js";
+import { renderEnv } from "../src/setup.js";
 
 const healthy: ServiceState[] = [
   { Service: "postgres", State: "running", Health: "healthy", Image: "postgres:17.6" },
@@ -158,6 +161,37 @@ describe("checkCliVersion", () => {
   });
 });
 
+describe("Docker Compose floor (2.24, every ingress)", () => {
+  it("reads the version from every known output form", () => {
+    expect(parseComposeVersion("2.29.7")).toBe("2.29.7");
+    expect(parseComposeVersion("v2.24.0\n")).toBe("2.24.0");
+    expect(parseComposeVersion("2.29.7-desktop.1")).toBe("2.29.7");
+    expect(parseComposeVersion("5.5.1")).toBe("5.5.1");
+    expect(parseComposeVersion("Docker Compose version v2.24.6")).toBe("2.24.6");
+    expect(parseComposeVersion("2.26.1-4")).toBe("2.26.1");
+    expect(parseComposeVersion("2.24")).toBe("2.24");
+    for (const odd of ["", "dev", "2", "v", "version unknown", "abc2.30.0"]) expect(parseComposeVersion(odd), odd).toBeNull();
+  });
+  it("passes 2.24.0 and newer, including 5.x and Docker Desktop builds", () => {
+    for (const ok of ["2.24.0", "v2.24.0", "2.24", "2.29.7-desktop.1", "2.100.0", "3.0.0", "5.5.1"]) {
+      expect(checkComposeVersion(ok), ok).toMatchObject({ id: "compose.version", status: "pass", class: "advisory" });
+    }
+    expect(checkComposeVersion("v2.24.0").detail).toBe("2.24.0");
+  });
+  it("fails anything older, numerically rather than as text", () => {
+    for (const old of ["2.23.3", "2.23.99", "v2.3.0", "2.9.0", "1.29.2"]) {
+      const check = checkComposeVersion(old);
+      expect(check, old).toMatchObject({ status: "fail", class: "advisory", detail: `found ${parseComposeVersion(old)}` });
+      expect(check.remedy).toContain("2.24 or newer");
+    }
+  });
+  it("fails when Compose is missing and is unknown, not passed, for an unreadable version", () => {
+    expect(checkComposeVersion(null)).toMatchObject({ status: "fail", detail: expect.stringContaining("Compose plugin is missing") });
+    expect(checkComposeVersion("dev")).toMatchObject({ status: "unknown", detail: 'found "dev", not a version number' });
+    expect(checkComposeVersion("")).toMatchObject({ status: "unknown", detail: "`docker compose version --short` printed no version" });
+  });
+});
+
 describe("checkWebConfig", () => {
   const js = (url: string) => `window.__VARLATCH__ = { convexUrl: "${url}" };\n`;
   it("passes a public HTTPS Convex origin", () => {
@@ -190,6 +224,7 @@ describe("runDoctor", () => {
       calls.push(args);
       const key = args.slice(0, 4).join(" ");
       if (overrides[key]) return overrides[key]!;
+      if (key === "compose version --short") return { code: 0, stdout: "2.29.7" };
       if (key === "compose ps --all --format") return { code: 0, stdout: JSON.stringify(healthy) };
       if (key === "compose exec -T varlatchd") return { code: 0, stdout: JSON.stringify(serverReport) };
       if (key === "compose exec -T varlatch-web") return { code: 0, stdout: 'window.__VARLATCH__ = { convexUrl: "https://convex.example.com" };' };
@@ -204,7 +239,7 @@ describe("runDoctor", () => {
     const report = await runDoctor({ dir, run, waitSeconds: 0 });
     for (const args of calls) {
       const command = args[0] === "inspect" ? "inspect" : args[args[1] === "--profile" ? 3 : 1];
-      expect(["ps", "exec", "config", "inspect"]).toContain(command);
+      expect(["version", "ps", "exec", "config", "inspect"]).toContain(command);
     }
     expect(calls.find((a) => a[3] === "varlatchd")).toEqual(["compose", "exec", "-T", "varlatchd", "node", "dist/cli.js", "admin", "doctor", "--wait", "0"]);
     expect(doctorExitCode(report)).toBe(0);
@@ -226,8 +261,55 @@ describe("runDoctor", () => {
   it("stops with one clear failure when Compose is unreachable", async () => {
     const { run } = fakeRunner({ "compose ps --all --format": { code: 1, stdout: "" } });
     const report = await runDoctor({ dir: tmpdir(), run });
-    expect(report.checks).toEqual([expect.objectContaining({ id: "docker.compose", status: "fail" })]);
+    expect(report.checks.map((c) => c.id)).toEqual(["compose.version", "docker.compose"]);
+    expect(report.checks.filter((c) => c.status !== "pass")).toEqual([expect.objectContaining({ id: "docker.compose", status: "fail" })]);
     expect(doctorExitCode(report)).toBe(1);
+  });
+
+  it("names a missing Compose plugin when the project cannot be listed", async () => {
+    const { run } = fakeRunner({ "compose version --short": { code: 1, stdout: "" }, "compose ps --all --format": { code: 1, stdout: "" } });
+    const report = await runDoctor({ dir: tmpdir(), run });
+    expect(report.checks[0]).toMatchObject({ id: "compose.version", status: "fail", detail: expect.stringContaining("Compose plugin is missing") });
+    expect(report.checks[1]).toMatchObject({ id: "docker.compose", status: "fail" });
+  });
+
+  it("reports an old Compose as an advisory finding that neither fails doctor nor blocks the gate", async () => {
+    const { run, calls } = fakeRunner({ "compose version --short": { code: 0, stdout: "2.23.3" } });
+    const report = await runDoctor({ dir: mkdtempSync(join(tmpdir(), "doctor-")), run, waitSeconds: 0 });
+    expect(calls[0]).toEqual(["compose", "version", "--short"]);
+    expect(report.checks.find((c) => c.id === "compose.version")).toMatchObject({ status: "fail", class: "advisory", detail: "found 2.23.3" });
+    expect(doctorExitCode(report)).toBe(0);
+    expect(formatDoctor(report)).toContain("! Docker Compose 2.24 or newer  [advisory]");
+    const verdict = evaluateGate(report);
+    expect(verdict.blocking.map((c) => c.id)).not.toContain("compose.version");
+    expect(verdict.advisory.map((c) => c.id)).toContain("compose.version");
+  });
+
+  describe("docker-compose.override.yml", () => {
+    afterEach(() => vi.unstubAllEnvs());
+    const isolate = () => {
+      for (const name of ["COMPOSE_FILE", "COMPOSE_ENV_FILES", "COMPOSE_PATH_SEPARATOR"]) vi.stubEnv(name, undefined);
+    };
+
+    it("warns, advisory only, when COMPOSE_FILE leaves an existing override out", async () => {
+      isolate();
+      const dir = mkdtempSync(join(tmpdir(), "doctor-"));
+      writeFileSync(join(dir, ".env"), renderEnv({ schemaVersion: 1, publicUrl: "https://vault.example.com", webPort: 8787, bindAddress: "127.0.0.1", ingress: "public" }));
+      writeFileSync(join(dir, "docker-compose.override.yml"), "services: {}\n");
+      const report = await runDoctor({ dir, run: fakeRunner().run, waitSeconds: 0 });
+      const check = report.checks.find((c) => c.id === "compose.override");
+      expect(check).toMatchObject({ status: "fail", class: "advisory" });
+      expect(check!.detail).toContain("lists docker-compose.yml, docker-compose.caddy.yml");
+      expect(check!.remedy).toContain("Run `varlatch setup` again");
+      expect(doctorExitCode(report)).toBe(0);
+      expect(evaluateGate(report).blocking.map((c) => c.id)).not.toContain("compose.override");
+    });
+
+    it("says nothing without an override file", async () => {
+      isolate();
+      const report = await runDoctor({ dir: mkdtempSync(join(tmpdir(), "doctor-")), run: fakeRunner().run, waitSeconds: 0 });
+      expect(report.checks.find((c) => c.id === "compose.override")).toBeUndefined();
+    });
   });
 
   it("reports the Secret Plane as unknown when varlatchd cannot be queried", async () => {
