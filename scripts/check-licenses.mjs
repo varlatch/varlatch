@@ -8,7 +8,8 @@
  *   - every source file carries the SPDX-License-Identifier of its directory;
  *   - every workspace package.json declares that license;
  *   - every workspace package has a LICENSE file with its full text, identical
- *     to the one in LICENSES/.
+ *     to the one in LICENSES/;
+ *   - every release image declares Varlatch's licenses in its OCI label.
  *
  * Usage:
  *   check-licenses.mjs          fail on any deviation
@@ -80,6 +81,14 @@ for (const path of tracked.filter(path => path.endsWith("package.json") && path 
     if (fix) writeFileSync(licenseFile, fullText[expected]);
     else problems.push(`${dir}/LICENSE: missing or not the ${expected} text from LICENSES/`);
   }
+}
+
+// The label names Varlatch's own licenses; THIRD-PARTY-NOTICES.md, copied
+// into each image, covers the third-party contents.
+const IMAGE_LICENSES = `${AGPL} AND ${APACHE}`;
+for (const path of ["services/varlatchd/Dockerfile", "apps/web/Dockerfile", "infra/compose/convex-deploy.Dockerfile"]) {
+  const label = readFileSync(join(repoRoot, path), "utf8").match(/org\.opencontainers\.image\.licenses="([^"]*)"/);
+  if (label?.[1] !== IMAGE_LICENSES) problems.push(`${path}: needs LABEL org.opencontainers.image.licenses="${IMAGE_LICENSES}"`);
 }
 
 if (problems.length > 0) {

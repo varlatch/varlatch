@@ -23,6 +23,10 @@ COPY convex/convex ./convex
 COPY convex/scripts ./scripts
 COPY LICENSE THIRD-PARTY-NOTICES.md /usr/share/doc/varlatch/
 COPY LICENSES /usr/share/doc/varlatch/LICENSES
+# Varlatch's own code here is AGPL-3.0-or-later and Apache-2.0 (LICENSE maps
+# which is which); THIRD-PARTY-NOTICES.md lists everything else.
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/varlatch/varlatch"
 # Stamp the bundle with this release's fingerprint; `meta:release` reports it.
 RUN node scripts/fingerprint.mjs --root . --stamp && chown -R node:node /app
 USER node
