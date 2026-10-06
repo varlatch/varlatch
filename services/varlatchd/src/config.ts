@@ -46,6 +46,8 @@ export interface VarlatchdConfig {
   databaseUrl: string;
   port: number;
   publicUrl: string | undefined;
+  /** The issuer of the tokens varlatchd signs: publicUrl, else localhost:port. */
+  issuer: string;
   convexUrl: string | undefined;
   tailscale:
     | { socketPath: string; expectedTailnet: string; port: number; bind: string }
@@ -153,6 +155,11 @@ export function loadConfig(
     databaseUrl: withPasswordFile(cfg.VARLATCH_DATABASE_URL, cfg.VARLATCH_DATABASE_PASSWORD_FILE),
     port: cfg.VARLATCH_PORT,
     publicUrl: cfg.VARLATCH_PUBLIC_URL,
+    // The one token issuer (#110): the server, the Mirror publisher, and
+    // `admin mirror-sync` must agree, and Convex trusts exactly this value.
+    // Compose refuses to start without VARLATCH_PUBLIC_URL; the localhost
+    // fallback serves a bare `node dist/cli.js` run only.
+    issuer: cfg.VARLATCH_PUBLIC_URL ?? `http://localhost:${cfg.VARLATCH_PORT}`,
     convexUrl: cfg.VARLATCH_CONVEX_URL,
     sync:
       cfg.VARLATCH_SYNC === "off"

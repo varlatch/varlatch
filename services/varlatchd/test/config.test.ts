@@ -39,6 +39,14 @@ describe("loadConfig", () => {
     expect(() => cfg.loadRootKek()).toThrow(ConfigError);
   });
 
+  it("derives one token issuer from VARLATCH_PUBLIC_URL, with a localhost fallback (#110)", () => {
+    const kek = { VARLATCH_KEK: Buffer.alloc(32).toString("base64") };
+    expect(loadConfig({ ...base, ...kek, VARLATCH_PUBLIC_URL: "https://vault.example.com" }).issuer).toBe("https://vault.example.com");
+    // Compose passes an unset optional variable as an empty string.
+    expect(loadConfig({ ...base, ...kek, VARLATCH_PUBLIC_URL: "" }).issuer).toBe("http://localhost:8686");
+    expect(loadConfig({ ...base, ...kek, VARLATCH_PORT: "9000" }).issuer).toBe("http://localhost:9000");
+  });
+
   it("defaults the port and validates ranges", () => {
     const cfg = loadConfig({ ...base, VARLATCH_KEK: Buffer.alloc(32).toString("base64") });
     expect(cfg.port).toBe(8686);

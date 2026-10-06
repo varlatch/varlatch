@@ -110,7 +110,7 @@ async function serveCommand(): Promise<void> {
       );
     }
   }
-  const issuer = config.publicUrl ?? `http://localhost:${config.port}`;
+  const issuer = config.issuer;
   const humanAuth = buildHumanAuth({
     ctx,
     databaseUrl: config.databaseUrl,
@@ -332,7 +332,7 @@ async function adminCommand(rest: string[]): Promise<void> {
           console.log(cred.token);
           break;
         }
-        const base = config.publicUrl ?? `http://localhost:${config.port}`;
+        const base = config.issuer;
         console.log("Open this one-time enrollment URL in your browser to create");
         console.log("the first Installation Admin's passkey (ADR-0006):");
         console.log(`  ${base}/enroll#${grant.token}`);
@@ -362,7 +362,7 @@ async function adminCommand(rest: string[]): Promise<void> {
           console.log(cred.token);
           break;
         }
-        const base = config.publicUrl ?? "http://localhost:8686";
+        const base = config.issuer;
         console.log("Open this one-time recovery URL to enroll a new passkey:");
         console.log(`  ${base}/enroll#${grant.token}`);
         console.log(`Expires: ${grant.expiresAt}.`);
@@ -373,7 +373,7 @@ async function adminCommand(rest: string[]): Promise<void> {
         const { syncAllMirrors } = await import("./mirror/publisher.js");
         const result = await syncAllMirrors(makeCtx(), {
           convexUrl: config.convexUrl,
-          issuer: config.publicUrl ?? "varlatch",
+          issuer: config.issuer,
         });
         console.log(`Mirrored ${result.pushed} records to the Application Plane.`);
         break;

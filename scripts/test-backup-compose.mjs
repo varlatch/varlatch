@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Both supported deployment variants must enforce the same recovery gate.
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 const env = {
@@ -9,12 +9,20 @@ const env = {
   POSTGRES_SUPERUSER_PASSWORD: 'compose-test', VARLATCH_MIGRATE_PASSWORD: 'compose-test',
   VARLATCH_RUNTIME_PASSWORD: 'compose-test', CONVEX_DB_PASSWORD: 'compose-test',
   CONVEX_INSTANCE_SECRET: 'compose-test', TS_AUTHKEY: 'compose-test', VARLATCH_TAILNET_NAME: 'test.ts.net',
+  VARLATCH_PUBLIC_URL: 'https://vault.compose.test',
 };
 const variants = [['docker-compose.yml'], ['docker-compose.yml', 'docker-compose.tailscale.yml'], ['docker-compose.coolify-tailscale.yml']];
 for (const files of variants) {
   const name = files.join(' + ');
   const args = files.flatMap(f => ['-f', fileURLToPath(new URL(`../infra/compose/${f}`, import.meta.url))]);
   const config = JSON.parse(execFileSync('docker', ['compose', ...args, '--profile', 'deploy', 'config', '--format', 'json'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  // #110: Convex trusts exactly the issuer varlatchd signs with, and without
+  // VARLATCH_PUBLIC_URL Compose refuses to start instead of guessing one.
+  assert.equal(config.services.varlatchd.environment.VARLATCH_PUBLIC_URL, env.VARLATCH_PUBLIC_URL, `${name}: varlatchd issuer`);
+  assert.equal(config.services['convex-deploy'].environment.VARLATCH_ISSUER, env.VARLATCH_PUBLIC_URL, `${name}: Convex trusts varlatchd's issuer`);
+  const unset = spawnSync('docker', ['compose', ...args, '--profile', 'deploy', 'config', '--quiet'], { env: { ...env, VARLATCH_PUBLIC_URL: '' }, encoding: 'utf8' });
+  assert.notEqual(unset.status, 0, `${name}: starts without VARLATCH_PUBLIC_URL`);
+  assert.match(unset.stderr, /VARLATCH_PUBLIC_URL/, `${name}: the refusal names the variable`);
   if (config.services.tailscale) {
     // varlatchd shares the sidecar's network namespace: Docker refuses published
     // ports there, and web/Convex reach it only through the sidecar's alias.

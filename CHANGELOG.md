@@ -103,6 +103,16 @@ fixes.
   If such an installation already has the file, its settings never applied:
   check that they are still what you want, then run `varlatch setup` again.
   See the [deployment guide](infra/compose/README.md).
+- **Compose refuses to start without `VARLATCH_PUBLIC_URL`.** Without it,
+  varlatchd, `convex-deploy`, and `varlatchd admin mirror-sync` each fell
+  back to a different token issuer. Convex then rejected varlatchd's tokens:
+  the stack started, but the dashboard never updated and `varlatch doctor`
+  reported `mirror.catch-up` as rejected. Every Compose file now requires
+  the variable, and the three use the same issuer. `varlatch setup` always
+  writes it, so installations made with setup are not affected. If you
+  wrote `.env` by hand without it, `varlatch upgrade` stops before it
+  changes anything and names the variable: set it to the address people
+  open in the browser, then run the upgrade again.
 
 ## 0.14.2 (2026-10-06)
 

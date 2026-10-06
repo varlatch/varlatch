@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import type { GateVerdict } from "./doctor.js";
+import { parseDotenv } from "./dotenv.js";
 import { createInterface } from "node:readline/promises";
 
 /**
@@ -281,6 +282,27 @@ async function confirm(question: string, yes: boolean): Promise<boolean> {
   }
 }
 
+/**
+ * The variables the release's Compose file refuses to start without
+ * (`${NAME:?...}`) that neither the installation's .env nor the environment
+ * sets (#110). Checked before anything changes: once the new file is in
+ * place, every `docker compose` command would stop on the missing value.
+ */
+export function missingComposeVariables(compose: string, dir: string, env: NodeJS.ProcessEnv): string[] {
+  const required = new Set([...compose.matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*):\?/g)].map((m) => m[1] as string));
+  if (required.size === 0) return [];
+  const envPath = join(dir, ".env");
+  let file = new Map<string, string>();
+  if (existsSync(envPath)) {
+    try {
+      file = new Map(parseDotenv(readFileSync(envPath, "utf8")).map((e) => [e.name, e.value]));
+    } catch {
+      return []; // Compose's own parser decides; the image pull reports it.
+    }
+  }
+  return [...required].filter((name) => !(env[name] || file.get(name)));
+}
+
 export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
   const composePath = join(opts.dir, COMPOSE_FILE);
   if (!opts.checkOnly && !existsSync(composePath)) {
@@ -335,6 +357,14 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
   }
 
   const releaseCompose = await asset(RELEASE_COMPOSE_ASSET);
+  const missing = missingComposeVariables(releaseCompose, opts.dir, process.env);
+  if (missing.length > 0) {
+    throw new UpgradeError(
+      `${target.version} requires ${missing.join(", ")} in ${join(opts.dir, ".env")}, and it is not set. ` +
+        (missing.includes("VARLATCH_PUBLIC_URL") ? "VARLATCH_PUBLIC_URL is the address people open in the browser. " : "") +
+        "Set it and run the upgrade again; nothing has changed.",
+    );
+  }
   const supervisor = await asset("convex-supervisor.cjs");
   const overlays: [string, string][] = [];
   for (const name of OVERLAY_ASSETS) {
