@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/accessor-python",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "private": true,
   "description": "The Typed Accessor for Python: reads os.environ and converts it with Contract Semantics; embedded in every Python module varlatch types generates",
   "license": "Apache-2.0",

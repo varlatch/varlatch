@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/application-plane",
-  "version": "0.14.2",
+  "version": "0.14.3",
   "private": true,
   "description": "The Convex Application Plane (ADR-0005): non-authoritative mirrors and dashboard product state. Contains no security authority.",
   "license": "AGPL-3.0-or-later",
