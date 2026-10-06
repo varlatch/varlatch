@@ -4,9 +4,17 @@ This directory is Varlatch's deployment contract. Coolify deployments
 use this same Compose file through Coolify's Compose support: same topology,
 different UI clicks.
 
-**Current scope:** Secret Plane only (`postgres`, `varlatch-migrate`,
-`varlatchd`). The Convex Application Plane, `varlatch-web`, and the optional
-Tailscale profile are added as those components land.
+New to Varlatch? [Getting started](https://github.com/varlatch/varlatch/blob/main/docs/getting-started.md) goes from
+nothing to `varlatch run` and is the shorter read. This page covers every
+deployment option.
+
+**What it runs:** `postgres`; `varlatchd`, the Secret Plane, after the
+one-shot `varlatch-migrate`; `convex-backend`, the Application Plane, whose
+functions the one-shot `convex-deploy` deploys; and `varlatch-web`, the
+dashboard, which also serves `/v1` and `/convex`. Overlays add the ingress:
+`docker-compose.caddy.yml` for public HTTPS, and `docker-compose.tailscale.yml`
+with `docker-compose.tailnet-https.yml` for the tailnet. `varlatch setup`
+chooses them for you.
 
 ## First install
 

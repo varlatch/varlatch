@@ -20,6 +20,14 @@ fixes.
   and `org.opencontainers.image.source`. Their third-party contents stay
   listed in `THIRD-PARTY-NOTICES.md` inside each image.
 
+### Documentation
+
+- [Getting started](docs/getting-started.md) is new: one page from nothing
+  to `varlatch run`, covering getting the CLI on any machine, running an
+  installation with `varlatch setup`, setting up a project, inviting your
+  team, and connecting CI. The deployment guide no longer says it runs the
+  Secret Plane only.
+
 ## 0.14.2 (2026-10-06)
 
 ### Coding agents
