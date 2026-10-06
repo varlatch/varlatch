@@ -4,17 +4,10 @@ Thank you for your interest in Varlatch. Everyone who takes part, in issues,
 pull requests, or anywhere else, follows the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-## Open source, not yet open to code contributions
+## Code contributions
 
-Varlatch is open source, but it does not accept code from outside Robotsson
-yet: only its maintainers at Robotsson can open pull requests. Varlatch
-holds other people's secrets, so every line of it is written and reviewed
-to that standard, and for now the maintainers do both.
-
-That changes when two things are in place: a Contributor License Agreement
-for outside contributors to sign, and the time to review their code. This
-file will say when that happens. Until then, the most useful thing you can
-send is a report.
+Varlatch is open source, but it does not accept code contributions yet.
+Reports are welcome, as described below.
 
 ## What is welcome now
 

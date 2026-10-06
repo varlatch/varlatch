@@ -1,6 +1,5 @@
 <!--
-Varlatch does not accept pull requests from outside Robotsson yet.
-CONTRIBUTING.md explains why and says when that changes.
+Varlatch does not accept code contributions yet (CONTRIBUTING.md).
 -->
 
 ## Why
