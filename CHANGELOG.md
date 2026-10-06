@@ -77,6 +77,10 @@ fixes.
   installation. An unchanged Mirror is now left as it is, which also stops
   waking every open dashboard each minute. This change does not remove the
   versions already stored.
+- Dependency update for a published advisory: `@modelcontextprotocol/sdk`
+  1.31.0 (GHSA-6qxp-vccf-f47h, in the SDK's OAuth client, which could send
+  credentials to an authorization server the MCP server chose). Varlatch's
+  MCP server, bundled in the CLI, does not use that client.
 
 ### Self-hosting
 

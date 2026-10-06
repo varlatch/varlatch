@@ -24,7 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "@varlatch/context": "workspace:*",
     "@varlatch/protocol": "workspace:*",
     "@varlatch/sdk": "workspace:*",
