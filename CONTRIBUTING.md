@@ -1,6 +1,8 @@
 # Contributing to Varlatch
 
-Thank you for your interest in Varlatch.
+Thank you for your interest in Varlatch. Everyone who takes part, in issues,
+pull requests, or anywhere else, follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Outside contributions are not accepted yet
 
