@@ -56,11 +56,14 @@ async function buildControl(workDir: string, entry: string, name: string, prebui
     if (!existsSync(prebuilt)) throw new Error(`VARLATCH_CONTROL_CLI names ${prebuilt}, which does not exist`);
     return prebuilt;
   }
-  if (!haveCommit()) {
+  // Test files build their controls in parallel: in a shallow checkout a
+  // second `git fetch` fails on shallow.lock while the first one still runs,
+  // so a failed fetch is retried until the commit is there.
+  for (let attempt = 0; attempt < 10 && !haveCommit(); attempt++) {
     try {
       git(["fetch", "--quiet", "--depth=1", "origin", CONTROL_COMMIT]);
     } catch {
-      /* reported below */
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
     }
   }
   if (!haveCommit()) {
