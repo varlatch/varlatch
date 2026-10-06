@@ -9,8 +9,8 @@ import { compareVersions, parseManifest, type ReleaseManifest } from "./upgrade.
 /**
  * `varlatch doctor` (ADR-0035 Decision 8): read-only Installation Health for
  * the Compose installation in --dir. Host authority, like `admin backup`: it
- * needs Docker access, no Varlatch login. It only runs `docker compose ps`,
- * `config` and read-only `exec`s and reads files — no restarts, repairs,
+ * needs Docker access, no Varlatch login. It only runs `docker compose version`,
+ * `ps`, `config` and read-only `exec`s and reads files: no restarts, repairs,
  * locks, or writes (not even a diagnostics log). The resolved configuration
  * holds secret values; they stay in memory and no check reports one.
  *
@@ -215,6 +215,50 @@ export function checkCliVersion(facts: ServerFacts | null, cliVersion = EMBEDDED
       };
 }
 
+/**
+ * The oldest Docker Compose this release supports, for every ingress: the
+ * Tailscale overlay uses `!reset`, which Compose 2.24 introduced.
+ */
+export const COMPOSE_MINIMUM = "2.24";
+
+/**
+ * The version in `docker compose version --short` output ("2.29.7",
+ * "v2.24.0", "2.29.7-desktop.1", "5.5.1"). Only the numbers count: a suffix
+ * such as Docker Desktop's "-desktop.1" does not make it a prerelease.
+ */
+export function parseComposeVersion(output: string): string | null {
+  return output.match(/(?<![\w.])v?(\d+\.\d+(?:\.\d+)?)/)?.[1] ?? null;
+}
+
+/**
+ * Docker Compose against the floor; `output` is `docker compose version
+ * --short`, null when that did not run. `varlatch setup` refuses to start
+ * unless this passes. Here it is advisory and outside the upgrade gate, like
+ * the host CLI's version: it describes the host's tooling, not the
+ * installation, and an upgrade neither changes it nor can fix it.
+ */
+export function checkComposeVersion(output: string | null): Check {
+  const base = { id: "compose.version", title: `Docker Compose ${COMPOSE_MINIMUM} or newer`, class: "advisory" as const };
+  if (output === null) {
+    return {
+      ...base, status: "fail",
+      detail: "`docker compose version` did not run, so Docker or its Compose plugin is missing",
+      remedy: `Install Docker with its Compose plugin, ${COMPOSE_MINIMUM} or newer`,
+    };
+  }
+  const version = parseComposeVersion(output);
+  if (!version) {
+    return {
+      ...base, status: "unknown",
+      detail: output.trim() ? `found "${(output.trim().split("\n")[0] ?? "").slice(0, 60)}", not a version number` : "`docker compose version --short` printed no version",
+      remedy: `Install a released Docker Compose, ${COMPOSE_MINIMUM} or newer`,
+    };
+  }
+  return compareVersions(version, COMPOSE_MINIMUM) >= 0
+    ? { ...base, status: "pass", detail: version }
+    : { ...base, status: "fail", detail: `found ${version}`, remedy: `Update Docker Compose to ${COMPOSE_MINIMUM} or newer` };
+}
+
 const isLoopback = (host: string) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
 
 export function checkWebConfig(configJs: string | null, publicUrl: string | null): Check[] {
@@ -255,6 +299,10 @@ export async function runDoctor(opts: { dir: string; waitSeconds?: number; run?:
   const dir = resolve(opts.dir);
   const run = opts.run ?? dockerRunner(dir);
   const checks: Check[] = [];
+
+  // First, so a missing or old Compose is named even when listing the project fails.
+  const compose = await run(["compose", "version", "--short"]);
+  checks.push(checkComposeVersion(compose.code === 0 ? compose.stdout : null));
 
   const ps = await run(["compose", "ps", "--all", "--format", "json"]);
   let services: ServiceState[] = [];
@@ -302,6 +350,9 @@ export async function runDoctor(opts: { dir: string; waitSeconds?: number; run?:
   try { config = resolved.code === 0 ? JSON.parse(resolved.stdout) : null; } catch { /* unknown below */ }
   const { checkAdoption } = await import("./adopt.js");
   checks.push(checkAdoption(config, dir));
+  const { checkComposeOverride } = await import("./setup.js");
+  const override = checkComposeOverride(dir);
+  if (override) checks.push(override);
   const supervisor = await supervisorCheck(config, services, run);
   if (supervisor) checks.push(supervisor);
   checks.push({

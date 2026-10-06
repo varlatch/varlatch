@@ -39,6 +39,28 @@ fixes.
   waking every open dashboard each minute. This change does not remove the
   versions already stored.
 
+### Self-hosting
+
+- **`varlatch setup` checks Docker Compose before it changes anything.** It
+  needs Compose 2.24 or newer with every ingress (the Tailscale overlay uses
+  `!reset`, which Compose 2.24 introduced), and stops with the version it
+  found and the one it needs when Compose is missing, older, or reports no
+  version it can read. Before, an older Compose failed halfway through
+  setup, inside a Docker command. `varlatch doctor` reports the version as
+  the advisory check `compose.version`; it never blocks the upgrade gate.
+- **A `docker-compose.override.yml` now applies with the public and tailnet
+  ingress.** Compose reads that file by itself only while `COMPOSE_FILE` is
+  not set, and setup sets `COMPOSE_FILE` for those two, so the override file
+  the deployment guide recommends was silently ignored there. Setup now
+  lists it last in `COMPOSE_FILE` when it exists, and only then, since
+  Compose refuses a listed file that is missing; `varlatch adopt` does the
+  same when it hands `.env` to setup. After you create or delete the file,
+  run `varlatch setup` again. `varlatch doctor` warns, as the advisory check
+  `compose.override`, when the file exists and `COMPOSE_FILE` leaves it out.
+  If such an installation already has the file, its settings never applied:
+  check that they are still what you want, then run `varlatch setup` again.
+  See the [deployment guide](infra/compose/README.md).
+
 ## 0.14.2 (2026-10-06)
 
 ### Coding agents

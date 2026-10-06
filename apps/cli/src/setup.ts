@@ -2,9 +2,9 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { doctorExitCode, formatDoctor, runDoctor } from "./doctor.js";
+import { checkComposeVersion, doctorExitCode, formatDoctor, runDoctor, type Check } from "./doctor.js";
 
 /**
  * `varlatch setup` (ADR-0035 D7): takes a Compose directory (a release bundle
@@ -87,11 +87,20 @@ export function validatePublicHost(origin: string): string {
   return url.origin;
 }
 
-/** The Compose files each ingress runs with (written to .env as COMPOSE_FILE). */
-export function composeFiles(ingress: Ingress): string[] {
-  return ingress === "public" ? ["docker-compose.yml", "docker-compose.caddy.yml"]
+/** The operator's own Compose file: release files are replaced on upgrade, this one never. */
+export const COMPOSE_OVERRIDE = "docker-compose.override.yml";
+
+/**
+ * The Compose files each ingress runs with (written to .env as COMPOSE_FILE).
+ * Compose reads docker-compose.override.yml by itself only while COMPOSE_FILE
+ * is unset, so it comes last when it exists, and only then: Compose refuses
+ * a listed file that is missing.
+ */
+export function composeFiles(ingress: Ingress, override = false): string[] {
+  const files = ingress === "public" ? ["docker-compose.yml", "docker-compose.caddy.yml"]
     : ingress === "tailnet" ? ["docker-compose.yml", "docker-compose.tailscale.yml", "docker-compose.tailnet-https.yml"]
     : ["docker-compose.yml"];
+  return override ? [...files, COMPOSE_OVERRIDE] : files;
 }
 const INGRESS_FILES: Record<Ingress, string[]> = {
   public: ["docker-compose.caddy.yml", "Caddyfile"],
@@ -169,8 +178,11 @@ export function ensureSecrets(dir: string, opts: { existingInstallation: boolean
   return { created: missing.map((s) => s.file), kept: relevant.filter((s) => !missing.includes(s)).map((s) => s.file) };
 }
 
-/** The managed .env: derived from the install config; paths only, no secret values. */
-export function renderEnv(config: InstallConfig, additions = ""): string {
+/**
+ * The managed .env: derived from the install config; paths only, no secret
+ * values. `override`: docker-compose.override.yml exists in the directory.
+ */
+export function renderEnv(config: InstallConfig, additions = "", opts: { override?: boolean } = {}): string {
   const lines = [
     `${ENV_HEADER} from ${CONFIG_FILE} — edit that file and rerun setup.`,
     "# Secrets are files in ./secrets, mounted only into the services that need",
@@ -186,16 +198,16 @@ export function renderEnv(config: InstallConfig, additions = ""): string {
     // With a separate Convex origin the operator's port lines stay theirs.
     ...(config.convexOrigin ? [] : ["# One public origin (ADR-0035 D5): varlatchd and Convex need no host port.", "VARLATCHD_PORT=0", "CONVEX_PORT=0"]),
     ...SECRET_FILES.filter((s) => s.hostPath).map((s) => `${s.hostPath}=${config.secretPaths?.[s.hostPath!] ?? `./secrets/${s.file}`}`),
-    ...ingressEnv(config),
+    ...ingressEnv(config, opts.override ?? false),
     ENV_KEEP,
   ];
   return `${lines.join("\n")}\n${additions}`;
 }
 
-function ingressEnv(config: InstallConfig): string[] {
+function ingressEnv(config: InstallConfig, override: boolean): string[] {
   const ingress = config.ingress ?? "external";
   if (ingress === "external") return [];
-  const lines = [`# Ingress: ${ingress} (ADR-0035 D6).`, `COMPOSE_FILE=${composeFiles(ingress).join(":")}`];
+  const lines = [`# Ingress: ${ingress} (ADR-0035 D6).`, `COMPOSE_FILE=${composeFiles(ingress, override).join(":")}`];
   if (ingress === "public") lines.push(`VARLATCH_PUBLIC_HOST=${new URL(config.publicUrl).hostname}`);
   else {
     lines.push(
@@ -206,6 +218,80 @@ function ingressEnv(config: InstallConfig): string[] {
     );
   }
   return lines;
+}
+
+/** COMPOSE_FILE as Compose resolves it in a directory, and where it comes from. */
+export interface ComposeFileSetting {
+  files: string[];
+  /** "the environment", ".env", or the env file named by COMPOSE_ENV_FILES. */
+  source: string;
+  /** The line setup writes in a managed .env (above the keep marker). */
+  setupLine: boolean;
+  /** A line below the keep marker that replaces the one setup writes. */
+  replacesSetup: boolean;
+}
+
+/** A dotenv value as Compose reads it: quotes removed, an unquoted ` # comment` cut. */
+function envValue(raw: string): string {
+  const value = raw.trim();
+  const quoted = value.match(/^(["'])(.*)\1/);
+  return quoted ? quoted[2]! : value.replace(/\s+#.*$/, "");
+}
+
+/**
+ * Compose takes COMPOSE_FILE (and COMPOSE_PATH_SEPARATOR) from the
+ * environment first, then from its env files (.env unless COMPOSE_ENV_FILES
+ * names others), where the last line counts. Null when it is not set.
+ */
+export function composeFileSetting(dir: string, env: NodeJS.ProcessEnv = process.env): ComposeFileSetting | null {
+  let setting: Omit<ComposeFileSetting, "files"> & { value: string } | null = null;
+  let separator: string | undefined;
+  const envFiles = env.COMPOSE_ENV_FILES ? env.COMPOSE_ENV_FILES.split(",") : [".env"];
+  for (const file of envFiles.map((f) => resolve(dir, f))) {
+    if (!existsSync(file)) continue;
+    const lines = readFileSync(file, "utf8").split("\n");
+    const managed = lines[0]?.startsWith(ENV_HEADER) ?? false;
+    const keep = lines.indexOf(ENV_KEEP);
+    let setupWrote = false;
+    for (const [i, line] of lines.entries()) {
+      const m = line.match(/^\s*(?:export\s+)?(COMPOSE_FILE|COMPOSE_PATH_SEPARATOR)\s*=(.*)$/);
+      if (!m) continue;
+      if (m[1] === "COMPOSE_PATH_SEPARATOR") { separator = envValue(m[2]!); continue; }
+      const own = managed && (keep < 0 || i < keep);
+      setupWrote ||= own;
+      setting = { value: envValue(m[2]!), source: file === resolve(dir, ".env") ? ".env" : file, setupLine: own, replacesSetup: !own && setupWrote };
+    }
+  }
+  if (env.COMPOSE_FILE !== undefined) setting = { value: env.COMPOSE_FILE, source: "the environment", setupLine: false, replacesSetup: false };
+  if (!setting) return null;
+  const { value, ...rest } = setting;
+  return { ...rest, files: value.split(env.COMPOSE_PATH_SEPARATOR || separator || delimiter).filter(Boolean) };
+}
+
+/**
+ * Doctor's advisory finding: a docker-compose.override.yml that COMPOSE_FILE
+ * leaves out is never read, so none of its settings apply. Not applicable
+ * without the file.
+ */
+export function checkComposeOverride(dir: string, env: NodeJS.ProcessEnv = process.env): Check | null {
+  const path = resolve(dir, COMPOSE_OVERRIDE);
+  if (!existsSync(path)) return null;
+  const base = { id: "compose.override", title: `${COMPOSE_OVERRIDE} in effect`, class: "advisory" as const };
+  let setting: ComposeFileSetting | null;
+  try {
+    setting = composeFileSetting(dir, env);
+  } catch {
+    return { ...base, status: "unknown", detail: "could not read the env files that may set COMPOSE_FILE" };
+  }
+  if (!setting) return { ...base, status: "pass", detail: "COMPOSE_FILE is not set, so Compose reads it" };
+  if (setting.files.some((f) => resolve(dir, f) === path)) return { ...base, status: "pass", detail: `listed in COMPOSE_FILE (${setting.source})` };
+  return {
+    ...base, status: "fail",
+    detail: `COMPOSE_FILE (${setting.source}) lists ${setting.files.join(", ") || "nothing"}, so Compose does not read ${COMPOSE_OVERRIDE}`,
+    remedy: setting.setupLine ? `Run \`varlatch setup\` again: it lists ${COMPOSE_OVERRIDE} last in COMPOSE_FILE`
+      : setting.replacesSetup ? "Remove the COMPOSE_FILE line below the keep marker in .env, which replaces the one setup writes, then run `varlatch setup` again"
+      : `List ${COMPOSE_OVERRIDE} last in COMPOSE_FILE (${setting.source})`,
+  };
 }
 
 export type BootstrapAction =
@@ -272,6 +358,25 @@ export function escrowComplete(status: CustodyStatus): boolean {
 }
 
 // ---- Docker plumbing -------------------------------------------------------
+
+/** `docker compose version --short`; null when Docker or its Compose plugin is missing. */
+export function composeVersionOutput(): string | null {
+  const result = spawnSync("docker", ["compose", "version", "--short"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 60_000 });
+  return result.error || result.status !== 0 ? null : (result.stdout ?? "").trim();
+}
+
+/**
+ * One Compose floor for every ingress (doctor's compose.version), checked
+ * before setup changes anything: an older Compose would otherwise fail
+ * halfway, in the middle of a Docker command. Returns the version found.
+ */
+export function requireComposeVersion(output: string | null): string {
+  const check = checkComposeVersion(output);
+  if (check.status !== "pass") {
+    throw new SetupError(`Setup needs ${check.title}: ${check.detail}. Nothing was changed. ${check.remedy}, then run \`varlatch setup\` again.`);
+  }
+  return check.detail!;
+}
 
 export function docker(dir: string, args: string[], opts: { stream?: boolean; input?: string } = {}): string {
   const result = spawnSync("docker", ["compose", ...args], {
@@ -489,9 +594,11 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
   const step = (n: number, text: string) => console.log(`\n[${n}/7] ${text}`);
 
   if (opts.ingress && !INGRESS.includes(opts.ingress)) throw new SetupError(`--ingress must be one of ${INGRESS.join(", ")}`);
+  const composeVersion = requireComposeVersion(composeVersionOutput());
 
   // 1. Installation Configuration — the only operator input.
   step(1, "Installation configuration");
+  console.log(`  ✓ Docker Compose ${composeVersion}`);
   let config = loadInstallConfig(dir);
   const saveConfig = (next: InstallConfig) => writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(next, null, 2) + "\n");
   if (config) {
@@ -544,13 +651,17 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
     additions = keep >= 0 ? current.slice(keep + ENV_KEEP.length + 1) : "";
   }
   const secrets = ensureSecrets(dir, { existingInstallation: hasDatabaseVolume(dir), ...(config.secretPaths ? { paths: config.secretPaths } : {}) });
-  writeFileSync(envPath, renderEnv(config, additions), { mode: 0o600 });
+  // The operator's override applies with every ingress: Compose reads it by
+  // itself without COMPOSE_FILE (external), and setup lists it otherwise.
+  const override = existsSync(join(dir, COMPOSE_OVERRIDE));
+  writeFileSync(envPath, renderEnv(config, additions, { override }), { mode: 0o600 });
   mkdirSync(join(dir, "backups"), { recursive: true, mode: 0o700 }); // operator-owned, not Docker-created
   console.log(secrets.created.length ? `  ✓ generated ${secrets.created.join(", ")}` : "  ✓ secrets present (none regenerated)");
+  if (override) console.log(`  ✓ ${COMPOSE_OVERRIDE} applies${ingress === "external" ? "" : " (last in COMPOSE_FILE)"}`);
   if (ingress === "tailnet") {
     config = await joinTailnet(dir, config, opts);
     saveConfig(config);
-    writeFileSync(envPath, renderEnv(config, additions), { mode: 0o600 });
+    writeFileSync(envPath, renderEnv(config, additions, { override }), { mode: 0o600 });
   }
 
   // 3. Start (builds or pulls as the Compose file says) and wait for health.
