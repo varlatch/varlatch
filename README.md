@@ -152,6 +152,9 @@ placeholder values only. State lives in `.dev/`.
 
 ## Documentation
 
+The same documentation, searchable, is at
+[docs.varlatch.com](https://docs.varlatch.com).
+
 - [`docs/getting-started.md`](docs/getting-started.md): from nothing to
   `varlatch run`, for whoever runs the installation and for everyone who
   uses it
@@ -162,6 +165,10 @@ placeholder values only. State lives in `.dev/`.
 - [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md): what Varlatch guarantees,
   each guarantee mapped to a test, and what it explicitly does not
 - [`infra/compose/README.md`](infra/compose/README.md): self-hosting
+- [`docs/self-hosting/requirements.md`](docs/self-hosting/requirements.md):
+  what a host needs, with measured memory, processor, and disk use
+- [`docs/self-hosting/configuration.md`](docs/self-hosting/configuration.md):
+  every setting of an installation
 - [`docs/operations/backup.md`](docs/operations/backup.md): backups and
   recovery
 - [`docs/operations/verify-release.md`](docs/operations/verify-release.md):

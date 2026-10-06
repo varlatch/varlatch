@@ -1,0 +1,13 @@
+# The documentation site's own workspace and lockfile, apart from the
+# product's (see the repository's pnpm-workspace.yaml): Astro brings its own
+# Vite and several hundred packages, none of which ships in a release.
+packages:
+  - "."
+allowBuilds:
+  esbuild: true
+  sharp: true
+overrides:
+  # GHSA-rj75-hqrm-r3gf is fixed only in postcss-selector-parser 7.1.6;
+  # Expressive Code (Starlight's code blocks) still asks for postcss-nested 6,
+  # which uses the 6.x parser. postcss-nested 7 is the same plugin on parser 7.
+  postcss-nested@^6: 7.0.2

@@ -113,6 +113,18 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The documentation site is its own pnpm workspace (apps/docs), so the
+      # steps above neither install, audit, nor build it. Its build fails on a
+      # link to a page or heading that does not exist, so a change to docs/
+      # is checked here too.
+      - name: Documentation site builds, and its links resolve
+        working-directory: apps/docs
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm audit --audit-level moderate
+          pnpm test
+          pnpm build
+
       # The release workflow builds its files in the repository root; do the
       # same here, with placeholder digests, so it cannot first fail at tag time.
       - name: Release files build from the repository root
