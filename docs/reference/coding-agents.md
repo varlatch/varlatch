@@ -71,7 +71,22 @@ each CLI upgrade to update the skill.
 
 The CLI edits only UTF-8 text files. An `AGENTS.md` that is not one stops
 the command with status 78; an adapter's file that is not one is left as it
-is, with the edit printed. An unknown option, a missing option value, or an
+is, with the edit printed.
+
+The CLI never writes through a symbolic link:
+
+- When `CLAUDE.md` (or `.claude/CLAUDE.md`) is `AGENTS.md`, as a symbolic
+  link either way or a hard link, as some project templates set it up,
+  Claude Code already reads the file with the block. The Claude Code
+  adapter does nothing and the output says so.
+- An `AGENTS.md` that links to a file in the project is resolved: the block
+  goes into the file it leads to, and the link stays as it is. An
+  `AGENTS.md` that links outside the project, or to nothing, stops the
+  command with status 78 and nothing is written.
+- Any other file the CLI would edit that is a symbolic link (a `CLAUDE.md`
+  that links elsewhere, a linked `.aider.conf.yml`) is left as it is, with
+  the edit printed for you to make, as for a file whose edit would
+  reformat it. `--remove` leaves every link in place. An unknown option, a missing option value, or an
 extra argument exits 64 before anything is written, so a mistyped `--check`
 never installs.
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -618,4 +618,198 @@ describe("the CLI", () => {
     expect(existsSync(join(damaged, "varlatch.toml"))).toBe(true);
     expect(r.stderr).toMatch(/files for coding agents were not written .* run varlatch agents install to try again/);
   });
+});
+
+/**
+ * Symbolic links (#93). Nothing is written through a link: an AGENTS.md
+ * link to a file in the project is resolved and that file edited; a
+ * CLAUDE.md that is AGENTS.md needs no adapter; every other link is left
+ * as it is, with the edit for the human. Each layout: install, a second
+ * install (no change), --check (passes), --remove (the original bytes, the
+ * link still there).
+ */
+describe("symbolic links (#93)", () => {
+  const rules = "# Project rules\n\n- Be nice.\n";
+  const block = `${rules}\n${agentsBlock()}\n`;
+  const linkOf = (path: string) => (lstatSync(path).isSymbolicLink() ? readlinkSync(path) : null);
+  const outside = () => {
+    const d = join(dir, `outside${n++}`);
+    mkdirSync(d, { recursive: true });
+    return d;
+  };
+
+  /** install, again, --check, --remove; returns the results. */
+  function cycle(root: string) {
+    const first = install(root);
+    const afterFirst = snapshot(root);
+    const second = install(root);
+    expect(second.drift, "a second install changes nothing").toBe(false);
+    expect(snapshot(root)).toEqual(afterFirst);
+    const check = install(root, { mode: "check" });
+    expect(check.drift, "--check passes").toBe(false);
+    return { first, second, check, removed: () => install(root, { mode: "remove" }) };
+  }
+
+  it("CLAUDE.md -> AGENTS.md (the issue): AGENTS.md gets its block, the adapter is skipped and says why, nothing imports itself", () => {
+    const root = project({ "AGENTS.md": rules });
+    symlinkSync("AGENTS.md", join(root, "CLAUDE.md"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).not.toMatch(/^@AGENTS\.md$/m);
+    expect(first.notices).toEqual(["CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly"]);
+    expect(first.changes.map((c) => c.path)).not.toContain("CLAUDE.md");
+    expect(linkOf(join(root, "CLAUDE.md"))).toBe("AGENTS.md");
+    // Naming Claude Code changes nothing: the link is already what it reads.
+    expect(install(root, { agents: ["claude-code"] }).drift).toBe(false);
+    const r = removed();
+    expect(r.leftInPlace).toEqual([]);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(linkOf(join(root, "CLAUDE.md"))).toBe("AGENTS.md");
+  });
+
+  it("control: what 0.14.1 left in such a project (the self-import, no block) is repaired, and --remove gives back the original bytes", () => {
+    // withClaudeImport through the link, as the old release wrote it.
+    const damaged = withClaudeImport(rules, false) as string;
+    expect(damaged).toBe(`${rules}\n<!-- varlatch: the Varlatch instructions are in AGENTS.md -->\n@AGENTS.md\n`);
+    const root = project({ "AGENTS.md": damaged });
+    symlinkSync("AGENTS.md", join(root, "CLAUDE.md"));
+    expect(install(root, { mode: "check" }).drift).toBe(true);
+    const { removed } = cycle(root);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    removed();
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(linkOf(join(root, "CLAUDE.md"))).toBe("AGENTS.md");
+  });
+
+  it(".claude/CLAUDE.md -> ../AGENTS.md: the same, for the nested file", () => {
+    const root = project({ "AGENTS.md": rules });
+    mkdirSync(join(root, ".claude"));
+    symlinkSync("../AGENTS.md", join(root, ".claude", "CLAUDE.md"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    expect(first.notices).toEqual([".claude/CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly"]);
+    expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
+    removed();
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(linkOf(join(root, ".claude", "CLAUDE.md"))).toBe("../AGENTS.md");
+  });
+
+  it("AGENTS.md -> CLAUDE.md (the other direction): the block goes into the file the link leads to, never through the link", () => {
+    const root = project({ "CLAUDE.md": rules });
+    symlinkSync("CLAUDE.md", join(root, "AGENTS.md"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(block);
+    expect(linkOf(join(root, "AGENTS.md"))).toBe("CLAUDE.md");
+    expect(first.changes.filter((c) => c.action !== "unchanged").map((c) => c.path)).toContain("CLAUDE.md");
+    expect(first.changes.map((c) => c.path)).not.toContain("AGENTS.md");
+    expect(first.notices).toEqual(["AGENTS.md is a link to CLAUDE.md; Claude Code reads it directly"]);
+    removed();
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(rules);
+    expect(linkOf(join(root, "AGENTS.md"))).toBe("CLAUDE.md");
+  });
+
+  it("a hard link between CLAUDE.md and AGENTS.md is one file too", () => {
+    const root = project({ "AGENTS.md": rules });
+    linkSync(join(root, "AGENTS.md"), join(root, "CLAUDE.md"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    expect(first.notices).toEqual(["CLAUDE.md and AGENTS.md are the same file; Claude Code reads it directly"]);
+    removed();
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(rules);
+  });
+
+  it("CLAUDE.md -> a file outside the project: never written through; the edit is the human's; --remove leaves the link", () => {
+    const away = outside();
+    writeFileSync(join(away, "CLAUDE.md"), "Personal rules.\n");
+    const root = project({ "AGENTS.md": rules });
+    symlinkSync(join(away, "CLAUDE.md"), join(root, "CLAUDE.md"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(away, "CLAUDE.md"), "utf8")).toBe("Personal rules.\n");
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    expect(first.manual).toEqual([
+      `CLAUDE.md is a symbolic link (to ${join(away, "CLAUDE.md")}), so the CLI does not write through it: for Claude Code to read AGENTS.md, make CLAUDE.md a file with the line @AGENTS.md, or add that line where it leads`,
+    ]);
+    expect(first.changes.map((c) => c.path)).not.toContain("CLAUDE.md");
+    const r = removed();
+    expect(r.leftInPlace).toEqual([]);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(readFileSync(join(away, "CLAUDE.md"), "utf8")).toBe("Personal rules.\n");
+    expect(linkOf(join(root, "CLAUDE.md"))).toBe(join(away, "CLAUDE.md"));
+    // When the file it leads to already imports AGENTS.md, there is nothing to ask for.
+    writeFileSync(join(away, "CLAUDE.md"), "Personal rules.\n@AGENTS.md\n");
+    expect(install(root).manual).toEqual([]);
+  });
+
+  it("control: a link written through by an earlier release keeps its marked line, reported as left in place", () => {
+    const away = outside();
+    writeFileSync(join(away, "CLAUDE.md"), withClaudeImport("Personal rules.\n", false) as string);
+    const root = project({ "AGENTS.md": rules });
+    symlinkSync(join(away, "CLAUDE.md"), join(root, "CLAUDE.md"));
+    const r = install(root, { mode: "remove" });
+    expect(r.leftInPlace).toEqual(["the marked @AGENTS.md line in CLAUDE.md, a symbolic link the CLI does not write through"]);
+    expect(readFileSync(join(away, "CLAUDE.md"), "utf8")).toBe(withClaudeImport("Personal rules.\n", false));
+  });
+
+  it("AGENTS.md -> a file outside the project, or to nothing: refused in every mode, nothing written", () => {
+    const away = outside();
+    writeFileSync(join(away, "AGENTS.md"), rules);
+    const root = project();
+    symlinkSync(join(away, "AGENTS.md"), join(root, "AGENTS.md"));
+    for (const mode of ["install", "check", "remove"] as const) {
+      expect(() => install(root, { mode })).toThrow(new RegExp(`AGENTS\\.md is a symbolic link to ${join(away, "AGENTS.md").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}, outside this project`));
+    }
+    expect(readFileSync(join(away, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(Object.keys(snapshot(root))).toEqual(["AGENTS.md"]);
+    const dangling = project();
+    symlinkSync("nowhere.md", join(dangling, "AGENTS.md"));
+    expect(() => install(dangling)).toThrow(/AGENTS\.md is a symbolic link to a file that does not exist/);
+    expect(existsSync(join(dangling, "nowhere.md"))).toBe(false);
+  });
+
+  it("any other managed file that is a link is never written or removed through; the edit is the human's, and --check stays clean", () => {
+    const away = outside();
+    writeFileSync(join(away, "aider.yml"), "model: x\n");
+    const root = project({ "AGENTS.md": rules });
+    symlinkSync(join(away, "aider.yml"), join(root, ".aider.conf.yml"));
+    const { first, removed } = cycle(root);
+    expect(readFileSync(join(away, "aider.yml"), "utf8")).toBe("model: x\n");
+    expect(first.manual).toEqual([".aider.conf.yml is a symbolic link, so the CLI does not write through it: replace it with a file, then run this again"]);
+    removed();
+    expect(linkOf(join(root, ".aider.conf.yml"))).toBe(join(away, "aider.yml"));
+    expect(readFileSync(join(away, "aider.yml"), "utf8")).toBe("model: x\n");
+  });
+
+  it("the CLI: the issue's reproduction, step by step, and init says why CLAUDE.md is left alone", async () => {
+    const root = project({ "AGENTS.md": rules });
+    symlinkSync("AGENTS.md", join(root, "CLAUDE.md"));
+    const first = await cli(["--assisted", "agents", "install"], root);
+    expect(first.code, first.stderr).toBe(0);
+    expect(first.stdout).toContain("Note: CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly");
+    expect(first.stdout).not.toMatch(/updated CLAUDE\.md/);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(block);
+    const check = await cli(["--assisted", "agents", "install", "--check", "--json"], root);
+    expect(check.code).toBe(0);
+    expect(JSON.parse(check.stdout)).toMatchObject({ drift: false, notices: ["CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly"] });
+    const again = await cli(["--assisted", "agents", "install"], root);
+    expect(again.stdout).toContain("The agent files are up to date.");
+    const removed = await cli(["--assisted", "agents", "install", "--remove"], root);
+    expect(removed.code).toBe(0);
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(rules);
+    expect(linkOf(join(root, "CLAUDE.md"))).toBe("AGENTS.md");
+
+    const init = project({ "AGENTS.md": rules });
+    symlinkSync("AGENTS.md", join(init, "CLAUDE.md"));
+    const r = await cli(["init", "--org", "acme", "--project", "web"], init);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Note: CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly");
+    expect(readFileSync(join(init, "AGENTS.md"), "utf8")).toBe(block);
+
+    const away = outside();
+    writeFileSync(join(away, "AGENTS.md"), rules);
+    const refused = project();
+    symlinkSync(join(away, "AGENTS.md"), join(refused, "AGENTS.md"));
+    const x = await cli(["agents", "install"], refused);
+    expect(x.code).toBe(EXIT.config);
+    expect(x.stderr).toMatch(/outside this project, so the CLI does not edit it/);
+  }, 30_000);
 });

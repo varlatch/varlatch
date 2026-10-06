@@ -1,7 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
-import { appendOwned, eolOf, escapeRegExp, filesUnder, isCanonicalJson, ownedEol, readBytes, Staging, withoutOwned } from "./files.js";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
+import {
+  appendOwned,
+  eolOf,
+  escapeRegExp,
+  filesUnder,
+  isCanonicalJson,
+  isInside,
+  isSymlink,
+  ownedEol,
+  readBytes,
+  readText,
+  resolvedPath,
+  sameFile,
+  Staging,
+  withoutOwned,
+} from "./files.js";
 import { planGuardrails } from "./guardrails.js";
 import { planMcp } from "./mcpConfig.js";
 import { SKILL_NAME, skillFiles } from "./skill.js";
@@ -17,6 +32,12 @@ import { SKILL_NAME, skillFiles } from "./skill.js";
  * edited only when the edit cannot reformat it; otherwise the human gets
  * the exact edit to make. `--check` compares without writing; `--remove`
  * takes back what the CLI wrote.
+ *
+ * Nothing is written through a symbolic link: the bytes behind it may be
+ * another file this run also edits (a CLAUDE.md that links to AGENTS.md),
+ * or a file outside the project. An AGENTS.md that links to a file in the
+ * project is resolved, and that file is edited; any other link is left as
+ * it is, with the edit for the human.
  */
 
 export type Scope = "project" | "user";
@@ -194,6 +215,11 @@ export function withBlock(current: string | null, remove: boolean): string | nul
   return appendOwned(current, block + eol);
 }
 
+/** Whether a CLAUDE.md's text already imports AGENTS.md (`importPath` is relative to the file). */
+function importsAgents(text: string, importPath: string): boolean {
+  return new RegExp(`^[ \\t]*@(\\./)?${escapeRegExp(importPath)}[ \\t]*$`, "m").test(text);
+}
+
 /**
  * A CLAUDE.md with the marked import of AGENTS.md added, or taken out when
  * removing (null: the file held only the import, so it goes). `importPath`
@@ -205,7 +231,7 @@ export function withClaudeImport(current: string | null, remove: boolean, import
     const ours = new RegExp(`${escapeRegExp(CLAUDE_MARKER)}\\r?\\n@${escapeRegExp(importPath)}(?=\\r?\\n|$)`).exec(text);
     return ours ? withoutOwned(text, ours.index, ours.index + ours[0].length) : current;
   }
-  if (new RegExp(`^[ \\t]*@(\\./)?${escapeRegExp(importPath)}[ \\t]*$`, "m").test(text)) return current;
+  if (importsAgents(text, importPath)) return current;
   const eol = eolOf(text);
   return appendOwned(current, `${CLAUDE_MARKER}${eol}@${importPath}${eol}`);
 }
@@ -303,27 +329,87 @@ function plan(opts: InstallOptions): Plan {
   }
   if (opts.scope === "user") return { files, manual, leftInPlace, notices: [] };
 
-  const agentsMd = staging.read(at("AGENTS.md"));
-  if (agentsMd === undefined) {
-    throw new AgentsInstallError("AGENTS.md is not a UTF-8 text file, so the CLI does not edit it; fix or move it, then run this again", false);
+  // AGENTS.md as a link: the file it leads to is edited, never the link,
+  // and only when that file is in the project.
+  let agentsPath = at("AGENTS.md");
+  if (isSymlink(agentsPath)) {
+    let real: string | null = null;
+    try {
+      real = realpathSync(agentsPath);
+    } catch {
+      real = null;
+    }
+    const realRoot = resolvedPath(opts.root);
+    if (real === null || !isInside(realRoot, real)) {
+      throw new AgentsInstallError(
+        `AGENTS.md is a symbolic link ${real === null ? "to a file that does not exist" : `to ${real}, outside this project`}, so the CLI does not edit it; ` +
+          "replace it with a file, or link it to a file in this project, then run this again",
+        false,
+      );
+    }
+    // The same file, named under the root, so changes are reported relative to it.
+    agentsPath = resolve(opts.root, relative(realRoot, real));
   }
-  if (!(remove && agentsMd === null)) staging.write(at("AGENTS.md"), withBlock(agentsMd, remove));
-
-  const selected = new Set(opts.agents.map((agent) => AGENTS[agent]?.adapter));
-
   // Claude Code reads AGENTS.md only when no CLAUDE.md is in the way: an
-  // existing one (at the root, else in .claude/) imports it.
+  // existing one (at the root, else in .claude/) imports it. A CLAUDE.md
+  // that is AGENTS.md (a link, either way, or a hard link) needs nothing:
+  // Claude Code reads that file directly. Any other link is never written
+  // through.
   const claude = [
     { path: "CLAUDE.md", importPath: "AGENTS.md" },
     { path: join(".claude", "CLAUDE.md"), importPath: "../AGENTS.md" },
-  ].map((c) => ({ ...c, current: staging.read(at(c.path)) }));
+  ].map((c) => {
+    const link = isSymlink(at(c.path));
+    const exists = link || existsSync(at(c.path));
+    return { ...c, link, exists, same: exists && sameFile(at(c.path), agentsPath), current: link ? null : staging.read(at(c.path)) };
+  });
+
+  let agentsMd = staging.read(agentsPath);
+  if (agentsMd === undefined) {
+    throw new AgentsInstallError("AGENTS.md is not a UTF-8 text file, so the CLI does not edit it; fix or move it, then run this again", false);
+  }
+  // An earlier release wrote its import through such a link, into AGENTS.md
+  // itself, and lost the block. That marked line is the CLI's to take back,
+  // before the block is placed, so the file ends as a fresh install leaves it.
+  for (const c of claude.filter((x) => x.same)) {
+    if (typeof agentsMd === "string") agentsMd = withClaudeImport(agentsMd, true, c.importPath) ?? "";
+  }
+  if (!(remove && agentsMd === null)) staging.write(agentsPath, withBlock(agentsMd, remove));
+
+  const selected = new Set(opts.agents.map((agent) => AGENTS[agent]?.adapter));
+  const notices: string[] = [];
   if (remove) {
     for (const c of claude) {
+      if (c.same) continue;
+      if (c.link) {
+        const linked = readText(at(c.path));
+        if (typeof linked === "string" && linked.includes(CLAUDE_MARKER)) {
+          leftInPlace.push(`the marked @${c.importPath} line in ${c.path}, a symbolic link the CLI does not write through`);
+        }
+        continue;
+      }
       if (typeof c.current === "string") staging.write(at(c.path), withClaudeImport(c.current, true, c.importPath));
     }
   } else {
-    const target = claude.find((c) => c.current !== null);
-    if (target && typeof target.current === "string") {
+    const target = claude.find((c) => c.exists);
+    if (target?.same) {
+      const agentsLink = agentsPath !== at("AGENTS.md");
+      notices.push(
+        target.link
+          ? `${target.path} is a link to AGENTS.md; Claude Code reads it directly`
+          : agentsLink
+            ? `AGENTS.md is a link to ${target.path}; Claude Code reads it directly`
+            : `${target.path} and AGENTS.md are the same file; Claude Code reads it directly`,
+      );
+    } else if (target?.link) {
+      const linked = readText(at(target.path));
+      if (!(typeof linked === "string" && importsAgents(linked, target.importPath))) {
+        manual.push(
+          `${target.path} is a symbolic link (to ${shownPath(opts.root, at(target.path))}), so the CLI does not write through it: ` +
+            `for Claude Code to read AGENTS.md, make ${target.path} a file with the line @${target.importPath}, or add that line where it leads`,
+        );
+      }
+    } else if (target && typeof target.current === "string") {
       staging.write(at(target.path), withClaudeImport(target.current, false, target.importPath));
     } else if (target) notText(target.path, `add the line @${target.importPath}`);
     else if (selected.has("claude")) staging.write(at("CLAUDE.md"), withClaudeImport(null, false));
@@ -380,7 +466,6 @@ function plan(opts: InstallOptions): Plan {
       manual.push("add AGENTS.md under read: in .aider.conf.yml (the CLI appends to the file only when its layout makes that safe)");
     }
   }
-  const notices: string[] = [];
   if (remove || opts.guardrails) {
     const guardrails = planGuardrails(opts.root, opts.agents, opts.mode, staging);
     manual.push(...guardrails.manual);
@@ -396,6 +481,13 @@ function plan(opts: InstallOptions): Plan {
   }
   files.push(...staging.entries());
   return { files, manual, leftInPlace, notices: [...new Set(notices)] };
+}
+
+/** Where a link leads, for a message: relative to the project when inside it, else the full path. */
+function shownPath(root: string, path: string): string {
+  const realRoot = resolvedPath(root);
+  const target = resolvedPath(path);
+  return isInside(realRoot, target) ? relative(realRoot, target).split("\\").join("/") : target;
 }
 
 /** After --remove: the emptied skill directories go, and their parents if nothing else is in them. */
@@ -428,6 +520,7 @@ export function runInstall(opts: InstallOptions): InstallResult {
   const { files, manual, leftInPlace, notices } = plan(opts);
   const changes: Change[] = [];
   for (const file of files) {
+    const rel = relative(opts.root, file.path).split("\\").join("/");
     const current = readBytes(file.path);
     if (current === undefined) {
       throw new AgentsInstallError(`${relative(opts.root, file.path)} is not a file; move it, then run this again`, false);
@@ -442,7 +535,14 @@ export function runInstall(opts: InstallOptions): InstallResult {
           : current.equals(Buffer.from(file.desired, "utf8"))
             ? "unchanged"
             : "update";
-    changes.push({ path: relative(opts.root, file.path).split("\\").join("/"), action });
+    // Never through a link: what it leads to is another file (one this run
+    // may also edit) or outside the project. It stays as it is, and the
+    // human gets the edit, as for a file whose edit would reformat it.
+    if (action !== "unchanged" && isSymlink(file.path)) {
+      manual.push(`${rel} is a symbolic link, so the CLI does not write through it: replace it with a file, then run this again`);
+      continue;
+    }
+    changes.push({ path: rel, action });
     if (opts.mode === "check" || action === "unchanged") continue;
     if (file.desired === null) rmSync(file.path, { force: true });
     else {

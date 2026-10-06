@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 /**
  * File helpers for `varlatch agents install` (ADR-0043 Decisions 7 and 8):
@@ -84,6 +84,45 @@ export function readBytes(path: string): Buffer | null | undefined {
     return null;
   }
   return readFileSync(path);
+}
+
+/** Whether `path` itself is a symbolic link (the link, not what it leads to). */
+export function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** Where `path` leads: its resolved path, or for a link to nothing, the path its text names. */
+export function resolvedPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return isSymlink(path) ? resolve(dirname(path), readlinkSync(path)) : resolve(path);
+  }
+}
+
+/**
+ * Whether two paths are one file: the same inode (a symbolic or a hard
+ * link), or, when one does not exist yet (a link to an AGENTS.md this run
+ * creates), the same resolved path.
+ */
+export function sameFile(a: string, b: string): boolean {
+  try {
+    const x = statSync(a);
+    const y = statSync(b);
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return resolvedPath(a) === resolvedPath(b);
+  }
+}
+
+/** Whether `path` lies inside the directory `root`; both resolved. */
+export function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 export function filesUnder(dir: string): string[] {

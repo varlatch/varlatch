@@ -803,6 +803,7 @@ async function main(): Promise<void> {
               console.log(`Wrote the Varlatch skill and instructions for coding agents: ${targets.join(", ")}. Commit them too.`);
             }
             for (const m of result.manual) console.log(`To do by hand: ${m}`);
+            for (const notice of result.notices) console.log(`Note: ${notice}`);
           } catch (err) {
             console.error(
               `varlatch: the files for coding agents were not written (${err instanceof Error ? err.message : String(err)}); ` +
