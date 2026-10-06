@@ -2,6 +2,9 @@ packages:
   - "packages/*"
   - "services/*"
   - "apps/*"
+  # The documentation site is its own workspace (apps/docs/pnpm-workspace.yaml),
+  # so its build tooling never changes what the product resolves.
+  - "!apps/docs"
   - "convex"
 allowBuilds:
   '@tailwindcss/oxide': true

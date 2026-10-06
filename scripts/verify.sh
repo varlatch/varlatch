@@ -74,6 +74,10 @@ pnpm build
 step "Typecheck"
 pnpm typecheck
 
+# Its own pnpm workspace, so `pnpm build` above leaves it out.
+step "Documentation site builds, and its links resolve"
+(cd apps/docs && pnpm install --frozen-lockfile --prefer-offline && pnpm test && pnpm build)
+
 # CI scans every ref, so a credential-shaped fixture on any pushed branch
 # fails everyone's CI; scan this branch's commits before they are pushed.
 # The Git directory is mounted at its own path too, because a worktree's

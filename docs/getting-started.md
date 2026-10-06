@@ -20,7 +20,9 @@ Already invited to an installation? Get the CLI, then go to
 - **For the installation:** a Linux host, amd64 or arm64, with Docker and
   Docker Compose, and a way for people to reach it: a domain name pointing
   at the host, a Tailscale network, or your own reverse proxy.
-  [Run an installation](#run-an-installation) explains the choice.
+  [Run an installation](#run-an-installation) explains the choice, and
+  [Host requirements](self-hosting/requirements.md) lists memory, disk,
+  and ports.
 - **For each person:** Node.js 22 or newer for the CLI, and a browser that
   supports passkeys. Varlatch has no passwords: you sign in with a passkey
   kept on your device, in a password manager, or on a security key.

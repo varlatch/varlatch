@@ -41,3 +41,10 @@ first runs `pnpm verify` (the cheap CI checks, and the tests of the packages
 you changed and of the packages that depend on them) and marks the pull
 request ready, which starts CI, only if they pass. `pnpm verify` needs
 Docker, and `pnpm ready` needs the GitHub CLI.
+
+The documentation is the Markdown in `docs/`, plus the deployment guide,
+`CONTEXT.md`, and `CHANGELOG.md`. `apps/docs`, a pnpm workspace of its
+own, builds it into the site at docs.varlatch.com; `pnpm install && pnpm
+dev` in `apps/docs` previews it. Write
+links between files as relative Markdown links, which work on GitHub too: the
+build points them at the site's pages and fails on one that leads nowhere.

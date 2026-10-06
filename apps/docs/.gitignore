@@ -1,0 +1,5 @@
+# Copied in from the repository by scripts/sync-content.mjs; only the home
+# page is written here.
+src/content/docs/*
+!src/content/docs/index.mdx
+.astro/

@@ -1,0 +1,25 @@
+---
+title: Varlatch documentation
+description: Run a Varlatch installation, and use it from your machines, CI, and coding agents.
+template: splash
+hero:
+  tagline: Run your own installation, then give every machine and coding agent the configuration it needs without keeping a copy.
+  actions:
+    - text: Get started
+      link: /getting-started/
+      icon: right-arrow
+    - text: Self-hosting
+      link: /self-hosting/
+      variant: minimal
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <LinkCard title="Getting started" description="From nothing to varlatch run: the CLI, an installation, a project, your team, and CI." href="/getting-started/" />
+  <LinkCard title="Self-hosting" description="Requirements, varlatch setup, configuration, upgrades, backups, and recovery." href="/self-hosting/" />
+  <LinkCard title="Contracts" description="Describe the configuration an app needs in .env.schema, then validate it and generate types." href="/reference/env-schema/" />
+  <LinkCard title="Coding agents" description="Let an agent work with your configuration in assisted mode, without reading Secrets." href="/reference/coding-agents/" />
+  <LinkCard title="Threat model" description="What Varlatch guarantees, the test behind each guarantee, and what it does not protect against." href="/threat-model/" />
+  <LinkCard title="Changelog" description="What changed in each release, and how to upgrade." href="/changelog/" />
+</CardGrid>

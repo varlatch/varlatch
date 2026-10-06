@@ -27,6 +27,16 @@ fixes.
   installation with `varlatch setup`, setting up a project, inviting your
   team, and connecting CI. The deployment guide no longer says it runs the
   Secret Plane only.
+- The documentation is now a website, docs.varlatch.com, built from the
+  same files: this repository's `docs/`, the deployment guide, the
+  vocabulary, and this changelog, with search. `apps/docs` builds it, and
+  the build fails on a link to a page or heading that does not exist.
+- [Host requirements](docs/self-hosting/requirements.md) and the
+  [configuration reference](docs/self-hosting/configuration.md) are new.
+  The first lists what a host needs, with the memory, processor, and disk
+  an installation was measured to use; the second, every setting of an
+  installation, what reads it, its default, and whether `varlatch setup`
+  writes it.
 - Self-hosting instructions that did not work as written are corrected:
   - The manual upgrade's health check now uses the dashboard's port,
     `127.0.0.1:8787/readyz`. Installations set up with `varlatch setup`

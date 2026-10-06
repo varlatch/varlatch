@@ -1,0 +1,24 @@
+{
+  "name": "@varlatch/docs",
+  "version": "0.14.1",
+  "private": true,
+  "description": "docs.varlatch.com: the documentation site, built from docs/ and the deployment guide",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/sync-content.mjs && astro dev",
+    "build": "node scripts/sync-content.mjs && astro build && node scripts/check-links.mjs",
+    "preview": "astro preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.2",
+    "@astrojs/starlight": "0.42.5",
+    "@fontsource-variable/inter": "5.3.0",
+    "@fontsource-variable/jetbrains-mono": "5.3.0",
+    "astro": "7.3.5"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}
