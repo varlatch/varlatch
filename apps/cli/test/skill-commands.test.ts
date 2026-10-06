@@ -585,9 +585,11 @@ describe("completion gaps from the second agent evaluation", () => {
     expect(block).toMatch(/`varlatch --assisted validate -e <environment> --json`; listing values does not check the Contract/);
     expect(block).toMatch(/no `--assisted`; add `--server <url>` when the server was overridden\), or point them to the dashboard:\n\n  ```text\n  varlatch values set <NAME> -e <environment>\n  ```/);
     expect(block).toMatch(/in assisted mode `values set`, `values rotate`, and `import` refuse to replace one without `--replace <NAME>`/);
-    // Leaving out an item the command does not need comes first, and needs no approval (ADR-0043 Decision 4, amended).
-    expect(block).toMatch(/When a Secret is too short to mask \(exit 78\) and the command does not need it, leave it out and rerun, with no\s+approval needed: `varlatch --assisted run -e <environment> --omit <NAME> -- <command>`\. When the command needs\s+it, stop and ask the human\./);
-    expect(block).toMatch(/Only after they approve a remedy for that item and environment may you carry it out,\s+with `--assisted`; for a new random value:\s+`varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32` \(keep `--server <url>`\s+when it was overridden\)\. A credential a provider issued is the human's to enter\./);
+    // Leaving out an item comes first and needs no approval, but only when the command's code or documentation shows
+    // it is not used; the answer names what was left out and whether the task was done (ADR-0043 Decision 4, amended).
+    expect(block).toMatch(/When a Secret is too short to mask \(exit 78\), leave it out only if the command's code or documentation shows that\s+the command does not use it; that needs no approval:\s+`varlatch --assisted run -e <environment> --omit <NAME> -- <command>`\./);
+    expect(block).toMatch(/Then name every item left out in your answer,\s+and say whether the task itself was done: getting past exit 78 does not show that it was\. If you are not sure, or\s+the command uses it, stop and ask the human\./);
+    expect(block).toMatch(/Only after they approve a remedy for that item and environment may you\s+carry it out, with `--assisted`; for a new random value:\s+`varlatch --assisted values set <NAME> -e <environment> --replace <NAME> --generate hex:32` \(keep `--server <url>`\s+when it was overridden\)\. A credential a provider issued is the human's to enter\./);
     expect(block).toMatch(/Marking an item as not secret\s+changes the Contract for the whole project: `varlatch --assisted agents guide contract`\./);
     expect(block).toMatch(/Showing a Secret unmasked\s+is the human's alone: never add `--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)\./);
     expect(block).toMatch(/When the human asks for a new random value, generate it \(`--generate hex:32`\); a credential issued elsewhere is\s+theirs to enter\. Never run a command printed for the human's own terminal yourself\./);
@@ -597,7 +599,9 @@ describe("completion gaps from the second agent evaluation", () => {
     // The skill says the same.
     expect(skill).toMatch(/never add\s+`--allow-unmasked` or `--no-redact` \(assisted mode refuses both\)/);
     expect(skill).toMatch(/After they approve one, you may carry it out yourself, with\s+`--assisted`/);
-    expect(skill).toMatch(/When the command does not need a secret that is too short\s+to mask, leave it out and rerun, with no approval needed/);
+    expect(skill).toMatch(/Leave such a secret out only when the command's code or\s+documentation shows that the command does not use it; that needs no\s+approval/);
+    expect(skill).toMatch(/Your answer must then name every item you left out and say whether the\s+task itself was done: getting past exit 78 does not show that it was\./);
+    expect(skill).toMatch(/If you are not sure the command does without it, do not leave it out/);
     expect(skill).toMatch(/`varlatch --assisted run -e <environment> --omit <NAME> -- <command>`/);
     expect(skill).toMatch(/`varlatch --assisted values set\s+<NAME> -e <environment> --replace <NAME> --generate hex:32`/);
     expect(skill).toMatch(/A command printed for the human's own terminal\s+\(without `--assisted`\) is theirs: never run it yourself\./);

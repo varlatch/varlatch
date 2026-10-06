@@ -17,9 +17,14 @@ fixes.
   8 bytes that the command does not need no longer stops it: before, the
   only ways past that refusal were the human's `--allow-unmasked`, a new
   value, or marking the item as not secret. A coding agent may add
-  `--omit` itself, and the exit-78 message now offers it first, with the
-  command to rerun; `--allow-unmasked` and `--no-redact` stay refused in
-  assisted mode, and every other Secret is masked as before. A name that is
+  `--omit` itself, but only when the command's code or documentation shows
+  that the command does not use the item; when it is not sure, it stops and
+  asks. The exit-78 message offers this first, with the command to rerun,
+  and says what the agent's answer owes: the items it left out, and whether
+  the task itself was done, since getting past the refusal does not show
+  that it was. In assisted mode the run repeats that on stderr.
+  `--allow-unmasked` and `--no-redact` stay refused in assisted mode, and
+  every other Secret is masked as before. A name that is
   neither stored in the environment nor in its Contract exits 64 before
   anything is disclosed or started. With `--strict`, omitting an item the
   Contract requires is a violation (78); with `--export-context`, the run

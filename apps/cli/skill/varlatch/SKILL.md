@@ -51,11 +51,14 @@ long as you follow these rules.
    **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too
-   short to mask. When the command does not need a secret that is too short
-   to mask, leave it out and rerun, with no approval needed (the command
-   then never gets it):
+   short to mask. Leave such a secret out only when the command's code or
+   documentation shows that the command does not use it; that needs no
+   approval:
    `varlatch --assisted run -e <environment> --omit <NAME> -- <command>`.
-   Otherwise report the names in the error, then stop and ask. Each
+   Your answer must then name every item you left out and say whether the
+   task itself was done: getting past exit 78 does not show that it was.
+   If you are not sure the command does without it, do not leave it out:
+   report the names in the error, then stop and ask. Each
    remedy is the human's decision, for the named item (and environment)
    only. After they approve one, you may carry it out yourself, with
    `--assisted`:

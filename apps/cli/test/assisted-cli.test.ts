@@ -535,10 +535,11 @@ describe("assisted run: a value too short to mask", () => {
     const r = await cli(["--assisted", "run", ...mode, "--", process.execPath, printer()], { env: { MARKER: marker } });
     expect(r.code).toBe(78);
     expect(r.stderr).toMatch(/shorter than 8 bytes, so its value cannot be masked in the command's output: PIN/);
-    // First the remedy that needs no approval: leaving the item out, as the agent's own command.
-    expect(r.stderr).toMatch(new RegExp(`If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:\\n {6}varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--omit PIN -- <command>\\n`));
-    // Otherwise stop and ask; each other remedy is the human's decision, for this item only.
-    expect(r.stderr).toMatch(/If it needs it, stop and ask the human what to do about PIN\. Approval for one item or action never covers another\./);
+    // First the remedy that needs no approval, only on evidence from the command's code or documentation, as the agent's own command.
+    expect(r.stderr).toMatch(new RegExp(`Leave PIN out only if the command's code or documentation shows that the command does not use it \\(no approval needed\\):\\n {6}varlatch --assisted run -e development ${mode.length > 0 ? "--strict " : ""}--omit PIN -- <command>\\n`));
+    expect(r.stderr).toContain("Then name PIN left out in your answer, and say whether the task itself was done: getting past this refusal does not show that the command did what was asked.");
+    // Otherwise (or when unsure) stop and ask; each other remedy is the human's decision, for this item only.
+    expect(r.stderr).toMatch(/If you are not sure, or the command uses PIN, stop and ask the human what to do about PIN\. Approval for one item or action never covers another\./);
     // After approval, the replacement is the agent's own command, with --assisted and --replace.
     expect(r.stderr).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e development --replace PIN --generate hex:32\n/);
     expect(r.stderr).not.toMatch(/^\s*varlatch values set PIN .*--generate/m);
@@ -616,9 +617,10 @@ describe("run --omit: an item left out of the run", () => {
     const control = await cli(["--assisted", "run", "--", ...reporter("PIN")], { env: { PIN: SHELL_PIN } });
     expect(control.code).toBe(78);
     expect(control.stderr).toContain(
-      "  If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:\n" +
+      "  Leave PIN out only if the command's code or documentation shows that the command does not use it (no approval needed):\n" +
         "      varlatch --assisted run -e development --omit PIN -- <command>\n" +
-        "  If it needs it, stop and ask the human what to do about PIN.",
+        "    Then name PIN left out in your answer, and say whether the task itself was done: getting past this refusal does not show that the command did what was asked.\n" +
+        "  If you are not sure, or the command uses PIN, stop and ask the human what to do about PIN.",
     );
     expect(control.stderr.indexOf("--omit PIN")).toBeLessThan(control.stderr.indexOf("stop and ask"));
     requests = [];
@@ -627,7 +629,10 @@ describe("run --omit: an item left out of the run", () => {
     expect(r.stdout).toContain("PIN=absent\nAPI_TOKEN=present\n");
     // Not fetched: the disclosure names every other Secret, and not PIN.
     expect(disclosures()).toEqual([{ items: ["API_TOKEN", "WITHHELD_KEY"] }]);
-    expect(r.stderr).toContain("varlatch: left out of this run (--omit), so the command does not get it, and not masked if the command obtains it another way: PIN\n");
+    expect(r.stderr).toContain(
+      "varlatch: left out of this run (--omit), so the command does not get it, and not masked if the command obtains it another way: PIN\n" +
+        "varlatch: name it in your answer; the command starting does not show that the task was done\n",
+    );
     expect(r.stdout + r.stderr).not.toContain(PIN);
     expect(r.stdout + r.stderr).not.toContain(SHELL_PIN);
   });
@@ -645,7 +650,8 @@ describe("run --omit: an item left out of the run", () => {
     stored.push({ name: "PIN_TWO", sensitive: true, value: "abcdefg" });
     const refused = await cli(["--assisted", "run", "--", ...reporter("PIN")]);
     expect(refused.code).toBe(78);
-    expect(refused.stderr).toContain("(leave out only the ones it does not need):\n      varlatch --assisted run -e development --omit PIN --omit PIN_TWO -- <command>\n");
+    expect(refused.stderr).toContain("(no approval needed), and only those items:\n      varlatch --assisted run -e development --omit PIN --omit PIN_TWO -- <command>\n");
+    expect(refused.stderr).toContain("    Then name each item left out in your answer, and say whether the task itself was done");
     const one = await cli(["--assisted", "run", "--omit", "PIN", "--", ...reporter("PIN")]);
     expect(one.code).toBe(78);
     expect(one.stderr).toMatch(/cannot be masked in the command's output: PIN_TWO\n/);

@@ -87,12 +87,12 @@ describe("planAssistedRedaction", () => {
     const lines = unmaskableRefusal(["PIN", "REDIS_PASSWORD"], { target: "-e production", runOptions: ["--strict"] }).join("\n");
     expect(lines).toMatch(/shorter than 8 bytes.*: PIN, REDIS_PASSWORD/);
     // Every command names the run's environment, so it acts on the same values.
-    // First the remedy that needs no approval: leaving the items out, as the agent's own command, keeping the run's options.
+    // First the remedy that needs no approval, but only on evidence: leaving items out, as the agent's own command, keeping the run's options.
     expect(lines).toMatch(
-      /^ {2}If the command does not need them, rerun with --omit PIN --omit REDIS_PASSWORD: the command then does not get them, and no approval is needed \(leave out only the ones it does not need\):\n {6}varlatch --assisted run -e production --strict --omit PIN --omit REDIS_PASSWORD -- <command>\n {2}If it needs one, stop and ask/m,
+      /^ {2}Leave an item out only if the command's code or documentation shows that the command does not use it \(no approval needed\), and only those items:\n {6}varlatch --assisted run -e production --strict --omit PIN --omit REDIS_PASSWORD -- <command>\n {4}Then name each item left out in your answer, and say whether the task itself was done: getting past this refusal does not show that the command did what was asked\.\n {2}For each item you are not sure about, or the command uses, stop and ask/m,
     );
     // Otherwise stop and ask; an approved replacement is the agent's own command, with --assisted.
-    expect(lines).toMatch(/stop and ask the human what to do about each item it needs\. Approval for one item or action never covers another\./);
+    expect(lines).toMatch(/stop and ask the human what to do about it\. Approval for one item or action never covers another\./);
     expect(lines).toMatch(/Only if they approve replacing PIN with a new random value \(it overwrites the current one\):\n {6}varlatch --assisted values set PIN -e production --replace PIN --generate hex:32 {3}\(each item needs its own approval\)/);
     // No generated replacement is printed without --assisted: an agent could run it outside assisted mode.
     expect(lines).not.toMatch(/^\s*varlatch values set .*--generate/m);
@@ -109,11 +109,16 @@ describe("planAssistedRedaction", () => {
     expect(lines).not.toMatch(/1234567|abcdefg/);
   });
 
-  it("the --omit remedy comes first; for the human's override it has no --assisted and keeps the allowances", () => {
+  it("the --omit remedy comes first, only on evidence, with what the answer owes; for the human's override it has no --assisted and keeps the allowances", () => {
     const agent = unmaskableRefusal(["PIN"], { target: "-e production" });
-    expect(agent[1]).toBe("  If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:");
+    expect(agent[1]).toBe("  Leave PIN out only if the command's code or documentation shows that the command does not use it (no approval needed):");
     expect(agent[2]).toBe("      varlatch --assisted run -e production --omit PIN -- <command>");
-    expect(agent[3]).toMatch(/^ {2}If it needs it, stop and ask the human what to do about PIN\./);
+    // The answer names what was left out, and getting past the refusal is not completing the task.
+    expect(agent[3]).toBe(
+      "    Then name PIN left out in your answer, and say whether the task itself was done: getting past this refusal does not show that the command did what was asked.",
+    );
+    // Uncertainty means stop and ask.
+    expect(agent[4]).toMatch(/^ {2}If you are not sure, or the command uses PIN, stop and ask the human what to do about PIN\./);
     const human = unmaskableRefusal(["PIN_TWO"], { target: "-e production", runOptions: ["--allow-unmasked PIN"], assisted: false });
     expect(human[2]).toBe("      varlatch run -e production --allow-unmasked PIN --omit PIN_TWO -- <command>");
   });

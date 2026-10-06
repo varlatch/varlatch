@@ -66,9 +66,10 @@ varlatch --assisted <command> [args...]
 
   ```
   varlatch: this Secret is shorter than 8 bytes, so its value cannot be masked in the command's output: PIN
-    If the command does not need PIN, rerun with --omit PIN: the command then does not get it, and no approval is needed:
+    Leave PIN out only if the command's code or documentation shows that the command does not use it (no approval needed):
         varlatch --assisted run -e production --omit PIN -- <command>
-    If it needs it, stop and ask the human what to do about PIN. Approval for one item or action never covers another.
+      Then name PIN left out in your answer, and say whether the task itself was done: getting past this refusal does not show that the command did what was asked.
+    If you are not sure, or the command uses PIN, stop and ask the human what to do about PIN. Approval for one item or action never covers another.
     - Only if they approve replacing PIN with a new random value (it overwrites the current one):
         varlatch --assisted values set PIN -e production --replace PIN --generate hex:32
       A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set PIN -e production
@@ -78,10 +79,16 @@ varlatch --assisted <command> [args...]
   Nothing was started.
   ```
 
-  When the command does not need the item, the agent leaves it out with
-  `--omit` and runs again. That needs nobody's approval: the command then
-  never gets the value, so nothing passes unmasked. Otherwise the agent
-  stops and asks. Each other remedy is the human's decision, for
+  The agent may leave the item out with `--omit` and run again only when
+  the command's code or documentation shows that the command does not use
+  it. That needs nobody's approval: the command then never gets the value,
+  so nothing passes unmasked. Its answer must then name every item it left
+  out and say whether the task itself was done: getting past exit 78 does
+  not show that the command did what was asked (a command that runs
+  without an item it needs may fail, or seem to work and do the wrong
+  thing), and the run reminds it on stderr. When the agent is not sure, it
+  does not leave the item out: it stops and asks. Each other remedy is the
+  human's decision, for
   the named item (and environment) only. After that approval, a safe remedy
   is the agent's own command, with `--assisted`: a new random value
   replaces the item with `--replace` naming it. A credential a provider
