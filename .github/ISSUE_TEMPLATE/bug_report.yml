@@ -1,0 +1,51 @@
+name: Bug report
+description: Varlatch does something it should not, or does not do what its documentation says.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic values. Never paste a secret value, even one you think is harmless.
+        For a security problem, do not open an issue: report it privately as [SECURITY.md](https://github.com/varlatch/varlatch/blob/main/SECURITY.md) describes.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `varlatch --version`. If you run the server yourself, the version `varlatch doctor` reports too.
+      placeholder: varlatch 0.14.1 (migration 25)
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - CLI
+        - Dashboard
+        - varlatchd
+        - SDK or Typed Accessor
+        - Compose deployment
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The commands or steps, in order, so that someone else can reproduce it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Error messages and output, with any secret values removed.
+      render: text
+    validations:
+      required: true

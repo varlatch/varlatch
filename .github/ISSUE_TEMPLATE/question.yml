@@ -1,0 +1,19 @@
+name: Question
+description: A question about installing, running, or using Varlatch.
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic values. Never paste a secret value, even one you think is harmless.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to do, and what you have tried so far.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `varlatch --version`, if you have it installed.

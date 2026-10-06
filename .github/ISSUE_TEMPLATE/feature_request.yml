@@ -1,0 +1,23 @@
+name: Feature request
+description: Something Varlatch should do that it does not do yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do, and what stops you today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: How you picture it working. A command, a screen, or an API call is enough.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do now
+      description: Any workaround you use, or another approach you considered.
