@@ -126,7 +126,8 @@ long as you follow these rules.
    variables hold Placeholders, not secret values. Putting a Placeholder in
    a `varlatch --assisted request` header or body target is how you use a
    secret there; a real secret value stays forbidden. curl and fetch are
-   refused by the Broker. For example:
+   refused by the Broker: curl's `CONNECT tunnel failed, response 502` means
+   "use `varlatch --assisted request`", not "the API is down". For example:
    `varlatch --assisted request -X POST -H "Authorization: Bearer $STRIPE_KEY" --json '{"amount": 500}' https://api.example.com/v1/charges`
    The double quotes let the shell put the Placeholder in; in single quotes
    the request would carry the literal text `$STRIPE_KEY`, which the Broker

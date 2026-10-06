@@ -2,12 +2,13 @@
 import { maintenanceNotice } from "./maintenance.js";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AGENT_RUN_ENV, type ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
 import { canonicalTargets, type EffectiveConfiguration } from "@varlatch/protocol";
-import { generatePlaceholder, sameTargets, startBroker, type BrokerEvent } from "./broker.js";
+import { TUNNELS_PATH, generatePlaceholder, sameTargets, startBroker, type BrokerEvent } from "./broker.js";
 import type { ConfigurationContract } from "@varlatch/contract";
 import { RUN_CONTEXT, runChild } from "./inject.js";
 import {
@@ -215,6 +216,72 @@ export function agentRunCredentials(env: NodeJS.ProcessEnv): { item: string; val
     }
   }
   return out;
+}
+
+/**
+ * The tunnels the run's Broker refused so far, by destination: a nested
+ * `varlatch run` reads them before and after its command, to say what curl
+ * does not. Undefined when the proxy is not the run's Broker or it does not
+ * answer: the note is a hint, never a reason to fail the command.
+ */
+export async function refusedTunnels(env: NodeJS.ProcessEnv): Promise<Map<string, number> | undefined> {
+  let proxy: URL;
+  try {
+    proxy = new URL(env.HTTPS_PROXY ?? env.https_proxy ?? "");
+  } catch {
+    return undefined;
+  }
+  if (proxy.hostname !== "127.0.0.1" || proxy.username !== "vlt" || !proxy.port) return undefined;
+  const auth = Buffer.from(`vlt:${decodeURIComponent(proxy.password)}`).toString("base64");
+  return new Promise((resolve) => {
+    // A fresh agent: never Node's environment proxy, which is the Broker itself.
+    const req = http.get(
+      { host: "127.0.0.1", port: Number(proxy.port), path: TUNNELS_PATH, agent: false, timeout: 2000, headers: { "Proxy-Authorization": `Basic ${auth}` } },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => (body += chunk));
+        res.on("error", () => resolve(undefined));
+        res.on("end", () => {
+          try {
+            const { tunnels } = JSON.parse(body) as { tunnels?: { destination: string; count: number }[] };
+            resolve(res.statusCode === 200 && Array.isArray(tunnels) ? new Map(tunnels.map((t) => [t.destination, t.count])) : undefined);
+          } catch {
+            resolve(undefined);
+          }
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy());
+    req.on("error", () => resolve(undefined));
+  });
+}
+
+/**
+ * What a nested `varlatch run` adds after its command when the Broker
+ * refused a tunnel meanwhile (ADR-0043 agent evaluations, runs 8 and 10: an
+ * Agent read curl's "CONNECT tunnel failed, response 502" as the API being
+ * down). Destinations and a Placeholder name only, never a value.
+ */
+export function tunnelNote(
+  before: Map<string, number> | undefined,
+  after: Map<string, number> | undefined,
+  placeholders: string[],
+): string | undefined {
+  if (!before || !after) return undefined;
+  const refused = [...after].filter(([destination, n]) => n > (before.get(destination) ?? 0)).map(([destination]) => destination).sort();
+  if (refused.length === 0) return undefined;
+  const first = refused[0]!;
+  const colon = first.lastIndexOf(":");
+  const host = first.slice(0, colon).includes(":") ? `[${first.slice(0, colon)}]` : first.slice(0, colon);
+  const port = first.slice(colon + 1);
+  const url = `https://${host}${port === "443" ? "" : `:${port}`}/...`;
+  return (
+    `varlatch: while this command ran, the Broker refused an HTTPS tunnel to ${refused.join(", ")}. ` +
+    "curl, fetch, and most SDKs open one, and agent-safe runs refuse it: the request never left this machine, " +
+    "so this is not a network failure. Send the request with varlatch request instead, for example:\n" +
+    `  varlatch --assisted request -H "Authorization: Bearer $${placeholders[0] ?? "API_KEY"}" ${url}`
+  );
 }
 
 function setProxy(env: NodeJS.ProcessEnv, proxyUrl: string): void {
@@ -475,6 +542,13 @@ function brokerDiagnostics(): { report: (event: BrokerEvent) => void; summarize:
           return;
         case "aborted":
           console.error(`varlatch-broker: aborted a response: ${event.reason}`);
+          return;
+        case "tunnel":
+          counts.set("tunnel", (counts.get("tunnel") ?? 0) + 1);
+          say(
+            `tunnel ${event.destination}`,
+            `varlatch-broker: refused an HTTPS tunnel to ${event.destination} (curl, fetch, and most SDKs open one); a request that uses a Secret goes through varlatch request`,
+          );
           return;
         case "blocked":
         case "failed":

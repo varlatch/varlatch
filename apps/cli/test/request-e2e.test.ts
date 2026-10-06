@@ -152,6 +152,17 @@ for (const [name, command] of [["docDouble", e.DOC_DOUBLE], ["docSingle", e.DOC_
   const r = spawnSync("sh", ["-c", command], { env: e, encoding: "utf8", timeout: 20000 });
   record.probes[name] = { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
+// Real clients, as Agents reach for them: curl in a nested varlatch run (how the agent evaluations called
+// the API), with -v, and Python's urllib on its own; the control sends its request through the Broker.
+function nested(name, command) {
+  const r = spawnSync(process.execPath, [e.CLI_BUNDLE, "run", "--", ...command], { env: e, encoding: "utf8", timeout: 20000 });
+  record.probes[name] = { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+nested("nestedCurl", ["curl", "-sS", "https://" + dest + "/nested-curl"]);
+nested("nestedCurlVerbose", ["curl", "-v", "https://" + dest + "/nested-curl-verbose"]);
+nested("nestedRequest", [process.execPath, e.CLI_BUNDLE, "request", "https://" + dest + "/nested-request"]);
+const py = spawnSync("python3", ["-c", "import urllib.request; urllib.request.urlopen('https://" + dest + "/python')"], { env: e, encoding: "utf8", timeout: 20000 });
+record.probes.python = { code: py.status, stdout: py.stdout, stderr: py.stderr };
 // A CONNECT tunnel, as curl, fetch, and most SDKs open for HTTPS through a proxy.
 const proxy = new URL(e.HTTPS_PROXY);
 const auth = Buffer.from(decodeURIComponent(proxy.username) + ":" + decodeURIComponent(proxy.password)).toString("base64");
@@ -327,6 +338,47 @@ describe("varlatch request through the Broker of an agent-safe run", () => {
     expect(record.connect).toMatch(/^HTTP\/1\.1 502 /);
     expect(record.connect).toMatch(/Send the request with varlatch request/);
     expect(seen.filter((s) => s.method === "CONNECT")).toEqual([]);
+  });
+
+  it("curl in a nested varlatch run shows only its tunnel error; the run then says it was the Broker's refusal, and what to send instead", () => {
+    const probe = record.probes.nestedCurl!;
+    expect(probe.code).not.toBe(0);
+    expect(probe.stderr).toMatch(/curl: \(\d+\) CONNECT tunnel failed, response 502/);
+    // The refusal's body, which names varlatch request, is never shown by curl.
+    expect(probe.stderr).not.toMatch(/intentionally does not MITM/);
+    const note = `varlatch: while this command ran, the Broker refused an HTTPS tunnel to 127.0.0.1:${upstreamPort}.`;
+    expect(probe.stderr).toContain(note);
+    expect(probe.stderr).toContain(`  varlatch --assisted request -H "Authorization: Bearer $STRIPE_KEY" https://127.0.0.1:${upstreamPort}/...`);
+    expect(probe.stderr.indexOf(note)).toBeGreaterThan(probe.stderr.indexOf("CONNECT tunnel failed"));
+    expect(at("/nested-curl")).toEqual([]);
+  });
+
+  it("curl -v shows the refusal's status line, which names varlatch request", () => {
+    const probe = record.probes.nestedCurlVerbose!;
+    expect(probe.stderr).toMatch(/< HTTP\/1\.1 502 Tunnel refused by Varlatch, use varlatch request/);
+    expect(probe.stderr).toContain("the Broker refused an HTTPS tunnel");
+    expect(at("/nested-curl-verbose")).toEqual([]);
+  });
+
+  it("Python's urllib puts the status line in its error, without a verbose flag", () => {
+    const probe = record.probes.python!;
+    expect(probe.code).not.toBe(0);
+    expect(probe.stderr).toMatch(/Tunnel connection failed: 502 Tunnel refused by Varlatch, use varlatch request/);
+    expect(at("/python")).toEqual([]);
+  });
+
+  it("negative control: a nested run whose command sends its request through the Broker reaches the destination and prints no note", () => {
+    const probe = record.probes.nestedRequest!;
+    expect(probe.code, probe.stderr).toBe(0);
+    expect(at("/nested-request")).toHaveLength(1);
+    expect(probe.stderr).not.toMatch(/refused an HTTPS tunnel/);
+  });
+
+  it("the run itself names each refused destination once, and counts the refused tunnels at the end", () => {
+    const line = `varlatch-broker: refused an HTTPS tunnel to 127.0.0.1:${upstreamPort}`;
+    expect(outer.output.split(line)).toHaveLength(2);
+    // curl twice, Python, and the raw CONNECT.
+    expect(outer.output).toMatch(/varlatch: the broker refused \d+ request\(s\): .*\btunnel 4\b/);
   });
 
   it("a request the Broker refuses (substitution over plain HTTP) exits 1 with its reason on stderr, and reaches nothing", () => {

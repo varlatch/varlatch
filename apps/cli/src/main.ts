@@ -1072,11 +1072,16 @@ async function main(): Promise<void> {
           );
           const [cmd, ...cmdArgs] = args.slice(sep + 1) as [string, ...string[]];
           // The run's credentials never reach a nested command's output (an agent asked to check a variable).
-          const { agentRunCredentials } = await import("./agentRun.js");
+          const { agentRunCredentials, placeholderNames, refusedTunnels, tunnelNote } = await import("./agentRun.js");
           const credentials = agentRunCredentials(process.env);
           const nested = { ...process.env };
           for (const name of omitted) delete nested[name];
-          process.exit(await runChild(cmd, cmdArgs, nested, credentials.length > 0 ? credentials : undefined));
+          // A refused tunnel looks like a network failure from curl: say what it was (#107).
+          const before = await refusedTunnels(process.env);
+          const code = await runChild(cmd, cmdArgs, nested, credentials.length > 0 ? credentials : undefined);
+          const note = tunnelNote(before, await refusedTunnels(process.env), placeholderNames(nested));
+          if (note) console.error(note);
+          process.exit(code);
         }
         const agentSafe = has(preArgs, "--agent-safe");
         const noRedact = has(preArgs, "--no-redact");

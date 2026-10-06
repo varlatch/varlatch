@@ -46,7 +46,10 @@ varlatch --assisted request -i -o response.json https://api.example.com/v1/items
 - It takes `-X`, `-H`, `-d`, `--json`, `-o`, and `-i`; `@file` and `@-` send
   a file or standard input as the body.
 - Responses arrive scrubbed: a Secret echoed back shows as its Placeholder.
-- curl, fetch, and most SDKs open a tunnel the Broker refuses (502).
+- curl, fetch, and most SDKs open a tunnel the Broker refuses (502). curl
+  then prints only `CONNECT tunnel failed, response 502`. That means "use
+  `varlatch --assisted request`", not "the API is down": the request never
+  left this machine. Send it again with `varlatch --assisted request`.
 - Exit 0 when the destination answered, whatever the HTTP status; 1 when the
   Broker refused (its reason is on stderr) or the response was cut off; 77
   when the Broker did not accept the run's proxy credential.

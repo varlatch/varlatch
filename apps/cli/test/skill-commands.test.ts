@@ -697,6 +697,16 @@ describe("Placeholders in an agent-safe run", () => {
   });
 });
 
+describe("a refused tunnel, as curl reports it (agent evaluations, runs 8 and 10)", () => {
+  it("SKILL.md and references/agent-run.md quote curl's error and say it means varlatch request, not a down API", () => {
+    for (const file of ["SKILL.md", "references/agent-run.md"]) {
+      const text = (SKILL_FILES[file] as string).replace(/\s+/g, " ");
+      expect(text, file).toContain("`CONNECT tunnel failed, response 502`");
+      expect(text, file).toMatch(/"use `varlatch --assisted request`", not "the API is down"/);
+    }
+  });
+});
+
 describe("the agent-safe request example", () => {
   it("parses as written, in SKILL.md and in the AGENTS.md block; outside an agent-safe run it is refused, not misread", async () => {
     const examples = [...documented("request").map((c) => c.line), ...[...agentsBlock().matchAll(/`(varlatch --assisted request [^`]+)`/g)].map((m) => m[1] as string)];
