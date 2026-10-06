@@ -34,6 +34,7 @@ export default defineConfig({
             "self-hosting/configuration",
             { label: "Backup and recovery", slug: "operations/backup" },
             { label: "First off-host backup (B2)", slug: "operations/backup-b2" },
+            { label: "Moving to another address", slug: "operations/move-installation" },
             { label: "Verifying a release", slug: "operations/verify-release" },
           ],
         },

@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { basename, delimiter, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { checkComposeVersion, doctorExitCode, formatDoctor, runDoctor, type Check } from "./doctor.js";
+import { clearMoveState, MOVE_STATE_FILE, readMoveState, writeMoveState } from "./moveState.js";
 
 /**
  * `varlatch setup` (ADR-0035 D7): takes a Compose directory (a release bundle
@@ -102,7 +103,7 @@ export function composeFiles(ingress: Ingress, override = false): string[] {
     : ["docker-compose.yml"];
   return override ? [...files, COMPOSE_OVERRIDE] : files;
 }
-const INGRESS_FILES: Record<Ingress, string[]> = {
+export const INGRESS_FILES: Record<Ingress, string[]> = {
   public: ["docker-compose.caddy.yml", "Caddyfile"],
   tailnet: ["docker-compose.tailscale.yml", "docker-compose.tailnet-https.yml", "tailscale-serve.json"],
   external: [],
@@ -238,6 +239,15 @@ function envValue(raw: string): string {
   return quoted ? quoted[2]! : value.replace(/\s+#.*$/, "");
 }
 
+/** VARLATCH_PUBLIC_URL in a setup-managed .env: the address the installation runs at. */
+export function runningPublicUrl(envPath: string): string | null {
+  if (!existsSync(envPath)) return null;
+  const text = readFileSync(envPath, "utf8");
+  if (!text.startsWith(ENV_HEADER)) return null;
+  const line = text.split("\n").filter((l) => l.startsWith("VARLATCH_PUBLIC_URL=")).pop();
+  return line ? envValue(line.slice("VARLATCH_PUBLIC_URL=".length)) || null : null;
+}
+
 /**
  * Compose takes COMPOSE_FILE (and COMPOSE_PATH_SEPARATOR) from the
  * environment first, then from its env files (.env unless COMPOSE_ENV_FILES
@@ -343,6 +353,13 @@ export interface SetupOptions {
   threshold?: number | undefined;
   /** Non-interactive confirmation that the copies are stored off this host. */
   attest: boolean;
+  /**
+   * `varlatch move` (issue #103): the configuration already names the new
+   * address and varlatch-move.json records the move. Setup then removes the
+   * old address's passkeys once and issues re-enrollment links instead of a
+   * bootstrap or recovery link.
+   */
+  move?: { reenrollHours?: number } | undefined;
 }
 
 export interface CustodyStatus {
@@ -601,6 +618,22 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
   console.log(`  ✓ Docker Compose ${composeVersion}`);
   let config = loadInstallConfig(dir);
   const saveConfig = (next: InstallConfig) => writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(next, null, 2) + "\n");
+  const moving = opts.move ? readMoveState(dir) : null;
+  if (opts.move && !moving) throw new SetupError(`No move in progress (${MOVE_STATE_FILE}): start one with \`varlatch move --public-url <url>\``);
+  if (!opts.move && readMoveState(dir)) {
+    throw new SetupError(`A move to ${readMoveState(dir)!.to} is in progress: finish it with \`varlatch move\`.`);
+  }
+  if (config && !opts.move) {
+    // The file is not the place to change the address: editing it and
+    // rerunning setup would skip everything a move needs (issue #103).
+    const running = runningPublicUrl(join(dir, ".env"));
+    if (running && config.publicUrl && running !== config.publicUrl) {
+      throw new SetupError(
+        `${CONFIG_FILE} names ${config.publicUrl}, but this installation runs at ${running}. ` +
+          `To move it, put ${running} back in ${CONFIG_FILE} and run \`varlatch move --public-url ${config.publicUrl}\`.`,
+      );
+    }
+  }
   if (config) {
     if (opts.ingress && opts.ingress !== (config.ingress ?? "external")) {
       throw new SetupError(`This installation uses the ${config.ingress ?? "external"} ingress. Changing it moves the public URL; it is a separate procedure, not a setup rerun.`);
@@ -672,14 +705,55 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
   if (ingress === "public") await waitForCertificate(dir, new URL(config.publicUrl).hostname, 5 * 60_000);
 
   // 4. Application Plane reconciliation — no admin key to handle (D3/D4).
+  // After a move this also gives Convex the new token issuer.
   step(4, "Application Plane");
   docker(dir, ["run", "--rm", "convex-deploy"], { stream: true });
+  if (moving && !moving.passkeysRetiredAt) {
+    const retired = JSON.parse(varlatchd(dir, ["admin", "public-url-changed", "--from", moving.from])) as {
+      passkeysRemoved: number; sessionsEnded: number; browserCredentialsRevoked: number;
+    };
+    moving.passkeysRetiredAt = new Date().toISOString();
+    writeMoveState(dir, moving);
+    console.log(
+      `  ✓ ${retired.passkeysRemoved} passkey(s) for ${moving.from} removed, ${retired.sessionsEnded} browser session(s) ended`,
+    );
+  }
 
   // 5. Bootstrap: done only when an Installation Admin can sign in.
-  step(5, "First administrator");
+  step(5, moving ? "Re-enrollment" : "First administrator");
   const status = () => bootstrapAction(JSON.parse(varlatchd(dir, ["admin", "bootstrap-status"])) as BootstrapStatus);
   let action = status();
-  if (action.kind !== "done") {
+  if (moving) {
+    if (!moving.linksIssuedAt) {
+      const hours = opts.move?.reenrollHours;
+      const { links } = JSON.parse(
+        varlatchd(dir, ["admin", "reenroll", "--all", "--json", ...(hours !== undefined ? ["--hours", String(hours)] : [])]),
+      ) as { links: { name: string; identityId: string; installationAdmin: boolean; link: string; expiresAt: string }[] };
+      moving.linksIssuedAt = new Date().toISOString();
+      writeMoveState(dir, moving);
+      console.log("\n  One-time links, one per person: each enrolls a new passkey on that person's existing identity.");
+      console.log("  Send each only to its person, over a channel you trust. Open yours first.\n");
+      for (const l of links) console.log(`    ${l.name}${l.installationAdmin ? " (Installation Admin)" : ""}\n      ${l.link}`);
+      console.log(`\n  They expire ${links[0]?.expiresAt ?? "-"}. New ones: \`varlatch admin reenroll --all\` (revokes these).`);
+    } else {
+      console.log(`  Links were issued at ${moving.linksIssuedAt}. New ones: \`varlatch admin reenroll --all\` (revokes those).`);
+    }
+    if (action.kind !== "done") {
+      if (opts.noWait) {
+        console.log("  Rerun `varlatch move` once an Installation Admin has enrolled, to finish.");
+        return 3;
+      }
+      console.log("  Waiting for an Installation Admin to enroll ...");
+      const deadline = Date.now() + opts.enrollTimeoutMs;
+      while ((action = status()).kind !== "done") {
+        if (Date.now() > deadline) {
+          console.log("  No Installation Admin has enrolled yet. Rerun `varlatch move` to keep waiting; nothing else is repeated.");
+          return 3;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  } else if (action.kind !== "done") {
     const issue =
       action.kind === "bootstrap" ? ["admin", "bootstrap"]
       : action.kind === "recover" ? ["admin", "recover", "--identity", action.identityId]
@@ -721,6 +795,12 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
   if (!escrowed) {
     console.log(`\nRunning at ${config.publicUrl}, but recovery-key escrow is pending: rerun \`varlatch setup\` to finish.`);
     return 4;
+  }
+  if (moving) {
+    clearMoveState(dir);
+    console.log(`\nMoved: ${moving.from} → ${config.publicUrl}. The archive from before the move is ${moving.archive}.`);
+    console.log("Everyone else enrolls with their link. CLI users sign in again: " + `varlatch login --server ${config.publicUrl}`);
+    return 0;
   }
   console.log(`\nSetup complete: ${config.publicUrl}`);
   return 0;

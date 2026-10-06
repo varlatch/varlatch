@@ -5,6 +5,38 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.15.0)
+
+### Self-hosting
+
+- **`varlatch move` gives an installation another public URL** (#103),
+  for a new domain or to go from a tailnet address to a public one.
+  Passkeys belong to the address, so a move is a re-enrollment event. The
+  command shows what the move affects and asks first. It takes and
+  verifies an archive (the way back), then moves the installation to the
+  new address and gives Convex the new token issuer. It removes the old
+  address's passkeys, ends every browser session, and prints one
+  single-use link per person to enroll a new passkey on the same identity.
+  CLI, agent, and machine credentials, OIDC bindings, Sync Targets, and
+  webhooks keep working; only their configured server address changes. A
+  move that stops resumes with another `varlatch move`. See
+  [Moving an installation to another address](docs/operations/move-installation.md).
+- **`varlatch admin reenroll`** issues those links at any time, for
+  everyone (`--all`) or for named people (`--identity`), for example for
+  someone who lost their passkey. A new link for a person revokes the
+  unused one before it. Links expire after 24 hours by default (at most a
+  week).
+- `varlatch setup` refuses a `publicUrl` edited into
+  `varlatch-install.json`: rerunning setup with it skipped everything a
+  move needs.
+- The sign-in and Security pages no longer send people to an
+  organization admin for a recovery link: only whoever runs the server can
+  issue one.
+
+### Upgrading
+
+- Migration 26 adds the re-enrollment grant kind.
+
 ## 0.14.3 (2026-10-06)
 
 ### Coding agents

@@ -102,6 +102,11 @@ Usage:
                                                        # install: one command, resumable
   varlatch adopt [--dir <compose-directory>] [--apply] [--only <step>] [--revert <step>] [--secrets-dir <dir>]
                                                        # existing installation → managed, step by step
+  varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]
+                [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]
+                [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links
+  varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]
+                                                       # one-time links: a new passkey on an existing identity
   varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
                                                        # read-only installation health on this host
   varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]

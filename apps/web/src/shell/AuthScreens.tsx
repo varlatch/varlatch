@@ -59,7 +59,7 @@ export function SignInScreen() {
           {status || "No passwords exist here. Your passkey lives on your device or security key."}
         </p>
         <div className="mt-5 border-t border-bd pt-4 text-[13px] text-muted">
-          Lost your passkey? Ask an organization admin for a recovery link.
+          Lost your passkey? Whoever runs this Varlatch server can send you a link to enroll a new one.
         </div>
       </div>
       {meta.data?.serverVersion && (

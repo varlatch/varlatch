@@ -19,6 +19,13 @@ import { DomainError } from "./errors.js";
 const SETUP_GRANT_TTL_MS = 15 * 60 * 1000;
 /** Invites are handed to another human; give them a practical window. */
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Re-enrollment links also travel to other people, but each one binds a
+ * passkey to an existing identity, Installation Admins included: a day by
+ * default, a week at most.
+ */
+export const REENROLL_TTL_DEFAULT_HOURS = 24;
+export const REENROLL_TTL_MAX_HOURS = 7 * 24;
 
 export interface InstallationRow {
   id: string;
@@ -248,7 +255,137 @@ export async function issueInviteGrant(
   });
 }
 
-type SetupGrantKind = "bootstrap" | "recover" | "invite";
+export interface ReenrollmentGrant {
+  identityId: string;
+  name: string;
+  installationAdmin: boolean;
+  token: string;
+  expiresAt: string;
+}
+
+/**
+ * Re-enrollment links (issue #103): one per enabled human identity, or per
+ * named identity, each adding a passkey to that existing identity. Issuing
+ * is host-exec authority, like recovery. A new link for a person revokes the
+ * unused ones issued before, so at most one is live per person.
+ */
+export async function issueReenrollmentGrants(
+  ctx: AppCtx,
+  input: { identityIds: string[] | "all"; ttlHours?: number },
+): Promise<ReenrollmentGrant[]> {
+  const inst = await getInstallation(ctx.db);
+  if (!inst?.bootstrapped_at) {
+    throw new DomainError("VALIDATION_FAILED", "Installation is not bootstrapped yet; use bootstrap");
+  }
+  const ttlHours = input.ttlHours ?? REENROLL_TTL_DEFAULT_HOURS;
+  if (!Number.isFinite(ttlHours) || ttlHours <= 0 || ttlHours > REENROLL_TTL_MAX_HOURS) {
+    throw new DomainError("VALIDATION_FAILED", `Link lifetime must be more than 0 and at most ${REENROLL_TTL_MAX_HOURS} hours`);
+  }
+  return withTx(ctx.db, async (db) => {
+    const res = await db.query(
+      `SELECT id, name, installation_admin, kind, disabled FROM identities
+        WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
+        ORDER BY installation_admin DESC, created_at, id`,
+      input.identityIds === "all" ? [] : [input.identityIds],
+    );
+    const rows = res.rows as { id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean }[];
+    if (input.identityIds !== "all") {
+      for (const id of input.identityIds) {
+        const row = rows.find((r) => r.id === id);
+        if (!row || row.kind !== "human") throw new DomainError("RESOURCE_NOT_FOUND", `No person with identity ${id}`);
+        if (row.disabled) throw new DomainError("VALIDATION_FAILED", `Identity ${id} is disabled`);
+      }
+    }
+    const expiresAt = new Date(Date.now() + ttlHours * 60 * 60 * 1000).toISOString();
+    const grants: ReenrollmentGrant[] = [];
+    for (const row of rows) {
+      await db.query(
+        `UPDATE setup_grants SET revoked_at = now()
+          WHERE kind = 'reenroll' AND subject_identity_id = $1 AND consumed_at IS NULL AND revoked_at IS NULL`,
+        [row.id],
+      );
+      const token = generateToken("cli").replace("vlt_cli_", "vlt_reenroll_");
+      await db.query(
+        "INSERT INTO setup_grants (id, kind, subject_identity_id, token_hash, expires_at) VALUES ($1,'reenroll',$2,$3,$4)",
+        [newId("setupGrant"), row.id, hashToken(token), expiresAt],
+      );
+      await recordAuditEvent(db, {
+        eventType: "reenrollment.grant_issued",
+        decision: "info",
+        resource: { identityId: row.id },
+        metadata: { expiresAt, installationAdmin: row.installation_admin },
+      });
+      grants.push({ identityId: row.id, name: row.name, installationAdmin: row.installation_admin, token, expiresAt });
+    }
+    return grants;
+  });
+}
+
+/** What a move to another public URL affects, read-only (issue #103). */
+export interface MoveFacts {
+  people: number;
+  installationAdmins: number;
+  passkeys: number;
+  sessions: number;
+  tailnetConstraints: number;
+  pendingInvitations: number;
+}
+
+export async function moveFacts(db: Querier): Promise<MoveFacts> {
+  const one = async (sql: string) => ((await db.query(sql)).rows[0] as { n: number }).n;
+  return {
+    people: await one("SELECT count(*)::int AS n FROM identities WHERE kind = 'human' AND NOT disabled"),
+    installationAdmins: await one("SELECT count(*)::int AS n FROM identities WHERE installation_admin AND NOT disabled"),
+    passkeys: await one(`SELECT count(*)::int AS n FROM "passkey"`),
+    sessions: await one(`SELECT count(*)::int AS n FROM "session"`),
+    tailnetConstraints: await one("SELECT count(*)::int AS n FROM requirements WHERE kind = 'tailnet' AND revoked_at IS NULL"),
+    pendingInvitations: await one(
+      "SELECT count(*)::int AS n FROM setup_grants WHERE kind = 'invite' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()",
+    ),
+  };
+}
+
+/**
+ * The installation now answers at another public URL, so another WebAuthn
+ * relying party (issue #103): every passkey registered for the old one can
+ * never sign in again. Remove them and end every browser session, so that
+ * nothing (setup's bootstrap check, the Security page, the last-passkey rule)
+ * mistakes them for working credentials. Explicit, never automatic: a typo
+ * in VARLATCH_PUBLIC_URL must not erase anyone's passkeys. The archive taken
+ * before the move keeps them, for a move back.
+ */
+export async function completePublicUrlChange(
+  ctx: AppCtx,
+  input: { from: string; to: string },
+): Promise<{ from: string; to: string; passkeysRemoved: number; sessionsEnded: number; browserCredentialsRevoked: number }> {
+  const from = new URL(input.from).origin;
+  const to = new URL(input.to).origin;
+  if (from === to) throw new DomainError("VALIDATION_FAILED", "The installation already answers at this address");
+  return withTx(ctx.db, async (db) => {
+    const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
+    const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
+    // The dashboard's bearer tokens were minted from those sessions. CLI,
+    // agent, and machine credentials hold no address and keep working.
+    const browser = await db.query(
+      `UPDATE credentials SET revoked_at = now()
+        WHERE kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) RETURNING id`,
+    );
+    const result = {
+      from, to,
+      passkeysRemoved: passkeys.rows.length,
+      sessionsEnded: sessions.rows.length,
+      browserCredentialsRevoked: browser.rows.length,
+    };
+    await recordAuditEvent(db, {
+      eventType: "installation.public_url_changed",
+      decision: "info",
+      metadata: result,
+    });
+    return result;
+  });
+}
+
+type SetupGrantKind = "bootstrap" | "recover" | "invite" | "reenroll";
 
 async function rejectSetupGrant(ctx: AppCtx): Promise<never> {
   // Rejection must survive any transaction that declined consumption.
@@ -311,7 +448,7 @@ export async function consumeSetupGrant(
     const grant = res.rows[0] as
       | {
           id: string;
-          kind: "bootstrap" | "recover" | "invite";
+          kind: SetupGrantKind;
           subject_identity_id: string | null;
           expires_at: string;
           consumed_at: string | null;
@@ -325,6 +462,11 @@ export async function consumeSetupGrant(
     // started before the revocation (the row lock orders the two).
     if (!grant || grant.consumed_at || grant.revoked_at || new Date(grant.expires_at).getTime() <= Date.now()) {
       return null;
+    }
+    if (grant.kind === "reenroll") {
+      // The person may have been disabled since the link was issued.
+      const subject = await db.query("SELECT disabled FROM identities WHERE id = $1", [grant.subject_identity_id]);
+      if ((subject.rows[0] as { disabled: boolean } | undefined)?.disabled !== false) return null;
     }
     await db.query("UPDATE setup_grants SET consumed_at = now() WHERE id = $1", [grant.id]);
 
@@ -355,7 +497,9 @@ export async function consumeSetupGrant(
           ? "bootstrap.completed"
           : grant.kind === "invite"
             ? "invitation.accepted"
-            : "recovery.completed",
+            : grant.kind === "reenroll"
+              ? "reenrollment.completed"
+              : "recovery.completed",
       decision: "info",
       actorIdentityId: identityId,
       organizationId: grant.invite_organization_id,

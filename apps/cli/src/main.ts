@@ -2085,7 +2085,22 @@ async function main(): Promise<void> {
       }
 
       case "admin": {
-        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status");
+        if (args[0] === "reenroll") {
+          // Issue #103: one-time links that add a passkey to existing people,
+          // issued by varlatchd on this host (host-exec authority, like recovery).
+          const { varlatchd } = await import("./setup.js");
+          const all = has(args, "--all");
+          const ids = args.flatMap((value, i) => (args[i - 1] === "--identity" ? [value] : []));
+          if (all === ids.length > 0) usageError("Usage: varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]");
+          const hours = flag(args, "--hours");
+          process.stdout.write(varlatchd(flag(args, "--dir") ?? process.cwd(), [
+            "admin", "reenroll",
+            ...(all ? ["--all"] : ids.flatMap((id) => ["--identity", id])),
+            ...(hours ? ["--hours", hours] : []),
+          ]));
+          break;
+        }
+        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll");
         const { backupCommand } = await import("./backup.js");
         await backupCommand(args.slice(1));
         break;
@@ -2109,6 +2124,28 @@ async function main(): Promise<void> {
             shares: flag(args, "--shares") ? Number(flag(args, "--shares")) : undefined,
             threshold: flag(args, "--threshold") ? Number(flag(args, "--threshold")) : undefined,
             attest: has(args, "--attest"),
+          });
+        } catch (err) {
+          if (err instanceof SetupError) fail(err.message);
+          throw err;
+        }
+        return;
+      }
+      case "move": {
+        // Another public URL for this installation (issue #103): archive,
+        // the new address through setup's steps, re-enrollment links.
+        const { runMove } = await import("./move.js");
+        const { SetupError } = await import("./setup.js");
+        try {
+          process.exitCode = await runMove({
+            dir: flag(args, "--dir") ?? process.cwd(),
+            publicUrl: flag(args, "--public-url"),
+            ingress: flag(args, "--ingress") as "public" | "tailnet" | "external" | undefined,
+            backupArgs: ["--bek-file", "--bek-passphrase-file", "--kek-file", "--destination", "--destinations-file", "--scratch-dir", "--timeout-seconds"].flatMap((name) => flag(args, name) ? [name, flag(args, name)!] : []),
+            yes: has(args, "--yes"),
+            reenrollHours: flag(args, "--reenroll-hours") ? Number(flag(args, "--reenroll-hours")) : undefined,
+            noWait: has(args, "--no-wait"),
+            enrollTimeoutMs: Number(flag(args, "--enroll-timeout") ?? "900") * 1000,
           });
         } catch (err) {
           if (err instanceof SetupError) fail(err.message);
