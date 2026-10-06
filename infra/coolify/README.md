@@ -27,7 +27,7 @@ live updates) while Convex is down.
 `convex.<your-domain>` → `convex-backend` (port 3210) and
 `CONVEX_CLOUD_ORIGIN=https://convex.<your-domain>`; the browser connects to
 Convex directly. Both work; switching an existing installation is one
-variable plus a `varlatch-web` restart, and its `convex.` route can go after.
+variable plus a redeploy, and its `convex.` route can go after.
 
 Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
 
@@ -54,10 +54,14 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
    (Coolify redeploys from a fresh clone; `secrets/` is gitignored):
 
    ```sh
-   mkdir -p /data/varlatch
+   install -d -m 700 /data/varlatch
    openssl rand -hex 32 > /data/varlatch/varlatch-kek
-   chmod 600 /data/varlatch/varlatch-kek
+   chmod 644 /data/varlatch/varlatch-kek   # varlatchd's own user (uid 999) must read it;
+                                           # the 700 directory keeps others out
    ```
+
+   A mode-0600 file owned by the host user cannot be read inside the
+   container, and varlatchd then fails to start.
 
    Back it up off this host now, separately from database backups.
    Storing the KEK in Coolify's env settings would persist it in Coolify's
@@ -115,7 +119,9 @@ Never public: PostgreSQL, `varlatch-migrate`, the Convex dashboard.
    ```
 
    `CONVEX_CLOUD_ORIGIN` is served to the browser by `varlatch-web` as
-   runtime config; changing it requires a restart of `varlatch-web`.
+   runtime config, read when its container is created: apply a change with a
+   redeploy (`docker compose up -d` elsewhere). Restarting the container
+   keeps the old value.
    The three PostgreSQL role passwords are consumed once, on first database
    init. Changing them later requires a manual `ALTER ROLE`.
 

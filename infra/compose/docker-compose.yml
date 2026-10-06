@@ -110,9 +110,9 @@ services:
         aliases:
           - tailscale
     ports:
-      # Loopback by default: behind a reverse proxy (Coolify/Traefik) raw
-      # container ports must not be published on public interfaces. Set
-      # BIND_ADDRESS=0.0.0.0 for direct LAN access.
+      # Loopback by default: the ingress in front is the only way in. Never
+      # route a public domain here: passkey sign-in works only at the public
+      # URL, which varlatch-web serves.
       - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCHD_PORT:-8686}:8686"
     depends_on:
       postgres:

@@ -27,6 +27,21 @@ fixes.
   installation with `varlatch setup`, setting up a project, inviting your
   team, and connecting CI. The deployment guide no longer says it runs the
   Secret Plane only.
+- Self-hosting instructions that did not work as written are corrected:
+  - The manual upgrade's health check now uses the dashboard's port,
+    `127.0.0.1:8787/readyz`. Installations set up with `varlatch setup`
+    publish no fixed varlatchd port, so `localhost:8686` failed there.
+  - The Coolify guide gave the Root KEK mode 0600, which varlatchd's own
+    user cannot read, so varlatchd did not start. Like `varlatch setup`, it
+    now uses mode 0644 inside a mode-0700 directory. The installation by
+    hand does the same, and creates `backups/` before Docker creates it as
+    root, which made `backup create` fail.
+  - A changed `CONVEX_CLOUD_ORIGIN` takes `docker compose up -d` (on
+    Coolify, a redeploy), not a restart, which keeps the old value.
+    `varlatch doctor`'s remedy now says so.
+  - `.env.example` lists every variable the Compose files read, and no
+    longer suggests routing a domain at varlatchd's port or publishing the
+    ports on a LAN, where passkeys cannot work without HTTPS.
 
 ### Fixes
 

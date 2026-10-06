@@ -292,8 +292,8 @@ three multipart calls with `s3:PutObject`; abort needs `s3:AbortMultipartUpload`
 
 The read key's policy has `"Action": "s3:GetObject"` on the same resource.
 Against overwrites, enable versioning (a write-only key cannot delete old
-versions) or Object Lock in compliance mode. Omit `endpoint` in
-`destinations.json` for AWS.
+versions) or Object Lock in compliance mode. Omit `endpoint` in the
+destinations file for AWS.
 
 **Cloudflare R2:** no put-only credential exists. The narrowest API token is
 *Object Read & Write* on specific buckets, which can also read, list,
@@ -342,12 +342,15 @@ prevents overwrites.
    Installation before restoring.
 
    File permissions matter twice over (rehearsal-tested failure modes):
-   restrict **only key material** to mode 0600. `postgres-init/`,
+   restrict **only key material** to mode 0600, and only the copies the host
+   CLI reads (the BEK, a Root KEK copy). The key files containers read, the
+   mounted Root KEK and the database passwords, need mode 0644 inside a
+   mode-0700 directory: the containers run as other users. `postgres-init/`,
    `convex-supervisor.cjs`, and any source tree used for image builds must be
    world-readable (`chmod -R a+rX`), because containers run as non-root users
    and `docker build` **bakes host permissions into images** (symptom:
-   `ERR_INVALID_PACKAGE_CONFIG: permission denied` from every container).
-   A blanket `umask 077` while preparing the directory causes all three.
+   `ERR_INVALID_PACKAGE_CONFIG: permission denied` from every container). A
+   blanket `umask 077` while preparing the directory causes all three.
 2. **Set `VARLATCH_PUBLIC_URL` to the original installation's public URL**
    (its exact issuer string), even though the recovery host does not serve
    that domain. The restored Application Plane keeps the original

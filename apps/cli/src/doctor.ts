@@ -268,7 +268,7 @@ export function checkWebConfig(configJs: string | null, publicUrl: string | null
     : {
         id: "web.live-updates", title: "Dashboard live-update endpoint", class: "advisory", status: "fail",
         detail: "varlatch-web serves no Convex URL; the dashboard runs without live updates",
-        remedy: "Set CONVEX_CLOUD_ORIGIN and restart varlatch-web",
+        remedy: "Set CONVEX_CLOUD_ORIGIN and apply it with `docker compose up -d` (a restart keeps the old value)",
       };
   const checks = [configured];
   if (convexUrl && publicUrl) {
@@ -284,7 +284,7 @@ export function checkWebConfig(configJs: string | null, publicUrl: string | null
       problem = `unparseable Convex URL ${convexUrl}`;
     }
     checks.push(problem
-      ? { id: "web.live-updates-reachable", title: "Live-update endpoint usable by browsers", class: "mandatory", status: "fail", detail: problem, remedy: "Set CONVEX_CLOUD_ORIGIN to the public HTTPS Convex origin and restart varlatch-web" }
+      ? { id: "web.live-updates-reachable", title: "Live-update endpoint usable by browsers", class: "mandatory", status: "fail", detail: problem, remedy: "Set CONVEX_CLOUD_ORIGIN to the public HTTPS Convex origin and apply it with `docker compose up -d`" }
       : { id: "web.live-updates-reachable", title: "Live-update endpoint usable by browsers", class: "mandatory", status: "pass", detail: "consistent with the public URL" });
   }
   return checks;
