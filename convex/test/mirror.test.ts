@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
 vi.mock("../convex/_generated/server", () => ({ query: (x: unknown) => x, mutation: (x: unknown) => x }));
-import { list, listMine, purgeRetired } from "../convex/mirror";
+import { list, listMine, purgeRetired, sameValue, upsert } from "../convex/mirror";
 // Exercise the registered handlers with verified claims; denial must never
 // touch the database, even for administrators or org-associated machines.
 const run = (fn: unknown, identity: unknown, args: unknown) => (fn as { handler: Function }).handler({
@@ -41,3 +41,51 @@ describe("retired Mirror purge (ADR-0036)", () => {
   });
 });
 
+describe("Mirror upsert", () => {
+  const mirror = { subject: "varlatchd-mirror", role: "mirror" };
+  const args = { kind: "project", resourceId: "prj_1", organizationId: "org_1", data: { slug: "api", name: "API", activeContractRevisionId: null } };
+  const upsertWith = async (existing: unknown, input: unknown = args) => {
+    const writes: string[] = [];
+    await (upsert as unknown as { handler: Function }).handler({
+      auth: { getUserIdentity: async () => mirror },
+      db: {
+        query: () => ({ withIndex: () => ({ filter: () => ({ unique: async () => existing }) }) }),
+        insert: async () => { writes.push("insert"); },
+        replace: async () => { writes.push("replace"); },
+      },
+    }, input);
+    return writes;
+  };
+  const stored = (over: Record<string, unknown> = {}) => ({ _id: "m1", ...args, mirroredAt: 1, ...over });
+
+  it("writes nothing when a republished Mirror has not changed, whatever its key order", async () => {
+    expect(await upsertWith(stored())).toEqual([]);
+    expect(await upsertWith(stored({ data: { activeContractRevisionId: null, name: "API", slug: "api" } }))).toEqual([]);
+  });
+
+  it("replaces a Mirror whose payload or organization changed, and inserts a new one", async () => {
+    expect(await upsertWith(stored({ data: { ...args.data, name: "Old name" } }))).toEqual(["replace"]);
+    expect(await upsertWith(stored({ data: { ...args.data, activeContractRevisionId: "rev_2" } }))).toEqual(["replace"]);
+    expect(await upsertWith(stored({ organizationId: "org_2" }))).toEqual(["replace"]);
+    expect(await upsertWith(stored({ data: { slug: "api", name: "API" } }))).toEqual(["replace"]);
+    expect(await upsertWith(null)).toEqual(["insert"]);
+  });
+
+  it("is for varlatchd's mirror identity only", async () => {
+    await expect((upsert as unknown as { handler: Function }).handler({
+      auth: { getUserIdentity: async () => ({ subject: "machine", orgIds: ["org_1"], installationAdmin: true }) },
+      db: { query: () => { throw new Error("unexpected database read"); } },
+    }, args)).rejects.toThrow(/mirror identity/);
+  });
+});
+
+describe("sameValue", () => {
+  it("compares JSON values by content", () => {
+    expect(sameValue({ a: [1, { b: null }], c: "x" }, { c: "x", a: [1, { b: null }] })).toBe(true);
+    expect(sameValue({ a: [1, 2] }, { a: [2, 1] })).toBe(false);
+    expect(sameValue({ a: 1 }, { a: 1, b: undefined })).toBe(false);
+    expect(sameValue({ a: null }, { a: 0 })).toBe(false);
+    expect(sameValue([], {})).toBe(false);
+    expect(sameValue("1", 1)).toBe(false);
+  });
+});

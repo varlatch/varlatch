@@ -14,7 +14,7 @@ export default defineSchema({
     resourceId: v.string(), // Varlatch domain ID (never a Convex ID)
     organizationId: v.union(v.string(), v.null()),
     data: v.any(),
-    mirroredAt: v.number(),
+    mirroredAt: v.number(), // when the payload last changed (an unchanged republish writes nothing)
   })
     .index("by_kind_org", ["kind", "organizationId", "resourceId"])
     .index("by_resource", ["resourceId"]),

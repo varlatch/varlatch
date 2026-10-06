@@ -28,6 +28,17 @@ fixes.
   team, and connecting CI. The deployment guide no longer says it runs the
   Secret Plane only.
 
+### Fixes
+
+- The Application Plane database no longer stores a new version of every
+  dashboard read model (Mirror) each minute. varlatchd republishes every
+  Mirror once a minute, and Convex stored each republish as a new document
+  version even when nothing had changed, keeping superseded versions for at
+  least its 14-day retention window: 3.3 GiB after 14 days on a small
+  installation. An unchanged Mirror is now left as it is, which also stops
+  waking every open dashboard each minute. This change does not remove the
+  versions already stored.
+
 ## 0.14.2 (2026-10-06)
 
 ### Coding agents

@@ -24,6 +24,24 @@ async function identityOf(ctx: {
   return identity as unknown as VarlatchIdentity;
 }
 
+/**
+ * Whether two Mirror payloads hold the same values. Key order does not
+ * count: payloads are JSON from varlatchd, and stored objects need not keep
+ * the order they were sent in.
+ */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => sameValue(item, b[i]));
+  }
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length &&
+    keys.every((key) => Object.hasOwn(b, key) && sameValue((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]))
+  );
+}
+
 export const upsert = mutation({
   args: {
     kind: v.string(),
@@ -41,6 +59,11 @@ export const upsert = mutation({
       .withIndex("by_resource", (q) => q.eq("resourceId", args.resourceId))
       .filter((q) => q.eq(q.field("kind"), args.kind))
       .unique();
+    // varlatchd's full sync republishes every Mirror once a minute. Replacing
+    // an unchanged one would still store a new document version, which
+    // Convex keeps, and wake every dashboard subscribed to it; so it is left
+    // as it is, and mirroredAt records the last change, not the last sync.
+    if (existing && existing.organizationId === args.organizationId && sameValue(existing.data, args.data)) return;
     const doc = { ...args, mirroredAt: Date.now() };
     if (existing) await ctx.db.replace(existing._id, doc);
     else await ctx.db.insert("mirrors", doc);
