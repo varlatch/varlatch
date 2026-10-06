@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/contract",
-  "version": "0.14.1",
+  "version": "0.14.2",
   "private": true,
   "description": "Canonical Varlatch Configuration Contract model, normalization, content hashing, semantic diffing, and versioned Contract Semantics",
   "license": "Apache-2.0",
