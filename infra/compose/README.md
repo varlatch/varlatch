@@ -109,8 +109,9 @@ installation.
 ```sh
 cd infra/compose
 cp .env.example .env            # then edit: set the passwords and CONVEX_INSTANCE_SECRET
-mkdir -p secrets
+install -d -m 700 secrets backups   # yours, before Docker creates them as root
 openssl rand -hex 32 > secrets/varlatch-kek
+chmod 644 secrets/varlatch-kek  # varlatchd's own user must read it; secrets/ keeps others out
 docker compose up -d --build
 docker compose run --rm convex-deploy   # deploy the Application Plane functions
 ```
@@ -282,7 +283,9 @@ Manually, the same steps are:
 3. Replace `docker-compose.yml` with the release's
    `docker-compose.release.yml` (and keep its `varlatch-release.json`).
 4. `docker compose pull && docker compose up -d`
-5. Wait for health (`curl -fsS localhost:8686/readyz`), then
+5. Wait for health (`curl -fsS http://127.0.0.1:8787/readyz`, the
+   dashboard's port, which forwards `/readyz` to varlatchd; setup-managed
+   installations publish no fixed varlatchd port), then
    `docker compose run --rm convex-deploy`.
 
 Recovery = restore the pre-upgrade archive with its BEK and matching Root KEK

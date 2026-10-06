@@ -23,7 +23,9 @@ COMPOSE=(docker compose --project-name "$PROJECT" --project-directory "$DEV_DIR"
 # The deployment files come from the checkout on every start, so the stack
 # follows the branch; the generated state is created once.
 prepare() {
-  mkdir -p "$DEV_DIR/secrets"
+  # backups/ is the operator's: Docker would create it as root, and
+  # `varlatch admin backup create` could not write archives there.
+  mkdir -p "$DEV_DIR/secrets" "$DEV_DIR/backups"
   cp "$REPO_ROOT/infra/compose/docker-compose.yml" "$REPO_ROOT/infra/compose/convex-supervisor.cjs" "$DEV_DIR/"
   rm -rf "$DEV_DIR/postgres-init"
   cp -r "$REPO_ROOT/infra/compose/postgres-init" "$DEV_DIR/postgres-init"
