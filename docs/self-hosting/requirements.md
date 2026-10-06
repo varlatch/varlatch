@@ -9,7 +9,7 @@ walks you through the installation itself, and
 | | Minimum |
 |---|---|
 | Operating system | Linux, on amd64 or arm64 |
-| Containers | Docker with Docker Compose v2 (`docker compose`); Compose 2.24 or newer for the tailnet ingress |
+| Containers | Docker with the Docker Compose plugin (`docker compose`), Compose 2.24 or newer |
 | On the host | Node.js 22 or newer, for the operator CLI |
 | Memory | 2 GiB |
 | Processor | 2 CPU cores |
@@ -34,10 +34,13 @@ limits do not hold under emulation on a small host.
 
 ## Software
 
-- **Docker and Docker Compose v2.** Every host command (`varlatch setup`,
-  `doctor`, `upgrade`, and `admin backup`) drives `docker compose`. The
-  tailnet ingress uses the Tailscale overlay, which needs Compose 2.24 or
-  newer: it uses `!reset` to drop varlatchd's own port mapping.
+- **Docker with the Docker Compose plugin, Compose 2.24 or newer.** Every
+  host command (`varlatch setup`, `doctor`, `upgrade`, and `admin backup`)
+  drives `docker compose`. The Tailscale overlay needs 2.24, because it uses
+  `!reset` to drop varlatchd's own port mapping, and the same minimum holds
+  for every ingress. `varlatch setup` stops before it changes anything when
+  Compose is older, and `varlatch doctor` reports the version. Releases are
+  tested with Docker 29 and Compose 5.
 - **Node.js 22 or newer.** The operator CLI is a single file that needs
   only Node.js: [Get the CLI](../getting-started.md#get-the-cli).
 - **systemd,** only if you use the reference backup timer in
@@ -46,12 +49,8 @@ limits do not hold under emulation on a small host.
 You do not install PostgreSQL, Convex, Caddy, or Tailscale yourself: each
 runs in a container the Compose files define.
 
-<!-- TODO(owner): name the oldest Docker Engine and Docker Compose versions
-the release is tested with for the public and external ingress. The
-measurements on this page were taken on Docker 29.7.2 with Compose 5.5.1. -->
-
-`varlatch setup` does not check versions, free ports, memory, or disk
-before it starts. When something is missing, the Docker or Compose command
+Apart from the Compose version, `varlatch setup` does not check free
+ports, memory, or disk before it starts. When something is missing, the Docker or Compose command
 it runs fails, and setup stops with that error. Fix the cause and run
 setup again: it continues where it stopped.
 
@@ -78,6 +77,10 @@ yours:
   file that you own.
   [Keys and passwords](configuration.md#keys-and-passwords) has the
   details.
+- On a host where other people have a shell, mount `/proc` with
+  `hidepid=2`. The Convex backend image passes its instance secret to the
+  backend process as a command-line argument, which every user on the host
+  can otherwise read in `/proc/<pid>/cmdline`.
 
 ## Network
 
@@ -174,24 +177,35 @@ included.
 | `varlatch-web` | 2 MiB | 6 MiB | 25 MiB |
 | **All four** | **322 MiB** | **658 MiB** | |
 
-PostgreSQL's peak is almost all page cache: on this installation it caches
-a 3.3 GiB Application Plane database ([Disk](#disk) explains why that
-database is so large). The kernel reclaims page cache when other processes
-need the memory.
+PostgreSQL's peak is almost all page cache: this installation had grown a
+3.3 GiB Application Plane database under a release before 0.14.3
+([Disk](#disk) explains why). The kernel reclaims page cache when other
+processes need the memory.
 
 A reading from a production installation on 2026-10-05, less than two
 hours after its Convex backend restarted, was similar: 72 MiB for the
 Convex backend, and 24 MiB plus 140 MiB of shared buffers for PostgreSQL,
 without page cache.
 
-**Recommended: at least 2 GiB.** That leaves room above the measured 658
-MiB for the operating system, Docker, page cache, and the one-shot jobs:
-`convex-deploy` on every setup and upgrade, and the database dump of each
-backup.
+The one-shot jobs were measured on a fresh development installation on
+2026-10-06, sampling each container's memory ten times a second:
 
-<!-- TODO(owner): measure the peak memory of `convex-deploy`, of a backup
-capture, and of the Caddy and Tailscale containers on a 2 GiB host, and
-confirm the recommendation. -->
+| Job | Peak |
+|---|---|
+| `convex-deploy`, deploying the Application Plane functions (every setup and upgrade) | 173 MiB |
+| `varlatch admin backup create`: the host CLI | 125 MiB |
+| the same backup: `varlatchd`, and the PostgreSQL dump | 83 MiB and 79 MiB, no more than they use idle |
+
+That backup took 1.9 seconds for a small Secret Plane database; a large
+audit history takes longer and more memory, as below.
+
+**Recommended: at least 2 GiB.** That leaves room above the measured 658
+MiB for the operating system, Docker, page cache, the ingress container,
+and the one-shot jobs above, which run one at a time.
+
+<!-- TODO(owner): before launch, run setup, a backup, and an upgrade on a
+2 GiB host with each ingress, measuring Caddy and the Tailscale sidecar,
+and confirm the recommendation. -->
 
 For a large audit history, the
 [capture measurements](../operations/backup.md#what-a-capture-costs-measured)
@@ -237,11 +251,13 @@ The data grows over time:
 - **The Secret Plane database** held 9.6 MiB on the measured installation.
   It grows with the audit history: about 0.9 GiB per million audit events
   in the backup runbook's measurements.
-- **The Application Plane database** grew by about 245 MiB a day on the
-  measured installation, to 3.3 GiB after 14 days. varlatchd republishes
-  every dashboard read model (Mirror) to Convex once a minute, and Convex
-  keeps each version: here, 137 Mirrors and 3.2 million stored versions.
-  The growth is proportional to the number of Mirrors.
+- **The Application Plane database** holds the dashboard's read models
+  (Mirrors), which are small, and grows only when they change. Convex keeps
+  each replaced version of a document for at least 14 days. Before 0.14.3,
+  varlatchd stored every Mirror again once a minute even when nothing had
+  changed, and the measured installation reached 3.3 GiB that way: an
+  installation upgraded from an earlier release may hold several GiB of
+  such versions.
 - **Backup archives** hold only the Secret Plane database: about 76 MiB per
   million audit events. `backup create` writes them to `backups/` in the
   installation's directory, and the reference timer keeps the newest 7
@@ -250,15 +266,9 @@ The data grows over time:
   pass `--scratch-dir`, holds the dump and the decrypted copy that
   verification reads while a backup runs.
 
-At the measured rate, 20 GB covers two release sets, local backups, and
-about a month of Application Plane growth. Watch the free space of Docker's
-data directory.
-
-<!-- TODO(owner): the Application Plane growth above was measured on one
-installation over 14 days, and nothing in it was removed in that time.
-Decide whether it is expected (and whether Convex ever prunes old versions)
-before publishing a disk figure. -->
-
+**Recommended: 20 GB free.** That covers two release sets, the databases,
+and local backups, with room for the audit history to grow. Watch the free
+space of Docker's data directory.
 Where the data lives:
 
 | Volume or directory | Holds |

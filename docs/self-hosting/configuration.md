@@ -85,13 +85,15 @@ VARLATCH_PUBLIC_HOST=vault.example.com
 files. `varlatch upgrade` replaces them and keeps the previous ones as
 `*.pre-<version>`. Keep your changes in `.env`.
 
-The compose guide also allows a `docker-compose.override.yml`. Compose
-reads that file by itself only while `COMPOSE_FILE` is not set, which is
-the case with the external ingress. With the public or tailnet ingress,
-setup sets `COMPOSE_FILE`, and Compose then reads only the files it lists.
-
-<!-- TODO(owner): say how to add an override file to an installation whose
-`.env` sets `COMPOSE_FILE`, or that it is not supported. -->
+For changes that `.env` cannot express, add a `docker-compose.override.yml`
+next to `docker-compose.yml`: upgrades never touch it. Compose reads that
+file by itself only while `COMPOSE_FILE` is not set, which is the case with
+the external ingress. With the public or tailnet ingress, setup lists it
+last in `COMPOSE_FILE` when it exists: after you create or delete the file,
+run `varlatch setup` again. `varlatch doctor` warns when the file exists but
+is not in effect. Do not add a `COMPOSE_FILE` line of your own below the
+keep marker: it would replace the list setup writes, and keep an outdated
+one when a later setup run changes it.
 
 ## `varlatch-install.json`
 
@@ -111,8 +113,8 @@ and derives `.env` from it. Its fields:
 
 To change `webPort` or `bindAddress`, edit the file and run `varlatch setup`
 again. Leave `publicUrl`, `ingress`, `tailnetMachine`, and `tailnetName`
-alone: they decide the address passkeys are registered for, and changing
-that address is its own procedure, not a setup rerun. For the same reason,
+alone: they decide the address passkeys are registered for, and moving an
+installation to another address is not supported yet. For the same reason,
 setup refuses a `--public-url` or `--ingress` that differs from the
 recorded one.
 
@@ -162,14 +164,13 @@ with it. It must be exactly the URL users visit: an origin such as
 HTTPS; `http://localhost` works for local testing. varlatchd does not start
 with a value that is not a URL.
 
-When to change it: only as a deliberate change of address, after which
-everyone registers their passkey again. When you restore onto a new host,
-set it to the original installation's URL, even though the new host does
-not serve that address:
+When to change it: not on a running installation. Every passkey is
+registered for this address, setup refuses a different one, and there is
+no supported procedure yet for moving an installation to another address:
+choose it before the first run. When you restore onto a new host, set it to
+the original installation's URL, even though the new host does not serve
+that address:
 [Restore on a fresh host](../operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore).
-
-<!-- TODO(owner): link the procedure for changing an installation's public
-URL once it is documented. -->
 
 ### `CONVEX_CLOUD_ORIGIN`
 
@@ -220,7 +221,8 @@ external ingress, your own proxy does this instead.
 - **Setup:** writes
   `docker-compose.yml:docker-compose.caddy.yml` for the public ingress and
   `docker-compose.yml:docker-compose.tailscale.yml:docker-compose.tailnet-https.yml`
-  for the tailnet ingress. It writes nothing for the external ingress.
+  for the tailnet ingress, followed by `docker-compose.override.yml` when
+  that file exists. It writes nothing for the external ingress.
 
 The Compose files that make up the installation, separated by colons. When
 it is set, Compose reads only the files it lists.
