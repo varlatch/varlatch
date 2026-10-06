@@ -93,6 +93,10 @@ COPY --chmod=644 infra/host-backup/run.sh infra/host-backup/verify-remote.sh /op
 COPY --from=convex-fingerprint --chmod=644 /convex-functions.fingerprint /opt/varlatch/convex-functions.fingerprint
 COPY --chmod=644 LICENSE THIRD-PARTY-NOTICES.md /usr/share/doc/varlatch/
 COPY --chmod=644 LICENSES/AGPL-3.0-or-later.txt LICENSES/Apache-2.0.txt /usr/share/doc/varlatch/LICENSES/
+# Varlatch's own code here is AGPL-3.0-or-later and Apache-2.0 (LICENSE maps
+# which is which); THIRD-PARTY-NOTICES.md lists everything else.
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/varlatch/varlatch"
 RUN mkdir -p /var/lib/varlatch && chown varlatch:varlatch /var/lib/varlatch
 USER varlatch
 ENV NODE_ENV=production

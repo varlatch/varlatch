@@ -29,4 +29,8 @@ RUN chmod +x /docker-entrypoint.d/10-varlatch-config.sh
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
 COPY LICENSE THIRD-PARTY-NOTICES.md /usr/share/doc/varlatch/
 COPY LICENSES /usr/share/doc/varlatch/LICENSES
+# Varlatch's own code here is AGPL-3.0-or-later and Apache-2.0 (LICENSE maps
+# which is which); THIRD-PARTY-NOTICES.md lists everything else.
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later AND Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/varlatch/varlatch"
 EXPOSE 80

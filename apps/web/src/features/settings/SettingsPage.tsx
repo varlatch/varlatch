@@ -2,9 +2,10 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, Sun, TriangleAlert } from "lucide-react";
+import { Archive, ArrowUpRight, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, Sun, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
+import { SOURCE_REPOSITORY, sourceUrl } from "../../lib/source";
 import { chooseThemePreference, themePreference, type ThemePreference } from "../../lib/theme";
 import { timeAgo, useNow } from "../../lib/time";
 import { Badge, Button, Input, Mono, SectionCard, cn } from "../../components/ui";
@@ -165,6 +166,18 @@ function ServerCard() {
     <SectionCard id="settings-server" title="Server" description="Facts this installation reports. Nothing here is editable from the dashboard." className="scroll-mt-6" data-testid="settings-server">
       <Row label="Version">
         <Mono className="rounded-md border border-bd bg-inset px-2 py-1">{meta.data?.serverVersion ?? "…"}</Mono>
+      </Row>
+      <Row label="Source code" hint="Server and dashboard: AGPL-3.0-or-later. CLI and SDKs: Apache-2.0.">
+        <a
+          href={sourceUrl(meta.data?.serverVersion)}
+          target="_blank"
+          rel="noreferrer"
+          data-testid="source-link"
+          className="inline-flex items-center gap-1 text-[13px] text-accent hover:underline"
+        >
+          {SOURCE_REPOSITORY.replace(/^https:\/\//, "")}
+          <ArrowUpRight size={13} />
+        </a>
       </Row>
       <Row label="API">
         <Mono>{meta.data ? `v${meta.data.apiMajor}` : "…"}</Mono>

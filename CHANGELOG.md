@@ -5,6 +5,21 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.14.3)
+
+### Licensing
+
+- Settings → Server has a **Source code** row that links to the source of
+  the release the server runs and names the licenses of its parts. If you
+  run a modified Varlatch for other people, the AGPL asks you to offer them
+  your modified source: point `SOURCE_REPOSITORY` in
+  `apps/web/src/lib/source.ts` at it.
+- The release images (`varlatchd`, `varlatch-web`, and
+  `varlatch-convex-deploy`) carry the OCI labels
+  `org.opencontainers.image.licenses` (`AGPL-3.0-or-later AND Apache-2.0`)
+  and `org.opencontainers.image.source`. Their third-party contents stay
+  listed in `THIRD-PARTY-NOTICES.md` inside each image.
+
 ## 0.14.2 (2026-10-06)
 
 ### Coding agents
