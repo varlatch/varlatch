@@ -27,6 +27,19 @@ fixes.
   the command reads it some other way. The skill and the `AGENTS.md` block
   say the same: run `varlatch agents install` again to update them. See
   [assisted mode](docs/reference/assisted-mode.md).
+- **The opt-in guardrails' hook (`varlatch agents hook`) reads commands
+  more accurately.** It no longer denies a search pattern or a jq filter
+  that starts with `.env` (`grep -E "\.env|app"`, `jq .environment`): a
+  name that is not `.env`, `.envrc`, or `.env.<name>` counts only as an
+  existing file, and a backslash in double quotes is kept as the shell
+  keeps it. It now denies a glob that matches a .env file (`cat .e*`), a
+  recursive search that would print one (`grep -r`, `rg --hidden`, `ag
+  --hidden`, `git grep --no-index` or a tracked .env, and Claude Code's
+  Grep tool in content mode), unless the search leaves .env files out or,
+  for the tools that honor it, git ignores them; and printing a variable
+  inside `varlatch run` with `echo` or `printf`, as `printenv NAME`
+  already was, except shell variables such as `HOME` and `PATH`. The
+  guardrails stay opt-in and are accident prevention, not a boundary.
 
 ### Fixes
 

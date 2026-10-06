@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,6 +199,191 @@ describe("tool calls", () => {
     const patch = (file: string) => `*** Begin Patch\n*** Update File: ${file}\n@@\n-A=1\n+A=2\n*** End Patch`;
     expect(checkToolCall("apply_patch", { command: patch(".env") }, ctx)).toMatch(ENV);
     expect(checkToolCall("apply_patch", { command: patch("src/app.ts") }, ctx)).toBeNull();
+  });
+});
+
+/** A project directory with files, optionally a git repository, removed after `body`. */
+function inProject(files: Record<string, string>, body: (here: HookContext, root: string) => void, options: { git?: boolean } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "varlatch-hook-project-"));
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    if (options.git) spawnSync("git", ["init", "-q"], { cwd: root });
+    body({ ...ctx, cwd: root }, root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const SEARCH = /this search would print lines of \.env files/;
+
+describe("names that only look like .env files", () => {
+  it("a pattern or filter that starts with .env is not a file the command reads", () => {
+    for (const p of [".environment", ".env|app.cjs", ".env-old", "!.env*"]) expect(isProtectedEnvFile(p), p).toBe(false);
+    for (const p of [".e*", ".*", ".[e]nv", ".en?", ".env.*"]) expect(isProtectedEnvFile(p), p).toBe(true);
+    // A leading dot is matched only by a dot, as the shell does.
+    for (const p of ["*", "?env", "[.]env"]) expect(isProtectedEnvFile(p), p).toBe(false);
+  });
+
+  // Each allowed command has a denied twin that reads a .env file the same way.
+  const allowed: [string, string][] = [
+    ['ls -la | grep -E "\\.env|app\\.cjs"', 'ls -la | grep -E "KEY" .env'],
+    ["grep -E '\\.env' notes.md", "grep -E 'x' .env"],
+    ["grep -n -e .env notes.md", "grep -n -e x .env"],
+    ["jq -r '.environment' context.json", "jq -r '.environment' .env.json"],
+    ["jq .env package.json", "jq . .env"],
+    ["rg '.env.local' docs", "rg x .env.local"],
+    ["git grep -n .env -- src", "git grep -n x -- .env"],
+  ];
+
+  it.each(allowed)("allows %s", (command) => {
+    expect(checkCommand(command, ctx)).toBeNull();
+  });
+
+  it.each(allowed)("control for %s: its twin is denied", (_command, twin) => {
+    expect(checkCommand(twin, ctx), twin).toMatch(ENV);
+  });
+
+  it("the shell keeps a backslash in double quotes unless it escapes $ ` \" or \\", () => {
+    expect(lexShell('grep "\\.env" "a\\$b" "c\\"d"').segments[0]?.words).toEqual(["grep", "\\.env", "a$b", 'c"d']);
+  });
+
+  it("another name starting with .env is one when it exists as a file", () => {
+    inProject({ ".env-old": "A=1\n", ".environment": "B=2\n" }, (here) => {
+      expect(checkCommand("cat .env-old", here)).toMatch(ENV);
+      expect(checkCommand("cat .environment", here)).toMatch(ENV);
+      // Control, same directory: a name that is no file is a filter, not a read.
+      expect(checkCommand("jq -r '.environments' context.json", here)).toBeNull();
+    });
+    inProject({ "a.txt": "x\n" }, (here) => {
+      expect(checkCommand("cat .env-old", here)).toBeNull();
+    });
+  });
+});
+
+describe("globs", () => {
+  it("a glob that matches a .env file reads it", () => {
+    inProject({ ".env": "A=1\n", "notes.md": "x\n" }, (here) => {
+      for (const command of ["cat .e*", "cat .*", "head .en?", "cat ./.[e]nv", "grep KEY .e*"]) expect(checkCommand(command, here), command).toMatch(ENV);
+      // Controls: the shell's * does not match a leading dot, and a glob that matches no .env file.
+      for (const command of ["cat *", "cat *.md", "cat n*"]) expect(checkCommand(command, here), command).toBeNull();
+    });
+  });
+
+  it("a glob is checked against the files in its directory, for .env names the name rule does not cover", () => {
+    inProject({ ".env-old": "A=1\n" }, (here) => {
+      expect(checkCommand("cat .env-*", here)).toMatch(ENV);
+    });
+    inProject({ "notes.md": "x\n" }, (here) => {
+      expect(checkCommand("cat .env-*", here)).toBeNull();
+    });
+  });
+});
+
+describe("recursive searches", () => {
+  const project = { ".env": "API_KEY=1\n", "src/app.ts": "const key = process.env.API_KEY;\n" };
+
+  it("grep -r prints the .env files under the directory it searches", () => {
+    inProject(project, (here) => {
+      for (const command of ["grep -r KEY", "grep -rn API_KEY .", "grep -R KEY ./", "grep --recursive KEY .", "grep -d recurse KEY .", "rgrep KEY ."]) {
+        expect(checkCommand(command, here), command).toMatch(SEARCH);
+      }
+      // Controls, same directory: a directory without .env files, the .env files left out, names or counts only.
+      for (const command of [
+        "grep -r KEY src",
+        "grep -r --exclude='.env*' KEY .",
+        "grep -r --exclude=.env KEY .",
+        "grep -r --include='*.ts' KEY .",
+        "grep -rl KEY .",
+        "grep -rc KEY .",
+        "grep KEY src/app.ts",
+      ]) {
+        expect(checkCommand(command, here), command).toBeNull();
+      }
+    });
+  });
+
+  it("finds a .env file below the top level, unless its directory is left out", () => {
+    inProject({ "apps/web/.env.local": "A=1\n", "apps/web/index.ts": "x\n" }, (here) => {
+      expect(checkCommand("grep -r KEY .", here)).toMatch(SEARCH);
+      expect(checkCommand("grep -r --exclude-dir=web KEY .", here)).toBeNull();
+    });
+    // Control: no .env file anywhere.
+    inProject({ "src/app.ts": "x\n" }, (here) => {
+      expect(checkCommand("grep -r KEY .", here)).toBeNull();
+    });
+  });
+
+  it("rg and ag search hidden files only when asked, and skip what git ignores", () => {
+    inProject(project, (here) => {
+      expect(checkCommand("rg KEY", here)).toBeNull();
+      expect(checkCommand("ag KEY", here)).toBeNull();
+      for (const command of ["rg --hidden KEY", "rg -uu KEY", "rg -. KEY .", "ag --hidden KEY", "ag -u KEY"]) {
+        expect(checkCommand(command, here), command).toMatch(SEARCH);
+      }
+      for (const command of ["rg --hidden -g '!.env*' KEY", "rg --hidden -t ts KEY", "rg --hidden -l KEY", "rg --hidden --files"]) {
+        expect(checkCommand(command, here), command).toBeNull();
+      }
+    });
+    inProject({ ...project, ".gitignore": ".env\n" }, (here) => {
+      expect(checkCommand("rg --hidden KEY", here)).toBeNull();
+      expect(checkCommand("ag --hidden KEY", here)).toBeNull();
+      // Control: told to ignore nothing, it searches the ignored file.
+      expect(checkCommand("rg --hidden --no-ignore KEY", here)).toMatch(SEARCH);
+      expect(checkCommand("rg -uuu KEY", here)).toMatch(SEARCH);
+    }, { git: true });
+  });
+
+  it("git grep searches tracked files, or the directory with --no-index", () => {
+    inProject({ ...project, ".gitignore": ".env\n" }, (here, root) => {
+      expect(checkCommand("git grep KEY", here)).toBeNull();
+      expect(checkCommand("git grep --untracked KEY", here)).toBeNull();
+      expect(checkCommand("git grep --no-index KEY", here)).toMatch(SEARCH);
+      // Control: once .env is tracked, a plain git grep prints it.
+      spawnSync("git", ["add", "-f", ".env"], { cwd: root });
+      expect(checkCommand("git grep KEY", here)).toMatch(SEARCH);
+    }, { git: true });
+  });
+
+  it("Claude Code's Grep tool prints .env lines in content mode, unless git ignores the file or a filter leaves it out", () => {
+    inProject(project, (here) => {
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content" }, here)).toMatch(SEARCH);
+      expect(checkToolCall("Grep", { pattern: "KEY", path: ".", output_mode: "content" }, here)).toMatch(SEARCH);
+      // Controls: names only (the default), a glob or type that leaves .env out, another directory.
+      expect(checkToolCall("Grep", { pattern: "KEY" }, here)).toBeNull();
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "files_with_matches" }, here)).toBeNull();
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content", glob: "*.ts" }, here)).toBeNull();
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content", glob: "!.env*" }, here)).toBeNull();
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content", type: "ts" }, here)).toBeNull();
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content", path: "src" }, here)).toBeNull();
+    });
+    inProject({ ...project, ".gitignore": ".env\n" }, (here) => {
+      expect(checkToolCall("Grep", { pattern: "KEY", output_mode: "content" }, here)).toBeNull();
+    }, { git: true });
+  });
+});
+
+describe("printing a variable inside varlatch run", () => {
+  const denied: [string, string][] = [
+    ["varlatch --assisted run -e development -- bash -c 'echo \"STRIPE_KEY=$STRIPE_KEY\"'", "varlatch --assisted run -e development -- bash -c 'echo \"home is $HOME\"'"],
+    ["varlatch run -- sh -c 'printf \"%s\\n\" \"${API_KEY}\"'", "varlatch run -- sh -c 'printf \"%s\\n\" \"${PATH}\"'"],
+    ["varlatch run -- sh -c 'echo ${API_KEY:-unset}'", "varlatch run -- sh -c 'echo ${HOME:-unset}'"],
+    ["varlatch run -- printenv HOME API_KEY", "varlatch run -- printenv HOME PATH"],
+  ];
+
+  it.each(denied)("denies %s, as printenv NAME is", (command) => {
+    expect(checkCommand(command, ctx)).toMatch(DUMP);
+  });
+
+  it.each(denied)("control for %s: a shell variable such as HOME holds no Secret", (_command, twin) => {
+    expect(checkCommand(twin, ctx), twin).toBeNull();
+  });
+
+  it("outside varlatch run, printing a variable is not printing the run's environment", () => {
+    expect(checkCommand("echo \"$API_KEY\"", ctx)).toBeNull();
+    expect(checkCommand("printenv API_KEY", ctx)).toBeNull();
   });
 });
 

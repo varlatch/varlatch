@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { type Dirent, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
 import { credentialsPath } from "@varlatch/context";
@@ -34,20 +35,93 @@ export interface HookContext {
 export type Denial = string;
 
 const ENV_TEMPLATES = new Set([".env.example", ".env.schema"]);
+/** Names a glob is tried against: a glob that can match one of them reads a .env file. */
+const ENV_NAMES = [".env", ".envrc", ".env.local", ".env.production", ".env.development.local", ".env.bak"];
 
-/** Whether a path names a .env* file other than the two templates. A glob such as `.env*` counts. */
-export function isProtectedEnvFile(path: string): boolean {
-  const base = path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
-  return base.startsWith(".env") && !ENV_TEMPLATES.has(base);
+function nameOf(path: string): string {
+  return path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
 }
 
-/** A protected .env* name that is not an existing directory (a Python virtualenv is often called .env). */
-function isProtectedEnvPath(path: string, ctx: HookContext): boolean {
-  if (!isProtectedEnvFile(path)) return false;
+function isGlob(name: string): boolean {
+  return /[*?[]/.test(name);
+}
+
+/** A shell glob as a regular expression for one name. A leading dot is matched only by a dot, as the shell does. */
+function globRegex(glob: string): RegExp | null {
+  let out = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i] as string;
+    if (c === "*") out += ".*";
+    else if (c === "?") out += ".";
+    else if (c === "[") {
+      const close = glob.indexOf("]", i + 2);
+      if (close < 0) return null;
+      const body = glob.slice(i + 1, close);
+      out += `[${body.startsWith("!") ? `^${body.slice(1)}` : body}]`;
+      i = close;
+    } else out += c.replace(/[\\^$.|+(){}]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`);
+}
+
+function globMatches(glob: string, name: string): boolean {
+  if (name.startsWith(".") && !glob.startsWith(".")) return false;
+  return globRegex(glob)?.test(name) ?? false;
+}
+
+/**
+ * Whether a name is a .env file by its name alone: `.env`, `.envrc`, or
+ * `.env.<anything>`, other than the two templates; or a glob that matches
+ * one (`.env*`, `.e*`, `.*`). Other names that start with `.env`
+ * (`.env-old`, `.environment`) count only as existing files: see
+ * isProtectedEnvPath.
+ */
+export function isProtectedEnvFile(path: string): boolean {
+  const name = nameOf(path);
+  if (ENV_TEMPLATES.has(name)) return false;
+  if (isGlob(name)) return ENV_NAMES.some((n) => globMatches(name, n));
+  return name === ".env" || name === ".envrc" || /^\.env\..+/.test(name);
+}
+
+function statOf(path: string) {
   try {
-    return !statSync(resolve(ctx.cwd, expandPath(path, ctx))).isDirectory();
+    return statSync(path);
   } catch {
-    return true;
+    return null;
+  }
+}
+
+/** An existing file other than a template whose name starts with `.env`. */
+function isEnvLikeFile(path: string): boolean {
+  const name = nameOf(path);
+  return name.startsWith(".env") && !ENV_TEMPLATES.has(name) && statOf(path)?.isFile() === true;
+}
+
+/**
+ * Whether a path the command reads is a .env file. A .env name is one
+ * unless it is an existing directory (a Python virtualenv is often called
+ * .env); a glob is one when it can match a .env name, or matches an
+ * existing .env* file in its directory; another name starting with `.env`
+ * is one only as an existing file, so a jq filter `.environment` or a
+ * pattern `.env|app` is not.
+ */
+function isProtectedEnvPath(path: string, ctx: HookContext): boolean {
+  const full = resolve(ctx.cwd, expandPath(path, ctx));
+  const name = nameOf(path);
+  if (ENV_TEMPLATES.has(name)) return false;
+  if (isGlob(name)) {
+    if (isProtectedEnvFile(name)) return true;
+    return entriesOf(dirname(full)).some((entry) => globMatches(name, entry) && isEnvLikeFile(resolve(dirname(full), entry)));
+  }
+  if (isProtectedEnvFile(name)) return statOf(full)?.isDirectory() !== true;
+  return isEnvLikeFile(full);
+}
+
+function entriesOf(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
   }
 }
 
@@ -184,7 +258,9 @@ export function lexShell(text: string): Lexed {
       let part = "";
       while (i < text.length && text[i] !== '"') {
         if (text[i] === "\\" && i + 1 < text.length) {
-          part += text[i + 1];
+          // In double quotes a backslash escapes only $ ` " \ and a newline: `"\.env"` keeps it.
+          const escaped = text[i + 1] as string;
+          if (escaped !== "\n") part += "$`\"\\".includes(escaped) ? escaped : `\\${escaped}`;
           i += 2;
         } else if (text[i] === "$" && text[i + 1] === "(") {
           const { inner, end } = balanced(text, i + 2);
@@ -361,10 +437,33 @@ function codeNamesEnvFile(code: string): boolean {
   return false;
 }
 
-/** Why a simple command dumps the environment, when it is the command of a `varlatch run`. */
+/** Shell variables that hold no Secret: printing one inside `varlatch run` prints none. */
+const SHELL_VARS = new Set([
+  "HOME", "PWD", "OLDPWD", "PATH", "USER", "LOGNAME", "SHELL", "TERM", "LANG", "LC_ALL", "HOSTNAME", "TMPDIR",
+  "UID", "EUID", "PPID", "SHLVL", "RANDOM", "SECONDS", "LINENO", "IFS", "COLUMNS", "LINES", "TZ",
+]);
+const PRINTERS = new Set(["echo", "printf", "print"]);
+
+/** The variables a word expands (`$NAME`, `${NAME}`, `${NAME:-x}`), without the lexer's marker for a substitution. */
+function expandedNames(word: string): string[] {
+  return [...word.matchAll(/\$(?:\{([A-Za-z_]\w*)|([A-Za-z_]\w*))/g)].map((m) => (m[1] ?? m[2]) as string).filter((n) => n !== "SUBST");
+}
+
+/**
+ * Why a simple command dumps the environment, when it is the command of a
+ * `varlatch run`. Printing one variable is printing the environment too,
+ * however it is printed (`printenv NAME`, `echo "$NAME"`, `printf`), unless
+ * it is a shell variable such as HOME: the hook cannot tell a Secret from
+ * configuration.
+ */
 function dumpsEnvironment(name: string, words: string[], bareEnv: boolean): boolean {
-  if (bareEnv || name === "printenv") return true;
+  if (bareEnv) return true;
   const args = words.slice(1);
+  if (name === "printenv") {
+    const names = args.filter((a) => !a.startsWith("-"));
+    return names.length === 0 || names.some((n) => !SHELL_VARS.has(n));
+  }
+  if (PRINTERS.has(name)) return args.some((a) => expandedNames(a).some((n) => !SHELL_VARS.has(n)));
   if (name === "set") return args.length === 0;
   if (name === "export" || name === "declare" || name === "typeset") return args.length === 0 || args.every((a) => /^-[a-zA-Z]*[px]/.test(a));
   return words.some((w) => /^\/proc\/[^/]+\/environ$/.test(w));
@@ -375,6 +474,230 @@ function varlatchArgs(words: string[]): string[] | null {
   if (name === "varlatch") return words.slice(1);
   if (["npx", "pnpx", "bunx"].includes(name) && base(words[1] ?? "") === "varlatch") return words.slice(2);
   if (["pnpm", "npm", "yarn"].includes(name) && words[1] === "exec" && base(words[2] ?? "") === "varlatch") return words.slice(3);
+  return null;
+}
+
+// ---- Searches -------------------------------------------------------------------
+
+/** What a search command reads: the files and directories it searches, and the files it reads patterns or filters from. */
+interface Search {
+  roots: string[];
+  /** Files read whole, for patterns (`grep -f`) or a filter (`jq -f`). */
+  read: string[];
+  /** Whether a directory among the roots is searched, with what is under it. */
+  recursive: boolean;
+  /** Whether matching lines are printed, not only names or counts. */
+  printsContent: boolean;
+  /** Which files under a directory: every one, those git does not ignore, or those git tracks. */
+  scope: "all" | "unignored" | "tracked";
+  /** Whether hidden files (every .env file) are searched under a directory. */
+  hidden: boolean;
+  include: string[];
+  exclude: string[];
+  excludeDir: string[];
+  /** A file-type filter (`rg -t`, the Grep tool's `type`): no .env file is of a type. */
+  typed: boolean;
+}
+
+/** Options and operands, with each option's value: `--opt=v`, and `--opt v` or `-o v` for the options in `valued`; short flags run together (`-rn`, `-m5`). */
+function parseArgs(args: string[], valued: Set<string>): { options: [string, string | undefined][]; operands: string[] } {
+  const options: [string, string | undefined][] = [];
+  const operands: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const w = args[i] as string;
+    if (w === "--") {
+      operands.push(...args.slice(i + 1));
+      break;
+    }
+    if (w.startsWith("--")) {
+      const eq = w.indexOf("=");
+      if (eq > 0) options.push([w.slice(0, eq), w.slice(eq + 1)]);
+      else options.push([w, valued.has(w) ? args[++i] : undefined]);
+    } else if (w.startsWith("-") && w.length > 1) {
+      for (let j = 1; j < w.length; j++) {
+        const opt = `-${w[j]}`;
+        if (valued.has(opt)) {
+          options.push([opt, j + 1 < w.length ? w.slice(j + 1) : args[++i]]);
+          break;
+        }
+        options.push([opt, undefined]);
+      }
+    } else operands.push(w);
+  }
+  return { options, operands };
+}
+
+const GREP_VALUED = new Set([
+  "-e", "-f", "-m", "-A", "-B", "-C", "-d", "-D", "--regexp", "--file", "--max-count", "--after-context", "--before-context",
+  "--context", "--directories", "--devices", "--include", "--exclude", "--exclude-dir", "--exclude-from", "--label", "--group-separator",
+]);
+const RG_VALUED = new Set([
+  "-e", "-f", "-g", "-t", "-T", "-m", "-A", "-B", "-C", "-j", "-M", "-d", "-E", "-r", "--regexp", "--file", "--glob", "--iglob",
+  "--type", "--type-not", "--max-count", "--after-context", "--before-context", "--context", "--threads", "--max-columns",
+  "--max-depth", "--encoding", "--replace", "--sort", "--sortr", "--type-add", "--type-clear", "--pre", "--pre-glob",
+  "--ignore-file", "--max-filesize", "--path-separator", "--context-separator", "--colors", "--color", "--engine",
+]);
+const AG_VALUED = new Set([
+  "-A", "-B", "-C", "-G", "-g", "-m", "-p", "-W", "--ignore", "--ignore-dir", "--file-search-regex", "--path-to-ignore",
+  "--depth", "--context", "--after", "--before", "--max-count", "--pager", "--width",
+]);
+const GIT_GREP_VALUED = new Set(["-e", "-f", "-A", "-B", "-C", "-m", "--max-depth", "--threads", "--max-count", "--after-context", "--before-context", "--context"]);
+const JQ_VALUED = new Set(["-f", "--from-file", "-L", "--indent"]);
+const GREPS = new Set(["grep", "egrep", "fgrep", "rgrep", "zgrep"]);
+
+/** What a search command (grep and its kin, rg, ag, git grep) or jq reads, or null for another command. */
+function searchOf(name: string, args: string[]): Search | null {
+  const parse = (valued: Set<string>) => {
+    const { options, operands } = parseArgs(args, valued);
+    const has = (...names: string[]) => options.some(([k]) => names.includes(k));
+    const values = (...names: string[]) => options.filter(([k]) => names.includes(k)).map(([, v]) => v).filter((v): v is string => v !== undefined);
+    return { options, operands, has, values };
+  };
+  const base: Omit<Search, "roots"> = { read: [], recursive: false, printsContent: true, scope: "all", hidden: true, include: [], exclude: [], excludeDir: [], typed: false };
+  if (GREPS.has(name)) {
+    const { operands, has, values } = parse(GREP_VALUED);
+    const files = has("-e", "--regexp", "-f", "--file") ? operands : operands.slice(1);
+    const recursive = name === "rgrep" || has("-r", "-R", "--recursive", "--dereference-recursive") || values("-d", "--directories").includes("recurse");
+    return {
+      ...base,
+      roots: files.length > 0 ? files : recursive ? ["."] : [],
+      read: values("-f", "--file"),
+      recursive,
+      printsContent: !has("-l", "-L", "-c", "-q", "--files-with-matches", "--files-without-match", "--count", "--quiet", "--silent"),
+      include: values("--include"),
+      exclude: values("--exclude"),
+      excludeDir: values("--exclude-dir"),
+    };
+  }
+  if (name === "rg") {
+    const { options, operands, has, values } = parse(RG_VALUED);
+    const listing = has("--files", "--type-list");
+    const files = listing || has("-e", "--regexp", "-f", "--file") ? operands : operands.slice(1);
+    const unrestricted = options.filter(([k]) => k === "-u").length;
+    const globs = values("-g", "--glob", "--iglob");
+    return {
+      ...base,
+      roots: files.length > 0 ? files : ["."],
+      read: values("-f", "--file"),
+      recursive: true,
+      printsContent: !listing && !has("-l", "-c", "-q", "--files-with-matches", "--files-without-match", "--count", "--count-matches", "--quiet"),
+      scope: has("--no-ignore", "--no-ignore-vcs") || unrestricted >= 1 ? "all" : "unignored",
+      hidden: has("--hidden", "-.") || unrestricted >= 2,
+      include: globs.filter((g) => !g.startsWith("!")),
+      exclude: globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1)),
+      typed: has("-t", "--type"),
+    };
+  }
+  if (name === "ag") {
+    const { operands, has } = parse(AG_VALUED);
+    return {
+      ...base,
+      roots: operands.length > 1 ? operands.slice(1) : ["."],
+      recursive: true,
+      printsContent: !has("-l", "-L", "-c", "-g", "--files-with-matches", "--files-without-matches", "--count"),
+      scope: has("-u", "--unrestricted", "-U", "--skip-vcs-ignores") ? "all" : "unignored",
+      hidden: has("--hidden", "-u", "--unrestricted"),
+    };
+  }
+  if (name === "git-grep") {
+    const { operands, has, values } = parse(GIT_GREP_VALUED);
+    const files = has("-e", "-f") ? operands : operands.slice(1);
+    return {
+      ...base,
+      roots: files.length > 0 ? files : ["."],
+      read: values("-f"),
+      recursive: true,
+      printsContent: !has("-l", "-L", "-c", "-q", "--name-only", "--files-with-matches", "--files-without-match", "--count", "--quiet"),
+      scope: has("--no-index") ? (has("--exclude-standard") ? "unignored" : "all") : has("--untracked") ? "unignored" : "tracked",
+    };
+  }
+  if (name === "jq") {
+    // --arg, --argjson, --slurpfile and --rawfile take two words; the last two read a file.
+    const rest: string[] = [];
+    const read: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      const w = args[i] as string;
+      if (["--arg", "--argjson", "--slurpfile", "--rawfile"].includes(w)) {
+        if (w === "--slurpfile" || w === "--rawfile") read.push(args[i + 2] ?? "");
+        i += 2;
+      } else rest.push(w);
+    }
+    const { options, operands } = parseArgs(rest, JQ_VALUED);
+    const filterFile = options.filter(([k]) => k === "-f" || k === "--from-file").map(([, v]) => v).filter((v): v is string => v !== undefined);
+    // The first operand is the filter, unless it comes from a file.
+    return { ...base, roots: filterFile.length > 0 ? operands : operands.slice(1), read: [...read, ...filterFile] };
+  }
+  return null;
+}
+
+/** Whether a file-name glob (grep's --include, rg's --glob) matches a file found under a search root. */
+function patternMatches(glob: string, name: string, relative: string): boolean {
+  const re = globRegex(glob.startsWith("**/") ? glob.slice(3) : glob);
+  return re !== null && (re.test(name) || re.test(relative));
+}
+
+function git(args: string[], cwd: string): number | null {
+  const r = spawnSync("git", args, { cwd, stdio: "ignore", timeout: 5_000 });
+  return r.error ? null : r.status;
+}
+
+/** Whether a search reads this .env file: its scope, its hidden-file rule, and its filters. */
+function searchReads(search: Search, path: string, relative: string): boolean {
+  const name = nameOf(path);
+  if (search.typed || !search.hidden) return false;
+  if (search.include.length > 0 && !search.include.some((g) => patternMatches(g, name, relative))) return false;
+  if (search.exclude.some((g) => patternMatches(g, name, relative))) return false;
+  if (search.scope === "unignored") return git(["check-ignore", "-q", "--", path], dirname(path)) !== 0;
+  if (search.scope === "tracked") return git(["ls-files", "--error-unmatch", "--", path], dirname(path)) === 0;
+  return true;
+}
+
+const WALK_SKIP = new Set(["node_modules", ".git", ".hg", ".svn"]);
+const WALK_LIMIT = 20_000;
+const WALK_DEPTH = 8;
+
+/**
+ * Whether a recursive search of a directory would print a .env file under
+ * it. The walk is bounded (depth and entries) and skips dependency and VCS
+ * directories; past the bound it gives no denial, as the hook fails open.
+ */
+function searchReadsEnvUnder(root: string, search: Search): boolean {
+  const queue: [string, number][] = [[root, 0]];
+  let seen = 0;
+  while (queue.length > 0) {
+    const [dir, level] = queue.shift() as [string, number];
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (++seen > WALK_LIMIT) return false;
+      const path = resolve(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (level < WALK_DEPTH && !WALK_SKIP.has(entry.name) && !search.excludeDir.some((g) => globRegex(g)?.test(entry.name))) queue.push([path, level + 1]);
+      } else if (entry.isFile() && entry.name.startsWith(".env") && !ENV_TEMPLATES.has(entry.name)) {
+        if (searchReads(search, path, path.slice(root.length + 1))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+const DENY_ENV_SEARCH =
+  "Varlatch guardrail: this search would print lines of .env files, so their values would enter your context. " +
+  "Leave them out (`grep -r --exclude='.env*'`, `rg --glob '!.env*'`, the Grep tool's glob `!.env*`) or search only the files you need. " +
+  "To see the names a .env file sets, run `varlatch --assisted import --dry-run <file>`.";
+
+/** The denial for a search: a .env file it names, or one a recursive search would print. */
+function checkSearch(search: Search, ctx: HookContext): Denial | null {
+  for (const path of [...search.roots, ...search.read]) if (isProtectedEnvPath(path, ctx)) return DENY_ENV_FILE;
+  if (!search.recursive || !search.printsContent) return null;
+  for (const root of search.roots) {
+    const dir = resolve(ctx.cwd, expandPath(root, ctx));
+    if (statOf(dir)?.isDirectory() && searchReadsEnvUnder(dir, search)) return DENY_ENV_SEARCH;
+  }
   return null;
 }
 
@@ -417,9 +740,14 @@ function checkSegment(seg: Segment, ctx: HookContext, underRun: boolean, depth: 
 
   let reads = !NON_READING.has(name);
   let args = words.slice(1);
-  if (name === "git") {
-    const sub = args.find((w, i, rest) => !w.startsWith("-") && !["-C", "-c"].includes(rest[i - 1] ?? ""));
-    reads = sub !== undefined && GIT_READING.has(sub);
+  const gitSub = name === "git" ? args.findIndex((w, i, rest) => !w.startsWith("-") && !["-C", "-c"].includes(rest[i - 1] ?? "")) : -1;
+  if (name === "git") reads = gitSub >= 0 && GIT_READING.has(args[gitSub] as string);
+  // A search reads the files it searches, not its pattern; jq reads its files, not its filter.
+  const search = name === "git" ? (args[gitSub] === "grep" ? searchOf("git-grep", args.slice(gitSub + 1)) : null) : searchOf(name, args);
+  if (search) {
+    const denial = checkSearch(search, ctx);
+    if (denial) return denial;
+    reads = false;
   }
   // find lists names unless it runs a command on what it finds.
   if (name === "find") reads = args.some((w) => ["-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf"].includes(w));
@@ -491,7 +819,30 @@ export function checkToolCall(toolName: string, toolInput: unknown, ctx: HookCon
     if (isProtectedEnvPath(path, ctx)) return DENY_ENV_FILE;
     if (isInStore(path, ctx)) return DENY_STORE;
   }
+  if (toolName === "Grep") return checkSearch(grepToolSearch(input), ctx);
   return null;
+}
+
+/**
+ * Claude Code's Grep tool searches its path (the directory by default) the
+ * way rg does with hidden files on: a .env file git does not ignore is
+ * searched. It prints lines only with `output_mode: "content"`; its `glob`
+ * and `type` narrow the files.
+ */
+function grepToolSearch(input: Record<string, unknown>): Search {
+  const glob = typeof input.glob === "string" ? input.glob : null;
+  return {
+    roots: [typeof input.path === "string" ? input.path : "."],
+    read: [],
+    recursive: true,
+    printsContent: input.output_mode === "content",
+    scope: "unignored",
+    hidden: true,
+    include: glob !== null && !glob.startsWith("!") ? [glob] : [],
+    exclude: glob !== null && glob.startsWith("!") ? [glob.slice(1)] : [],
+    excludeDir: [],
+    typed: typeof input.type === "string",
+  };
 }
 
 /**

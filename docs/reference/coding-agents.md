@@ -136,13 +136,26 @@ It reads the tool call the agent is about to make and denies:
 
 - reading a `.env*` file other than `.env.example` and `.env.schema`, with a
   file tool or a shell command (`cat`, `grep`, `source`, `git show`, an
-  interpreter's inline code, and so on). Commands that only name a file
+  interpreter's inline code, and so on), including through a glob that
+  matches one (`cat .e*`). Commands that only name a file
   (`echo .env >> .gitignore`, `ls`, `rm`, `find -name`), a `.env` that is
   the destination of `cp`, a directory called `.env` (a Python
-  virtualenv), and `varlatch import` are allowed;
+  virtualenv), and `varlatch import` are allowed. `.env`, `.envrc`, and
+  `.env.<name>` are .env files by name; another name that starts with
+  `.env` is one only if it exists as a file, so a search pattern or a jq
+  filter such as `.environment` is not;
+- a recursive search that would print lines of a .env file: `grep -r`,
+  `rg` and `ag` with hidden files, `git grep --no-index` (or a .env file
+  git tracks), and Claude Code's Grep tool in content mode. A search that
+  leaves .env files out (`--exclude`, a glob or type filter), lists only
+  names or counts, or, for the tools that honor `.gitignore`, finds them
+  ignored, is allowed;
 - reading the Varlatch credential store, wherever it is configured;
-- printing the environment of a `varlatch run`: `env`, `printenv`, `export
-  -p`, or inline code that reads the environment, as the run's command.
+- printing the environment of a `varlatch run`, or a variable of it, as
+  the run's command: `env`, `printenv`, `export -p`, `echo "$NAME"` or
+  `printf`, or inline code that reads the environment. Shell variables
+  such as `HOME` and `PATH` may be printed: the hook cannot tell a Secret
+  from configuration, so any other variable counts.
 
 The denial tells the agent what to do instead. The handler gives no
 decision for a call it does not understand, so the agent goes ahead.
