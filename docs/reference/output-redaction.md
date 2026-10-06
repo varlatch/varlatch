@@ -122,8 +122,9 @@ differences:
   inherits from your shell that Varlatch knows to be a Secret, stored in the
   environment or marked sensitive in the active Contract.
 - **A Secret shorter than 8 bytes stops the run** with status 78 before the
-  command starts, naming the item. When the command does not need it,
-  `--omit <NAME>` leaves it out: the command does not get it, so it no
+  command starts, naming the item. When the command's code or
+  documentation shows that the command does not use it, `--omit <NAME>`
+  leaves it out: the command does not get it, so it no
   longer stops the run. The other remedies are the human's, in their
   own terminal; there, `varlatch run --allow-unmasked <NAME> -- <command>`
   lets that item through unmasked and keeps every other Secret masked.

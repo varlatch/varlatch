@@ -265,13 +265,16 @@ function runPolicyOptions(args: string[]): string[] {
 /**
  * Said on stderr before the command starts: what `--omit` left out. With
  * output redaction, also its limit: a value the run never handled is not
- * masked if the command gets it some other way.
+ * masked if the command gets it some other way. In assisted mode, also what
+ * the coding agent owes the human: an evaluation saw an agent leave out a
+ * Secret its command needed and report success.
  */
-function omittedNotice(omitted: string[], masking: boolean): string | null {
+function omittedNotice(omitted: string[], masking: boolean, agent: boolean): string | null {
   if (omitted.length === 0) return null;
   const them = omitted.length === 1 ? "it" : "them";
   return `varlatch: left out of this run (--omit), so the command does not get ${them}` +
-    `${masking ? `, and not masked if the command obtains ${them} another way` : ""}: ${[...omitted].sort().join(", ")}`;
+    `${masking ? `, and not masked if the command obtains ${them} another way` : ""}: ${[...omitted].sort().join(", ")}` +
+    (agent ? `\nvarlatch: name ${them} in your answer; the command starting does not show that the task was done` : "");
 }
 
 /**
@@ -1160,7 +1163,7 @@ async function main(): Promise<void> {
               omit,
               parent: process.env,
               start: async (env, secrets, secretNames) => {
-                const notice = omittedNotice(omit, assistedRedaction || redact);
+                const notice = omittedNotice(omit, assistedRedaction || redact, assisted.on);
                 if (!assistedRedaction) {
                   if (notice) log(notice);
                   return runChild(cmd, cmdArgs, env, redact ? secrets : undefined);
@@ -1269,7 +1272,7 @@ async function main(): Promise<void> {
         const env = buildEnv(process.env, effective, omitted);
         if (exportContext) env[RUN_CONTEXT] = exportContext(effective, process.env, omitted);
         if (assisted.on) for (const line of assistedRunNotices(ctx, effective, cmd, contextOptions(preArgs, ctx))) log(line);
-        const notice = omittedNotice(omit, assistedRedaction || redact);
+        const notice = omittedNotice(omit, assistedRedaction || redact, assisted.on);
         if (assistedRedaction) {
           const secretNames = await knownSecretNames(api, ctx, effective, log);
           const set = assistedRedactionSet(deliveredSecrets(effective.items ?? [], env), env, process.env, secretNames);

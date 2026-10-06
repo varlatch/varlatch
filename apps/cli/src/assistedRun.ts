@@ -89,9 +89,13 @@ export interface RemedyContext {
 
 /**
  * Why an assisted run did not start: names and remedies, never a value.
- * The first remedy needs nobody's approval: when the command does not need
- * the item, `--omit` leaves it out, so the command never holds a value
- * that would pass unmasked. Otherwise the agent stops and asks; each other
+ * The first remedy needs nobody's approval, but only on evidence: when the
+ * command's code or documentation shows that it does not use the item,
+ * `--omit` leaves it out, so the command never holds a value that would
+ * pass unmasked. The agent must then name what it left out and say whether
+ * the task was done: an agent evaluation saw an agent leave out a Secret
+ * its command needed and report success. Getting past the refusal is not
+ * completing the task. When in doubt, the agent stops and asks; each other
  * remedy is the human's decision, for the named item and environment only
  * (an agent evaluation saw an agent regenerate items nobody named). After
  * that approval, a safe remedy is printed as the agent's own command, with
@@ -119,12 +123,15 @@ export function unmaskableRefusal(items: string[], how: RemedyContext): string[]
   return [
     `varlatch: ${several ? "these Secrets are" : "this Secret is"} shorter than ${MIN_LENGTH} bytes, so ` +
       `${several ? "their values" : "its value"} cannot be masked in the command's output: ${items.join(", ")}`,
-    `  If the command does not need ${several ? "them" : first}, rerun with ${items.map((name) => `--omit ${name}`).join(" ")}: ` +
-      `the command then does not get ${several ? "them" : "it"}, and no approval is needed` +
-      (several ? " (leave out only the ones it does not need)" : "") +
-      ":",
+    several
+      ? "  Leave an item out only if the command's code or documentation shows that the command does not use it (no approval needed), and only those items:"
+      : `  Leave ${first} out only if the command's code or documentation shows that the command does not use it (no approval needed):`,
     `      ${omit}`,
-    `  If it needs ${several ? "one" : "it"}, stop and ask the human what to do about ${several ? "each item it needs" : first}. Approval for one item or action never covers another.`,
+    `    Then name ${several ? "each item" : first} left out in your answer, and say whether the task itself was done: ` +
+      "getting past this refusal does not show that the command did what was asked.",
+    several
+      ? "  For each item you are not sure about, or the command uses, stop and ask the human what to do about it. Approval for one item or action never covers another."
+      : `  If you are not sure, or the command uses ${first}, stop and ask the human what to do about ${first}. Approval for one item or action never covers another.`,
     `  - Only if they approve replacing ${first} with a new random value (it overwrites the current one):`,
     `      varlatch --assisted values set ${first} ${how.target} --replace ${first} --generate hex:32` + (several ? "   (each item needs its own approval)" : ""),
     `    A credential a provider issued is never generated: the human enters it, in their own terminal: varlatch values set ${first} ${how.target}`,
