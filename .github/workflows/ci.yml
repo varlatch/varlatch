@@ -153,7 +153,10 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
           if [ "$TESTS" != affected ]; then
-            pnpm test
+            # Match local verification on the three-CPU self-hosted slots:
+            # overlapping suites can starve multi-process CLI tests of CPU.
+            # Two full runs hit their deadlines, including the 0.13 control.
+            pnpm -r --workspace-concurrency=1 test --maxWorkers=2
             exit 0
           fi
           packages=$(scripts/ci-changes.sh affected "$BASE")
@@ -163,7 +166,7 @@ jobs:
           fi
           filters=()
           while read -r name; do filters+=(--filter "$name"); done <<< "$packages"
-          pnpm "${filters[@]}" test
+          pnpm --workspace-concurrency=1 "${filters[@]}" test --maxWorkers=2
 
   # The Typed Accessor for Python on the oldest and newest Python it
   # supports, each with the standard library only and with a pinned ada-url:
