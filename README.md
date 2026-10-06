@@ -95,6 +95,10 @@ each release added.
 
 ## Getting started
 
+[Getting started](docs/getting-started.md) goes from nothing to
+`varlatch run`: installing the CLI, running an installation, setting up a
+project, and inviting your team.
+
 ### Run your own installation
 
 Varlatch runs with Docker Compose on any Linux host, amd64 or arm64, and on
@@ -102,6 +106,10 @@ Coolify. [`infra/compose/README.md`](infra/compose/README.md) walks through
 setup, access, backups, and upgrades.
 
 ### Use the CLI
+
+The CLI is one file attached to every release, `varlatch-cli-<version>.cjs`,
+and needs Node.js 22 or newer:
+[Get the CLI](docs/getting-started.md#get-the-cli).
 
 ```sh
 varlatch login --server https://varlatch.example.com
@@ -144,6 +152,9 @@ placeholder values only. State lives in `.dev/`.
 
 ## Documentation
 
+- [`docs/getting-started.md`](docs/getting-started.md): from nothing to
+  `varlatch run`, for whoever runs the installation and for everyone who
+  uses it
 - [`CHANGELOG.md`](CHANGELOG.md): what changed in each release, and how to
   upgrade
 - [`CONTEXT.md`](CONTEXT.md): the vocabulary, from planes and identities to

@@ -33,7 +33,7 @@ pnpm dev:up       # the whole stack from this checkout, with synthetic data
 
 `pnpm dev:up` needs Docker. It prints a one-time link that adds a passkey for
 the seeded admin, and the settings the CLI needs. The
-[Development section of the README](README.md#development) has the details.
+[Develop Varlatch section of the README](README.md#develop-varlatch) has the details.
 
 Open a pull request as a draft while the work is in progress: CI does not run
 on drafts. When it is done, push, then mark it ready with `pnpm ready`. That
