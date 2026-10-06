@@ -18,7 +18,9 @@ import {
   checkTargetFlags,
   contractSecrets,
   issueWithTargets,
+  refusedTunnels,
   requireTargetsServer,
+  tunnelNote,
 } from "../src/agentRun.js";
 import {
   generatePlaceholder,
@@ -26,11 +28,13 @@ import {
   parseSelectors,
   sameTargets,
   startBroker,
+  TUNNELS_PATH,
   type BrokerEvent,
   type Exercised,
   type RunningBroker,
 } from "../src/broker.js";
 import type { Placement } from "../src/placement.js";
+import { BROKER_REPLY_HEADER } from "../src/scrub.js";
 
 describe("placeholders", () => {
   it("are opaque, random, and self-identifying", () => {
@@ -682,6 +686,114 @@ describe("broker proxy", () => {
     });
     expect(result).toContain("502");
     expect(result).toContain("intentionally does not MITM");
+  });
+
+  /** A raw CONNECT, as curl sends it; resolves with the Broker's whole reply. */
+  function rawConnect(broker: RunningBroker, authority: string, auth = true): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const socket = net.connect(broker.port, "127.0.0.1", () => {
+        const credential = auth ? `Proxy-Authorization: Basic ${Buffer.from(`vlt:${broker.token}`).toString("base64")}\r\n` : "";
+        socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${credential}\r\n`);
+      });
+      let reply = "";
+      socket.on("data", (d: Buffer) => {
+        reply += d.toString();
+        // An established tunnel stays open: its status line is the whole answer.
+        if (reply.startsWith("HTTP/1.1 200")) socket.destroy();
+      });
+      socket.on("close", () => resolve(reply));
+      socket.on("error", reject);
+    });
+  }
+
+  it("the refused CONNECT's status line names varlatch request, where clients that hide the body still show it", async () => {
+    const { broker } = await liveBroker(["api.stripe.com:443"]);
+    const reply = await rawConnect(broker, "api.stripe.com:443");
+    expect(reply.split("\r\n")[0]).toBe("HTTP/1.1 502 Tunnel refused by Varlatch, use varlatch request");
+    expect(reply).toContain(`${BROKER_REPLY_HEADER}: refused`);
+    expect(reply).toContain("Send the request with varlatch request");
+  });
+
+  it(`counts refused tunnels by destination at ${TUNNELS_PATH}, and reports each`, async () => {
+    const up = await upstream(undefined, false);
+    cleanups.push(up.close);
+    const { broker, events } = await liveBroker(["api.stripe.com:443", "API.example.com:8443"]);
+    const tunnels = async () => JSON.parse((await proxyRequest(broker, TUNNELS_PATH)).body) as { tunnels: { destination: string; count: number }[] };
+    expect(await tunnels()).toEqual({ tunnels: [] });
+    await rawConnect(broker, "api.stripe.com:443");
+    await rawConnect(broker, "api.stripe.com:443");
+    await rawConnect(broker, "api.example.com:8443");
+    // Control: a tunnel to a destination outside the allowlist passes through, and is not counted.
+    expect(await rawConnect(broker, `127.0.0.1:${up.port}`)).toMatch(/^HTTP\/1\.1 200 /);
+    expect(await tunnels()).toEqual({
+      tunnels: [
+        { destination: "api.example.com:8443", count: 1 },
+        { destination: "api.stripe.com:443", count: 2 },
+      ],
+    });
+    expect(events.filter((e) => e.kind === "tunnel")).toEqual([
+      { kind: "tunnel", destination: "api.stripe.com:443" },
+      { kind: "tunnel", destination: "api.stripe.com:443" },
+      { kind: "tunnel", destination: "api.example.com:8443" },
+    ]);
+  });
+
+  it(`${TUNNELS_PATH} needs the proxy credential and answers GET only; a refusal without the credential is not counted`, async () => {
+    const { broker } = await liveBroker(["api.stripe.com:443"]);
+    expect(await rawConnect(broker, "api.stripe.com:443", false)).toMatch(/^HTTP\/1\.1 407 /);
+    expect((await proxyRequest(broker, TUNNELS_PATH, { auth: false })).status).toBe(407);
+    const post = await proxyRequest(broker, TUNNELS_PATH, { method: "POST" });
+    expect(post.status).toBe(405);
+    expect(post.headers.allow).toBe("GET");
+    expect(JSON.parse((await proxyRequest(broker, TUNNELS_PATH)).body)).toEqual({ tunnels: [] });
+  });
+
+  it("strict mode's refusal of a tunnel outside the allowlist is not counted: varlatch request would not help there", async () => {
+    const { broker, events } = await liveBroker(["api.stripe.com:443"], { strict: true });
+    expect(await rawConnect(broker, "elsewhere.example:443")).toMatch(/^HTTP\/1\.1 403 /);
+    expect(JSON.parse((await proxyRequest(broker, TUNNELS_PATH)).body)).toEqual({ tunnels: [] });
+    expect(events.filter((e) => e.kind === "tunnel")).toEqual([]);
+  });
+
+  it("a nested run reads the counts with the Agent's environment; any other proxy, or none, reads nothing", async () => {
+    const { broker } = await liveBroker(["api.stripe.com:443"]);
+    const env = buildAgentEnv({}, { environmentId: "e", items: [] }, new Map(), broker.proxyUrl);
+    expect(await refusedTunnels(env)).toEqual(new Map());
+    await rawConnect(broker, "api.stripe.com:443");
+    expect(await refusedTunnels(env)).toEqual(new Map([["api.stripe.com:443", 1]]));
+    // Controls: the proxy credential is checked, and nothing is sent to a proxy that is not a Broker's.
+    const wrong = new URL(broker.proxyUrl);
+    wrong.password = "not-the-token";
+    expect(await refusedTunnels({ HTTPS_PROXY: wrong.href })).toBeUndefined();
+    expect(await refusedTunnels({ HTTPS_PROXY: "http://proxy.corp.example:3128" })).toBeUndefined();
+    expect(await refusedTunnels({})).toBeUndefined();
+    await broker.close();
+    expect(await refusedTunnels(env)).toBeUndefined();
+  });
+
+  describe("the note a nested run prints after its command", () => {
+    const counts = (entries: [string, number][]) => new Map(entries);
+
+    it("names each destination refused while the command ran, with a request to send instead", () => {
+      const note = tunnelNote(counts([["api.stripe.com:443", 1]]), counts([["api.stripe.com:443", 2], ["api.example.com:8443", 1]]), ["STRIPE_KEY"]);
+      expect(note).toBe(
+        "varlatch: while this command ran, the Broker refused an HTTPS tunnel to api.example.com:8443, api.stripe.com:443. " +
+          "curl, fetch, and most SDKs open one, and agent-safe runs refuse it: the request never left this machine, " +
+          "so this is not a network failure. Send the request with varlatch request instead, for example:\n" +
+          '  varlatch --assisted request -H "Authorization: Bearer $STRIPE_KEY" https://api.example.com:8443/...',
+      );
+    });
+
+    it("drops the default port, brackets an IPv6 address, and falls back to a generic name without Placeholders", () => {
+      expect(tunnelNote(counts([]), counts([["api.stripe.com:443", 1]]), [])).toMatch(/"Authorization: Bearer \$API_KEY" https:\/\/api\.stripe\.com\/\.\.\.$/);
+      expect(tunnelNote(counts([]), counts([["::1:8443", 1]]), ["K"])).toMatch(/ https:\/\/\[::1\]:8443\/\.\.\.$/);
+    });
+
+    it("negative controls: nothing new refused, or counts it could not read, print nothing", () => {
+      expect(tunnelNote(counts([["api.stripe.com:443", 2]]), counts([["api.stripe.com:443", 2]]), ["STRIPE_KEY"])).toBeUndefined();
+      expect(tunnelNote(undefined, counts([["api.stripe.com:443", 1]]), [])).toBeUndefined();
+      expect(tunnelNote(counts([]), undefined, [])).toBeUndefined();
+    });
   });
 
   it("rejects origin-form requests with guidance", async () => {

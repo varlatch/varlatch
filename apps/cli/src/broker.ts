@@ -94,7 +94,16 @@ export type BrokerEvent =
   | { kind: "blocked"; status: number; rule: PlacementRule; message: string }
   | { kind: "failed"; rule: PlacementRule | "exercise-mismatch"; message: string }
   | { kind: "stray"; item: string; surface: Surface }
+  | { kind: "tunnel"; destination: string }
   | ScrubEvent;
+
+/**
+ * The Broker's one origin-form route: the tunnels it refused so far, by
+ * destination, for a `varlatch run` inside the run to report after its
+ * command (curl shows only "CONNECT tunnel failed, response 502"). Behind
+ * the proxy credential; destinations and counts only.
+ */
+export const TUNNELS_PATH = "/varlatch-broker/tunnels";
 
 export interface BrokerOptions {
   /** placeholder token -> Config Item name */
@@ -192,6 +201,11 @@ const CONNECT_DIAGNOSTIC = (host: string) =>
   `"Authorization: Bearer $API_KEY" https://${host}/...), or send plain HTTP ` +
   `requests with absolute URIs through the proxy.`;
 
+// The reason phrase reaches people the body does not: Python's http.client
+// puts it in its error, and curl -v prints the status line. curl never shows
+// the body.
+const CONNECT_STATUS = "502 Tunnel refused by Varlatch, use varlatch request";
+
 // Headers the broker owns on the connection it originates: hop-by-hop and
 // proxy headers are dropped; Host and Content-Length are set from the
 // authorized URL and the body actually sent.
@@ -220,6 +234,7 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
   const report = options.report ?? (() => {});
   const limits: ScrubLimits = { ...SCRUB_LIMITS, ...options.limits };
   const placeholderOf = new Map([...options.placeholders].map(([token, item]) => [item, Buffer.from(token)]));
+  const refusedTunnels = new Map<string, number>();
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res).catch((err: unknown) => {
@@ -247,8 +262,11 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
     const [host = "", portRaw = "443"] = (req.url ?? "").split(":");
     const port = Number(portRaw) || 443;
     if (matchesSelectors(selectors, host, port)) {
+      const destination = `${canonicalHost(host)}:${port}`;
+      refusedTunnels.set(destination, (refusedTunnels.get(destination) ?? 0) + 1);
+      report({ kind: "tunnel", destination });
       socket.end(
-        `HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\n${CONNECT_DIAGNOSTIC(host)}\n`,
+        `HTTP/1.1 ${CONNECT_STATUS}\r\nContent-Type: text/plain\r\nConnection: close\r\n${BROKER_REPLY_HEADER}: refused\r\n\r\n${CONNECT_DIAGNOSTIC(host)}\n`,
       );
       return;
     }
@@ -269,6 +287,16 @@ export async function startBroker(options: BrokerOptions): Promise<RunningBroker
     if (!checkProxyAuth(req.headers, token)) {
       res.writeHead(407, { "Proxy-Authenticate": "Basic", Connection: "close", [BROKER_REPLY_HEADER]: "refused" });
       res.end();
+      return;
+    }
+    if (req.url === TUNNELS_PATH) {
+      if (req.method !== "GET") {
+        deny(res, 405, `${TUNNELS_PATH} answers GET only`, { Allow: "GET" });
+        return;
+      }
+      const tunnels = [...refusedTunnels].sort(([a], [b]) => a.localeCompare(b)).map(([destination, count]) => ({ destination, count }));
+      res.writeHead(200, { "Content-Type": "application/json", Connection: "close" });
+      res.end(JSON.stringify({ tunnels }));
       return;
     }
     let target: URL;

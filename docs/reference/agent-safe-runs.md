@@ -269,7 +269,22 @@ req.end();
 The Broker does not intercept TLS, so a client that tunnels HTTPS with
 `CONNECT`, which includes curl, Node's `fetch`, and most HTTP libraries,
 gets a `502` for an allowed destination, with an explanation that names
-`varlatch request`. Traffic to other
+`varlatch request`. Most clients do not show that explanation: curl prints
+only `CONNECT tunnel failed, response 502`. So the refusal says it in more
+places:
+
+- The status line is `502 Tunnel refused by Varlatch, use varlatch request`.
+  `curl -v` prints it, and Python's `urllib` and `requests` put it in their
+  error.
+- A `varlatch run -- <command>` inside the run checks, when its command
+  ends, whether the Broker refused a tunnel meanwhile. If it did, it names
+  each destination and prints a `varlatch request` command to send
+  instead. It asks the Broker at `/varlatch-broker/tunnels`, which needs the
+  run's proxy credential and answers with destinations and counts only.
+- The run's own output names each refused destination once and counts
+  refused tunnels with the other failures when the run ends.
+
+Traffic to other
 destinations passes through unchanged, Placeholders intact, unless you pass
 `--agent-network strict`, which blocks it.
 

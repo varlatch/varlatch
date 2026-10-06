@@ -7,6 +7,20 @@ fixes.
 
 ## Unreleased (0.14.3)
 
+### Coding agents
+
+- **A refused tunnel no longer looks like a network failure.** Inside an
+  agent-safe run, curl, `fetch`, and most SDKs open a `CONNECT` tunnel,
+  which the Broker refuses for an allowed destination. curl prints only
+  `CONNECT tunnel failed, response 502`, and agents read that as the API
+  being down. Now a `varlatch run -- <command>` inside the run ends, after
+  such a refusal, with a note that names the destination and the
+  `varlatch request` command to send instead. The refusal's status line
+  reads `502 Tunnel refused by Varlatch, use varlatch request`, which
+  `curl -v` and Python's errors show. The run's own output names
+  each refused destination and counts the refusals. The skill says what
+  curl's error means. Tunnels stay refused, and no value is shown.
+
 ### Licensing
 
 - Settings → Server has a **Source code** row that links to the source of
