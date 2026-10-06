@@ -7,7 +7,7 @@ info:
     pagination, idempotency semantics and the audit NDJSON schema are part of
     the compatibility contract. Pre-product-1.0 releases may still contain
     breaking changes while the contract is being established.
-  version: 0.14.2
+  version: 0.14.3
 servers:
   - url: /v1
 security:
