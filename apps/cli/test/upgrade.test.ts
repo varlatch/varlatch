@@ -161,3 +161,33 @@ exit 0
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it("refuses before any change when the release requires a variable the installation does not set (#110)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-upgrade-required-"));
+  const release = join(dir, "release");
+  mkdirSync(release);
+  const manifest = (version: string) => JSON.stringify({ schemaVersion: 1, version, apiMajor: 1, migrationVersion: 18, supportedPostgresMajor: 17, supportedRestoreSources: [{ version: "0.6.0", migrationVersion: 18 }], images: {} });
+  writeFileSync(join(dir, "varlatch-release.json"), manifest("0.6.0"));
+  writeFileSync(join(dir, "docker-compose.yml"), "old compose");
+  writeFileSync(join(dir, ".env"), "# hand-written\nVARLATCH_WEB_PORT=8787\nVARLATCH_PUBLIC_URL=\n");
+  writeFileSync(join(release, "varlatch-release.json"), manifest("0.7.0"));
+  writeFileSync(join(release, "docker-compose.release.yml"), "VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:?set it}\nVARLATCH_ISSUER: ${VARLATCH_PUBLIC_URL:?set it}\nX: ${OPTIONAL:-}\n");
+  writeFileSync(join(release, "convex-supervisor.cjs"), "// supervisor");
+  vi.stubEnv("VARLATCH_PUBLIC_URL", "");
+  const capture = vi.spyOn(backup, "createBackup").mockRejectedValue(new Error("backup reached"));
+  const opts = { dir, repo: "test/repo", version: "0.7.0", yes: true, skipDbBackup: false, kekBackupVerified: false, checkOnly: false, releaseDir: release };
+  try {
+    await expect(runUpgrade(opts)).rejects.toThrow(/0\.7\.0 requires VARLATCH_PUBLIC_URL in .*\.env.*nothing has changed/);
+    expect(capture).not.toHaveBeenCalled();
+    expect(readFileSync(join(dir, "docker-compose.yml"), "utf8")).toBe("old compose");
+    expect(existsSync(join(dir, "varlatch-release.json.pending"))).toBe(false);
+    // Negative control: once .env sets it, the upgrade proceeds to the backup.
+    writeFileSync(join(dir, ".env"), "VARLATCH_PUBLIC_URL=https://vault.example.com\n");
+    await expect(runUpgrade(opts)).rejects.toThrow(/backup reached/);
+    expect(capture).toHaveBeenCalledOnce();
+  } finally {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

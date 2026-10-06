@@ -88,7 +88,10 @@ services:
       VARLATCH_DATABASE_PASSWORD_FILE: /run/secrets/varlatch-runtime-password
       VARLATCH_KEK_FILE: /run/secrets/varlatch-kek
       VARLATCH_PORT: "8686"
-      VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:-}
+      # The address people open: WebAuthn origin and token issuer (#110).
+      # Compose refuses to start without it rather than fall back to an
+      # issuer Convex does not trust.
+      VARLATCH_PUBLIC_URL: ${VARLATCH_PUBLIC_URL:?set VARLATCH_PUBLIC_URL in .env to the address people open in the browser}
       VARLATCH_CONVEX_URL: ${VARLATCH_CONVEX_URL:-http://convex-backend:3210}
       # The proxies whose X-Forwarded-For varlatchd believes, so per-client
       # limits and the device sign-in confirmation see each caller's own
@@ -212,7 +215,8 @@ services:
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${CONVEX_ADMIN_KEY:-}
       CONVEX_INSTANCE_SECRET: ${CONVEX_INSTANCE_SECRET:-}
       CONVEX_INSTANCE_SECRET_FILE: /run/secrets/convex-instance-secret
-      VARLATCH_ISSUER: ${VARLATCH_PUBLIC_URL:-http://varlatchd:8686}
+      # Must equal varlatchd's issuer, which is VARLATCH_PUBLIC_URL (#110).
+      VARLATCH_ISSUER: ${VARLATCH_PUBLIC_URL:?set VARLATCH_PUBLIC_URL in .env to the address people open in the browser}
       VARLATCH_JWKS_URL: ${VARLATCH_JWKS_URL:-http://varlatchd:8686/.well-known/jwks.json}
     secrets:
       - convex-instance-secret

@@ -153,7 +153,7 @@ or empty.
 
 - **Read by:** `varlatchd`, and `convex-deploy`, which gives it to Convex as
   `VARLATCH_ISSUER`.
-- **Default:** none. Always set it.
+- **Default:** none. Compose refuses to start without it.
 - **Setup:** writes the `--public-url` you give, or with the tailnet
   ingress, the address the node reports once it has joined.
 
