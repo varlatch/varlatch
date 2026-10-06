@@ -30,6 +30,12 @@ fixes.
 
 ### Fixes
 
+- Dependency updates for three published advisories: `smol-toml` 1.9.0
+  (GHSA-r4xh-jqrq-34v2, a quadratic-time parse; the CLI reads
+  `varlatch.toml` and coding-agent settings with it), `proxy-addr` 2.0.8
+  (GHSA-jqcg-44mw-7w3h, through the MCP server's dependencies, bundled in
+  the CLI), and `source-map-js` 1.2.2 (GHSA-68fv-2mgg-jv7q, build and test
+  tooling only).
 - The web console no longer shows healthy Sync Targets as failing. A pass
   that finds the destination already current records `converged`, and the
   console counted every result other than `ok` as a failure, so after the
