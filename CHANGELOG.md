@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.14.2)
+## 0.14.2 (2026-10-06)
 
 ### Coding agents
 
@@ -68,7 +68,7 @@ fixes.
   `varlatch.toml` and coding-agent settings with it), `proxy-addr` 2.0.8
   (GHSA-jqcg-44mw-7w3h, through the MCP server's dependencies, bundled in
   the CLI), and `source-map-js` 1.2.2 (GHSA-68fv-2mgg-jv7q, build and test
-  tooling only).
+  tooling only, in both the pnpm and Convex npm lockfiles).
 - `varlatch agents install` (and `varlatch init`) no longer breaks a
   project whose `CLAUDE.md` is a symbolic link to `AGENTS.md`, as Astro's
   template ships it (#93). The Claude Code adapter wrote its import line
@@ -90,6 +90,26 @@ fixes.
   A target now fails only when a run failed or the target was stopped. A
   push whose values landed but whose redeploy did not now shows as a
   warning, "Redeploy failed", on the target and on its connection.
+
+### Upgrading
+
+No database migration: 0.14.2 runs on 0.14.1's schema (migration 25).
+
+- From 0.14.1, 0.14.0, 0.13.0, 0.12.0, or 0.11.0: download
+  `varlatch-cli-0.14.2.cjs` from the `v0.14.2` release, check it against
+  `SHA256SUMS`, and run `node varlatch-cli-0.14.2.cjs upgrade 0.14.2
+  --dir /YOUR/COMPOSE/DIRECTORY --bek-file /YOUR/BEK
+  --kek-file /YOUR/ROOT-KEK`. From 0.13.0 or older, it also applies
+  migrations 23 to 25, and the 0.14.0 notes below apply. Then replace the
+  host CLI with `varlatch-cli-0.14.2.cjs`, or run `varlatch self-update`.
+- From 0.10.1 or older: follow the 0.11.0 instructions below with the
+  0.14.2 CLI and version.
+- Run `varlatch agents install` again in projects that use the installed
+  skill or `AGENTS.md` block. `agents install --check` reports drift until
+  those instructions are updated.
+- Guardrails remain opt-in. The `.env` integration result covers the tested
+  read paths, agent versions, models, and settings; it is not a boundary.
+- 0.14.2 restores everything 0.14.1 restores, and archives from 0.14.1.
 
 ## 0.14.1 (2026-10-05)
 
