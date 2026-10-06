@@ -221,10 +221,12 @@ async function agentSafeRun(cli: string, metadata: boolean): Promise<{ code: num
 
 const operatorRequestsAfter = (at: number) => requests.filter((r) => r.auth === OPERATOR && r.at >= at);
 
+// Each case spawns an agent-safe run whose probes each get 20 s (`probe`);
+// vitest's default 5 s per test ran out on loaded CI runners.
 describe.each([
   ["without --agent-metadata", false],
   ["with --agent-metadata", true],
-])("agent-safe run %s", (_mode, metadata) => {
+])("agent-safe run %s", { timeout: 60_000 }, (_mode, metadata) => {
   it("gives the Agent its own configuration directory and run id, and removes the directory at exit", async () => {
     const { code, output, record } = await agentSafeRun(bundle, metadata);
     expect(code, output).toBe(0);
