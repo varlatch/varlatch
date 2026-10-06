@@ -211,7 +211,7 @@ what the bundler includes.
 | postgres-date | 1.0.7 | MIT | varlatchd |
 | postgres-interval | 1.2.0 | MIT | varlatchd |
 | prettier | 3.9.6 | MIT | dashboard, convex-deploy |
-| proxy-addr | 2.0.7 | MIT | CLI |
+| proxy-addr | 2.0.8 | MIT | CLI |
 | pvtsutils | 1.3.6 | MIT | varlatchd, dashboard |
 | pvutils | 1.2.0 | MIT | varlatchd, dashboard |
 | qs | 6.16.0 | BSD-3-Clause | CLI |
@@ -240,7 +240,7 @@ what the bundler includes.
 | side-channel-list | 1.0.1 | MIT | CLI |
 | side-channel-map | 1.0.1 | MIT | CLI |
 | side-channel-weakmap | 1.0.2 | MIT | CLI |
-| smol-toml | 1.8.0 | BSD-3-Clause | CLI |
+| smol-toml | 1.9.0 | BSD-3-Clause | CLI |
 | split2 | 4.2.0 | ISC | varlatchd |
 | statuses | 2.0.2 | MIT | CLI |
 | stream-browserify | 3.0.0 | MIT | varlatchd, CLI |
@@ -2842,7 +2842,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ````
 
-### etag@1.8.1, proxy-addr@2.0.7
+### etag@1.8.1, proxy-addr@2.0.8
 
 ````text
 (The MIT License)
@@ -4699,7 +4699,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### smol-toml@1.8.0
+### smol-toml@1.9.0
 
 ````text
 Copyright (c) Squirrel Chat et al., All rights reserved.
