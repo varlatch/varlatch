@@ -229,6 +229,17 @@ exit 1
     expect(() => varlatchd(dir, ["admin", "reenroll", "--identity", "idn_typo"])).toThrow(/failed \(exit 1\): No person with identity idn_typo/);
   });
 
+  it("refuses a damaged move state with a clear error, in move and in setup", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fakeDocker();
+    const dir = installation();
+    for (const bad of ["{\"from\": \"https://old", "{}", "null"]) {
+      writeFileSync(join(dir, MOVE_STATE_FILE), bad);
+      await expect(runMove(options(dir))).rejects.toThrow(/varlatch-move\.json is unreadable, so the move's progress is unknown\. Nothing was changed/);
+      await expect(runSetup({ dir, noWait: true, enrollTimeoutMs: 0, attest: false })).rejects.toThrow(/is unreadable/);
+    }
+  });
+
   it("changes nothing when the operator does not confirm", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     const calls = fakeDocker();
