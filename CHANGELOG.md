@@ -18,6 +18,10 @@ fixes.
 
 ### Fixes
 
+- `varlatch move` no longer stops when only recording its archive's
+  verification in the backup status fails. It verifies the archive again
+  without recording, goes on when that passes, and says so (#1). A
+  damaged archive still stops the move before anything changes.
 - `varlatch move` and `varlatch setup` stop with a clear error when
   `varlatch-move.json` is damaged, instead of a raw JSON error. The move
   guide says how to find where the move stopped.
