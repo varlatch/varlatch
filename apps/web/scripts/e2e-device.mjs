@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Live E2E for device sign-in (design notes "Device-authorization
  * sign-in"): the built CLI starts a sign-in, a person approves it on the

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Degraded realtime E2E (ADR-0035 D10). With convex-backend stopped, the
  * dashboard says live updates are reconnecting, keeps showing changes made

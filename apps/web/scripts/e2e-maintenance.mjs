@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Isolating maintenance E2E (ADR-0036 D6). The installation is put into the
  * same `503 MAINTENANCE` admission a restore uses, for a short lease:

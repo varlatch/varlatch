@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Live dashboard E2E: enroll a passkey through the dashboard origin, then
  * verify the two-backend client — /v1 views (orgs, projects, environments,

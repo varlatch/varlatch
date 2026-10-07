@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Live E2E for the CLI browser-handoff login (ADR-0017): enrolls a passkey
  * via a recovery grant, then drives `varlatch login` end to end — CLI opens
