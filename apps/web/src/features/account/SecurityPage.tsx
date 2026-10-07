@@ -108,7 +108,7 @@ export function SecurityPage() {
         {items.length === 1 && (
           <div className="px-4 pb-4">
             <Callout tone="warn" icon={<ShieldAlert size={17} />} title="Only one passkey">
-              If you lose this device you need an admin's recovery link. Add a second passkey, for example a security key.
+              If you lose this device, only whoever runs this Varlatch server can send you a link to enroll a new one. Add a second passkey, for example a security key.
             </Callout>
           </div>
         )}

@@ -11,6 +11,7 @@ import { TrustedProxies, clientAddressResolver } from "./http/client-address.js"
 import { whois } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
+import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
 import { createPgQuerier } from "./db/pg.js";
 import { runMigrations, schemaIsCurrent } from "./db/migrate.js";
@@ -80,6 +81,9 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     if (err instanceof ConfigError) fail(err.message);
+    // Written for people (the API returns the same text); any other error may
+    // carry configuration and stays behind the generic message below.
+    if (err instanceof DomainError) fail(err.message);
     throw err;
   }
 }
@@ -278,6 +282,16 @@ async function adminCommand(rest: string[]): Promise<void> {
     return;
   }
 
+  if (sub === "move-facts") {
+    // Read-only (issue #103): what a move to another public URL affects,
+    // for `varlatch move` to show before it changes anything.
+    const { moveFacts } = await import("./domain/bootstrap.js");
+    const config = loadConfig(process.env, { requireKek: false });
+    const db = createPgQuerier(config.databaseUrl);
+    try { console.log(JSON.stringify({ publicUrl: config.publicUrl ?? null, ...(await moveFacts(db)) })); } finally { await db.end(); }
+    return;
+  }
+
   if (sub === "doctor") {
     // Read-only Installation Health (ADR-0035 D8): no operator lease and no
     // maintenance refusal — it must report, not block, an active backup, and
@@ -368,6 +382,43 @@ async function adminCommand(rest: string[]): Promise<void> {
         console.log(`Expires: ${grant.expiresAt}.`);
         break;
       }
+      case "public-url-changed": {
+        // Issue #103: run once, after the installation answers at its new
+        // public URL. Passkeys of the old relying party can never sign in
+        // again: remove them, end every session, revoke the dashboard's
+        // tokens. The running configuration must already carry the new URL.
+        const from = arg("--from");
+        if (!from || !URL.canParse(from)) fail("Usage: varlatchd admin public-url-changed --from <the previous public URL>");
+        if (!config.publicUrl) fail("VARLATCH_PUBLIC_URL is not set; set the new public URL and restart varlatchd first");
+        const { completePublicUrlChange } = await import("./domain/bootstrap.js");
+        console.log(JSON.stringify(await completePublicUrlChange(makeCtx(), { from, to: config.publicUrl })));
+        break;
+      }
+      case "reenroll": {
+        // Issue #103: one-time links that add a passkey to existing people.
+        const all = has("--all");
+        const ids = rest.flatMap((value, i) => (rest[i - 1] === "--identity" ? [value] : []));
+        if (all === ids.length > 0) fail("Usage: varlatchd admin reenroll (--all | --identity <id> ...) [--hours <1-168>] [--json]");
+        const hours = arg("--hours");
+        const { issueReenrollmentGrants } = await import("./domain/bootstrap.js");
+        const grants = await issueReenrollmentGrants(makeCtx(), {
+          identityIds: all ? "all" : ids,
+          ...(hours !== undefined ? { ttlHours: Number(hours) } : {}),
+        });
+        const links = grants.map((g) => ({
+          identityId: g.identityId, name: g.name, installationAdmin: g.installationAdmin,
+          link: `${config.issuer}/enroll#${g.token}`, expiresAt: g.expiresAt,
+        }));
+        if (has("--json")) {
+          console.log(JSON.stringify({ links }));
+          break;
+        }
+        console.log("One-time re-enrollment links. Each adds a passkey to that person's existing identity;");
+        console.log("send each only to its person, over a channel you trust:");
+        for (const l of links) console.log(`  ${l.name}${l.installationAdmin ? " (Installation Admin)" : ""} [${l.identityId}]\n    ${l.link}`);
+        console.log(`Expire: ${links[0]?.expiresAt ?? "-"}.`);
+        break;
+      }
       case "mirror-sync": {
         if (!config.convexUrl) fail("Set VARLATCH_CONVEX_URL to enable mirror sync");
         const { syncAllMirrors } = await import("./mirror/publisher.js");
@@ -391,7 +442,7 @@ async function adminCommand(rest: string[]): Promise<void> {
       }
       default:
         fail(
-          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | mirror-sync | doctor [--wait <s>] | custody attest|status | " +
+          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | custody attest|status | " +
             "kek verify|export|restore|split|combine>",
         );
     }

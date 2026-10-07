@@ -113,10 +113,11 @@ and derives `.env` from it. Its fields:
 
 To change `webPort` or `bindAddress`, edit the file and run `varlatch setup`
 again. Leave `publicUrl`, `ingress`, `tailnetMachine`, and `tailnetName`
-alone: they decide the address passkeys are registered for, and moving an
-installation to another address is not supported yet. For the same reason,
-setup refuses a `--public-url` or `--ingress` that differs from the
-recorded one.
+alone: they decide the address passkeys are registered for. To give the
+installation another address, use `varlatch move`:
+[Moving an installation to another address](../operations/move-installation.md).
+Setup refuses a `--public-url` or `--ingress` that differs from the
+recorded one, and a `publicUrl` edited into the file.
 
 ## All variables
 
@@ -164,12 +165,12 @@ with it. It must be exactly the URL users visit: an origin such as
 HTTPS; `http://localhost` works for local testing. varlatchd does not start
 with a value that is not a URL.
 
-When to change it: not on a running installation. Every passkey is
-registered for this address, setup refuses a different one, and there is
-no supported procedure yet for moving an installation to another address:
-choose it before the first run. When you restore onto a new host, set it to
-the original installation's URL, even though the new host does not serve
-that address:
+When to change it: only with `varlatch move`. Every passkey is registered
+for this address, so a move is a re-enrollment event:
+[Moving an installation to another address](../operations/move-installation.md).
+When you restore onto a new host, set it to the original installation's
+URL, even though the new host does not serve that address, and move
+afterwards if you need a new one:
 [Restore on a fresh host](../operations/backup.md#restore-on-a-fresh-host-or-retry-an-interrupted-restore).
 
 ### `CONVEX_CLOUD_ORIGIN`
