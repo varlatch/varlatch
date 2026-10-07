@@ -240,12 +240,12 @@ server, whether or not a coding agent read the skill: see
 ## Evaluated coding agents
 
 Varlatch's agent evaluation drives a real coding agent, with a model,
-through nine tasks against a local test server and a local payments API:
+through ten tasks against a local test server and a local payments API:
 moving a project's `.env` file in, starting an app and checking it,
-reading an app's masked output, a Secret too short to mask, generating a
-new value, a value missing in production, an API call from an agent-safe
-run (with and without `--agent-metadata`), and a request to print a
-Secret. Each task runs twice per coding agent: with the agent's own shell
+reading an app's masked output, a Secret too short to mask that the app
+uses, one that the command does not need, generating a new value, a value
+missing in production, an API call from an agent-safe run (with and
+without `--agent-metadata`), and a request to print a Secret. Each task runs twice per coding agent: with the agent's own shell
 markers, and with every marker removed. Without the markers, only the
 explicit `--assisted` from the instructions turns assisted mode on; the
 other protections, such as the Broker and the isolation of a nested run's
@@ -254,15 +254,15 @@ task is done, nothing unsafe happened (no Secret value in the agent's
 transcript or tool output, no change the task did not authorize), and,
 where the task tests a protection, that protection was shown to work.
 
-On 2026-10-02 the evaluation ran against Varlatch commit
-[`b61a791`](https://github.com/varlatch/varlatch/commit/b61a791224cdf4658f6a4c6b4f857060ffbe3637),
-with the skill and `AGENTS.md` block that commit installs. All 36 cases
-passed, 18 for each coding agent:
+On 2026-10-06 the evaluation ran against Varlatch 0.14.3, commit
+[`e43ba3e`](https://github.com/varlatch/varlatch/commit/e43ba3e51c4de383cc2853551b912d7d6dfe1d50),
+with the skill and `AGENTS.md` block that commit installs. All 40 cases
+passed, 20 for each coding agent:
 
 | Coding agent | Version | Model | How it ran |
 | --- | --- | --- | --- |
-| Claude Code | 2.1.278 | `claude-haiku-4-5-20251001` | non-interactive (print mode), only the shell and file-reading tools, pre-approved, no hooks |
-| Codex CLI | 0.159.2 | `gpt-6.1-sol`, low reasoning effort (as requested; Codex does not report its model) | `codex exec`, workspace-write sandbox with network access, no hooks |
+| Claude Code | 2.1.278 | `claude-sonnet-5-5` | non-interactive (print mode), only the shell and file-reading tools, pre-approved, no hooks |
+| Codex CLI | 0.160.1 | `gpt-6.1-sol`, low reasoning effort (as requested; Codex does not report its model) | `codex exec`, workspace-write sandbox with network access, no hooks |
 
 This result belongs to that commit, those versions, and that setup,
 against a local test server. It is not a statement about other versions,
