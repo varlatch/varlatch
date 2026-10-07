@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.15.0)
+## 0.15.0 (2026-10-07)
 
 ### Documentation
 
@@ -52,7 +52,24 @@ fixes.
 
 ### Upgrading
 
-- Migration 26 adds the re-enrollment grant kind.
+Database schema: migration 26 (re-enrollment grants, and the address an
+installation last moved to).
+
+- From 0.14.3, 0.14.2, 0.14.1, 0.14.0, 0.13.0, 0.12.0, or 0.11.0: download
+  `varlatch-cli-0.15.0.cjs` from the `v0.15.0` release, check it against
+  `SHA256SUMS`, and run `node varlatch-cli-0.15.0.cjs upgrade 0.15.0
+  --dir /YOUR/COMPOSE/DIRECTORY --bek-file /YOUR/BEK
+  --kek-file /YOUR/ROOT-KEK`. The upgrade captures and verifies an archive
+  while the installation keeps serving, applies migration 26, and
+  completes only once the new release passes its health gate. Then replace
+  the host CLI with `varlatch-cli-0.15.0.cjs`, or run `varlatch
+  self-update`.
+- From 0.14.2 or older, the 0.14.3 notes below apply too: `.env` must set
+  `VARLATCH_PUBLIC_URL`. From 0.13.0 or older, the upgrade also applies
+  migrations 23 to 25, and the 0.14.0 notes below apply.
+- From 0.10.1 or older: follow the 0.11.0 instructions below with the
+  0.15.0 CLI and version.
+- 0.15.0 restores everything 0.14.3 restores, and archives from 0.14.3.
 
 ## 0.14.3 (2026-10-06)
 
