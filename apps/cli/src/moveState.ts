@@ -36,8 +36,8 @@ export function readMoveState(dir: string): MoveState | null {
     /* reported below */
   }
   if (!state || typeof state.from !== "string" || typeof state.to !== "string") {
-    // Found in a review of 0.15.0 (LampTwist/lamptwist-monorepo#894): a
-    // truncated file used to end the command with a raw JSON error.
+    // A truncated file used to end the command with a raw JSON error
+    // (found in a review of 0.15.0).
     throw new SetupError(
       `${MOVE_STATE_FILE} is unreadable, so the move's progress is unknown. Nothing was changed. ` +
         "See docs/operations/move-installation.md, \"If the move stops\", before you remove it.",

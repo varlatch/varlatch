@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * P4 E2E: audit timeline (authoritative /v1 history, filters, provenance
  * drawer), contract tab (git read-only vs managed editor, moving to the

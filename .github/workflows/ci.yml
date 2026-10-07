@@ -38,10 +38,9 @@ on:
 # gate. While minutes last, the probe bills one hosted minute per run.
 # Third-party actions are pinned to commits because a self-hosted runner
 # executes them on its host.
-# The self-hosted pool runs several jobs at once (a desktop machine with two
-# job slots, and a Hetzner server that takes over while the desktop is off),
-# but its capacity is small: a newer push to a pull request supersedes the
-# older run, so it cancels it. Runs on main are never cancelled.
+# The self-hosted pool runs a few jobs at once, but its capacity is small:
+# a newer push to a pull request supersedes the older run, so it cancels
+# it. Runs on main are never cancelled.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

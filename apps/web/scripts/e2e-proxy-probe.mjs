@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch tokens in output
 /**
  * Device sign-in behind the dashboard's nginx (ci-e2e.sh): each request
  * claims a different forged client address in X-Forwarded-For; varlatchd
