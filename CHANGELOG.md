@@ -7,6 +7,14 @@ fixes.
 
 ## Unreleased (0.15.0)
 
+### Fixes
+
+- A `varlatch run` inside an agent-safe run reads at most 64 KiB when it
+  asks the Broker how many tunnels it refused. It takes the Broker's
+  address from the Agent's environment, so whatever answered there could
+  otherwise stream an endless body into its memory. Past the limit, it
+  prints no note, as for any other unusable answer.
+
 ### Self-hosting
 
 - **`varlatch move` gives an installation another public URL** (#103),

@@ -224,6 +224,9 @@ export function agentRunCredentials(env: NodeJS.ProcessEnv): { item: string; val
  * does not. Undefined when the proxy is not the run's Broker or it does not
  * answer: the note is a hint, never a reason to fail the command.
  */
+/** The counts are a few hundred bytes; the address comes from the Agent's environment. */
+const TUNNELS_RESPONSE_LIMIT = 64 * 1024;
+
 export async function refusedTunnels(env: NodeJS.ProcessEnv): Promise<Map<string, number> | undefined> {
   let proxy: URL;
   try {
@@ -240,7 +243,13 @@ export async function refusedTunnels(env: NodeJS.ProcessEnv): Promise<Map<string
       (res) => {
         let body = "";
         res.setEncoding("utf8");
-        res.on("data", (chunk: string) => (body += chunk));
+        res.on("data", (chunk: string) => {
+          body += chunk;
+          if (body.length > TUNNELS_RESPONSE_LIMIT) {
+            res.destroy();
+            resolve(undefined);
+          }
+        });
         res.on("error", () => resolve(undefined));
         res.on("end", () => {
           try {
