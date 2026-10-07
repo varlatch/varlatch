@@ -245,6 +245,17 @@ what to do.
 Outside contributions are not accepted yet, but issues are welcome.
 [`CONTRIBUTING.md`](CONTRIBUTING.md) explains.
 
+## No warranty
+
+Varlatch is provided "as is", without warranty of any kind, and Robotsson is
+not liable for damage or loss from using it, to the extent the law allows.
+The warranty and liability sections of the licenses are the binding terms:
+sections 15 and 16 of the [AGPL-3.0](LICENSES/AGPL-3.0-or-later.txt) and
+sections 7 and 8 of the [Apache-2.0](LICENSES/Apache-2.0.txt).
+
+You run your installation and are responsible for it. Keep your Root KEK safe
+and your backups tested: without them, encrypted values cannot be recovered.
+
 ## License
 
 Copyright © 2026 Robotsson. Varlatch is open source, licensed by directory
