@@ -9,6 +9,9 @@ fixes.
 
 ### Documentation
 
+- The README states that Varlatch comes without warranty and that the
+  licenses' warranty and liability sections are the binding terms, and
+  shows the dashboard, an agent-safe run, and the architecture.
 - [Verifying a release](docs/operations/verify-release.md) says which
   releases are signed by version instead of by their notes: 0.15.0 and
   earlier were published while the repository was private and are not
