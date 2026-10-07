@@ -11,6 +11,7 @@ import { TrustedProxies, clientAddressResolver } from "./http/client-address.js"
 import { whois } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
+import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
 import { createPgQuerier } from "./db/pg.js";
 import { runMigrations, schemaIsCurrent } from "./db/migrate.js";
@@ -80,6 +81,9 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     if (err instanceof ConfigError) fail(err.message);
+    // Written for people (the API returns the same text); any other error may
+    // carry configuration and stays behind the generic message below.
+    if (err instanceof DomainError) fail(err.message);
     throw err;
   }
 }
