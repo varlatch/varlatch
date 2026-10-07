@@ -212,7 +212,20 @@ export async function runMove(opts: MoveOptions): Promise<number> {
     // Checked against the release this installation runs: the archive is for
     // going back to it, not forward.
     const installed = join(dir, "varlatch-release.json");
-    await verifyBackup([...opts.backupArgs, "--in", archive, "--record", ...(existsSync(installed) ? ["--target-release", installed] : [])], dir);
+    const verifyArgs = [...opts.backupArgs, "--in", archive, ...(existsSync(installed) ? ["--target-release", installed] : [])];
+    try {
+      await verifyBackup([...verifyArgs, "--record"], dir);
+    } catch (err) {
+      // Recording the result in the backup status is a Compose exec into
+      // varlatchd of its own, and it can fail while the archive is fine
+      // (varlatch/varlatch#1). Verify again without it: a damaged archive
+      // still stops the move here.
+      await verifyBackup(verifyArgs, dir);
+      console.log(
+        `  Note: the archive is verified, but the result could not be recorded in the backup status ` +
+          `(${err instanceof Error ? err.message : String(err)}).`,
+      );
+    }
     console.log(`  ✓ archive ${archive} verified`);
 
     writeMoveState(dir, {

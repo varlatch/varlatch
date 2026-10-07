@@ -31,6 +31,7 @@ import { join, resolve } from 'node:path';
 import tls from 'node:tls';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseDocument } from 'yaml';
+import { redactTokens } from './redact-tokens.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const cli = join(root, 'apps/cli/dist/varlatch.cjs');
@@ -63,6 +64,20 @@ function run(args) {
     exit.then(() => res(null));
   });
   return { when, exit, output: () => out };
+}
+
+/**
+ * The backup tooling's operator diagnostics (a Compose command and its
+ * stderr tail), for a failure message in a public CI log: credentials in
+ * URLs, NAME=value pairs for secret-looking names, and Varlatch tokens masked.
+ */
+function diagnostics() {
+  const path = join(dir, 'backup-diagnostics.log');
+  if (!existsSync(path)) return '';
+  const text = redactTokens(readFileSync(path, 'utf8'))
+    .replace(/(:\/\/)[^\s:@/]+:[^\s@/]+@/g, '$1***@')
+    .replace(/\b([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z0-9_]*)=\S+/g, '$1=***');
+  return `\n--- backup-diagnostics.log (masked) ---\n${text}`;
 }
 
 /** A CONNECT proxy that sends both names to Caddy's published HTTPS port. */
@@ -189,7 +204,7 @@ try {
   const move = run(['move', '--dir', dir, '--public-url', `https://${NEW}`, '--ingress', 'public', '--yes', '--enroll-timeout', '600',
     '--bek-file', join(dir, 'secrets/backup-key'), '--kek-file', join(dir, 'secrets/varlatch-kek')]);
   // Every link is printed before the wait starts; match them all from the full output then.
-  if (!(await move.when(/Waiting for an Installation Admin to enroll/g))) assert.fail(`move did not reach the re-enrollment wait:\n${(await move.exit).out}`);
+  if (!(await move.when(/Waiting for an Installation Admin to enroll/g))) assert.fail(`move did not reach the re-enrollment wait:\n${(await move.exit).out}${diagnostics()}`);
   const links = [...move.output().matchAll(/https:\/\/vault2\.varlatch\.test\/enroll#vlt_reenroll_\S+/g)];
   assert.equal(links.length, 2, 'one link per person');
   const during = JSON.parse(varlatchd(['admin', 'move-facts']));

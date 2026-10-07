@@ -169,6 +169,28 @@ exit 1
     expect(existsSync(join(dir, MOVE_STATE_FILE))).toBe(false);
   });
 
+  it("goes on when only recording the verification fails, and stops when the archive itself fails (#1)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    fakeDocker();
+    const dir = installation();
+    vi.spyOn(backup, "createBackup").mockResolvedValue("/backups/pre-move.vltbak");
+    const verify = vi.spyOn(backup, "verifyBackup").mockImplementation(async (args) => {
+      if (args.includes("--record")) throw new Error("Compose exec failed; installation may remain isolated.");
+      return {} as never;
+    });
+    expect(await runMove(options(dir, { publicUrl: NEW }))).toBe(3);
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect(verify.mock.calls[1]![0]).not.toContain("--record");
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/archive is verified, but the result could not be recorded/));
+    expect(readMoveState(dir)?.to).toBe(NEW);
+
+    const other = installation();
+    verify.mockReset().mockRejectedValue(new Error("Backup verification checks failed"));
+    await expect(runMove(options(other, { publicUrl: NEW }))).rejects.toThrow(/Backup verification checks failed/);
+    expect(existsSync(join(other, MOVE_STATE_FILE))).toBe(false);
+    expect(JSON.parse(readFileSync(join(other, CONFIG_FILE), "utf8")).publicUrl).toBe(OLD);
+  });
+
   it("checks the link lifetime and that an Installation Admin can finish, before anything changes", async () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     fakeDocker({ admins: 0 });
