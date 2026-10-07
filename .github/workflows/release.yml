@@ -193,6 +193,10 @@ jobs:
     # backend (third-party, pinned by digest) run natively, because Convex's
     # function time limits do not hold under emulation on a small host.
     runs-on: ${{ vars.ARM64_RUNNER || vars.RELEASE_RUNNER || (needs.images.outputs.hosted == 'true' && 'ubuntu-24.04-arm') || 'varlatch-ci' }}
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
     timeout-minutes: ${{ (vars.ARM64_RUNNER || vars.RELEASE_RUNNER || needs.images.outputs.hosted != 'true') && 240 || 45 }}
     permissions:
       contents: read

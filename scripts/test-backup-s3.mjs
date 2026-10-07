@@ -20,7 +20,9 @@ const dir = mkdtempSync(join(tmpdir(), name));
 const credentials = { accessKeyId: 'backup-test', secretAccessKey: randomBytes(24).toString('hex') };
 let s3;
 try {
-  execFileSync('docker', ['run','-d','--name',name,'-p','127.0.0.1::7070','-e',`ROOT_ACCESS_KEY=${credentials.accessKeyId}`,'-e',`ROOT_SECRET_KEY=${credentials.secretAccessKey}`,image,'posix','/tmp'], {stdio:'pipe'});
+  // The secret goes through the environment, by name only: a failed command's
+  // error repeats its arguments, and CI logs are public.
+  execFileSync('docker', ['run','-d','--name',name,'-p','127.0.0.1::7070','-e',`ROOT_ACCESS_KEY=${credentials.accessKeyId}`,'-e','ROOT_SECRET_KEY',image,'posix','/tmp'], {stdio:'pipe',env:{...process.env,ROOT_SECRET_KEY:credentials.secretAccessKey}});
   const endpoint=`http://${execFileSync('docker',['port',name,'7070/tcp'],{encoding:'utf8'}).trim()}`;
   // Any HTTP answer, even an authentication error, means it is listening.
   for(let i=0;i<100;i++) { try { await fetch(endpoint); break; } catch {} await new Promise(r=>setTimeout(r,100)); }
