@@ -297,6 +297,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.contributor == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -319,6 +323,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
@@ -460,6 +468,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.recovery == 'true' || needs.changes.outputs.lifecycle == 'true'
     runs-on: ${{ vars.CI_RUNNER || needs.changes.outputs.runner }}
+    # Public logs: every line of this job's steps is masked (scripts/ci-shell.sh).
+    defaults:
+      run:
+        shell: bash scripts/ci-shell.sh {0}
     # The self-hosted runner is much smaller than a hosted one.
     timeout-minutes: ${{ !vars.CI_RUNNER && needs.changes.outputs.hosted == 'true' && 45 || 180 }}
     permissions:
