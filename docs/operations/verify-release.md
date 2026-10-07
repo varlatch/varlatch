@@ -62,10 +62,13 @@ including the operator CLI and the release manifest.
 
 ## Images
 
-The release manifest pins each image by digest. Verify Varlatch's own three
-images against the same identity:
+The release manifest pins each image by digest. Their signatures are kept in
+a separate package, `ghcr.io/varlatch/varlatch-signatures`, so tell cosign
+to look there. Then verify Varlatch's own three images against the same
+identity:
 
 ```sh
+export COSIGN_REPOSITORY=ghcr.io/varlatch/varlatch-signatures
 for image in $(jq -r '.images | to_entries[]
     | select(.key == "varlatchd" or .key == "varlatch-web" or .key == "convex-deploy")
     | .value.digest' varlatch-release.json); do
@@ -73,6 +76,9 @@ for image in $(jq -r '.images | to_entries[]
     && echo "verified $image"
 done
 ```
+
+Without `COSIGN_REPOSITORY`, cosign looks beside each image and reports
+that no signatures were found. 0.15.1's signatures are in both places.
 
 The third-party images (PostgreSQL, the Convex backend, Caddy, Tailscale)
 are pinned by digest in the same manifest, which `SHA256SUMS` covers.
