@@ -771,6 +771,28 @@ describe("broker proxy", () => {
     expect(await refusedTunnels(env)).toBeUndefined();
   });
 
+  it("a nested run stops reading an endless answer: the address comes from the Agent's environment", async () => {
+    let sent = 0;
+    let closed!: () => void;
+    const done = new Promise<void>((r) => { closed = r; });
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      const chunk = "x".repeat(16 * 1024);
+      const pump = () => {
+        while (!res.destroyed && sent < 64 * 1024 * 1024 && res.write(chunk)) sent += chunk.length;
+        if (!res.destroyed && sent < 64 * 1024 * 1024) res.once("drain", pump);
+      };
+      res.on("close", closed);
+      pump();
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    expect(await refusedTunnels({ HTTPS_PROXY: `http://vlt:token@127.0.0.1:${port}` })).toBeUndefined();
+    await done;
+    expect(sent).toBeLessThan(8 * 1024 * 1024); // stopped near the 64 KiB limit, not at the 64 MiB the server offered
+    server.close();
+  });
+
   describe("the note a nested run prints after its command", () => {
     const counts = (entries: [string, number][]) => new Map(entries);
 
