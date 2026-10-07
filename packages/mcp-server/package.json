@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/mcp-server",
-  "version": "0.14.3",
+  "version": "0.15.0",
   "private": true,
   "description": "Model Context Protocol server for varlatch: metadata and (opt-in) non-secret writes, never a Secret's value; run as `varlatch mcp`",
   "license": "Apache-2.0",

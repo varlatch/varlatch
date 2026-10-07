@@ -15,7 +15,7 @@ a registry login that can read its images (`docker login ghcr.io` with a
 token that has the `read:packages` scope).
 
 ```sh
-V=0.14.3                                      # the release to verify
+V=0.15.0                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
@@ -106,7 +106,7 @@ Bash, giving the version, and the repository if releases come from another
 one:
 
 ```sh
-bash verify-unsigned.sh 0.14.3
+bash verify-unsigned.sh 0.15.0
 ```
 
 It downloads the release into a new temporary directory and stops at the

@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/matcher",
-  "version": "0.14.3",
+  "version": "0.15.0",
   "private": true,
   "description": "Streaming multi-pattern secret matcher shared by response scrubbing, output redaction, and scanning",
   "license": "Apache-2.0",

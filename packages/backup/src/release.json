@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.14.3",
+  "version": "0.15.0",
   "apiMajor": 1,
   "migrationVersion": 26,
   "supportedPostgresMajor": 17,
@@ -67,6 +67,10 @@
     },
     {
       "version": "0.14.2",
+      "migrationVersion": 25
+    },
+    {
+      "version": "0.14.3",
       "migrationVersion": 25
     }
   ]
