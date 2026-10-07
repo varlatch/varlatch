@@ -7,6 +7,13 @@ fixes.
 
 ## Unreleased (0.15.0)
 
+### Documentation
+
+- [Evaluated coding agents](docs/reference/coding-agents.md#evaluated-coding-agents)
+  now describes the evaluation of 0.14.3: Claude Code 2.1.278 with
+  `claude-sonnet-5-5` and Codex CLI 0.160.1 passed all 40 cases of ten
+  tasks, including the short Secret a command does not need.
+
 ### Fixes
 
 - A `varlatch run` inside an agent-safe run reads at most 64 KiB when it
