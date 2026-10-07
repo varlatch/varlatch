@@ -23,6 +23,7 @@ export default defineConfig({
       favicon: "/brand/favicon-32.png",
       head: [{ tag: "link", attrs: { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png" } }],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/varlatch/varlatch" }],
+      components: { SocialIcons: "./src/components/SocialIcons.astro" },
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
       sidebar: [
         { label: "Start here", items: ["getting-started", "concepts"] },

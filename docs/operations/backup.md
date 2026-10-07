@@ -20,11 +20,8 @@ sudo install -m 755 varlatch-cli-$V.cjs /usr/local/bin/varlatch
 varlatch --version
 ```
 
-Releases from the public repository sign `SHA256SUMS` itself: check its
-signature first, as [Verifying a release](verify-release.md) describes.
-
-While the repository is private, fetch the same assets with
-`gh release download v$V -R varlatch/varlatch -p "varlatch-cli-*" -p SHA256SUMS`.
+Releases after 0.15.0 sign `SHA256SUMS` itself: check its signature
+first, as [Verifying a release](verify-release.md) describes.
 
 From then on, `varlatch self-update` does the same for a newer release:
 it checks the signature on `SHA256SUMS` when cosign is installed and the

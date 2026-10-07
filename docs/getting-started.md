@@ -40,11 +40,9 @@ curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-While the repository is private, download the same files with
-`gh release download v$V -R varlatch/varlatch -p "varlatch-cli-*" -p SHA256SUMS`.
-Releases from the public repository also sign `SHA256SUMS`: check that
-signature first, as [Verifying a release](operations/verify-release.md)
-describes. On macOS, check the file with
+Releases after 0.15.0 also sign `SHA256SUMS`: check that signature
+first, as [Verifying a release](operations/verify-release.md) describes.
+On macOS, check the file with
 `grep " varlatch-cli-$V.cjs\$" SHA256SUMS | shasum -a 256 -c -`.
 
 Then put it on your `PATH` as `varlatch`:

@@ -7,6 +7,15 @@ fixes.
 
 ## Unreleased (0.15.1)
 
+### Documentation
+
+- [Verifying a release](docs/operations/verify-release.md) says which
+  releases are signed by version instead of by their notes: 0.15.0 and
+  earlier were published while the repository was private and are not
+  signed, and every later release is. The install steps no longer describe
+  downloading from a private repository, and the documentation site links
+  to varlatch.com.
+
 ### Fixes
 
 - `varlatch move` and `varlatch setup` stop with a clear error when
