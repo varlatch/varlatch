@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/sdk",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "description": "Typed client for the Varlatch /v1 public API (ADR-0018): the same surface official and third-party clients use",
   "license": "Apache-2.0",
