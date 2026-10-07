@@ -1,4 +1,36 @@
-# Varlatch
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/docs/src/assets/varlatch-mark-on-dark.png">
+    <img src="apps/docs/src/assets/varlatch-mark-on-light.png" width="88" alt="">
+  </picture>
+</p>
+
+<h1 align="center">Varlatch</h1>
+
+<p align="center">
+  <strong>Self-hosted secrets and environment configuration, built for AI coding agents.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/varlatch/varlatch/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/varlatch/varlatch?sort=semver&label=release"></a>
+  <a href="https://github.com/varlatch/varlatch/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/varlatch/varlatch/ci.yml?branch=main&event=push&label=CI"></a>
+  <a href="LICENSE"><img alt="License: AGPL-3.0 and Apache-2.0" src="https://img.shields.io/badge/license-AGPL--3.0%20%7C%20Apache--2.0-blue"></a>
+</p>
+
+<p align="center">
+  <a href="https://varlatch.com">Website</a> ·
+  <a href="https://docs.varlatch.com">Documentation</a> ·
+  <a href="docs/getting-started.md">Getting started</a> ·
+  <a href="CHANGELOG.md">Changelog</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/dashboard-dark.webp">
+    <img src="docs/assets/readme/dashboard-light.webp" alt="The Varlatch dashboard: the configuration items of a project across its development, staging, and production environments, with secret values masked">
+  </picture>
+</p>
 
 Varlatch is a self-hosted platform for secrets and environment configuration.
 It stores, authorizes, audits, and delivers the configuration your
@@ -53,29 +85,40 @@ each release added.
 - **No artificial limits.** Unlimited projects, environments, users, and
   machines.
 
+<p align="center">
+  <img src="docs/assets/readme/agent-safe-run.webp" alt="A terminal running varlatch run with --agent-safe: the agent's environment holds a placeholder for STRIPE_SECRET_KEY, and DATABASE_URL is left out">
+</p>
+
+In an agent-safe run, the agent sees a placeholder instead of the Stripe key.
+The local Broker puts the real key into the `Authorization` header of requests
+to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
+[Agent-safe runs](docs/reference/agent-safe-runs.md) explains the details.
+
+## A look around
+
+<table>
+  <tr>
+    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/audit-dark.webp"><img src="docs/assets/readme/audit-light.webp" alt="The audit log: a live list of who read, changed, or was denied what"></picture><br>
+      <sub><b>Audit log.</b> Every security-relevant action, live, filterable, and exportable as NDJSON.</sub></td>
+    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/access-dark.webp"><img src="docs/assets/readme/access-light.webp" alt="The Access page: how access works, explained, above the list of people"></picture><br>
+      <sub><b>Access.</b> Default-deny: people, machines, roles, teams, and grants.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/contract-dark.webp"><img src="docs/assets/readme/contract-light.webp" alt="A project's contract: each item with its type, whether it is required, and whether it is secret"></picture><br>
+      <sub><b>Contract.</b> Which items a project needs, of what type, and which are secret.</sub></td>
+    <td width="50%"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/environment-dark.webp"><img src="docs/assets/readme/environment-light.webp" alt="One environment's values, with secrets masked until revealed"></picture><br>
+      <sub><b>Environment.</b> Secrets stay masked; revealing one is recorded in the audit log.</sub></td>
+  </tr>
+</table>
+
 ## How it works
 
-```
-┌───────────────────────────────────────────────┐
-│              UNTRUSTED CLIENTS                │
-│   browser · CLI · CI · workloads · agents     │
-└──────────────────────┬────────────────────────┘
-                       │  authenticate end to end
-                       ▼
-┌───────────────────────────────────────────────┐
-│          SECRET PLANE (varlatchd)             │
-│  the only public API (/v1) · passkeys ·       │
-│  identities · organizations · grants ·        │
-│  contracts · secret values · crypto · audit   │
-└──────────────────────┬────────────────────────┘
-                       │  one-way mirrors
-                       ▼
-┌───────────────────────────────────────────────┐
-│        APPLICATION PLANE (Convex)             │
-│  reactive dashboard backend · read models     │
-│  that are never authoritative                 │
-└───────────────────────────────────────────────┘
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/architecture-dark.webp">
+    <img src="docs/assets/readme/architecture-light.webp" width="820" alt="Architecture: untrusted clients (browser, CLI, CI, workloads, AI agents) authenticate end to end with varlatchd, the Secret Plane and security authority, which sends one-way mirrors to Convex, the Application Plane">
+  </picture>
+</p>
 
 - **`varlatchd` is the security authority.** It owns everything that feeds an
   authorization decision. A self-hosted [Convex](https://convex.dev) backend
