@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/sync",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "private": true,
   "description": "Platform Adapters for Sync Targets (ADR-0031): the closed allowlist of platforms varlatchd and the CLI can push Values to",
   "license": "Apache-2.0",

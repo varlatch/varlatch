@@ -34,7 +34,7 @@ release. It needs only Node.js 22 or newer. Use the version your
 installation runs: the CLI and the installation are released together.
 
 ```sh
-V=0.15.0  # the release your installation runs
+V=0.15.1  # the release your installation runs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS

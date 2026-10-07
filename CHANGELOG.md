@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.15.1)
+## 0.15.1 (2026-10-07)
 
 ### Documentation
 
@@ -28,6 +28,21 @@ fixes.
 - `varlatch move` and `varlatch setup` stop with a clear error when
   `varlatch-move.json` is damaged, instead of a raw JSON error. The move
   guide says how to find where the move stopped.
+
+### Upgrading
+
+No database migration: 0.15.1 runs on 0.15.0's schema (migration 26).
+0.15.1 is the first signed release: check `SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
+
+- From 0.15.0: download `varlatch-cli-0.15.1.cjs` from the `v0.15.1`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.15.1.cjs upgrade 0.15.1 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.15.1.cjs`, or run `varlatch self-update`.
+- From 0.14.3 or older: follow the 0.15.0 notes below with the 0.15.1 CLI
+  and version. The upgrade applies migration 26.
+- 0.15.1 restores everything 0.15.0 restores, and archives from 0.15.0.
 
 ## 0.15.0 (2026-10-07)
 
