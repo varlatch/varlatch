@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Ingress, InstallConfig } from "./setup.js";
+import { type Ingress, type InstallConfig, SetupError } from "./setup.js";
 
 /**
  * Where an interrupted `varlatch move` (issue #103) stands, so a rerun
@@ -28,7 +28,22 @@ export interface MoveState {
 
 export function readMoveState(dir: string): MoveState | null {
   const path = join(dir, MOVE_STATE_FILE);
-  return existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as MoveState) : null;
+  if (!existsSync(path)) return null;
+  let state: Partial<MoveState> | null = null;
+  try {
+    state = JSON.parse(readFileSync(path, "utf8")) as Partial<MoveState>;
+  } catch {
+    /* reported below */
+  }
+  if (!state || typeof state.from !== "string" || typeof state.to !== "string") {
+    // Found in a review of 0.15.0 (LampTwist/lamptwist-monorepo#894): a
+    // truncated file used to end the command with a raw JSON error.
+    throw new SetupError(
+      `${MOVE_STATE_FILE} is unreadable, so the move's progress is unknown. Nothing was changed. ` +
+        "See docs/operations/move-installation.md, \"If the move stops\", before you remove it.",
+    );
+  }
+  return state as MoveState;
 }
 
 export function writeMoveState(dir: string, state: MoveState): void {

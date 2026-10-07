@@ -5,6 +5,14 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.15.1)
+
+### Fixes
+
+- `varlatch move` and `varlatch setup` stop with a clear error when
+  `varlatch-move.json` is damaged, instead of a raw JSON error. The move
+  guide says how to find where the move stopped.
+
 ## 0.15.0 (2026-10-07)
 
 ### Documentation

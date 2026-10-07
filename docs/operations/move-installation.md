@@ -100,6 +100,12 @@ address. The server also records the address of the last move, and refuses
 to remove passkeys a second time. `varlatch setup` refuses to run while a
 move is open.
 
+If `varlatch-move.json` itself is damaged, every command refuses to guess.
+`varlatchd admin move-facts` (in the `varlatchd` container) shows the address
+varlatchd runs at and how many passkeys exist: zero means the old ones were
+removed. Write the file back with `from`, `to`, both ingresses, and the
+archive's path, then run `varlatch move` again.
+
 ## Going back
 
 Give the move up:
