@@ -1,7 +1,7 @@
 # Verifying a release
 
-A Varlatch release is signed by the repository's release workflow, unless
-its release notes say otherwise (see
+A Varlatch release after 0.15.0 is signed by the repository's release
+workflow; 0.15.0 and earlier are not (see
 [signed and unsigned releases](#signed-and-unsigned-releases)). Signing is
 keyless: Sigstore certifies the workflow's GitHub Actions identity for the
 release tag, so there is no key to fetch or trust separately. Each image also
@@ -30,19 +30,22 @@ releases are signed only when its `SIGN_PRIVATE_RELEASES` repository
 variable is `true`, because keyless signatures are recorded in Sigstore's
 public transparency log with the repository, tag, and digests they cover.
 
+Releases up to and including 0.15.0 were published while this repository
+was private, and are not signed. Every later release is published from the
+public repository, so it is signed.
+
 A signed release has `SHA256SUMS.sigstore.json` among its assets and a
 signature on each of Varlatch's three images. An unsigned release has
 neither.
 
-Treat a release as unsigned only when its release notes say it is not
-signed. A release from the public repository is always signed, whatever its
-notes say. If a release you expect to be signed has no
-`SHA256SUMS.sigstore.json`, or a signature check below fails, stop: do not
-install it, and do not fall back to the checks for unsigned releases. Its
-missing signatures may mean it was tampered with or published incorrectly.
+Treat a release as unsigned only when it is 0.15.0 or earlier. A later
+release is always signed, whatever its notes say. If a release you expect
+to be signed has no `SHA256SUMS.sigstore.json`, or a signature check below
+fails, stop: do not install it, and do not fall back to the checks for
+unsigned releases. Its missing signatures may mean it was tampered with or
+published incorrectly.
 
-For a release whose notes say it is not signed, go to
-[unsigned releases](#unsigned-releases).
+For 0.15.0 and earlier, go to [unsigned releases](#unsigned-releases).
 
 ## Release assets
 
@@ -95,7 +98,7 @@ lists them, so the release-asset checks above cover them.
 
 ## Unsigned releases
 
-These checks are for a release whose notes say it is not signed. They show
+These checks are for 0.15.0 and earlier, which are not signed. They show
 that your download is complete and consistent, and that the pinned images
 describe the expected build. They do not verify the release workflow's
 identity: read [what they cannot show](#what-unsigned-checks-cannot-show)
@@ -117,7 +120,7 @@ passed; that runs code from the release, as installing it would.
 
 ```bash
 #!/usr/bin/env bash
-# Checks for a Varlatch release whose notes say it is not signed.
+# Checks for an unsigned Varlatch release (0.15.0 and earlier).
 # Usage: bash verify-unsigned.sh VERSION [REPOSITORY]
 set -euo pipefail
 shopt -s dotglob nullglob # "*" below also matches hidden files
@@ -227,8 +230,8 @@ cryptographic identity:
   Inspecting them shows what an image claims about its build, not that the
   claim is true.
 - The release notes are not signed either, including their statement that
-  a release is unsigned. That is why a release from the public repository
-  needs its signatures whatever its notes say.
+  a release is unsigned. That is why a release after 0.15.0 needs its
+  signatures whatever its notes say.
 
 An unsigned release is therefore only as trustworthy as access to the
 repository and its packages: who can push tags, publish releases, and push

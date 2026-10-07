@@ -216,8 +216,8 @@ Each GitHub release attaches the deployment unit: `varlatch-release.json`
 `varlatch-cli-<version>.cjs` (the single-file operator CLI, Node 22+) and
 `SHA256SUMS`. Digests are the canonical runtime pin; tags are for humans.
 From 0.10.0 on, images are published for linux/amd64 and linux/arm64 with
-provenance and SBOM attestations, and releases from the public repository
-sign `SHA256SUMS` and the images:
+provenance and SBOM attestations, and releases after 0.15.0 sign
+`SHA256SUMS` and the images:
 [Verifying a release](../../docs/operations/verify-release.md).
 
 The canonical path is the CLI, run on the host in this directory. Install it

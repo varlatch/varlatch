@@ -589,7 +589,7 @@ The host CLI reads a few variables of its own:
 
 | Variable | Used by | Purpose |
 |---|---|---|
-| `GITHUB_TOKEN` or `GH_TOKEN` | `varlatch upgrade`, `varlatch self-update` | a GitHub token for reading releases, needed while the repository is private |
+| `GITHUB_TOKEN` or `GH_TOKEN` | `varlatch upgrade`, `varlatch self-update` | a GitHub token for reading releases, needed only when they come from a private repository |
 | `VARLATCH_RELEASE_REPO` | `varlatch upgrade`, `varlatch self-update` | the repository releases come from; default `varlatch/varlatch`; `--repo` overrides it |
 | `COMPOSE_PROJECT_NAME`, `COMPOSE_FILE`, `COMPOSE_ENV_FILES` | `varlatch doctor` and the other host commands, through `docker compose` | for a project started with other files or another project name: [Health check](../../infra/compose/README.md#health-check-read-only) |
 | `VARLATCH_KEK_PASSPHRASE` | `admin kek export` and `admin kek restore`, inside `varlatchd` | the escrow passphrase, for non-interactive use; `--passphrase-file` is the alternative |

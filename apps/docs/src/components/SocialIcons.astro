@@ -1,0 +1,20 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// The header's links: varlatch.com, then Starlight's social icons. Starlight
+// also shows these in the mobile menu.
+import Default from "@astrojs/starlight/components/SocialIcons.astro";
+---
+
+<a class="home" href="https://varlatch.com/">varlatch.com</a>
+<Default />
+
+<style>
+  .home {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    text-decoration: none;
+  }
+  .home:hover {
+    color: var(--sl-color-white);
+  }
+</style>
