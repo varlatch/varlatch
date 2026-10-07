@@ -10,7 +10,7 @@ name: Release
 # Provenance (ADR-0037 D4/D5): images are built for linux/amd64 and
 # linux/arm64 with build-provenance and SBOM attestations, and each image and
 # SHA256SUMS is signed keyless with Sigstore from this workflow's own OIDC
-# identity. The release itself is only published once an end-to-end suite has
+# identity; the image signatures are stored in ghcr.io/OWNER/varlatch-signatures. The release itself is only published once an end-to-end suite has
 # passed on arm64. docs/operations/verify-release.md shows how to check all of
 # it.
 #
@@ -110,6 +110,7 @@ jobs:
             echo "varlatchd=ghcr.io/${OWNER}/varlatchd"
             echo "web=ghcr.io/${OWNER}/varlatch-web"
             echo "convex_deploy=ghcr.io/${OWNER}/varlatch-convex-deploy"
+            echo "signatures=ghcr.io/${OWNER}/varlatch-signatures"
             echo "version=${GITHUB_REF_NAME#v}"
           } >> "$GITHUB_OUTPUT"
 
@@ -163,8 +164,15 @@ jobs:
           push: true
           tags: ${{ steps.names.outputs.convex_deploy }}:${{ steps.names.outputs.version }}
 
+      # The image signatures go to their own package: cosign would otherwise
+      # tag each one beside its image, and GitHub shows the newest tag of a
+      # package as its latest version, with a pull command for the signature.
+      # (GHCR has no OCI referrers API, so newer signature formats still add a
+      # tag.) Verifying needs COSIGN_REPOSITORY set the same way.
       - name: Sign the images
         id: refs
+        env:
+          COSIGN_REPOSITORY: ${{ steps.names.outputs.signatures }}
         run: |
           set -euo pipefail
           version=${{ steps.names.outputs.version }}

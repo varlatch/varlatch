@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.15.2)
+
+### Releases
+
+- Image signatures are published in their own package,
+  `ghcr.io/varlatch/varlatch-signatures`, instead of beside each image.
+  GitHub showed the newest signature as an image's latest version, with a
+  pull command for the signature instead of the image. To verify images,
+  set `COSIGN_REPOSITORY` as
+  [Verifying a release](docs/operations/verify-release.md) shows. 0.15.1's
+  signatures are in both places.
+
 ## 0.15.1 (2026-10-07)
 
 ### Documentation
