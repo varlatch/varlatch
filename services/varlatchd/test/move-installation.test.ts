@@ -96,6 +96,8 @@ describe("re-enrollment links (issue #103)", () => {
     await expect(issueReenrollmentGrants(ctx, { identityIds: ["idn_unknown"] })).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND" });
     const [grant] = await issueReenrollmentGrants(ctx, { identityIds: [memberId] });
     await ctx.db.query("UPDATE identities SET disabled = true WHERE id = $1", [memberId]);
+    // Refused when the ceremony starts, before an authenticator makes a credential, and at consumption.
+    await expect(peekSetupGrant(ctx, grant!.token)).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
     await expect(consumeSetupGrant(ctx, grant!.token, {})).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
     await expect(issueReenrollmentGrants(ctx, { identityIds: [memberId] })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect((await issueReenrollmentGrants(ctx, { identityIds: "all" })).map((g) => g.identityId)).not.toContain(memberId);
@@ -139,6 +141,34 @@ describe("completing a public URL change (issue #103)", () => {
     const audit = await ctx.db.query("SELECT metadata FROM audit_events WHERE event_type = 'installation.public_url_changed'");
     expect(audit.rows).toHaveLength(1);
     expect((audit.rows[0] as { metadata: unknown }).metadata).toMatchObject({ from: result.from, to: result.to, passkeysRemoved: 2 });
+  });
+
+  it("removes passkeys once per move: a rerun or a wrong --from after people re-enrolled removes nothing", async () => {
+    const { memberId } = await installation();
+    await completePublicUrlChange(ctx, { from: "https://a.example.com", to: "https://b.example.com" });
+    const [grant] = await issueReenrollmentGrants(ctx, { identityIds: [memberId] });
+    await completeEnrollment(ctx, (await enrollmentUser(ctx, grant!.token)).id, grant!.token);
+    await ctx.db.query(
+      `INSERT INTO "passkey" (id, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp")
+       VALUES ('pk_new', 'pk', $1, 'cred_new', 0, 'singleDevice', false)`,
+      [`bau_${memberId}`],
+    );
+    await expect(completePublicUrlChange(ctx, { from: "https://a.example.com", to: "https://b.example.com" })).rejects.toThrow(/already removed/);
+    await expect(completePublicUrlChange(ctx, { from: "https://typo.example.com", to: "https://c.example.com" })).rejects.toThrow(/last moved to https:\/\/b\.example\.com/);
+    expect(await count(`SELECT count(*)::int AS n FROM "passkey"`)).toBe(1);
+    // The next real move starts from the recorded address.
+    expect((await completePublicUrlChange(ctx, { from: "https://b.example.com", to: "https://c.example.com" })).passkeysRemoved).toBe(1);
+  });
+
+  it("writes one credential.revoked line per browser token, as every revocation does", async () => {
+    const { memberId, adminId } = await installation();
+    const a = await issueCredential(ctx.db, { identityId: memberId, kind: "browser", authSessionId: "ses_2" });
+    const b = await issueCredential(ctx.db, { identityId: adminId, kind: "browser", authSessionId: "ses_1" });
+    await completePublicUrlChange(ctx, { from: "https://vault.example.com", to: "https://vault.example.org" });
+    const lines = await ctx.db.query(
+      "SELECT credential_id FROM audit_events WHERE event_type = 'credential.revoked' ORDER BY credential_id",
+    );
+    expect((lines.rows as { credential_id: string }[]).map((r) => r.credential_id)).toEqual([a.credentialId, b.credentialId].sort());
   });
 
   it("refuses the same address, and changes nothing", async () => {

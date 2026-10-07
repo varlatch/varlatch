@@ -105,6 +105,7 @@ Usage:
   varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]
                 [--bek-file <path> | --bek-passphrase-file <path>] --kek-file <path> [--reenroll-hours <1-168>]
                 [--yes] [--no-wait]                    # another public URL: archive, move, re-enrollment links
+  varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address
   varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]
                                                        # one-time links: a new passkey on an existing identity
   varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]

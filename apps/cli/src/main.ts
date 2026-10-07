@@ -2088,16 +2088,21 @@ async function main(): Promise<void> {
         if (args[0] === "reenroll") {
           // Issue #103: one-time links that add a passkey to existing people,
           // issued by varlatchd on this host (host-exec authority, like recovery).
-          const { varlatchd } = await import("./setup.js");
+          const { varlatchd, SetupError } = await import("./setup.js");
           const all = has(args, "--all");
-          const ids = args.flatMap((value, i) => (args[i - 1] === "--identity" ? [value] : []));
+          const ids = flags(args, "--identity");
           if (all === ids.length > 0) usageError("Usage: varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]");
           const hours = flag(args, "--hours");
-          process.stdout.write(varlatchd(flag(args, "--dir") ?? process.cwd(), [
-            "admin", "reenroll",
-            ...(all ? ["--all"] : ids.flatMap((id) => ["--identity", id])),
-            ...(hours ? ["--hours", hours] : []),
-          ]));
+          try {
+            process.stdout.write(varlatchd(flag(args, "--dir") ?? process.cwd(), [
+              "admin", "reenroll",
+              ...(all ? ["--all"] : ids.flatMap((id) => ["--identity", id])),
+              ...(hours ? ["--hours", hours] : []),
+            ]) + "\n");
+          } catch (err) {
+            if (err instanceof SetupError) fail(err.message);
+            throw err;
+          }
           break;
         }
         if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll");
@@ -2141,9 +2146,11 @@ async function main(): Promise<void> {
             dir: flag(args, "--dir") ?? process.cwd(),
             publicUrl: flag(args, "--public-url"),
             ingress: flag(args, "--ingress") as "public" | "tailnet" | "external" | undefined,
-            backupArgs: ["--bek-file", "--bek-passphrase-file", "--kek-file", "--destination", "--destinations-file", "--scratch-dir", "--timeout-seconds"].flatMap((name) => flag(args, name) ? [name, flag(args, name)!] : []),
+            // The archive stays in the Compose directory: it is the way back, read right after.
+            backupArgs: ["--bek-file", "--bek-passphrase-file", "--kek-file", "--scratch-dir", "--timeout-seconds"].flatMap((name) => flag(args, name) ? [name, flag(args, name)!] : []),
             yes: has(args, "--yes"),
-            reenrollHours: flag(args, "--reenroll-hours") ? Number(flag(args, "--reenroll-hours")) : undefined,
+            reenrollHours: flag(args, "--reenroll-hours") !== undefined ? Number(flag(args, "--reenroll-hours")) : undefined,
+            abandon: has(args, "--abandon"),
             noWait: has(args, "--no-wait"),
             enrollTimeoutMs: Number(flag(args, "--enroll-timeout") ?? "900") * 1000,
           });

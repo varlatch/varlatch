@@ -3,7 +3,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { createBackup, verifyBackup } from "./backup.js";
-import { readMoveState, writeMoveState } from "./moveState.js";
+import { clearMoveState, readMoveState, writeMoveState } from "./moveState.js";
 import {
   CONFIG_FILE,
   INGRESS,
@@ -11,6 +11,7 @@ import {
   type Ingress,
   type InstallConfig,
   loadInstallConfig,
+  rewriteManagedEnv,
   runSetup,
   SetupError,
   validatePublicHost,
@@ -45,14 +46,18 @@ export interface MoveOptions {
   dir: string;
   publicUrl?: string | undefined;
   ingress?: Ingress | undefined;
-  /** Passed through to `varlatch admin backup create|verify`. */
+  /** Passed through to `varlatch admin backup create|verify`; the archive stays local. */
   backupArgs: string[];
   yes: boolean;
   /** Lifetime of the re-enrollment links (1 to 168 hours). */
   reenrollHours?: number | undefined;
   noWait: boolean;
   enrollTimeoutMs: number;
+  /** Give up an open move: the configuration goes back to the old address. */
+  abandon?: boolean;
 }
+
+export const REENROLL_HOURS_MAX = 168;
 
 /** The Installation Configuration after the move; pure, so it is testable. */
 export function movedConfig(config: InstallConfig, to: { publicUrl: string; ingress: Ingress }): { config: InstallConfig; notes: string[] } {
@@ -111,7 +116,7 @@ export function movePlan(from: InstallConfig, to: { publicUrl: string; ingress: 
     "  - CLI, agent, and machine credentials keep working: change the server address where they are",
     "    configured (varlatch.toml, CI, VARLATCH_SERVER), and people sign in again with",
     `    \`varlatch login --server ${to.publicUrl}\`;`,
-    `  - ${from.publicUrl} stops answering.`,
+    `  - passkeys and the dashboard no longer work at ${from.publicUrl}${fromIngress === "external" ? " (your proxy may still route it)" : ", which stops answering"}.`,
     "",
     "First, an archive of the installation is taken and verified. Restoring it is the way back.",
   ];
@@ -153,16 +158,28 @@ export async function runMove(opts: MoveOptions): Promise<number> {
         "On Coolify, follow docs/operations/move-installation.md.",
     );
   }
+  if (opts.reenrollHours !== undefined && !(Number.isFinite(opts.reenrollHours) && opts.reenrollHours > 0 && opts.reenrollHours <= REENROLL_HOURS_MAX)) {
+    throw new SetupError(`--reenroll-hours must be more than 0 and at most ${REENROLL_HOURS_MAX}. Nothing changed.`);
+  }
   const pending = readMoveState(dir);
+  if (opts.abandon) return abandonMove(dir, config, pending);
   if (pending) {
     if (opts.publicUrl && validatePublicUrl(opts.publicUrl) !== pending.to) {
-      throw new SetupError(`A move to ${pending.to} is in progress: finish it with \`varlatch move\` (no --public-url) before choosing another address.`);
+      throw new SetupError(`A move to ${pending.to} is in progress: finish it with \`varlatch move\` (no --public-url), or give it up with \`varlatch move --abandon\`.`);
+    }
+    if (opts.ingress && opts.ingress !== pending.toIngress) {
+      throw new SetupError(`The move in progress goes to the ${pending.toIngress} ingress, not ${opts.ingress}.`);
+    }
+    if (config.publicUrl === pending.from) {
+      // Stopped between recording the move and writing the new address.
+      writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(movedConfig(config, { publicUrl: pending.to, ingress: pending.toIngress }).config, null, 2) + "\n");
+    } else if (config.publicUrl !== pending.to || (config.ingress ?? "external") !== pending.toIngress) {
+      throw new SetupError(
+        `${CONFIG_FILE} names ${config.publicUrl} (${config.ingress ?? "external"} ingress), but the move in progress goes from ${pending.from} to ` +
+          `${pending.to} (${pending.toIngress} ingress). Put ${pending.to} back, or give the move up with \`varlatch move --abandon\`.`,
+      );
     }
     console.log(`Resuming the move from ${pending.from} to ${pending.to} (archive ${pending.archive}).`);
-    // Stopped between recording the move and writing the new address.
-    if (config.publicUrl === pending.from) {
-      writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(movedConfig(config, { publicUrl: pending.to, ingress: pending.toIngress }).config, null, 2) + "\n");
-    }
   } else {
     const to = moveTarget(config, opts);
     if (!config.publicUrl) throw new SetupError(`${CONFIG_FILE} names no public URL yet: finish \`varlatch setup\` first.`);
@@ -171,13 +188,20 @@ export async function runMove(opts: MoveOptions): Promise<number> {
     let facts: MoveFacts;
     try {
       facts = JSON.parse(varlatchd(dir, ["admin", "move-facts"])) as MoveFacts;
-    } catch {
-      throw new SetupError("Could not read the installation's state from varlatchd: the installation must be running (`docker compose ps`).");
+    } catch (err) {
+      throw new SetupError(`Could not read the installation's state from varlatchd (it must be running and 0.15.0 or newer): ${err instanceof Error ? err.message : String(err)}`);
     }
     if (facts.publicUrl && facts.publicUrl !== config.publicUrl) {
       throw new SetupError(`${CONFIG_FILE} names ${config.publicUrl}, but varlatchd runs at ${facts.publicUrl}: rerun \`varlatch setup\` before moving.`);
     }
-    console.log(movePlan(config, to, facts).join("\n"));
+    if (facts.installationAdmins === 0) {
+      throw new SetupError(
+        "No Installation Admin is enabled, so nobody could finish the move. Recover one first: " +
+          "`docker compose exec varlatchd node dist/cli.js admin recover --new-admin`. Nothing changed.",
+      );
+    }
+    const { config: next, notes } = movedConfig(config, to);
+    console.log([...movePlan(config, to, facts), ...notes.map((n) => `\nNote: ${n}`)].join("\n"));
     if (!(await confirm(`\nMove this installation to ${to.publicUrl}?`, opts.yes))) {
       console.log("Nothing changed.");
       return 1;
@@ -185,10 +209,12 @@ export async function runMove(opts: MoveOptions): Promise<number> {
 
     console.log("\nTaking an archive (the way back) ...");
     const archive = await createBackup(opts.backupArgs, dir);
-    await verifyBackup([...opts.backupArgs, "--in", archive], dir);
+    // Checked against the release this installation runs: the archive is for
+    // going back to it, not forward.
+    const installed = join(dir, "varlatch-release.json");
+    await verifyBackup([...opts.backupArgs, "--in", archive, "--record", ...(existsSync(installed) ? ["--target-release", installed] : [])], dir);
     console.log(`  ✓ archive ${archive} verified`);
 
-    const { config: next, notes } = movedConfig(config, to);
     writeMoveState(dir, {
       from: config.publicUrl,
       fromIngress: config.ingress ?? "external",
@@ -196,9 +222,9 @@ export async function runMove(opts: MoveOptions): Promise<number> {
       toIngress: to.ingress,
       archive,
       startedAt: new Date().toISOString(),
+      previousConfig: config,
     });
     writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(next, null, 2) + "\n");
-    for (const note of notes) console.log(`Note: ${note}`);
   }
   return runSetup({
     dir,
@@ -207,4 +233,28 @@ export async function runMove(opts: MoveOptions): Promise<number> {
     attest: false,
     move: { ...(opts.reenrollHours !== undefined ? { reenrollHours: opts.reenrollHours } : {}) },
   });
+}
+
+/**
+ * `varlatch move --abandon`: the configuration and .env go back to the old
+ * address and the move is closed. Before the old passkeys were removed that
+ * is all a way back needs (then `varlatch setup`); after, the archive the move
+ * took is restored first, which brings the old passkeys back.
+ */
+function abandonMove(dir: string, config: InstallConfig, pending: ReturnType<typeof readMoveState>): number {
+  if (!pending) throw new SetupError("No move in progress: nothing to give up.");
+  const previous = pending.previousConfig ?? { ...config, publicUrl: pending.from, ingress: pending.fromIngress };
+  writeFileSync(join(dir, CONFIG_FILE), JSON.stringify(previous, null, 2) + "\n");
+  rewriteManagedEnv(dir, previous);
+  clearMoveState(dir);
+  console.log(`The move to ${pending.to} is given up: ${CONFIG_FILE} and .env name ${pending.from} again.`);
+  if (pending.passkeysRetiredAt) {
+    console.log(
+      `The passkeys of ${pending.from} were removed at ${pending.passkeysRetiredAt}. To get them back, restore the archive the move took, ` +
+        `${pending.archive} (docs/operations/backup.md), then run \`varlatch setup\`.`,
+    );
+  } else {
+    console.log("No passkey was removed. Run `varlatch setup` to bring the installation back at its old address.");
+  }
+  return 0;
 }

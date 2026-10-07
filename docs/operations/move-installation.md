@@ -16,7 +16,9 @@ anywhere else. So a move is a re-enrollment event:
 - **Each person enrolls a new passkey on the same identity**, with a
   one-time link the move prints. Their access, memberships, grants, and
   audit history stay as they are.
-- **The old address stops answering.**
+- **Passkeys and the dashboard stop working at the old address.** With the
+  public or tailnet ingress it stops answering. With the external ingress,
+  your own proxy decides.
 
 What keeps working:
 
@@ -64,7 +66,8 @@ for example when you leave the tailnet. The command:
 1. Reads what the move affects and prints it: the number of people,
    passkeys, and sessions, and any Tailnet Constraints or open invitations.
    It asks before it changes anything (`--yes` skips the question).
-2. Takes an archive and verifies it. Restoring it is the way back.
+2. Takes an archive in the Compose directory's `backups/` and verifies it
+   against the release the installation runs. Restoring it is the way back.
 3. Writes the new address to `varlatch-install.json` and `.env`, and starts
    the installation with it. With the public ingress, it waits for the
    certificate.
@@ -93,14 +96,27 @@ A new link for a person revokes the unused one before it.
 Run `varlatch move` again, without `--public-url`. `varlatch-move.json`
 records how far the move got, so a rerun takes no second archive, issues no
 new links, and never removes passkeys people already enrolled at the new
-address. `varlatch setup` refuses to run while a move is open.
+address. The server also records the address of the last move, and refuses
+to remove passkeys a second time. `varlatch setup` refuses to run while a
+move is open.
 
 ## Going back
 
-Restore the archive the move took (`varlatch move` prints its path), with
-the old address back in `varlatch-install.json`: see
-[Backup and recovery](backup.md). Passkeys enrolled at the new address are
-not in that archive, and would not work at the old address anyway.
+Give the move up:
+
+```sh
+varlatch move --abandon
+```
+
+It puts the old address back in `varlatch-install.json` and `.env` and
+closes the move. It says whether the old passkeys were already removed:
+
+- **Not removed yet** (the move stopped before step 5): run `varlatch setup`,
+  and the installation is back at its old address.
+- **Removed**: restore the archive the move took (it prints the path, see
+  [Backup and recovery](backup.md)), then run `varlatch setup`. Passkeys
+  enrolled at the new address are not in that archive, and would not work at
+  the old address anyway.
 
 ## Afterwards
 
@@ -122,4 +138,5 @@ not in that archive, and would not work at the old address anyway.
   change `VARLATCH_PUBLIC_URL` in Coolify and redeploy (each deploy runs
   `convex-deploy`, which gives Convex the new issuer); then run, in the
   `varlatchd` container, `node dist/cli.js admin public-url-changed --from
-  <old address>` and `node dist/cli.js admin reenroll --all`.
+  <old address>` once (a second run is refused) and `node dist/cli.js admin
+  reenroll --all`.

@@ -431,7 +431,7 @@ jobs:
             # Convex mirror, the backup CLI.
             [recovery]="$shared|^services/varlatchd/src/(backup|db|crypto|mirror)/|^services/varlatchd/src/(cli|control-entry|config)\.ts$|^packages/backup/|^apps/cli/src/(backup|legacyBackup|maintenance)\.ts$|^convex/convex/(schema|mirror)\.ts$|^infra/|^scripts/(test-backup|fixtures/)"
             # Installing, upgrading and adopting an installation, and its ingress.
-            [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^services/varlatchd/src/domain/bootstrap\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor|move|moveState)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|test-move|fixtures/)"
+            [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^services/varlatchd/src/(domain/bootstrap|auth/humanauth|cli)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor|move|moveState)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|test-move|fixtures/)"
           )
           for t in $tiers; do
             hits=$(grep -E "${guards[$t]}" <<< "$files" || true)

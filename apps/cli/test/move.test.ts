@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as backup from "../src/backup.js";
 import { movedConfig, movePlan, moveTarget, runMove, type MoveFacts } from "../src/move.js";
 import { MOVE_STATE_FILE, readMoveState } from "../src/moveState.js";
-import { CONFIG_FILE, type InstallConfig, renderEnv, runningPublicUrl, runSetup } from "../src/setup.js";
+import { CONFIG_FILE, type InstallConfig, renderEnv, runningPublicUrl, runSetup, varlatchd } from "../src/setup.js";
 
 /** `varlatch move` (issue #103). */
 
@@ -79,7 +79,7 @@ describe("runMove and setup's move mode", () => {
     vi.unstubAllEnvs();
   });
 
-  function fakeDocker(): string {
+  function fakeDocker(opts: { admins?: number; adminEnrolled?: boolean } = {}): string {
     const bin = mkdtempSync(join(tmpdir(), "move-bin-"));
     const calls = join(bin, "calls.log");
     const healthy = ["postgres", "varlatchd", "varlatch-web", "convex-backend"]
@@ -92,10 +92,11 @@ case "$*" in
   "compose up -d --remove-orphans") exit 0;;
   "compose ps -a --format json") printf '${healthy}\\n'; exit 0;;
   "compose run --rm convex-deploy") exit 0;;
-  *"admin move-facts") echo '{"publicUrl":"${OLD}","people":2,"installationAdmins":1,"passkeys":2,"sessions":1,"tailnetConstraints":0,"pendingInvitations":0}'; exit 0;;
+  *"admin move-facts") echo '{"publicUrl":"${OLD}","people":2,"installationAdmins":${opts.admins ?? 1},"passkeys":2,"sessions":1,"tailnetConstraints":0,"pendingInvitations":0}'; exit 0;;
+  *"admin reenroll --identity idn_typo"*) echo "No person with identity idn_typo" >&2; exit 1;;
   *"admin public-url-changed --from ${OLD}") echo '{"from":"${OLD}","to":"${NEW}","passkeysRemoved":2,"sessionsEnded":1,"browserCredentialsRevoked":1}'; exit 0;;
   *"admin reenroll --all --json"*) echo '{"links":[{"name":"Jeremy","identityId":"idn_a","installationAdmin":true,"link":"${NEW}/enroll#vlt_reenroll_x","expiresAt":"2026-10-08T00:00:00.000Z"}]}'; exit 0;;
-  *"admin bootstrap-status") echo '{"initialized":true,"bootstrapped":true,"admins":[{"id":"idn_a","enabled":true,"hasPasskey":false}]}'; exit 0;;
+  *"admin bootstrap-status") echo '{"initialized":true,"bootstrapped":true,"admins":[{"id":"idn_a","enabled":true,"hasPasskey":${opts.adminEnrolled ? "true" : "false"}}]}'; exit 0;;
 esac
 exit 1
 `, { mode: 0o755 });
@@ -125,7 +126,7 @@ exit 1
 
     expect(await runMove(options(dir, { publicUrl: NEW }))).toBe(3); // waits for an admin, --no-wait
     expect(capture).toHaveBeenCalledWith(["--kek-file", "/k"], dir);
-    expect(verify).toHaveBeenCalledWith(["--kek-file", "/k", "--in", "/backups/pre-move.vltbak"], dir);
+    expect(verify).toHaveBeenCalledWith(["--kek-file", "/k", "--in", "/backups/pre-move.vltbak", "--record"], dir);
     expect(JSON.parse(readFileSync(join(dir, CONFIG_FILE), "utf8")).publicUrl).toBe(NEW);
     expect(runningPublicUrl(join(dir, ".env"))).toBe(NEW);
     expect(readMoveState(dir)).toMatchObject({ from: OLD, to: NEW, archive: "/backups/pre-move.vltbak" });
@@ -166,6 +167,66 @@ exit 1
     await expect(runMove(options(dir, { publicUrl: NEW, ingress: "public" }))).rejects.toThrow(/public ingress needs docker-compose\.caddy\.yml, Caddyfile/);
     expect(capture).not.toHaveBeenCalled();
     expect(existsSync(join(dir, MOVE_STATE_FILE))).toBe(false);
+  });
+
+  it("checks the link lifetime and that an Installation Admin can finish, before anything changes", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fakeDocker({ admins: 0 });
+    const dir = installation();
+    const capture = vi.spyOn(backup, "createBackup").mockResolvedValue("/x");
+    for (const reenrollHours of [0, 200, Number.NaN]) {
+      await expect(runMove(options(dir, { publicUrl: NEW, reenrollHours }))).rejects.toThrow(/--reenroll-hours must be/);
+    }
+    await expect(runMove(options(dir, { publicUrl: NEW }))).rejects.toThrow(/No Installation Admin is enabled/);
+    expect(capture).not.toHaveBeenCalled();
+    expect(existsSync(join(dir, MOVE_STATE_FILE))).toBe(false);
+  });
+
+  it("refuses to resume when the configuration or the ingress no longer matches the move", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    fakeDocker();
+    const dir = installation({ ...base, publicUrl: "https://third.example.com" });
+    writeFileSync(join(dir, MOVE_STATE_FILE), JSON.stringify({ from: OLD, fromIngress: "external", to: NEW, toIngress: "external", archive: "/a", startedAt: "x" }));
+    await expect(runMove(options(dir))).rejects.toThrow(/names https:\/\/third\.example\.com .* goes from/);
+    await expect(runMove(options(dir, { ingress: "public" }))).rejects.toThrow(/goes to the external ingress, not public/);
+  });
+
+  it("gives up a move: before the passkeys were removed nothing else is needed; after, the archive brings them back", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const dir = installation({ ...base, publicUrl: NEW });
+    const state = { from: OLD, fromIngress: "external", to: NEW, toIngress: "external", archive: "/backups/pre-move.vltbak", startedAt: "x", previousConfig: base };
+    writeFileSync(join(dir, MOVE_STATE_FILE), JSON.stringify(state));
+    writeFileSync(join(dir, ".env"), renderEnv({ ...base, publicUrl: NEW }) + "MY_ADDITION=1\n");
+    expect(await runMove(options(dir, { abandon: true }))).toBe(0);
+    expect(JSON.parse(readFileSync(join(dir, CONFIG_FILE), "utf8"))).toEqual(base);
+    expect(runningPublicUrl(join(dir, ".env"))).toBe(OLD);
+    expect(existsSync(join(dir, MOVE_STATE_FILE))).toBe(false);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/No passkey was removed/));
+    // After the passkeys were removed, the way back is the archive.
+    writeFileSync(join(dir, MOVE_STATE_FILE), JSON.stringify({ ...state, passkeysRetiredAt: "2026-10-07T01:00:00Z" }));
+    expect(await runMove(options(dir, { abandon: true }))).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/restore the archive the move took, \/backups\/pre-move\.vltbak/));
+    await expect(runMove(options(dir, { abandon: true }))).rejects.toThrow(/No move in progress/);
+  });
+
+  it("finishes without asking for custody, and points failures at `varlatch move`", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const calls = fakeDocker({ adminEnrolled: true });
+    const dir = installation();
+    vi.spyOn(backup, "createBackup").mockResolvedValue("/a");
+    vi.spyOn(backup, "verifyBackup").mockResolvedValue({} as never);
+    const code = await runMove(options(dir, { publicUrl: NEW }));
+    expect(count(calls, "custody")).toBe(0);
+    expect(log).toHaveBeenCalledWith("  ✓ unchanged by a move (`varlatch setup` finishes any pending custody)");
+    // The stand-in docker has no doctor: the health step fails, and says how to resume.
+    expect(code).not.toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/The move finished with mandatory failures above; fix them and rerun `varlatch move`/));
+  });
+
+  it("shows varlatchd's reason when an admin command fails", async () => {
+    fakeDocker();
+    const dir = installation();
+    expect(() => varlatchd(dir, ["admin", "reenroll", "--identity", "idn_typo"])).toThrow(/failed \(exit 1\): No person with identity idn_typo/);
   });
 
   it("changes nothing when the operator does not confirm", async () => {

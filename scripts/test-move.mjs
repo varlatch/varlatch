@@ -19,7 +19,7 @@
 // Prerequisites: the candidate images (varlatch-backup-*-test:local), the
 // CLI bundle (apps/cli/dist), and Playwright's Chromium.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createHash, randomBytes, X509Certificate } from 'node:crypto';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -62,7 +62,7 @@ function run(args) {
     listeners.push(check); check(out);
     exit.then(() => res(null));
   });
-  return { when, exit };
+  return { when, exit, output: () => out };
 }
 
 /** A CONNECT proxy that sends both names to Caddy's published HTTPS port. */
@@ -188,9 +188,9 @@ try {
   // ---- The move, as the procedure page describes it.
   const move = run(['move', '--dir', dir, '--public-url', `https://${NEW}`, '--ingress', 'public', '--yes', '--enroll-timeout', '600',
     '--bek-file', join(dir, 'secrets/backup-key'), '--kek-file', join(dir, 'secrets/varlatch-kek')]);
-  const links = await move.when(/https:\/\/vault2\.varlatch\.test\/enroll#vlt_reenroll_\S+/g);
-  if (!links) assert.fail(`move printed no re-enrollment links:\n${(await move.exit).out}`);
-  await move.when(/Waiting for an Installation Admin to enroll/g);
+  // Every link is printed before the wait starts; match them all from the full output then.
+  if (!(await move.when(/Waiting for an Installation Admin to enroll/g))) assert.fail(`move did not reach the re-enrollment wait:\n${(await move.exit).out}`);
+  const links = [...move.output().matchAll(/https:\/\/vault2\.varlatch\.test\/enroll#vlt_reenroll_\S+/g)];
   assert.equal(links.length, 2, 'one link per person');
   const during = JSON.parse(varlatchd(['admin', 'move-facts']));
   assert.deepEqual([during.publicUrl, during.people, during.passkeys, during.sessions], [`https://${NEW}`, 2, 0, 0]);
@@ -212,6 +212,14 @@ try {
   const after = JSON.parse(varlatchd(['admin', 'move-facts']));
   assert.deepEqual([after.people, after.passkeys], [2, 2]);
   pass('the member re-enrolled on the same identity with their link');
+
+  // The server removes the old address's passkeys once per move: a rerun of
+  // the step after people re-enrolled is refused and removes nothing.
+  const rerun = spawnSync('docker', ['compose', 'exec', '-T', 'varlatchd', 'node', 'dist/cli.js', 'admin', 'public-url-changed', '--from', `https://${OLD}`], { cwd: dir, encoding: 'utf8' });
+  assert.notEqual(rerun.status, 0);
+  assert.match(rerun.stderr + rerun.stdout, /already removed/);
+  assert.equal(JSON.parse(varlatchd(['admin', 'move-facts'])).passkeys, 2);
+  pass('a second removal after re-enrollment is refused: the new passkeys stay');
 
   const ca = dc(['exec', '-T', 'caddy', 'wget', '-q', '-O', '-', 'https://pebble:15000/roots/0']);
   const meta = await request(NEW, '/v1/meta', { ca, token: adminToken });

@@ -19,7 +19,9 @@ fixes.
   single-use link per person to enroll a new passkey on the same identity.
   CLI, agent, and machine credentials, OIDC bindings, Sync Targets, and
   webhooks keep working; only their configured server address changes. A
-  move that stops resumes with another `varlatch move`. See
+  move that stops resumes with another `varlatch move`, and `varlatch move
+  --abandon` gives one up. The server records each move's address and
+  never removes passkeys twice. See
   [Moving an installation to another address](docs/operations/move-installation.md).
 - **`varlatch admin reenroll`** issues those links at any time, for
   everyone (`--all`) or for named people (`--identity`), for example for

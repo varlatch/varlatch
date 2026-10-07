@@ -283,9 +283,11 @@ export async function issueReenrollmentGrants(
   }
   return withTx(ctx.db, async (db) => {
     const res = await db.query(
+      // FOR UPDATE: two issuances for the same person serialize, so at most
+      // one link per person stays live.
       `SELECT id, name, installation_admin, kind, disabled FROM identities
         WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
-        ORDER BY installation_admin DESC, created_at, id`,
+        ORDER BY installation_admin DESC, created_at, id FOR UPDATE`,
       input.identityIds === "all" ? [] : [input.identityIds],
     );
     const rows = res.rows as { id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean }[];
@@ -332,17 +334,16 @@ export interface MoveFacts {
 }
 
 export async function moveFacts(db: Querier): Promise<MoveFacts> {
-  const one = async (sql: string) => ((await db.query(sql)).rows[0] as { n: number }).n;
-  return {
-    people: await one("SELECT count(*)::int AS n FROM identities WHERE kind = 'human' AND NOT disabled"),
-    installationAdmins: await one("SELECT count(*)::int AS n FROM identities WHERE installation_admin AND NOT disabled"),
-    passkeys: await one(`SELECT count(*)::int AS n FROM "passkey"`),
-    sessions: await one(`SELECT count(*)::int AS n FROM "session"`),
-    tailnetConstraints: await one("SELECT count(*)::int AS n FROM requirements WHERE kind = 'tailnet' AND revoked_at IS NULL"),
-    pendingInvitations: await one(
-      "SELECT count(*)::int AS n FROM setup_grants WHERE kind = 'invite' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()",
-    ),
-  };
+  const res = await db.query(
+    `SELECT (SELECT count(*)::int FROM identities WHERE kind = 'human' AND NOT disabled) AS people,
+            (SELECT count(*)::int FROM identities WHERE installation_admin AND NOT disabled) AS "installationAdmins",
+            (SELECT count(*)::int FROM "passkey") AS passkeys,
+            (SELECT count(*)::int FROM "session") AS sessions,
+            (SELECT count(*)::int FROM requirements WHERE kind = 'tailnet' AND revoked_at IS NULL) AS "tailnetConstraints",
+            (SELECT count(*)::int FROM setup_grants
+              WHERE kind = 'invite' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()) AS "pendingInvitations"`,
+  );
+  return res.rows[0] as MoveFacts;
 }
 
 /**
@@ -362,14 +363,33 @@ export async function completePublicUrlChange(
   const to = new URL(input.to).origin;
   if (from === to) throw new DomainError("VALIDATION_FAILED", "The installation already answers at this address");
   return withTx(ctx.db, async (db) => {
+    // Once per move: after the first run the recorded address is the new
+    // one, so a rerun (or a --from typo) after people re-enrolled at the new
+    // address removes nothing.
+    const inst = await db.query("SELECT id, public_url FROM installation LIMIT 1 FOR UPDATE");
+    const recorded = (inst.rows[0] as { public_url: string | null } | undefined)?.public_url ?? null;
+    if (recorded === to) {
+      throw new DomainError("VALIDATION_FAILED", `The passkeys of ${from} were already removed when the installation moved to ${to}`);
+    }
+    if (recorded !== null && recorded !== from) {
+      throw new DomainError("VALIDATION_FAILED", `The installation last moved to ${recorded}, not ${from}: check --from`);
+    }
     const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
     const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
     // The dashboard's bearer tokens were minted from those sessions. CLI,
     // agent, and machine credentials hold no address and keep working.
     const browser = await db.query(
       `UPDATE credentials SET revoked_at = now()
-        WHERE kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) RETURNING id`,
+        WHERE kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) RETURNING id, identity_id`,
     );
+    // One line per credential, as every other revocation path writes.
+    for (const c of browser.rows as { id: string; identity_id: string }[]) {
+      await recordAuditEvent(db, {
+        eventType: "credential.revoked", decision: "info", credentialId: c.id,
+        resource: { identityId: c.identity_id }, metadata: { reason: "public-url-changed" },
+      });
+    }
+    await db.query("UPDATE installation SET public_url = $1", [to]);
     const result = {
       from, to,
       passkeysRemoved: passkeys.rows.length,
@@ -410,7 +430,8 @@ export async function peekSetupGrant(
   const res = await ctx.db.query(
     `SELECT g.id, g.kind, g.invite_name, i.name AS subject_name
        FROM setup_grants g LEFT JOIN identities i ON i.id = g.subject_identity_id
-      WHERE g.token_hash = $1 AND g.consumed_at IS NULL AND g.revoked_at IS NULL AND g.expires_at > now()`,
+      WHERE g.token_hash = $1 AND g.consumed_at IS NULL AND g.revoked_at IS NULL AND g.expires_at > now()
+        AND (g.kind <> 'reenroll' OR NOT i.disabled)`,
     [hashToken(token)],
   );
   const row = res.rows[0] as

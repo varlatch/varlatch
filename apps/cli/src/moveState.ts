@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Ingress } from "./setup.js";
+import type { Ingress, InstallConfig } from "./setup.js";
 
 /**
  * Where an interrupted `varlatch move` (issue #103) stands, so a rerun
@@ -22,6 +22,8 @@ export interface MoveState {
   passkeysRetiredAt?: string;
   /** Set once the re-enrollment links were issued. */
   linksIssuedAt?: string;
+  /** The Installation Configuration before the move, for `varlatch move --abandon`. */
+  previousConfig?: InstallConfig;
 }
 
 export function readMoveState(dir: string): MoveState | null {
