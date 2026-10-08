@@ -64,6 +64,8 @@ export async function issueCredential(
     expiresAt?: string | undefined;
     maxUses?: number | undefined;
     actorIdentityId?: string;
+    /** The organization whose audit listing shows the issuance, as for revocation. */
+    organizationId?: string | null;
     metadata?: Record<string, unknown>;
     /** Readable client label (client-label.ts), never a raw User-Agent. */
     client?: string | null;
@@ -94,6 +96,7 @@ export async function issueCredential(
       decision: "info",
       actorIdentityId: input.actorIdentityId ?? input.identityId,
       credentialId,
+      organizationId: input.organizationId ?? null,
       resource: { identityId: input.identityId },
       metadata: {
         kind: input.kind,

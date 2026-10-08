@@ -44,6 +44,19 @@ describe("organization rename", () => {
   });
 });
 
+describe("machine credential issuance", () => {
+  it("posts the name and the optional limits to the identity's credentials", async () => {
+    const issued = { id: "crd_1", kind: "service", name: "backup job", token: "vlt_svc_x", expiresAt: null, maxUses: null };
+    const { requests, client } = recorder(() => new Response(JSON.stringify(issued), { status: 201 }));
+    await expect(client.issueMachineCredential("acme", "idn_1", { name: "backup job" })).resolves.toEqual(issued);
+    await client.issueMachineCredential("acme", "idn 2", { name: "metrics", ttlSeconds: 600, maxUses: 5 });
+    expect(requests).toMatchObject([
+      { method: "POST", url: "https://v.example/v1/organizations/acme/identities/idn_1/credentials", body: { name: "backup job" } },
+      { method: "POST", url: "https://v.example/v1/organizations/acme/identities/idn%202/credentials", body: { name: "metrics", ttlSeconds: 600, maxUses: 5 } },
+    ]);
+  });
+});
+
 describe("audit filters", () => {
   const filters = {
     decision: "deny",

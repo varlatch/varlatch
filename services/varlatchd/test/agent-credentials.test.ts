@@ -101,9 +101,16 @@ describe("issuance", () => {
   });
 
   it("only in-org brokers may mint; others learn nothing", async () => {
+    // Other callers take the identity.manage path (identity.credentials.issue),
+    // which issues service credentials only and hides Agent Identities.
     expect((await mint({}, adminToken)).status).toBe(404);
     const svc = await (await post("/v1/organizations/acme/identities", { name: "svc", kind: "service" })).json();
-    expect((await mint({}, svc.credential)).status).toBe(404);
+    // Without identity.manage the denial comes first, the same for any id.
+    expect((await mint({}, svc.credential)).status).toBe(403);
+    const unknown = await post("/v1/organizations/acme/identities/idn_nope/credentials", { ttlSeconds: 600 }, svc.credential);
+    expect(unknown.status).toBe(403);
+    const minted = await ctx.db.query("SELECT count(*)::int AS n FROM credentials WHERE kind = 'agent-run'");
+    expect((minted.rows[0] as { n: number }).n).toBe(0);
   });
 
   it("only agent identities are mintable-for; wrong kind and unknown ids collapse to 404", async () => {

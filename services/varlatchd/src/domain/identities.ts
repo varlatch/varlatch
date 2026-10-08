@@ -14,6 +14,13 @@ import { DomainError } from "./errors.js";
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
 /**
+ * The machine kinds that hold service credentials: the ones creation issues
+ * one for. CI identities federate instead (ADR-0007) and Agents never hold a
+ * reusable credential (ADR-0022 §8), so neither is ever issued one.
+ */
+export const SERVICE_CREDENTIAL_KINDS: ReadonlySet<string> = new Set<MachineKind>(["service", "workload", "broker"]);
+
+/**
  * Machine identities belong to exactly one organization and start with zero
  * Grants (ADR-0015 §9). Service/workload identities receive an opaque
  * credential exactly once at creation. Agents get none by default (ADR-0022
@@ -56,7 +63,7 @@ export async function createMachineIdentity(
     let credential: string | null = null;
     let credentialExpiresAt: string | null = null;
     // CI identities are expected to federate (ADR-0007); no static token by default.
-    if (input.kind === "service" || input.kind === "workload" || input.kind === "broker") {
+    if (SERVICE_CREDENTIAL_KINDS.has(input.kind)) {
       if (input.credentialTtlSeconds) {
         credentialExpiresAt = new Date(
           Date.now() + input.credentialTtlSeconds * 1000,
@@ -84,6 +91,55 @@ export async function createMachineIdentity(
       credential,
       credentialExpiresAt,
     };
+  });
+}
+
+/**
+ * Issue another service credential for an existing machine identity
+ * (capability identity.credentials.issue). It is the deliberate issuance a
+ * reactivated identity waits for (ADR-0034 §3), the new half of a rotation
+ * (mint new, then revoke old), and how several programs sharing one
+ * identity's Grants each get a named, separately revocable credential.
+ * Limits and default as at creation: no TTL means no expiry (revocation only).
+ */
+export async function issueMachineCredential(
+  ctx: AppCtx,
+  organizationId: string,
+  identityId: string,
+  input: { name: string; ttlSeconds?: number | undefined; maxUses?: number | undefined },
+  actorIdentityId: string,
+): Promise<{ credentialId: string; token: string; expiresAt: string | null; maxUses: number | null }> {
+  if (!input.name || input.name.length > 200) {
+    throw new DomainError("VALIDATION_FAILED", "Invalid credential name");
+  }
+  return withTx(ctx.db, async (db) => {
+    // FOR SHARE serializes with retire's UPDATE: a retirement committed first
+    // is seen here, and one committing after this issuance revokes the new
+    // credential with the rest, so a reactivation never resurrects it.
+    const res = await db.query(
+      "SELECT kind, disabled FROM identities WHERE id = $1 AND organization_id = $2 FOR SHARE",
+      [identityId, organizationId],
+    );
+    const row = res.rows[0] as { kind: string; disabled: boolean } | undefined;
+    if (!row || !SERVICE_CREDENTIAL_KINDS.has(row.kind) || row.disabled) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+    }
+    const expiresAt = input.ttlSeconds
+      ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString()
+      : null;
+    const maxUses = input.maxUses ?? null;
+    const issued = await issueCredential(db, {
+      identityId,
+      kind: "service",
+      name: input.name,
+      expiresAt: expiresAt ?? undefined,
+      maxUses: maxUses ?? undefined,
+      actorIdentityId,
+      organizationId,
+      // Identifiers only (ADR-0016 §8); null records "no expiry" and "unlimited".
+      metadata: { name: input.name, expiresAt, maxUses },
+    });
+    return { credentialId: issued.credentialId, token: issued.token, expiresAt, maxUses };
   });
 }
 

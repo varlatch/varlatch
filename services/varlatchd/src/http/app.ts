@@ -60,11 +60,13 @@ import {
 } from "../domain/values.js";
 import {
   createMachineIdentity,
+  issueMachineCredential,
   listIdentityCredentials,
   listOrgIdentities,
   reactivateIdentity,
   renameIdentity,
   retireIdentity,
+  SERVICE_CREDENTIAL_KINDS,
 } from "../domain/identities.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
@@ -1839,9 +1841,46 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return row;
   };
 
+  // Non-Broker path (capability identity.credentials.issue): identity.manage
+  // issues another service credential for an in-org machine identity of a
+  // kind creation issues one for (ADR-0034 §3's deliberate issuance, the new
+  // half of a rotation, one credential per program sharing an identity).
+  // Humans, ci and agent identities, disabled ones, and other organizations'
+  // all collapse to not-found. The token is returned exactly once.
+  const issueServiceCredential = async (c: Context, principal: Principal, org: OrgRow) => {
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    const identity = await loadMachineIdentity(c, org.id);
+    if (!SERVICE_CREDENTIAL_KINDS.has(identity.kind) || identity.disabled) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+    }
+    const body = parseBody(
+      z.object({
+        name: z.string().min(1).max(200),
+        // The limits identity creation takes for its credential.
+        ttlSeconds: z.number().int().min(1).max(315_360_000).optional(),
+        maxUses: z.number().int().min(1).max(1_000_000).optional(),
+      }),
+      await c.req.json(),
+    );
+    const issued = await issueMachineCredential(ctx, org.id, identity.id, body, principal.identity.id);
+    c.header("Cache-Control", "no-store");
+    return c.json(
+      {
+        id: issued.credentialId,
+        kind: "service" as const,
+        name: body.name,
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+        maxUses: issued.maxUses,
+      },
+      201,
+    );
+  };
+
   app.post("/v1/organizations/:org/identities/:identity/credentials", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
+    if (principal.identity.kind !== "broker") return issueServiceCredential(c, principal, org);
     requireBroker(principal, org);
     const agent = await loadAgentIdentity(c, org.id);
     const body = parseBody(
