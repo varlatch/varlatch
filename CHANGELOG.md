@@ -7,6 +7,34 @@ fixes.
 
 ## Unreleased (0.15.2)
 
+### Sign-in
+
+- On Windows, `varlatch login` opens the sign-in page in the default
+  browser; before, it only printed the address. It starts Windows' URL
+  handler directly, never through a shell.
+- With `VARLATCH_NO_BROWSER` set to anything but an empty value or `0`,
+  `varlatch login` opens no browser and only prints the address, for an app
+  that drives the sign-in and opens the address itself. The two lines it
+  prints the address in do not change:
+  [Browser sign-in from an app](docs/reference/scripting.md#browser-sign-in-from-an-app).
+  An older CLI ignores the variable.
+
+### Documentation
+
+- [Getting started](docs/getting-started.md#on-windows) shows how to
+  install the CLI on Windows: check it against `SHA256SUMS` with
+  `Get-FileHash`, install it as
+  `%LOCALAPPDATA%\Programs\Varlatch\varlatch.cjs` with a `varlatch.cmd`
+  next to it, and add that directory to your `PATH`. `varlatch self-update`
+  then replaces it without administrator rights.
+
+### Fixes
+
+- On Windows, `varlatch self-update` no longer suggests `sudo` when it
+  cannot replace the CLI. It suggests rerunning the command it shows from a
+  terminal run as administrator, or installing the CLI in a directory you
+  own, and closing any program that has the file open.
+
 ### Releases
 
 - Image signatures are published in their own package,

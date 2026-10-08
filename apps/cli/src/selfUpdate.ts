@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdtempSync, openSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { compareVersions, downloadAssetBytes, fetchRelease, type GithubRelease } from "./upgrade.js";
 
@@ -146,6 +146,44 @@ async function ask(question: string): Promise<boolean> {
   }
 }
 
+export interface ReplaceTarget {
+  platform: NodeJS.Platform;
+  /** The Node.js that runs this CLI (process.execPath). */
+  execPath: string;
+  /** The CLI file being replaced. */
+  path: string;
+  /** The release being installed. */
+  version: string;
+}
+
+/**
+ * What to say when writing next to the CLI or renaming over it failed with
+ * `code`, or null to let the error speak for itself. Windows has no sudo.
+ * There, renaming over a file another program has open fails with EPERM, as
+ * a missing right does, so that message names both; EBUSY is a file in use.
+ */
+export function replaceFailure(code: string | undefined, target: ReplaceTarget): string | null {
+  const { platform, execPath, path, version } = target;
+  const denied = code === "EACCES" || code === "EPERM" || code === "EROFS";
+  if (platform !== "win32") {
+    if (!denied) return null;
+    return (
+      `Cannot write ${posix.dirname(path)}. Rerun with the rights to replace ${path}, for example:\n` +
+      `  sudo ${execPath} ${path} self-update ${version}`
+    );
+  }
+  if (code === "EBUSY") {
+    return `Cannot replace ${path}: another process has it open. Close other varlatch processes and anything else using the file, then run the update again.`;
+  }
+  if (!denied) return null;
+  return (
+    `Cannot replace ${path}. Rerun from a terminal with the rights to replace it, such as one run as administrator:\n` +
+    `  "${execPath}" "${path}" self-update ${version}\n` +
+    `In PowerShell, put "& " before that command. Or install the CLI in a directory you own, such as %LOCALAPPDATA%\\Programs\\Varlatch. ` +
+    "If another program has the file open, close it and try again."
+  );
+}
+
 export async function runSelfUpdate(opts: SelfUpdateOptions): Promise<SelfUpdateCheck> {
   const log = opts.log ?? ((line: string) => console.log(line));
   const current = opts.current ?? EMBEDDED_RELEASE.version;
@@ -241,13 +279,13 @@ export async function runSelfUpdate(opts: SelfUpdateOptions): Promise<SelfUpdate
       renameSync(next, path);
     } catch (err) {
       rmSync(next, { force: true });
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EACCES" || code === "EPERM" || code === "EROFS") {
-        throw new SelfUpdateError(
-          `Cannot write ${dirname(path)}. Rerun with the rights to replace ${path}, for example:\n` +
-            `  sudo ${process.execPath} ${path} self-update ${release.version}`,
-        );
-      }
+      const message = replaceFailure((err as NodeJS.ErrnoException).code, {
+        platform: process.platform,
+        execPath: process.execPath,
+        path,
+        version: release.version,
+      });
+      if (message) throw new SelfUpdateError(message);
       throw err;
     }
     log(`Installed varlatch ${release.version} at ${path}.`);
