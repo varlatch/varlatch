@@ -81,6 +81,27 @@ These keep the meanings they always had:
   Contract, checked before the command starts (in a default run, before any
   Secret is disclosed). Everything after `--` goes to the command unchanged.
 
+## Browser sign-in from an app
+
+`varlatch login --server <url>`, the browser sign-in, prints two lines on
+stdout, then waits for the sign-in page to call back:
+
+```text
+Complete passkey sign-in in your browser:
+  https://vault.example.com/enroll?callback=http%3A%2F%2F127.0.0.1%3A50123%2F
+```
+
+The second line is the address, indented by two spaces. These lines do not
+change, so an app that drives the sign-in can read the address from them.
+
+The CLI also opens the address in the default browser: with `open` on
+macOS, `xdg-open` on Linux and other systems, and the URL handler,
+`rundll32 url.dll,FileProtocolHandler`, on Windows. An app that opens the
+address itself sets `VARLATCH_NO_BROWSER=1`. With `VARLATCH_NO_BROWSER` set
+to anything but an empty value or `0`, the CLI opens nothing and prints the
+same lines. An older CLI ignores the variable and opens the browser as
+well, so an app can set it whatever the CLI's version.
+
 ## Help
 
 - `varlatch --help`, `varlatch -h`, `varlatch help`, and `varlatch` alone

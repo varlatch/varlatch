@@ -7,6 +7,18 @@ fixes.
 
 ## Unreleased (0.15.2)
 
+### Sign-in
+
+- On Windows, `varlatch login` opens the sign-in page in the default
+  browser; before, it only printed the address. It starts Windows' URL
+  handler directly, never through a shell.
+- With `VARLATCH_NO_BROWSER` set to anything but an empty value or `0`,
+  `varlatch login` opens no browser and only prints the address, for an app
+  that drives the sign-in and opens the address itself. The two lines it
+  prints the address in do not change:
+  [Browser sign-in from an app](docs/reference/scripting.md#browser-sign-in-from-an-app).
+  An older CLI ignores the variable.
+
 ### Releases
 
 - Image signatures are published in their own package,

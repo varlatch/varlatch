@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 import { maintenanceNotice } from "./maintenance.js";
+import { browserCommand } from "./browser.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
@@ -463,10 +464,14 @@ async function browserLogin(server: string): Promise<string> {
       const url = `${server.replace(/\/+$/, "")}/enroll?callback=${encodeURIComponent(`http://127.0.0.1:${port}/`)}`;
       console.log("Complete passkey sign-in in your browser:");
       console.log(`  ${url}`);
-      spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], {
-        stdio: "ignore",
-        detached: true,
-      }).on("error", () => {/* headless: user opens manually */});
+      const opener = browserCommand(process.platform, url, process.env);
+      if (opener) {
+        spawn(opener.command, opener.args, {
+          stdio: "ignore",
+          detached: true,
+          windowsHide: true,
+        }).on("error", () => {/* headless: user opens manually */});
+      }
     });
   });
 }
