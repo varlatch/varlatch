@@ -19,6 +19,15 @@ fixes.
   [Browser sign-in from an app](docs/reference/scripting.md#browser-sign-in-from-an-app).
   An older CLI ignores the variable.
 
+### Documentation
+
+- [Getting started](docs/getting-started.md#on-windows) shows how to
+  install the CLI on Windows: check it against `SHA256SUMS` with
+  `Get-FileHash`, install it as
+  `%LOCALAPPDATA%\Programs\Varlatch\varlatch.cjs` with a `varlatch.cmd`
+  next to it, and add that directory to your `PATH`. `varlatch self-update`
+  then replaces it without administrator rights.
+
 ### Fixes
 
 - On Windows, `varlatch self-update` no longer suggests `sudo` when it

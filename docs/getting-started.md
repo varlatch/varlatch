@@ -59,11 +59,58 @@ Then put it on your `PATH` as `varlatch`:
 - **On the installation's host,** root-owned, as the backup runbook's
   [Install the operator CLI](operations/backup.md#install-the-operator-cli)
   describes. Replace it after every upgrade.
-- **On Windows,** run it as `node varlatch-cli-<version>.cjs`.
+- **On Windows,** a directory you own, with a small `varlatch.cmd` that
+  starts it: [On Windows](#on-windows) below.
 
 `varlatch self-update` installs a newer release the same way: it checks the
 file against `SHA256SUMS`, and the signature when the release is signed and
 cosign is installed.
+
+### On Windows
+
+Install Node.js 22 or newer, for example with winget:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+In a new PowerShell window, so that it finds `node`, download the CLI and
+`SHA256SUMS`, and check the file against its line in `SHA256SUMS`:
+
+```powershell
+$V = "0.15.1"  # the release your installation runs
+curl.exe -fLO "https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs"
+curl.exe -fLO "https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS"
+$Line = Get-Content SHA256SUMS | Where-Object { $_ -like "* varlatch-cli-$V.cjs" }
+$Hash = (Get-FileHash -Algorithm SHA256 "varlatch-cli-$V.cjs").Hash
+if ($Line -and $Hash -eq ($Line -split " ")[0]) { "OK" } else { "MISMATCH: do not install this file" }
+```
+
+It must print `OK`. Releases after 0.15.0 also sign `SHA256SUMS`: check
+that signature first, as [Verifying a release](operations/verify-release.md)
+describes.
+
+Then install it as `%LOCALAPPDATA%\Programs\Varlatch\varlatch.cjs`, with a
+`varlatch.cmd` next to it that runs it with Node.js, and add that directory
+to your user `PATH`:
+
+```powershell
+$Dir = "$env:LOCALAPPDATA\Programs\Varlatch"
+New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+Copy-Item "varlatch-cli-$V.cjs" "$Dir\varlatch.cjs"
+Set-Content -Path "$Dir\varlatch.cmd" -Value '@node "%~dp0varlatch.cjs" %*' -Encoding Ascii
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not $UserPath) { $UserPath = $Dir } elseif (($UserPath -split ";") -notcontains $Dir) { $UserPath = "$UserPath;$Dir" }
+[Environment]::SetEnvironmentVariable("Path", $UserPath, "User")
+$env:Path = "$env:Path;$Dir"
+varlatch --version
+```
+
+New terminals find `varlatch` on their own; the second-to-last line makes
+this one find it too. `varlatch self-update` replaces `varlatch.cjs` in
+place, without administrator rights, because the directory is yours.
+[Varlatch for Windows](https://github.com/varlatch/windows-tray), the tray
+app, installs the CLI the same way.
 
 ## Run an installation
 
