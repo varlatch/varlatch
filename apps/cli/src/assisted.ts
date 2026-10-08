@@ -5,7 +5,9 @@
  * with the human's own credential (Assisted Operation). It changes client
  * behaviour only, never authorization: `varlatch run` masks what it can and
  * refuses what it cannot (Decision 4), and a Secret's value is never taken
- * from the command line (Decision 2). The server never sees it.
+ * from the command line (Decision 2). The server sees it only as the
+ * `assisted` token in the CLI's User-Agent (userAgent.ts), which the audit
+ * log records as what the client said, never as an authorization input.
  *
  * The documented flow turns it on explicitly with the global `--assisted`
  * option (or VARLATCH_ASSISTED=1), because many coding agents start a fresh

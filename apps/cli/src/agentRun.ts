@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { maintenanceNotice } from "./maintenance.js";
+import { cliUserAgent } from "./userAgent.js";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
@@ -415,7 +416,7 @@ export async function runAgentSafe(
     // Nothing to mediate: run with non-sensitive values and no broker.
     console.error("varlatch: no Secrets to mediate in this run; running without a broker");
     const minted = opts.metadataCredential
-      ? await mintAgentCredential(new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts) }))
+      ? await mintAgentCredential(new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts), userAgent: cliUserAgent() }))
       : undefined;
     const env = buildAgentEnv(process.env, effective, new Map(), "", minted?.credential, strip);
     delete env.HTTP_PROXY;
@@ -435,7 +436,7 @@ export async function runAgentSafe(
     );
   }
 
-  const brokerApi = new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts) });
+  const brokerApi = new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts), userAgent: cliUserAgent() });
   const cap = await issueWithTargets(brokerApi, ctx, {
     agentIdentityId: agent.id,
     items: secretItems,
@@ -502,7 +503,7 @@ async function runMediated(run: {
 
   // An agent's request is waiting on each exercise: during isolating
   // maintenance give up quickly and let the broker answer 503 + Retry-After.
-  const exerciseApi = new VarlatchClient({ server: ctx.server, token: loadBrokerCredential(opts), maintenanceRetryMs: 15_000 });
+  const exerciseApi = new VarlatchClient({ server: ctx.server, token: loadBrokerCredential(opts), maintenanceRetryMs: 15_000, userAgent: cliUserAgent() });
   const diagnostics = brokerDiagnostics();
   const broker = await startBroker({
     placeholders,
@@ -721,7 +722,7 @@ export async function runAgentSafeStrict(
   const agent = await findAgent(api, ctx, opts.agent);
   const runId = `run_${randomBytes(8).toString("hex")}`;
   const allow = new Set(opts.allowInherited);
-  const brokerApi = new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts) });
+  const brokerApi = new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token: loadBrokerCredential(opts), userAgent: cliUserAgent() });
   const mint = opts.metadataCredential ? () => mintFor(brokerApi, ctx, agent.id, runId, opts.ttlSeconds) : undefined;
   const refuse = (violations: Violation[]) => {
     for (const line of formatViolations(violations)) log(line);

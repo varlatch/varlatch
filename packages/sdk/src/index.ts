@@ -109,8 +109,9 @@ export interface VarlatchClientOptions {
   /**
    * A User-Agent header for every request, for clients that identify
    * themselves (the CLI sends `varlatch-cli/<version> (<platform>; <arch>)`,
-   * which the server summarizes as a credential's client label). Browsers
-   * may ignore it; omit it there.
+   * plus `; assisted` in assisted mode). The server summarizes it as a
+   * credential's client label and as the client of each audit event a
+   * request records. Browsers may ignore it; omit it there.
    */
   userAgent?: string;
 }
