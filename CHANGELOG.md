@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.16.0)
+## 0.16.0 (2026-10-08)
 
 ### Machine identities
 
@@ -102,11 +102,25 @@ fixes.
 ### Upgrading
 
 Database schema: migration 27 (the audit events' client). Earlier events
-keep no client, and `credentialId` only where they had one.
+keep no client, and `credentialId` only where they had one. Check
+`SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
 
+- From 0.15.2, 0.15.1, or 0.15.0: download `varlatch-cli-0.16.0.cjs` from
+  the `v0.16.0` release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.16.0.cjs upgrade 0.16.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. The upgrade captures and
+  verifies an archive while the installation keeps serving, applies
+  migration 27, and completes only once the new release passes its health
+  gate. Then replace the host CLI with `varlatch-cli-0.16.0.cjs`, or run
+  `varlatch self-update`.
+- From 0.14.3 or older: follow the 0.15.0 notes below with the 0.16.0 CLI
+  and version. The upgrade applies migrations 26 and 27.
 - Update the CLI with `varlatch self-update` wherever coding agents run it:
   older CLIs send no User-Agent outside `varlatch login`, so their events
-  carry the credential but no client.
+  carry the credential but no client. `varlatch credential issue` needs
+  the 0.16.0 CLI and server.
+- 0.16.0 restores everything 0.15.2 restores, and archives from 0.15.2.
 
 ## 0.15.2 (2026-10-08)
 
