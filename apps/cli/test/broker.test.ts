@@ -17,8 +17,10 @@ import {
   BROKER_CREDENTIAL_ENV,
   checkTargetFlags,
   contractSecrets,
+  exemptsEveryHost,
   issueWithTargets,
   refusedTunnels,
+  removedNoProxyEntries,
   requireTargetsServer,
   tunnelNote,
 } from "../src/agentRun.js";
@@ -143,29 +145,54 @@ describe("the Agent's NO_PROXY: exactly the Broker's address is added", () => {
     ["only NO_PROXY", { NO_PROXY: "internal.example, .corp" }],
     ["only no_proxy", { no_proxy: "internal.example" }],
     ["conflicting spellings", { NO_PROXY: "a.example", no_proxy: "b.example" }],
-    ["a wildcard", { NO_PROXY: "*", no_proxy: "*" }],
     ["the Broker's address already", { NO_PROXY: `${broker},x.example` }],
     ["empty values", { NO_PROXY: "", no_proxy: " , " }],
   ];
-  for (const [name, base] of cases) {
-    it(`${name}: each spelling keeps its entries and gains only ${broker}`, () => {
+  for (const [name, base] of [...cases, ["entries that exempt every host", { NO_PROXY: "*, a.example", no_proxy: "*:443,::/0" }] as const]) {
+    it(`${name}: each spelling keeps its entries but those that exempt every host, and gains only ${broker}`, () => {
       const out = agentNoProxy(base, broker);
       for (const spelling of ["NO_PROXY", "no_proxy"] as const) {
         expect(entries(out[spelling]).has(broker)).toBe(true);
         expect(added(base[spelling], out[spelling]).filter((e) => e !== broker)).toEqual([]);
         for (const e of (base[spelling] ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
-          expect(entries(out[spelling]).has(e)).toBe(true);
+          expect(entries(out[spelling]).has(e)).toBe(!exemptsEveryHost(e));
         }
       }
     });
   }
 
   it("never copies one spelling's entries into the other", () => {
-    expect(agentNoProxy({ NO_PROXY: "*" }, broker)).toEqual({ NO_PROXY: `*,${broker}`, no_proxy: broker });
+    expect(agentNoProxy({ NO_PROXY: "a.example" }, broker)).toEqual({ NO_PROXY: `a.example,${broker}`, no_proxy: broker });
     expect(agentNoProxy({ NO_PROXY: "a.example", no_proxy: "b.example" }, broker)).toEqual({
       NO_PROXY: `a.example,${broker}`,
       no_proxy: `b.example,${broker}`,
     });
+  });
+
+  it("removes an inherited entry that exempts every host, whatever its place in the list", () => {
+    // Node from 26.11 honours `*` anywhere in the list, so the Broker's
+    // address appended after it no longer disables it there.
+    for (const entry of ["*", " * ", "*:443", "0.0.0.0/0", "::/0", "[::]/0"]) expect(exemptsEveryHost(entry)).toBe(true);
+    for (const entry of ["*.example.com", ".example.com", "example.com", "10.0.0.0/8", "127.0.0.1:8080", "::1", "*x"]) {
+      expect(exemptsEveryHost(entry)).toBe(false);
+    }
+    expect(agentNoProxy({ NO_PROXY: "*", no_proxy: "internal.example,*,*.corp" }, broker)).toEqual({
+      NO_PROXY: broker,
+      no_proxy: `internal.example,*.corp,${broker}`,
+    });
+  });
+
+  it("names what it removed, and only when it removed something", () => {
+    const effective: EffectiveConfiguration = { environmentId: "e", items: [] };
+    const proxy = `http://vlt:tok@${broker}`;
+    const env = buildAgentEnv({ NO_PROXY: "*,a.example", no_proxy: "0.0.0.0/0" }, effective, new Map(), proxy);
+    expect(removedNoProxyEntries(env)).toEqual(["NO_PROXY=*", "no_proxy=0.0.0.0/0"]);
+    expect(env.NO_PROXY).toBe(`a.example,${broker}`);
+    expect(removedNoProxyEntries(buildAgentEnv({ NO_PROXY: "a.example" }, effective, new Map(), proxy))).toEqual([]);
+    // Without a Broker nothing is proxied, so nothing is removed.
+    const unproxied = buildAgentEnv({ NO_PROXY: "*" }, effective, new Map(), "");
+    expect(unproxied.NO_PROXY).toBe("*");
+    expect(removedNoProxyEntries(unproxied)).toEqual([]);
   });
 });
 
@@ -892,12 +919,12 @@ describe("broker proxy", () => {
     expect(await fetchDecoy({ NO_PROXY: "other.example", no_proxy: `127.0.0.1:${decoy.port}` })).toBe("status 200");
     expect(decoy.connections()).toBe(1);
     expect(await fetchDecoy({ NO_PROXY: `127.0.0.1:${decoy.port}`, no_proxy: "other.example" })).toBe("status 403");
-    // Node (like curl and Python) treats `*` as a wildcard only as the whole
-    // value, so once the Broker's address is appended an inherited `*` exempts
-    // nothing for it, in either spelling. A client that honours `*` anywhere
-    // in the list would still bypass everything.
+    // An inherited entry that exempts every host is removed, so it exempts
+    // nothing, in either spelling, whether the client honours `*` only as the
+    // whole value or (as Node does from 26.11) anywhere in the list.
     expect(await fetchDecoy({ no_proxy: "*" })).toBe("status 403");
     expect(await fetchDecoy({ NO_PROXY: "*" })).toBe("status 403");
+    expect(await fetchDecoy({ no_proxy: `*:${decoy.port}` })).toBe("status 403");
     expect(decoy.connections()).toBe(1);
   });
 });

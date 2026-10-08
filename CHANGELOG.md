@@ -30,6 +30,14 @@ fixes.
 
 ### Fixes
 
+- An agent-safe run removes an inherited `NO_PROXY` or `no_proxy` entry
+  that exempts every host (`*`, `*` with a port, or a `/0` address range
+  such as `0.0.0.0/0`) and names it. Node 26.11 honours `*` anywhere in the
+  list, so the Broker's address the run appends no longer disabled an
+  inherited `*` for it: a Node Agent's requests went around the Broker,
+  unblocked even with `--agent-network strict`. Other inherited entries
+  still bypass the Broker, as
+  [Agent-safe runs](docs/reference/agent-safe-runs.md) states.
 - On Windows, `varlatch self-update` no longer suggests `sudo` when it
   cannot replace the CLI. It suggests rerunning the command it shows from a
   terminal run as administrator, or installing the CLI in a directory you

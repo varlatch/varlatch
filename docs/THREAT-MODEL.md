@@ -133,7 +133,8 @@ And the honest limits, stated with the same discipline:
   outbound requests unless separately sandboxed, and a `NO_PROXY` or
   `no_proxy` exemption inherited from the operator's shell sends matching
   requests around the Broker even in strict mode (the run adds only the
-  Broker's own address to each spelling).
+  Broker's own address to each spelling, and removes an inherited entry
+  that would exempt every host).
 - **Opaque CONNECT tunnels cannot carry substitution** without MITM, which
   Varlatch deliberately does not do (no local CA). Clients must send
   inspectable absolute-URI HTTP requests to the Broker; CONNECT to a

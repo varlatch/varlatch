@@ -303,24 +303,58 @@ function setProxy(env: NodeJS.ProcessEnv, proxyUrl: string): void {
   env.NODE_USE_ENV_PROXY = "1";
   // With it set, Node would also proxy a request addressed to the Broker
   // itself and reject the absolute-URI form substitution needs.
+  const removed = everyHostExemptions(env);
   Object.assign(env, agentNoProxy(env, new URL(proxyUrl).host));
+  if (removed.length > 0) removedExemptions.set(env, removed);
+}
+
+/** What setProxy removed from an Agent's environment, for the run to name. */
+const removedExemptions = new WeakMap<NodeJS.ProcessEnv, string[]>();
+
+/** The inherited no-proxy entries removed from this Agent's environment, as `SPELLING=entry`. */
+export function removedNoProxyEntries(env: NodeJS.ProcessEnv): string[] {
+  return removedExemptions.get(env) ?? [];
+}
+
+/**
+ * A no-proxy entry that exempts every destination, or every destination on
+ * one port: `*`, `*:<port>`, or an address range with a /0 prefix
+ * (`0.0.0.0/0`, `::/0`). Clients disagree about where in the list `*`
+ * counts: curl, Python, and Node before 26.11 honour it only as the whole
+ * value, Node from 26.11 (undici 8.11) anywhere in the list. Removing such
+ * an entry is the only way it exempts nothing for every client.
+ */
+export function exemptsEveryHost(entry: string): boolean {
+  const e = entry.trim().toLowerCase();
+  return /^\*(:\d+)?$/.test(e) || /^\[?[0-9a-f.:]+\]?\/0$/.test(e);
+}
+
+function noProxyEntries(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((e) => e.trim()).filter(Boolean);
+}
+
+function everyHostExemptions(base: NodeJS.ProcessEnv): string[] {
+  return (["NO_PROXY", "no_proxy"] as const).flatMap((spelling) =>
+    noProxyEntries(base[spelling]).filter(exemptsEveryHost).map((entry) => `${spelling}=${entry}`),
+  );
 }
 
 /**
  * The Agent's NO_PROXY and no_proxy: each spelling keeps the entries it
- * inherited and gains exactly the Broker's own address; a spelling that was
- * unset becomes that address alone. Clients disagree about which spelling
- * wins when both are set (Node 26 reads no_proxy first), so this is the only
+ * inherited, except one that exempts every host (see exemptsEveryHost),
+ * and gains exactly the Broker's own address; a spelling that was unset
+ * becomes that address alone. Clients disagree about which spelling wins
+ * when both are set (Node 26 reads no_proxy first), so this is the only
  * rule under which, whatever spelling a client reads, the run adds no
  * exemption but the Broker's address. It can narrow an inherited exemption
  * (a client that fell back to the other spelling no longer sees it), never
- * widen one. Inherited entries, `*` included, still bypass the Broker for
- * clients that read their spelling: a stated limit, even with
- * --agent-network strict.
+ * widen one. Other inherited entries still bypass the Broker for clients
+ * that read their spelling: a stated limit, even with --agent-network
+ * strict.
  */
 export function agentNoProxy(base: NodeJS.ProcessEnv, broker: string): { NO_PROXY: string; no_proxy: string } {
   const withBroker = (value: string | undefined) =>
-    [...new Set([...(value ?? "").split(",").map((e) => e.trim()).filter(Boolean), broker])].join(",");
+    [...new Set([...noProxyEntries(value).filter((e) => !exemptsEveryHost(e)), broker])].join(",");
   return { NO_PROXY: withBroker(base.NO_PROXY), no_proxy: withBroker(base.no_proxy) };
 }
 
@@ -502,7 +536,14 @@ async function runMediated(run: {
   );
 
   try {
-    return await startAgent(runId, run.command, run.commandArgs, run.childEnv(placeholdersByItem, broker.proxyUrl, minted?.credential));
+    const env = run.childEnv(placeholdersByItem, broker.proxyUrl, minted?.credential);
+    const removed = removedNoProxyEntries(env);
+    if (removed.length > 0) {
+      console.error(
+        `varlatch: removed inherited no-proxy entries that would send the Agent's requests around the Broker: ${removed.join(", ")}`,
+      );
+    }
+    return await startAgent(runId, run.command, run.commandArgs, env);
   } finally {
     await broker.close();
     diagnostics.summarize();
