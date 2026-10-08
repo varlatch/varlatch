@@ -266,14 +266,14 @@ A trusted local process that exercises credentials on behalf of a less-trusted p
 _Avoid_: proxy (describes its mechanism, not its role), agent (the Broker is trusted; the Agent is not)
 
 **Coding Agent**:
-The tool a developer works with (Claude Code, Codex, Cursor, and others). In an Agent Run it acts as an Agent; in Assisted Operation Varlatch sees only the human whose credential it uses.
+The tool a developer works with (Claude Code, Codex, Cursor, and others). In an Agent Run it acts as an Agent; in Assisted Operation Varlatch sees only the human whose credential it uses, and the audit log the client the CLI reports for it.
 _Avoid_: agent, when the Agent Identity is not meant
 
 **Assisted Operation**:
 A Coding Agent driving the CLI with the human's own credential, the human approving its actions in the Coding Agent's own interface. To Varlatch it is the human acting: nothing creates, widens, or narrows authority. Its invariant: on the documented flow the CLI never hands the Coding Agent a Secret's value. That protects against accidents, not deliberate misuse.
 
 **Assisted Mode**:
-The CLI's client-side behaviour for Assisted Operation, turned on by `varlatch --assisted` (the documented form, in every command), `VARLATCH_ASSISTED=1`, or, as a backstop, a Coding Agent's shell marker; `VARLATCH_ASSISTED=0` turns marker detection off but never overrides `--assisted`. It changes client defaults only (Output Redaction by default, no Secret value from the command line, no prompts), never authorization.
+The CLI's client-side behaviour for Assisted Operation, turned on by `varlatch --assisted` (the documented form, in every command), `VARLATCH_ASSISTED=1`, or, as a backstop, a Coding Agent's shell marker; `VARLATCH_ASSISTED=0` turns marker detection off but never overrides `--assisted`. It changes client defaults only (Output Redaction by default, no Secret value from the command line, no prompts), never authorization; the server sees it only as the `assisted` token of the CLI's User-Agent, which the audit log records as the client the caller reported.
 _Avoid_: agent mode (confusable with Agent Runs)
 
 **Agent**:

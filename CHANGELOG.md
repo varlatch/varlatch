@@ -5,6 +5,69 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.16.0)
+
+### Audit
+
+- **The audit log says which credential and client acted.** Every event an
+  authenticated request records for its own identity now names the
+  credential that made the request (`credentialId`, before only on
+  denials) and the request's client (`client`, new), a short summary of
+  its User-Agent: `Firefox on Linux` for the dashboard, `varlatch CLI
+  0.16.0 on Linux` for the CLI, `varlatch CLI 0.16.0 on Linux, assisted`
+  when a coding agent drives the CLI in
+  [assisted mode](docs/reference/assisted-mode.md), and `varlatch MCP
+  0.16.0 on Linux` for [`varlatch mcp`](docs/reference/mcp.md). So the log
+  tells a person's dashboard from their CLI, a coding agent from the
+  human, and one machine from another sharing an identity. The client is
+  what the caller says, never verified, and no authorization depends on it.
+  A label holds only fixed words and a release version, never free text
+  from the header. Events with no authenticated request (failed sign-ins,
+  sync delivery, webhooks, operator commands) and events from before the
+  upgrade have neither. On `credential.issued`, `credential.revoked`, and
+  `authentication.device_collected`, `credentialId` keeps naming the
+  credential the event is about.
+- The dashboard's audit log shows how the actor connected next to their
+  name (the client, else the credential's name), and an event's details
+  show its credential (name, kind, and ID) and client. The actor filter
+  groups people, agents, CI, and machines, marks retired identities, and
+  offers **Varlatch** for Varlatch's own events.
+
+### CLI
+
+- Every request the CLI makes now sends `varlatch-cli/<version>
+  (<platform>; <arch>)` as its User-Agent, with a third token, `assisted`,
+  in assisted mode; before, only `varlatch login` sent one. `varlatch mcp`
+  sends `varlatch-mcp/<version> (<platform>; <arch>)`.
+
+### API
+
+- Audit events carry `client`, and `credentialId` on every event its
+  request's identity records (capability `audit.attribution`). Both are
+  additive: `schemaVersion` stays 1, and the listing, the NDJSON export,
+  and webhook deliveries carry them.
+- The audit listing returns `credentials`, the credentials its page's
+  events name, by ID: `name`, `kind`, and `client` for each, never token
+  material. It belongs to the listing only, not to the event: the export
+  and webhooks do not carry it. Merge it across pages. SDK:
+  `listAuditEvents()` returns it (`AuditEventPage`).
+- The audit listing and export take the filter `actor=varlatch`: only
+  Varlatch's own events, those without an actor identity, except
+  `authentication.*` events, whose missing actor is an unknown caller.
+  With `actorIdentityId` it is refused with `VALIDATION_FAILED`. SDK: the
+  `actor` filter.
+- Database migration 27 adds the audit events' `client` column, nullable.
+  The runtime role keeps INSERT and SELECT only on the audit table.
+
+### Upgrading
+
+Database schema: migration 27 (the audit events' client). Earlier events
+keep no client, and `credentialId` only where they had one.
+
+- Update the CLI with `varlatch self-update` wherever coding agents run it:
+  older CLIs send no User-Agent outside `varlatch login`, so their events
+  carry the credential but no client.
+
 ## 0.15.2 (2026-10-08)
 
 ### Sign-in

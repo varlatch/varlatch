@@ -77,6 +77,11 @@ tool argument comes from the model. So:
 - Organization, project, and environment default to the repository context
   of the working directory; flags override them, and every tool also
   accepts them as arguments.
+- Its requests carry the User-Agent `varlatch-mcp/<version> (<platform>;
+  <arch>)`, so the audit log records their events with the client
+  `varlatch MCP <version> on <platform>`, apart from the CLI's, though both
+  use the same credential. That is what the server says about itself, not
+  proof.
 
 ## Exit status
 
