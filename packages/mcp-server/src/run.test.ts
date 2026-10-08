@@ -3,8 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveToken } from "@varlatch/context";
-import { describe, expect, it } from "vitest";
-import { McpStartError, parseMcpArgs, prepareMcpServer } from "./run.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { McpStartError, mcpUserAgent, parseMcpArgs, prepareMcpServer } from "./run.js";
 
 /**
  * Starting the MCP server (ADR-0043 Decision 9): the shared path of
@@ -103,5 +103,30 @@ describe("prepareMcpServer: the credential", () => {
     const err = startError(() => prepareMcpServer(base, { XDG_CONFIG_HOME: mkdtempSync(join(tmpdir(), "x-")) }, cwd));
     expect(err.exitCode).toBe(77);
     expect(err.message).toMatch(/varlatch login/);
+  });
+});
+
+describe("prepareMcpServer: the User-Agent", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "varlatch-mcp-ua-"));
+  const base = { server: "https://varlatch.example", organization: "acme", allowWrites: false, help: false };
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function sent(version?: string): Promise<string | null> {
+    let userAgent: string | null = null;
+    vi.stubGlobal("fetch", async (_url: unknown, init?: RequestInit) => {
+      userAgent = new Headers(init?.headers).get("User-Agent");
+      return Response.json({ apiMajor: 1, serverVersion: "0.16.0", capabilities: [] });
+    });
+    await prepareMcpServer(base, { VARLATCH_TOKEN: "vlt_cli_test" }, cwd, version).client.meta();
+    return userAgent;
+  }
+
+  it("is varlatch-mcp/<version> (<platform>; <arch>), which varlatchd records as the client of each audit event", async () => {
+    expect(mcpUserAgent("0.16.0", "linux", "x64")).toBe("varlatch-mcp/0.16.0 (linux; x64)");
+    expect(await sent("0.16.0")).toBe(`varlatch-mcp/0.16.0 (${process.platform}; ${process.arch})`);
+  });
+
+  it("is not sent without a version to name", async () => {
+    expect(await sent()).toBeNull();
   });
 });
