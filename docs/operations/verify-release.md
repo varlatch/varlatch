@@ -15,7 +15,7 @@ a registry login that can read its images (`docker login ghcr.io` with a
 token that has the `read:packages` scope).
 
 ```sh
-V=0.15.2                                      # the release to verify
+V=0.16.0                                      # the release to verify
 REPO=varlatch/varlatch                        # the repository releases come from
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
