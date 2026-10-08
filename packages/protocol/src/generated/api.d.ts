@@ -1962,7 +1962,10 @@ export interface components {
             occurredAt: string;
             actorIdentityId?: string | null;
             authenticationMethodId?: string | null;
+            /** @description The credential of the request that recorded the event, when the actor is the identity that made it; on credential.issued, credential.revoked, and authentication.device_collected, the credential the event is about. Null when no request credential applies (Varlatch's own events, failed authentications). Before 0.16.0 only authorization.denied and those three types named one. */
             credentialId?: string | null;
+            /** @description A short, readable summary of the User-Agent of the request that recorded the event, such as "Firefox on Linux", "varlatch CLI 0.16.0 on Linux, assisted" (the CLI in assisted mode, a coding agent driving it), or "varlatch MCP 0.16.0 on Linux". What the client says about itself, never verified. Null when the client was not recognized, for events no authenticated request recorded, and for events before 0.16.0; absent from older servers (capability audit.attribution). */
+            client?: string | null;
             organizationId?: string | null;
             action?: string | null;
             resource?: Record<string, never>;

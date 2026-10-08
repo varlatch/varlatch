@@ -42,6 +42,8 @@ export function serializeAuditEvent(r: Record<string, unknown>) {
     actorIdentityId: r.actor_identity_id,
     authenticationMethodId: r.authentication_method_id,
     credentialId: r.credential_id,
+    // The acting request's client, as reported (migration 27); null before it.
+    client: r.client ?? null,
     organizationId: r.organization_id,
     action: r.action,
     resource: parseMaybe(r.resource),

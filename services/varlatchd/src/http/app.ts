@@ -13,6 +13,7 @@ import { CAPABILITIES } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
 import { clientLabel } from "../auth/client-label.js";
+import { withAttribution } from "../audit/attribution.js";
 import { recordAuditEvent } from "../audit/events.js";
 import { auditFilterConditions, parseAuditFilters } from "../audit/filters.js";
 import { serializeAuditEvent } from "../audit/serialize.js";
@@ -564,7 +565,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       credentialKind: result.credential.kind,
       authSessionId: result.credential.auth_session_id ?? null,
     });
-    return next();
+    // The rest of the request is attributed to this credential and client:
+    // every audit event its identity records names them (ADR-0016 §9).
+    return withAttribution(
+      {
+        identityId: result.identity.id,
+        credentialId: result.credential.id,
+        client: clientLabel(c.req.header("User-Agent")),
+      },
+      () => next(),
+    );
   });
 
   app.get("/v1/installation/backups", (c) => {
