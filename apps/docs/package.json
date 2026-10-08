@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/docs",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "private": true,
   "description": "docs.varlatch.com: the documentation site, built from docs/ and the deployment guide",
   "license": "Apache-2.0",

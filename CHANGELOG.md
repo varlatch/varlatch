@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.15.2)
+## 0.15.2 (2026-10-08)
 
 ### Sign-in
 
@@ -52,6 +52,24 @@ fixes.
   set `COSIGN_REPOSITORY` as
   [Verifying a release](docs/operations/verify-release.md) shows. 0.15.1's
   signatures are in both places.
+
+### Upgrading
+
+No database migration: 0.15.2 runs on 0.15.1's schema (migration 26). Check
+`SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
+
+- From 0.15.1 or 0.15.0: download `varlatch-cli-0.15.2.cjs` from the
+  `v0.15.2` release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.15.2.cjs upgrade 0.15.2 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.15.2.cjs`, or run `varlatch self-update`.
+- From 0.14.3 or older: follow the 0.15.0 notes below with the 0.15.2 CLI
+  and version. The upgrade applies migration 26.
+- Update the CLI wherever agent-safe runs start, with
+  `varlatch self-update`: the fix for an inherited `*` in `NO_PROXY` (see
+  Fixes) is in the CLI, not the server.
+- 0.15.2 restores everything 0.15.1 restores, and archives from 0.15.1.
 
 ## 0.15.1 (2026-10-07)
 
