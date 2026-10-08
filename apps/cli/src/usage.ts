@@ -125,6 +125,9 @@ Usage:
   varlatch identity <list [--json]|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>
                                                        # --confirm required: retire revokes all credentials
   varlatch credential <list <identity-id> [--json]|revoke <identity-id> <credential-id>>
+  varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
+               (another credential for a service, workload, or broker identity, such as one per program;
+                the token goes only to --out, a new file readable by you only, never to the output)
   varlatch --version                                   # CLI release; refresh it after every upgrade
   varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
                                                        # replace this CLI with a release build (checksum, signature)

@@ -608,6 +608,69 @@ async function obtainValue(source: ValueSource, item: string): Promise<{ value: 
   }
 }
 
+const CREDENTIAL_ISSUE_USAGE =
+  "Usage: varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]";
+
+/** credential issue writes a file, so it is parsed strictly (ADR-0043 Decision 10). */
+const CREDENTIAL_ISSUE_OPTIONS: OptionSpec = {
+  values: ["--name", "--ttl", "--max-uses", "--out", "--server"],
+  booleans: ["--json"],
+  onceBooleans: true,
+  positionals: 1,
+};
+
+/** --ttl or --max-uses: a whole number from 1 to `max`, the server's limits, or exit 64. */
+function credentialLimit(option: string, value: string | undefined, max: number): number | undefined {
+  if (value === undefined) return undefined;
+  const n = Number(value);
+  if (!/^\d+$/.test(value) || n < 1 || n > max) {
+    usageError(`varlatch credential issue: ${option} takes a whole number from 1 to ${max}, not ${value}`);
+  }
+  return n;
+}
+
+/**
+ * `varlatch credential issue` (credentialIssue.ts): the token goes only to
+ * the --out file; what is printed, as text or JSON, names the credential.
+ */
+async function credentialIssue(args: string[], assisted: AssistedMode): Promise<void> {
+  const parsed = strictOptions("credential issue", args, CREDENTIAL_ISSUE_OPTIONS, CREDENTIAL_ISSUE_USAGE);
+  const identityId = parsed.positionals[0] ?? usageError(CREDENTIAL_ISSUE_USAGE);
+  const name = parsed.values.get("--name") ?? usageError(`varlatch credential issue: give --name, such as the program that will use it\n${CREDENTIAL_ISSUE_USAGE}`);
+  if (name.length === 0 || name.length > 200) usageError("varlatch credential issue: --name takes 1 to 200 characters");
+  const out = parsed.values.get("--out");
+  if (!out) {
+    usageError(`varlatch credential issue: give --out <file>; the token is written only to a new file, never to the output\n${CREDENTIAL_ISSUE_USAGE}`);
+  }
+  const ttlSeconds = credentialLimit("--ttl", parsed.values.get("--ttl"), 315_360_000);
+  const maxUses = credentialLimit("--max-uses", parsed.values.get("--max-uses"), 1_000_000);
+  // The organization comes from the repository; no Environment is involved.
+  const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+  const server = parsed.values.get("--server");
+  if (server) opts.server = server;
+  const ctx = resolveContext(opts);
+  const { CredentialIssueError, issueCredentialToFile } = await import("./credentialIssue.js");
+  let issued: Awaited<ReturnType<typeof issueCredentialToFile>>;
+  try {
+    issued = await issueCredentialToFile(client(ctx), { organization: ctx.organization, identityId, name, ttlSeconds, maxUses, out });
+  } catch (err) {
+    if (err instanceof CredentialIssueError) fail(err.message);
+    throw err;
+  }
+  const { out: file, ...credential } = issued;
+  if (parsed.booleans.has("--json")) {
+    printJson({ identity: identityId, credential, out: file });
+    return;
+  }
+  const limits = [
+    issued.expiresAt ? `expires ${issued.expiresAt}` : "no expiry: revoke it when nothing uses it",
+    ...(issued.maxUses ? [`${issued.maxUses} use${issued.maxUses === 1 ? "" : "s"}`] : []),
+  ].join(", ");
+  console.log(`Issued credential ${issued.id} (${issued.name}) for ${identityId}; ${limits}.`);
+  console.log(`The token is in ${file}, readable by you only, and is never shown again.`);
+  if (assisted.on) console.log("The file holds a credential: do not print or read it; give its path to the program that uses it.");
+}
+
 async function main(): Promise<void> {
   // The global --assisted option (ADR-0043 Decision 3): taken from the CLI's
   // own arguments, never from a command's after `--`.
@@ -2042,6 +2105,10 @@ async function main(): Promise<void> {
 
       case "credential": {
         const sub = args[0];
+        if (sub === "issue") {
+          await credentialIssue(args.slice(1), assisted);
+          return;
+        }
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
@@ -2085,7 +2152,7 @@ async function main(): Promise<void> {
           console.log(`Credential ${credentialId} revoked. Every subsequent request with it fails.`);
           return;
         }
-        usageError("Usage: varlatch credential <list|revoke>");
+        usageError("Usage: varlatch credential <list|revoke|issue>");
         return;
       }
 

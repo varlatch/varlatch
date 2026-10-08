@@ -17,6 +17,12 @@ fixes.
   credential, move the program to it, then revoke the old one. `ci` and
   `agent` identities, which never hold a stored credential, and retired
   identities get none.
+- CLI: `varlatch credential issue <identity-id> --name <name> [--ttl <s>]
+  [--max-uses <n>] --out <file> [--json]`. The token is written only to
+  `--out`, a new file created with mode 0600 in a directory that exists;
+  an existing file is refused. The token never appears in the output or in
+  an error, so the command works in assisted mode too. Against an older
+  server it says so and issues nothing.
 
 ### Audit
 
