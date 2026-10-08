@@ -38,7 +38,7 @@ const repo = join(dir, "repo");
 let control = "";
 let server: http.Server;
 let origin = "";
-let requests: { method: string; url: string; auth: string }[] = [];
+let requests: { method: string; url: string; auth: string; userAgent: string }[] = [];
 /** Names dev has (source "self") or inherits (source "parent"); a status instead makes the metadata read fail. */
 let devItems: { name: string; source: "self" | "parent" }[] | number = [];
 
@@ -48,7 +48,12 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   req.resume();
   req.on("end", () => {
     const url = req.url ?? "";
-    requests.push({ method: req.method ?? "", url, auth: (req.headers.authorization ?? "").replace(/^Bearer /, "") });
+    requests.push({
+      method: req.method ?? "",
+      url,
+      auth: (req.headers.authorization ?? "").replace(/^Bearer /, ""),
+      userAgent: req.headers["user-agent"] ?? "",
+    });
     const json = (status: number, body: unknown) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(body));
@@ -231,6 +236,15 @@ describe.each([RELEASE, OLD])("$name", (entry) => {
     expect(requests).toEqual([]);
   });
 
+  it("identifies itself to varlatchd as the MCP server, which the audit log records as its client", async () => {
+    const client = await connect(entry, [], env());
+    await client.callTool("varlatch_list_organizations", {});
+    await client.close();
+    expect(requests.length).toBeGreaterThan(0);
+    const ua = new RegExp(`^varlatch-mcp/\\d+\\.\\d+\\.\\d+(?:-\\S+)? \\(${process.platform}; ${process.arch}\\)$`);
+    for (const r of requests) expect(r.userAgent).toMatch(ua);
+  });
+
   it("negative control, same store: outside an agent-safe run the stored credential is used; inside, the agent-run one", async () => {
     const outside = await connect(entry, [], operatorHome());
     await outside.callTool("varlatch_list_organizations", {});
@@ -247,7 +261,10 @@ describe("the release bundle", () => {
     const version = spawnSync(process.execPath, [RELEASE_BUNDLE, "--version"], { encoding: "utf8" }).stdout.split(" ")[1];
     const client = await connect(RELEASE, [], { ...operatorHome(), VARLATCH_TOKEN: "vlt_cli_test" });
     expect(client.serverInfo).toMatchObject({ name: "varlatch", version });
+    // The same version in its User-Agent to varlatchd.
+    await client.callTool("varlatch_list_organizations", {});
     await client.close();
+    expect(requests.map((r) => r.userAgent)).toContain(`varlatch-mcp/${version} (${process.platform}; ${process.arch})`);
   });
 
   it("the old entry point says it is deprecated and names varlatch mcp", () => {

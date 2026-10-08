@@ -99,6 +99,18 @@ export function parseMcpArgs(argv: string[], env: NodeJS.ProcessEnv): McpArgs {
   return args;
 }
 
+/**
+ * The MCP server's User-Agent on every request to varlatchd:
+ * `varlatch-mcp/<version> (<platform>; <arch>)`. varlatchd records its
+ * summary ("varlatch MCP 0.16.0 on Linux") as the client of each audit event
+ * a request records, so the audit log tells a model host's tool calls from
+ * the CLI, though both use the same credential. What the server says about
+ * itself: never verified, never an authorization input.
+ */
+export function mcpUserAgent(version: string, platform: string = process.platform, arch: string = process.arch): string {
+  return `varlatch-mcp/${version} (${platform}; ${arch})`;
+}
+
 export interface PreparedServer {
   client: VarlatchClient;
   defaults: McpDefaults;
@@ -107,9 +119,10 @@ export interface PreparedServer {
 
 /**
  * Everything short of connecting: the server, the defaults, and the client
- * with its credential. Throws McpStartError with the status to exit with.
+ * with its credential, identified by `version` in its User-Agent. Throws
+ * McpStartError with the status to exit with.
  */
-export function prepareMcpServer(args: McpArgs, env: NodeJS.ProcessEnv, cwd: string): PreparedServer {
+export function prepareMcpServer(args: McpArgs, env: NodeJS.ProcessEnv, cwd: string, version?: string): PreparedServer {
   const agentRun = agentRunOf(env);
   if (agentRun && args.allowWrites) {
     throw new McpStartError(
@@ -154,7 +167,11 @@ export function prepareMcpServer(args: McpArgs, env: NodeJS.ProcessEnv, cwd: str
   if (!token) {
     throw new McpStartError(`not authenticated to ${server}; run \`varlatch login\` or set VARLATCH_TOKEN`, MCP_EXIT.denied);
   }
-  return { client: new VarlatchClient({ server, token }), defaults, allowWrites: args.allowWrites };
+  return {
+    client: new VarlatchClient({ server, token, ...(version ? { userAgent: mcpUserAgent(version) } : {}) }),
+    defaults,
+    allowWrites: args.allowWrites,
+  };
 }
 
 /**
@@ -173,7 +190,7 @@ export async function runMcpServer(
       opts.out(`${MCP_USAGE}\n`);
       return 0;
     }
-    prepared = prepareMcpServer(args, opts.env, opts.cwd);
+    prepared = prepareMcpServer(args, opts.env, opts.cwd, opts.version);
   } catch (err) {
     if (err instanceof McpStartError) {
       opts.err(`${opts.name}: ${err.message}`);

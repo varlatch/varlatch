@@ -63,6 +63,34 @@ describe("clientLabel", () => {
     expect(clientLabel("varlatch-cli/1.2.3")).toBe("varlatch CLI 1.2.3");
   });
 
+  it("says when the CLI runs in assisted mode", () => {
+    expect(clientLabel("varlatch-cli/0.15.3 (linux; x64; assisted)")).toBe("varlatch CLI 0.15.3 on Linux, assisted");
+    expect(clientLabel("varlatch-cli/0.15.3 (win32; arm64; assisted)")).toBe("varlatch CLI 0.15.3 on Windows, assisted");
+    expect(clientLabel("varlatch-cli/0.15.3 (linux;x64;assisted)")).toBe("varlatch CLI 0.15.3 on Linux, assisted");
+    expect(clientLabel("varlatch-cli/0.15.3 (plan9; x64; assisted)")).toBe("varlatch CLI 0.15.3, assisted");
+  });
+
+  it("names the varlatch MCP server", () => {
+    expect(clientLabel("varlatch-mcp/0.15.3 (linux; x64)")).toBe("varlatch MCP 0.15.3 on Linux");
+    expect(clientLabel("varlatch-mcp/0.15.3 (darwin; arm64)")).toBe("varlatch MCP 0.15.3 on macOS");
+    expect(clientLabel("varlatch-mcp/0.15.3")).toBe("varlatch MCP 0.15.3");
+  });
+
+  it("reads assisted only as its own token inside the comment", () => {
+    for (const [ua, label] of [
+      ["varlatch-cli/0.15.3 (linux; x64; Assisted)", "varlatch CLI 0.15.3 on Linux"],
+      ["varlatch-cli/0.15.3 (linux; x64; assisted-ish)", "varlatch CLI 0.15.3 on Linux"],
+      ["varlatch-cli/0.15.3 (linux; x64; not assisted)", "varlatch CLI 0.15.3 on Linux"],
+      ["varlatch-cli/0.15.3 (assisted)", "varlatch CLI 0.15.3"],
+      ["varlatch-cli/0.15.3 (linux; x64) assisted", "varlatch CLI 0.15.3 on Linux"],
+      ["varlatch-cli/0.15.3 (linux; x64; assisted", "varlatch CLI 0.15.3"],
+      ["varlatch-cli/0.15.3 assisted", "varlatch CLI 0.15.3"],
+      ["varlatch-cli/0.15.3 (constructor; x64)", "varlatch CLI 0.15.3"],
+    ]) {
+      expect(clientLabel(ua), ua).toBe(label);
+    }
+  });
+
   it("is null when the client is missing or not recognized", () => {
     for (const ua of [
       undefined,
@@ -75,6 +103,12 @@ describe("clientLabel", () => {
       "varlatch-cli/latest (linux; x64)",
       "varlatch-cli/1.2.3-" + "a".repeat(21),
       "varlatch-cli/1.2.3<script> (linux; x64)",
+      "varlatch-mcp/latest (linux; x64)",
+      "varlatch-agent/1.2.3 (linux; x64)",
+      "Varlatch-cli/1.2.3 (linux; x64)",
+      "varlatch-mcp1.2.3",
+      // Too long once assisted: an honest unknown, never a shortened guess.
+      "varlatch-cli/9999.9999.9999-rc.abcdefghijklmnop (win32; x64; assisted)",
       `${UA.firefoxLinux}${" ".repeat(1024)}`,
     ]) {
       expect(clientLabel(ua), String(ua)).toBeNull();
@@ -86,8 +120,11 @@ describe("clientLabel", () => {
       "Mozilla/5.0 (X11; Linux x86_64; jeremy@laptop.example) Firefox/131.0 <script>alert(1)</script>",
       "Firefox/131.0 (Windows NT 10.0; serial 1234-5678)",
       "varlatch-cli/9999.9999.9999-rc.abcdefghijklmnop (win32; x64) extra words here",
+      "varlatch-cli/1.2.3 (linux; jeremy-laptop; serial 1234; assisted) extra",
+      "varlatch-mcp/1.2.3 (darwin; arm64; host=jeremy.example)",
     ];
-    const vocabulary = /^(?:varlatch CLI \d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?|[A-Za-z ]+)(?: on (?:Linux|macOS|Windows|iOS|Android|ChromeOS|FreeBSD|OpenBSD))?$/;
+    const vocabulary =
+      /^(?:varlatch (?:CLI|MCP) \d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?|[A-Za-z ]+)(?: on (?:Linux|macOS|Windows|iOS|Android|ChromeOS|FreeBSD|OpenBSD))?(?:, assisted)?$/;
     for (const ua of [...hostile, ...Object.values(UA)]) {
       const label = clientLabel(ua);
       expect(label, ua).not.toBeNull();

@@ -2302,6 +2302,7 @@ paths:
         - $ref: "#/components/parameters/auditDecision"
         - $ref: "#/components/parameters/auditEventType"
         - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditActor"
         - $ref: "#/components/parameters/auditProjectId"
         - $ref: "#/components/parameters/auditEnvironmentId"
         - $ref: "#/components/parameters/auditItem"
@@ -2320,6 +2321,15 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/AuditEvent" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+                  credentials:
+                    type: object
+                    additionalProperties: { $ref: "#/components/schemas/AuditCredential" }
+                    description: >
+                      The credentials this page's events name in credentialId,
+                      by ID (capability audit.attribution): a sidecar of the
+                      listing, not part of the event schema, so the export and
+                      webhook deliveries do not carry it. Absent from older
+                      servers.
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-events/export:
@@ -2336,6 +2346,7 @@ paths:
         - $ref: "#/components/parameters/auditDecision"
         - $ref: "#/components/parameters/auditEventType"
         - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditActor"
         - $ref: "#/components/parameters/auditProjectId"
         - $ref: "#/components/parameters/auditEnvironmentId"
         - $ref: "#/components/parameters/auditItem"
@@ -2882,6 +2893,16 @@ components:
       in: query
       description: Only events whose actor is this identity ID (capability audit.filters).
       schema: { type: string, maxLength: 200 }
+    auditActor:
+      name: actor
+      in: query
+      description: >
+        varlatch: only Varlatch's own events, those with no actor identity
+        (sync delivery, webhooks, operator commands), except
+        authentication.* events, whose missing actor is an unknown caller
+        (capability audit.attribution). Given with actorIdentityId it is
+        refused with VALIDATION_FAILED.
+      schema: { type: string, enum: [varlatch] }
     auditProjectId:
       name: projectId
       in: query
@@ -4057,6 +4078,24 @@ components:
         version: { $ref: "#/components/schemas/EntityVersion" }
         updatedAt: { type: [string, "null"], format: date-time }
 
+    AuditCredential:
+      type: object
+      required: [name, kind, client]
+      description: >
+        What the audit listing's credentials sidecar says about a credential
+        its events name. Metadata only; never token material.
+      properties:
+        name: { type: [string, "null"] }
+        kind:
+          type: string
+          description: service, cli, browser (a dashboard session), agent-run, or oidc.
+        client:
+          type: [string, "null"]
+          maxLength: 64
+          description: >
+            The client that requested the credential, for browser and cli
+            credentials ("Firefox on Linux"); null otherwise or when unknown.
+
     SyncLedgerName:
       type: object
       required: [name, state, updatedAt, error]
@@ -4081,7 +4120,27 @@ components:
         occurredAt: { type: string, format: date-time }
         actorIdentityId: { type: [string, "null"] }
         authenticationMethodId: { type: [string, "null"] }
-        credentialId: { type: [string, "null"] }
+        credentialId:
+          type: [string, "null"]
+          description: >
+            The credential of the request that recorded the event, when the
+            actor is the identity that made it; on credential.issued,
+            credential.revoked, and authentication.device_collected, the
+            credential the event is about. Null when no request credential
+            applies (Varlatch's own events, failed authentications). Before
+            0.16.0 only authorization.denied and those three types named one.
+        client:
+          type: [string, "null"]
+          maxLength: 64
+          description: >
+            A short, readable summary of the User-Agent of the request that
+            recorded the event, such as "Firefox on Linux", "varlatch CLI
+            0.16.0 on Linux, assisted" (the CLI in assisted mode, a coding
+            agent driving it), or "varlatch MCP 0.16.0 on Linux". What the
+            client says about itself, never verified. Null when the client
+            was not recognized, for events no authenticated request recorded,
+            and for events before 0.16.0; absent from older servers
+            (capability audit.attribution).
         organizationId: { type: [string, "null"] }
         action: { type: [string, "null"] }
         resource: { type: object }

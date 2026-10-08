@@ -15,6 +15,13 @@ export interface AuditFilters {
   /** An exact event type, or a prefix ending in a dot ("value." for `value.*`). */
   eventType?: { exact: string } | { prefix: string };
   actorIdentityId?: string;
+  /**
+   * "varlatch": Varlatch's own events, recorded with no actor (sync
+   * delivery, webhooks, operator commands). A failed authentication has no
+   * actor either, and is not Varlatch acting, so authentication.* events
+   * are left out, as the dashboard shows them as an unknown actor.
+   */
+  actor?: "varlatch";
   projectId?: string;
   environmentId?: string;
   item?: string;
@@ -28,6 +35,7 @@ export const AUDIT_FILTER_PARAMS = [
   "decision",
   "eventType",
   "actorIdentityId",
+  "actor",
   "projectId",
   "environmentId",
   "item",
@@ -104,6 +112,14 @@ export function parseAuditFilters(values: (name: string) => string[] | undefined
     filters[name] = value;
   }
 
+  const actor = one("actor");
+  if (actor !== undefined) {
+    if (actor !== "varlatch") invalid("actor must be varlatch, for Varlatch's own events; filter by an identity with actorIdentityId");
+    // ANDed they could only ever match nothing: refused rather than answered empty.
+    if (filters.actorIdentityId) invalid("actor and actorIdentityId cannot be combined: give one of them");
+    filters.actor = actor;
+  }
+
   const item = one("item");
   if (item !== undefined) {
     if (item.length > 200 || !CONFIG_ITEM_NAME_PATTERN.test(item)) {
@@ -144,6 +160,9 @@ export function auditFilterConditions(filters: AuditFilters, params: unknown[]):
     );
   }
   if (filters.actorIdentityId) conditions.push(`actor_identity_id = ${bind(filters.actorIdentityId)}`);
+  if (filters.actor === "varlatch") {
+    conditions.push("(actor_identity_id IS NULL AND NOT starts_with(event_type, 'authentication.'))");
+  }
   if (filters.projectId) conditions.push(`resource->>'projectId' = ${bind(filters.projectId)}`);
   if (filters.environmentId) conditions.push(`resource->>'environmentId' = ${bind(filters.environmentId)}`);
   if (filters.item) {

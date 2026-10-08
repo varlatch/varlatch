@@ -76,6 +76,7 @@ export const CAPABILITIES = [
   "organizations.rename",
   "audit.filters",
   "auth.device",
+  "audit.attribution",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

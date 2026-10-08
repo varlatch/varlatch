@@ -38,6 +38,8 @@ export type RequirementTarget = components["schemas"]["RequirementTarget"];
 export type TailnetSelector = components["schemas"]["TailnetSelector"];
 export type ConfigItemSearchResult = components["schemas"]["ConfigItemSearchResult"];
 export type AuditEvent = components["schemas"]["AuditEvent"];
+/** One entry of the audit listing's credentials sidecar (capability audit.attribution). */
+export type AuditCredential = components["schemas"]["AuditCredential"];
 /** Server-side audit filters (capability audit.filters): the listing's and export's optional query parameters. */
 export type AuditEventFilters = Omit<
   NonNullable<operations["listAuditEvents"]["parameters"]["query"]>,

@@ -27,7 +27,6 @@ export function AuditPage() {
   useMirrorInvalidation(orgQuery.data?.id, "*", [["audit", org]]);
   const connection = useConvexConnectionState();
   const live = connection.isWebSocketConnected && Boolean(orgQuery.data);
-  const server = useServerFiltering();
 
   const [params] = useSearchParams();
   const [filters, setFilters] = useState<AuditFilterState>(() => ({
@@ -36,6 +35,7 @@ export function AuditPage() {
     project: params.get("project") ?? "",
     decision: (["allow", "deny", "info"].includes(params.get("decision") ?? "") ? params.get("decision") : "") as AuditFilterState["decision"],
   }));
+  const server = useServerFiltering(filters);
   const [exporting, setExporting] = useState(false);
 
   const exportNdjson = async () => {

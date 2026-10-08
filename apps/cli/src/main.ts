@@ -26,6 +26,7 @@ import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNa
 import { RUN_CONTEXT, buildEnv, omitProblem, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
+import { cliUserAgent, setAssistedUserAgent } from "./userAgent.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
 import { STRICT_EXIT } from "./strictRun.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
@@ -365,7 +366,7 @@ function connectClient(ctx: ResolvedContext): VarlatchClient {
     );
   }
   warnIfExpiring(ctx.server);
-  return new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token });
+  return new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() });
 }
 
 async function probeServer(
@@ -373,7 +374,7 @@ async function probeServer(
   token: string,
 ): Promise<{ state: ProbeState; detail: string | null }> {
   try {
-    const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
+    const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
     await api.meta();
     // Verifies the credential AND identifies it: OwnCredential.current marks
     // the one authenticating this request, so a probe can backfill store
@@ -613,6 +614,8 @@ async function main(): Promise<void> {
   const taken = takeAssistedOption(process.argv.slice(2));
   const [command, ...args] = taken.argv;
   const assisted = resolveAssisted(taken.given, process.env);
+  // Every request then says so in its User-Agent, which the audit records.
+  setAssistedUserAgent(assisted.on);
   everyFailureIsOne = command === "scan";
   // Help (ADR-0043 Decision 10): on stdout, status 0. Only the CLI's own
   // arguments count: a --help after `--` belongs to the command run starts.
@@ -662,14 +665,13 @@ async function main(): Promise<void> {
           for (const option of ["--org", "--audience", "--oidc-token"]) {
             if (login.values.has(option)) usageError(`varlatch login: ${option} applies to --oidc, not to ${device}\n${LOGIN_USAGE}`);
           }
-          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
           const io: DeviceLoginIO = {
             out: (line) => console.log(line),
             err: (line) => console.error(line),
             json: login.booleans.has("--json") ? printJson : null,
             cli: assisted.on ? "varlatch --assisted" : "varlatch",
             assisted: assisted.on,
-            userAgent: `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`,
+            userAgent: cliUserAgent(),
           };
           let code: number;
           if (device === "--start") {
@@ -710,7 +712,7 @@ async function main(): Promise<void> {
             explicitToken: login.values.get("--oidc-token"),
             audience: login.values.get("--audience"),
           });
-          const anonymous = new VarlatchClient({ onMaintenance: maintenanceNotice, server });
+          const anonymous = new VarlatchClient({ onMaintenance: maintenanceNotice, server, userAgent: cliUserAgent() });
           const issued = await anonymous.exchangeOidcToken({
             token: idToken,
             organization,
@@ -726,18 +728,16 @@ async function main(): Promise<void> {
           // immediately for a longer-lived CLI credential (ADR-0024; the
           // bearer is revoked server-side by the exchange).
           const handoff = await browserLogin(server);
-          // Identifies the CLI so the server can label the credential
+          // The CLI's User-Agent lets the server label the credential
           // ("varlatch CLI 0.14.0 on Linux"); it stores only that summary.
-          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
-          const userAgent = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`;
-          const issued = await new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: handoff, userAgent }).exchangeCliCredential(
+          const issued = await new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: handoff, userAgent: cliUserAgent() }).exchangeCliCredential(
             ttlFlag ? { ttlSeconds: Number(ttlFlag) } : {},
           );
           token = issued.token;
           issuedMeta = issued;
           console.log(`Issued CLI credential (expires ${issued.expiresAt}).`);
         }
-        const probe = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
+        const probe = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
         const meta = await probe.meta();
         await probe.listOrganizations(); // verifies the credential
         const replaced = replacedCredential(loadCredential(server), token);
@@ -751,7 +751,7 @@ async function main(): Promise<void> {
           // Revoke only after the new credential is verified and stored: a
           // failed or abandoned login must never leave the user signed out.
           const failure = await revokeStoredCredential(replaced, (id) =>
-            new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: replaced.token }).revokeMyCredential(id),
+            new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: replaced.token, userAgent: cliUserAgent() }).revokeMyCredential(id),
           );
           if (failure === null) {
             console.log("Previous credential revoked.");
@@ -911,7 +911,7 @@ async function main(): Promise<void> {
         }
         for (const { server, credential } of targets) {
           const revokeFailure = await revokeStoredCredential(credential, (id) =>
-            new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: credential.token }).revokeMyCredential(id),
+            new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: credential.token, userAgent: cliUserAgent() }).revokeMyCredential(id),
           );
           deleteCredential(server);
           if (revokeFailure === null) {
@@ -990,7 +990,7 @@ async function main(): Promise<void> {
             const ctx = resolveContext({ cwd: process.cwd(), environment: name });
             const token = loadToken(ctx.server);
             if (token) {
-              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token }).listEnvironments(
+              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() }).listEnvironments(
                 ctx.organization,
                 ctx.project,
               );
@@ -1875,7 +1875,7 @@ async function main(): Promise<void> {
           (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));
         const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
         warnIfExpiring(server);
-        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
+        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
         if (sub === "list") {
           const page = await api.listOrganizations();
           if (has(args, "--json")) {
@@ -1905,7 +1905,7 @@ async function main(): Promise<void> {
           const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
           const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
           warnIfExpiring(server);
-          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token });
+          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
           const project = await api.createProject(org, {
             slug,
             name: positional(args, 2) ?? slug,

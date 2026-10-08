@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { agentsBlock } from "../src/agents/install.js";
 import { contractItem, revision } from "./fixtures.js";
 
@@ -44,7 +45,7 @@ interface StoredItem {
 
 /** Server state, reset before each test. */
 let stored: StoredItem[];
-let requests: { method: string; url: string; auth: string; body: unknown }[];
+let requests: { method: string; url: string; auth: string; body: unknown; userAgent: string }[];
 let denyEffective = false;
 let noActiveContract = false;
 let failPut: Set<string>;
@@ -73,7 +74,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   req.on("end", () => {
     const url = req.url ?? "";
     const body = raw ? (JSON.parse(raw) as unknown) : undefined;
-    requests.push({ method: req.method ?? "", url, auth: req.headers.authorization ?? "", body });
+    requests.push({ method: req.method ?? "", url, auth: req.headers.authorization ?? "", body, userAgent: req.headers["user-agent"] ?? "" });
     const json = (status: number, payload: unknown) => {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(payload));
@@ -254,6 +255,26 @@ function leaked(r: Result): string[] {
     .filter(([, v]) => all.includes(v as string))
     .map(([k]) => k as string);
 }
+
+describe("the User-Agent says whether assisted mode is on", () => {
+  // varlatchd records it on every audit event, so the audit log tells a
+  // coding agent driving the CLI from the human; it never authorizes anything.
+  const plain = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch})`;
+  const assisted = `varlatch-cli/${EMBEDDED_RELEASE.version} (${process.platform}; ${process.arch}; assisted)`;
+
+  it.each([
+    ["no signal", [], {}, plain],
+    ["--assisted", ["--assisted"], {}, assisted],
+    ["VARLATCH_ASSISTED=1", [], { VARLATCH_ASSISTED: "1" }, assisted],
+    ["a coding agent's marker", [], { CLAUDECODE: "1" }, assisted],
+    ["a marker with VARLATCH_ASSISTED=0", [], { CLAUDECODE: "1", VARLATCH_ASSISTED: "0" }, plain],
+  ] as [string, string[], Record<string, string>, string][])("%s", async (_name, option, env, expected) => {
+    const r = await cli([...option, "values", "list", "--json"], { env });
+    expect(r.code, r.stderr).toBe(0);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(new Set(requests.map((q) => q.userAgent))).toEqual(new Set([expected]));
+  });
+});
 
 describe("assisted run: output protection and precedence", () => {
   it.each([

@@ -10,7 +10,21 @@ import { Button, EmptyState, Select, Skeleton, Spinner, cn } from "../../compone
 import { Drawer } from "../../components/Drawer";
 import { useCapability, useProjects } from "../projects/hooks";
 import { describeEvent, segmentsText, type AuditEventLike } from "./describe";
-import { ActorMark, DecisionBadge, EventIconGlyph, SentenceText, actorOf, clock, sameDelivery, type AuditEvent } from "./parts";
+import {
+  ActorMark,
+  DecisionBadge,
+  EventIconGlyph,
+  SentenceText,
+  VARLATCH_ACTOR,
+  actorOf,
+  actorOptions,
+  clock,
+  isVarlatchEvent,
+  mergeCredentials,
+  sameDelivery,
+  type Actor,
+  type AuditEvent,
+} from "./parts";
 import { useAuditNames } from "./useAuditNames";
 import { AuditDetail } from "./AuditDetail";
 
@@ -24,6 +38,7 @@ import { AuditDetail } from "./AuditDetail";
 
 export type AuditFilterState = {
   text: string;
+  /** An identity ID, or VARLATCH_ACTOR for Varlatch's own events. */
   actor: string;
   project: string;
   decision: "" | "allow" | "deny" | "info";
@@ -51,7 +66,8 @@ export function rangeStart(range: AuditFilterState["range"], now = Date.now()): 
 export function serverFilters(filters: AuditFilterState, scope: AuditScope, since: string | undefined): AuditEventFilters {
   const out: AuditEventFilters = {};
   if (filters.decision) out.decision = filters.decision;
-  if (filters.actor) out.actorIdentityId = filters.actor;
+  if (filters.actor === VARLATCH_ACTOR) out.actor = VARLATCH_ACTOR;
+  else if (filters.actor) out.actorIdentityId = filters.actor;
   const project = scope.projectId ?? filters.project;
   if (project) out.projectId = project;
   if (scope.environmentId) out.environmentId = scope.environmentId;
@@ -63,15 +79,22 @@ export function serverFilters(filters: AuditFilterState, scope: AuditScope, sinc
 type Line = {
   event: AuditEvent;
   described: ReturnType<typeof describeEvent>;
-  actor: ReturnType<typeof actorOf>;
+  actor: Actor;
   projectId: string | undefined;
   related: AuditEvent[];
   haystack: string;
 };
 
-/** True when the timeline filters only what is loaded (no server filters). */
-export function useServerFiltering(): boolean {
-  return useCapability("audit.filters");
+/**
+ * True when the server filters the facets (audit.filters); false when the
+ * timeline filters only what is loaded. The Varlatch actor needs
+ * audit.attribution too: an older server ignores `actor`, so with it chosen
+ * the facets filter locally there.
+ */
+export function useServerFiltering(filters?: Pick<AuditFilterState, "actor">): boolean {
+  const supported = useCapability("audit.filters");
+  const attribution = useCapability("audit.attribution");
+  return supported && (filters?.actor !== VARLATCH_ACTOR || attribution);
 }
 
 function useWide(query = "(min-width: 1280px)"): boolean {
@@ -160,7 +183,7 @@ export function AuditTimeline({
   emptyHint?: React.ReactNode;
 }) {
   const { api } = useSession();
-  const server = useServerFiltering();
+  const server = useServerFiltering(filters);
   const projects = useProjects(org);
   const { names, identities, identityById } = useAuditNames(org);
   const since = useMemo(() => rangeStart(filters.range), [filters.range]);
@@ -180,6 +203,8 @@ export function AuditTimeline({
     () => (history.data?.pages.flatMap((p) => p.items) ?? []) as AuditEvent[],
     [history.data],
   );
+  // Each page describes the credentials of its own events; keep them all.
+  const credentials = useMemo(() => mergeCredentials(history.data?.pages ?? []), [history.data]);
 
   // Lines are described once per load; filtering then works on plain text.
   // One automatic push records several events (prepared, started, result):
@@ -193,7 +218,7 @@ export function AuditTimeline({
         continue;
       }
       const described = describeEvent(event, names);
-      const actor = actorOf(event, identityById);
+      const actor = actorOf(event, identityById, credentials);
       const r = (event.resource ?? {}) as Record<string, unknown>;
       const env = names.environment(r.environmentId as string | undefined);
       const projectId = (r.projectId as string | undefined) ?? env?.projectId;
@@ -205,6 +230,7 @@ export function AuditTimeline({
         related: [],
         haystack: [
           actor.name,
+          actor.via ?? "",
           segmentsText(described.segments),
           described.title,
           event.eventType,
@@ -214,13 +240,15 @@ export function AuditTimeline({
       });
     }
     return out;
-  }, [loaded, names, identityById]);
+  }, [loaded, names, identityById, credentials]);
 
   const sinceMs = since ? Date.parse(since) : undefined;
   const visible = lines.filter((l) => {
     if (!server) {
       if (filters.decision && l.event.decision !== filters.decision) return false;
-      if (filters.actor && l.event.actorIdentityId !== filters.actor) return false;
+      if (filters.actor === VARLATCH_ACTOR ? !isVarlatchEvent(l.event) : filters.actor && l.event.actorIdentityId !== filters.actor) {
+        return false;
+      }
       const project = scope.projectId ?? filters.project;
       if (project && l.projectId !== project) return false;
       if (scope.environmentId && (l.event.resource as Record<string, unknown> | undefined)?.environmentId !== scope.environmentId) return false;
@@ -282,12 +310,7 @@ export function AuditTimeline({
             value={filters.actor}
             onChange={(actor) => set({ actor })}
             testId="audit-actor"
-            options={[
-              { value: "", label: "anyone" },
-              ...[...identities]
-                .sort((a, b) => a.name.localeCompare(b.name))
-                .map((i) => ({ value: i.id, label: i.name })),
-            ]}
+            options={actorOptions(identities)}
           />
         )}
         {facets.includes("project") && !scope.projectId && (
@@ -400,8 +423,21 @@ export function AuditTimeline({
                         </time>
                         <span className="flex min-w-0 items-center gap-2 @max-3xl:col-start-2 @max-3xl:row-start-1">
                           <ActorMark actor={line.actor} />
-                          <span className={cn("truncate font-medium", line.actor.known ? "text-fg" : "font-mono text-xs text-muted")}>
-                            {line.actor.name}
+                          <span className="flex min-w-0 items-baseline gap-1">
+                            <span
+                              className={cn(
+                                "truncate font-medium",
+                                line.actor.via && "max-w-[65%] shrink-0",
+                                line.actor.known ? "text-fg" : "font-mono text-xs text-muted",
+                              )}
+                            >
+                              {line.actor.name}
+                            </span>
+                            {line.actor.via && (
+                              <span className="min-w-0 truncate text-xs text-muted" title={line.actor.via} data-testid="audit-via">
+                                · {line.actor.via}
+                              </span>
+                            )}
                           </span>
                         </span>
                         <span className="flex min-w-0 items-start gap-2 @max-3xl:col-span-2 @max-3xl:col-start-2 @max-3xl:row-start-2 @max-3xl:mt-1">

@@ -283,7 +283,7 @@ describe("validation", () => {
     );
     expect(res.status).toBe(200);
     expect(res.body.items.map((e: Event) => e.eventType)).toEqual(["organization.created"]);
-    expect((await list("projectId=prj_x&environmentId=env_x&item=DB_URL")).body).toEqual({ items: [], nextCursor: null });
+    expect((await list("projectId=prj_x&environmentId=env_x&item=DB_URL")).body).toEqual({ items: [], nextCursor: null, credentials: {} });
   });
 
   it("advertises audit.filters", async () => {

@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /**
- * A credential's readable client label: a short summary of the User-Agent
- * that requested a browser session credential or a CLI login credential,
- * so a person can tell their sessions apart ("Firefox on Linux", "varlatch
- * CLI 0.14.0 on Linux"). Only this summary is stored, never the User-Agent.
+ * A readable client label: a short summary of a User-Agent, so a person
+ * can tell their sessions and clients apart ("Firefox on Linux", "varlatch
+ * CLI 0.14.0 on Linux"). Credentials keep the label of the client that
+ * requested them, a browser session or a CLI login, and Security Audit
+ * Events the label of the request that recorded them. Only this summary is
+ * stored, never the User-Agent, and it is what the client says about
+ * itself: never verified, never an authorization input.
  *
  * Non-identifying by construction: every word of a label comes from the
- * fixed lists below, except the varlatch CLI's version, which must look
+ * fixed lists below, except a varlatch client's version, which must look
  * like a release version. No browser or OS version, device model, or other
  * free text from the header ever reaches it. Anything unrecognized is
  * null: an honest "unknown" rather than a guess.
@@ -15,10 +18,16 @@
 
 export const CLIENT_LABEL_MAX = 60;
 
-/** What the varlatch CLI sends since 0.14.0: varlatch-cli/<version> (<platform>; <arch>). */
-const CLI = /^varlatch-cli\/(\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[0-9A-Za-z.]{1,20})?)(?=$|\s)(?:\s+\(([a-z0-9]{1,20})[;)])?/;
+/**
+ * What varlatch's own clients send: the CLI `varlatch-cli/<version>
+ * (<platform>; <arch>)` since 0.14.0, with a third token `assisted` in
+ * assisted mode (ADR-0043 Decision 3), and the MCP server
+ * `varlatch-mcp/<version> (<platform>; <arch>)`. Only the platform and the
+ * exact token `assisted` are read from the comment.
+ */
+const VARLATCH = /^varlatch-(cli|mcp)\/(\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[0-9A-Za-z.]{1,20})?)(?=$|\s)(?:\s+\(([^()]{1,100})\))?/;
 
-const CLI_PLATFORMS: Record<string, string> = {
+const PLATFORMS: Record<string, string> = {
   linux: "Linux",
   darwin: "macOS",
   win32: "Windows",
@@ -56,10 +65,14 @@ function first(patterns: [RegExp, string][], ua: string): string | undefined {
 export function clientLabel(userAgent: string | null | undefined): string | null {
   // Real User-Agents are short; a huge header is not worth matching.
   if (!userAgent || userAgent.length > 1024) return null;
-  const cli = CLI.exec(userAgent);
-  if (cli) {
-    const platform = cli[2] ? CLI_PLATFORMS[cli[2]] : undefined;
-    const label = `varlatch CLI ${cli[1]}${platform ? ` on ${platform}` : ""}`;
+  const own = VARLATCH.exec(userAgent);
+  if (own) {
+    const [os = "", ...rest] = (own[3] ?? "").split(";").map((token) => token.trim());
+    const platform = Object.hasOwn(PLATFORMS, os) ? PLATFORMS[os] : undefined;
+    const label =
+      `varlatch ${own[1] === "mcp" ? "MCP" : "CLI"} ${own[2]}` +
+      (platform ? ` on ${platform}` : "") +
+      (rest.includes("assisted") ? ", assisted" : "");
     return label.length <= CLIENT_LABEL_MAX ? label : null;
   }
   const browser = first(BROWSERS, userAgent);

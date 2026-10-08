@@ -14,7 +14,13 @@ of that output by accident-proofing the commands an agent uses:
   approves in a browser, instead of waiting for a browser on this machine.
 
 Assisted mode changes only what the CLI does on your machine. It never
-changes what you are allowed to do, and the server never sees it.
+changes what you are allowed to do. The server sees it only in the CLI's
+User-Agent, `varlatch-cli/<version> (<platform>; <arch>; assisted)`, and
+the audit log records it as the client of each event the command causes,
+such as `varlatch CLI 0.16.0 on Linux, assisted`, next to your name and
+the credential used. That is what the CLI says about itself, not proof: it
+tells you a coding agent was driving the CLI, but a coding agent that drops
+`--assisted` and sets none of the markers below is recorded as you.
 
 ## Turning it on
 

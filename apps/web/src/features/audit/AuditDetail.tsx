@@ -6,12 +6,13 @@ import { CopyButton } from "../../components/CodeBlock";
 import { IconButton, Mono, cn } from "../../components/ui";
 import { dayLabel } from "../../lib/time";
 import { ACTION_LABELS, authorizationSummary, describeEvent, listedItems, placeOf, type Described, type NameResolver } from "./describe";
-import { ActorMark, DecisionBadge, EventIconGlyph, SentenceText, clock, type AuditEvent, type actorOf } from "./parts";
+import { ActorMark, DecisionBadge, EventIconGlyph, SentenceText, clock, type Actor, type AuditEvent } from "./parts";
 
 /**
- * One event, readable: who, what, where, the decision in words, when, and the
- * request ID; the raw event JSON stays one click away. A denial offers the
- * way out: granting the access it lacked.
+ * One event, readable: who, through which credential and client, what,
+ * where, the decision in words, when, and the request ID; the raw event JSON
+ * stays one click away. A denial offers the way out: granting the access it
+ * lacked.
  */
 export function AuditDetail({
   org,
@@ -27,7 +28,7 @@ export function AuditDetail({
   org: string;
   event: AuditEvent;
   described: Described;
-  actor: ReturnType<typeof actorOf>;
+  actor: Actor;
   /** Further events folded into this line (one automatic push). */
   related?: AuditEvent[] | undefined;
   names: NameResolver;
@@ -60,6 +61,23 @@ export function AuditDetail({
       </span>,
     ],
   ];
+  if (event.credentialId) {
+    const credential = actor.credential;
+    rows.push([
+      "Credential",
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        {credential?.name && <span className="min-w-0 truncate">{credential.name}</span>}
+        {credential && <Mono className="rounded-md border border-bd bg-inset px-1.5 py-0.5 text-xs">{credential.kind}</Mono>}
+        <span className="flex min-w-0 items-center gap-1">
+          <Mono className="truncate text-xs text-muted" title={event.credentialId}>
+            {event.credentialId}
+          </Mono>
+          <CopyButton value={event.credentialId} label="Copy credential ID" />
+        </span>
+      </span>,
+    ]);
+  }
+  if (event.client) rows.push(["Client", <span className="break-words">{event.client}</span>]);
   if (event.action) {
     rows.push([
       "Action",
