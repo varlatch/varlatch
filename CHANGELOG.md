@@ -19,6 +19,13 @@ fixes.
   [Browser sign-in from an app](docs/reference/scripting.md#browser-sign-in-from-an-app).
   An older CLI ignores the variable.
 
+### Fixes
+
+- On Windows, `varlatch self-update` no longer suggests `sudo` when it
+  cannot replace the CLI. It suggests rerunning the command it shows from a
+  terminal run as administrator, or installing the CLI in a directory you
+  own, and closing any program that has the file open.
+
 ### Releases
 
 - Image signatures are published in their own package,

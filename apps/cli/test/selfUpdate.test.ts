@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { cliAsset, detectInstall, expectedDigest, runSelfUpdate, SelfUpdateError, type ReleaseSource } from "../src/selfUpdate.js";
+import { cliAsset, detectInstall, expectedDigest, replaceFailure, runSelfUpdate, SelfUpdateError, type ReleaseSource } from "../src/selfUpdate.js";
 
 const cli = (version: string) =>
   `#!/usr/bin/env node\n/*! Varlatch CLI. Test build. */\nconsole.log("varlatch ${version} (migration 1)");\n`;
@@ -49,6 +49,47 @@ describe("expectedDigest", () => {
 
   it("fails for an unlisted asset instead of passing it", () => {
     expect(() => expectedDigest(`${"a".repeat(64)}  one.cjs\n`, "one.cjs.evil")).toThrow(SelfUpdateError);
+  });
+});
+
+describe("replaceFailure", () => {
+  const unix = { execPath: "/usr/bin/node", path: "/usr/local/bin/varlatch", version: "0.16.0" };
+  const windows = {
+    platform: "win32" as const,
+    execPath: "C:\\Program Files\\nodejs\\node.exe",
+    path: "C:\\Program Files\\Varlatch\\varlatch.cjs",
+    version: "0.16.0",
+  };
+
+  it("outside Windows, names the directory and the sudo command for a write that is not allowed", () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      for (const code of ["EACCES", "EPERM", "EROFS"]) {
+        expect(replaceFailure(code, { platform, ...unix }), `${platform} ${code}`).toBe(
+          "Cannot write /usr/local/bin. Rerun with the rights to replace /usr/local/bin/varlatch, for example:\n" +
+            "  sudo /usr/bin/node /usr/local/bin/varlatch self-update 0.16.0",
+        );
+      }
+      for (const code of ["EBUSY", "ENOSPC", undefined]) expect(replaceFailure(code, { platform, ...unix }), `${platform} ${code}`).toBeNull();
+    }
+  });
+
+  it("on Windows, suggests an administrator terminal or a directory you own, never sudo", () => {
+    for (const code of ["EACCES", "EPERM", "EROFS"]) {
+      expect(replaceFailure(code, windows), code).toBe(
+        "Cannot replace C:\\Program Files\\Varlatch\\varlatch.cjs. Rerun from a terminal with the rights to replace it, such as one run as administrator:\n" +
+          '  "C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\Varlatch\\varlatch.cjs" self-update 0.16.0\n' +
+          'In PowerShell, put "& " before that command. Or install the CLI in a directory you own, such as %LOCALAPPDATA%\\Programs\\Varlatch. ' +
+          "If another program has the file open, close it and try again.",
+      );
+    }
+  });
+
+  it("on Windows, says to close other varlatch processes when the file is in use", () => {
+    const message = replaceFailure("EBUSY", windows);
+    expect(message).toMatch(/^Cannot replace C:\\Program Files\\Varlatch\\varlatch\.cjs: another process has it open\./);
+    expect(message).toMatch(/Close other varlatch processes.*then run the update again/);
+    expect(message).not.toMatch(/sudo/);
+    for (const code of ["ENOSPC", undefined]) expect(replaceFailure(code, windows), String(code)).toBeNull();
   });
 });
 
@@ -98,6 +139,18 @@ describe("runSelfUpdate", () => {
     await runSelfUpdate({ ...base, script: link, source: release("0.11.0") });
     expect(readFileSync(link, "utf8")).toBe(cli("0.11.0"));
     expect(readFileSync(target, "utf8")).toBe(cli("0.10.1"));
+  });
+
+  it.runIf(process.platform === "win32")("on Windows, a CLI it cannot replace gets the Windows advice and stays as it was", async () => {
+    const path = installed("0.10.1");
+    chmodSync(path, 0o444); // read-only: renaming over it fails with EPERM, as a file another program has open does
+    const failure = runSelfUpdate({ ...base, script: path, source: release("0.11.0") });
+    await expect(failure).rejects.toThrow(SelfUpdateError);
+    await expect(failure).rejects.toThrow(/^Cannot replace .*varlatch\. Rerun from a terminal with the rights to replace it/);
+    await expect(failure).rejects.not.toThrow(/sudo/);
+    expect(readFileSync(path, "utf8")).toBe(cli("0.10.1"));
+    expect(readdirSync(join(path, ".."))).toEqual(["varlatch"]);
+    chmodSync(path, 0o644);
   });
 
   it("refuses a file that does not match SHA256SUMS", async () => {
