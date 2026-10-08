@@ -14,6 +14,9 @@ export type AuditEventLike = {
   occurredAt: string;
   decision: string;
   actorIdentityId?: string | null;
+  credentialId?: string | null;
+  /** The acting request's client, as the server summarized its User-Agent. */
+  client?: string | null;
   action?: string | null;
   resource?: unknown;
   metadata?: unknown;

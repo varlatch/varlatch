@@ -21,7 +21,20 @@ export type SelectOption = {
   description?: string | undefined;
   icon?: React.ReactNode | undefined;
   disabled?: boolean | undefined;
+  /** A heading the option is listed under; consecutive options of one group share it. */
+  group?: string | undefined;
 };
+
+/** Consecutive options under one heading (or none), with their indexes in `options`. */
+function runsOf(options: SelectOption[]): { group: string | undefined; items: { option: SelectOption; index: number }[] }[] {
+  const runs: { group: string | undefined; items: { option: SelectOption; index: number }[] }[] = [];
+  options.forEach((option, index) => {
+    const last = runs[runs.length - 1];
+    if (last && last.group === option.group) last.items.push({ option, index });
+    else runs.push({ group: option.group, items: [{ option, index }] });
+  });
+  return runs;
+}
 
 export function Select({
   value,
@@ -166,11 +179,20 @@ export function Select({
         onChange={(e) => onChange?.(e.target.value)}
         className="absolute left-0 top-0 z-10 h-px w-px cursor-default appearance-none overflow-hidden border-0 bg-transparent p-0 opacity-0"
       >
-        {options.map((o) => (
-          <option key={o.value} value={o.value} disabled={o.disabled}>
-            {o.label}
-          </option>
-        ))}
+        {runsOf(options).map((run, r) => {
+          const items = run.items.map(({ option: o }) => (
+            <option key={o.value} value={o.value} disabled={o.disabled}>
+              {o.label}
+            </option>
+          ));
+          return run.group === undefined ? (
+            items
+          ) : (
+            <optgroup key={`group-${r}`} label={run.group}>
+              {items}
+            </optgroup>
+          );
+        })}
         {needsSentinel && options.length > 0 && <option value={value ?? ""} hidden></option>}
       </select>
       <button
@@ -212,33 +234,48 @@ export function Select({
           aria-label={ariaLabel}
           className="max-h-72 min-w-max animate-pop-in overflow-y-auto rounded-lg border border-bd bg-raised p-1 shadow-pop"
         >
-          {options.map((o, i) => (
-            <li
-              key={o.value}
-              id={`${listboxId}-${i}`}
-              data-index={i}
-              role="option"
-              aria-selected={i === selectedIndex}
-              aria-disabled={o.disabled || undefined}
-              onMouseMove={() => !o.disabled && setActiveIndex(i)}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => commit(i)}
-              className={cn(
-                "flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm",
-                i === activeIndex && "bg-hover",
-                o.disabled && "cursor-not-allowed opacity-45",
-              )}
-            >
-              {o.icon && <span className="flex shrink-0 items-center pt-0.5 text-muted">{o.icon}</span>}
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{o.label}</span>
-                {o.description && <span className="block max-w-80 text-xs text-muted">{o.description}</span>}
-              </span>
-              <span className="flex w-4 shrink-0 items-center pt-0.5 text-accent">
-                {i === selectedIndex && <Check size={14} aria-hidden="true" />}
-              </span>
-            </li>
-          ))}
+          {runsOf(options).map((run, r) => {
+            const items = run.items.map(({ option: o, index: i }) => (
+              <li
+                key={o.value}
+                id={`${listboxId}-${i}`}
+                data-index={i}
+                role="option"
+                aria-selected={i === selectedIndex}
+                aria-disabled={o.disabled || undefined}
+                onMouseMove={() => !o.disabled && setActiveIndex(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commit(i)}
+                className={cn(
+                  "flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm",
+                  i === activeIndex && "bg-hover",
+                  o.disabled && "cursor-not-allowed opacity-45",
+                )}
+              >
+                {o.icon && <span className="flex shrink-0 items-center pt-0.5 text-muted">{o.icon}</span>}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{o.label}</span>
+                  {o.description && <span className="block max-w-80 text-xs text-muted">{o.description}</span>}
+                </span>
+                <span className="flex w-4 shrink-0 items-center pt-0.5 text-accent">
+                  {i === selectedIndex && <Check size={14} aria-hidden="true" />}
+                </span>
+              </li>
+            ));
+            if (run.group === undefined) return items;
+            const heading = `${listboxId}-group-${r}`;
+            return (
+              <li key={heading} role="group" aria-labelledby={heading}>
+                <div
+                  id={heading}
+                  className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted"
+                >
+                  {run.group}
+                </div>
+                <ul role="none">{items}</ul>
+              </li>
+            );
+          })}
         </ul>
       </Popover>
     </div>
