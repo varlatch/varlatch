@@ -3124,7 +3124,24 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       rows.length > limit && page.length > 0
         ? encodeCursor([page[page.length - 1]?.cursor_time as string, page[page.length - 1]?.id as string])
         : null;
-    return c.json({ items: page.map(serializeAuditEvent), nextCursor });
+    // The credentials the page's events name, so a reader can tell a
+    // person's dashboard from their CLI, or two machines sharing an
+    // identity, without a lookup per event. A sidecar of this listing only:
+    // events, the export, and webhooks carry the ID alone, and an ID with no
+    // stored credential is simply absent. Metadata, never token material.
+    const credentialIds = [...new Set(page.map((r) => r.credential_id).filter((id): id is string => typeof id === "string"))];
+    const credentials =
+      credentialIds.length === 0
+        ? []
+        : ((await ctx.db.query("SELECT id, name, kind, client FROM credentials WHERE id = ANY($1)", [credentialIds]))
+            .rows as { id: string; name: string | null; kind: string; client: string | null }[]);
+    return c.json({
+      items: page.map(serializeAuditEvent),
+      nextCursor,
+      credentials: Object.fromEntries(
+        credentials.map((r) => [r.id, { name: r.name ?? null, kind: r.kind, client: r.client ?? null }]),
+      ),
+    });
   });
 
   app.get("/v1/organizations/:org/audit-events/export", async (c) => {

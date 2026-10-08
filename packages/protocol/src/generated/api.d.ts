@@ -1944,6 +1944,14 @@ export interface components {
             /** Format: date-time */
             updatedAt: string | null;
         };
+        /** @description What the audit listing's credentials sidecar says about a credential its events name. Metadata only; never token material. */
+        AuditCredential: {
+            name: string | null;
+            /** @description service, cli, browser (a dashboard session), agent-run, or oidc. */
+            kind: string;
+            /** @description The client that requested the credential, for browser and cli credentials ("Firefox on Linux"); null otherwise or when unknown. */
+            client: string | null;
+        };
         SyncLedgerName: {
             /** @description Destination name (renames applied) */
             name: string;
@@ -2008,6 +2016,8 @@ export interface components {
         auditEventType: string;
         /** @description Only events whose actor is this identity ID (capability audit.filters). */
         auditActorIdentityId: string;
+        /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+        auditActor: "varlatch";
         /** @description Only events whose resource names this project ID (capability audit.filters). */
         auditProjectId: string;
         /** @description Only events whose resource names this environment ID (capability audit.filters). */
@@ -4645,6 +4655,8 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];
                 /** @description Only events whose resource names this environment ID (capability audit.filters). */
@@ -4674,6 +4686,10 @@ export interface operations {
                     "application/json": {
                         items: components["schemas"]["AuditEvent"][];
                         nextCursor: components["schemas"]["NextCursor"];
+                        /** @description The credentials this page's events name in credentialId, by ID (capability audit.attribution): a sidecar of the listing, not part of the event schema, so the export and webhook deliveries do not carry it. Absent from older servers. */
+                        credentials?: {
+                            [key: string]: components["schemas"]["AuditCredential"];
+                        };
                     };
                 };
             };
@@ -4689,6 +4705,8 @@ export interface operations {
                 eventType?: components["parameters"]["auditEventType"];
                 /** @description Only events whose actor is this identity ID (capability audit.filters). */
                 actorIdentityId?: components["parameters"]["auditActorIdentityId"];
+                /** @description varlatch: only Varlatch's own events, those with no actor identity (sync delivery, webhooks, operator commands), except authentication.* events, whose missing actor is an unknown caller (capability audit.attribution). Given with actorIdentityId it is refused with VALIDATION_FAILED. */
+                actor?: components["parameters"]["auditActor"];
                 /** @description Only events whose resource names this project ID (capability audit.filters). */
                 projectId?: components["parameters"]["auditProjectId"];
                 /** @description Only events whose resource names this environment ID (capability audit.filters). */

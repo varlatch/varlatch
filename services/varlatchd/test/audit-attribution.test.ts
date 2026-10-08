@@ -230,3 +230,104 @@ describe("the audit writer's rule", () => {
     });
   });
 });
+
+describe("the listing's credentials sidecar", () => {
+  beforeEach(async () => {
+    await call("PUT", `${ENV}/values/API_TOKEN`, { ua: UA.assisted, body: { value: "tok-abc-123" } });
+    await call("POST", `${ENV}/disclosures`, { token: browser.token, ua: UA.firefox, body: { items: ["API_TOKEN"] } });
+  });
+
+  it("describes every credential the page's events name, and no other", async () => {
+    const page = await call("GET", "/v1/organizations/acme/audit-events?limit=500");
+    expect(page.status).toBe(200);
+    const named = new Set(page.body.items.map((e: { credentialId: string | null }) => e.credentialId).filter(Boolean));
+    expect(new Set(Object.keys(page.body.credentials))).toEqual(named);
+    expect(page.body.credentials).toEqual({
+      [cli.credentialId]: { name: "laptop CLI", kind: "cli", client: "varlatch CLI 0.16.0 on Linux" },
+      [browser.credentialId]: { name: "dashboard session bearer", kind: "browser", client: "Firefox on Linux" },
+    });
+    const disclosed = page.body.items.find((e: { eventType: string }) => e.eventType === "secret.disclosed");
+    expect(disclosed).toMatchObject({ credentialId: browser.credentialId, client: "Firefox on Linux" });
+  });
+
+  it("describes each page's own events only", async () => {
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = await call("GET", `/v1/organizations/acme/audit-events?limit=1${cursor ? `&cursor=${cursor}` : ""}`);
+      const [event] = page.body.items as { credentialId: string | null }[];
+      expect(Object.keys(page.body.credentials)).toEqual(event?.credentialId ? [event.credentialId] : []);
+      cursor = page.body.nextCursor;
+      pages++;
+    } while (cursor && pages < 50);
+    expect(pages).toBeGreaterThan(3);
+  });
+
+  it("is not part of the event schema: the export carries the client, never the sidecar", async () => {
+    const res = await app.request("/v1/organizations/acme/audit-events/export", { headers: { Authorization: `Bearer ${cli.token}` } });
+    const events = (await res.text()).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events.every((e) => "client" in e && !("credentials" in e))).toBe(true);
+    expect(events.find((e) => e.eventType === "value.written")).toMatchObject({
+      schemaVersion: 1,
+      credentialId: cli.credentialId,
+      client: "varlatch CLI 0.16.0 on Linux, assisted",
+    });
+  });
+
+  it("is gated by audit.read like the page", async () => {
+    const svc = await call("POST", "/v1/organizations/acme/identities", { body: { name: "runner", kind: "service" } });
+    const denied = await call("GET", "/v1/organizations/acme/audit-events", { token: svc.body.credential });
+    expect(denied.status).toBe(403);
+    expect(denied.body.credentials).toBeUndefined();
+  });
+});
+
+describe("actor=varlatch: Varlatch's own events", () => {
+  let orgId: string;
+  beforeEach(async () => {
+    orgId = (await call("GET", "/v1/organizations/acme")).body.id;
+    // Org-scoped events with no actor: one Varlatch recorded, one a failed caller.
+    await ctx.db.query(
+      `INSERT INTO audit_events (id, event_type, organization_id, decision) VALUES
+         ('evt_sync', 'sync.push_attempted', $1, 'info'), ('evt_auth', 'authentication.failed', $1, 'deny')`,
+      [orgId],
+    );
+  });
+
+  const list = (query: string) => call("GET", `/v1/organizations/acme/audit-events?limit=500&${query}`);
+
+  it("selects actorless events except authentication.*, in the listing and the export", async () => {
+    const all = (await list("")).body.items as { eventId: string; eventType: string; actorIdentityId: string | null }[];
+    const own = all.filter((e) => e.actorIdentityId === null && !e.eventType.startsWith("authentication."));
+    const varlatch = (await list("actor=varlatch")).body.items as typeof all;
+    expect(varlatch.map((e) => e.eventId)).toEqual(own.map((e) => e.eventId));
+    expect(varlatch.map((e) => e.eventId)).toContain("evt_sync");
+    expect(all.map((e) => e.eventId)).toContain("evt_auth");
+    expect(varlatch.map((e) => e.eventId)).not.toContain("evt_auth");
+    // ANDed with the other filters.
+    expect((await list("actor=varlatch&decision=deny")).body.items).toEqual([]);
+
+    const res = await app.request("/v1/organizations/acme/audit-events/export?actor=varlatch", { headers: { Authorization: `Bearer ${cli.token}` } });
+    const exported = (await res.text()).trim().split("\n").map((line) => (JSON.parse(line) as { eventId: string }).eventId);
+    expect(exported.sort()).toEqual(own.map((e) => e.eventId).sort());
+  });
+
+  it("refuses actor with actorIdentityId, and any other value, with VALIDATION_FAILED", async () => {
+    for (const query of [
+      `actor=varlatch&actorIdentityId=${adminId}`,
+      "actor=Varlatch",
+      "actor=system",
+      `actor=${adminId}`,
+      "actor=",
+      "actor=varlatch&actor=varlatch",
+    ]) {
+      for (const path of ["/v1/organizations/acme/audit-events", "/v1/organizations/acme/audit-events/export"]) {
+        const res = await call("GET", `${path}?${query}`);
+        expect(res.status, `${path}?${query}`).toBe(422);
+        expect(res.body.error.code).toBe("VALIDATION_FAILED");
+      }
+    }
+    const conflict = await list(`actor=varlatch&actorIdentityId=${adminId}`);
+    expect(conflict.body.error.message).toMatch(/actor and actorIdentityId cannot be combined/);
+  });
+});

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  AuditCredential,
   AuditEventFilters,
   InstallationBackups,
   ApiError,
@@ -159,12 +160,22 @@ export interface IdentityCredential {
   client?: string | null;
 }
 
-export type { AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+/**
+ * A page of the audit listing. `credentials` describes the credentials its
+ * events name, by ID (capability audit.attribution); absent from older
+ * servers. Merge it across pages: each page describes its own events only.
+ */
+export interface AuditEventPage extends Page<Record<string, unknown>> {
+  credentials?: Record<string, AuditCredential>;
+}
+
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
   "eventType",
   "actorIdentityId",
+  "actor",
   "projectId",
   "environmentId",
   "item",
@@ -1190,7 +1201,7 @@ export class VarlatchClient {
   listAuditEvents(
     org: string,
     opts: { limit?: number; cursor?: string } & AuditEventFilters = {},
-  ): Promise<Page<Record<string, unknown>>> {
+  ): Promise<AuditEventPage> {
     const params = new URLSearchParams();
     if (opts.limit) params.set("limit", String(opts.limit));
     if (opts.cursor) params.set("cursor", opts.cursor);

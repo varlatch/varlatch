@@ -2302,6 +2302,7 @@ paths:
         - $ref: "#/components/parameters/auditDecision"
         - $ref: "#/components/parameters/auditEventType"
         - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditActor"
         - $ref: "#/components/parameters/auditProjectId"
         - $ref: "#/components/parameters/auditEnvironmentId"
         - $ref: "#/components/parameters/auditItem"
@@ -2320,6 +2321,15 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/AuditEvent" }
                   nextCursor: { $ref: "#/components/schemas/NextCursor" }
+                  credentials:
+                    type: object
+                    additionalProperties: { $ref: "#/components/schemas/AuditCredential" }
+                    description: >
+                      The credentials this page's events name in credentialId,
+                      by ID (capability audit.attribution): a sidecar of the
+                      listing, not part of the event schema, so the export and
+                      webhook deliveries do not carry it. Absent from older
+                      servers.
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-events/export:
@@ -2336,6 +2346,7 @@ paths:
         - $ref: "#/components/parameters/auditDecision"
         - $ref: "#/components/parameters/auditEventType"
         - $ref: "#/components/parameters/auditActorIdentityId"
+        - $ref: "#/components/parameters/auditActor"
         - $ref: "#/components/parameters/auditProjectId"
         - $ref: "#/components/parameters/auditEnvironmentId"
         - $ref: "#/components/parameters/auditItem"
@@ -2882,6 +2893,16 @@ components:
       in: query
       description: Only events whose actor is this identity ID (capability audit.filters).
       schema: { type: string, maxLength: 200 }
+    auditActor:
+      name: actor
+      in: query
+      description: >
+        varlatch: only Varlatch's own events, those with no actor identity
+        (sync delivery, webhooks, operator commands), except
+        authentication.* events, whose missing actor is an unknown caller
+        (capability audit.attribution). Given with actorIdentityId it is
+        refused with VALIDATION_FAILED.
+      schema: { type: string, enum: [varlatch] }
     auditProjectId:
       name: projectId
       in: query
@@ -4056,6 +4077,24 @@ components:
         createdAt: { type: string, format: date-time }
         version: { $ref: "#/components/schemas/EntityVersion" }
         updatedAt: { type: [string, "null"], format: date-time }
+
+    AuditCredential:
+      type: object
+      required: [name, kind, client]
+      description: >
+        What the audit listing's credentials sidecar says about a credential
+        its events name. Metadata only; never token material.
+      properties:
+        name: { type: [string, "null"] }
+        kind:
+          type: string
+          description: service, cli, browser (a dashboard session), agent-run, or oidc.
+        client:
+          type: [string, "null"]
+          maxLength: 64
+          description: >
+            The client that requested the credential, for browser and cli
+            credentials ("Firefox on Linux"); null otherwise or when unknown.
 
     SyncLedgerName:
       type: object
