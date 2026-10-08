@@ -52,6 +52,11 @@ fixes.
   show its credential (name, kind, and ID) and client. The actor filter
   groups people, agents, CI, and machines, marks retired identities, and
   offers **Varlatch** for Varlatch's own events.
+- The `credential.issued` events of a machine identity's credentials now
+  appear in the organization's audit log: the credential issued when the
+  identity is created, the agent-run credentials a Broker mints, and the
+  credentials of an OIDC exchange. Before, they were recorded without an
+  organization, and no audit listing showed them.
 
 ### CLI
 

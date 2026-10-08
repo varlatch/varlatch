@@ -1897,6 +1897,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       name: body.runId ?? "agent-run",
       expiresAt,
       actorIdentityId: principal.identity.id,
+      organizationId: org.id,
       metadata: { ...(body.runId ? { runId: body.runId } : {}), ttlSeconds: body.ttlSeconds },
     });
     c.header("Cache-Control", "no-store");

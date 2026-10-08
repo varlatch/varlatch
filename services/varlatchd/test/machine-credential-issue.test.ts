@@ -204,6 +204,13 @@ describe("audit", () => {
     expect(listing.items.map((e: { credentialId: string }) => e.credentialId)).toContain(issued.id);
   });
 
+  it("shows the credential issued at identity creation in the organization's audit listing", async () => {
+    const listing = await (await get("/v1/organizations/acme/audit-events?eventType=credential.issued")).json();
+    const issued = listing.items.filter((e: { resource: { identityId?: string } }) => e.resource.identityId === svcId);
+    expect(issued).toHaveLength(1);
+    expect(issued[0].actorIdentityId).toBe(adminId);
+  });
+
   it("records no expiry and no budget as null", async () => {
     const issued = await (await issue()).json();
     const res = await ctx.db.query("SELECT metadata FROM audit_events WHERE credential_id = $1 AND event_type = 'credential.issued'", [issued.id]);

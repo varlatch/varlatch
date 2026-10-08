@@ -76,6 +76,7 @@ export async function createMachineIdentity(
         expiresAt: credentialExpiresAt ?? undefined,
         maxUses: input.credentialMaxUses,
         actorIdentityId,
+        organizationId,
       });
       credential = issued.token;
     }
