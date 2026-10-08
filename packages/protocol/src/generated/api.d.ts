@@ -441,8 +441,8 @@ export interface paths {
         /** List a machine identity's credentials — metadata only (capability identity.lifecycle, ADR-0034). Token material is unrecoverable by construction and never returned. Requires identity.manage; existence-hiding. */
         get: operations["listIdentityCredentials"];
         put?: never;
-        /** Mint a short-lived read-only agent-run credential for an Agent Identity (capability credentials.agent, ADR-0023). Broker-only; callers that are not an in-org Broker receive existence-hidden responses. The token is returned exactly once. Requests authenticated with an agent-run credential are refused for every non-read operation at the HTTP layer. */
-        post: operations["issueAgentCredential"];
+        /** Issue a credential for a machine identity. Two disjoint paths, chosen by the caller's kind; the token is returned exactly once. An in-org Broker mints a short-lived read-only agent-run credential for an Agent Identity (capability credentials.agent, ADR-0023); requests authenticated with one are refused for every non-read operation at the HTTP layer, and a Broker reaches no other identity. Any other principal with identity.manage issues a service credential for an in-org service, workload, or broker identity that is not retired (capability identity.credentials.issue): another credential for a program sharing the identity, the first one after reactivation, or the new half of a rotation. Human, ci, agent, retired, and other organizations' identities are existence-hidden. */
+        post: operations["issueIdentityCredential"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1618,6 +1618,30 @@ export interface components {
             token: string;
             /** Format: date-time */
             expiresAt: string;
+        };
+        /** @description Another service credential for a machine identity (capability identity.credentials.issue), with the limits identity creation takes. */
+        MachineCredentialRequest: {
+            /** @description Shown in the credential listing, such as the program that uses it. */
+            name: string;
+            /** @description Optional wall-clock lifetime. Absent means no expiry (revocation only). */
+            ttlSeconds?: number;
+            /** @description Optional use budget; each authenticated request consumes one use. 1 yields a one-shot token. Absent means unlimited. */
+            maxUses?: number;
+        };
+        IssuedMachineCredential: {
+            id: string;
+            /** @enum {string} */
+            kind: "service";
+            name: string;
+            /** @description Returned exactly once; stored hashed; never retrievable again. */
+            token: string;
+            /**
+             * Format: date-time
+             * @description Null when no ttlSeconds was given.
+             */
+            expiresAt: string | null;
+            /** @description Null when no use budget was given. */
+            maxUses: number | null;
         };
         IssuedCapability: {
             id: string;
@@ -3190,14 +3214,14 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
-    issueAgentCredential: {
+    issueIdentityCredential: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
-                /** @description Agent Identity ID */
+                /** @description Machine identity ID (an Agent Identity on the Broker path) */
                 identity: string;
             };
             cookie?: never;
@@ -3207,17 +3231,17 @@ export interface operations {
                 "application/json": {
                     ttlSeconds: number;
                     runId?: string;
-                };
+                } | components["schemas"]["MachineCredentialRequest"];
             };
         };
         responses: {
-            /** @description Issued agent-run credential (Cache-Control no-store) */
+            /** @description Issued credential (Cache-Control no-store) */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IssuedAgentCredential"];
+                    "application/json": components["schemas"]["IssuedAgentCredential"] | components["schemas"]["IssuedMachineCredential"];
                 };
             };
             default: components["responses"]["Error"];

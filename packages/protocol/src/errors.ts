@@ -66,6 +66,7 @@ export const CAPABILITIES = [
   "sync.targets",
   "installation.backups",
   "identity.lifecycle",
+  "identity.credentials.issue",
   "retrieval.manifest",
   "retrieval.strict",
   "retrieval.preflight",

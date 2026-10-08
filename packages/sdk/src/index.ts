@@ -16,6 +16,7 @@ import type {
   OwnCredential,
   Requirement,
   IssuedAgentCredential,
+  IssuedMachineCredential,
   IssuedCapability,
   EffectiveConfiguration,
   Environment,
@@ -711,6 +712,23 @@ export class VarlatchClient {
     return this.request(
       "GET",
       `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/credentials`,
+    );
+  }
+
+  /**
+   * Issue another service credential for an in-org service, workload, or
+   * broker identity (identity.manage; capability identity.credentials.issue).
+   * The token is in the response only: it is never retrievable again.
+   */
+  issueMachineCredential(
+    org: string,
+    identityId: string,
+    input: { name: string; ttlSeconds?: number; maxUses?: number },
+  ): Promise<IssuedMachineCredential> {
+    return this.request(
+      "POST",
+      `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/credentials`,
+      input,
     );
   }
 

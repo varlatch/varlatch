@@ -227,6 +227,7 @@ export async function exchangeOidcToken(
     name: `oidc:${claims.sub.slice(0, 180)}`,
     expiresAt,
     actorIdentityId: binding.identity_id,
+    organizationId: binding.organization_id,
     metadata: {
       method: "oidc",
       oidcBindingId: binding.id,

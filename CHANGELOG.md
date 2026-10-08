@@ -7,6 +7,26 @@ fixes.
 
 ## Unreleased (0.16.0)
 
+### Machine identities
+
+- Issue another credential for an existing service, workload, or broker
+  identity. Several programs on one host can share the identity and its
+  grants, each with its own credential, listed under its name and revoked
+  on its own. It is also how a reactivated identity gets a working
+  credential again, and the first step of replacing one: issue the new
+  credential, move the program to it, then revoke the old one. `ci` and
+  `agent` identities, which never hold a stored credential, and retired
+  identities get none.
+- CLI: `varlatch credential issue <identity-id> --name <name> [--ttl <s>]
+  [--max-uses <n>] --out <file> [--json]`. The token is written only to
+  `--out`, a new file created with mode 0600 in a directory that exists;
+  an existing file is refused. The token never appears in the output or in
+  an error, so the command works in assisted mode too. Against an older
+  server it says so and issues nothing.
+- Dashboard: a machine's Credentials panel, on the Machines tab, has an
+  Issue credential action with a name and an optional lifetime. The token
+  is shown once, with a copy button.
+
 ### Audit
 
 - **The audit log says which credential and client acted.** Every event an
@@ -32,6 +52,11 @@ fixes.
   show its credential (name, kind, and ID) and client. The actor filter
   groups people, agents, CI, and machines, marks retired identities, and
   offers **Varlatch** for Varlatch's own events.
+- The `credential.issued` events of a machine identity's credentials now
+  appear in the organization's audit log: the credential issued when the
+  identity is created, the agent-run credentials a Broker mints, and the
+  credentials of an OIDC exchange. Before, they were recorded without an
+  organization, and no audit listing showed them.
 
 ### CLI
 
@@ -58,6 +83,21 @@ fixes.
   `actor` filter.
 - Database migration 27 adds the audit events' `client` column, nullable.
   The runtime role keeps INSERT and SELECT only on the audit table.
+- `POST /v1/organizations/{org}/identities/{identity}/credentials` has a
+  second path (capability `identity.credentials.issue`). A caller with
+  `identity.manage` sends `{"name": ..., "ttlSeconds": ..., "maxUses":
+  ...}`, the last two optional with the limits identity creation takes,
+  and gets `{id, kind: "service", name, token, expiresAt, maxUses}` once,
+  with `Cache-Control: no-store`. Without `ttlSeconds` the credential does
+  not expire, as at creation. Human, `ci`, `agent`, retired, and other
+  organizations' identities are not found. A Broker's request takes the
+  agent-run path exactly as before; a caller without `identity.manage` now
+  gets `PERMISSION_DENIED` there instead of `RESOURCE_NOT_FOUND`, as on the
+  revocation route. The audit event `credential.issued` records the actor,
+  the identity, and the credential's id, kind, name, expiry, and use
+  budget, in the organization's audit log. SDK:
+  `issueMachineCredential()`. In the OpenAPI document the operation is now
+  `issueIdentityCredential`.
 
 ### Upgrading
 

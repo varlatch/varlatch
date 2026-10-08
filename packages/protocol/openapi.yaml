@@ -1075,37 +1075,49 @@ paths:
         default: { $ref: "#/components/responses/Error" }
     post:
       tags: [identities]
-      operationId: issueAgentCredential
+      operationId: issueIdentityCredential
       summary: >
-        Mint a short-lived read-only agent-run credential for an Agent
-        Identity (capability credentials.agent, ADR-0023). Broker-only;
-        callers that are not an in-org Broker receive existence-hidden
-        responses. The token is returned exactly once. Requests
-        authenticated with an agent-run credential are refused for every
-        non-read operation at the HTTP layer.
+        Issue a credential for a machine identity. Two disjoint paths, chosen
+        by the caller's kind; the token is returned exactly once. An in-org
+        Broker mints a short-lived read-only agent-run credential for an
+        Agent Identity (capability credentials.agent, ADR-0023); requests
+        authenticated with one are refused for every non-read operation at
+        the HTTP layer, and a Broker reaches no other identity. Any other
+        principal with identity.manage issues a service credential for an
+        in-org service, workload, or broker identity that is not retired
+        (capability identity.credentials.issue): another credential for a
+        program sharing the identity, the first one after reactivation, or
+        the new half of a rotation. Human, ci, agent, retired, and other
+        organizations' identities are existence-hidden.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: identity
           in: path
           required: true
-          description: Agent Identity ID
+          description: Machine identity ID (an Agent Identity on the Broker path)
           schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [ttlSeconds]
-              properties:
-                ttlSeconds: { type: integer, minimum: 1, maximum: 3600 }
-                runId: { type: string, maxLength: 200 }
+              oneOf:
+                - type: object
+                  description: Broker path (credentials.agent).
+                  required: [ttlSeconds]
+                  properties:
+                    ttlSeconds: { type: integer, minimum: 1, maximum: 3600 }
+                    runId: { type: string, maxLength: 200 }
+                - $ref: "#/components/schemas/MachineCredentialRequest"
       responses:
         "201":
-          description: Issued agent-run credential (Cache-Control no-store)
+          description: Issued credential (Cache-Control no-store)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/IssuedAgentCredential" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/IssuedAgentCredential"
+                  - $ref: "#/components/schemas/IssuedMachineCredential"
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/credentials/{credential}:
@@ -3553,6 +3565,49 @@ components:
           type: string
           description: Returned exactly once; never retrievable again.
         expiresAt: { type: string, format: date-time }
+
+    MachineCredentialRequest:
+      type: object
+      description: >
+        Another service credential for a machine identity (capability
+        identity.credentials.issue), with the limits identity creation takes.
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Shown in the credential listing, such as the program that uses it.
+        ttlSeconds:
+          type: integer
+          minimum: 1
+          maximum: 315360000
+          description: Optional wall-clock lifetime. Absent means no expiry (revocation only).
+        maxUses:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+          description: >
+            Optional use budget; each authenticated request consumes one use.
+            1 yields a one-shot token. Absent means unlimited.
+
+    IssuedMachineCredential:
+      type: object
+      required: [id, kind, name, token, expiresAt, maxUses]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [service] }
+        name: { type: string }
+        token:
+          type: string
+          description: Returned exactly once; stored hashed; never retrievable again.
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: Null when no ttlSeconds was given.
+        maxUses:
+          type: [integer, "null"]
+          description: Null when no use budget was given.
 
     IssuedCapability:
       type: object

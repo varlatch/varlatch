@@ -328,6 +328,21 @@ needs: like a person, it starts with no access.
   the identity. Store it where the machine keeps its secrets, and sign in
   with `varlatch login --server <url> --token-stdin < credential-file`.
 
+  Programs on one host can share an identity and its grants, each with a
+  credential of its own that you revoke on its own. Issue another one in
+  the machine's Credentials panel in the dashboard, or with the CLI, which
+  writes the token only to a new file that only you can read, never to
+  its output:
+
+  ```sh
+  varlatch credential issue <identity-id> --name "backup job" --out backup-job.token
+  varlatch credential list <identity-id>                  # every credential, by name
+  varlatch credential revoke <identity-id> <credential-id>
+  ```
+
+  To replace a credential, issue the new one, move the program to it, then
+  revoke the old one.
+
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
 or Convex, for platforms that read their own settings: add a Sync Target in
 the dashboard under Connections.

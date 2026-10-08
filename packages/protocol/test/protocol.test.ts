@@ -16,7 +16,7 @@ describe("protocol consistency", () => {
   it("capabilities are unique and namespaced", () => {
     expect(new Set(CAPABILITIES).size).toBe(CAPABILITIES.length);
     for (const cap of CAPABILITIES) {
-      expect(cap).toMatch(/^[a-z-]+\.[a-z-]+$/);
+      expect(cap).toMatch(/^[a-z-]+(\.[a-z-]+)+$/);
     }
   });
 });
