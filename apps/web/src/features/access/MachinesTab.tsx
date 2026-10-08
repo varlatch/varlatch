@@ -13,7 +13,7 @@ import {
   ShieldOff,
   TriangleAlert,
 } from "lucide-react";
-import type { OidcBinding } from "@varlatch/protocol";
+import type { IssuedMachineCredential, OidcBinding } from "@varlatch/protocol";
 import type { IdentityCredential, OrgIdentity } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { timeAgo, timeUntil, useNow } from "../../lib/time";
@@ -440,12 +440,18 @@ function MonoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Credential metadata only: never token material. */
+/** Credential metadata only: never token material, except once, right after issuing. */
 function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity }) {
   const { api } = useSession();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const now = useNow();
+  // Another token for a token kind (capability identity.credentials.issue);
+  // ci and agent identities never hold one, and a retired one gets none.
+  const canIssue =
+    useCapability("identity.credentials.issue") && TOKEN_KINDS.includes(identity.kind as MachineKind) && !identity.disabled;
+  const [issuing, setIssuing] = useState(false);
+  const [issued, setIssued] = useState<IssuedMachineCredential | null>(null);
   const key = ["identity-credentials", org, identity.id];
   const creds = useQuery({ queryKey: key, queryFn: () => api.listIdentityCredentials(org, identity.id) });
   const revoke = useMutation({
@@ -455,9 +461,16 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
   const items = (creds.data?.items ?? []) as (IdentityCredential & { client?: string | null })[];
   return (
     <div className="rounded-lg border border-bd bg-raised" data-testid={`credentials-panel-${identity.id}`}>
-      <div className="border-b border-bd px-4 py-2.5">
-        <p className="text-[13px] font-semibold">Credentials</p>
-        <p className="text-xs text-muted">Metadata only. Tokens are shown once, when they are issued.</p>
+      <div className="flex items-center justify-between gap-3 border-b border-bd px-4 py-2.5">
+        <div>
+          <p className="text-[13px] font-semibold">Credentials</p>
+          <p className="text-xs text-muted">Metadata only. Tokens are shown once, when they are issued.</p>
+        </div>
+        {canIssue && (
+          <Button size="sm" variant="secondary" icon={<Plus size={13} />} data-testid={`issue-credential-${identity.id}`} onClick={() => setIssuing(true)}>
+            Issue credential
+          </Button>
+        )}
       </div>
       {creds.isLoading ? (
         <div className="px-4 py-3">
@@ -505,7 +518,148 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
           ))}
         </ul>
       )}
+      <IssueCredentialDialog
+        org={org}
+        identity={identity}
+        open={issuing}
+        onClose={() => setIssuing(false)}
+        onIssued={(credential) => {
+          setIssuing(false);
+          setIssued(credential);
+          void qc.invalidateQueries({ queryKey: key });
+        }}
+      />
+      {issued && <IssuedCredentialDialog identity={identity} issued={issued} onClose={() => setIssued(null)} />}
     </div>
+  );
+}
+
+/** Another token for a machine, with its grants and its own name, revocable on its own. */
+function IssueCredentialDialog({
+  org,
+  identity,
+  open,
+  onClose,
+  onIssued,
+}: {
+  org: string;
+  identity: OrgIdentity;
+  open: boolean;
+  onClose: () => void;
+  onIssued: (issued: IssuedMachineCredential) => void;
+}) {
+  const { api } = useSession();
+  const [name, setName] = useState("");
+  const [ttlSeconds, setTtlSeconds] = useState("");
+  const ttlValid = ttlSeconds === "" || /^[1-9][0-9]*$/.test(ttlSeconds);
+  const issue = useMutation({
+    mutationFn: () =>
+      api.issueMachineCredential(org, identity.id, { name: name.trim(), ...(ttlSeconds ? { ttlSeconds: Number(ttlSeconds) } : {}) }),
+    onSuccess: (issued) => {
+      setName("");
+      setTtlSeconds("");
+      onIssued(issued);
+    },
+  });
+  const ready = name.trim() !== "" && ttlValid;
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`Issue a credential for ${identity.name}`}
+      description="A new token with this machine's grants. Name it after the program that uses it, so you can revoke it on its own."
+      data-testid="issue-credential-dialog"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" data-testid="issue-credential-submit" loading={issue.isPending} disabled={!ready} onClick={() => issue.mutate()}>
+            Issue credential
+          </Button>
+        </>
+      }
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (ready) issue.mutate();
+        }}
+      >
+        <Field label="Name">
+          <Input data-autofocus data-testid="issue-credential-name" className="w-full" maxLength={200} placeholder="backup job" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field label="Token lifetime (seconds)" hint="Empty: no expiry, revocation only." error={!ttlValid ? "Whole seconds, at least 1." : undefined}>
+          <Input data-testid="issue-credential-ttl" mono className="w-full" placeholder="7776000" value={ttlSeconds} invalid={!ttlValid} onChange={(e) => setTtlSeconds(e.target.value.trim())} />
+        </Field>
+        {issue.error && <p className="text-sm text-deny">{errorMessage(issue.error)}</p>}
+        <button type="submit" hidden />
+      </form>
+    </Dialog>
+  );
+}
+
+function IssuedCredentialDialog({ identity, issued, onClose }: { identity: OrgIdentity; issued: IssuedMachineCredential; onClose: () => void }) {
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      dismissable={false}
+      title={`Credential issued for ${identity.name}`}
+      description={issued.name}
+      icon={
+        <span className="flex size-9 items-center justify-center rounded-full border border-accent/50 text-accent">
+          <ShieldCheck size={18} />
+        </span>
+      }
+      data-testid="issued-credential"
+      footer={
+        <Button variant="primary" data-testid="dismiss-issued-credential" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <div className="space-y-5">
+        <OneTimeToken token={issued.token} tokenTestId="issued-credential-token" copyTestId="copy-issued-credential" />
+        <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-muted" data-testid="issued-credential-limits">
+          <span className="inline-flex items-center gap-2">
+            <Clock size={15} />
+            {issued.expiresAt ? `Expires ${new Date(issued.expiresAt).toLocaleString()}` : "No expiry: revoke it when done"}
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <ShieldCheck size={15} />
+            The grants of {identity.name}, no more
+          </span>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** A token shown once: blurred until revealed, with a copy button and the warning. */
+function OneTimeToken({ token, tokenTestId, copyTestId }: { token: string; tokenTestId: string; copyTestId: string }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <Callout tone="warn" icon={<TriangleAlert size={17} />} title="Copy this token now. It will never be shown again.">
+      <div className="mt-2 flex items-center gap-2">
+        <span
+          data-testid={tokenTestId}
+          className={cn(
+            "min-w-0 flex-1 truncate rounded-md border border-bd bg-inset px-3 py-2 font-mono text-[13px] text-fg transition-[filter]",
+            !revealed && "select-none blur-[5px]",
+          )}
+        >
+          {token}
+        </span>
+        <IconButton label={revealed ? "Hide token" : "Show token"} onClick={() => setRevealed((v) => !v)}>
+          {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+        </IconButton>
+        <CopyButton value={token} data-testid={copyTestId}>
+          Copy
+        </CopyButton>
+      </div>
+    </Callout>
   );
 }
 
@@ -632,7 +786,6 @@ function NewMachineDialog({
 }
 
 function MachineTokenDialog({ oneTime, onClose, onGrant }: { oneTime: OneTime; onClose: () => void; onGrant: () => void }) {
-  const [revealed, setRevealed] = useState(false);
   const [tab, setTab] = useState("shell");
   const origin = window.location.origin;
   const snippets: Record<string, string[]> = {
@@ -670,25 +823,7 @@ function MachineTokenDialog({ oneTime, onClose, onGrant }: { oneTime: OneTime; o
       }
     >
       <div className="space-y-5">
-        <Callout tone="warn" icon={<TriangleAlert size={17} />} title="Copy this token now. It will never be shown again.">
-          <div className="mt-2 flex items-center gap-2">
-            <span
-              data-testid="one-time-credential-token"
-              className={cn(
-                "min-w-0 flex-1 truncate rounded-md border border-bd bg-inset px-3 py-2 font-mono text-[13px] text-fg transition-[filter]",
-                !revealed && "select-none blur-[5px]",
-              )}
-            >
-              {oneTime.credential}
-            </span>
-            <IconButton label={revealed ? "Hide token" : "Show token"} onClick={() => setRevealed((v) => !v)}>
-              {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
-            </IconButton>
-            <CopyButton value={oneTime.credential} data-testid="copy-credential">
-              Copy
-            </CopyButton>
-          </div>
-        </Callout>
+        <OneTimeToken token={oneTime.credential} tokenTestId="one-time-credential-token" copyTestId="copy-credential" />
         <div className="flex flex-wrap gap-x-6 gap-y-2 text-[13px] text-muted" data-testid="one-time-credential-limits">
           <span className="inline-flex items-center gap-2">
             <Clock size={15} />

@@ -93,6 +93,39 @@ check(
 await page.click('[data-testid="dismiss-credential"]');
 await page.waitForSelector('[data-identity="budget-runner"]');
 
+// 1c. Another credential for an existing machine (identity.credentials.issue):
+// named, shown once, listed, authenticating as the machine, revocable alone.
+const deployerId = await page.getAttribute('[data-identity="ci-deployer"]', "data-identity-id");
+await page.click('[data-identity="ci-deployer"]');
+await page.waitForSelector(`[data-testid="issue-credential-${deployerId}"]`, { timeout: 10000 });
+await page.click(`[data-testid="issue-credential-${deployerId}"]`);
+await page.waitForSelector('[data-testid="issue-credential-name"]', { timeout: 10000 });
+await page.fill('[data-testid="issue-credential-name"]', "nightly backup");
+await page.fill('[data-testid="issue-credential-ttl"]', "3600");
+await page.click('[data-testid="issue-credential-submit"]');
+await page.waitForSelector('[data-testid="issued-credential"]', { timeout: 10000 });
+const issuedToken = (await page.textContent('[data-testid="issued-credential-token"]')).trim();
+check("issued credential shown once, a new service token", /^vlt_svc_/.test(issuedToken) && issuedToken !== machineToken);
+check("issued credential's expiry echoed", /Expires /.test(await page.textContent('[data-testid="issued-credential-limits"]')));
+await page.click('[data-testid="dismiss-issued-credential"]');
+check("issued credential dismissed, not re-shown", (await page.locator('[data-testid="issued-credential"]').count()) === 0);
+const issuedRow = page.locator(`[data-testid="credentials-panel-${deployerId}"] [data-credential]`, { hasText: "nightly backup" });
+await issuedRow.waitFor({ timeout: 10000 });
+check("issued credential listed under its name", true);
+const asIssued = await asMachine(issuedToken, "/organizations/acme/projects");
+check("issued credential authenticates as the machine (denied, not unauthenticated)", asIssued.status === 403, `status ${asIssued.status}`);
+await issuedRow.locator('[data-testid^="revoke-credential-"]').click();
+await confirmDialog();
+await issuedRow.locator("text=revoked").waitFor({ timeout: 10000 });
+const afterIssuedRevoke = await asMachine(issuedToken, "/organizations/acme/projects");
+const firstStillWorks = await asMachine(machineToken, "/organizations/acme/projects");
+check(
+  "revoking the issued credential leaves the first one working",
+  afterIssuedRevoke.status === 401 && firstStillWorks.status === 403,
+  `issued ${afterIssuedRevoke.status}, first ${firstStillWorks.status}`,
+);
+await page.click('[data-identity="ci-deployer"]');
+
 // 2. Default-deny: zero grants means the machine sees nothing.
 const before = await asMachine(machineToken, "/organizations/acme/projects");
 check("machine denied before any grant", !before.ok, `status ${before.status}`);

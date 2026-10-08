@@ -23,6 +23,9 @@ fixes.
   an existing file is refused. The token never appears in the output or in
   an error, so the command works in assisted mode too. Against an older
   server it says so and issues nothing.
+- Dashboard: a machine's Credentials panel, on the Machines tab, has an
+  Issue credential action with a name and an optional lifetime. The token
+  is shown once, with a copy button.
 
 ### Audit
 
