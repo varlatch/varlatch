@@ -147,7 +147,9 @@ and counts failures by rule when the run ends.
   the Broker is not proxied a second time. A spelling that was not set
   becomes the Broker's address alone. Clients disagree about which spelling
   wins when both are set (Node reads `no_proxy` first), so neither is copied
-  into the other.
+  into the other. An inherited entry that exempts every host (`*`, `*` with
+  a port, or a `/0` address range such as `0.0.0.0/0`) is removed, and the
+  run names it.
 - No reusable Varlatch credential, unless you pass `--agent-metadata`.
 - Its own, empty configuration directory in `VARLATCH_CONFIG_DIR`, created
   private for the run and removed when it ends, and the run's identifier in
@@ -307,8 +309,8 @@ destinations passes through unchanged, Placeholders intact, unless you pass
   streaming, the Broker keeps the values it fetched for it in memory.
 - An exemption inherited in `NO_PROXY` or `no_proxy` still sends matching
   requests around the Broker, even with `--agent-network strict`, for every
-  client that reads that spelling. Node, curl, and Python treat `*` as a
-  wildcard only when it is the whole value, so the appended Broker address
-  disables an inherited `*` for them; a client that honours `*` anywhere in
-  the list still bypasses the Broker entirely. Start agent-safe runs without
-  exemptions you do not need.
+  client that reads that spelling. An entry that would exempt every host is
+  the exception: the run removes it, since clients disagree about where in
+  the list `*` counts (curl, Python, and Node before 26.11 honour it only as
+  the whole value, Node from 26.11 anywhere in it). Start agent-safe runs
+  without exemptions you do not need.
