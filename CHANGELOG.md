@@ -38,15 +38,18 @@ fixes.
   connection and every integration that uses it warn, with a way to
   replace the credential; an expired token says so. Creating a connection
   or replacing its credential with a token that expires within two weeks
-  stops first, with Save anyway or Replace anyway. Replacing the
-  credential clears the date until the new token is used. A token without
+  stops first, with Save anyway or Replace anyway. GitHub does not repeat
+  the date on every answer, so a connection's known date stands in for its
+  stored token. Replacing the credential clears the date until the new
+  token is used. A token without
   an expiry, and other platforms, show no date.
 - API: a connection carries `credentialExpiresAt` and
   `credentialExpirySeenAt` (null when unknown), and an access check
   `credentialExpiresAt` when GitHub reports it.
 - Database migration 28 adds the connections' `credential_expires_at` and
   `credential_expiry_seen_at` columns, nullable and unknown for every
-  existing connection until its token is next used.
+  existing connection until its token is next used. Backup archives of
+  0.16.0 (migration 27) restore into this release.
 
 ### Dashboard
 
