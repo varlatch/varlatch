@@ -133,6 +133,56 @@ describe("setup --tailnet-endpoint / --no-tailnet-endpoint", () => {
     expect(line(env, "VARLATCH_TAILNET_ENDPOINT")).toBeNull();
   });
 
+  /** A Docker whose sidecar has joined as `dnsName`; everything after the join fails. */
+  function joinedDocker(dnsName: string, extra: Record<string, unknown> = {}): void {
+    const bin = mkdtempSync(join(tmpdir(), "setup-bin-"));
+    const status = JSON.stringify({ BackendState: "Running", MagicDNSSuffix: "tail1.ts.net", CertDomains: [dnsName], Self: { DNSName: `${dnsName}.`, Tags: ["tag:varlatch"] }, ...extra });
+    writeFileSync(
+      join(bin, "docker"),
+      [
+        "#!/bin/sh",
+        'case "$*" in',
+        '  "compose version --short") echo 2.30.0; exit 0;;',
+        '  "volume inspect "*_tailscale-state) exit 0;;',
+        '  "compose up -d tailscale") exit 0;;',
+        `  "compose exec -T tailscale tailscale status --json") echo '${status}'; exit 0;;`,
+        "esac",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+  }
+
+  it("with the external ingress: the sidecar joins, the public address stays, the node's actual name is recorded", async () => {
+    const dir = installDir({ ...base, ingress: "external" }, ["docker-compose.tailscale.yml"]);
+    joinedDocker("varlatch-1.tail1.ts.net");
+    await expect(runSetup(options(dir, true))).rejects.toThrow(/up -d --remove-orphans failed/);
+    expect(saved(dir)).toMatchObject({
+      publicUrl: "https://vault.example.com",
+      tailnetMachine: "varlatch",
+      tailnetName: "tail1.ts.net",
+      tailnetHost: "varlatch-1.tail1.ts.net",
+      tailnetEndpoint: { port: 8688 },
+    });
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    expect(line(env, "VARLATCH_PUBLIC_URL")).toBe("https://vault.example.com");
+    expect(line(env, "VARLATCH_TAILNET_NODE")).toBe("varlatch-1");
+    expect(line(env, "VARLATCH_TAILNET_ENDPOINT")).toBe("https://varlatch-1.tail1.ts.net:8688");
+  });
+
+  it("stops when the sidecar's node was renamed since, and when the tailnet has no HTTPS certificates", async () => {
+    const renamed = installDir({ ...base, ingress: "external", tailnetMachine: "varlatch", tailnetHost: "varlatch.tail1.ts.net", tailnetEndpoint: { port: 8688 } }, [
+      "docker-compose.tailscale.yml",
+    ]);
+    joinedDocker("varlatch-2.tail1.ts.net");
+    await expect(runSetup(options(renamed, undefined))).rejects.toThrow(/was varlatch\.tail1\.ts\.net, but it is now varlatch-2\.tail1\.ts\.net/);
+    const noCerts = installDir({ ...base, ingress: "external" }, ["docker-compose.tailscale.yml"]);
+    joinedDocker("varlatch.tail1.ts.net", { CertDomains: null });
+    await expect(runSetup(options(noCerts, true))).rejects.toThrow(/enable HTTPS certificates/);
+  });
+
   it("leaves the configuration alone without either flag", async () => {
     const config = { ...base, ingress: "external" as const };
     const dir = installDir(config, []);
