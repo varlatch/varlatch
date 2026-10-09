@@ -22,8 +22,13 @@ varlatchd: a small probe stands in for varlatchd, in the same topology.
   node and a client node (both userspace, the image the Tailscale overlay
   pins). This machine is the third node and runs the browsers.
 - It configures Serve on the spike node only (S6), from a file it writes.
-- At the end both nodes log out and every container and volume is removed
-  (`SPIKE_KEEP=1` keeps them for inspection).
+- At the end every container and volume is removed (`SPIKE_KEEP=1` keeps
+  them for inspection). Both nodes are asked to log out, but inside the
+  overlay's container `tailscale logout` fails ("register request ...
+  context canceled"; the harness prints it), so the nodes go offline
+  instead. Tailscale removes them some time later, as ephemeral nodes. Until
+  then they are listed as offline machines in the admin console, where they
+  can also be removed by hand.
 - It never changes the tailnet's access rules, its settings, or any other
   device. S7 and S8 need changes only the owner makes (below); without
   them they report NOT RUN.

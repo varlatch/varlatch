@@ -598,28 +598,62 @@ async function s4(ctx) {
   } else {
     notRun("s4", "forced renewal: set SPIKE_S4_FORCE_RENEW=1 (one Let's Encrypt issuance for the spike node's name)");
   }
-  // 20 workers keep requests in flight; the swap lands in the middle of them.
-  const total = 400;
-  let issued = 0;
-  let failures = 0;
-  const worker = async () => {
-    while (issued < total) {
-      issued++;
-      const r = await request(`https://${ctx.name}:8688/probe?s4=${issued}`);
-      if (!r.ok || r.status !== 200) failures++;
+  // 20 workers keep requests in flight. The same load runs twice: first
+  // without a swap, as a control, then with the swap landing in the middle.
+  // Failures in the control mean the load itself fails, and the swap cannot
+  // be judged.
+  const load = async (swapMidway) => {
+    const total = 400;
+    let issued = 0;
+    const failures = [];
+    const whoisMs = [];
+    const worker = async () => {
+      while (issued < total) {
+        const n = ++issued;
+        // lean=1: one WhoIs per request, as varlatchd makes, not the probe's three.
+        const r = await request(`https://${ctx.name}:8688/probe?lean=1&s4=${swapMidway ? "swap" : "control"}-${n}`);
+        if (!r.ok || r.status !== 200) failures.push({ n, error: r.error ?? `HTTP ${r.status}`, ms: r.ms });
+        else if (typeof r.json?.whoisMs === "number") whoisMs.push(r.json.whoisMs);
+      }
+    };
+    const running = Promise.all(Array.from({ length: 20 }, worker));
+    let swapped = null;
+    let issuedAtSwap = null;
+    if (swapMidway) {
+      await sleep(500);
+      issuedAtSwap = issued;
+      swapped = await ctlAsync("POST", "/reload-tls").catch((err) => ({ swapped: false, error: String(err).slice(0, 300) }));
     }
+    await running;
+    const errors = {};
+    for (const f of failures) errors[f.error] = (errors[f.error] ?? 0) + 1;
+    whoisMs.sort((a, b) => a - b);
+    const pct = (q) => (whoisMs.length ? whoisMs[Math.min(whoisMs.length - 1, Math.floor(q * whoisMs.length))] : null);
+    return {
+      total,
+      failures: failures.length,
+      errors,
+      whoisMs: { p50: pct(0.5), p95: pct(0.95), max: whoisMs.at(-1) ?? null, over3s: whoisMs.filter((m) => m > 3000).length },
+      issuedAtSwap,
+      swapped: swapped?.swapped ?? null,
+      swapError: swapped?.error ?? swapped?.cert?.error ?? null,
+    };
   };
-  const load = Promise.all(Array.from({ length: 20 }, worker));
-  await sleep(500);
-  const issuedAtSwap = issued;
-  const swapped = await ctlAsync("POST", "/reload-tls").catch((err) => ({ swapped: false, error: String(err) }));
-  await load;
-  expect("s4", "swapping the TLS context under load fails no request", swapped.swapped === true && failures === 0 && issuedAtSwap < total, {
-    total,
-    failures,
-    issuedAtSwap,
-    swapped: swapped.swapped,
-  });
+  const control = await load(false);
+  observe("s4", "load without a swap (control)", control);
+  const withSwap = await load(true);
+  observe("s4", "load with a swap midway", withSwap);
+  judge(
+    "s4",
+    "swapping the TLS context under load fails no request",
+    control.failures > 0
+      ? verdict("INCONCLUSIVE", { problem: "the load fails without a swap too, so the swap cannot be judged", control })
+      : withSwap.swapped !== true
+        ? verdict("INCONCLUSIVE", { problem: "the swap did not happen", swapError: withSwap.swapError })
+        : withSwap.failures === 0 && withSwap.issuedAtSwap < withSwap.total
+          ? verdict("PASS", { total: withSwap.total, issuedAtSwap: withSwap.issuedAtSwap })
+          : verdict("FAIL", withSwap),
+  );
 }
 
 // ---- S5: browsers calling the endpoint cross-origin, from a public and a ts.net origin.
@@ -1042,10 +1076,15 @@ try {
   emit("FAIL", "setup", "spike setup", String(err).slice(0, 400));
 } finally {
   if (scratchDir && process.env.SPIKE_KEEP !== "1") {
+    // Logging out deletes an ephemeral node at once; otherwise Tailscale
+    // removes it some time after it goes offline. Say which happened.
     for (const svc of ["server-ts", "client-ts"]) {
       try {
         dc(["exec", "-T", svc, "tailscale", "logout"]);
-      } catch {}
+        console.log(`cleanup: ${svc} logged out`);
+      } catch (err) {
+        console.log(`cleanup: ${svc} did not log out (${String(err.stderr ?? err).trim().split("\n")[0].slice(0, 160)}); as an ephemeral node it is removed after going offline`);
+      }
     }
     try {
       dc(["down", "-v", "--remove-orphans"]);

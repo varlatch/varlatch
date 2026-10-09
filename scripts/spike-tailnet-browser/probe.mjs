@@ -150,9 +150,11 @@ async function serve() {
     const t0 = Date.now();
     entry.whois = await whois(addr, port);
     entry.whoisMs = Date.now() - t0;
-    entry.whoisPort0 = await whois(addr, 0);
     log.push(entry);
-    // After close: an entry must not outlive its connection.
+    // ?lean=1: one WhoIs per request, as varlatchd makes; otherwise also the
+    // port-0 lookup and, after close, whether the entry outlived its connection.
+    if (new URL(req.url ?? "/", "https://x.invalid").searchParams.get("lean") === "1") return entry;
+    entry.whoisPort0 = await whois(addr, 0);
     sock.once("close", () => {
       setTimeout(async () => {
         entry.whoisAfterClose = await whois(addr, port);
