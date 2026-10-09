@@ -369,8 +369,9 @@ function NewConnectionDialog({
     },
     onError: (err) => toast.error("Could not create the connection", { description: err instanceof Error ? err.message : String(err) }),
   });
-  // Checked, read-only, before saving. A failed check stays shown until an
-  // input changes; meanwhile the button saves anyway.
+  // Checked, read-only, before saving. A failed check (or one that could
+  // not run) stays shown until an input changes; meanwhile the button saves
+  // anyway.
   const [failed, setFailed] = useState<AccessCheck | null>(null);
   const verify = useMutation({
     mutationFn: () => api.checkPlatformAccess(org, { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential }),
@@ -383,6 +384,7 @@ function NewConnectionDialog({
       setFailed(null);
       verify.reset();
     };
+  const skipCheck = Boolean(failed || verify.error);
   const ready = Boolean(platform && baseIdentity.trim() && name.trim() && credential);
 
   return (
@@ -403,9 +405,9 @@ function NewConnectionDialog({
             data-testid="save-connection"
             disabled={!ready}
             loading={verify.isPending || create.isPending}
-            onClick={() => (failed ? create.mutate() : verify.mutate())}
+            onClick={() => (skipCheck ? create.mutate() : verify.mutate())}
           >
-            {failed ? "Save anyway" : "Create connection"}
+            {skipCheck ? "Save anyway" : "Create connection"}
           </Button>
         </>
       }
@@ -504,7 +506,8 @@ function ReplaceCredentialDialog({
   });
   // The new credential is checked, read-only, against every destination
   // that will use it (or the account or instance when none does yet). Any
-  // failure is shown first; the button then replaces anyway.
+  // failure, or a check that could not run, is shown first; the button then
+  // replaces anyway.
   const [failures, setFailures] = useState<{ target: SyncTarget | null; check: AccessCheck }[] | null>(null);
   const verify = useMutation({
     mutationFn: () =>
@@ -546,9 +549,9 @@ function ReplaceCredentialDialog({
             data-testid={`confirm-credential-${connection.id}`}
             disabled={!credential}
             loading={verify.isPending || replace.isPending}
-            onClick={() => (failures ? replace.mutate() : verify.mutate())}
+            onClick={() => (failures || verify.error ? replace.mutate() : verify.mutate())}
           >
-            {failures ? "Replace anyway" : "Replace credential"}
+            {failures || verify.error ? "Replace anyway" : "Replace credential"}
           </Button>
         </>
       }
