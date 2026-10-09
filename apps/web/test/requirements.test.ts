@@ -92,7 +92,7 @@ describe("requirement display", () => {
       { kind: "user", value: "alice@example.com" },
     ]);
     expect(requirementSentence(pinned, names)).toBe(
-      "Secrets in api / production (and environments derived from it) can only be read from devices on example.ts.net that match any of: device nAbc123CNTRL, device nDef456CNTRL",
+      "Values in api / production (and environments derived from it) can only be read from devices on example.ts.net that match any of: device nAbc123CNTRL, device nDef456CNTRL",
     );
   });
 });

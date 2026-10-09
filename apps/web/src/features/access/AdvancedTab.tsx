@@ -74,7 +74,7 @@ function RequirementsSection({ org }: { org: string }) {
   return (
     <SectionCard
       title="Network requirements"
-      description="Secrets a requirement covers can only be read from verified devices on your tailnet. A device passes a requirement by matching any one of its devices, tags or users. When several requirements cover the same secret, every one must pass. Restrictive only: a requirement can take access away, never add it."
+      description="Values a requirement covers, secrets and non-secret config alike, can only be read from verified devices on your tailnet. A device passes a requirement by matching any one of its devices, tags or users. When several requirements cover the same value, every one must pass. Restrictive only: a requirement can take access away, never add it."
       data-testid="requirements-section"
       actions={
         !adding && (
@@ -88,7 +88,7 @@ function RequirementsSection({ org }: { org: string }) {
         <EmptyState
           icon={<Wifi size={20} />}
           title="No network requirements"
-          description="Secret retrieval is governed by grants alone. Add one to require, for example, that production secrets are only read from devices tagged tag:prod."
+          description="Reading values is governed by grants alone. Add one to require, for example, that production values are only read from devices tagged tag:prod."
           className="py-8"
         />
       )}
@@ -115,7 +115,7 @@ function RequirementsSection({ org }: { org: string }) {
               className="group border-b border-bd px-5 py-3.5 text-[14px] last:border-b-0"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted">Secrets in</span>
+                <span className="text-muted">Values in</span>
                 {targetParts(req.target, names).map((part) => (
                   <TargetChip key={part.kind === "tier" ? part.tier : part.id} part={part} />
                 ))}
@@ -145,7 +145,7 @@ function RequirementsSection({ org }: { org: string }) {
                         const ok = await confirm({
                           title: "Remove this requirement?",
                           description:
-                            "This loosens access: the secrets it covers can then be read from anywhere a grant allows, unless another requirement still covers them. The change is audited.",
+                            "This loosens access: the values it covers can then be read from anywhere a grant allows, unless another requirement still covers them. The change is audited.",
                           confirmLabel: "Remove requirement",
                           tone: "danger",
                         });

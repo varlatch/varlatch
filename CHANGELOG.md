@@ -31,13 +31,13 @@ fixes.
   root environment also covers the environments derived from it, and lists
   every device (Tailscale node ID), tag, and user it accepts. It also says
   how they combine: a device passes a requirement by matching any one of
-  them, and every requirement that covers a secret must pass. Before, a
+  them, and every requirement that covers a value must pass. Before, a
   requirement for specific environments read "1 environments", and its
   devices and users were not shown.
 - **Edit is off for requirements the form cannot represent.** The form
   edits a tier and its tags. Saved over a requirement for specific
   environments, or one that names devices or users, it replaced them with
-  a tier and tags, which could let more devices read the secrets. Those
+  a tier and tags, which could let more devices read the values. Those
   requirements now say why Edit is unavailable; change them through the
   API.
 - **Tailnet-only values are marked where they are used.** A network
