@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Filter, MoreHorizontal, Plus, Sparkles, Wifi } from "lucide-react";
-import type { Tier } from "@varlatch/protocol";
+import { Filter, Monitor, MoreHorizontal, Plus, Sparkles, Tag, User, Wifi } from "lucide-react";
+import type { Requirement, Tier } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { countdown, timeAgo, useNow } from "../../lib/time";
 import {
@@ -11,6 +11,7 @@ import {
   Callout,
   EmptyState,
   Field,
+  InfoTip,
   Input,
   Menu,
   SectionCard,
@@ -23,6 +24,18 @@ import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { TIERS, useIdentities } from "./shared";
+import { useAccessNames } from "./useAccessNames";
+import {
+  formEditBlocker,
+  matchParts,
+  parseTags,
+  requirementCreate,
+  requirementSentence,
+  requirementUpdate,
+  targetParts,
+  type MatchPart,
+  type TargetPart,
+} from "./requirements";
 
 /**
  * Advanced: mechanisms that never grant. Network requirements narrow where
@@ -42,18 +55,12 @@ export function AdvancedTab({ org }: { org: string }) {
   );
 }
 
-type Requirement = {
-  id: string;
-  target: { kind: string; tier?: Tier; environmentIds?: string[] };
-  selector: { tailnet: string; tags?: string[] };
-  version: number;
-};
-
 function RequirementsSection({ org }: { org: string }) {
   const { api } = useSession();
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
+  const { names } = useAccessNames(org);
   const reqs = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org) });
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -63,11 +70,11 @@ function RequirementsSection({ org }: { org: string }) {
     onSuccess: invalidate,
     onError: (err) => toast.error("Could not remove the requirement", { description: errorMessage(err) }),
   });
-  const items = (reqs.data?.items ?? []) as unknown as Requirement[];
+  const items = reqs.data?.items ?? [];
   return (
     <SectionCard
       title="Network requirements"
-      description="Secrets in a tier can only be read from verified devices on your tailnet. Restrictive only: a requirement can take access away, never add it."
+      description="Secrets a requirement covers can only be read from verified devices on your tailnet. A device passes a requirement by matching any one of its devices, tags or users. When several requirements cover the same secret, every one must pass. Restrictive only: a requirement can take access away, never add it."
       data-testid="requirements-section"
       actions={
         !adding && (
@@ -86,8 +93,9 @@ function RequirementsSection({ org }: { org: string }) {
         />
       )}
       <ul>
-        {items.map((req) =>
-          editing === req.id ? (
+        {items.map((req) => {
+          const blocker = formEditBlocker(req);
+          return editing === req.id && !blocker ? (
             <li key={req.id} data-requirement={req.id} className="border-b border-bd px-5 py-4 last:border-b-0">
               <RequirementForm
                 org={org}
@@ -100,56 +108,67 @@ function RequirementsSection({ org }: { org: string }) {
               />
             </li>
           ) : (
-            <li key={req.id} data-requirement={req.id} className="group flex flex-wrap items-center gap-2 border-b border-bd px-5 py-3.5 text-[14px] last:border-b-0">
-              <span className="text-muted">Secrets in</span>
-              {req.target.tier ? (
-                <Chip>
-                  <TierDot tier={req.target.tier} />
-                  {req.target.tier}
-                </Chip>
-              ) : (
-                <Chip>{req.target.environmentIds?.length ?? 0} environments</Chip>
-              )}
-              <span className="text-muted">can only be read from devices on</span>
-              <Chip mono>{req.selector.tailnet}</Chip>
-              {(req.selector.tags ?? []).length > 0 && (
-                <>
-                  <span className="text-muted">tagged</span>
-                  {(req.selector.tags ?? []).map((t) => (
-                    <Chip key={t} mono>
-                      {t}
-                    </Chip>
-                  ))}
-                </>
-              )}
-              <span className="flex-1" />
-              <Button size="sm" variant="ghost" data-testid={`edit-requirement-${req.id}`} onClick={() => setEditing(req.id)}>
-                Edit
-              </Button>
-              <Menu
-                label="Requirement actions"
-                items={[
-                  {
-                    label: "Remove…",
-                    danger: true,
-                    "data-testid": `delete-requirement-${req.id}`,
-                    onSelect: async () => {
-                      const ok = await confirm({
-                        title: "Remove this requirement?",
-                        description: "This loosens access: secrets in this tier can then be read from anywhere a grant allows. The change is audited.",
-                        confirmLabel: "Remove requirement",
-                        tone: "danger",
-                      });
-                      if (ok) remove.mutate(req.id);
+            <li
+              key={req.id}
+              data-requirement={req.id}
+              title={requirementSentence(req, names)}
+              className="group border-b border-bd px-5 py-3.5 text-[14px] last:border-b-0"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted">Secrets in</span>
+                {targetParts(req.target, names).map((part) => (
+                  <TargetChip key={part.kind === "tier" ? part.tier : part.id} part={part} />
+                ))}
+                <span className="text-muted">can only be read on</span>
+                <Chip mono>{req.selector.tailnet}</Chip>
+                <span className="flex-1" />
+                {blocker ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Button size="sm" variant="ghost" disabled data-testid={`edit-requirement-${req.id}`} data-edit-blocked="">
+                      Edit
+                    </Button>
+                    <InfoTip text={blocker} />
+                  </span>
+                ) : (
+                  <Button size="sm" variant="ghost" data-testid={`edit-requirement-${req.id}`} onClick={() => setEditing(req.id)}>
+                    Edit
+                  </Button>
+                )}
+                <Menu
+                  label="Requirement actions"
+                  items={[
+                    {
+                      label: "Remove…",
+                      danger: true,
+                      "data-testid": `delete-requirement-${req.id}`,
+                      onSelect: async () => {
+                        const ok = await confirm({
+                          title: "Remove this requirement?",
+                          description:
+                            "This loosens access: the secrets it covers can then be read from anywhere a grant allows, unless another requirement still covers them. The change is audited.",
+                          confirmLabel: "Remove requirement",
+                          tone: "danger",
+                        });
+                        if (ok) remove.mutate(req.id);
+                      },
                     },
-                  },
-                ]}
-              >
-                <MoreHorizontal size={16} />
-              </Menu>
+                  ]}
+                >
+                  <MoreHorizontal size={16} />
+                </Menu>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2" data-testid={`requirement-matches-${req.id}`}>
+                <span className="text-muted">by a device that matches any of</span>
+                {matchParts(req.selector).map((m) => (
+                  <Chip key={`${m.kind}:${m.value}`} mono data-match={m.kind}>
+                    <MatchIcon kind={m.kind} />
+                    {m.value}
+                  </Chip>
+                ))}
+              </div>
             </li>
-          ),
-        )}
+          );
+        })}
       </ul>
       {adding && (
         <div className="border-t border-bd px-5 py-4">
@@ -167,12 +186,48 @@ function RequirementsSection({ org }: { org: string }) {
   );
 }
 
-function Chip({ children, mono }: { children: React.ReactNode; mono?: boolean }) {
+function Chip({ children, mono, ...props }: React.ComponentProps<"span"> & { mono?: boolean }) {
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded-md border border-bd bg-inset px-2 py-0.5 text-[13px]", mono && "font-mono text-[12.5px]")}>
+    <span
+      className={cn("inline-flex items-center gap-1.5 rounded-md border border-bd bg-inset px-2 py-0.5 text-[13px]", mono && "font-mono text-[12.5px]")}
+      {...props}
+    >
       {children}
     </span>
   );
+}
+
+function TargetChip({ part }: { part: TargetPart }) {
+  if (part.kind === "tier") {
+    return (
+      <Chip>
+        <TierDot tier={part.tier} />
+        {part.tier}
+      </Chip>
+    );
+  }
+  if (!part.name) {
+    // Not visible to this viewer or deleted: the ID is all there is.
+    return (
+      <Chip mono data-target-environment={part.id}>
+        {part.id}
+      </Chip>
+    );
+  }
+  return (
+    <>
+      <Chip mono data-target-environment={part.id}>
+        {part.tier && <TierDot tier={part.tier} />}
+        {part.project ? `${part.project} / ${part.name}` : part.name}
+      </Chip>
+      {part.includesDerived && <span className="text-[13px] text-muted">and environments derived from it</span>}
+    </>
+  );
+}
+
+function MatchIcon({ kind }: { kind: MatchPart["kind"] }) {
+  const Icon = kind === "device" ? Monitor : kind === "tag" ? Tag : User;
+  return <Icon size={12} aria-label={kind} className="text-muted" />;
 }
 
 function RequirementForm({
@@ -187,16 +242,16 @@ function RequirementForm({
   onCancel: () => void;
 }) {
   const { api } = useSession();
-  const [tier, setTier] = useState<Tier>(initial?.target.tier ?? "production");
+  const [tier, setTier] = useState<Tier>(initial?.target.kind === "tier" ? initial.target.tier : "production");
   const [tailnet, setTailnet] = useState(initial?.selector.tailnet ?? "");
   const [tags, setTags] = useState((initial?.selector.tags ?? []).join(","));
-  const tagList = tags.split(",").map((t) => t.trim()).filter(Boolean);
+  const tagList = parseTags(tags);
   const save = useMutation({
     mutationFn: async () => {
-      const target = { kind: "tier" as const, tier };
-      const selector = { tailnet: tailnet.trim(), tags: tagList };
-      if (initial) await api.updateRequirement(org, initial.id, { expectedVersion: initial.version, target, selector });
-      else await api.createTailnetRequirement(org, { target, selector });
+      const form = { tier, tailnet, tags: tagList };
+      // requirementUpdate refuses requirements this form cannot represent.
+      if (initial) await api.updateRequirement(org, initial.id, requirementUpdate(initial, form));
+      else await api.createTailnetRequirement(org, requirementCreate(form));
     },
     onSuccess: onDone,
   });

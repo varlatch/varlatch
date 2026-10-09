@@ -53,8 +53,11 @@ console.log("PASS  recovery passkey enrolled");
 
 // 2. Run `varlatch login` (no --token) and capture its callback URL.
 const home = mkdtempSync(join(tmpdir(), "varlatch-login-e2e-"));
+// The human's browser handoff: VARLATCH_ASSISTED=0, as in the strict-run
+// E2E, so a coding agent's marker in the host shell does not switch on
+// assisted mode, where login starts a device sign-in instead (ADR-0043).
 const cli = spawn("node", [cliPath, "login", "--server", base], {
-  env: { ...process.env, VARLATCH_CONFIG_DIR: home, DISPLAY: "" },
+  env: { ...process.env, VARLATCH_ASSISTED: "0", VARLATCH_CONFIG_DIR: home, DISPLAY: "" },
 });
 let out = "";
 cli.stdout.on("data", (d) => (out += d.toString()));

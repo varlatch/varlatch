@@ -135,7 +135,9 @@ await page.fill('[data-testid="cell-editor"]', "4000");
 await page.keyboard.press("Enter");
 await page.fill('[data-testid="add-name"]', "NEW_FLAG");
 await page.selectOption('[data-testid="add-env"]', "development");
-await page.fill('[data-testid="add-value"]', "on");
+// At least 8 bytes: later suites `varlatch run` this environment, and in an
+// assisted (coding agent) session the CLI refuses Secrets too short to mask.
+await page.fill('[data-testid="add-value"]', "flag-enabled");
 await page.click('[data-testid="add-item"]');
 check("save bar counts drafts", ((await page.textContent('[data-testid="dirty-count"]')) ?? "").includes("2 unsaved changes"));
 check("edited cell is marked", (await cellText("PORT", "development")).includes("edited"));
@@ -144,7 +146,7 @@ await page.waitForSelector('[data-testid="review-dialog"]');
 const reviewPort = (await page.textContent('[data-review-item="PORT"]')) ?? "";
 const reviewFlag = (await page.textContent('[data-review-item="NEW_FLAG"]')) ?? "";
 check("review shows old -> new for a non-secret", reviewPort.includes("3000") && reviewPort.includes("4000"), reviewPort);
-check("review hides a new secret's value", reviewFlag.includes("hidden") && !reviewFlag.includes("on"), reviewFlag);
+check("review hides a new secret's value", reviewFlag.includes("hidden") && !reviewFlag.includes("flag-enabled"), reviewFlag);
 await page.click('[data-testid="commit-changes"]');
 await waitText(cellSel("PORT", "development", "set"), "4000");
 await page.waitForSelector('[data-testid="dirty-count"]', { state: "detached", timeout: 10000 });

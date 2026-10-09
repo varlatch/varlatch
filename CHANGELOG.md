@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## Unreleased (0.16.1)
 
 ### Integrations
 
@@ -23,6 +23,23 @@ fixes.
   each platform needs, with its permissions, and where to find every
   field. The GitHub hint now says that environment secrets need the
   Environments permission, not Secrets.
+### Dashboard
+
+- **Network requirements show everything they enforce.** Access, Advanced
+  names each requirement's environments by project and name (the ID when
+  an environment is not visible to you), notes that a requirement on a
+  root environment also covers the environments derived from it, and lists
+  every device (Tailscale node ID), tag, and user it accepts. It also says
+  how they combine: a device passes a requirement by matching any one of
+  them, and every requirement that covers a secret must pass. Before, a
+  requirement for specific environments read "1 environments", and its
+  devices and users were not shown.
+- **Edit is off for requirements the form cannot represent.** The form
+  edits a tier and its tags. Saved over a requirement for specific
+  environments, or one that names devices or users, it replaced them with
+  a tier and tags, which could let more devices read the secrets. Those
+  requirements now say why Edit is unavailable; change them through the
+  API.
 
 ## 0.16.0 (2026-10-08)
 
