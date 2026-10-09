@@ -133,8 +133,19 @@ fixes.
   0.16.0 (migration 27) restore into this release.
 - Database migration 29 prepares GitHub App connections: a `github_apps`
   table and a credential kind on connections (`token` or `github-app`).
-  Every existing connection becomes `token` and works as before; nothing
-  creates an App yet. Backup archives of 0.16.0 restore into this release.
+  Every existing connection becomes `token` and works as before. Backup
+  archives of 0.16.0 restore into this release.
+- API: an Organization can register its GitHub App through GitHub's
+  manifest flow (`POST /v1/organizations/{org}/github-app/registrations`,
+  then `.../registrations/complete` with GitHub's code) and read it
+  (`GET /v1/organizations/{org}/github-app`). Varlatch keeps the App only
+  when GitHub created it on the intended account. When the person may not
+  register Apps there, GitHub creates it on their own account instead;
+  Varlatch then keeps nothing, and the answer says where to delete it on
+  GitHub. The App's private key rests under the Organization KEK and is
+  never returned. Connections on an App, and the dashboard, come later.
+  Database migration 30 holds registrations in progress (only a hash of
+  each, for an hour).
 
 ### Dashboard
 

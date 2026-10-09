@@ -1240,6 +1240,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/github-app": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's GitHub App (ADR-0047), if it has one. Its private key rests under the Organization KEK and is never returned. */
+        get: operations["getGitHubApp"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start registering the Organization's GitHub App through GitHub's manifest flow (ADR-0047 Decision 1). Returns the manifest and where the browser posts it (a form field named `manifest`, holding its JSON), with a single-use state bound to the caller, the Organization, and the GitHub account named here. GitHub sends the browser back to the dashboard with a code, within the hour. Needs the Installation's public URL over HTTPS (or loopback), and no live App in the Organization. */
+        post: operations["startGitHubAppRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete a registration with the state and GitHub's code. The state is consumed once, by the caller who started it (CONSUMED and EXPIRED answer 410). The App is stored only when GitHub created it on the intended account: GitHub creates it on the person's own account when they may not register Apps on the intended one, and then the App is refused, nothing is kept, and the answer says where to delete it (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the state is released for another attempt. */
+        post: operations["completeGitHubAppRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/sync-targets": {
         parameters: {
             query?: never;
@@ -2071,6 +2122,83 @@ export interface components {
              * @description When the platform said so; null with credentialExpiresAt.
              */
             credentialExpirySeenAt: string | null;
+        };
+        GitHubAccount: {
+            login: string;
+            /** @enum {string} */
+            type: "organization" | "user";
+        };
+        GitHubApp: {
+            id: string;
+            organizationId: string;
+            /** @description GitHub's App id */
+            githubAppId: number;
+            slug: string;
+            /** @description The App's client id (not a secret; the JWT issuer) */
+            clientId: string;
+            owner: {
+                login: string;
+                id: number;
+                /** @enum {string} */
+                type: "organization" | "user";
+            };
+            /** Format: uri */
+            htmlUrl: string;
+            /** Format: date-time */
+            createdAt: string;
+            version: components["schemas"]["EntityVersion"];
+            /** Format: date-time */
+            updatedAt: string | null;
+        };
+        GitHubAppRegistrationStart: {
+            /** @description Single-use; only its hash is stored */
+            state: string;
+            /**
+             * Format: uri
+             * @description Where the browser posts the manifest
+             */
+            action: string;
+            /** @description GitHub's App manifest; post its JSON as the form field `manifest` */
+            manifest: {
+                [key: string]: unknown;
+            };
+            account: components["schemas"]["GitHubAccount"];
+            /** Format: date-time */
+            expiresAt: string;
+        };
+        GitHubAppRegistrationRegistered: {
+            /** @enum {string} */
+            outcome: "registered";
+            app: components["schemas"]["GitHubApp"];
+        };
+        GitHubAppRegistrationRefused: {
+            /** @enum {string} */
+            outcome: "refused";
+            /**
+             * @description owner-mismatch: GitHub created the App on another account (the person's own, when they may not register Apps on the intended one). organization-has-app: the Organization got an App meanwhile. app-in-use: another Organization has this App.
+             * @enum {string}
+             */
+            reason: "owner-mismatch" | "organization-has-app" | "app-in-use";
+            app: {
+                githubAppId: number;
+                slug: string;
+                owner: components["schemas"]["GitHubAccount"];
+            };
+            account: components["schemas"]["GitHubAccount"];
+            /**
+             * Format: uri
+             * @description Where the App's owner deletes it on GitHub
+             */
+            deleteUrl: string;
+            message: string;
+        };
+        GitHubAppRegistrationFailed: {
+            /** @enum {string} */
+            outcome: "failed";
+            /** @description True when GitHub could not be reached; the state was released for another attempt */
+            retryable: boolean;
+            httpStatus?: number;
+            message: string;
         };
         AccessCheck: {
             /**
@@ -5365,6 +5493,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformConnection"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getGitHubApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The live GitHub App */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubApp"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    account: components["schemas"]["GitHubAccount"];
+                };
+            };
+        };
+        responses: {
+            /** @description The registration started (Cache-Control no-store; the state is returned only here) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    completeGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    state: string;
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Refused, or failed (Cache-Control no-store); nothing was stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRefused"] | components["schemas"]["GitHubAppRegistrationFailed"];
+                };
+            };
+            /** @description Registered (Cache-Control no-store) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
                 };
             };
             default: components["responses"]["Error"];

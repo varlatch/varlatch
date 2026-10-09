@@ -46,6 +46,10 @@ function platformCredentialContext(organizationId: string, connectionId: string)
   return { purpose: "platform-credential", organizationId, connectionId };
 }
 
+function githubAppKeyContext(organizationId: string, githubAppId: string): AadContext {
+  return { purpose: "github-app-key", organizationId, githubAppId };
+}
+
 /**
  * Platform Credentials (ADR-0031 §1) rest encrypted under the org KEK,
  * exactly like webhook secrets: recoverable (pushes must present them),
@@ -75,6 +79,29 @@ export function decryptPlatformCredential(
     envelope,
     platformCredentialContext(organizationId, connectionId),
   ).toString("utf8");
+}
+
+/**
+ * A GitHub App's private key (ADR-0047 Decision 1) rests under the org KEK,
+ * bound to its github_apps row, like a Platform Credential: recoverable
+ * (minting needs it), never displayed or returned.
+ */
+export function encryptGitHubAppKey(
+  orgKek: Buffer,
+  organizationId: string,
+  githubAppId: string,
+  privateKeyPem: string,
+): Envelope {
+  return encrypt(orgKek, Buffer.from(privateKeyPem, "utf8"), githubAppKeyContext(organizationId, githubAppId));
+}
+
+export function decryptGitHubAppKey(
+  orgKek: Buffer,
+  organizationId: string,
+  githubAppId: string,
+  envelope: Envelope,
+): string {
+  return decrypt(orgKek, envelope, githubAppKeyContext(organizationId, githubAppId)).toString("utf8");
 }
 
 /**

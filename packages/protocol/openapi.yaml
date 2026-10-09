@@ -2736,6 +2736,93 @@ paths:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/github-app:
+    get:
+      tags: [sync]
+      operationId: getGitHubApp
+      summary: >
+        The Organization's GitHub App (ADR-0047), if it has one. Its private
+        key rests under the Organization KEK and is never returned.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: The live GitHub App
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubApp" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations:
+    post:
+      tags: [sync]
+      operationId: startGitHubAppRegistration
+      summary: >
+        Start registering the Organization's GitHub App through GitHub's
+        manifest flow (ADR-0047 Decision 1). Returns the manifest and where
+        the browser posts it (a form field named `manifest`, holding its
+        JSON), with a single-use state bound to the caller, the
+        Organization, and the GitHub account named here. GitHub sends the
+        browser back to the dashboard with a code, within the hour. Needs
+        the Installation's public URL over HTTPS (or loopback), and no live
+        App in the Organization.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account]
+              properties:
+                account: { $ref: "#/components/schemas/GitHubAccount" }
+      responses:
+        "201":
+          description: The registration started (Cache-Control no-store; the state is returned only here)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationStart" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations/complete:
+    post:
+      tags: [sync]
+      operationId: completeGitHubAppRegistration
+      summary: >
+        Complete a registration with the state and GitHub's code. The state
+        is consumed once, by the caller who started it (CONSUMED and EXPIRED
+        answer 410). The App is stored only when GitHub created it on the
+        intended account: GitHub creates it on the person's own account when
+        they may not register Apps on the intended one, and then the App is
+        refused, nothing is kept, and the answer says where to delete it
+        (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the
+        state is released for another attempt.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state, code]
+              properties:
+                state: { type: string, minLength: 1, maxLength: 200 }
+                code: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Registered (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRegistered" }
+        "200":
+          description: Refused, or failed (Cache-Control no-store); nothing was stored
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
+                  - { $ref: "#/components/schemas/GitHubAppRegistrationFailed" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/sync-targets:
     get:
       tags: [sync]
@@ -4297,6 +4384,89 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the platform said so; null with credentialExpiresAt.
+
+    GitHubAccount:
+      type: object
+      required: [login, type]
+      properties:
+        login: { type: string, minLength: 1, maxLength: 39 }
+        type: { type: string, enum: [organization, user] }
+
+    GitHubApp:
+      type: object
+      required: [id, organizationId, githubAppId, slug, clientId, owner, htmlUrl, createdAt, version, updatedAt]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        githubAppId: { type: integer, description: GitHub's App id }
+        slug: { type: string }
+        clientId: { type: string, description: The App's client id (not a secret; the JWT issuer) }
+        owner:
+          type: object
+          required: [login, id, type]
+          properties:
+            login: { type: string }
+            id: { type: integer }
+            type: { type: string, enum: [organization, user] }
+        htmlUrl: { type: string, format: uri }
+        createdAt: { type: string, format: date-time }
+        version: { $ref: "#/components/schemas/EntityVersion" }
+        updatedAt: { type: [string, "null"], format: date-time }
+
+    GitHubAppRegistrationStart:
+      type: object
+      required: [state, action, manifest, account, expiresAt]
+      properties:
+        state: { type: string, description: Single-use; only its hash is stored }
+        action: { type: string, format: uri, description: Where the browser posts the manifest }
+        manifest:
+          type: object
+          additionalProperties: true
+          description: GitHub's App manifest; post its JSON as the form field `manifest`
+        account: { $ref: "#/components/schemas/GitHubAccount" }
+        expiresAt: { type: string, format: date-time }
+
+    GitHubAppRegistrationRegistered:
+      type: object
+      required: [outcome, app]
+      properties:
+        outcome: { type: string, enum: [registered] }
+        app: { $ref: "#/components/schemas/GitHubApp" }
+
+    GitHubAppRegistrationRefused:
+      type: object
+      required: [outcome, reason, app, account, deleteUrl, message]
+      properties:
+        outcome: { type: string, enum: [refused] }
+        reason:
+          type: string
+          enum: [owner-mismatch, organization-has-app, app-in-use]
+          description: >
+            owner-mismatch: GitHub created the App on another account (the
+            person's own, when they may not register Apps on the intended
+            one). organization-has-app: the Organization got an App
+            meanwhile. app-in-use: another Organization has this App.
+        app:
+          type: object
+          required: [githubAppId, slug, owner]
+          properties:
+            githubAppId: { type: integer }
+            slug: { type: string }
+            owner: { $ref: "#/components/schemas/GitHubAccount" }
+        account: { $ref: "#/components/schemas/GitHubAccount" }
+        deleteUrl: { type: string, format: uri, description: Where the App's owner deletes it on GitHub }
+        message: { type: string }
+
+    GitHubAppRegistrationFailed:
+      type: object
+      required: [outcome, retryable, message]
+      properties:
+        outcome: { type: string, enum: [failed] }
+        retryable:
+          type: boolean
+          description: True when GitHub could not be reached; the state was released for another attempt
+        httpStatus: { type: integer }
+        message: { type: string }
 
     AccessCheck:
       type: object

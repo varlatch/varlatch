@@ -76,6 +76,19 @@ describe("describeEvent", () => {
     );
   });
 
+  it("describes a GitHub App registered, and one refused because GitHub created it on another account", () => {
+    expect(
+      sentence(event({ eventType: "sync.github_app_registered", resource: { githubAppId: "gha_1" }, metadata: { via: "manifest", appId: 5254113, slug: "varlatch-acme", owner: "acme-gh", ownerType: "organization" } })),
+    ).toBe("registered the GitHub App varlatch-acme on acme-gh");
+    const refused = { eventType: "sync.github_app_registration_refused", decision: "deny" };
+    expect(
+      sentence(event({ ...refused, metadata: { reason: "owner-mismatch", slug: "varlatch-acme", owner: "jeremydeceuster", ownerType: "user", account: "acme-gh", accountType: "organization" } })),
+    ).toBe("refused the GitHub App varlatch-acme: GitHub created it on jeremydeceuster, not on acme-gh");
+    expect(sentence(event({ ...refused, metadata: { reason: "organization-has-app", slug: "varlatch-acme-2" } }))).toBe(
+      "refused the GitHub App varlatch-acme-2: the organization already had one",
+    );
+  });
+
   it("grants read as role names, then readable actions", () => {
     expect(
       sentence(event({ eventType: "grant.created", resource: { subjectIdentityId: "idn_agent" }, metadata: { roleId: "rol_use" } })),

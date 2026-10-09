@@ -95,6 +95,13 @@ import {
   type SyncTargetRow,
 } from "../domain/sync.js";
 import {
+  GITHUB_WEB,
+  completeRegistration,
+  getGitHubApp,
+  startRegistration,
+  type GitHubAppRow,
+} from "../domain/githubapps.js";
+import {
   createOidcBinding,
   exchangeOidcToken,
   listOidcBindings,
@@ -248,7 +255,8 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
 /**
  * The base URL device sign-in runs on, or null when it must not run: the
  * device code and the issued credential travel only over HTTPS, except to
- * a loopback server in local development.
+ * a loopback server in local development. GitHub App registration sends
+ * GitHub's code back to the same base, under the same rule.
  */
 function deviceSignInBase(publicUrl: string | undefined): URL | null {
   if (!publicUrl) return null;
@@ -3178,6 +3186,81 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     await revokeConnection(ctx, org, c.req.param("connection"), principal.identity.id);
     return c.body(null, 204);
+  });
+
+  // ---- GitHub App (ADR-0047): one per Organization, registered through
+  // GitHub's manifest flow. GitHub sends the browser back to the dashboard,
+  // which completes the registration with its own bearer.
+  const serializeGitHubApp = (a: GitHubAppRow) => ({
+    id: a.id,
+    organizationId: a.organization_id,
+    githubAppId: Number(a.github_app_id),
+    slug: a.slug,
+    clientId: a.client_id,
+    owner: { login: a.owner_login, id: Number(a.owner_id), type: a.owner_type },
+    htmlUrl: `${GITHUB_WEB}/apps/${a.slug}`,
+    version: a.version,
+    createdAt: iso(a.created_at),
+    updatedAt: a.updated_at ? iso(a.updated_at) : null,
+  });
+  const assertGitHubAppsAllowed = (): URL => {
+    assertSyncEnabled();
+    if (syncEnabled.adapters && !syncEnabled.adapters.includes("github-actions")) {
+      throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
+    }
+    const base = deviceSignInBase(options.publicUrl);
+    if (!base) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        "Registering a GitHub App needs this Installation's public URL (VARLATCH_PUBLIC_URL) over HTTPS, or a loopback address in local development",
+      );
+    }
+    return base;
+  };
+
+  app.get("/v1/organizations/:org/github-app", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    return c.json(serializeGitHubApp(await getGitHubApp(ctx, org.id)));
+  });
+
+  app.post("/v1/organizations/:org/github-app/registrations", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    const base = assertGitHubAppsAllowed();
+    const body = parseBody(
+      z.object({
+        account: z.object({
+          login: z.string().min(1).max(39),
+          type: z.enum(["organization", "user"]),
+        }),
+      }),
+      await c.req.json(),
+    );
+    const started = await startRegistration(ctx, org, body.account, principal.identity.id, base);
+    c.header("Cache-Control", "no-store");
+    return c.json(started, 201);
+  });
+
+  app.post("/v1/organizations/:org/github-app/registrations/complete", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAppsAllowed();
+    const body = parseBody(
+      z.object({ state: z.string().min(1).max(200), code: z.string().min(1).max(200) }),
+      await c.req.json(),
+    );
+    const result = await completeRegistration(ctx, org, body, principal.identity.id, options.syncFetch);
+    c.header("Cache-Control", "no-store");
+    if (result.outcome === "registered") {
+      return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
+    }
+    return c.json(result);
   });
 
   app.get("/v1/organizations/:org/sync-targets", async (c) => {

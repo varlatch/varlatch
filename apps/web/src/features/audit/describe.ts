@@ -488,6 +488,28 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
       return { icon: "trash", title: "Connection revoked", segments: ["revoked connection ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
+    case "sync.github_app_registered":
+      return {
+        icon: "plug",
+        title: "GitHub App registered",
+        segments: ["registered the GitHub App ", { kind: "mono", text: str(m.slug) ?? "an App" }, ...(str(m.owner) ? [" on ", { kind: "mono" as const, text: str(m.owner)! }] : [])],
+      };
+    case "sync.github_app_registration_refused":
+      return {
+        icon: "alert",
+        title: "GitHub App refused",
+        segments: [
+          "refused the GitHub App ",
+          { kind: "mono", text: str(m.slug) ?? "an App" },
+          ...(str(m.reason) === "owner-mismatch" && str(m.owner) && str(m.account)
+            ? [": GitHub created it on ", { kind: "mono" as const, text: str(m.owner)! }, ", not on ", { kind: "mono" as const, text: str(m.account)! }]
+            : str(m.reason) === "organization-has-app"
+              ? [": the organization already had one"]
+              : str(m.reason) === "app-in-use"
+                ? [": another organization uses it"]
+                : []),
+        ],
+      };
     case "sync.target_created":
       return { icon: "upload", title: "Integration added", segments: ["added an integration", ...inPlace(r, names, "from"), ...(str(m.destination) ? [" to ", { kind: "mono" as const, text: str(m.destination)! }] : [])] };
     case "sync.target_updated":
