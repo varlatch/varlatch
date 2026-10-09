@@ -722,6 +722,26 @@ export async function updateTarget(
   actorIdentityId: string,
 ): Promise<SyncTargetRow> {
   return withTx(ctx.db, async (db) => {
+    // Lock order: Connections, then the Target, as credential replacement
+    // and Connection revocation take them, so a Target edit serializes with
+    // either instead of deadlocking. The Target's Connection is read
+    // unlocked to know which to lock; both it and a re-point's new
+    // Connection are locked, in id order, then the Target, which is checked
+    // again under the lock.
+    const seen = await db.query(
+      "SELECT connection_id FROM sync_targets WHERE id = $1 AND revoked_at IS NULL",
+      [target.id],
+    );
+    const seenConnectionId = (seen.rows[0] as { connection_id: string } | undefined)?.connection_id;
+    if (!seenConnectionId) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    const connectionId = patch.connectionId ?? seenConnectionId;
+    const connections = (await db.query(
+      `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
+       WHERE id = ANY($1::text[]) AND organization_id = $2
+       ORDER BY id FOR UPDATE`,
+      [[...new Set([seenConnectionId, connectionId])], org.id],
+    )).rows as PlatformConnectionRow[];
+
     const locked = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets WHERE id = $1 AND revoked_at IS NULL FOR UPDATE`,
       [target.id],
@@ -730,20 +750,13 @@ export async function updateTarget(
       ? targetRow(locked.rows[0] as Record<string, unknown>)
       : undefined;
     if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
-    if (current.version !== patch.expectedVersion) {
+    if (current.version !== patch.expectedVersion || current.connection_id !== seenConnectionId) {
       throw new DomainError("VERSION_CONFLICT", "Sync Target was modified concurrently; reload and retry");
     }
-
-    // Re-point / destination change: lock the (possibly new) Connection so
-    // this serializes with credential replacement.
-    const connectionId = patch.connectionId ?? current.connection_id;
-    const connection = await lockConnection(db, org.id, connectionId);
+    const connection = connections.find((c) => c.id === connectionId && c.revoked_at === null);
+    if (!connection) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
     if (patch.connectionId !== undefined) {
-      const oldConnection = await db.query(
-        "SELECT platform FROM platform_connections WHERE id = $1",
-        [current.connection_id],
-      );
-      const oldPlatform = (oldConnection.rows[0] as { platform: string } | undefined)?.platform;
+      const oldPlatform = connections.find((c) => c.id === current.connection_id)?.platform;
       if (oldPlatform !== undefined && connection.platform !== oldPlatform) {
         throw new DomainError(
           "VALIDATION_FAILED",

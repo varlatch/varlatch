@@ -90,6 +90,11 @@ fixes.
 
 ### Integrations
 
+- Editing an integration while its connection's credential is replaced,
+  or while the connection is revoked, no longer fails with an internal
+  error. The two took their database locks in opposite orders and could
+  deadlock; the edit now waits for the other change, and is refused as
+  out of date when the connection was revoked meanwhile.
 - Varlatch checks a platform credential before it saves anything: when a
   connection is created, when its credential is replaced (against every
   integration that uses it), and on the review step of a new integration,
