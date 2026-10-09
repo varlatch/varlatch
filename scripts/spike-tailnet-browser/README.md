@@ -56,6 +56,7 @@ SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey \
 | `SPIKE_PROBE_UID` | The probe's uid, varlatchd's user (default 999, `useradd -r` in the varlatchd image) |
 | `SPIKE_S4_FORCE_RENEW=1` | Let S4 force one certificate renewal (one more Let's Encrypt issuance) |
 | `SPIKE_HEADED=1` | S5 with visible browsers, to see permission prompts headless browsers never show |
+| `SPIKE_S5_BROWSERS` | S5: which Playwright browsers to run (default `chromium,firefox,webkit`; `none` for a Safari-only run) |
 | `SPIKE_SAFARI_NODE` | S5 in Safari: the Mac's MagicDNS short name or node ID (see below) |
 | `SPIKE_SAFARI_WAIT_SECONDS` | S5 in Safari: how long to wait for someone to open the page there |
 | `SPIKE_S7_WAIT_SECONDS` | S7: how long to wait for the request from a shared-in device |

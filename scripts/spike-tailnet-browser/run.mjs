@@ -680,7 +680,10 @@ async function s5(ctx, local) {
     { origin: "public, name does not resolve", expected: "unreachable", url: `${PUBLIC_ORIGIN}/nxdomain`, page: (run) => pageHtml(`https://no-such-spike-node.${ctx.tailnet}:8688`, 30000, { run }) },
     { origin: "public, address not on the tailnet", expected: "unreachable", url: `${PUBLIC_ORIGIN}/blackhole`, page: (run) => pageHtml(`https://${blackhole}:8688`, 30000, { run }) },
   ];
-  for (const type of ["chromium", "firefox", "webkit"]) {
+  // SPIKE_S5_BROWSERS picks the Playwright browsers (default all three; "none"
+  // for a run that is only the Safari step).
+  const browsers = (process.env.SPIKE_S5_BROWSERS ?? "chromium,firefox,webkit").split(",").map((b) => b.trim()).filter((b) => ["chromium", "firefox", "webkit"].includes(b));
+  for (const type of browsers) {
     if (!existsSync(pw[type].executablePath())) {
       notRun("s5", `${type} is not installed (npx playwright install ${type})`);
       continue;
