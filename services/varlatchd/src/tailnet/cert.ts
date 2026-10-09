@@ -61,6 +61,16 @@ export function decodePair(body: string, host: string, now: number): Loaded | st
   }
 }
 
+/**
+ * Why tailscaled gave no pair, from the status alone. The body is never
+ * repeated: whatever it holds, key material included, stays out of the log
+ * and out of status().
+ */
+function refusal(status: number): string {
+  if (status === 403) return "tailscaled refused (403): varlatchd's user needs certificate permission (TS_PERMIT_CERT_UID)";
+  return `tailscaled answered ${status}`;
+}
+
 export class NodeCertificate {
   readonly #socketPath: string;
   readonly #host: string;
@@ -150,12 +160,9 @@ export class NodeCertificate {
     let outcome: Loaded | string;
     try {
       const res = await localApiGet(this.#socketPath, path, FETCH_TIMEOUT_MS);
-      outcome =
-        res.status === 200
-          ? decodePair(res.body, this.#host, this.#now())
-          : `tailscaled answered ${res.status}: ${res.body.trim().slice(0, 200) || "(no message)"}`;
+      outcome = res.status === 200 ? decodePair(res.body, this.#host, this.#now()) : refusal(res.status);
     } catch (err) {
-      outcome = `tailscaled is not reachable (${err instanceof Error ? err.message : String(err)})`;
+      outcome = `no answer from tailscaled (${err instanceof Error ? err.message : String(err)})`;
     }
     this.#checkedAt = this.#now();
     if (typeof outcome === "string") {

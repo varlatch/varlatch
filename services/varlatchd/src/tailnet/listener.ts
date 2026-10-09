@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { constants } from "node:crypto";
 import https from "node:https";
 import type { AddressInfo } from "node:net";
+import type { TLSSocket } from "node:tls";
 import { serve, type ServerType } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context } from "hono";
@@ -39,6 +41,12 @@ export const TAILNET_HTTPS_BIND = "127.0.0.1";
  * name, without a name (SNI), or while no valid certificate is loaded is
  * refused. TLS terminates here, in the process that reads the socket peer,
  * so the device check sees exactly what the plain listener sees.
+ *
+ * Sessions are never resumed. Node runs SNICallback when OpenSSL picks a
+ * certificate, which a resumed handshake skips, so a resumed session would
+ * skip the name and validity checks too. Every connection makes a full
+ * handshake, and one that somehow resumed, or completed without a valid
+ * certificate loaded, is closed before a request is read.
  */
 export function serveTailnetHttps(
   opts: {
@@ -50,7 +58,7 @@ export function serveTailnetHttps(
   },
   onListening?: (info: AddressInfo) => void,
 ): ServerType {
-  return serve(
+  const server = serve(
     {
       fetch: opts.fetch,
       port: opts.port,
@@ -58,6 +66,9 @@ export function serveTailnetHttps(
       createServer: https.createServer,
       serverOptions: {
         minVersion: "TLSv1.2",
+        // No stateless tickets (TLS 1.2), and TLS 1.3 tickets become
+        // stateful, which nothing stores: no session can be resumed.
+        secureOptions: constants.SSL_OP_NO_TICKET,
         SNICallback: (servername, cb) => {
           if (servername.toLowerCase() !== opts.host) return cb(new Error("unknown server name"));
           const context = opts.certificate.context();
@@ -68,4 +79,9 @@ export function serveTailnetHttps(
     },
     onListening,
   );
+  // Before the HTTP parser sees any byte of this connection.
+  server.prependListener("secureConnection", (socket: TLSSocket) => {
+    if (socket.isSessionReused() || !opts.certificate.context()) socket.destroy();
+  });
+  return server;
 }

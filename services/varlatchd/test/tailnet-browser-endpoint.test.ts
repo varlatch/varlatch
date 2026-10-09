@@ -17,6 +17,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { buildApp } from "../src/http/app.js";
 import { decodePair, NodeCertificate } from "../src/tailnet/cert.js";
 import { serveTailnetHttps, tailnetResolver } from "../src/tailnet/listener.js";
+import { localApiGet } from "../src/tailnet/localapi.js";
 import { selfNodeResolver } from "../src/tailnet/whois.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
@@ -384,7 +385,10 @@ describe("tailnet browser endpoint", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(await cold.refresh()).toBe(false);
     expect(cold.context()).toBeNull();
-    expect(cold.status()).toMatchObject({ notAfter: null, lastError: "tailscaled answered 403: cert access denied" });
+    expect(cold.status()).toMatchObject({
+      notAfter: null,
+      lastError: "tailscaled refused (403): varlatchd's user needs certificate permission (TS_PERMIT_CERT_UID)",
+    });
     const coldServer = serveTailnetHttps({ fetch: () => new Response("never"), host: HOST, port: 0, certificate: cold });
     await once(coldServer, "listening");
     const coldPort = (coldServer.address() as net.AddressInfo).port;
@@ -470,11 +474,115 @@ describe("node certificate", () => {
     expect(await cert.refresh()).toBe(false);
     expect(await cert.refresh()).toBe(false);
     expect(cert.context()).not.toBeNull();
-    expect(cert.status().lastError).toBe("tailscaled answered 500: acme: rate limited");
+    expect(cert.status().lastError).toBe("tailscaled answered 500");
     answer = { status: 200, body: makePair(["other.example.ts.net"]).key + pair.cert };
     expect(await cert.refresh()).toBe(false);
-    expect(logged.filter((l) => l.includes("rate limited"))).toHaveLength(1);
+    expect(logged.filter((l) => l.includes("answered 500"))).toHaveLength(1);
     expect(logged.join("\n")).not.toMatch(/PRIVATE KEY|BEGIN/);
+  });
+});
+
+describe("browser endpoint review regressions", () => {
+  let localApi: http.Server;
+  let socketPath: string;
+  let handler: http.RequestListener;
+  beforeEach(async () => {
+    socketPath = join(mkdtempSync(join(tmpdir(), "ts-sock-")), "tailscaled.sock");
+    localApi = http.createServer((req, res) => handler(req, res));
+    await new Promise<void>((r) => localApi.listen(socketPath, r));
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    localApi.closeAllConnections();
+    await new Promise((r) => localApi.close(r));
+  });
+
+  for (const version of ["TLSv1.2", "TLSv1.3"] as const) {
+    it(`never resumes a ${version} session, so an expired certificate refuses every connection (review regression)`, async () => {
+      const pair = makePair([HOST]);
+      handler = (_req, res) => res.writeHead(200).end(pair.key + pair.cert);
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      let now = Date.now();
+      const certificate = new NodeCertificate({ socketPath, host: HOST, now: () => now });
+      expect(await certificate.refresh()).toBe(true);
+      const server = serveTailnetHttps({ fetch: () => new Response("ok"), host: HOST, port: 0, certificate });
+      await once(server, "listening");
+      const port = (server.address() as net.AddressInfo).port;
+      const sockets: tls.TLSSocket[] = [];
+      // One request on a connection that offers `session`; what it saved, and whether it resumed.
+      const visit = async (session?: Buffer) => {
+        const socket = tls.connect({ host: "127.0.0.1", port, servername: HOST, rejectUnauthorized: false, minVersion: version, maxVersion: version, session });
+        sockets.push(socket);
+        const saved: Buffer[] = [];
+        socket.on("session", (s: Buffer) => saved.push(s));
+        await once(socket, "secureConnect");
+        const reused = socket.isSessionReused();
+        socket.write(`GET / HTTP/1.1\r\nHost: ${HOST}:${port}\r\nConnection: close\r\n\r\n`);
+        let text = "";
+        socket.on("data", (d: Buffer) => (text += d.toString("latin1")));
+        await once(socket, "close");
+        expect(text).toContain("200 OK");
+        return { saved: saved.at(-1) ?? socket.getSession(), reused };
+      };
+      try {
+        const first = await visit();
+        expect(first.saved).toBeDefined();
+        const second = await visit(first.saved);
+        expect(second.reused).toBe(false);
+        now += 31 * 86_400_000;
+        expect(certificate.context()).toBeNull();
+        await expect(visit(second.saved ?? first.saved)).rejects.toThrow();
+      } finally {
+        for (const socket of sockets) socket.destroy();
+        await new Promise((r) => server.close(r));
+      }
+    });
+  }
+
+  it("settles a LocalAPI answer that ends early or never finishes, and a later certificate refresh succeeds (review regression)", async () => {
+    const pair = makePair([HOST]);
+    let mode: "truncate" | "trickle" | "whole" = "truncate";
+    handler = (_req, res) => {
+      if (mode === "whole") return res.writeHead(200).end(pair.key + pair.cert);
+      res.writeHead(200, { "Content-Length": "100000" });
+      res.write(pair.key.slice(0, 20));
+      // Ends mid-body, or keeps the connection busy past any deadline.
+      if (mode === "truncate") setTimeout(() => res.destroy(), 10);
+      else {
+        const drip = setInterval(() => res.write("."), 20);
+        res.on("close", () => clearInterval(drip));
+      }
+    };
+    await expect(localApiGet(socketPath, "/localapi/v0/cert/x", 1_000)).rejects.toThrow("ended early");
+    mode = "trickle";
+    const started = Date.now();
+    await expect(localApiGet(socketPath, "/localapi/v0/cert/x", 200)).rejects.toThrow("timeout");
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    mode = "truncate";
+    const certificate = new NodeCertificate({ socketPath, host: HOST });
+    expect(await certificate.refresh()).toBe(false);
+    expect(certificate.status().lastError).toContain("ended early");
+    mode = "whole";
+    expect(await certificate.refresh()).toBe(true);
+    expect(certificate.context()).not.toBeNull();
+  });
+
+  it("never repeats a refusal's body, key material included, in the log or status (review regression)", async () => {
+    const pair = makePair([HOST]);
+    const logged: string[] = [];
+    vi.spyOn(console, "warn").mockImplementation((...a: unknown[]) => void logged.push(a.join(" ")));
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => void logged.push(a.join(" ")));
+    const certificate = new NodeCertificate({ socketPath, host: HOST });
+    for (const status of [500, 403, 404, 502]) {
+      handler = (_req, res) => res.writeHead(status).end(`failed: ${pair.key}${pair.cert}`);
+      expect(await certificate.refresh()).toBe(false);
+      expect(certificate.status().lastError).not.toMatch(/BEGIN|PRIVATE|failed:/);
+    }
+    expect(logged.join("\n")).not.toMatch(/BEGIN|PRIVATE|failed:/);
+    expect(logged).toHaveLength(4);
   });
 });
 
