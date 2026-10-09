@@ -167,6 +167,47 @@ describe("whois client", () => {
     }
   });
 
+  it("never has two status reads in flight, even for a caller asking again the moment a read ends (review regression)", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let reads = 0;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((r) => (releaseFirst = r));
+    const tracked = http.createServer(async (_req, res) => {
+      reads++;
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      // The first read waits for the test; later ones take a moment, so
+      // two of them at once would overlap and show in the peak.
+      if (reads === 1) await firstGate;
+      else await new Promise((r) => setTimeout(r, 30));
+      inFlight--;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ Self: { ID: `nSELF${reads}` } }));
+    });
+    const trackedSocket = join(mkdtempSync(join(tmpdir(), "ts-sock-")), "tailscaled.sock");
+    await new Promise<void>((r) => tracked.listen(trackedSocket, r));
+    try {
+      const selfId = selfNodeResolver(trackedSocket);
+      // 1. A read starts; its caller asks again the moment it ends.
+      const firstThenAgain = selfId().then(() => selfId());
+      await new Promise((r) => setTimeout(r, 20));
+      // 2. Another caller arrives meanwhile and queues the next read.
+      const queued = selfId();
+      // 3. The first read ends.
+      releaseFirst();
+      const [again, other] = await Promise.all([firstThenAgain, queued]);
+      // 4. The caller asking again shares the queued read: one at a time.
+      expect(peak).toBe(1);
+      expect(reads).toBe(2);
+      expect(again).toBe("nSELF2");
+      expect(other).toBe("nSELF2");
+    } finally {
+      releaseFirst();
+      await new Promise((r) => tracked.close(r));
+    }
+  });
+
   it("follows a change of the node's own identity at once (review regression)", async () => {
     const shared = config(); // one resolver, as the listener keeps
     status = { status: 200, body: { Self: { ID: "nOLD" } } };

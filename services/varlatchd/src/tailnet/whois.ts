@@ -148,17 +148,20 @@ export function selfNodeResolver(socketPath: string): () => Promise<string | nul
   };
 
   return () => {
+    // A queued read starts after whatever is in flight, so after this caller
+    // arrived: share it. Checked first, because the read in flight clears
+    // `current` just before the queued one starts; a caller in that gap would
+    // otherwise start a second read alongside it.
+    if (next) return next;
     if (!current) return start();
-    // The read in flight may predate this caller: share the one after it.
-    if (!next) {
-      next = current.then(
-        () => undefined,
-        () => undefined,
-      ).then(() => {
-        next = null;
-        return start();
-      });
-    }
+    // The read in flight may predate this caller: queue the one after it.
+    next = current.then(
+      () => undefined,
+      () => undefined,
+    ).then(() => {
+      next = null;
+      return start();
+    });
     return next;
   };
 }
