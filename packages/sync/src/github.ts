@@ -92,6 +92,19 @@ function refused(res: Response, where: AccessCheckWhere): AccessCheck {
   return unexpected("GitHub", rateLimited(res) ? 429 : res.status, where);
 }
 
+/**
+ * GitHub's GitHub-Authentication-Token-Expiration header, sent for personal
+ * access tokens that expire ("2026-06-03 19:52:44 UTC"), as an ISO 8601
+ * instant. Anything else is ignored rather than guessed at.
+ */
+export function parseTokenExpiration(value: string | null): string | null {
+  const match = value?.trim().match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})\s*(UTC|Z|[+-]\d{2}:?\d{2})?$/);
+  if (!match) return null;
+  const zone = !match[3] || match[3] === "UTC" || match[3] === "Z" ? "Z" : match[3].replace(/^([+-]\d{2})(\d{2})$/, "$1:$2");
+  const instant = new Date(`${match[1]}T${match[2]}${zone}`);
+  return Number.isNaN(instant.getTime()) ? null : instant.toISOString();
+}
+
 async function request(
   req: AdapterRequest,
   method: string,
@@ -99,8 +112,9 @@ async function request(
   body?: unknown,
 ): Promise<Response> {
   const fetchImpl = req.fetchImpl ?? fetch;
+  let res: Response;
   try {
-    return await fetchImpl(url, {
+    res = await fetchImpl(url, {
       method,
       headers: headers(req.credential),
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
@@ -110,6 +124,22 @@ async function request(
   } catch (err) {
     throw new AdapterError(err instanceof Error ? err.name : "fetch failed", true, { cause: err });
   }
+  const expiresAt = parseTokenExpiration(res.headers.get("github-authentication-token-expiration"));
+  if (expiresAt) req.onCredentialExpiry?.(expiresAt);
+  return res;
+}
+
+/** Runs fn with the request's expiry observed, and puts it on the check. */
+async function withExpiry(req: AdapterRequest, fn: (req: AdapterRequest) => Promise<AccessCheck>): Promise<AccessCheck> {
+  let seen: string | undefined;
+  const check = await fn({
+    ...req,
+    onCredentialExpiry: (expiresAt) => {
+      seen = expiresAt;
+      req.onCredentialExpiry?.(expiresAt);
+    },
+  });
+  return seen ? { ...check, credentialExpiresAt: seen } : check;
 }
 
 export const githubActionsAdapter: PlatformAdapter = {
@@ -213,111 +243,127 @@ export const githubActionsAdapter: PlatformAdapter = {
    * token's selection, so a missing environment is told apart by reading
    * the repository itself.
    */
-  async checkAccess(req: AdapterRequest): Promise<AccessCheck> {
-    const owner = req.baseIdentity;
-    const { repo, environment } = req.destination;
-    let where: AccessCheckWhere = "connection";
-    try {
-      const user = await request(req, "GET", `${API}/users/${owner}`);
-      if (user.status === 401) return TOKEN_REJECTED;
-      if (user.status === 404) {
-        return { status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` };
-      }
-      if (!user.ok) return refused(user, where);
-      const account = await jsonBody(user);
-      if (!isRecord(account) || typeof account.login !== "string") return notGitHub(where);
-      if (!repo) return { status: "ok", where, message: `GitHub accepted the token, and ${owner} exists.` };
+  checkAccess(req: AdapterRequest): Promise<AccessCheck> {
+    return withExpiry(req, checkGitHubAccess);
+  },
 
-      where = "destination";
-      const place = environment ? `${owner}/${repo} (environment ${environment})` : `${owner}/${repo}`;
-      const permission = environment ? "Environments" : "Secrets";
-      const key = await request(req, "GET", `${secretsBase(req)}/public-key`);
-      if (key.ok) {
-        const publicKey = await jsonBody(key);
-        if (!isRecord(publicKey) || typeof publicKey.key_id !== "string" || typeof publicKey.key !== "string") {
-          return notGitHub(where);
-        }
-        return {
-          status: "ok",
-          where,
-          message: `The token can read the secrets of ${place}. The first push shows whether it may also write them.`,
-        };
+  async listDestinations(req: AdapterRequest): Promise<DestinationListing> {
+    let seen: string | undefined;
+    const listing = await listGitHubRepositories({
+      ...req,
+      onCredentialExpiry: (expiresAt) => {
+        seen = expiresAt;
+        req.onCredentialExpiry?.(expiresAt);
+      },
+    });
+    return seen ? { ...listing, check: { ...listing.check, credentialExpiresAt: seen } } : listing;
+  },
+};
+
+async function checkGitHubAccess(req: AdapterRequest): Promise<AccessCheck> {
+  const owner = req.baseIdentity;
+  const { repo, environment } = req.destination;
+  let where: AccessCheckWhere = "connection";
+  try {
+    const user = await request(req, "GET", `${API}/users/${owner}`);
+    if (user.status === 401) return TOKEN_REJECTED;
+    if (user.status === 404) {
+      return { status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` };
+    }
+    if (!user.ok) return refused(user, where);
+    const account = await jsonBody(user);
+    if (!isRecord(account) || typeof account.login !== "string") return notGitHub(where);
+    if (!repo) return { status: "ok", where, message: `GitHub accepted the token, and ${owner} exists.` };
+
+    where = "destination";
+    const place = environment ? `${owner}/${repo} (environment ${environment})` : `${owner}/${repo}`;
+    const permission = environment ? "Environments" : "Secrets";
+    const key = await request(req, "GET", `${secretsBase(req)}/public-key`);
+    if (key.ok) {
+      const publicKey = await jsonBody(key);
+      if (!isRecord(publicKey) || typeof publicKey.key_id !== "string" || typeof publicKey.key !== "string") {
+        return notGitHub(where);
       }
-      if (key.status === 401) return TOKEN_REJECTED;
-      if (key.status === 403 && !rateLimited(key)) {
-        return {
-          status: "permission-missing",
-          where,
-          httpStatus: 403,
-          message: `GitHub refused the token access to the secrets of ${place}. Give it ${permission}: Read and write, and check that the organization approved it.`,
-        };
-      }
-      if (key.status === 404) {
-        if (environment && (await request(req, "GET", `${API}/repos/${owner}/${repo}`)).ok) {
-          return {
-            status: "not-found",
-            where,
-            httpStatus: 404,
-            message: `${owner}/${repo} has no environment named ${environment}. Create it in the repository settings, or leave the field empty for repository secrets.`,
-          };
-        }
+      return {
+        status: "ok",
+        where,
+        message: `The token can read the secrets of ${place}. The first push shows whether it may also write them.`,
+      };
+    }
+    if (key.status === 401) return TOKEN_REJECTED;
+    if (key.status === 403 && !rateLimited(key)) {
+      return {
+        status: "permission-missing",
+        where,
+        httpStatus: 403,
+        message: `GitHub refused the token access to the secrets of ${place}. Give it ${permission}: Read and write, and check that the organization approved it.`,
+      };
+    }
+    if (key.status === 404) {
+      if (environment && (await request(req, "GET", `${API}/repos/${owner}/${repo}`)).ok) {
         return {
           status: "not-found",
           where,
           httpStatus: 404,
-          message: `GitHub cannot find ${owner}/${repo} with this token. Check the name, and that the token's repository access includes it.`,
+          message: `${owner}/${repo} has no environment named ${environment}. Create it in the repository settings, or leave the field empty for repository secrets.`,
         };
       }
-      return refused(key, where);
-    } catch (err) {
-      return unreachable("api.github.com", err, where);
+      return {
+        status: "not-found",
+        where,
+        httpStatus: 404,
+        message: `GitHub cannot find ${owner}/${repo} with this token. Check the name, and that the token's repository access includes it.`,
+      };
     }
-  },
+    return refused(key, where);
+  } catch (err) {
+    return unreachable("api.github.com", err, where);
+  }
+}
 
-  /**
-   * The repositories the token can see in the owner, archived ones left out
-   * (they take no secrets). The owner's type picks the listing: an
-   * organization's own, or the user's repositories (owned or shared)
-   * filtered to that owner. Seeing a repository is not the Secrets
-   * permission on it; the access check on the chosen one tells.
-   */
-  async listDestinations(req: AdapterRequest): Promise<DestinationListing> {
-    const owner = req.baseIdentity;
-    const where = "connection";
-    try {
-      const user = await request(req, "GET", `${API}/users/${owner}`);
-      if (user.status === 401) return listingFailed(TOKEN_REJECTED);
-      if (user.status === 404) {
-        return listingFailed({ status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` });
-      }
-      if (!user.ok) return listingFailed(refused(user, where));
-      const account = await jsonBody(user);
-      if (!isRecord(account) || typeof account.login !== "string") return listingFailed(notGitHub(where));
-      const listing =
-        account.type === "Organization"
-          ? `${API}/orgs/${owner}/repos?type=all&sort=full_name&per_page=100`
-          : `${API}/user/repos?affiliation=owner,collaborator&sort=full_name&per_page=100`;
-
-      const items: DestinationOption[] = [];
-      for (let page = 1; ; page++) {
-        // Filtering a user's listing to one owner can skip many pages.
-        if (page > MAX_PAGES) return { check: listed(owner, items.length), items, truncated: true };
-        const res = await request(req, "GET", `${listing}&page=${page}`);
-        if (res.status === 401) return listingFailed(TOKEN_REJECTED);
-        if (!res.ok) return listingFailed(refused(res, where));
-        const repos = await jsonBody(res);
-        if (!Array.isArray(repos)) return listingFailed(notGitHub(where));
-        for (const repo of repos) {
-          if (!isRecord(repo) || !isRecord(repo.owner) || repo.archived === true) continue;
-          const name = typeof repo.name === "string" ? repo.name : "";
-          if (!REPO_PATTERN.test(name) || String(repo.owner.login).toLowerCase() !== owner) continue;
-          if (items.length === MAX_DESTINATIONS) return { check: listed(owner, items.length), items, truncated: true };
-          items.push({ destination: { repo: name }, label: name, detail: repo.private === true ? "private" : "public" });
-        }
-        if (repos.length < 100) return { check: listed(owner, items.length), items, truncated: false };
-      }
-    } catch (err) {
-      return listingFailed(unreachable("api.github.com", err, where));
+/**
+ * The repositories the token can see in the owner, archived ones left out
+ * (they take no secrets). The owner's type picks the listing: an
+ * organization's own, or the user's repositories (owned or shared)
+ * filtered to that owner. Seeing a repository is not the Secrets
+ * permission on it; the access check on the chosen one tells.
+ */
+async function listGitHubRepositories(req: AdapterRequest): Promise<DestinationListing> {
+  const owner = req.baseIdentity;
+  const where = "connection";
+  try {
+    const user = await request(req, "GET", `${API}/users/${owner}`);
+    if (user.status === 401) return listingFailed(TOKEN_REJECTED);
+    if (user.status === 404) {
+      return listingFailed({ status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` });
     }
-  },
-};
+    if (!user.ok) return listingFailed(refused(user, where));
+    const account = await jsonBody(user);
+    if (!isRecord(account) || typeof account.login !== "string") return listingFailed(notGitHub(where));
+    const listing =
+      account.type === "Organization"
+        ? `${API}/orgs/${owner}/repos?type=all&sort=full_name&per_page=100`
+        : `${API}/user/repos?affiliation=owner,collaborator&sort=full_name&per_page=100`;
+
+    const items: DestinationOption[] = [];
+    for (let page = 1; ; page++) {
+      // Filtering a user's listing to one owner can skip many pages.
+      if (page > MAX_PAGES) return { check: listed(owner, items.length), items, truncated: true };
+      const res = await request(req, "GET", `${listing}&page=${page}`);
+      if (res.status === 401) return listingFailed(TOKEN_REJECTED);
+      if (!res.ok) return listingFailed(refused(res, where));
+      const repos = await jsonBody(res);
+      if (!Array.isArray(repos)) return listingFailed(notGitHub(where));
+      for (const repo of repos) {
+        if (!isRecord(repo) || !isRecord(repo.owner) || repo.archived === true) continue;
+        const name = typeof repo.name === "string" ? repo.name : "";
+        if (!REPO_PATTERN.test(name) || String(repo.owner.login).toLowerCase() !== owner) continue;
+        if (items.length === MAX_DESTINATIONS) return { check: listed(owner, items.length), items, truncated: true };
+        items.push({ destination: { repo: name }, label: name, detail: repo.private === true ? "private" : "public" });
+      }
+      if (repos.length < 100) return { check: listed(owner, items.length), items, truncated: false };
+    }
+  } catch (err) {
+    return listingFailed(unreachable("api.github.com", err, where));
+  }
+}

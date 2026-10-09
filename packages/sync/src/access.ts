@@ -35,6 +35,8 @@ export interface AccessCheck {
   message: string;
   /** The platform's HTTP status, when it answered. */
   httpStatus?: number;
+  /** When the credential expires, if the platform said (ISO 8601). */
+  credentialExpiresAt?: string;
 }
 
 /** One destination a credential can see, as a picker offers it. */
