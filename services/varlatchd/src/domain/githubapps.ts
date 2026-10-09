@@ -1,13 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createPrivateKey, randomBytes } from "node:crypto";
+import type { AccessCheck } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import { hashToken } from "../auth/credentials.js";
-import { encryptGitHubAppKey } from "../crypto/hierarchy.js";
+import type { Envelope } from "../crypto/aead.js";
+import { decryptGitHubAppKey, encryptGitHubAppKey } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import {
+  GITHUB_API,
+  GITHUB_HEADERS,
+  GITHUB_TIMEOUT_MS,
+  GITHUB_UNREACHABLE,
+  NOT_GITHUB,
+  appRequest,
+  readJwtRefusal,
+} from "./githubjwt.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -30,7 +41,6 @@ import { orgKekOf, type OrgRow } from "./orgs.js";
  */
 
 export const GITHUB_WEB = "https://github.com";
-export const GITHUB_API = "https://api.github.com";
 /** GitHub's code is valid for an hour, and so is the state. */
 export const REGISTRATION_TTL_SECONDS = 3600;
 export const GITHUB_APP_PERMISSIONS = { secrets: "write", environments: "write", metadata: "read" } as const;
@@ -38,7 +48,8 @@ export const GITHUB_APP_PERMISSIONS = { secrets: "write", environments: "write",
 const APP_NAME_MAX = 34;
 const LOGIN_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,99}$/;
-const TIMEOUT_MS = 10_000;
+/** Installation pages read at most: 3,000 installations. */
+const MAX_INSTALLATION_PAGES = 30;
 
 export type GitHubAccountType = "organization" | "user";
 
@@ -229,9 +240,9 @@ export async function completeRegistration(
   try {
     res = await fetchImpl(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
       method: "POST",
-      headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "varlatch" },
+      headers: GITHUB_HEADERS,
       redirect: "error",
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
   } catch {
     // No answer: GitHub may not have seen the code, so the state is released
@@ -331,4 +342,234 @@ export async function completeRegistration(
     });
     return { outcome: "registered" as const, app };
   });
+}
+
+// ---------------------------------------------------------------------------
+// The App's own calls (ADR-0047 Decisions 1 and 2): import, and its installations.
+
+/** GitHub's permission levels, weakest first. */
+const LEVELS = ["read", "write", "admin"];
+const allows = (granted: unknown, needed: string) =>
+  typeof granted === "string" && LEVELS.indexOf(granted) >= LEVELS.indexOf(needed);
+
+function readAccount(value: unknown): (GitHubAccount & { id: number }) | null {
+  if (typeof value !== "object" || value === null) return null;
+  const a = value as Record<string, unknown>;
+  if (typeof a.login !== "string" || !LOGIN_PATTERN.test(a.login)) return null;
+  if (!Number.isSafeInteger(a.id) || (a.id as number) <= 0) return null;
+  if (a.type !== "Organization" && a.type !== "User") return null;
+  return { login: a.login, id: a.id as number, type: a.type === "Organization" ? "organization" : "user" };
+}
+
+function isRsaKey(pem: string): boolean {
+  try {
+    return createPrivateKey(pem).asymmetricKeyType === "rsa";
+  } catch {
+    return false;
+  }
+}
+
+/** The live App and its private key, unwrapped. */
+async function appWithKey(ctx: AppCtx, org: OrgRow): Promise<{ app: GitHubAppRow; pem: string }> {
+  const res = await ctx.db.query(
+    `SELECT ${APP_COLUMNS}, key_envelope FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL`,
+    [org.id],
+  );
+  const row = res.rows[0] as (GitHubAppRow & { key_envelope: Envelope | string }) | undefined;
+  if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+  const envelope = typeof row.key_envelope === "string" ? (JSON.parse(row.key_envelope) as Envelope) : row.key_envelope;
+  const { key_envelope: _key, ...app } = row;
+  return { app, pem: decryptGitHubAppKey(orgKekOf(ctx, org), org.id, row.id, envelope) };
+}
+
+export type ImportOutcome = { outcome: "registered"; app: GitHubAppRow } | ({ outcome: "failed" } & AccessCheck);
+
+/**
+ * Import an App someone registered on GitHub (Decision 1): its id and
+ * private key. The pair is verified first, with a JWT signed by the key
+ * (issued as the App id, the only identifier given) and GET /app answering
+ * that id; the client id, slug, and owner are then GitHub's. The App needs
+ * the permissions Varlatch pushes with; it may have more, which the audit
+ * event names with their levels. The stored key keeps everything the App
+ * holds: tokens Varlatch mints are narrowed per use, but whoever has the
+ * key could mint broader ones.
+ */
+export async function importGitHubApp(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: { appId: number; privateKey: string },
+  actorIdentityId: string,
+  fetchImpl: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<ImportOutcome> {
+  if (!isRsaKey(input.privateKey)) {
+    throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
+  }
+  if (await liveApp(ctx.db, org.id)) {
+    throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before importing another.");
+  }
+  const { res, claims } = await appRequest(fetchImpl, "/app", String(input.appId), input.privateKey, now);
+  if (!res) return { outcome: "failed", ...GITHUB_UNREACHABLE };
+  if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
+  if (!res.ok) {
+    return {
+      outcome: "failed",
+      status: "failed",
+      where: "connection",
+      httpStatus: res.status,
+      message: `GitHub did not confirm App ${input.appId} with this key (HTTP ${res.status}).`,
+    };
+  }
+  const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+  const owner = readAccount(body?.owner);
+  const permissions = body?.permissions as Record<string, unknown> | undefined;
+  if (
+    !body || typeof body !== "object" || Array.isArray(body) || !owner ||
+    !Number.isSafeInteger(body.id) ||
+    typeof body.slug !== "string" || !SLUG_PATTERN.test(body.slug) ||
+    typeof body.client_id !== "string" || body.client_id.length === 0 || body.client_id.length > 100 ||
+    typeof permissions !== "object" || permissions === null || Array.isArray(permissions)
+  ) {
+    return { outcome: "failed", ...NOT_GITHUB(res.status) };
+  }
+  if (body.id !== input.appId) {
+    return { outcome: "failed", ...NOT_GITHUB(res.status) };
+  }
+  const missing = Object.entries(GITHUB_APP_PERMISSIONS)
+    .filter(([name, level]) => !allows(permissions[name], level))
+    .map(([name, level]) => `${name}: ${level}`);
+  if (missing.length > 0) {
+    return {
+      outcome: "failed",
+      status: "permission-missing",
+      where: "connection",
+      httpStatus: res.status,
+      message: `The App ${body.slug} lacks ${missing.join(", ")}. Give it those permissions in its settings on GitHub (and have the installation accept them), then import it again.`,
+    };
+  }
+  const extra = Object.keys(permissions)
+    .filter((name) => !(name in GITHUB_APP_PERMISSIONS))
+    .sort()
+    .map((name) => `${name}:${String(permissions[name])}`);
+  const slug = body.slug;
+  const clientId = body.client_id;
+  const id = newId("githubApp");
+  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, input.privateKey);
+  return withTx(ctx.db, async (db) => {
+    const inserted = await db.query(
+      `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT DO NOTHING
+       RETURNING ${APP_COLUMNS}`,
+      [id, org.id, input.appId, slug, clientId, owner.login, owner.id, owner.type, JSON.stringify(envelope), actorIdentityId],
+    );
+    const app = inserted.rows[0] as GitHubAppRow | undefined;
+    if (!app) {
+      throw new DomainError(
+        "STATE_CHANGED",
+        (await liveApp(db, org.id))
+          ? "This Organization already has a GitHub App. Remove it from Varlatch before importing another."
+          : `Another Organization on this Varlatch already uses the App ${slug}.`,
+      );
+    }
+    await recordAuditEvent(db, {
+      eventType: "sync.github_app_registered",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { githubAppId: id },
+      metadata: {
+        via: "import",
+        appId: input.appId,
+        slug,
+        owner: owner.login,
+        ownerType: owner.type,
+        ...(extra.length > 0 ? { extraPermissions: extra.join(",") } : {}),
+      },
+    });
+    return { outcome: "registered" as const, app };
+  });
+}
+
+export interface AppInstallation {
+  installationId: number;
+  account: GitHubAccount & { id: number };
+  repositorySelection: "all" | "selected";
+  suspended: boolean;
+}
+
+export interface InstallationListing {
+  check: AccessCheck;
+  items: AppInstallation[];
+  truncated: boolean;
+}
+
+/**
+ * Where the App is installed (Decision 2: the user picks one to create a
+ * Connection), signed as the App. Every entry must be GitHub's, and this
+ * App's (its app_id): one that is not fails the listing rather than being
+ * skipped. Audited like a
+ * destination listing, as a use of the stored key.
+ */
+export async function listAppInstallations(
+  ctx: AppCtx,
+  org: OrgRow,
+  actorIdentityId: string,
+  fetchImpl: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<InstallationListing> {
+  const { app, pem } = await appWithKey(ctx, org);
+  const listing = await readInstallations(fetchImpl, Number(app.github_app_id), app.client_id, pem, now);
+  await recordAuditEvent(ctx.db, {
+    eventType: "sync.github_app_installations_listed",
+    decision: "info",
+    actorIdentityId,
+    organizationId: org.id,
+    action: "config.sync.manage",
+    resource: { githubAppId: app.id },
+    metadata: {
+      status: listing.check.status,
+      httpStatus: listing.check.httpStatus ?? null,
+      count: listing.items.length,
+      truncated: listing.truncated,
+    },
+  });
+  return listing;
+}
+
+async function readInstallations(fetchImpl: typeof fetch, githubAppId: number, clientId: string, pem: string, now: number): Promise<InstallationListing> {
+  const failed = (check: AccessCheck): InstallationListing => ({ check, items: [], truncated: false });
+  const items: AppInstallation[] = [];
+  for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
+    const { res, claims } = await appRequest(fetchImpl, `/app/installations?per_page=100&page=${page}`, clientId, pem, now);
+    if (!res) return failed(GITHUB_UNREACHABLE);
+    if (res.status === 401) return failed(readJwtRefusal(res, claims));
+    if (!res.ok) {
+      return failed({ status: "failed", where: "connection", httpStatus: res.status, message: `GitHub refused to list the App's installations (HTTP ${res.status}).` });
+    }
+    const body = await res.json().catch(() => undefined);
+    if (!Array.isArray(body)) return failed(NOT_GITHUB(res.status));
+    for (const entry of body as unknown[]) {
+      const e = entry as Record<string, unknown> | null;
+      const account = readAccount(e?.account);
+      // Every installation must be this App's: a foreign or missing app_id
+      // is not GitHub's answer to this App, and fails the whole listing.
+      if (
+        !e || !account || !Number.isSafeInteger(e.id) || (e.id as number) <= 0 ||
+        e.app_id !== githubAppId ||
+        (e.repository_selection !== "all" && e.repository_selection !== "selected")
+      ) {
+        return failed(NOT_GITHUB(res.status));
+      }
+      items.push({
+        installationId: e.id as number,
+        account,
+        repositorySelection: e.repository_selection,
+        suspended: e.suspended_at !== null && e.suspended_at !== undefined,
+      });
+    }
+    if (body.length < 100) return { check: { status: "ok", where: "connection", message: "listed" }, items, truncated: false };
+  }
+  return { check: { status: "ok", where: "connection", message: "listed" }, items, truncated: true };
 }

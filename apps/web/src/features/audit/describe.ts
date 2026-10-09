@@ -488,12 +488,27 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
       return { icon: "trash", title: "Connection revoked", segments: ["revoked connection ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
-    case "sync.github_app_registered":
+    case "sync.github_app_registered": {
+      const imported = str(m.via) === "import";
       return {
         icon: "plug",
-        title: "GitHub App registered",
-        segments: ["registered the GitHub App ", { kind: "mono", text: str(m.slug) ?? "an App" }, ...(str(m.owner) ? [" on ", { kind: "mono" as const, text: str(m.owner)! }] : [])],
+        title: imported ? "GitHub App imported" : "GitHub App registered",
+        segments: [imported ? "imported the GitHub App " : "registered the GitHub App ", { kind: "mono", text: str(m.slug) ?? "an App" }, ...(str(m.owner) ? [" on ", { kind: "mono" as const, text: str(m.owner)! }] : [])],
       };
+    }
+    case "sync.github_app_installations_listed": {
+      const status = str(m.status);
+      const count = typeof m.count === "number" ? m.count : null;
+      return {
+        icon: status === "ok" ? "plug" : "alert",
+        title: "GitHub App installations listed",
+        segments: [
+          "listed where the GitHub App is installed",
+          ...(status === "ok" && count !== null ? [`: ${count} installation${count === 1 ? "" : "s"}`] : []),
+          ...(status && status !== "ok" ? [`: ${status.replace(/-/g, " ")}`] : []),
+        ],
+      };
+    }
     case "sync.github_app_registration_refused":
       return {
         icon: "alert",
