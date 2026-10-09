@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Lock, Plus, ShieldAlert } from "lucide-react";
 import type { PlatformConnection, SyncMappingInput, SyncPlatform } from "@varlatch/protocol";
@@ -8,6 +8,10 @@ import { Dialog } from "../../components/Dialog";
 import { Button, Callout, Checkbox, Field, Input, Mono, Segmented, Select, cn } from "../../components/ui";
 import { useToast } from "../../components/Toast";
 import { keys } from "../projects/hooks";
+import { AccessCheckNotice } from "./AccessCheckNotice";
+import { useBoundCheck } from "./useBoundCheck";
+import { CredentialHint } from "./CredentialHint";
+import { fixStep } from "./accessCheck";
 import { platformMeta } from "./platform-meta";
 import { hostOf } from "./status";
 import { PlatformTile } from "./TargetCard";
@@ -15,7 +19,9 @@ import { PlatformTile } from "./TargetCard";
 /**
  * Add an integration in four steps: connection, destination, items, and a
  * review that says in plain words what leaves Varlatch and where. Creating
- * one is a standing, audited disclosure; nothing is on by default.
+ * one is a standing, audited disclosure; nothing is on by default. The
+ * review checks, read-only, that the credential reaches the destination,
+ * so a wrong token or name shows up here rather than on the first push.
  */
 
 const STEPS = ["Connection", "Destination", "Items", "Review"] as const;
@@ -146,6 +152,24 @@ export function AddIntegrationDialog({
       : effectivePlatform === "coolify"
         ? appUuid.trim()
         : hostOf(owner);
+
+  // Read-only, nothing saved: a new credential is checked as typed, an
+  // existing connection with its stored one. The outcome is bound to these
+  // inputs, and Create waits for it: an integration is never created while
+  // its check is still out.
+  const access = useBoundCheck(
+    isNew
+      ? { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential, destination }
+      : { connectionId, destination },
+    (checked) => api.checkPlatformAccess(org, checked),
+  );
+  const checkAccess = access.run;
+  useEffect(() => {
+    // Every arrival at the review checks again: earlier steps may have changed.
+    if (step === STEPS.length - 1) checkAccess();
+  }, [step, checkAccess]);
+  const fix = access.result ? fixStep(access.result) : null;
+  const accessFailed = Boolean((access.result && access.result.status !== "ok") || access.error);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -327,7 +351,7 @@ export function AddIntegrationDialog({
                             onChange={(e) => setConnectionName(e.target.value)}
                           />
                         </Field>
-                        <Field label={meta.credentialLabel} hint={meta.credentialHelp} className="sm:col-span-2">
+                        <Field label={meta.credentialLabel} hint={<CredentialHint platform={platform} />} className="sm:col-span-2">
                           <Input
                             data-testid="connection-credential"
                             mono
@@ -521,6 +545,26 @@ export function AddIntegrationDialog({
                   )}
                   {mappingMode === "wildcard" ? ", and every item added later." : "."}
                 </p>
+                <AccessCheckNotice
+                  pending={!access.settled}
+                  check={access.result}
+                  error={access.error}
+                  actions={
+                    accessFailed ? (
+                      <>
+                        {fix !== null && (
+                          <Button size="sm" variant="secondary" data-testid="access-fix" onClick={() => setStep(fix)}>
+                            {fix === 0 ? "Change connection" : "Change destination"}
+                          </Button>
+                        )}
+                        {/* A token's permissions can change on the platform without a new token. */}
+                        <Button size="sm" variant="ghost" data-testid="access-retry" onClick={() => checkAccess()}>
+                          Check again
+                        </Button>
+                      </>
+                    ) : undefined
+                  }
+                />
                 {pushed.length > 0 && (
                   <div className="rounded-xl border border-bd bg-inset/40 px-3 py-2">
                     <ul className="divide-y divide-bd">
@@ -570,8 +614,14 @@ export function AddIntegrationDialog({
                 Continue
               </Button>
             ) : (
-              <Button variant="primary" data-testid="confirm-integration" loading={create.isPending} onClick={() => create.mutate()}>
-                Create integration
+              <Button
+                variant="primary"
+                data-testid="confirm-integration"
+                disabled={!access.settled}
+                loading={create.isPending}
+                onClick={() => create.mutate()}
+              >
+                {accessFailed ? "Create anyway" : "Create integration"}
               </Button>
             )}
           </div>

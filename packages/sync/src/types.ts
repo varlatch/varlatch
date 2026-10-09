@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { AccessCheck } from "./access.js";
+
 /**
  * Platform Adapters (ADR-0031 §8): the closed allowlist of platforms Sync
  * Targets can push Values to. Each adapter owns its platform's API shape,
@@ -18,8 +20,10 @@ export class AdapterError extends Error {
     message: string,
     /** True when retrying without operator intervention may succeed. */
     readonly retryable: boolean = true,
+    /** The transport error, for an access check to read; never in the message. */
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
@@ -93,6 +97,14 @@ export interface PlatformAdapter {
   readValues?(req: AdapterRequest): Promise<Map<string, string>>;
   /** Best-effort redeploy trigger (supportsRedeploy). */
   triggerRedeploy?(req: AdapterRequest): Promise<void>;
+  /**
+   * Read-only access check: does the credential reach the base identity,
+   * and, when `req.destination` names one, that destination? Sends the
+   * credential only to the base identity, writes nothing, and never
+   * throws. Platforms cannot show write permission without a write, so
+   * `ok` means "reachable and readable"; the first push confirms the rest.
+   */
+  checkAccess(req: AdapterRequest): Promise<AccessCheck>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;

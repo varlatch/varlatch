@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { canonicalDestinationIdentity, getAdapter, AdapterError } from "@varlatch/sync";
+import { canonicalDestinationIdentity, getAdapter, AdapterError, type AccessCheck } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
-import { encryptPlatformCredential } from "../crypto/hierarchy.js";
+import type { Envelope } from "../crypto/aead.js";
+import { decryptPlatformCredential, encryptPlatformCredential } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
@@ -393,6 +394,91 @@ export async function revokeConnection(
       },
     });
   });
+}
+
+export type AccessCheckInput = { destination?: Record<string, unknown> | undefined } & (
+  | { connectionId: string; credential?: string | undefined }
+  | { platform: string; baseIdentity: string; credential: string }
+);
+
+/**
+ * A read-only access check (ADR-0031, amendment 2026-10-09): does a
+ * credential reach its base identity, and the destination when one is
+ * named? The credential is the one supplied now (a new Connection, or a
+ * replacement for a stored one) or the Connection's stored one, and it goes
+ * only to the Connection's base identity. Nothing is stored, no Value is
+ * read, and no platform text comes back; the outcome is audited.
+ */
+export async function checkConnectionAccess(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: AccessCheckInput,
+  allowedAdapters: string[] | null,
+  actorIdentityId: string,
+  fetchImpl?: typeof fetch,
+): Promise<AccessCheck> {
+  let platform: string;
+  let baseIdentity: string;
+  let credential: string;
+  let connectionId: string | null = null;
+  if ("connectionId" in input) {
+    const connection = await getConnection(ctx, org.id, input.connectionId);
+    connectionId = connection.id;
+    platform = connection.platform;
+    baseIdentity = connection.base_identity;
+    if (input.credential !== undefined) {
+      credential = input.credential;
+    } else {
+      const res = await ctx.db.query("SELECT credential_envelope FROM platform_connections WHERE id = $1", [connection.id]);
+      credential = decryptPlatformCredential(
+        orgKekOf(ctx, org),
+        org.id,
+        connection.id,
+        parseJson<Envelope>((res.rows[0] as { credential_envelope: unknown }).credential_envelope),
+      );
+    }
+  } else {
+    platform = input.platform;
+    baseIdentity = input.baseIdentity;
+    credential = input.credential;
+  }
+  if (allowedAdapters && !allowedAdapters.includes(platform)) {
+    throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
+  }
+  const adapter = canonicalizeOrValidationError(() => getAdapter(platform));
+  baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(baseIdentity));
+  if (credential.trim().length === 0) {
+    throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
+  }
+  // No destination fields: the check stops at the base identity.
+  const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
+  const destination = named
+    ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
+    : null;
+
+  const result = await adapter.checkAccess({
+    baseIdentity,
+    destination: destination?.destination ?? {},
+    credential,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  });
+  await recordAuditEvent(ctx.db, {
+    eventType: "sync.connection_checked",
+    decision: "info",
+    actorIdentityId,
+    organizationId: org.id,
+    action: "config.sync.manage",
+    resource: connectionId ? { connectionId } : null,
+    metadata: {
+      platform: adapter.platform,
+      baseIdentity,
+      destination: destination ? describeDestination(adapter.platform, destination.key) : null,
+      credential: connectionId && input.credential === undefined ? "stored" : "supplied",
+      status: result.status,
+      httpStatus: result.httpStatus ?? null,
+    },
+  });
+  return result;
 }
 
 // ---------------------------------------------------------------------------

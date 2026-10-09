@@ -61,6 +61,7 @@ export type DeviceSignInLookup = components["schemas"]["DeviceSignInLookup"];
 export type CreatedWebhook = components["schemas"]["CreatedWebhook"];
 export type SyncPlatform = components["schemas"]["SyncPlatform"];
 export type PlatformConnection = components["schemas"]["PlatformConnection"];
+export type AccessCheck = components["schemas"]["AccessCheck"];
 export type SyncTarget = components["schemas"]["SyncTarget"];
 export type SyncMapping = components["schemas"]["SyncMapping"];
 export type SyncMappingInput = components["schemas"]["SyncMappingInput"];

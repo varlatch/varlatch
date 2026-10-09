@@ -344,8 +344,9 @@ needs: like a person, it starts with no access.
   revoke the old one.
 
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
-or Convex, for platforms that read their own settings: add a Sync Target in
-the dashboard under Connections.
+or Convex, for platforms that keep their own copy: add an integration on the
+environment's Integrations tab. [Integrations](reference/integrations.md)
+lists the credential each platform needs and where to find every field.
 
 ## With coding agents
 

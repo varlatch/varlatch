@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { foreign, isRecord, jsonBody, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -41,6 +42,16 @@ import {
  * - The start/restart actions accept POST on every version and, since
  *   v4.3, POST only (GET answers 405).
  */
+
+const TOKEN_REJECTED: AccessCheck = {
+  status: "credential-rejected",
+  where: "connection",
+  httpStatus: 401,
+  message: "Coolify rejected the token: it is mistyped, or was deleted.",
+};
+
+/** What /api/v1/version answers: the bare version, e.g. 4.0.0-beta.420. */
+const VERSION_TEXT = /^"?v?\d+\.\d+[\w.+-]*"?$/;
 
 const UUID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{2,63}$/;
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -135,8 +146,30 @@ async function request(
       signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new AdapterError(err instanceof Error ? err.name : "fetch failed");
+    throw new AdapterError(err instanceof Error ? err.name : "fetch failed", true, { cause: err });
   }
+}
+
+/**
+ * Coolify answers 403 for several unrelated reasons; its message picks the
+ * advice. The message is matched, never repeated.
+ */
+async function forbidden(res: Response, where: AccessCheckWhere): Promise<AccessCheck> {
+  let message = "";
+  try {
+    const body = (await res.json()) as { message?: unknown };
+    if (typeof body.message === "string") message = body.message;
+  } catch {
+    // Not JSON: fall through to the general advice.
+  }
+  const advice = /API is disabled/i.test(message)
+    ? "The API is off on this Coolify instance. Turn on API access in its settings."
+    : /not allowed to access the API/i.test(message)
+      ? "Coolify accepts API calls only from listed IP addresses, and this server's is not among them."
+      : /exceed your current role/i.test(message)
+        ? "The token belongs to a team member, and Coolify limits members to read-only tokens. Create it as a team admin or owner."
+        : "Coolify refused the token. It needs the read and write permissions, plus deploy to redeploy.";
+  return { status: "permission-missing", where, httpStatus: 403, message: advice };
 }
 
 /** Production env rows only: the endpoint merges preview-deployment rows in. */
@@ -311,6 +344,63 @@ export const coolifyAdapter: PlatformAdapter = {
     );
     if (!res.ok) {
       throw new AdapterError(`Coolify ${restart ? "restart" : "deploy"} failed (${res.status})`);
+    }
+  },
+
+  /**
+   * The instance first (/version needs the read permission, so a token, the
+   * API switch and the IP allowlist are all exercised), then, for a
+   * destination, the application itself. Coolify tokens are team-scoped:
+   * another team's application is a 404 like a mistyped UUID.
+   */
+  async checkAccess(req: AdapterRequest): Promise<AccessCheck> {
+    const host = new URL(req.baseIdentity).host;
+    let where: AccessCheckWhere = "connection";
+    try {
+      const version = await request(req, "GET", "/version");
+      if (version.status === 401) return TOKEN_REJECTED;
+      if (version.status === 403) return await forbidden(version, where);
+      if (version.status === 404) {
+        return { status: "not-found", where, httpStatus: 404, message: `No Coolify API answered at ${host}. Check the instance URL.` };
+      }
+      // A sign-in page in front of the instance answers 200 as well.
+      if (!version.ok || !VERSION_TEXT.test((await version.text()).trim())) {
+        return foreign("Coolify", "instance", host, version.status);
+      }
+      const app = req.destination.applicationUuid;
+      if (!app) return { status: "ok", where, message: "Coolify accepted the token." };
+
+      where = "destination";
+      const res = await request(req, "GET", `/applications/${app}`);
+      if (res.ok) {
+        const found = await jsonBody(res);
+        if (!isRecord(found) || found.uuid !== app) {
+          return {
+            status: "failed",
+            where,
+            httpStatus: res.status,
+            message: `${host} did not answer with application ${app}. Check the instance URL and the UUID.`,
+          };
+        }
+        return {
+          status: "ok",
+          where,
+          message: `The token can read application ${app}. The first push shows whether it may also write its variables.`,
+        };
+      }
+      if (res.status === 401) return TOKEN_REJECTED;
+      if (res.status === 403) return await forbidden(res, where);
+      if (res.status === 404) {
+        return {
+          status: "not-found",
+          where,
+          httpStatus: 404,
+          message: `The token's team has no application ${app} on ${host}. Copy the UUID from the application's URL in Coolify.`,
+        };
+      }
+      return unexpected("Coolify", res.status, where);
+    } catch (err) {
+      return unreachable(host, err, where);
     }
   },
 };

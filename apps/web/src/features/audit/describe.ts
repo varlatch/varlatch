@@ -451,6 +451,20 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         title: "Connection created",
         segments: ["connected ", PLATFORM_LABELS[str(m.platform) ?? ""] ?? "a platform", ...(str(m.baseIdentity) ? [" ", { kind: "mono" as const, text: str(m.baseIdentity)! }] : [])],
       };
+    case "sync.connection_checked": {
+      const status = str(m.status);
+      const where = str(m.destination) ?? str(m.baseIdentity);
+      return {
+        icon: status === "ok" ? "check" : "alert",
+        title: "Access checked",
+        segments: [
+          "checked access to ",
+          PLATFORM_LABELS[str(m.platform) ?? ""] ?? "a platform",
+          ...(where ? [" ", { kind: "mono" as const, text: where }] : []),
+          ...(status && status !== "ok" ? [`: ${status.replace(/-/g, " ")}`] : []),
+        ],
+      };
+    }
     case "sync.connection_credential_replaced":
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
