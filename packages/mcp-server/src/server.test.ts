@@ -224,7 +224,8 @@ describe("varlatch MCP server", () => {
       identity: { id: "idn_1", name: "runner-macmini", kind: "service", email: null },
       organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-09-01T00:00:00.000Z" },
       credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
-      listener: "ordinary",
+      listener: "tailnet",
+      tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
     };
     const meta = (capabilities: string[]) => ({ apiMajor: 1, serverVersion: "0.17.0", capabilities });
     const whoami = async (responses: Record<string, unknown>) => {
@@ -235,7 +236,7 @@ describe("varlatch MCP server", () => {
       return { body: JSON.parse(textOf(result)) as Record<string, unknown>, requests };
     };
 
-    it("names the caller: identity, organization, and credential, never a token", async () => {
+    it("names the caller: identity, organization, credential, and device, never a token", async () => {
       const { body, requests } = await whoami({ "/v1/meta": meta(["identity.whoami"]), "/v1/me": caller });
       expect(body).toMatchObject({ server: "https://varlatch.test", caller, defaults, allowWrites: false });
       expect(body).not.toHaveProperty("callerUnavailable");

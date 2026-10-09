@@ -48,7 +48,7 @@ const WHOAMI = {
   organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-09-01T00:00:00.000Z" },
   credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
   listener: "tailnet",
-  tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", tags: ["tag:desktop-runner"] },
+  tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
 };
 
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -420,7 +420,7 @@ describe("whoami", () => {
         "Organization  acme (Acme, org_1)",
         "Credential    desktop-runner (service, crd_1), no expiry",
         `Server        ${origin} (tailnet listener)`,
-        "Device        node nRunner, tags tag:desktop-runner, on example.ts.net",
+        "Device        macmini (nRunner), tags tag:desktop-runner, on example.ts.net",
         "",
       ].join("\n"),
     );

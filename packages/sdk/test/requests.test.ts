@@ -50,7 +50,8 @@ describe("whoami", () => {
       identity: { id: "idn_1", name: "runner-macmini", kind: "service", email: null },
       organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-10-01T00:00:00.000Z" },
       credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
-      listener: "ordinary",
+      listener: "tailnet",
+      tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
     };
     const { requests, client } = recorder(() => new Response(JSON.stringify(caller)));
     await expect(client.whoami()).resolves.toEqual(caller);

@@ -84,10 +84,14 @@ describe("formatWhoamiHuman", () => {
   it("the tailnet listener's device, recognized or not", () => {
     const on = (tailnet: WhoAmI["tailnet"]) =>
       formatWhoamiHuman("http://varlatch:8687", { ...machine, listener: "tailnet", tailnet }).split("\n").slice(-2);
-    expect(on({ recognized: true, tailnet: "example.ts.net", nodeId: "nR", tags: ["tag:desktop-runner", "tag:runner-macmini"] })).toEqual([
+    expect(on({ recognized: true, tailnet: "example.ts.net", nodeId: "nR", nodeName: "macmini", tags: ["tag:desktop-runner", "tag:runner-macmini"] })).toEqual([
       "Server        http://varlatch:8687 (tailnet listener)",
-      "Device        node nR, tags tag:desktop-runner, tag:runner-macmini, on example.ts.net",
+      "Device        macmini (nR), tags tag:desktop-runner, tag:runner-macmini, on example.ts.net",
     ]);
+    // A device Tailscale gave no machine name.
+    expect(on({ recognized: true, tailnet: "example.ts.net", nodeId: "nR", tags: ["tag:desktop-runner"] })[1]).toBe(
+      "Device        node nR, tags tag:desktop-runner, on example.ts.net",
+    );
     expect(on({ recognized: true, tailnet: "example.ts.net", nodeId: "nL", nodeName: "laptop", tags: [], userLogin: "j@example.com" })[1]).toBe(
       "Device        laptop (nL), user j@example.com, on example.ts.net",
     );
