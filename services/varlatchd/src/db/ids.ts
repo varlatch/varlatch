@@ -29,6 +29,7 @@ const PREFIXES = {
   syncTarget: "snt",
   deviceSignIn: "dsi",
   deviceSignInChallenge: "dsc",
+  githubApp: "gha",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;
