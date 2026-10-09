@@ -216,8 +216,22 @@ describe("doctor: the endpoint from the host's side", () => {
     expect(web[1]).toMatchObject({ status: "fail" });
   });
 
+  it("reads Serve's applied configuration, foreground sessions included; an empty one passes", () => {
+    const direct = (status: string | null) => checkTailnetBrowser(endpoint, csp(`'self' ${endpoint}`), endpoint, status).find((c) => c.id === "tailnet.browser-direct");
+    expect(direct("{}")).toMatchObject({ status: "pass" });
+    expect(direct(JSON.stringify({ TCP: { "443": { HTTPS: true } }, Web: { [`${HOST}:443`]: {} } }))).toMatchObject({ status: "pass" });
+    expect(direct(JSON.stringify({ Foreground: { session1: { TCP: { "8688": { TCPForward: "127.0.0.1:8687" } } } } }))).toMatchObject({ status: "fail" });
+  });
+
+  it("never passes what it could not read (review regression)", () => {
+    const direct = (status: string | null) => checkTailnetBrowser(endpoint, csp(`'self' ${endpoint}`), endpoint, status).find((c) => c.id === "tailnet.browser-direct");
+    for (const unreadable of [null, '{"TCP":', "[]", "null", '"text"', JSON.stringify({ TCP: ["8688"] }), JSON.stringify({ Foreground: { s: "x" } })]) {
+      expect(direct(unreadable), String(unreadable)).toMatchObject({ status: "unknown" });
+    }
+  });
+
   it("is unknown when an older web image has no policy file, and flags a web setting varlatchd does not back", () => {
-    expect(checkTailnetBrowser(endpoint, null, null, null)[0]).toMatchObject({ status: "unknown" });
+    expect(checkTailnetBrowser(endpoint, null, null, "{}")[0]).toMatchObject({ status: "unknown" });
     expect(checkTailnetBrowser(null, csp(`'self' ${endpoint}`), endpoint, null)).toEqual([
       expect.objectContaining({ id: "tailnet.browser-policy", status: "fail" }),
     ]);

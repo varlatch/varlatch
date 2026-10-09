@@ -2,17 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // The tailnet browser endpoint (ADR-0046) on a REAL tailnet, through
 // `varlatch setup --tailnet-endpoint`. Manual, like test-ingress-tailnet.mjs.
-// It builds a disposable installation with the tailnet ingress and the
-// endpoint, then runs the ADR's real-tailnet cases from this machine:
+// It builds the images of THIS checkout (clean, one commit, under tags no
+// other run uses, labeled with the commit and checked before use), sets up
+// a disposable installation with the tailnet ingress and the endpoint, and
+// runs the ADR's real-tailnet cases from this machine, the browser ones in
+// the real dashboard under its Content-Security-Policy:
 //
 //   setup   the endpoint's settings, the printed access rule, doctor's
 //           tailnet checks passing
 //   case 1  an approved device (this machine, named by a node Requirement):
-//           a page on the dashboard's origin, in Chromium, reads the device
-//           check and a disclosure through the endpoint; audit records the
+//           in the dashboard, Connect to tailnet, Reveal all and an export
+//           with secrets read through the endpoint, and nothing protected
+//           is asked of the dashboard's own address; audit records the
 //           tailnet listener and this device
-//   case 2  the same device once the Requirement names another node:
-//           403 TAILNET_CONTEXT_UNAVAILABLE, readable by the page
+//   case 2  the same device once the Requirement names another node: the
+//           dashboard says this device does not meet the requirements
 //   case 4  the ordinary ingress (the dashboard's address): the disclosure
 //           is TAILNET_CONTEXT_REQUIRED, no CORS, no device route
 //   case 5  spoofed identity at the endpoint: forwarding and Tailscale
@@ -24,10 +28,16 @@
 //   peer    a container on the Compose network: no route to the endpoint
 //           (bound to loopback), and no device on the plain listener
 //
-// Run on a tailnet member whose access rules let it reach the test node on
-// tcp:8688 (in a tailnet where members may reach every device, no change is
-// needed), with MagicDNS and HTTPS certificates enabled:
-//   SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey node scripts/test-tailnet-endpoint.mjs
+//   csp     no Content-Security-Policy violation anywhere in the run, and
+//           the policy names the endpoint
+//
+// Run from a clean checkout of the revision under review (the dashboard side,
+// #27, included), on a tailnet member whose access rules let it reach the
+// test node on tcp:8688 (in a tailnet where members may reach every device,
+// no change is needed), with MagicDNS and HTTPS certificates enabled:
+//   SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey \
+//   VARLATCH_TEST_REVISION=<the reviewed commit> node scripts/test-tailnet-endpoint.mjs
+// VARLATCH_TEST_REVISION, when set, must be the checkout's HEAD.
 // It never changes access rules. The node logs out and every container and
 // volume is removed at the end. Any failure, including a prerequisite that
 // is missing (no route to tcp:8688, no certificate), fails the run.
@@ -48,8 +58,21 @@ const cli = join(root, 'apps/cli/dist/varlatch.cjs');
 const keyFile = (process.env.SPIKE_TS_AUTHKEY_FILE ?? '').replace(/^~/, homedir());
 if (!keyFile) { console.error('Set SPIKE_TS_AUTHKEY_FILE to a file holding a tailnet auth key.'); process.exit(1); }
 const machine = process.env.SPIKE_HOSTNAME ?? 'varlatch-endpoint';
-const images = { varlatchd: 'varlatch-backup-test:local', 'varlatch-migrate': 'varlatch-backup-test:local', 'varlatch-web': 'varlatch-backup-web-test:local', 'convex-deploy': 'varlatch-backup-convex-deploy-test:local' };
-const project = `vlt-endpoint-${randomBytes(3).toString('hex')}`;
+const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+// One revision, exactly: what is built is what was committed and reviewed.
+if (git('status', '--porcelain')) { console.error('The checkout has uncommitted changes: commit or stash them, so the run tests exactly one revision.'); process.exit(1); }
+const revision = git('rev-parse', 'HEAD');
+if (process.env.VARLATCH_TEST_REVISION && !revision.startsWith(process.env.VARLATCH_TEST_REVISION)) {
+  console.error(`HEAD is ${revision}, not ${process.env.VARLATCH_TEST_REVISION}: check out the reviewed revision.`); process.exit(1);
+}
+if (spawnSync('git', ['-C', root, 'cat-file', '-e', `${revision}:apps/web/src/lib/tailnetConnection.tsx`]).status !== 0) {
+  console.error(`${revision} has no dashboard side of the endpoint (#27): run on a revision that has both.`); process.exit(1);
+}
+const runId = randomBytes(3).toString('hex');
+const project = `vlt-endpoint-${runId}`;
+const tag = (name) => `varlatch-endpoint-test/${name}:${revision.slice(0, 12)}-${runId}`;
+const images = { varlatchd: tag('varlatchd'), 'varlatch-migrate': tag('varlatchd'), 'varlatch-web': tag('web'), 'convex-deploy': tag('convex-deploy') };
+const dockerfiles = { [tag('varlatchd')]: 'services/varlatchd/Dockerfile', [tag('web')]: 'apps/web/Dockerfile', [tag('convex-deploy')]: 'infra/compose/convex-deploy.Dockerfile' };
 const dir = mkdtempSync(join(tmpdir(), 'varlatch-tailnet-endpoint-'));
 
 let failed = false;
@@ -64,6 +87,13 @@ const sql = (query) => dc(['exec', '-T', 'postgres', 'psql', '-U', 'postgres', '
 
 let browser;
 try {
+  for (const [image, dockerfile] of Object.entries(dockerfiles)) {
+    console.log(`building ${image} from ${revision.slice(0, 12)} ...`);
+    execFileSync('docker', ['build', '-q', '-f', join(root, dockerfile), '-t', image, '--label', `org.varlatch.test.revision=${revision}`, root], { stdio: ['ignore', 'ignore', 'inherit'] });
+    const label = execFileSync('docker', ['image', 'inspect', '-f', '{{index .Config.Labels "org.varlatch.test.revision"}} {{.Id}}', image], { encoding: 'utf8' }).trim();
+    if (!label.startsWith(`${revision} `)) throw new Error(`${image} is not the image just built from ${revision}: ${label}`);
+    console.log(`  ${image} = ${label.split(' ')[1]}`);
+  }
   const doc = parseDocument(readFileSync(join(root, 'infra/compose/docker-compose.yml'), 'utf8'));
   doc.set('name', project);
   for (const [s, i] of Object.entries(images)) { doc.deleteIn(['services', s, 'build']); doc.setIn(['services', s, 'image'], i); doc.setIn(['services', s, 'pull_policy'], 'never'); }
@@ -85,7 +115,10 @@ try {
     env.includes('VARLATCH_TAILNET_HTTPS_PORT=8688\n') && env.includes(`VARLATCH_TAILNET_ENDPOINT=${endpoint}\n`) && env.includes('VARLATCH_TAILNET_CERT_UID=999\n'));
 
   browser = await chromium.launch();
-  const context = await browser.newContext();
+  const context = await browser.newContext({ acceptDownloads: true });
+  const cspViolations = [];
+  const watchCsp = (p) => p.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspViolations.push(m.text().slice(0, 240)); });
+  context.on('page', watchCsp);
   // Chromium asks before a page reaches a local-network address; this stands for the person clicking Allow (spike S5).
   await context.grantPermissions(['local-network-access']);
   const page = await context.newPage();
@@ -119,29 +152,51 @@ try {
   let reqId = await requirement([self.ID]);
   const PATH = '/v1/organizations/acme/projects/api/environments/production';
 
-  // A page on the dashboard's origin (served by the test, not the dashboard), reading cross-origin as the dashboard does.
-  await page.route(`${publicUrl}/__endpoint-test`, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>endpoint test</title>' }));
-  await page.goto(`${publicUrl}/__endpoint-test`);
-  const fromPage = (path, method = 'GET', body) => page.evaluate(async ({ url, method, body, token }) => {
-    try {
-      const res = await fetch(url, { method, credentials: 'omit', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(8000) });
-      return { status: res.status, body: await res.json().catch(() => null) };
-    } catch (err) { return { error: String(err) }; }
-  }, { url: `${endpoint}${path}`, method, body, token });
+  // Every request the browser makes, to tell the endpoint from the dashboard's own address.
+  const requests = [];
+  context.on('request', (r) => requests.push({ url: r.url(), method: r.method() }));
+  const protectedOnOrdinary = () =>
+    requests.filter((r) => r.url.startsWith(`${publicUrl}${PATH}/`) && (/\/disclosures$/.test(r.url) || /include=values/.test(r.url)));
+  const onEndpoint = (suffix, method) => requests.filter((r) => r.url.startsWith(`${endpoint}${PATH}${suffix}`) && r.method === method);
 
-  // ---- Case 1: approved device.
-  const device = await fromPage('/v1/tailnet/context');
-  check('case 1: the endpoint recognizes this machine, from a page on the dashboard\'s origin', device.body?.recognized === true && device.body?.nodeId === self.ID, JSON.stringify(device));
-  const disclosed = await fromPage(`${PATH}/disclosures`, 'POST', { scope: 'all-authorized-secrets' });
-  check('case 1: the disclosure through the endpoint returns the value', disclosed.status === 200 && disclosed.body?.items?.[0]?.value === 'endpoint-s3cr3t', JSON.stringify(disclosed).slice(0, 300));
+  // ---- Case 1, in the dashboard: Connect, Reveal all, export.
+  const shell = await page.goto(`${publicUrl}/o/acme/p/api/e/production`);
+  const policy = (await shell.allHeaders())['content-security-policy'] ?? '';
+  check('csp: the dashboard\'s policy lets it connect to the endpoint, and nothing inline', policy.includes(endpoint) && !/unsafe-inline|unsafe-eval/.test(policy), policy);
+  await page.waitForSelector('[data-testid="tailnet-connect"]', { timeout: 30000 });
+  check('case 1: no request to the endpoint before Connect', requests.every((r) => !r.url.startsWith(endpoint)));
+  await page.click('[data-testid="tailnet-connect"]');
+  await page.waitForSelector('[data-testid="tailnet-read-note"]', { timeout: 30000 });
+  check('case 1: Connect checks this device; the values are read through the endpoint', onEndpoint('/effective-configuration?include=values', 'GET').length > 0);
+  await page.click('[data-testid="reveal-all"]');
+  await page.waitForFunction(() => document.querySelector('[data-row="SECRET_A"]')?.textContent?.includes('endpoint-s3cr3t'), null, { timeout: 30000 });
+  check('case 1: Reveal all shows the secret, disclosed through the endpoint', onEndpoint('/disclosures', 'POST').length === 1);
   const audit = sql("SELECT listener || ' ' || (tailnet->>'nodeId') FROM audit_events WHERE event_type = 'secret.disclosed' ORDER BY event_order DESC LIMIT 1");
   check('case 1: audit records the tailnet listener and this device', audit === `tailnet ${self.ID}`, audit);
 
-  // ---- Case 2: the same device, no longer named.
+  // A new page load starts unconnected: the grid offers Connect again.
+  await page.goto(`${publicUrl}/o/acme/p/api`);
+  await page.waitForSelector('[data-testid="tailnet-connect-prompt"] [data-testid="tailnet-connect"]', { timeout: 30000 });
+  await page.click('[data-testid="tailnet-connect-prompt"] [data-testid="tailnet-connect"]');
+  await page.waitForSelector('[data-testid="tailnet-connect-prompt"]', { state: 'detached', timeout: 30000 });
+  await page.click('[data-testid="export-menu"]');
+  await page.click('[data-testid="export-production"]');
+  await page.waitForSelector('[data-testid="export-include-secrets"]', { timeout: 30000 });
+  await page.click('[data-testid="export-include-secrets"]');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-testid="export-download"]')]);
+  const exported = readFileSync(await download.path(), 'utf8');
+  check('case 1: the export with secrets reads through the endpoint', exported.includes('SECRET_A=endpoint-s3cr3t') && onEndpoint('/disclosures', 'POST').length === 2, exported.split('\n').slice(0, 3).join(' | '));
+  check('case 1: nothing protected was asked of the dashboard\'s own address', protectedOnOrdinary().length === 0, JSON.stringify(protectedOnOrdinary()));
+
+  // ---- Case 2, in the dashboard: the Requirement names another node.
   await api(`/v1/organizations/acme/requirements/${reqId}`, { method: 'DELETE' });
   reqId = await requirement(['nSOMEONEELSE']);
-  const mismatch = await fromPage(`${PATH}/disclosures`, 'POST', { scope: 'all-authorized-secrets' });
-  check('case 2: a device the Requirement does not name is refused, and the page can read why', mismatch.status === 403 && mismatch.body?.error?.code === 'TAILNET_CONTEXT_UNAVAILABLE', JSON.stringify(mismatch));
+  await page.goto(`${publicUrl}/o/acme/p/api/e/production`);
+  await page.waitForSelector('[data-testid="tailnet-connect"]', { timeout: 30000 });
+  await page.click('[data-testid="tailnet-connect"]');
+  const refused = await page.waitForSelector('[data-testid="tailnet-connect-status"][data-status="refused"]', { timeout: 30000 }).then(() => true, () => false);
+  check('case 2: the dashboard says this device does not meet the requirements here', refused, await page.textContent('[data-testid="tailnet-only-notice"]').catch(() => ''));
+  check('case 2: and still asks nothing protected of its own address', protectedOnOrdinary().length === 0);
   await api(`/v1/organizations/acme/requirements/${reqId}`, { method: 'DELETE' });
   reqId = await requirement([self.ID]);
 
@@ -185,12 +240,13 @@ try {
   const sock = '/var/run/tailscale/tailscaled.sock';
   try {
     dc(['exec', '-T', 'tailscale', 'mv', sock, `${sock}.away`]);
-    const refused = await fromPage(`${PATH}/disclosures`, 'POST', { scope: 'all-authorized-secrets' });
+    const res = await fetch(`${endpoint}${PATH}/disclosures`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: 'all-authorized-secrets' }) });
+    const refused = { status: res.status, body: await res.json().catch(() => null) };
     check('case 7: without the LocalAPI, constrained reads are refused', refused.status === 403 && refused.body?.error?.code === 'TAILNET_CONTEXT_REQUIRED', JSON.stringify(refused));
     const reason = sql("SELECT tailnet->>'refused' FROM audit_events WHERE event_type = 'authorization.denied' ORDER BY event_order DESC LIMIT 1");
     check('case 7: and recorded as resolver-unavailable', reason === 'resolver-unavailable', reason);
-    const metadata = await fromPage(`${PATH}/effective-configuration`);
-    check('case 7: metadata is still served', metadata.status === 200, JSON.stringify(metadata).slice(0, 200));
+    const metadata = await fetch(`${endpoint}${PATH}/effective-configuration`, { headers: { Authorization: `Bearer ${token}` } });
+    check('case 7: metadata is still served', metadata.status === 200, String(metadata.status));
   } finally {
     dc(['exec', '-T', 'tailscale', 'mv', `${sock}.away`, sock]);
   }
@@ -202,6 +258,7 @@ try {
   check('peer: the endpoint is not reachable from the Compose network (bound to loopback)', /error (ECONNREFUSED|ECONNRESET)/.test(tls.stdout), tls.stdout + tls.stderr);
   const plain = peer(`fetch('http://varlatchd:8687${PATH}/disclosures',{method:'POST',headers:{Authorization:'Bearer ${token}','Content-Type':'application/json'},body:JSON.stringify({scope:'all-authorized-secrets'})}).then(async r=>console.log(r.status,(await r.json()).error?.code)).catch(e=>console.log('error',e.cause?.code))`);
   check('peer: on the plain listener it has no device', /403 TAILNET_CONTEXT_REQUIRED|error ECONNREFUSED/.test(plain.stdout), plain.stdout + plain.stderr);
+  check('csp: no Content-Security-Policy violation anywhere in the run', cspViolations.length === 0, cspViolations.slice(0, 3).join(' | '));
 } catch (err) {
   fail('real-tailnet endpoint test', String(err?.stack ?? err).slice(0, 1200));
 } finally {
@@ -209,6 +266,7 @@ try {
   try { dc(['exec', '-T', 'tailscale', 'tailscale', 'logout']); } catch {}
   try { dc(['down', '-v', '--remove-orphans']); } catch {}
   rmSync(dir, { recursive: true, force: true });
+  spawnSync('docker', ['image', 'rm', ...new Set(Object.values(images))], { stdio: 'ignore' });
 }
 if (failed) { console.log('FAILED'); process.exit(1); }
 console.log('PASS: tailnet browser endpoint on a real tailnet');
