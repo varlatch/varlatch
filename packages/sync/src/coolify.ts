@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
+import { foreign, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -360,7 +360,7 @@ export const coolifyAdapter: PlatformAdapter = {
       if (version.status === 404) {
         return { status: "not-found", where, httpStatus: 404, message: `No Coolify API answered at ${host}. Check the instance URL.` };
       }
-      if (!version.ok) return unexpected("Coolify", version.status, where);
+      if (!version.ok) return foreign("Coolify", "instance", host, version.status);
       const app = req.destination.applicationUuid;
       if (!app) return { status: "ok", where, message: "Coolify accepted the token." };
 

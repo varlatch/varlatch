@@ -120,7 +120,8 @@ is no redeploy.
 | The credential is missing a permission | Give it the permissions listed above for its platform. On GitHub, also check that the organization approved the token; on Coolify, that API access is on and the allowed IPs include Varlatch's server. |
 | Account or instance not found | Check the owner, instance URL, or deployment URL. |
 | Destination not found | Check the repository, GitHub environment, or application UUID, and that the token can see it. |
-| Could not check right now | Varlatch's server could not reach the platform, or the platform asked it to slow down. Check that the server can reach the address, then **Check again**. |
+| Could not check right now | Varlatch's server got no answer: the dialog says whether the address does not resolve, refuses the connection, redirects (a sign-in page in front of the API, for example), or has a certificate the server does not trust. A timeout, a rate limit, or a platform error clears with **Check again**. |
+| The platform refused the check | Most often the address answers but is not the platform's API: check the instance or deployment URL. |
 
 ## What a check sends
 

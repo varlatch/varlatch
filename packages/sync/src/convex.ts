@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { unexpected, unreachable, type AccessCheck } from "./access.js";
+import { foreign, unreachable, type AccessCheck } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -239,7 +239,7 @@ export const convexAdapter: PlatformAdapter = {
       if (res.status === 404) {
         return { status: "not-found", where, httpStatus: 404, message: `No Convex deployment answered at ${host}. Check the deployment URL.` };
       }
-      if (!res.ok) return unexpected("Convex", res.status, where);
+      if (!res.ok) return foreign("Convex", "deployment", host, res.status);
       let key: { isReadOnly?: unknown; allowedOps?: unknown };
       try {
         key = (await res.json()) as typeof key;

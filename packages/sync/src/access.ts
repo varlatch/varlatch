@@ -89,3 +89,18 @@ export function unexpected(platform: string, status: number, where: AccessCheckW
   }
   return { status: "failed", where, httpStatus: status, message: `${platform} refused the request (HTTP ${status}).` };
 }
+
+/**
+ * An answer at a user-supplied base address that is not the platform's API
+ * (a 410 from another site, a 405 from a proxy): the address is wrong more
+ * often than the platform is.
+ */
+export function foreign(platform: string, kind: string, host: string, status: number): AccessCheck {
+  if (status === 429 || status >= 500) return unexpected(platform, status, "connection");
+  return {
+    status: "failed",
+    where: "connection",
+    httpStatus: status,
+    message: `${host} does not answer like a ${platform} ${kind} (HTTP ${status}). Check the address.`,
+  };
+}

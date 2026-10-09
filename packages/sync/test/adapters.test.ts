@@ -878,6 +878,12 @@ describe("access checks", () => {
       }
     });
 
+    it("says when the address answers, but not like Coolify", async () => {
+      const result = await coolifyAdapter.checkAccess(coolify(fakeFetch(() => ({ status: 410, body: { message: "Gone" } }))));
+      expect(result).toMatchObject({ status: "failed", where: "connection", httpStatus: 410 });
+      expect(result.message).toBe("coolify.example.com does not answer like a Coolify instance (HTTP 410). Check the address.");
+    });
+
     it("reads server errors and timeouts as unreachable", async () => {
       expect((await coolifyAdapter.checkAccess(coolify(fakeFetch(() => ({ status: 502 }))))).status).toBe("unreachable");
       const timeout = Object.assign(new Error("aborted"), { name: "TimeoutError" });
