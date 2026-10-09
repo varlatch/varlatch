@@ -86,6 +86,42 @@ describe("disclosures when an environment turns tailnet-only", () => {
     expect(hook.shown("production", "DATABASE_URL")).toBeUndefined();
   });
 
+  it("keeps a disclosure discarded when the restriction is lifted before it lands", async () => {
+    let land!: (r: ReturnType<typeof disclosed>) => void;
+    discloseSecrets.mockReturnValueOnce(new Promise((r) => (land = r)));
+    await render(NONE);
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.reveal("production", ["DATABASE_URL"]);
+    });
+    // Reveal, then a requirement is added, then removed, then the response lands.
+    await render(PROD);
+    await render(NONE);
+    const refused = expect(pending).rejects.toMatchObject({ code: "DISCLOSURE_DISCARDED" });
+    await act(async () => land(disclosed({ DATABASE_URL: "postgres://prod" })));
+    await refused;
+    expect(hook.shown("production", "DATABASE_URL")).toBeUndefined();
+    // A reveal started after the cleanup works again.
+    discloseSecrets.mockResolvedValueOnce(disclosed({ DATABASE_URL: "postgres://prod-2" }));
+    await act(async () => void (await hook.reveal("production", ["DATABASE_URL"])));
+    expect(hook.shown("production", "DATABASE_URL")?.value).toBe("postgres://prod-2");
+  });
+
+  it("discards a disclosure in flight when everything is masked", async () => {
+    let land!: (r: ReturnType<typeof disclosed>) => void;
+    discloseSecrets.mockReturnValueOnce(new Promise((r) => (land = r)));
+    await render(NONE);
+    let pending!: Promise<unknown>;
+    await act(async () => {
+      pending = hook.reveal("development", ["DATABASE_URL"]);
+    });
+    await act(async () => hook.maskAll());
+    const refused = expect(pending).rejects.toMatchObject({ code: "DISCLOSURE_DISCARDED" });
+    await act(async () => land(disclosed({ DATABASE_URL: "postgres://dev" })));
+    await refused;
+    expect(hook.shown("development", "DATABASE_URL")).toBeUndefined();
+  });
+
   it("refuses a reveal in a restricted environment without asking the server", async () => {
     await render(PROD);
     await expect(hook.reveal("production", ["DATABASE_URL"])).rejects.toMatchObject({ code: "TAILNET_ONLY" });

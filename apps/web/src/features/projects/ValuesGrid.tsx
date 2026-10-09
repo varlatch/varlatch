@@ -94,7 +94,9 @@ export function ValuesGrid() {
   const [active, setActive] = useState<Pos | null>(null);
   const [editing, setEditing] = useState<Pos | null>(null);
   const [importRows, setImportRows] = useState<{ rows: { name: string; value: string }[]; env: string } | null>(null);
-  const [exportEnv, setExportEnv] = useState<Environment | null>(null);
+  // By id: the dialog follows the environment as it is now, protection included.
+  const [exportEnvId, setExportEnvId] = useState<string | null>(null);
+  const exportEnv = exportEnvId ? (environments.find((e) => e.id === exportEnvId) ?? null) : null;
   const [rotating, setRotating] = useState<{ env: Environment; item: string } | null>(null);
   const [newEnvOpen, setNewEnvOpen] = useState(false);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -432,7 +434,7 @@ export function ValuesGrid() {
               </span>
             ),
             ...(isTailnetOnly(env) ? { hint: "tailnet only" } : {}),
-            onSelect: () => setExportEnv(env),
+            onSelect: () => setExportEnvId(env.id),
             "data-testid": `export-${env.name}`,
           }))}
         >
@@ -618,7 +620,7 @@ export function ValuesGrid() {
           setImportRows(null);
         }}
       />
-      <ExportDialog org={org} project={slug} env={exportEnv} onClose={() => setExportEnv(null)} />
+      <ExportDialog org={org} project={slug} env={exportEnv} onClose={() => setExportEnvId(null)} />
       {rotating && (
         <RotateDialog
           open

@@ -321,6 +321,13 @@ await page.goto(`${base}/o/acme/p/api/e/production`);
 await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
 await page.click('[data-testid="reveal-all"]');
 await waitText('[data-row="DATABASE_URL"]', "prod-rotated");
+// A second tab holds production's export dialog open, values loaded.
+const exportPage = await context.newPage();
+await exportPage.goto(`${base}/o/acme/p/api`);
+await exportPage.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
+await exportPage.click('[data-testid="export-menu"]');
+await exportPage.click('[data-testid="export-production"]');
+await exportPage.waitForSelector('[data-testid="export-download"]:not([disabled])', { timeout: 10000 });
 const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", {
   kind: "tailnet",
   target: { kind: "tier", tier: "production" },
@@ -335,6 +342,10 @@ check(
   !(await rowText("DATABASE_URL")).includes("prod-rotated"),
   await rowText("DATABASE_URL"),
 );
+// The dialog that was already open follows: explanation, no Download.
+await exportPage.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 30000 });
+check("an export dialog already open stops offering Download", await exportPage.locator('[data-testid="export-download"]').isDisabled());
+await exportPage.close();
 const valueReads = [];
 page.on("request", (req) => {
   if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());

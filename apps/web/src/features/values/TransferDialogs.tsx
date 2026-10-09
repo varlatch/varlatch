@@ -2,13 +2,13 @@
 import { useEffect, useState } from "react";
 import { Download, Lock, ShieldAlert, Wifi } from "lucide-react";
 import type { Environment, Tier } from "@varlatch/protocol";
-import { useSession } from "../../lib/session";
-import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
+import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
 import { Dialog } from "../../components/Dialog";
 import { Button, Callout, Checkbox, Field, Select, Skeleton, TierDot } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
-import { dotenvLine, plural, type ServerItem } from "./model";
+import { plural } from "./model";
 import { SecretMask } from "./bits";
+import { useExport } from "./useExport";
 
 /**
  * `.env` in and out. Import fills drafts (never writes); export downloads
@@ -102,63 +102,22 @@ export function ExportDialog({
   env: Environment | null;
   onClose: () => void;
 }) {
-  const { api } = useSession();
-  const [items, setItems] = useState<ServerItem[] | null>(null);
-  const [withheld, setWithheld] = useState<Set<string>>(new Set());
-  const [includeSecrets, setIncludeSecrets] = useState(false);
+  // `env` is the environment as it is now (the grid resolves it from current
+  // data), so a Requirement added while the dialog is open takes effect here.
+  const { items, withheld, secrets, plain, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } = useExport(org, project, env);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  // A Tailnet Requirement covers the environment: no value can be read here.
-  const tailnetOnly = isTailnetOnly(env ?? undefined);
-
-  useEffect(() => {
-    if (!env || tailnetOnly) return;
-    let live = true;
-    setItems(null);
-    setIncludeSecrets(false);
-    setError("");
-    api
-      .effectiveConfiguration(org, project, env.name, { includeValues: true })
-      .then((r) => {
-        if (!live) return;
-        setItems(r.items ?? []);
-        setWithheld(new Set((r.callerView?.withheld ?? []).map((w) => w.name)));
-      })
-      .catch((err) => live && setError(errorMessage(err)));
-    return () => {
-      live = false;
-    };
-  }, [api, org, project, env, tailnetOnly]);
-
-  const secrets = (items ?? []).filter((i) => i.sensitive);
-  const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);
 
   const download = async () => {
-    if (!env || !items) return;
     setBusy(true);
     setError("");
     try {
-      let disclosed = new Map<string, string>();
-      if (includeSecrets && secrets.length > 0) {
-        const result = await api.discloseSecrets(org, project, env.name, { items: secrets.map((s) => s.name) });
-        disclosed = new Map(result.items.map((i) => [i.name, i.value]));
-      }
-      const lines = [`# ${project} / ${env.name}, exported ${new Date().toISOString()}`];
-      for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
-        if (item.sensitive) {
-          const value = disclosed.get(item.name);
-          lines.push(value !== undefined ? dotenvLine(item.name, value) : `# ${item.name}: secret, not exported`);
-        } else if (withheld.has(item.name) || item.value == null) {
-          lines.push(`# ${item.name}: not readable with your access`);
-        } else {
-          lines.push(dotenvLine(item.name, item.value));
-        }
-      }
-      const blob = new Blob([`${lines.join("\n")}\n`], { type: "text/plain" });
+      const { text, filename } = await build();
+      const blob = new Blob([text], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${project}.${env.name.replace(/\//g, "-")}.env`;
+      a.download = filename;
       document.body.append(a);
       a.click();
       a.remove();
@@ -170,6 +129,7 @@ export function ExportDialog({
       setBusy(false);
     }
   };
+  const shownError = error || (loadError ? errorMessage(loadError) : "");
 
   return (
     <Dialog
@@ -207,7 +167,7 @@ export function ExportDialog({
             {TAILNET_ONLY_GUIDANCE}
           </Callout>
         )}
-        {!items && !error && !tailnetOnly && <Skeleton className="h-10 w-full" />}
+        {!items && !shownError && !tailnetOnly && <Skeleton className="h-10 w-full" />}
         {items && (
           <p className="text-muted">
             <span className="text-fg">{plural(plain.length, "value")}</span> exported.{" "}
@@ -230,7 +190,7 @@ export function ExportDialog({
             audit log; deleting the file does not undo it.
           </Callout>
         )}
-        {error && <p className="text-deny">{error}</p>}
+        {shownError && <p className="text-deny">{shownError}</p>}
       </div>
     </Dialog>
   );

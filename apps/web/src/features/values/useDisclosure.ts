@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "../../lib/session";
-import { TailnetOnlyError, isTailnetDenial } from "../../lib/tailnet";
+import { DisclosureDiscardedError, TailnetOnlyError, isTailnetDenial } from "../../lib/tailnet";
 
 /**
  * Server-disclosed Secret plaintext, held in component memory only: never
@@ -13,8 +13,11 @@ import { TailnetOnlyError, isTailnetDenial } from "../../lib/tailnet";
  * `restricted` names the environments a Tailnet Requirement now covers.
  * Their plaintext stops showing in the same render the restriction appears,
  * is dropped from memory right after, and a disclosure still in flight for
- * one is discarded when it lands. Display cleanup only: plaintext already
- * delivered to this browser is not revoked.
+ * one is discarded when it lands. Every cleanup (a restriction, a tailnet
+ * denial, masking) bumps a generation, so a disclosure started before it
+ * stays discarded even if the restriction has been lifted by the time it
+ * lands. Display cleanup only: plaintext already delivered to this browser
+ * is not revoked.
  */
 
 const REMASK_MS = 5 * 60 * 1000;
@@ -31,14 +34,20 @@ export function useDisclosure(org: string, project: string, restricted: Readonly
   // Read when a disclosure lands, which may be renders after it started.
   const restrictedNow = useRef(restricted);
   restrictedNow.current = restricted;
+  // Cleanup generations: one for everything, one per environment.
+  const epoch = useRef(0);
+  const generations = useRef(new Map<string, number>());
+  const generationOf = (env: string) => `${epoch.current}:${generations.current.get(env) ?? 0}`;
 
   const maskAll = useCallback(() => {
+    epoch.current++;
     window.clearTimeout(timer.current);
     setValues(new Map());
     setHidden(new Set());
   }, []);
 
   const maskEnv = useCallback((env: string) => {
+    generations.current.set(env, (generations.current.get(env) ?? 0) + 1);
     setValues((prev) => {
       if (!prev.has(env)) return prev;
       const next = new Map(prev);
@@ -61,6 +70,7 @@ export function useDisclosure(org: string, project: string, restricted: Readonly
   const reveal = useCallback(
     async (env: string, request: string[] | "all") => {
       if (restrictedNow.current.has(env)) throw new TailnetOnlyError();
+      const started = generationOf(env);
       let result;
       try {
         result = await api.discloseSecrets(
@@ -74,8 +84,10 @@ export function useDisclosure(org: string, project: string, restricted: Readonly
         if (isTailnetDenial(err)) maskEnv(env);
         throw err;
       }
-      // A Requirement that appeared while the disclosure was in flight.
+      // A Requirement that appeared while the disclosure was in flight, or
+      // any cleanup since it started, even one whose cause is gone again.
       if (restrictedNow.current.has(env)) throw new TailnetOnlyError();
+      if (generationOf(env) !== started) throw new DisclosureDiscardedError();
       setValues((prev) => {
         const next = new Map(prev);
         const forEnv = new Map(next.get(env) ?? []);

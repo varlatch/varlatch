@@ -34,3 +34,12 @@ export class TailnetOnlyError extends Error {
     this.name = "TailnetOnlyError";
   }
 }
+
+/** A disclosure discarded on arrival: the environment's plaintext was cleaned up while it was in flight. */
+export class DisclosureDiscardedError extends Error {
+  readonly code = "DISCLOSURE_DISCARDED";
+  constructor() {
+    super("Access to this environment changed while revealing, so nothing was shown. Reveal again.");
+    this.name = "DisclosureDiscardedError";
+  }
+}

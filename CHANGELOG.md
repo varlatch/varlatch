@@ -53,9 +53,11 @@ fixes.
   in the audit log on every visit; now it shows the items and their states
   and asks for no values. Secrets revealed on a page before a requirement
   covers its environment stop showing, and can no longer be copied, as soon
-  as the page learns of the requirement, and a reveal still in flight then
-  is discarded. This tidies the screen only: plaintext the browser already
-  received is not revoked.
+  as the page learns of the requirement. A reveal still in flight then is
+  discarded, and stays discarded if the requirement is removed before it
+  lands. An export dialog already open drops the values it loaded and stops
+  offering Download, and an export in flight writes no file. This tidies
+  the screen only: plaintext the browser already received is not revoked.
 
 ### API
 
