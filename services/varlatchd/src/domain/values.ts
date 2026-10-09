@@ -420,7 +420,7 @@ export async function effectiveConfiguration(
         action: "config.value.read",
         resource: { projectId: project.id, environmentId: env.id },
         requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
+        listener: opts.listener,
         metadata: {
           items: disclosed.map((i) => `${i.name}@${i.versionId}`).join(","),
           withheld: items.length - disclosed.length,
@@ -920,7 +920,7 @@ export async function discloseSecrets(
         action: "secret.reveal",
         resource: { projectId: project.id, environmentId: env.id },
         requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
+        listener: opts.listener,
         metadata: {
           mode: request.scope ?? "requested",
           items: selected
@@ -979,7 +979,7 @@ export async function discloseSecrets(
             action: "config.value.read",
             resource: { projectId: project.id, environmentId: env.id },
             requestId: opts.requestId ?? null,
-            listener: opts.listener ?? null,
+            listener: opts.listener,
             metadata: {
               mode: "reference-expansion",
               items: sources.map((i) => `${i.name}@${i.versionId}`).join(","),

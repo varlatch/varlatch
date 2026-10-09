@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { TrustedProxies, clientAddressResolver } from "./http/client-address.js";
-import { whois } from "./tailnet/whois.js";
+import { resolveWhois, selfNodeResolver } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
 import { DomainError } from "./domain/errors.js";
@@ -163,15 +163,18 @@ async function serveCommand(): Promise<void> {
     startNetnsWatchdog();
     // The dedicated tailnet listener (ADR-0014 §7): the ONLY place trusted
     // Tailnet Context can be created, from the true socket peer via WhoIs.
+    // A peer that is the Varlatch node itself, or shared in from another
+    // tailnet, gets none (ADR-0046 Decision 7).
+    const selfNodeId = selfNodeResolver(ts.socketPath);
     const tailnetApp = buildApp(ctx, {
       clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
       resolveTailnetContext: async (c) => {
         const info = getConnInfo(c);
         const addr = info.remote.address;
         const port = info.remote.port;
-        if (!addr || port === undefined) return null;
-        return whois(
-          { socketPath: ts.socketPath, expectedTailnet: ts.expectedTailnet },
+        if (!addr || port === undefined) return { ok: false, reason: "unrecognized" };
+        return resolveWhois(
+          { socketPath: ts.socketPath, expectedTailnet: ts.expectedTailnet, selfNodeId },
           addr,
           port,
         );

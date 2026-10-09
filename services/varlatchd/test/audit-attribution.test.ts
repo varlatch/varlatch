@@ -188,7 +188,7 @@ describe("events a request records name its credential and client", () => {
 });
 
 describe("the audit writer's rule", () => {
-  const acting = { identityId: "idn_actor", credentialId: "crd_acting", client: "varlatch CLI 0.16.0 on Linux, assisted" };
+  const acting = { identityId: "idn_actor", credentialId: "crd_acting", client: "varlatch CLI 0.16.0 on Linux, assisted", listener: "ordinary" as const, tailnet: null };
   async function written(event: Parameters<typeof recordAuditEvent>[1], inRequest = true) {
     const id = inRequest
       ? await withAttribution(acting, () => recordAuditEvent(ctx.db, event))

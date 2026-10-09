@@ -491,7 +491,7 @@ export async function exerciseCapability(
         environmentId: env.id,
       },
       requestId: opts.requestId ?? null,
-      listener: opts.listener ?? null,
+      listener: opts.listener,
       metadata: {
         reason,
         destination: `${input.destination.host}:${input.destination.port}`,
@@ -614,7 +614,7 @@ export async function exerciseCapability(
           requirements: evaluation.requirements,
         },
         requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
+        listener: opts.listener,
         metadata: {
           destination: `${input.destination.host}:${input.destination.port}`,
           items: selected
@@ -705,7 +705,7 @@ export async function exerciseCapability(
         action: "secret.use",
         resource,
         requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
+        listener: opts.listener,
         metadata: {
           mode: "reference-expansion",
           items: secretNeeded.map((i) => `${i.name}@${i.versionId}`).join(","),
@@ -722,7 +722,7 @@ export async function exerciseCapability(
         action: "config.value.read",
         resource,
         requestId: opts.requestId ?? null,
-        listener: opts.listener ?? null,
+        listener: opts.listener,
         metadata: {
           mode: "reference-expansion",
           items: plainNeeded.map((n) => `${n.item.name}@${n.item.versionId}`).join(","),

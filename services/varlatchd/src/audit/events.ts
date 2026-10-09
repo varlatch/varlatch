@@ -38,8 +38,10 @@ export interface AuditEventInput {
   resource?: Record<string, string | null> | null;
   /** Grant/Requirement provenance from the evaluator (IDs and outcomes only). */
   authz?: Record<string, unknown> | null;
-  tailnet?: Record<string, unknown> | null;
-  listener?: "ordinary" | "tailnet" | null;
+  /** Left undefined, filled from the request like credentialId (ADR-0046 Decision 8). */
+  tailnet?: Record<string, unknown> | null | undefined;
+  /** Left undefined, filled from the request like credentialId (ADR-0046 Decision 8). */
+  listener?: "ordinary" | "tailnet" | null | undefined;
   requestId?: string | null;
   metadata?: Record<string, string | number | boolean | null> | null;
 }
@@ -55,6 +57,9 @@ export async function recordAuditEvent(
   const attributed = acting !== undefined && event.actorIdentityId === acting.identityId;
   const credentialId = event.credentialId === undefined && attributed ? acting.credentialId : event.credentialId;
   const client = event.client === undefined && attributed ? acting.client : event.client;
+  // The listener and tailnet resolution are filled the same way.
+  const listener = event.listener === undefined && attributed ? acting.listener : event.listener;
+  const tailnet = event.tailnet === undefined && attributed ? acting.tailnet : event.tailnet;
   await db.query(
     `INSERT INTO audit_events
        (id, schema_version, event_type, actor_identity_id, authentication_method_id,
@@ -72,8 +77,8 @@ export async function recordAuditEvent(
       event.resource ? JSON.stringify(event.resource) : null,
       event.decision,
       event.authz ? JSON.stringify(event.authz) : null,
-      event.tailnet ? JSON.stringify(event.tailnet) : null,
-      event.listener ?? null,
+      tailnet ? JSON.stringify(tailnet) : null,
+      listener ?? null,
       event.requestId ?? null,
       event.metadata ? JSON.stringify(event.metadata) : null,
       client ?? null,
