@@ -2757,6 +2757,63 @@ paths:
                   - { $ref: "#/components/schemas/GitHubAppRegistrationFailed" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/github-app/import:
+    post:
+      tags: [sync]
+      operationId: importGitHubApp
+      summary: >
+        Import a GitHub App someone registered on GitHub (ADR-0047 Decision
+        1): its App id and private key. Varlatch verifies the pair first,
+        with a JWT signed by the key and GET /app answering that id, and
+        takes the client id, slug, and owner from GitHub. The App needs
+        secrets and environments (write) and metadata (read); it may have
+        more, which the audit event names. A refused JWT is read by its own
+        time claims against GitHub's Date header: the key, or this server's
+        clock. Refused (409) when the Organization already has a live App,
+        or another Organization has this one.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appId, privateKey]
+              properties:
+                appId: { type: integer, minimum: 1 }
+                privateKey: { type: string, minLength: 1, maxLength: 10000, description: The App's RSA private key in PEM, as GitHub issues it }
+      responses:
+        "201":
+          description: Imported (Cache-Control no-store; the key is never returned)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRegistered" }
+        "200":
+          description: Not imported, and why (Cache-Control no-store); nothing was stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppImportFailed" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/installations:
+    get:
+      tags: [sync]
+      operationId: listGitHubAppInstallations
+      summary: >
+        Where the Organization's GitHub App is installed (ADR-0047 Decision
+        2), signed as the App: the installations a Connection can be created
+        on. check says why not when the listing did not run (the key, this
+        server's clock, GitHub unreachable, or an answer that is not
+        GitHub's), and items is then empty. Audited as a use of the key.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      responses:
+        "200":
+          description: The installations, or why they could not be listed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppInstallationListing" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/sync-targets:
     get:
       tags: [sync]
@@ -4313,6 +4370,39 @@ components:
           description: True when GitHub could not be reached; the state was released for another attempt
         httpStatus: { type: integer }
         message: { type: string }
+
+    GitHubAppImportFailed:
+      allOf:
+        - { $ref: "#/components/schemas/AccessCheck" }
+        - type: object
+          required: [outcome]
+          properties:
+            outcome: { type: string, enum: [failed] }
+
+    GitHubAppInstallation:
+      type: object
+      required: [installationId, account, repositorySelection, suspended]
+      properties:
+        installationId: { type: integer }
+        account:
+          type: object
+          required: [login, id, type]
+          properties:
+            login: { type: string }
+            id: { type: integer }
+            type: { type: string, enum: [organization, user] }
+        repositorySelection: { type: string, enum: [all, selected] }
+        suspended: { type: boolean }
+
+    GitHubAppInstallationListing:
+      type: object
+      required: [check, items, truncated]
+      properties:
+        check: { $ref: "#/components/schemas/AccessCheck" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/GitHubAppInstallation" }
+        truncated: { type: boolean, description: True when Varlatch stopped at 3,000 installations }
 
     AccessCheck:
       type: object

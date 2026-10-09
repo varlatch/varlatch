@@ -98,6 +98,8 @@ import {
   GITHUB_WEB,
   completeRegistration,
   getGitHubApp,
+  importGitHubApp,
+  listAppInstallations,
   startRegistration,
   type GitHubAppRow,
 } from "../domain/githubapps.js";
@@ -3086,11 +3088,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     createdAt: iso(a.created_at),
     updatedAt: a.updated_at ? iso(a.updated_at) : null,
   });
-  const assertGitHubAppsAllowed = (): URL => {
+  const assertGitHubAdapterAllowed = () => {
     assertSyncEnabled();
     if (syncEnabled.adapters && !syncEnabled.adapters.includes("github-actions")) {
       throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
     }
+  };
+  const assertGitHubAppsAllowed = (): URL => {
+    assertGitHubAdapterAllowed();
     const base = deviceSignInBase(options.publicUrl);
     if (!base) {
       throw new DomainError(
@@ -3144,6 +3149,36 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
     }
     return c.json(result);
+  });
+
+  app.post("/v1/organizations/:org/github-app/import", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAdapterAllowed();
+    const body = parseBody(
+      z.object({
+        appId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        privateKey: z.string().min(1).max(10_000),
+      }),
+      await c.req.json(),
+    );
+    const result = await importGitHubApp(ctx, org, body, principal.identity.id, options.syncFetch);
+    c.header("Cache-Control", "no-store");
+    if (result.outcome === "registered") {
+      return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
+    }
+    return c.json(result);
+  });
+
+  app.get("/v1/organizations/:org/github-app/installations", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAdapterAllowed();
+    return c.json(await listAppInstallations(ctx, org, principal.identity.id, options.syncFetch));
   });
 
   app.get("/v1/organizations/:org/sync-targets", async (c) => {

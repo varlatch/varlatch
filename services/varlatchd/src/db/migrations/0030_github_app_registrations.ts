@@ -8,7 +8,8 @@
  * started it, the Organization, and the GitHub account the App is meant to
  * be created on (login and type), which the owner check compares GitHub's
  * answer with. It is consumed once, atomically, and expires after an hour,
- * as GitHub's code does. Rows are deleted a day after they expire.
+ * as GitHub's code does. Rows more than a day past their expiry are deleted
+ * when a later registration starts.
  */
 export const sql = /* sql */ `
 CREATE TABLE github_app_registrations (

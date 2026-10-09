@@ -89,6 +89,17 @@ describe("describeEvent", () => {
     );
   });
 
+  it("says imported for an imported App, and how an installation listing went", () => {
+    expect(
+      sentence(event({ eventType: "sync.github_app_registered", metadata: { via: "import", appId: 5254113, slug: "varlatch-acme", owner: "acme-gh", ownerType: "organization" } })),
+    ).toBe("imported the GitHub App varlatch-acme on acme-gh");
+    const listed = { eventType: "sync.github_app_installations_listed" };
+    expect(sentence(event({ ...listed, metadata: { status: "ok", count: 2, truncated: false } }))).toBe("listed where the GitHub App is installed: 2 installations");
+    expect(sentence(event({ ...listed, metadata: { status: "credential-rejected", count: 0 } }))).toBe(
+      "listed where the GitHub App is installed: credential rejected",
+    );
+  });
+
   it("grants read as role names, then readable actions", () => {
     expect(
       sentence(event({ eventType: "grant.created", resource: { subjectIdentityId: "idn_agent" }, metadata: { roleId: "rol_use" } })),

@@ -1231,6 +1231,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/github-app/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a GitHub App someone registered on GitHub (ADR-0047 Decision 1): its App id and private key. Varlatch verifies the pair first, with a JWT signed by the key and GET /app answering that id, and takes the client id, slug, and owner from GitHub. The App needs secrets and environments (write) and metadata (read); it may have more, which the audit event names. A refused JWT is read by its own time claims against GitHub's Date header: the key, or this server's clock. Refused (409) when the Organization already has a live App, or another Organization has this one. */
+        post: operations["importGitHubApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where the Organization's GitHub App is installed (ADR-0047 Decision 2), signed as the App: the installations a Connection can be created on. check says why not when the listing did not run (the key, this server's clock, GitHub unreachable, or an answer that is not GitHub's), and items is then empty. Audited as a use of the key. */
+        get: operations["listGitHubAppInstallations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/sync-targets": {
         parameters: {
             query?: never;
@@ -2090,6 +2124,28 @@ export interface components {
             retryable: boolean;
             httpStatus?: number;
             message: string;
+        };
+        GitHubAppImportFailed: components["schemas"]["AccessCheck"] & {
+            /** @enum {string} */
+            outcome: "failed";
+        };
+        GitHubAppInstallation: {
+            installationId: number;
+            account: {
+                login: string;
+                id: number;
+                /** @enum {string} */
+                type: "organization" | "user";
+            };
+            /** @enum {string} */
+            repositorySelection: "all" | "selected";
+            suspended: boolean;
+        };
+        GitHubAppInstallationListing: {
+            check: components["schemas"]["AccessCheck"];
+            items: components["schemas"]["GitHubAppInstallation"][];
+            /** @description True when Varlatch stopped at 3 */
+            truncated: boolean;
         };
         AccessCheck: {
             /**
@@ -5396,6 +5452,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    importGitHubApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    appId: number;
+                    /** @description The App's RSA private key in PEM */
+                    privateKey: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Not imported, and why (Cache-Control no-store); nothing was stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppImportFailed"];
+                };
+            };
+            /** @description Imported (Cache-Control no-store; the key is never returned) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listGitHubAppInstallations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The installations, or why they could not be listed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppInstallationListing"];
                 };
             };
             default: components["responses"]["Error"];
