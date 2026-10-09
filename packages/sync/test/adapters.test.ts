@@ -862,6 +862,22 @@ describe("access checks", () => {
       expect(noApp.message).toContain("app123");
     });
 
+    it("tells a redirect, an unknown host, a refusal, and an untrusted certificate apart", async () => {
+      const transport = (cause: object) => Object.assign(new TypeError("fetch failed"), { cause });
+      const cases: [object, string][] = [
+        [{ message: "unexpected redirect" }, "redirect, which Varlatch does not follow"],
+        [{ code: "ENOTFOUND", message: "getaddrinfo ENOTFOUND coolify.example.com" }, "No address was found for coolify.example.com"],
+        [{ code: "ECONNREFUSED" }, "refused the connection"],
+        [{ code: "DEPTH_ZERO_SELF_SIGNED_CERT" }, "does not trust the certificate"],
+        [{ code: "ECONNRESET" }, "could not reach coolify.example.com"],
+      ];
+      for (const [cause, text] of cases) {
+        const result = await coolifyAdapter.checkAccess(coolify(failing(transport(cause))));
+        expect(result).toMatchObject({ status: "unreachable", where: "connection" });
+        expect(result.message).toContain(text);
+      }
+    });
+
     it("reads server errors and timeouts as unreachable", async () => {
       expect((await coolifyAdapter.checkAccess(coolify(fakeFetch(() => ({ status: 502 }))))).status).toBe("unreachable");
       const timeout = Object.assign(new Error("aborted"), { name: "TimeoutError" });

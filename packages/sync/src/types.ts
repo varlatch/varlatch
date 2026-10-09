@@ -20,8 +20,10 @@ export class AdapterError extends Error {
     message: string,
     /** True when retrying without operator intervention may succeed. */
     readonly retryable: boolean = true,
+    /** The transport error, for an access check to read; never in the message. */
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 

@@ -37,15 +37,35 @@ export interface AccessCheck {
   httpStatus?: number;
 }
 
+/** Node's fetch reports the transport problem on the cause of its TypeError. */
+function transportProblem(err: unknown): "timeout" | "redirect" | "dns" | "refused" | "tls" | null {
+  if (!(err instanceof AdapterError)) return null;
+  if (err.message === "TimeoutError") return "timeout";
+  const cause = (err.cause as { cause?: { code?: unknown; message?: unknown } } | undefined)?.cause;
+  const code = typeof cause?.code === "string" ? cause.code : "";
+  if (typeof cause?.message === "string" && /redirect/i.test(cause.message)) return "redirect";
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN") return "dns";
+  if (code === "ECONNREFUSED") return "refused";
+  if (/CERT|SELF_SIGNED|SIGNATURE|TLS|SSL/.test(code)) return "tls";
+  return null;
+}
+
 /** The request never got an answer: DNS, TLS, a refused redirect, a timeout. */
 export function unreachable(host: string, err: unknown, where: AccessCheckWhere): AccessCheck {
-  if (err instanceof AdapterError && err.message === "TimeoutError") {
-    return { status: "unreachable", where, message: `${host} did not answer in time. Try again in a moment.` };
-  }
+  const problem = transportProblem(err);
+  const messages = {
+    timeout: `${host} did not answer in time. Try again in a moment.`,
+    redirect: `${host} answered with a redirect, which Varlatch does not follow. Enter the address it leads to, or let Varlatch past a sign-in page in front of it.`,
+    dns: `No address was found for ${host}. Check the spelling, and that this server can resolve it.`,
+    refused: `${host} refused the connection. Check the address and port.`,
+    tls: `This server does not trust the certificate of ${host}: it is self-signed, expired, or made for another name.`,
+  };
   return {
     status: "unreachable",
     where,
-    message: `Varlatch could not reach ${host}. Check the address, and that this server can reach it.`,
+    message: problem
+      ? messages[problem]
+      : `Varlatch could not reach ${host}. Check the address, and that this server can reach it.`,
   };
 }
 

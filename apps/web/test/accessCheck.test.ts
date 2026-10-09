@@ -14,8 +14,9 @@ describe("access check", () => {
     expect(fixStep(check({ status: "not-found", where: "destination" }))).toBe(1);
   });
 
-  it("offers no step when trying again is the fix, or nothing needs fixing", () => {
-    expect(fixStep(check({ status: "unreachable" }))).toBeNull();
+  it("offers the connection for an unreachable address, and no step when nothing needs fixing", () => {
+    expect(fixStep(check({ status: "unreachable", where: "connection" }))).toBe(0);
+    expect(fixStep(check({ status: "unreachable", where: "destination" }))).toBeNull();
     expect(fixStep(check({ status: "ok" }))).toBeNull();
   });
 

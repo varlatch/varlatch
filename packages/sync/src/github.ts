@@ -80,7 +80,7 @@ async function request(
       signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   } catch (err) {
-    throw new AdapterError(err instanceof Error ? err.name : "fetch failed");
+    throw new AdapterError(err instanceof Error ? err.name : "fetch failed", true, { cause: err });
   }
 }
 

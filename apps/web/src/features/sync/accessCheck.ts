@@ -32,14 +32,15 @@ export function accessTitle(check: AccessCheck): string {
 /**
  * The Add integration step that fixes a failed check: 0 is the connection
  * (credential, account or instance), 1 the destination. A credential
- * problem is fixed at the connection wherever it showed. Null when the fix
- * is to try again (or there is nothing to fix).
+ * problem is fixed at the connection wherever it showed, and so is an
+ * address that cannot be reached. Null when there is nothing to fix there.
  */
 export function fixStep(check: AccessCheck): 0 | 1 | null {
   switch (check.status) {
     case "ok":
-    case "unreachable":
       return null;
+    case "unreachable":
+      return check.where === "connection" ? 0 : null;
     case "credential-rejected":
     case "permission-missing":
       return 0;
