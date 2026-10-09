@@ -1361,6 +1361,10 @@ export interface components {
             expiresAt?: string | null;
             /** Format: date-time */
             createdAt: string;
+            /** @description True when an active Tailnet Requirement covers this Environment (capability environments.tailnet-required): reading its values, non-sensitive ones included, needs verified Tailnet Context, which only the tailnet listener establishes. Names and other metadata stay readable as before. Derived per response from the active Requirements with the same targeting authorization uses (a tier, this Environment, or the root it derives from); never stored. */
+            tailnetRequired?: boolean;
+            /** @description The Requirements that cover this Environment. Present only when tailnetRequired is true and the caller holds policy.read in the organization. */
+            tailnetRequirementIds?: string[];
         };
         /** @description Value metadata only — plaintext is never echoed by mutations. */
         ValueVersion: {

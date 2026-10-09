@@ -3163,6 +3163,23 @@ components:
         ownerIdentityId: { type: [string, "null"] }
         expiresAt: { type: [string, "null"], format: date-time }
         createdAt: { type: string, format: date-time }
+        tailnetRequired:
+          type: boolean
+          description: >-
+            True when an active Tailnet Requirement covers this Environment
+            (capability environments.tailnet-required): reading its values,
+            non-sensitive ones included, needs verified Tailnet Context, which
+            only the tailnet listener establishes. Names and other metadata
+            stay readable as before. Derived per response from the active
+            Requirements with the same targeting authorization uses (a tier,
+            this Environment, or the root it derives from); never stored.
+        tailnetRequirementIds:
+          type: array
+          items: { type: string }
+          description: >-
+            The Requirements that cover this Environment. Present only when
+            tailnetRequired is true and the caller holds policy.read in the
+            organization.
 
     ValueVersion:
       type: object
