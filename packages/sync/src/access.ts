@@ -37,6 +37,46 @@ export interface AccessCheck {
   httpStatus?: number;
 }
 
+/** One destination a credential can see, as a picker offers it. */
+export interface DestinationOption {
+  /** The destination record, as a Sync Target takes it. */
+  destination: Record<string, string>;
+  /** The repository or application name. */
+  label: string;
+  /** A second line: visibility, or the application's address. */
+  detail?: string;
+}
+
+/**
+ * The destinations a credential can see on its base identity. `check` is ok
+ * when the listing ran; otherwise it says why not, as an access check does,
+ * and `items` is empty. Seeing a destination is not permission to write it:
+ * the access check on a chosen destination, and the first push, still decide.
+ */
+export interface DestinationListing {
+  check: AccessCheck;
+  items: DestinationOption[];
+  /**
+   * The listing is partial: the adapter stopped reading (MAX_DESTINATIONS,
+   * or a page bound), so more may exist, even with no items.
+   */
+  truncated: boolean;
+}
+
+/** How many destinations a listing reads at most. */
+export const MAX_DESTINATIONS = 1000;
+
+export function listingFailed(check: AccessCheck): DestinationListing {
+  return { check, items: [], truncated: false };
+}
+
+/** A platform-supplied name, bounded before it leaves the adapter. */
+export function shortText(value: unknown, max = 200): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed === "" ? undefined : trimmed.slice(0, max);
+}
+
 /**
  * A 2xx answer's JSON body, or undefined when it is not JSON. A 2xx is not
  * proof of the platform: a sign-in page or another API answers 200 too, so

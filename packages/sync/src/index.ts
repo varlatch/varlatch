@@ -5,7 +5,14 @@ import { githubActionsAdapter } from "./github.js";
 import { AdapterError, PLATFORMS, type Platform, type PlatformAdapter } from "./types.js";
 
 export * from "./types.js";
-export type { AccessCheck, AccessCheckStatus, AccessCheckWhere } from "./access.js";
+export type {
+  AccessCheck,
+  AccessCheckStatus,
+  AccessCheckWhere,
+  DestinationListing,
+  DestinationOption,
+} from "./access.js";
+export { MAX_DESTINATIONS } from "./access.js";
 export { githubActionsAdapter } from "./github.js";
 export { coolifyAdapter } from "./coolify.js";
 export { convexAdapter } from "./convex.js";

@@ -44,7 +44,7 @@ button.
 | --- | --- |
 | Owner | The user or organization in `github.com/<owner>`. |
 | Access token | A fine-grained personal access token, below. |
-| Repository | On the integration: the repository name, without the owner. |
+| Repository | On the integration: pick it from the repositories the token can see in the owner, or type its name, without the owner. |
 | GitHub environment | Optional. Empty writes repository secrets; a name writes the secrets of that environment, which must already exist in the repository's settings. |
 
 Create the token on GitHub under **Settings**, **Developer settings**,
@@ -74,7 +74,7 @@ periodic repair writes them again instead.
 | --- | --- |
 | Instance URL | The address of your Coolify instance, with `https://` and nothing after the host: `https://coolify.example.com`. |
 | API token | A Coolify API token, below. |
-| Application UUID | On the integration: the last part of the application's address in Coolify (`…/application/<uuid>`). |
+| Application UUID | On the integration: pick the application from those of the token's team, or paste the last part of its address in Coolify (`…/application/<uuid>`). |
 | Build time | On the integration: whether the variables exist during the build. Values compiled into a build (`VITE_*`, `NEXT_PUBLIC_*`) need it, and then end up in image layers. |
 
 Then, in Coolify:
@@ -125,6 +125,23 @@ is no redeploy.
 | Could not check right now | Varlatch's server got no answer: the dialog says whether the address does not resolve, refuses the connection, redirects (a sign-in page in front of the API, for example), or has a certificate the server does not trust. A timeout, a rate limit, or a platform error clears with **Check again**. |
 | The platform refused the check | Most often the address answers but is not the platform's API: check the instance or deployment URL. |
 
+## Picking the destination
+
+On the Destination step, Varlatch lists what the connection's credential
+can see: the GitHub repositories in its owner (archived ones left out),
+or the applications of the Coolify token's team. Pick one, or type it
+when it is not listed: a repository you have not created yet, or one a
+partial list leaves out (Varlatch stops reading at 1,000, or after 30
+pages of GitHub repositories, and says so). If the list cannot load, the
+step says why, as a failed check does, and **Try again** reloads it;
+typing works meanwhile. After creating a repository or application on
+the platform, reload the list from the same step. Choosing another
+connection, or changing a new connection's owner or address, clears the
+destination and loads the new list.
+
+Seeing a destination is not permission to push to it: Review still checks
+the one you picked or typed, and the first push confirms it.
+
 ## What a check sends
 
 A check only reads. It sends the credential to the platform and nothing
@@ -143,3 +160,14 @@ Each check appears in the audit log as **Access checked**, with the
 platform, the address or destination, and the outcome; never the
 credential. Through the API, it is
 `POST /v1/organizations/{org}/platform-connections/check`.
+
+Listing destinations reads in the same way, with the same credential:
+
+| Platform | Requests |
+| --- | --- |
+| GitHub Actions | `GET /users/<owner>`, then `GET /orgs/<owner>/repos` for an organization or `GET /user/repos` (filtered to the owner) for a user, 100 per page |
+| Coolify | `GET /api/v1/applications`; only each application's uuid, name, and first address are kept |
+
+A listing appears in the audit log as **Destinations listed**, with how
+many it found and never their names. Through the API, it is
+`POST /v1/organizations/{org}/platform-connections/destinations`.

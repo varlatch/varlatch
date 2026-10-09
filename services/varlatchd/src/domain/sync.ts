@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { canonicalDestinationIdentity, getAdapter, AdapterError, type AccessCheck } from "@varlatch/sync";
+import {
+  canonicalDestinationIdentity,
+  getAdapter,
+  AdapterError,
+  type AccessCheck,
+  type DestinationListing,
+  type PlatformAdapter,
+} from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, encryptPlatformCredential } from "../crypto/hierarchy.js";
@@ -396,10 +403,12 @@ export async function revokeConnection(
   });
 }
 
-export type AccessCheckInput = { destination?: Record<string, unknown> | undefined } & (
+/** A Connection's stored credential (or a replacement for it), or a new one. */
+export type CredentialInput =
   | { connectionId: string; credential?: string | undefined }
-  | { platform: string; baseIdentity: string; credential: string }
-);
+  | { platform: string; baseIdentity: string; credential: string };
+
+export type AccessCheckInput = { destination?: Record<string, unknown> | undefined } & CredentialInput;
 
 /**
  * A read-only access check (ADR-0031, amendment 2026-10-09): does a
@@ -417,6 +426,99 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
+  const { adapter, baseIdentity, credential, connectionId, supplied } = await resolveCredential(ctx, org, input, allowedAdapters);
+  // No destination fields: the check stops at the base identity.
+  const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
+  const destination = named
+    ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
+    : null;
+
+  const result = await adapter.checkAccess({
+    baseIdentity,
+    destination: destination?.destination ?? {},
+    credential,
+    ...(fetchImpl ? { fetchImpl } : {}),
+  });
+  await recordAuditEvent(ctx.db, {
+    eventType: "sync.connection_checked",
+    decision: "info",
+    actorIdentityId,
+    organizationId: org.id,
+    action: "config.sync.manage",
+    resource: connectionId ? { connectionId } : null,
+    metadata: {
+      platform: adapter.platform,
+      baseIdentity,
+      destination: destination ? describeDestination(adapter.platform, destination.key) : null,
+      credential: supplied ? "supplied" : "stored",
+      status: result.status,
+      httpStatus: result.httpStatus ?? null,
+    },
+  });
+  return result;
+}
+
+/**
+ * The destinations a credential can see on its base identity, for the
+ * dashboard's pickers (ADR-0031, amendment 2026-10-09): read-only, under
+ * the same rules as an access check. Only destinations the adapter can
+ * canonicalize come back, and the audit records how many, never their names.
+ */
+export async function listConnectionDestinations(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: CredentialInput,
+  allowedAdapters: string[] | null,
+  actorIdentityId: string,
+  fetchImpl?: typeof fetch,
+): Promise<DestinationListing> {
+  const { adapter, baseIdentity, credential, connectionId, supplied } = await resolveCredential(ctx, org, input, allowedAdapters);
+  if (!adapter.listDestinations) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "This platform has no destinations to list: the Connection's base identity is the destination",
+    );
+  }
+  const listing = await adapter.listDestinations({ baseIdentity, destination: {}, credential, ...(fetchImpl ? { fetchImpl } : {}) });
+  const items = listing.items.filter((item) => {
+    try {
+      adapter.canonicalizeDestination(item.destination);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  await recordAuditEvent(ctx.db, {
+    eventType: "sync.destinations_listed",
+    decision: "info",
+    actorIdentityId,
+    organizationId: org.id,
+    action: "config.sync.manage",
+    resource: connectionId ? { connectionId } : null,
+    metadata: {
+      platform: adapter.platform,
+      baseIdentity,
+      credential: supplied ? "supplied" : "stored",
+      status: listing.check.status,
+      httpStatus: listing.check.httpStatus ?? null,
+      count: items.length,
+      truncated: listing.truncated,
+    },
+  });
+  return { ...listing, items };
+}
+
+/**
+ * The credential an access check or a listing uses: supplied now (a new
+ * Connection, or a replacement for a stored one) or the Connection's stored
+ * one. Either way it goes only to the Connection's base identity.
+ */
+async function resolveCredential(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: CredentialInput,
+  allowedAdapters: string[] | null,
+): Promise<{ adapter: PlatformAdapter; baseIdentity: string; credential: string; connectionId: string | null; supplied: boolean }> {
   let platform: string;
   let baseIdentity: string;
   let credential: string;
@@ -450,35 +552,8 @@ export async function checkConnectionAccess(
   if (credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
-  // No destination fields: the check stops at the base identity.
-  const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
-  const destination = named
-    ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
-    : null;
-
-  const result = await adapter.checkAccess({
-    baseIdentity,
-    destination: destination?.destination ?? {},
-    credential,
-    ...(fetchImpl ? { fetchImpl } : {}),
-  });
-  await recordAuditEvent(ctx.db, {
-    eventType: "sync.connection_checked",
-    decision: "info",
-    actorIdentityId,
-    organizationId: org.id,
-    action: "config.sync.manage",
-    resource: connectionId ? { connectionId } : null,
-    metadata: {
-      platform: adapter.platform,
-      baseIdentity,
-      destination: destination ? describeDestination(adapter.platform, destination.key) : null,
-      credential: connectionId && input.credential === undefined ? "stored" : "supplied",
-      status: result.status,
-      httpStatus: result.httpStatus ?? null,
-    },
-  });
-  return result;
+  const supplied = !("connectionId" in input) || input.credential !== undefined;
+  return { adapter, baseIdentity, credential, connectionId, supplied };
 }
 
 // ---------------------------------------------------------------------------

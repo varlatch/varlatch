@@ -1128,6 +1128,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/platform-connections/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** The destinations a credential can see on its base identity, for the dashboard's pickers (ADR-0031, amendment 2026-10-09): GitHub repositories in the owner, or the applications of a Coolify token's team. Read-only, under the access check's rules: a new credential (platform, baseIdentity, credential) or a Connection's stored one (connectionId), optionally replaced by a candidate. Seeing a destination is not permission to write it. Convex, whose base identity is the destination, has nothing to list (422). A listing that could not run still answers 200, with the reason in check. */
+        post: operations["listPlatformDestinations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/platform-connections/{connection}": {
         parameters: {
             query?: never;
@@ -1947,6 +1964,23 @@ export interface components {
             message: string;
             /** @description The platform's HTTP status, when it answered. */
             httpStatus?: number;
+        };
+        DestinationOption: {
+            /** @description The destination record, as a Sync Target takes it ({repo} or {applicationUuid}). */
+            destination: {
+                [key: string]: string;
+            };
+            /** @description The repository or application name. */
+            label: string;
+            /** @description A second line: visibility, or the application's address. */
+            detail?: string;
+        };
+        DestinationListing: {
+            /** @description ok when the listing ran; otherwise why not, and items is empty. */
+            check: components["schemas"]["AccessCheck"];
+            items: components["schemas"]["DestinationOption"][];
+            /** @description The listing is partial: Varlatch stopped reading (at 1,000 options, or after 30 pages of GitHub repositories), so more may exist than it shows, possibly with none listed. Type the exact name. */
+            truncated: boolean;
         };
         /** @description Item mapping: wildcard (every current AND future item of the Environment, optionally minus an exclusion list of exact names or trailing-* prefixes) or an explicit list with optional destination renames. A wildcard with exclusions gates exactly like a plain wildcard: the remainder still covers unknown future items. */
         SyncMappingInput: {
@@ -5006,6 +5040,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccessCheck"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listPlatformDestinations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    connectionId?: string;
+                    platform?: components["schemas"]["SyncPlatform"];
+                    baseIdentity?: string;
+                    credential?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The listing (Cache-Control no-store) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationListing"];
                 };
             };
             default: components["responses"]["Error"];

@@ -43,4 +43,23 @@ describe("access check", () => {
       "checked access to GitHub Actions acme: credential rejected",
     );
   });
+
+  it("describes an audited listing with its count, never names", () => {
+    const sentence = (metadata: Record<string, unknown>) =>
+      segmentsText(
+        describeEvent(
+          { eventId: "evt_2", eventType: "sync.destinations_listed", occurredAt: "2026-10-09T09:00:00Z", decision: "info", actorIdentityId: null, metadata },
+          emptyResolver,
+        ).segments,
+      );
+    expect(sentence({ platform: "github-actions", baseIdentity: "acme", status: "ok", count: 12, truncated: false })).toBe(
+      "listed what GitHub Actions acme lets the credential see (12)",
+    );
+    expect(sentence({ platform: "coolify", baseIdentity: "https://coolify.example.com", status: "ok", count: 1000, truncated: true })).toBe(
+      "listed what Coolify https://coolify.example.com lets the credential see (1000+)",
+    );
+    expect(sentence({ platform: "coolify", baseIdentity: "https://coolify.example.com", status: "permission-missing" })).toBe(
+      "listed what Coolify https://coolify.example.com lets the credential see: permission missing",
+    );
+  });
 });

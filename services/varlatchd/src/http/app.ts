@@ -84,10 +84,12 @@ import {
   requiredDisclosureActions,
   revokeConnection,
   checkConnectionAccess,
+  listConnectionDestinations,
   setTargetState,
   targetLedger,
   updateTarget,
   type AccessCheckInput,
+  type CredentialInput,
   type PlatformConnectionRow,
   type SyncMapping,
   type SyncTargetRow,
@@ -2892,6 +2894,33 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json(serializeConnection(connection), 201);
   });
 
+  // A Connection's stored credential, a replacement for it, or a new one: the
+  // credential an access check or a destination listing runs with.
+  const credentialInput = (body: {
+    connectionId?: string | undefined;
+    platform?: string | undefined;
+    baseIdentity?: string | undefined;
+    credential?: string | undefined;
+  }): CredentialInput => {
+    const { connectionId, platform, baseIdentity, credential } = body;
+    if (connectionId !== undefined) {
+      if (platform !== undefined || baseIdentity !== undefined) {
+        throw new DomainError("VALIDATION_FAILED", "Name a Connection, or a platform and base identity, not both");
+      }
+      return { connectionId, credential };
+    }
+    if (platform !== undefined && baseIdentity !== undefined && credential !== undefined) {
+      return { platform, baseIdentity, credential };
+    }
+    throw new DomainError("VALIDATION_FAILED", "Name a Connection, or a platform, base identity and credential");
+  };
+  const credentialFields = {
+    connectionId: z.string().min(1).optional(),
+    platform: z.string().min(1).max(50).optional(),
+    baseIdentity: z.string().min(1).max(500).optional(),
+    credential: z.string().min(1).max(10_000).optional(),
+  };
+
   // A read-only access check before anything is saved (ADR-0031, amendment
   // 2026-10-09): a new credential, a replacement for a stored one, or the
   // stored one, against the base identity and optionally a destination.
@@ -2901,30 +2930,33 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(
-      z.object({
-        connectionId: z.string().min(1).optional(),
-        platform: z.string().min(1).max(50).optional(),
-        baseIdentity: z.string().min(1).max(500).optional(),
-        credential: z.string().min(1).max(10_000).optional(),
-        destination: z.record(z.string(), z.unknown()).optional(),
-      }),
+      z.object({ ...credentialFields, destination: z.record(z.string(), z.unknown()).optional() }),
       await c.req.json(),
     );
-    const { connectionId, platform, baseIdentity, credential, destination } = body;
-    let input: AccessCheckInput;
-    if (connectionId !== undefined) {
-      if (platform !== undefined || baseIdentity !== undefined) {
-        throw new DomainError("VALIDATION_FAILED", "Name a Connection, or a platform and base identity, not both");
-      }
-      input = { connectionId, credential, destination };
-    } else if (platform !== undefined && baseIdentity !== undefined && credential !== undefined) {
-      input = { platform, baseIdentity, credential, destination };
-    } else {
-      throw new DomainError("VALIDATION_FAILED", "Name a Connection, or a platform, base identity and credential");
-    }
+    const input: AccessCheckInput = { ...credentialInput(body), destination: body.destination };
     const result = await checkConnectionAccess(ctx, org, input, syncEnabled.adapters, principal.identity.id, options.syncFetch);
     c.header("Cache-Control", "no-store");
     return c.json(result);
+  });
+
+  // The destinations a credential can see, for the dashboard's pickers:
+  // read-only, under the access check's rules.
+  app.post("/v1/organizations/:org/platform-connections/destinations", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object(credentialFields), await c.req.json());
+    const listing = await listConnectionDestinations(
+      ctx,
+      org,
+      credentialInput(body),
+      syncEnabled.adapters,
+      principal.identity.id,
+      options.syncFetch,
+    );
+    c.header("Cache-Control", "no-store");
+    return c.json(listing);
   });
 
   app.get("/v1/organizations/:org/platform-connections/:connection", async (c) => {

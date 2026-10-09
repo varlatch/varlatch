@@ -43,6 +43,7 @@ import type {
   OidcBinding,
   IssuedOidcCredential,
   AccessCheck,
+  DestinationListing,
   PlatformConnection,
   SyncLedgerName,
   SyncMappingInput,
@@ -939,6 +940,18 @@ export class VarlatchClient {
     ),
   ): Promise<AccessCheck> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/platform-connections/check`, input);
+  }
+
+  /**
+   * The destinations a credential can see, for a picker: a new credential
+   * (platform, baseIdentity, credential), or a Connection's stored one
+   * (connectionId), optionally replaced by a candidate.
+   */
+  listPlatformDestinations(
+    org: string,
+    input: { connectionId: string; credential?: string } | { platform: SyncPlatform; baseIdentity: string; credential: string },
+  ): Promise<DestinationListing> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/platform-connections/destinations`, input);
   }
 
   getPlatformConnection(

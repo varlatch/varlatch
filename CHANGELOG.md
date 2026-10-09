@@ -23,6 +23,16 @@ fixes.
   each platform needs, with its permissions, and where to find every
   field. The GitHub hint now says that environment secrets need the
   Environments permission, not Secrets.
+- The Destination step lists what the connection's credential can see:
+  GitHub repositories in its owner, or the applications of a Coolify
+  token's team, by name. Picking one fills the field; typing still works
+  for a destination the list leaves out or that does not exist yet, and
+  Review still checks it. A listing only reads, keeps each application's
+  uuid, name, and address only, and is audited as `Destinations listed`
+  with a count, never names.
+- API: `POST /v1/organizations/{org}/platform-connections/destinations`,
+  for a new credential or a connection's stored one.
+
 ### Dashboard
 
 - **Network requirements show everything they enforce.** Access, Advanced

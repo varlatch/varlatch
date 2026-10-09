@@ -9,6 +9,7 @@ import { Button, Callout, Checkbox, Field, Input, Mono, Segmented, Select, cn } 
 import { useToast } from "../../components/Toast";
 import { keys } from "../projects/hooks";
 import { AccessCheckNotice } from "./AccessCheckNotice";
+import { DestinationPicker } from "./DestinationPicker";
 import { useBoundCheck } from "./useBoundCheck";
 import { CredentialHint } from "./CredentialHint";
 import { fixStep } from "./accessCheck";
@@ -146,11 +147,38 @@ export function AddIntegrationDialog({
     true,
   ];
 
+  // The destinations the chosen connection can see, for the Destination
+  // step's picker: listed on arrival, again when the connection changes, and
+  // bound like the access check, so a slow listing for another connection
+  // never fills this one's list.
+  const listable = effectivePlatform === "github-actions" || effectivePlatform === "coolify";
+  const listInput = isNew ? { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential } : { connectionId };
+  const destinations = useBoundCheck(listInput, (checked) => api.listPlatformDestinations(org, checked));
+  const listKey = JSON.stringify(listInput);
+  const runListing = destinations.run;
+  useEffect(() => {
+    if (step === 1 && listable && !destinations.settled && !destinations.pending) runListing();
+  }, [step, listable, listKey, destinations.settled, destinations.pending, runListing]);
+  // Another connection, platform, or base identity is another account or
+  // instance: a destination picked for the previous one does not carry over.
+  const clearDestination = () => {
+    setRepo("");
+    setGhEnvironment("");
+    setAppUuid("");
+  };
+  const chooseConnection = (id: string) => {
+    if (id !== connectionId) clearDestination();
+    setConnectionId(id);
+  };
+
+  const pickedAppName = destinations.result?.items.find((o) => o.destination.applicationUuid === appUuid.trim())?.label;
   const destLabel =
     effectivePlatform === "github-actions"
       ? `${owner ? `${owner}/` : ""}${repo.trim()}`
       : effectivePlatform === "coolify"
-        ? appUuid.trim()
+        ? pickedAppName
+          ? `${pickedAppName} (${appUuid.trim()})`
+          : appUuid.trim()
         : hostOf(owner);
 
   // Read-only, nothing saved: a new credential is checked as typed, an
@@ -169,6 +197,7 @@ export function AddIntegrationDialog({
     if (step === STEPS.length - 1) checkAccess();
   }, [step, checkAccess]);
   const fix = access.result ? fixStep(access.result) : null;
+
   const accessFailed = Boolean((access.result && access.result.status !== "ok") || access.error);
 
   const create = useMutation({
@@ -285,7 +314,7 @@ export function AddIntegrationDialog({
                     <ChoiceCard
                       key={c.id}
                       selected={connectionId === c.id}
-                      onSelect={() => setConnectionId(c.id)}
+                      onSelect={() => chooseConnection(c.id)}
                       testId={`connection-option-${c.id}`}
                       icon={<PlatformTile platform={c.platform} size="sm" />}
                       title={c.name}
@@ -298,7 +327,7 @@ export function AddIntegrationDialog({
                   ))}
                   <ChoiceCard
                     selected={isNew}
-                    onSelect={() => setConnectionId("__new")}
+                    onSelect={() => chooseConnection("__new")}
                     testId="connection-option-new"
                     icon={
                       <span className="flex size-8 items-center justify-center rounded-lg border border-dashed border-bd-strong text-muted">
@@ -319,7 +348,10 @@ export function AddIntegrationDialog({
                           role="radio"
                           aria-checked={platform === a}
                           data-testid={`platform-card-${a}`}
-                          onClick={() => setPlatform(a)}
+                          onClick={() => {
+                            if (a !== platform) clearDestination();
+                            setPlatform(a);
+                          }}
                           className={cn(
                             "flex cursor-pointer items-center gap-2.5 rounded-lg border bg-raised px-3 py-2.5 text-left text-sm font-medium transition-colors",
                             platform === a ? "border-accent ring-2 ring-accent/20" : "border-bd hover:border-bd-strong",
@@ -339,7 +371,12 @@ export function AddIntegrationDialog({
                             className="w-full"
                             placeholder={meta.identityPlaceholder}
                             value={baseIdentity}
-                            onChange={(e) => setBaseIdentity(e.target.value)}
+                            onChange={(e) => {
+                              // Another account or instance: a destination picked for the
+                              // previous one does not carry over.
+                              if (e.target.value.trim().toLowerCase() !== baseIdentity.trim().toLowerCase()) clearDestination();
+                              setBaseIdentity(e.target.value);
+                            }}
                           />
                         </Field>
                         <Field label="Name" hint="How this connection shows up in Varlatch.">
@@ -398,9 +435,19 @@ export function AddIntegrationDialog({
                     </Field>
                   </div>
                 )}
+                {effectivePlatform === "github-actions" && (
+                  <DestinationPicker
+                    noun={{ one: "repository", many: "repositories" }}
+                    value={repo}
+                    valueOf={(o) => o.destination.repo ?? ""}
+                    listing={destinations}
+                    onPick={(o) => setRepo(o.destination.repo ?? "")}
+                    onRetry={() => runListing()}
+                  />
+                )}
                 {effectivePlatform === "coolify" && (
                   <div className="grid gap-4 sm:grid-cols-2">
-                    <Field label="Application UUID" error={appError} hint="From the application's URL in Coolify.">
+                    <Field label="Application UUID" error={appError} hint="Pick it below, or paste it from the application's URL in Coolify.">
                       <Input
                         data-testid="dest-app"
                         mono
@@ -428,6 +475,16 @@ export function AddIntegrationDialog({
                       />
                     </Field>
                   </div>
+                )}
+                {effectivePlatform === "coolify" && (
+                  <DestinationPicker
+                    noun={{ one: "application", many: "applications" }}
+                    value={appUuid}
+                    valueOf={(o) => o.destination.applicationUuid ?? ""}
+                    listing={destinations}
+                    onPick={(o) => setAppUuid(o.destination.applicationUuid ?? "")}
+                    onRetry={() => runListing()}
+                  />
                 )}
                 {effectivePlatform === "convex" && (
                   <Callout tone="neutral" data-testid="dest-convex">
