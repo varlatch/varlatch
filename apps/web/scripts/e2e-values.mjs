@@ -313,13 +313,14 @@ check(
 check("export made no disclosure", disclosures.length === 4);
 
 // 10b. Tailnet-only values: a Tailnet Requirement on production keeps every
-// value out of the dashboard, which never has Tailnet Context. The
+// value out of the dashboard, which never has Tailnet Context. Plaintext
+// revealed before the requirement appeared leaves the open page, the
 // environment says so, every Reveal path gives way to the explanation
 // (?reveal=1 included), and the page asks for no values and no disclosure.
-const valueReads = [];
-page.on("request", (req) => {
-  if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());
-});
+await page.goto(`${base}/o/acme/p/api/e/production`);
+await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
+await page.click('[data-testid="reveal-all"]');
+await waitText('[data-row="DATABASE_URL"]', "prod-rotated");
 const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", {
   kind: "tailnet",
   target: { kind: "tier", tier: "production" },
@@ -327,6 +328,17 @@ const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", 
 });
 check("tailnet requirement on production created", tailnetReq.status === 201, `status ${tailnetReq.status}`);
 const tailnetReqId = (await tailnetReq.json()).id;
+// No reload: the requirement reaches the open page as a live update.
+await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 30000 });
+check(
+  "plaintext revealed before the requirement leaves the open page",
+  !(await rowText("DATABASE_URL")).includes("prod-rotated"),
+  await rowText("DATABASE_URL"),
+);
+const valueReads = [];
+page.on("request", (req) => {
+  if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());
+});
 const disclosuresBefore = disclosureRequests.length;
 const flagged = (await (await apiJson(`${API}/environments`, "GET")).json()).items;
 check(

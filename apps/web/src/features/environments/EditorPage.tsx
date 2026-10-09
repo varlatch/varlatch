@@ -90,13 +90,16 @@ export function EditorPage() {
   const wide = useWide();
 
   const values = useEnvValues(org, slug, environment);
+  // A Tailnet Requirement covers this environment: no value can be read here.
+  const tailnetOnly = isTailnetOnly(environment) || values.data?.tailnetOnly === true;
+  const restricted = useMemo(() => new Set(tailnetOnly ? [envName] : []), [tailnetOnly, envName]);
   const contract = useContractItems(org, slug);
   const targets = useEnvSyncTargets(org, slug, envName);
   const connections = usePlatformConnections(org);
   const changes = useItemChanges(org, environment.id);
   const now = useNow(60_000);
   const drafts = useDrafts();
-  const disclosure = useDisclosure(org, slug);
+  const disclosure = useDisclosure(org, slug, restricted);
 
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<string | null>(() => params.get("item"));
@@ -120,8 +123,6 @@ export function EditorPage() {
     }
   }, [itemParam]);
   const revealParam = params.get("reveal") === "1";
-  // A Tailnet Requirement covers this environment: no value can be read here.
-  const tailnetOnly = values.data?.tailnetOnly ?? isTailnetOnly(environment);
   const revealedOnce = useRef(false);
 
   const serverByName = values.data?.byName;
@@ -585,7 +586,7 @@ function ValueRow({
   row,
   filter,
   draft,
-  disclosed,
+  disclosed: revealed,
   isDisclosed,
   withheld,
   tailnetOnly,
@@ -621,6 +622,8 @@ function ValueRow({
   onCancel: () => void;
   onEye: () => void;
 }) {
+  // Plaintext disclosed before a Tailnet Requirement appeared is never shown.
+  const disclosed = tailnetOnly ? undefined : revealed;
   const { name, server, contract, sensitive, state } = row;
   const kind = draftKind(draft, server);
   const flavour = editorKind(sensitive, contract);

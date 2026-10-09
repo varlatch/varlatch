@@ -51,7 +51,11 @@ fixes.
   them; others get the general guidance. Before, the environment page
   showed "Values unavailable" with the server's error and recorded a denial
   in the audit log on every visit; now it shows the items and their states
-  and asks for no values.
+  and asks for no values. Secrets revealed on a page before a requirement
+  covers its environment stop showing, and can no longer be copied, as soon
+  as the page learns of the requirement, and a reveal still in flight then
+  is discarded. This tidies the screen only: plaintext the browser already
+  received is not revoked.
 
 ### API
 

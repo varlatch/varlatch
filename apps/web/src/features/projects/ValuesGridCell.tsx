@@ -46,7 +46,7 @@ export function ValuesGridCell({
   sensitive,
   state,
   draft,
-  disclosed,
+  disclosed: revealed,
   withheld,
   tailnetOnly,
   loading,
@@ -81,6 +81,8 @@ export function ValuesGridCell({
   actions: CellActions;
 }) {
   const kind = draftKind(draft, server);
+  // Plaintext disclosed before a Tailnet Requirement appeared is never shown or copied.
+  const disclosed = tailnetOnly ? undefined : revealed;
   const editable = !loading && !unavailable;
   // Copy offers the saved value only; with a draft pending it would mislead.
   const copyValue = draft ? undefined : sensitive ? disclosed?.value : !withheld ? (server?.value ?? undefined) : undefined;

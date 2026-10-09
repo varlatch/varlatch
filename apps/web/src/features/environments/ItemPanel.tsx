@@ -49,7 +49,7 @@ export function ItemPanelBody({
   sensitive,
   state,
   draft,
-  disclosed,
+  disclosed: revealed,
   withheld,
   tailnetOnly = false,
   rotationDeadline,
@@ -79,6 +79,8 @@ export function ItemPanelBody({
   actions: PanelActions;
 }) {
   const now = useNow(30_000);
+  // Plaintext disclosed before a Tailnet Requirement appeared is never shown or copied.
+  const disclosed = tailnetOnly ? undefined : revealed;
   const kind = draftKind(draft, server);
   const own = server?.source === "self";
   return (
@@ -283,7 +285,7 @@ function ValueText({
     return <span className="font-mono text-[13px] italic text-muted">default {contract?.defaultValue}</span>;
   }
   if (!server) return <span className="text-[13px] text-muted">Not set</span>;
-  if (tailnetOnly && !disclosed) return <span className="text-[13px] text-muted">Set. {TAILNET_ONLY_GUIDANCE}</span>;
+  if (tailnetOnly) return <span className="text-[13px] text-muted">Set. {TAILNET_ONLY_GUIDANCE}</span>;
   if (sensitive) return disclosed ? <span className={mono}>{disclosed.value}</span> : <SecretMask />;
   if (withheld) return <span className="text-[13px] text-muted">Set; your access does not include reading it</span>;
   return <span className={mono}>{server.value === "" ? <em className="text-muted">(empty)</em> : server.value}</span>;

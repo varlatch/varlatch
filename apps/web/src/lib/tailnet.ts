@@ -25,3 +25,12 @@ export function isTailnetDenial(err: unknown): boolean {
   const code = err && typeof err === "object" && "code" in err ? (err as { code: unknown }).code : undefined;
   return typeof code === "string" && code.startsWith("TAILNET_");
 }
+
+/** A reveal refused, or a disclosure discarded, because the environment became tailnet-only. */
+export class TailnetOnlyError extends Error {
+  readonly code = "TAILNET_ONLY";
+  constructor() {
+    super(TAILNET_ONLY_GUIDANCE);
+    this.name = "TailnetOnlyError";
+  }
+}

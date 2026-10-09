@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EffectiveConfiguration, Environment, SyncTarget } from "@varlatch/protocol";
 import type { VarlatchClient } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
@@ -72,9 +72,24 @@ export async function loadEnvValues(api: VarlatchClient, org: string, project: s
 const valuesKey = (org: string, project: string, env: Environment) =>
   [...keys.effectiveValues(org, project, env.name), isTailnetOnly(env)] as const;
 
+/**
+ * Once an environment turns tailnet-only, drop what was cached before: its
+ * non-sensitive plaintext, under the key without the restriction.
+ */
+function useForgetUnrestricted(org: string, project: string, envs: Environment[]) {
+  const qc = useQueryClient();
+  const tailnetOnly = envs.filter(isTailnetOnly).map((e) => e.name).join("\u0000");
+  useEffect(() => {
+    for (const env of tailnetOnly ? tailnetOnly.split("\u0000") : []) {
+      qc.removeQueries({ queryKey: [...keys.effectiveValues(org, project, env), false], exact: true });
+    }
+  }, [qc, org, project, tailnetOnly]);
+}
+
 /** Effective configuration with non-sensitive values, for one environment. */
 export function useEnvValues(org: string, project: string, env: Environment) {
   const { api } = useSession();
+  useForgetUnrestricted(org, project, [env]);
   return useQuery({
     queryKey: valuesKey(org, project, env),
     queryFn: () => loadEnvValues(api, org, project, env),
@@ -84,6 +99,7 @@ export function useEnvValues(org: string, project: string, env: Environment) {
 /** The same, for several environments at once (the grid's columns). */
 export function useManyEnvValues(org: string, project: string, envs: Environment[]) {
   const { api } = useSession();
+  useForgetUnrestricted(org, project, envs);
   return useQueries({
     queries: envs.map((env) => ({
       queryKey: valuesKey(org, project, env),

@@ -81,7 +81,13 @@ export function ValuesGrid() {
   const targetsByEnv = useProjectSyncTargets(org, project.id);
   const connections = usePlatformConnections(org);
   const drafts = useDrafts();
-  const disclosure = useDisclosure(org, slug);
+  // Columns a Tailnet Requirement covers: no value can be read there.
+  const restrictedKey = roots
+    .filter((env, i) => isTailnetOnly(env) || columns[i]?.data?.tailnetOnly === true)
+    .map((env) => env.name)
+    .join("\u0000");
+  const restricted = useMemo(() => new Set(restrictedKey ? restrictedKey.split("\u0000") : []), [restrictedKey]);
+  const disclosure = useDisclosure(org, slug, restricted);
 
   const [filter, setFilter] = useState("");
   const [segment, setSegment] = useState<Segment>("all");
@@ -134,10 +140,10 @@ export function ValuesGrid() {
           loading: col?.isLoading ?? true,
           error: col?.isError ?? false,
           // A Tailnet Requirement covers the column: no value can be read here.
-          tailnetOnly: col?.data?.tailnetOnly ?? isTailnetOnly(env),
+          tailnetOnly: restricted.has(env.name),
         };
       }),
-    [roots, columns, rows],
+    [roots, columns, rows, restricted],
   );
 
   const missingRows = rows.filter((r) =>
