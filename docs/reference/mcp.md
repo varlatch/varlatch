@@ -24,7 +24,9 @@ Or let the CLI add it to the project's MCP files (`.mcp.json`,
 
 ## Tools
 
-- **Always:** server and context information, organizations, projects,
+- **Always:** server and context information, with who the server acts as
+  (`varlatch_whoami`: the identity, its organization, and the credential,
+  a person's or a machine's), organizations, projects,
   environments, the effective configuration (with non-secret values on
   request), the active Contract, validation, and audit events.
 - **With `--allow-writes`** (or `VARLATCH_MCP_ALLOW_WRITES=1`):

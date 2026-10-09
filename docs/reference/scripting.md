@@ -13,7 +13,8 @@ change either: scripts that parse them keep working.
 
 | Command | Document |
 | --- | --- |
-| `varlatch status --json` | stored credentials and the repository context |
+| `varlatch status --json` | stored credentials and the repository context; with `--probe`, each valid credential's `identity` (id, name, kind) and `organization` (id, slug, name, or null for a person), where the server can say |
+| `varlatch whoami --json` | `server`, and the caller as the server answers: `identity` (id, name, kind, email), `organization` (null for a person), `credential` (id, name, kind, expiresAt; never the token), `listener`, and on the tailnet listener `tailnet` (the device) |
 | `varlatch context --json` | the resolved context |
 | `varlatch env list --json` | `environments`: name, tier, kind, selected |
 | `varlatch values list --json` | `environment`, `items`: name, sensitive, source (never a value) |

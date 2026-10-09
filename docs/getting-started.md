@@ -343,6 +343,12 @@ needs: like a person, it starts with no access.
   To replace a credential, issue the new one, move the program to it, then
   revoke the old one.
 
+  A program can ask Varlatch which identity its credential belongs to:
+  `GET /v1/me` answers with the identity, its organization, and the
+  credential's own name, and needs no grant. On the command line,
+  `varlatch whoami` prints the same for the credential the CLI would use
+  (`VARLATCH_TOKEN`, else the stored one).
+
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
 or Convex, for platforms that keep their own copy: add an integration on the
 environment's Integrations tab. [Integrations](reference/integrations.md)
