@@ -14,7 +14,7 @@ varlatchd: a small probe stands in for varlatchd, in the same topology.
 | S5 | Chromium, Firefox and WebKit calling the endpoint cross-origin, from a public origin and a ts.net origin: preflights, Private Network Access, and how long an unreachable endpoint takes to fail |
 | S6 | `tailscale serve` TCP forwarding, TLS-terminated and plain, carries no tailnet identity |
 | S7 | A device from another tailnet, reaching the node through sharing, is refused by the tailnet pin |
-| S8 | How a device the access rules deny `tcp:8688` fails, and how fast |
+| S8 | How a device the access rules deny `tcp:8688` fails, and how fast, judged against an allowed device on the same port |
 
 ## What it does, and what it never does
 
@@ -56,12 +56,34 @@ SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey \
 | `SPIKE_KEEP=1` | Keep the containers (the nodes stay joined until you log them out) |
 
 Every result is one line, and one JSON line in a file under the temp
-directory (the path is printed): PASS or FAIL for an expectation the design
-makes, OBSERVED for a measurement, NOT RUN when a prerequisite is missing.
-NOT RUN is not a pass. The exit code is 0 only when every selected spike ran
-and passed; 1 when anything failed; 3 when anything did not run. S5 needs
-Firefox and WebKit installed for Playwright (`npx playwright install
-firefox webkit` in `apps/web`), or it reports them NOT RUN.
+directory (the path is printed):
+
+| Result | Meaning |
+|---|---|
+| PASS / FAIL | An acceptance check the design depends on |
+| OBSERVED | A measurement (timings, raw browser results); never a verdict |
+| INCONCLUSIVE | The check could not decide, for example a page that never completed |
+| NOT RUN | A prerequisite is missing |
+
+Only PASS is passing. The exit code is 0 only when every selected spike ran
+and passed; 1 when anything failed; 3 when anything was inconclusive or not
+run.
+
+**S5's acceptance checks**, per browser and page:
+- The public and ts.net origins pass only when a fetch was answered and
+  WhoIs named this machine. An answer naming anything else fails.
+- If every fetch failed, a headless run is inconclusive, because a
+  permission prompt nobody could answer may explain it. A headed run
+  (`SPIKE_HEADED=1`, with 60 seconds to answer a prompt) fails.
+- The unreachable endpoints pass only when every fetch failed; how long
+  that took is recorded.
+- A page that did not complete is inconclusive.
+
+Browsers come from Playwright: `npx playwright install firefox webkit` in
+`apps/web`. Playwright's WebKit needs system libraries some Linux
+distributions lack, and installing them needs root. Where it does not
+launch, S5 reports WebKit NOT RUN. Safari itself is better tested by hand
+on a Mac on the tailnet.
 
 ## What the test tailnet must allow
 
@@ -116,14 +138,26 @@ user's device, request the URL the script prints. The share is removed with
 the node when it logs out.
 
 **S8, a device denied `tcp:8688`.** Tailscale policies only allow, so denying
-one port means narrowing an allow rule. On a test tailnet with the default
-allow-all policy, the owner would replace it with (proposed, not applied):
+one port means narrowing an allow rule. The rule lets only this machine use
+8688. The spike's client node is then the denied device, and this machine
+an allowed control on the same port. `preflight` prints this machine's
+Tailscale addresses. On a test tailnet with the default allow-all policy,
+the owner would replace that rule with (proposed, not applied):
 
 ```jsonc
-// Everyone keeps every port except 8688; only <keeper> may use 8688.
+// Every port except 8688 for everyone; 8688 only from this machine.
 { "action": "accept", "src": ["*"], "dst": ["*:1-8687,8689-65535"] },
-{ "action": "accept", "src": ["<a device or user that is not this machine>"], "dst": ["*:8688"] }
+{ "action": "accept", "src": ["<this machine's Tailscale IPv4>"], "dst": ["*:8688"] }
 ```
 
 Then run `SPIKE_S8_RULE_APPLIED=1 node scripts/spike-tailnet-browser/run.mjs s8`
-from this machine, the denied device, and restore the policy afterwards.
+and restore the policy afterwards. S8 enables the spike node's HTTPS
+listener itself. It accepts the client node's failure only when:
+- this machine got an HTTPS answer on 8688 that names it, which proves
+  there is a listener and the rule lets the allowed device through
+- the client node still reaches the spike node on tcp:8687, which proves
+  the failure is the rule's and not a broken node
+
+Otherwise the result is inconclusive. The client node's failure is
+measured with curl through its proxy; a browser on a denied device would
+need a manual run on such a device.

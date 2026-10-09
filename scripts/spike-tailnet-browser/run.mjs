@@ -13,8 +13,9 @@
 //
 // The auth key comes from SPIKE_TS_AUTHKEY_FILE (a file holding it) or
 // SPIKE_TS_AUTHKEY; it is never printed or logged. Every result is a line:
-// PASS / FAIL (an expectation from the design), OBSERVED (a measurement),
-// NOT RUN (a prerequisite is missing: not a pass). Results also go to a
+// PASS / FAIL (an acceptance check), OBSERVED (a measurement, never a
+// verdict), INCONCLUSIVE (the check could not decide), NOT RUN (a
+// prerequisite is missing). Only PASS is passing. Results also go to a
 // JSONL file. Both spike nodes log out and every container and volume is
 // removed at the end, unless SPIKE_KEEP=1.
 import { execFile, execFileSync } from "node:child_process";
@@ -60,6 +61,49 @@ function emit(kind, spike, name, detail) {
 const expect = (spike, name, ok, detail) => emit(ok ? "PASS" : "FAIL", spike, name, detail);
 const observe = (spike, name, detail) => emit("OBSERVED", spike, name, detail);
 const notRun = (spike, why) => emit("NOT RUN", spike, why);
+const judge = (spike, name, verdict) => emit(verdict.kind, spike, name, verdict.detail);
+const verdict = (kind, detail) => ({ kind, ...(detail === undefined ? {} : { detail }) });
+
+/**
+ * S5 acceptance for one browser and one page. A reachable endpoint passes
+ * only when a fetch was answered and WhoIs named this machine; an
+ * unreachable one only when every fetch failed. A page that did not
+ * complete is inconclusive, and so is a headless run where every fetch
+ * failed, since a permission prompt nobody could answer may explain it.
+ */
+function judgeS5(expected, outcome, { headed, localId }) {
+  if (!outcome.completed) return verdict("INCONCLUSIVE", `the test page did not complete: ${outcome.error ?? "no result"}`);
+  const results = outcome.results ?? [];
+  if (results.length === 0) return verdict("INCONCLUSIVE", "the page recorded no fetch");
+  if (expected === "unreachable") {
+    return results.every((r) => !r.ok) ? verdict("PASS", results.map((r) => ({ ms: r.ms, error: r.error }))) : verdict("FAIL", { answered: results.filter((r) => r.ok) });
+  }
+  const answered = results.find((r) => r.ok && r.status === 200);
+  if (answered) {
+    return answered.whois?.ok && answered.whois.nodeId === localId
+      ? verdict("PASS", { pna: answered.pna, ms: answered.ms })
+      : verdict("FAIL", { problem: "answered, but WhoIs did not name this machine", whois: answered.whois });
+  }
+  return headed
+    ? verdict("FAIL", { problem: "every fetch failed in a headed browser", results })
+    : verdict("INCONCLUSIVE", { problem: "every fetch failed headless; a permission prompt may explain it: rerun with SPIKE_HEADED=1", results });
+}
+
+/**
+ * S8 acceptance. The denied device's failure means something only when the
+ * allowed device got an HTTPS answer on the same port (there is a listener
+ * and the rule lets someone through) and the denied device still reaches
+ * the node on another port (the failure is the rule's, not a broken node).
+ */
+function judgeS8({ control, denied, deniedPlain, allowedId }) {
+  if (!control.ok || control.status !== 200) {
+    return verdict("INCONCLUSIVE", { problem: "the allowed device's HTTPS request failed, so the denied device's failure proves nothing", control });
+  }
+  if (control.whois?.nodeId !== allowedId) return verdict("INCONCLUSIVE", { problem: "the control was answered without naming the allowed device", whois: control.whois });
+  if (!deniedPlain.ok) return verdict("INCONCLUSIVE", { problem: "the denied device does not reach the node on tcp:8687 either, so the failure is not shown to be the rule's", deniedPlain });
+  if (denied.ok) return verdict("FAIL", { problem: "the denied device was answered on tcp:8688", denied });
+  return verdict("PASS", { deniedFailedAfterMs: denied.ms, error: denied.error });
+}
 
 async function until(what, test, ms = 180_000) {
   const end = Date.now() + ms;
@@ -225,6 +269,20 @@ function curlLines(args) {
     .map((l) => JSON.parse(l));
 }
 
+/** One request from the client node, with its outcome and timing; a failure is a result, not an exception. */
+function curlOnce(url, timeoutSec) {
+  const t0 = Date.now();
+  try {
+    const out = dc(["exec", "-T", "client-curl", "curl", "-sS", "--socks5-hostname", "localhost:1055", "-m", String(timeoutSec), "-H", "Connection: close", "-w", "\n%{http_code}", url]);
+    const lines = out.split("\n");
+    const status = Number(lines.at(-1));
+    const body = lines.find((l) => l.startsWith("{"));
+    return { ok: status > 0, status, json: body ? JSON.parse(body) : null, ms: Date.now() - t0 };
+  } catch (err) {
+    return { ok: false, error: String(err.stderr ?? err).trim().slice(0, 200), ms: Date.now() - t0 };
+  }
+}
+
 // ---- Preflight: what this machine and the auth key source allow, joining nothing.
 function preflight() {
   const facts = {};
@@ -263,6 +321,31 @@ function preflight() {
   return facts;
 }
 
+/** Whether each Playwright browser actually starts here; an executable on disk is not enough. */
+async function launchableBrowsers() {
+  let pw;
+  try {
+    pw = createRequire(join(root, "apps/web/package.json"))("playwright");
+  } catch {
+    return null;
+  }
+  const out = {};
+  for (const b of ["chromium", "firefox", "webkit"]) {
+    if (!existsSync(pw[b].executablePath())) {
+      out[b] = "not installed";
+      continue;
+    }
+    try {
+      const browser = await pw[b].launch();
+      await browser.close();
+      out[b] = "launches";
+    } catch (err) {
+      out[b] = /missing dependencies/i.test(String(err)) ? "installed, missing system libraries" : "installed, does not launch";
+    }
+  }
+  return out;
+}
+
 function printPreflight(f) {
   const line = (ok, text) => console.log(`${ok ? "ok  " : "MISSING"}  ${text}`);
   line(!!f.docker, `Docker ${f.docker ?? "not reachable"}`);
@@ -270,9 +353,10 @@ function printPreflight(f) {
   line(f.magicDNS !== false, `MagicDNS ${f.magicDNS === null ? "unknown" : f.magicDNS ? "on" : "off"}`);
   line(f.httpsCertificates, `HTTPS certificates for the tailnet ${f.httpsCertificates ? "on" : "off or unknown"} (S3-S6, S8)`);
   line(!!f.authKeySource, `auth key from ${f.authKeySource ?? "nowhere: set SPIKE_TS_AUTHKEY_FILE or SPIKE_TS_AUTHKEY"} (not read here)`);
-  line(!!f.browsers, `browsers for S5: ${f.browsers ? Object.entries(f.browsers).map(([b, ok]) => `${b} ${ok ? "installed" : "missing"}`).join(", ") : "Playwright not found"}`);
-  line(process.env.SPIKE_S7_WAIT_SECONDS > 0, "S7 needs a node shared in from another tailnet (SPIKE_S7_WAIT_SECONDS)");
-  line(process.env.SPIKE_S8_RULE_APPLIED === "1", "S8 needs the approved deny rule applied (SPIKE_S8_RULE_APPLIED=1)");
+  line(!!f.browsers && Object.values(f.browsers).every((v) => v === true || v === "launches"), `browsers for S5: ${f.browsers ? Object.entries(f.browsers).map(([b, v]) => `${b} ${v === true ? "installed" : v === false ? "missing" : v}`).join(", ") : "Playwright not found"}`);
+  line(process.env.SPIKE_S7_WAIT_SECONDS > 0, "S7 needs the spike node shared with a user of another tailnet (SPIKE_S7_WAIT_SECONDS)");
+  line(process.env.SPIKE_S8_RULE_APPLIED === "1", "S8 needs the approved rule from README.md applied (SPIKE_S8_RULE_APPLIED=1)");
+  if (f.selfIPs?.length) console.log(`         this machine's Tailscale addresses, for the S8 rule: ${f.selfIPs.join(", ")}`);
 }
 
 // ---- Setup: both nodes join, the key copy goes, the probe starts.
@@ -449,21 +533,30 @@ async function s5(ctx, local) {
   } catch {
     return notRun("s5", "Playwright is not installed (pnpm install)");
   }
+  const headed = process.env.SPIKE_HEADED === "1";
+  // Headed, a person may have to answer a permission prompt: give them time.
+  const abortMs = headed ? 60000 : 4000;
   const endpoint = `https://${ctx.name}:8688`;
   const taken = new Set([...local.peerIPs, ...local.selfIPs]);
   const blackhole = ["100.88.77.66", "100.99.88.77", "100.77.66.55"].find((ip) => !taken.has(ip));
   const cases = [
-    { origin: "public", url: `${PUBLIC_ORIGIN}/`, html: pageHtml(endpoint) },
-    { origin: "ts.net", url: `https://${ctx.name}:8690/page` },
-    { origin: "public, name does not resolve", url: `${PUBLIC_ORIGIN}/nxdomain`, html: pageHtml(`https://no-such-spike-node.${ctx.tailnet}:8688`, 30000) },
-    { origin: "public, address not on the tailnet", url: `${PUBLIC_ORIGIN}/blackhole`, html: pageHtml(`https://${blackhole}:8688`, 30000) },
+    { origin: "public", expected: "reachable", url: `${PUBLIC_ORIGIN}/`, html: pageHtml(endpoint, abortMs) },
+    { origin: "ts.net", expected: "reachable", url: `https://${ctx.name}:8690/page` },
+    { origin: "public, name does not resolve", expected: "unreachable", url: `${PUBLIC_ORIGIN}/nxdomain`, html: pageHtml(`https://no-such-spike-node.${ctx.tailnet}:8688`, 30000) },
+    { origin: "public, address not on the tailnet", expected: "unreachable", url: `${PUBLIC_ORIGIN}/blackhole`, html: pageHtml(`https://${blackhole}:8688`, 30000) },
   ];
   for (const type of ["chromium", "firefox", "webkit"]) {
     if (!existsSync(pw[type].executablePath())) {
       notRun("s5", `${type} is not installed (npx playwright install ${type})`);
       continue;
     }
-    const browser = await pw[type].launch({ headless: process.env.SPIKE_HEADED !== "1" });
+    let browser;
+    try {
+      browser = await pw[type].launch({ headless: !headed });
+    } catch (err) {
+      notRun("s5", `${type} does not launch on this machine: ${String(err).split("\n").find((l) => /missing|error/i.test(l))?.trim() ?? String(err).slice(0, 120)}`);
+      continue;
+    }
     try {
       for (const c of cases) {
         const context = await browser.newContext();
@@ -471,13 +564,16 @@ async function s5(ctx, local) {
         if (c.html) await context.route(`${c.url}*`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: c.html }));
         const page = await context.newPage();
         page.on("console", (m) => /private|local network|cors|blocked/i.test(m.text()) && notes.push(m.text().slice(0, 200)));
+        let outcome;
         try {
           await page.goto(c.url, { timeout: 30000 });
-          await page.waitForFunction(() => window.__spikeDone === true, null, { timeout: 70000 });
-          observe("s5", `${type}, ${c.origin} origin`, { results: await page.evaluate(() => window.__spike), console: notes });
+          await page.waitForFunction(() => window.__spikeDone === true, null, { timeout: abortMs * 2 + 70000 });
+          outcome = { completed: true, results: await page.evaluate(() => window.__spike) };
         } catch (err) {
-          observe("s5", `${type}, ${c.origin} origin`, { error: String(err).slice(0, 200), console: notes });
+          outcome = { completed: false, error: String(err).slice(0, 200) };
         }
+        observe("s5", `${type}, ${c.origin} origin: what happened`, { ...outcome, console: notes });
+        judge("s5", `${type}, ${c.origin} origin: ${c.expected === "reachable" ? "answered, identifying this machine" : "fails"}`, judgeS5(c.expected, outcome, { headed, localId: ctx.localId }));
         await context.close();
       }
     } finally {
@@ -486,7 +582,6 @@ async function s5(ctx, local) {
   }
   const preflights = ctl("GET", "/log").filter((e) => e.listener === "tailnet-https-preflight");
   observe("s5", "preflights the probe saw", preflights.map((e) => ({ url: e.url, origin: e.origin, requestPrivateNetwork: e.requestPrivateNetwork })));
-  if (process.env.SPIKE_HEADED !== "1") observe("s5", "headless browsers show no permission prompt: rerun with SPIKE_HEADED=1 to see one");
 }
 
 // ---- S6: Serve's TCP forwarding loses the device.
@@ -497,34 +592,42 @@ async function s6(ctx) {
   expect("s6", "Serve plain TCP forwarding carries no tailnet identity", tcp.json?.whois?.ok === false, tcp.json ? { peer: `${tcp.json.remoteAddress}:${tcp.json.remotePort}`, whois: tcp.json.whois } : tcp.error);
 }
 
-// ---- S7: a node shared in from another tailnet.
+// ---- S7: a device of another tailnet, which the spike node is shared with.
 async function s7(ctx) {
   const wait = Number(process.env.SPIKE_S7_WAIT_SECONDS ?? 0);
-  if (!(wait > 0)) return notRun("s7", "needs a node shared into this tailnet from another; set SPIKE_S7_WAIT_SECONDS and request the printed URL from it");
-  console.log(`S7: from the shared-in node, request http://${ctx.serverIPs[0]}:8687/probe?s7=1 within ${wait} s`);
+  if (!(wait > 0)) return notRun("s7", "needs the spike node shared with a user of another tailnet; set SPIKE_S7_WAIT_SECONDS and request the printed URL from their device");
+  console.log(`S7: from the other tailnet's device, request http://${ctx.serverIPs[0]}:8687/probe?s7=1 within ${wait} s`);
   const end = Date.now() + wait * 1000;
   while (Date.now() < end) {
     const hit = ctl("GET", "/log").find((e) => e.url?.includes("s7=1"));
     if (hit) {
-      observe("s7", "WhoIs for the shared-in node", hit.whois);
+      observe("s7", "WhoIs for the other tailnet's device", hit.whois);
       const suffix = hit.whois.ok ? hit.whois.name.replace(/\.$/, "").split(".").slice(1).join(".") : null;
       return expect("s7", "the tailnet pin refuses it", !hit.whois.ok || suffix !== ctx.tailnet, { suffix, pinned: ctx.tailnet });
     }
     await sleep(2000);
   }
-  notRun("s7", "no request from a shared-in node arrived");
+  notRun("s7", "no request from the other tailnet's device arrived");
 }
 
-// ---- S8: a device the access rules deny tcp:8688.
+// ---- S8: a device the access rules deny tcp:8688. The rule (README.md)
+// lets only this machine use 8688, so the client node is the denied device
+// and this machine the allowed control.
 async function s8(ctx) {
   if (process.env.SPIKE_S8_RULE_APPLIED !== "1") {
-    return notRun("s8", "needs the deny rule from README.md applied to the test tailnet with the owner's approval; this script never changes access rules");
+    return notRun("s8", "needs the rule from README.md applied to the test tailnet with the owner's approval; this script never changes access rules");
   }
-  const r = await request(`https://${ctx.name}:8688/probe?s8=1`, { timeoutMs: 30000 });
-  observe("s8", "this machine (the denied device) calling the endpoint", r.ok ? { status: r.status, ms: r.ms } : { error: r.error, ms: r.ms });
-  expect("s8", "the denied device gets no answer", !r.ok, r.error);
-  const plain = await request(`http://${ctx.name}:8687/probe?s8=1`, { timeoutMs: 10000 });
-  observe("s8", "the same device on tcp:8687", plain.ok ? "reachable" : plain.error);
+  if (!ctx.permitCert) await recreateServer(ctx, true);
+  const listener = ctl("GET", "/status").listeners?.find((l) => l.port === 8688);
+  if (!listener?.ok) return emit("INCONCLUSIVE", "s8", "the spike node has no HTTPS listener on 8688, so nothing can be judged", ctl("GET", "/status").cert);
+  const control = await request(`https://${ctx.name}:8688/probe?s8=control`, { timeoutMs: 15000 });
+  const controlOutcome = { ok: control.ok, status: control.status, whois: control.json?.whois, error: control.error, ms: control.ms };
+  observe("s8", "this machine (allowed) on tcp:8688", controlOutcome);
+  const denied = curlOnce(`https://${ctx.name}:8688/probe?s8=denied`, 30);
+  observe("s8", "the client node (denied) on tcp:8688", { ok: denied.ok, status: denied.status, error: denied.error, ms: denied.ms });
+  const deniedPlain = curlOnce(`http://${ctx.name}:8687/probe?s8=plain`, 15);
+  observe("s8", "the client node on tcp:8687", { ok: deniedPlain.ok, status: deniedPlain.status, error: deniedPlain.error, ms: deniedPlain.ms });
+  judge("s8", "only the allowed device is answered on tcp:8688", judgeS8({ control: controlOutcome, denied, deniedPlain, allowedId: ctx.localId }));
 }
 
 // ---- Selftest: the probe's plumbing against a fake LocalAPI, in a throwaway
@@ -553,7 +656,38 @@ http.createServer((req, res) => {
 }).listen(sock, () => fs.chmodSync(sock, 0o666));
 `;
 
+/** The acceptance rules on made-up outcomes: what may and may not count as a pass. */
+function selftestJudges() {
+  const me = { headed: false, localId: "nME" };
+  const ok = (whois) => ({ pna: "0", ok: true, status: 200, ms: 40, whois });
+  const failed = { pna: "0", ok: false, error: "TypeError: Failed to fetch", ms: 30 };
+  const cases = [
+    ["S5: a page that did not complete is inconclusive", judgeS5("reachable", { completed: false, error: "net::ERR_NAME_NOT_RESOLVED" }, me), "INCONCLUSIVE"],
+    ["S5: a page with no fetch result is inconclusive", judgeS5("reachable", { completed: true, results: [] }, me), "INCONCLUSIVE"],
+    ["S5: an answer naming this machine passes", judgeS5("reachable", { completed: true, results: [failed, ok({ ok: true, nodeId: "nME" })] }, me), "PASS"],
+    ["S5: an answer naming another node fails", judgeS5("reachable", { completed: true, results: [ok({ ok: true, nodeId: "nOTHER" })] }, me), "FAIL"],
+    ["S5: an answer without identity fails", judgeS5("reachable", { completed: true, results: [ok({ ok: false, status: 404 })] }, me), "FAIL"],
+    ["S5: every fetch failing headless is inconclusive", judgeS5("reachable", { completed: true, results: [failed, failed] }, me), "INCONCLUSIVE"],
+    ["S5: every fetch failing headed fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, headed: true }), "FAIL"],
+    ["S5: an unreachable endpoint failing passes", judgeS5("unreachable", { completed: true, results: [failed, failed] }, me), "PASS"],
+    ["S5: an unreachable endpoint answering fails", judgeS5("unreachable", { completed: true, results: [ok({ ok: true, nodeId: "nME" })] }, me), "FAIL"],
+    ["S5: an unreachable case that did not complete is inconclusive", judgeS5("unreachable", { completed: false, error: "timeout" }, me), "INCONCLUSIVE"],
+  ];
+  const control = { ok: true, status: 200, whois: { ok: true, nodeId: "nME" } };
+  const refused = { ok: false, error: "curl: (28) Connection timed out", ms: 30000 };
+  const plainOk = { ok: true, status: 200 };
+  cases.push(
+    ["S8: no answer for the allowed device (no listener, or a rule shutting out everyone) is inconclusive", judgeS8({ control: { ok: false, error: "ECONNREFUSED" }, denied: refused, deniedPlain: plainOk, allowedId: "nME" }), "INCONCLUSIVE"],
+    ["S8: an allowed answer without the allowed device's identity is inconclusive", judgeS8({ control: { ...control, whois: { ok: false } }, denied: refused, deniedPlain: plainOk, allowedId: "nME" }), "INCONCLUSIVE"],
+    ["S8: a denied device that reaches nothing at all is inconclusive", judgeS8({ control, denied: refused, deniedPlain: { ok: false, error: "timeout" }, allowedId: "nME" }), "INCONCLUSIVE"],
+    ["S8: a denied device answered on 8688 fails", judgeS8({ control, denied: { ok: true, status: 200 }, deniedPlain: plainOk, allowedId: "nME" }), "FAIL"],
+    ["S8: allowed answered, denied refused, denied reaching 8687 passes", judgeS8({ control, denied: refused, deniedPlain: plainOk, allowedId: "nME" }), "PASS"],
+  );
+  for (const [name, got, want] of cases) expect("selftest", name, got.kind === want, got.kind === want ? undefined : { want, got });
+}
+
 async function selftest() {
+  selftestJudges();
   const dir = mkdtempSync(join(tmpdir(), "varlatch-browser-spike-selftest-"));
   writeFileSync(join(dir, "fake.cjs"), FAKE_LOCALAPI, { mode: 0o644 });
   // The probe runs as varlatchd's uid and the fake socket is created there:
@@ -620,6 +754,7 @@ if (args.length === 0 || args.includes("-h") || args.includes("--help")) {
 }
 const local = preflight();
 if (args[0] === "preflight") {
+  local.browsers = await launchableBrowsers();
   printPreflight(local);
   process.exit(local.docker && local.tailnet ? 0 : 1);
 }
@@ -657,8 +792,8 @@ if (!local.docker || !local.tailnet) {
 const steps = { s1, s2, s3, s4, s5, s6, s7, s8 };
 let setupError = null;
 try {
-  // S3 starts without cert permission; the others that need it start with it.
-  const ctx = await setup(local, { permitCert: !wanted.includes("s3") && wanted.some((s) => ["s4", "s5"].includes(s)) });
+  // S3 starts without cert permission; S4, S5 and S8 need the HTTPS listener.
+  const ctx = await setup(local, { permitCert: !wanted.includes("s3") && wanted.some((s) => ["s4", "s5", "s8"].includes(s)) });
   for (const s of SPIKES.filter((x) => wanted.includes(x))) {
     try {
       await steps[s](ctx, local);
@@ -685,8 +820,12 @@ try {
   }
 }
 const count = (k) => results.filter((r) => r.kind === k).length;
-const notRunSpikes = [...new Set(results.filter((r) => r.kind === "NOT RUN").map((r) => r.spike.toUpperCase()))];
-console.log(`\n${count("PASS")} passed, ${count("FAIL")} failed, ${count("OBSERVED")} observed, ${count("NOT RUN")} not run${notRunSpikes.length ? ` (${notRunSpikes.join(", ")}: not passing, a prerequisite is missing)` : ""}`);
+const spikesWith = (k) => [...new Set(results.filter((r) => r.kind === k).map((r) => r.spike.toUpperCase()))];
+const unsettled = [...new Set([...spikesWith("INCONCLUSIVE"), ...spikesWith("NOT RUN")])];
+console.log(
+  `\n${count("PASS")} passed, ${count("FAIL")} failed, ${count("INCONCLUSIVE")} inconclusive, ${count("NOT RUN")} not run, ${count("OBSERVED")} observed` +
+    (unsettled.length ? `\nnot validated: ${unsettled.join(", ")} (inconclusive or not run is not passing)` : ""),
+);
 console.log(`results: ${resultsFile}`);
-// 0 only when every selected spike ran and passed; 3 when any did not run.
-process.exit(count("FAIL") > 0 || setupError ? 1 : count("NOT RUN") > 0 ? 3 : 0);
+// 0 only when every selected spike ran and passed; 3 when any was inconclusive or did not run.
+process.exit(count("FAIL") > 0 || setupError ? 1 : count("NOT RUN") > 0 || count("INCONCLUSIVE") > 0 ? 3 : 0);
