@@ -116,7 +116,8 @@ a Mac that is a device on the same tailnet (the Mac mini is):
      refused; or when the browser read an answer naming another node
    - **INCONCLUSIVE** when requests arrived but no report came: arriving
      is not completing. Also when the report did not come from the Mac,
-     or names an answer the probe has no record of
+     came from a browser other than Safari (by its user agent), or names
+     an answer the probe has no record of
    - **NOT RUN** when nothing for this run ID arrived in time
 
 The selftest drives the same page, endpoint and report through a real

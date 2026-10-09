@@ -106,7 +106,9 @@ function judgeS5(expected, outcome, { headed, localId, serverEntries = [] }) {
  * completing. `entries` and `reports` are the probe's, `node` is the Mac's
  * MagicDNS short name or node ID, `run` the unique ID of this attempt.
  */
-function judgeSafari({ entries, reports, node, run }) {
+const SAFARI_UA = (ua) => /Version\/[\d.]+.*Safari\//.test(ua ?? "") && !/(Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Firefox)/.test(ua ?? "");
+
+function judgeSafari({ entries, reports, node, run, browser = null }) {
   const names = (w) => !!w?.ok && (w.nodeId === node || w.name?.split(".")[0] === node);
   const mine = entries.filter((e) => new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run);
   const answered = mine.filter((e) => e.listener === "tailnet-https");
@@ -117,6 +119,8 @@ function judgeSafari({ entries, reports, node, run }) {
       : verdict("INCONCLUSIVE", { problem: "requests arrived, but the browser never reported completing them", arrived: mine.map((e) => ({ listener: e.listener, url: e.url })) });
   }
   if (!names(report.reporter?.whois)) return verdict("INCONCLUSIVE", { problem: "the report did not come from the Mac", reporter: report.reporter?.whois });
+  // The step is about Safari: the same page opened in another browser on the Mac proves nothing about it.
+  if (browser === "safari" && !SAFARI_UA(report.userAgent)) return verdict("INCONCLUSIVE", { problem: "the report came from a browser other than Safari", userAgent: report.userAgent });
   const read = (report.results ?? []).filter((r) => r.ok && r.status === 200 && r.json === true);
   if (read.length === 0) {
     const browser = (report.results ?? []).map((r) => ({ pna: r.pna, status: r.status, error: r.error }));
@@ -652,7 +656,7 @@ async function s5(ctx, local) {
     const state = () => ({ entries: ctl("GET", "/log"), reports: ctl("GET", "/reports"), node: safariNode, run });
     // The browser's report settles it; without one, the deadline does.
     while (Date.now() < end && !ctl("GET", "/reports").some((r) => r.run === run)) await sleep(3000);
-    judge("s5", "Safari (by hand), ts.net origin: the browser read an answer naming the Mac, matching the probe's record", judgeSafari(state()));
+    judge("s5", "Safari (by hand), ts.net origin: the browser read an answer naming the Mac, matching the probe's record", judgeSafari({ ...state(), browser: "safari" }));
     notRun("s5", "Safari, public origin: needs the test page on a public HTTPS origin, which needs the owner's approval");
   }
   const preflights = ctl("GET", "/log").filter((e) => e.listener === "tailnet-https-preflight");
@@ -763,10 +767,12 @@ function selftestJudges() {
   );
   const mac = (nodeId) => ({ ok: true, nodeId, name: `${nodeId === "nMAC" ? "jeremys-mac-mini" : "other"}.example.ts.net.` });
   const entry = (listener, nodeId, { id = 11, run = "r1" } = {}) => ({ id, listener, url: `/probe?pna=0&run=${run}`, whois: nodeId ? mac(nodeId) : { ok: false } });
-  const report = (results, { reporter = "nMAC", run = "r1" } = {}) => ({ run, results, userAgent: "Safari", reporter: { whois: mac(reporter) } });
+  const SAFARI = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+  const CHROME = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
+  const report = (results, { reporter = "nMAC", run = "r1", userAgent = SAFARI } = {}) => ({ run, results, userAgent, reporter: { whois: mac(reporter) } });
   const macRead = (nodeId, id = 11) => ({ pna: "0", ok: true, status: 200, json: true, id, whois: mac(nodeId) });
   const rejected = { pna: "0", ok: false, json: false, error: "TypeError: Load failed" };
-  const safari = (entries, reports, node = "nMAC") => judgeSafari({ entries, reports, node, run: "r1" });
+  const safari = (entries, reports, node = "nMAC") => judgeSafari({ entries, reports, node, run: "r1", browser: "safari" });
   cases.push(
     ["Safari: the browser's report and the probe's record agree on the Mac (node ID): pass", safari([entry("tailnet-https-preflight", "nMAC"), entry("tailnet-https", "nMAC")], [report([macRead("nMAC")])]), "PASS"],
     ["Safari: the same, the Mac named by its MagicDNS name: pass", safari([entry("tailnet-https", "nMAC")], [report([macRead("nMAC")])], "jeremys-mac-mini"), "PASS"],
@@ -778,6 +784,7 @@ function selftestJudges() {
     ["Safari: only a preflight arriving, the browser reporting failure: fail", safari([entry("tailnet-https-preflight", "nMAC")], [report([rejected])]), "FAIL"],
     ["Safari: a refused origin: fail", safari([entry("tailnet-https-refused-origin", "nMAC")], [report([rejected])]), "FAIL"],
     ["Safari: nothing arriving is not run", safari([], []), "NOT RUN"],
+    ["Safari: the page opened in Chrome on the Mac is inconclusive", safari([entry("tailnet-https", "nMAC")], [report([macRead("nMAC")], { userAgent: CHROME })]), "INCONCLUSIVE"],
     ["Safari: another run's requests and report do not count", safari([entry("tailnet-https", "nMAC", { run: "r2" })], [report([macRead("nMAC")], { run: "r2" })]), "NOT RUN"],
   );
   for (const [name, got, want] of cases) expect("selftest", name, got.kind === want, got.kind === want ? undefined : { want, got });
