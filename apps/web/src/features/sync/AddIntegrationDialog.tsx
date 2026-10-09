@@ -12,7 +12,7 @@ import { AccessCheckNotice } from "./AccessCheckNotice";
 import { DestinationPicker } from "./DestinationPicker";
 import { useBoundCheck } from "./useBoundCheck";
 import { CredentialHint } from "./CredentialHint";
-import { fixStep } from "./accessCheck";
+import { checkPasses, fixStep } from "./accessCheck";
 import { platformMeta } from "./platform-meta";
 import { hostOf } from "./status";
 import { PlatformTile } from "./TargetCard";
@@ -196,9 +196,16 @@ export function AddIntegrationDialog({
     // Every arrival at the review checks again: earlier steps may have changed.
     if (step === STEPS.length - 1) checkAccess();
   }, [step, checkAccess]);
-  const fix = access.result ? fixStep(access.result) : null;
+  // GitHub does not repeat the expiry on every answer: for an existing
+  // connection, the date already known for its stored token stands in. A
+  // new connection's typed token never borrows one.
+  const reviewCheck =
+    access.result && !isNew && !access.result.credentialExpiresAt && selected?.credentialExpiresAt
+      ? { ...access.result, credentialExpiresAt: selected.credentialExpiresAt }
+      : access.result;
+  const fix = reviewCheck ? fixStep(reviewCheck) : null;
 
-  const accessFailed = Boolean((access.result && access.result.status !== "ok") || access.error);
+  const accessFailed = Boolean((reviewCheck && !checkPasses(reviewCheck)) || access.error);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -604,7 +611,7 @@ export function AddIntegrationDialog({
                 </p>
                 <AccessCheckNotice
                   pending={!access.settled}
-                  check={access.result}
+                  check={reviewCheck}
                   error={access.error}
                   actions={
                     accessFailed ? (

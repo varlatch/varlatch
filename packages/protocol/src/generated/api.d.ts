@@ -1952,6 +1952,16 @@ export interface components {
             version: components["schemas"]["EntityVersion"];
             /** Format: date-time */
             updatedAt: string | null;
+            /**
+             * Format: date-time
+             * @description When the platform last said the stored credential expires (GitHub personal access tokens), recorded when Varlatch uses it to push, check, or list. Null is unknown, not "never": GitHub says nothing for tokens without an expiry, other platforms say nothing at all, and replacing the credential clears it.
+             */
+            credentialExpiresAt: string | null;
+            /**
+             * Format: date-time
+             * @description When the platform said so; null with credentialExpiresAt.
+             */
+            credentialExpirySeenAt: string | null;
         };
         AccessCheck: {
             /**
@@ -1968,6 +1978,11 @@ export interface components {
             message: string;
             /** @description The platform's HTTP status, when it answered. */
             httpStatus?: number;
+            /**
+             * Format: date-time
+             * @description When the checked credential expires, if the platform said (GitHub personal access tokens). For a credential supplied with the check, it is reported and not stored. For a Connection's stored credential, the date recorded for it stands in when the platform does not repeat it; a supplied credential never borrows one.
+             */
+            credentialExpiresAt?: string;
         };
         DestinationOption: {
             /** @description The destination record, as a Sync Target takes it ({repo} or {applicationUuid}). */

@@ -6,16 +6,18 @@ import { KeyRound, MoreHorizontal, Plug, Plus, ShieldAlert, Trash2 } from "lucid
 import type { PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
-import { timeAgo, useNow } from "../../lib/time";
+import { formatDate, formatDateTime, timeAgo, useNow } from "../../lib/time";
 import { Button, Callout, Count, EmptyState, Field, Input, Menu, Mono, Skeleton, Status, TierDot, cn } from "../../components/ui";
 import { PageHeader } from "../../components/PageHeader";
 import { Dialog, useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { keys, useMeta, useOrgName } from "../projects/hooks";
 import { AccessCheckNotice } from "./AccessCheckNotice";
+import { checkPasses } from "./accessCheck";
 import { useBoundCheck } from "./useBoundCheck";
 import { connectionsKey } from "./keys";
 import { CredentialHint } from "./CredentialHint";
+import { credentialExpiry, expiryText, expiryTone } from "./credentialExpiry";
 import { platformMeta } from "./platform-meta";
 import { connectionHealth, targetDestination } from "./status";
 import { PlatformTile } from "./TargetCard";
@@ -218,7 +220,7 @@ function EnvChip({ org, target, envs }: { org: string; target: SyncTarget; envs:
   );
 }
 
-function ConnectionCard({
+export function ConnectionCard({
   org,
   connection,
   targets,
@@ -239,6 +241,8 @@ function ConnectionCard({
   const now = useNow();
   const meta = platformMeta(connection.platform);
   const health = connectionHealth(targets);
+  const expiry = credentialExpiry(connection.credentialExpiresAt, now);
+  const replaceSoon = health.credentialRejected || (expiry !== null && expiry.state !== "later");
   const revoke = useMutation({
     mutationFn: () => api.revokePlatformConnection(org, connection.id),
     onSuccess: () => {
@@ -316,7 +320,18 @@ function ConnectionCard({
           {health.label}
           {health.at && health.tone === "error" && <span className="text-deny/80">· {timeAgo(health.at, now)}</span>}
         </Status>
-        {health.credentialRejected && (
+        {expiry && (
+          <span
+            className="block"
+            data-testid={`credential-expiry-${connection.id}`}
+            title={`${formatDateTime(expiry.expiresAt)}, as ${meta.shortLabel} said ${timeAgo(connection.credentialExpirySeenAt, now)}`}
+          >
+            <Status tone={expiryTone(expiry)} className="text-sm">
+              {expiryText(expiry, formatDate(expiry.expiresAt))}
+            </Status>
+          </span>
+        )}
+        {replaceSoon && (
           <div>
             <Button variant="danger" size="sm" onClick={onReplace} data-testid={`fix-connection-${connection.id}`}>
               Replace credential
@@ -375,7 +390,7 @@ export function NewConnectionDialog({
   // button saves anyway.
   const inputs: Checked = { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential };
   const access = useBoundCheck(inputs, (checked) => api.checkPlatformAccess(org, checked));
-  const failed = access.result && access.result.status !== "ok" ? access.result : undefined;
+  const failed = access.result && !checkPasses(access.result) ? access.result : undefined;
   const skipCheck = Boolean(failed || access.error);
   const ready = Boolean(platform && baseIdentity.trim() && name.trim() && credential);
 
@@ -398,7 +413,7 @@ export function NewConnectionDialog({
             disabled={!ready}
             loading={access.pending || create.isPending}
             onClick={() =>
-              skipCheck ? create.mutate(inputs) : access.run((result, checked) => result.status === "ok" && create.mutate(checked))
+              skipCheck ? create.mutate(inputs) : access.run((result, checked) => checkPasses(result) && create.mutate(checked))
             }
           >
             {skipCheck ? "Save anyway" : "Create connection"}
@@ -517,7 +532,7 @@ export function ReplaceCredentialDialog({
       })),
     ),
   );
-  const failures = access.result?.filter((r) => r.check.status !== "ok") ?? [];
+  const failures = access.result?.filter((r) => !checkPasses(r.check)) ?? [];
   const skipCheck = failures.length > 0 || Boolean(access.error);
   return (
     <Dialog
@@ -544,7 +559,7 @@ export function ReplaceCredentialDialog({
             onClick={() =>
               skipCheck
                 ? replace.mutate(credential)
-                : access.run((results, checked) => results.every((r) => r.check.status === "ok") && replace.mutate(checked.credential))
+                : access.run((results, checked) => results.every((r) => checkPasses(r.check)) && replace.mutate(checked.credential))
             }
           >
             {skipCheck ? "Replace anyway" : "Replace credential"}

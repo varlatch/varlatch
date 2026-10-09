@@ -59,6 +59,12 @@ export interface AdapterRequest {
    * final check-to-send race per gated request; it cannot eliminate it.
    */
   shouldAbort?: () => Promise<boolean>;
+  /**
+   * Called when the platform says when the credential expires (GitHub, for
+   * personal access tokens), as an ISO 8601 instant. Not called when it
+   * says nothing, which does not mean the credential never expires.
+   */
+  onCredentialExpiry?: (expiresAt: string) => void;
 }
 
 export interface PlatformAdapter {

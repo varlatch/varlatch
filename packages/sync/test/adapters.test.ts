@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import nacl from "tweetnacl";
 import { convexAdapter } from "../src/convex.js";
 import { coolifyAdapter } from "../src/coolify.js";
-import { githubActionsAdapter } from "../src/github.js";
+import { githubActionsAdapter, parseTokenExpiration } from "../src/github.js";
 import { getAdapter, canonicalDestinationIdentity } from "../src/index.js";
 import { sealedBox, sealedBoxOpen } from "../src/sealedbox.js";
 import { AdapterError, type AdapterRequest } from "../src/types.js";
@@ -1096,5 +1096,65 @@ describe("destination listings", () => {
       const page = await coolifyAdapter.listDestinations!(coolify(signIn));
       expect(page).toMatchObject({ check: { status: "failed" }, items: [] });
     });
+  });
+});
+
+describe("credential expiry (GitHub)", () => {
+  const EXPIRES = { "github-authentication-token-expiration": "2026-11-08 09:30:00 UTC" };
+  const req = (fetchImpl: typeof fetch, destination: Record<string, string> = {}, onCredentialExpiry?: (d: string) => void): AdapterRequest => ({
+    baseIdentity: "acme",
+    destination,
+    credential: "github_pat_test",
+    fetchImpl,
+    ...(onCredentialExpiry ? { onCredentialExpiry } : {}),
+  });
+
+  it("reads GitHub's header, and ignores what it cannot read", () => {
+    expect(parseTokenExpiration("2026-06-03 19:52:44 UTC")).toBe("2026-06-03T19:52:44.000Z");
+    expect(parseTokenExpiration("2026-06-03 19:52:44 +0200")).toBe("2026-06-03T17:52:44.000Z");
+    expect(parseTokenExpiration("2026-06-03T19:52:44Z")).toBe("2026-06-03T19:52:44.000Z");
+    for (const junk of [null, "", "never", "2026-13-45 99:99:99 UTC", "June 3rd"]) expect(parseTokenExpiration(junk)).toBeNull();
+  });
+
+  it("puts the expiry on a check, and says nothing when GitHub does not", async () => {
+    const seen: string[] = [];
+    const withHeader = await githubActionsAdapter.checkAccess(
+      req(fakeFetch(() => ({ status: 200, body: { login: "acme" }, headers: EXPIRES })), {}, (d) => seen.push(d)),
+    );
+    expect(withHeader).toMatchObject({ status: "ok", credentialExpiresAt: "2026-11-08T09:30:00.000Z" });
+    expect(seen[0]).toBe("2026-11-08T09:30:00.000Z");
+    const without = await githubActionsAdapter.checkAccess(req(fakeFetch(() => ({ status: 200, body: { login: "acme" } }))));
+    expect(without).not.toHaveProperty("credentialExpiresAt");
+  });
+
+  it("reports the expiry even when the check fails, and on a listing", async () => {
+    const rejected = await githubActionsAdapter.checkAccess(
+      req(fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: { login: "acme" }, headers: EXPIRES } : { status: 403, headers: EXPIRES })), {
+        repo: "api",
+      }),
+    );
+    expect(rejected).toMatchObject({ status: "permission-missing", credentialExpiresAt: "2026-11-08T09:30:00.000Z" });
+    const listing = await githubActionsAdapter.listDestinations!(
+      req(fakeFetch((url) => ({ status: 200, body: url.endsWith("/users/acme") ? { login: "acme", type: "User" } : [], headers: EXPIRES }))),
+    );
+    expect(listing.check.credentialExpiresAt).toBe("2026-11-08T09:30:00.000Z");
+  });
+
+  it("reports the expiry while pushing", async () => {
+    const recipient = nacl.box.keyPair();
+    const seen: string[] = [];
+    await githubActionsAdapter.writeValues(
+      req(
+        fakeFetch((url) =>
+          url.endsWith("/public-key")
+            ? { status: 200, body: { key_id: "k", key: Buffer.from(recipient.publicKey).toString("base64") }, headers: EXPIRES }
+            : { status: 204, headers: EXPIRES },
+        ),
+        { repo: "api" },
+        (d) => seen.push(d),
+      ),
+      [{ name: "PORT", value: "8080" }],
+    );
+    expect(seen).toEqual(["2026-11-08T09:30:00.000Z", "2026-11-08T09:30:00.000Z"]);
   });
 });

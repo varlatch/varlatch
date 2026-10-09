@@ -3,7 +3,9 @@ import type React from "react";
 import { CircleCheck, ShieldAlert } from "lucide-react";
 import type { AccessCheck } from "@varlatch/protocol";
 import { Callout, Spinner } from "../../components/ui";
+import { formatDate } from "../../lib/time";
 import { accessTitle, accessTone } from "./accessCheck";
+import { credentialExpiry, expiryText } from "./credentialExpiry";
 
 /** The outcome of an access check, or its progress; renders nothing before one runs. */
 export function AccessCheckNotice({
@@ -34,17 +36,26 @@ export function AccessCheckNotice({
     );
   }
   if (!check) return null;
+  // GitHub says when a personal access token expires: a token that works
+  // today but expires within days is worth replacing before it is saved.
+  const expiry = credentialExpiry(check.credentialExpiresAt, Date.now());
+  const expiresSoon = check.status === "ok" && expiry !== null && expiry.state !== "later";
   return (
     <Callout
-      tone={accessTone(check)}
-      icon={check.status === "ok" ? <CircleCheck size={16} /> : <ShieldAlert size={16} />}
-      title={accessTitle(check)}
+      tone={expiresSoon ? "warn" : accessTone(check)}
+      icon={check.status === "ok" && !expiresSoon ? <CircleCheck size={16} /> : <ShieldAlert size={16} />}
+      title={expiresSoon ? `${accessTitle(check)}, but the token expires soon` : accessTitle(check)}
       actions={actions}
       className={className}
       data-testid="access-check"
       data-status={check.status}
     >
       {check.message}
+      {expiry && (
+        <span className="mt-1 block" data-testid="access-check-expiry">
+          {expiryText(expiry, formatDate(expiry.expiresAt))}.
+        </span>
+      )}
     </Callout>
   );
 }
