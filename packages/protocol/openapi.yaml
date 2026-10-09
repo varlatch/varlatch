@@ -2568,6 +2568,40 @@ paths:
               schema: { $ref: "#/components/schemas/AccessCheck" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/platform-connections/destinations:
+    post:
+      tags: [sync]
+      operationId: listPlatformDestinations
+      summary: >
+        The destinations a credential can see on its base identity, for the
+        dashboard's pickers (ADR-0031, amendment 2026-10-09): GitHub
+        repositories in the owner, or the applications of a Coolify token's
+        team. Read-only, under the access check's rules: a new credential
+        (platform, baseIdentity, credential) or a Connection's stored one
+        (connectionId), optionally replaced by a candidate. Seeing a
+        destination is not permission to write it. Convex, whose base
+        identity is the destination, has nothing to list (422). A listing
+        that could not run still answers 200, with the reason in check.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                connectionId: { type: string, minLength: 1 }
+                platform: { $ref: "#/components/schemas/SyncPlatform" }
+                baseIdentity: { type: string, minLength: 1, maxLength: 500 }
+                credential: { type: string, minLength: 1, maxLength: 10000 }
+      responses:
+        "200":
+          description: The listing (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestinationListing" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/platform-connections/{connection}:
     get:
       tags: [sync]
@@ -4098,6 +4132,31 @@ components:
           type: string
           description: One sentence for the person who fixes it; never platform response text.
         httpStatus: { type: integer, description: "The platform's HTTP status, when it answered." }
+
+    DestinationOption:
+      type: object
+      required: [destination, label]
+      properties:
+        destination:
+          type: object
+          additionalProperties: { type: string }
+          description: The destination record, as a Sync Target takes it ({repo} or {applicationUuid}).
+        label: { type: string, description: The repository or application name. }
+        detail: { type: string, description: "A second line: visibility, or the application's address." }
+
+    DestinationListing:
+      type: object
+      required: [check, items, truncated]
+      properties:
+        check:
+          $ref: "#/components/schemas/AccessCheck"
+          description: ok when the listing ran; otherwise why not, and items is empty.
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/DestinationOption" }
+        truncated:
+          type: boolean
+          description: More exist than Varlatch reads (1,000); type the exact name.
 
     SyncMappingInput:
       description: >

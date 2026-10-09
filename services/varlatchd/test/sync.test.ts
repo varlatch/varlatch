@@ -1047,6 +1047,116 @@ describe("access check (ADR-0031 amendment 2026-10-09)", () => {
   });
 });
 
+describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
+  const LIST = "/v1/organizations/acme/platform-connections/destinations";
+
+  /** A Coolify instance with two applications, recording who asked. */
+  function fakeInstance() {
+    const calls: { method: string; url: string; authorization: string }[] = [];
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({ method: init?.method ?? "GET", url, authorization: headers.Authorization ?? "" });
+      if (headers.Authorization === "Bearer wrong") return new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+      if (url.endsWith("/api/v1/applications")) {
+        return new Response(
+          JSON.stringify([
+            { uuid: "web123", name: "web", fqdn: "https://web.example.com", http_basic_auth_password: "hunter2" },
+            { uuid: "api123", name: "api", fqdn: null },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  async function list(body: unknown, listApp: ReturnType<typeof buildApp>, token = adminToken) {
+    return listApp.request(LIST, { method: "POST", headers: auth(token), body: JSON.stringify(body) });
+  }
+
+  async function listedEvents() {
+    const res = await ctx.db.query(
+      "SELECT resource, metadata FROM audit_events WHERE event_type = 'sync.destinations_listed' ORDER BY event_order",
+    );
+    return res.rows.map((r) => ({
+      resource: asJson<Record<string, string> | null>((r as { resource: unknown }).resource),
+      metadata: asJson<Record<string, unknown>>((r as { metadata: unknown }).metadata),
+    }));
+  }
+
+  it("lists with a supplied credential, read-only, and audits the count, never the names", async () => {
+    const instance = fakeInstance();
+    const listApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
+    const res = await list({ platform: "coolify", baseIdentity: "https://coolify.example.com", credential: "fresh-token" }, listApp);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const body = await res.json();
+    expect(body).toEqual({
+      check: expect.objectContaining({ status: "ok" }),
+      items: [
+        { destination: { applicationUuid: "api123" }, label: "api" },
+        { destination: { applicationUuid: "web123" }, label: "web", detail: "web.example.com" },
+      ],
+      truncated: false,
+    });
+    expect(JSON.stringify(body)).not.toContain("hunter2");
+    expect(instance.calls.map((c) => [c.method, c.url, c.authorization])).toEqual([
+      ["GET", "https://coolify.example.com/api/v1/applications", "Bearer fresh-token"],
+    ]);
+    expect((await ctx.db.query("SELECT id FROM platform_connections")).rows).toHaveLength(0);
+    const events = await listedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.metadata).toMatchObject({ platform: "coolify", credential: "supplied", status: "ok", count: 2, truncated: false });
+    expect(JSON.stringify(events)).not.toMatch(/fresh-token|web123|api123|"web"|"api"/);
+  });
+
+  it("lists with a connection's stored credential, and reports a rejected one as an outcome", async () => {
+    const instance = fakeInstance();
+    const listApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
+    const connection = await (await createConnection()).json();
+    const stored = await (await list({ connectionId: connection.id }, listApp)).json();
+    expect(stored.items).toHaveLength(2);
+    expect(instance.calls[0]!.authorization).toBe("Bearer coolify-token-123");
+
+    const rejected = await list({ connectionId: connection.id, credential: "wrong" }, listApp);
+    expect(rejected.status).toBe(200);
+    expect(await rejected.json()).toEqual({ check: expect.objectContaining({ status: "credential-rejected" }), items: [], truncated: false });
+    expect((await listedEvents()).map((e) => [e.resource?.connectionId, e.metadata.credential, e.metadata.status])).toEqual([
+      [connection.id, "stored", "ok"],
+      [connection.id, "supplied", "credential-rejected"],
+    ]);
+  });
+
+  it("refuses a platform whose base identity is the destination, and validates like a check", async () => {
+    const instance = fakeInstance();
+    const listApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
+    const convex = await list({ platform: "convex", baseIdentity: "https://happy-animal-123.convex.cloud", credential: "key" }, listApp);
+    expect(convex.status).toBe(422);
+    expect((await convex.json()).error.message).toContain("no destinations to list");
+    expect((await list({ platform: "coolify", baseIdentity: "https://coolify.example.com" }, listApp)).status).toBe(422);
+    expect((await list({ connectionId: "pcn_missing" }, listApp)).status).toBe(404);
+    expect(instance.calls).toHaveLength(0);
+    expect(await listedEvents()).toHaveLength(0);
+  });
+
+  it("needs config.sync.manage, a sync-enabled installation, and an allowed adapter", async () => {
+    const instance = fakeInstance();
+    const svc = await (await post("/v1/organizations/acme/identities", { name: "reader", kind: "service" })).json();
+    await post("/v1/organizations/acme/grants", {
+      subjectIdentityId: svc.id,
+      scope: { kind: "organization" },
+      actions: ["organization.read"],
+    });
+    const body = { platform: "coolify", baseIdentity: "https://coolify.example.com", credential: "tok" };
+    expect((await list(body, buildApp(ctx, { syncFetch: instance.fetchImpl }), svc.credential)).status).toBe(403);
+    expect((await list(body, buildApp(ctx, { sync: null, syncFetch: instance.fetchImpl }))).status).toBe(403);
+    expect((await list(body, buildApp(ctx, { sync: { adapters: ["github-actions"] }, syncFetch: instance.fetchImpl }))).status).toBe(422);
+    expect(instance.calls).toHaveLength(0);
+  });
+});
+
 describe("installation switch", () => {
   it("disabling sync hides the capability and blocks creation, not visibility", async () => {
     const offApp = buildApp(ctx, { sync: null });
