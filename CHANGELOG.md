@@ -5,6 +5,25 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### Integrations
+
+- Varlatch checks a platform credential before it saves anything: when a
+  connection is created, when its credential is replaced (against every
+  integration that uses it), and on the review step of a new integration,
+  against the chosen destination. A failed check names the problem and the
+  part to fix (a rejected or expired token, a missing permission, an
+  unknown owner, repository, environment, application, or deployment, or a
+  platform that cannot be reached), and the dialog can still save anyway.
+  A check only reads, stores nothing, and is audited as `Access checked`.
+- API: `POST /v1/organizations/{org}/platform-connections/check`, for a new
+  credential or a connection's stored one, with an optional destination.
+- New guide, [Integrations](docs/reference/integrations.md): the credential
+  each platform needs, with its permissions, and where to find every
+  field. The GitHub hint now says that environment secrets need the
+  Environments permission, not Secrets.
+
 ## 0.16.0 (2026-10-08)
 
 ### Machine identities
