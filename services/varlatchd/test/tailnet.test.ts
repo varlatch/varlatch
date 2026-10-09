@@ -22,15 +22,18 @@ describe("whois client", () => {
   let response: { status: number; body: unknown };
   let status: { status: number; body: unknown };
   let lastAddr: string | null;
+  let statusQuery: string | null;
 
   beforeEach(async () => {
     socketPath = join(mkdtempSync(join(tmpdir(), "ts-sock-")), "tailscaled.sock");
     status = { status: 200, body: { Self: { ID: "nSELF" } } };
     lastAddr = null;
+    statusQuery = null;
     server = http.createServer((req, res) => {
       const url = new URL(req.url ?? "/", "http://local-tailscaled.sock");
       const answer = url.pathname === "/localapi/v0/status" ? status : response;
       if (url.pathname === "/localapi/v0/whois") lastAddr = url.searchParams.get("addr");
+      if (url.pathname === "/localapi/v0/status") statusQuery = url.search;
       expect(["/localapi/v0/whois", "/localapi/v0/status"]).toContain(url.pathname);
       res.writeHead(answer.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(answer.body));
@@ -67,14 +70,47 @@ describe("whois client", () => {
     expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "other-tailnet" });
     response = { status: 404, body: {} };
     expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "unrecognized" });
+    // Only a 404 is "unrecognized"; a 200 that is not a whole node is malformed.
     response = { status: 200, body: { Node: { Name: "x.example.ts.net" } } };
-    expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "unrecognized" });
+    expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "resolver-unavailable" });
     response = { status: 500, body: {} };
     expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "resolver-unavailable" });
     expect(
       await resolveWhois({ socketPath: "/nonexistent/sock", expectedTailnet: "example.ts.net", selfNodeId: selfNodeResolver("/nonexistent/sock") }, "127.0.0.1", 1),
     ).toEqual({ ok: false, reason: "resolver-unavailable" });
     expect(await whois(config(), "127.0.0.1", 1)).toBeNull();
+  });
+
+  it("treats any answer that is not the expected shape as resolver-unavailable, never as an exception", async () => {
+    const malformed: unknown[] = [
+      null, // valid JSON null (review regression)
+      { Node: { StableID: "nPEER", Name: 42 } }, // non-string name (review regression)
+      { Node: null },
+      [],
+      "a string",
+      { Node: { StableID: 7, Name: "laptop.example.ts.net." } },
+      { Node: { StableID: "nPEER", Name: "laptop.example.ts.net.", Tags: "tag:prod" } },
+      { Node: { StableID: "nPEER", Name: "laptop.example.ts.net.", Tags: ["tag:prod", 1] } },
+      { Node: { StableID: "nPEER", Name: "laptop.example.ts.net.", Sharer: "4242" } },
+      { Node: { StableID: "nPEER", Name: "laptop.example.ts.net." }, UserProfile: "jeremy" },
+      { Node: { StableID: "nPEER", Name: "laptop.example.ts.net." }, UserProfile: { LoginName: 5 } },
+    ];
+    for (const body of malformed) {
+      response = { status: 200, body };
+      expect(await resolveWhois(config(), "127.0.0.1", 1), JSON.stringify(body)).toEqual({ ok: false, reason: "resolver-unavailable" });
+    }
+    // Not JSON at all.
+    const raw = http.createServer((_req, res) => res.end("not json"));
+    const rawSocket = join(mkdtempSync(join(tmpdir(), "ts-sock-")), "tailscaled.sock");
+    await new Promise<void>((r) => raw.listen(rawSocket, r));
+    try {
+      expect(await resolveWhois({ socketPath: rawSocket, expectedTailnet: "example.ts.net", selfNodeId: async () => "nSELF" }, "127.0.0.1", 1)).toEqual({
+        ok: false,
+        reason: "resolver-unavailable",
+      });
+    } finally {
+      await new Promise((r) => raw.close(r));
+    }
   });
 
   it("refuses a device shared into the tailnet, whatever its name and tags", async () => {
@@ -86,9 +122,63 @@ describe("whois client", () => {
   it("refuses the Varlatch node itself, and refuses everyone while its own ID is unknown", async () => {
     response = node({ StableID: "nSELF", Name: "varlatch.example.ts.net." });
     expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "self" });
-    status = { status: 500, body: {} };
+    // Status without the peer list: the node's own identity is all it needs.
+    expect(statusQuery).toBe("?peers=false");
     response = node({ StableID: "nPEER" });
-    expect(await resolveWhois(config(), "127.0.0.1", 1)).toEqual({ ok: false, reason: "resolver-unavailable" });
+    for (const unknown of [{ status: 500, body: {} }, { status: 200, body: null }, { status: 200, body: { Self: { ID: 7 } } }, { status: 200, body: {} }]) {
+      status = unknown;
+      expect(await resolveWhois(config(), "127.0.0.1", 1), JSON.stringify(unknown)).toEqual({ ok: false, reason: "resolver-unavailable" });
+    }
+    // A self-ID function that throws is unknown too.
+    const throwing = { socketPath, expectedTailnet: "example.ts.net", selfNodeId: async () => Promise.reject(new Error("boom")) };
+    expect(await resolveWhois(throwing, "127.0.0.1", 1)).toEqual({ ok: false, reason: "resolver-unavailable" });
+  });
+
+  it("shares status reads between concurrent callers, never with one that arrived after the read started", async () => {
+    let reads = 0;
+    let release!: () => void;
+    let gate = new Promise<void>((r) => (release = r));
+    const slow = http.createServer(async (_req, res) => {
+      reads++;
+      await gate;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ Self: { ID: `nSELF${reads}` } }));
+    });
+    const slowSocket = join(mkdtempSync(join(tmpdir(), "ts-sock-")), "tailscaled.sock");
+    await new Promise<void>((r) => slow.listen(slowSocket, r));
+    try {
+      const selfId = selfNodeResolver(slowSocket);
+      const first = selfId(); // starts read 1
+      await new Promise((r) => setTimeout(r, 20));
+      // Arrive while read 1 is in flight: they must not get read 1's answer.
+      const later = Array.from({ length: 10 }, () => selfId());
+      release();
+      gate = new Promise<void>((r) => (release = r));
+      expect(await first).toBe("nSELF1");
+      await new Promise((r) => setTimeout(r, 20));
+      release();
+      const answers = await Promise.all(later);
+      expect(new Set(answers)).toEqual(new Set(["nSELF2"]));
+      // Eleven callers, two reads.
+      expect(reads).toBe(2);
+    } finally {
+      release();
+      await new Promise((r) => slow.close(r));
+    }
+  });
+
+  it("follows a change of the node's own identity at once (review regression)", async () => {
+    const shared = config(); // one resolver, as the listener keeps
+    status = { status: 200, body: { Self: { ID: "nOLD" } } };
+    response = node({ StableID: "nOLD", Name: "varlatch.example.ts.net." });
+    expect(await resolveWhois(shared, "127.0.0.1", 1)).toEqual({ ok: false, reason: "self" });
+    // The node re-registers under a new identity.
+    status = { status: 200, body: { Self: { ID: "nNEW" } } };
+    response = node({ StableID: "nNEW", Name: "varlatch.example.ts.net." });
+    expect(await resolveWhois(shared, "127.0.0.1", 1)).toEqual({ ok: false, reason: "self" });
+    // The old identity is just another device now.
+    response = node({ StableID: "nOLD", Name: "varlatch.example.ts.net." });
+    expect((await resolveWhois(shared, "127.0.0.1", 1)).ok).toBe(true);
   });
 
   it("brackets IPv6 peers in the WhoIs address", async () => {
