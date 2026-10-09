@@ -81,7 +81,9 @@ COPY convex/scripts/fingerprint.mjs convex/scripts/fingerprint.mjs
 RUN node convex/scripts/fingerprint.mjs --root convex > /convex-functions.fingerprint
 
 FROM node:26-slim
-RUN groupadd -r varlatch && useradd -r -g varlatch varlatch
+# uid 999, pinned: the Tailscale sidecar lets exactly this uid fetch the
+# node's certificate for the tailnet browser endpoint (TS_PERMIT_CERT_UID).
+RUN groupadd -r -g 999 varlatch && useradd -r -u 999 -g varlatch varlatch
 WORKDIR /app
 COPY --from=build /out /app
 # root:root 0644 in 0755 directories: readable for extraction, not writable

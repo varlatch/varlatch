@@ -158,6 +158,7 @@ export const SERVER_VERSION = "0.16.0";
 import { evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 import type { WhoisResult } from "../tailnet/whois.js";
 import { tailnetBrowserGate, type TailnetBrowserOptions } from "./tailnet-browser.js";
+import type { TailnetListenerReport } from "../tailnet/observe.js";
 import {
   addGroupMember,
   addTeamProject,
@@ -232,6 +233,11 @@ export interface BuildAppOptions {
    * advertises tailnet.browser-reads. Unset or null: off.
    */
   browserEndpoint?: string | null;
+  /**
+   * What varlatchd last observed of its tailnet listeners, for Installation
+   * Admins (GET /v1/installation/listeners); absent without a tailnet listener.
+   */
+  tailnetListeners?: () => TailnetListenerReport;
   /** Test hook: fetch used for OIDC issuer discovery/JWKS retrieval. */
   oidcFetch?: typeof fetch;
   /** Test hook: fetch used by Platform Connection access checks. */
@@ -702,6 +708,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   if (options.tailnetBrowser) {
     app.get("/v1/tailnet/context", (c) => c.json(tailnetDeviceOf(c)));
   }
+
+  // Installation Admins: the tailnet listeners as configured and as
+  // varlatchd last observed them, with the time; never reachability from a
+  // client, which only the client can see (ADR-0046, Listener metadata).
+  app.get("/v1/installation/listeners", (c) => {
+    if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
+    return c.json({ tailnet: options.tailnetListeners?.() ?? null });
+  });
 
   app.get("/v1/installation/backups", (c) => {
     if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");

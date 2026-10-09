@@ -126,7 +126,7 @@ recorded one, and a `publicUrl` edited into the file.
 | `VARLATCH_PUBLIC_URL` | [Public address](#public-address) | yes | no |
 | `CONVEX_CLOUD_ORIGIN` | [Public address](#public-address) | yes | no |
 | `CONVEX_SITE_ORIGIN` | [Public address](#public-address) | yes | no |
-| `COMPOSE_FILE` | [Ingress](#ingress) | public and tailnet ingress | no |
+| `COMPOSE_FILE` | [Ingress](#ingress) | public and tailnet ingress, and with the tailnet browser endpoint | no |
 | `VARLATCH_PUBLIC_HOST` | [Ingress](#ingress) | public ingress | no |
 | `VARLATCH_ACME_CA` | [Ingress](#ingress) | no | no |
 | `VARLATCH_HTTP_PORT`, `VARLATCH_HTTPS_PORT` | [Ingress](#ingress) | no | no |
@@ -138,10 +138,12 @@ recorded one, and a `publicUrl` edited into the file.
 | `VARLATCH_KEK_HOST_PATH` and the other `*_HOST_PATH` variables | [Keys and passwords](#keys-and-passwords) | yes | a path to one |
 | `POSTGRES_SUPERUSER_PASSWORD`, `VARLATCH_MIGRATE_PASSWORD`, `VARLATCH_RUNTIME_PASSWORD`, `CONVEX_DB_PASSWORD`, `CONVEX_INSTANCE_SECRET` | [Keys and passwords](#keys-and-passwords) | no | yes |
 | `CONVEX_ADMIN_KEY` | [Keys and passwords](#keys-and-passwords) | no | yes |
-| `TS_AUTHKEY_HOST_PATH` | [Tailscale](#tailscale) | tailnet ingress | a path to one |
+| `TS_AUTHKEY_HOST_PATH` | [Tailscale](#tailscale) | with the Tailscale sidecar | a path to one |
 | `TS_AUTHKEY` | [Tailscale](#tailscale) | no | yes |
-| `VARLATCH_TAILNET_NAME` | [Tailscale](#tailscale) | tailnet ingress | no |
-| `VARLATCH_TAILNET_MACHINE` | [Tailscale](#tailscale) | tailnet ingress | no |
+| `VARLATCH_TAILNET_NAME` | [Tailscale](#tailscale) | with the Tailscale sidecar | no |
+| `VARLATCH_TAILNET_MACHINE` | [Tailscale](#tailscale) | with the Tailscale sidecar | no |
+| `VARLATCH_TAILNET_HTTPS_PORT`, `VARLATCH_TAILNET_NODE`, `VARLATCH_TAILNET_ENDPOINT`, `VARLATCH_TAILNET_CERT_UID` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | with `--tailnet-endpoint` | no |
+| `VARLATCH_TAILNET_BROWSER_ORIGINS` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | no | no |
 | `VARLATCH_TRUSTED_PROXIES` | [Client addresses](#client-addresses) | no | no |
 | `VARLATCH_SYNC`, `VARLATCH_SYNC_ADAPTERS` | [Sync Targets](#sync-targets) | no | no |
 
@@ -424,7 +426,10 @@ installation that still sets it must generate a new one.
 ## Tailscale
 
 These variables belong to `docker-compose.tailscale.yml`, which the tailnet
-ingress uses, and which also gives varlatchd its tailnet listener.
+ingress uses, and which also gives varlatchd its tailnet listener. With the
+public or external ingress, `varlatch setup --tailnet-endpoint` adds it too,
+and the setup notes below for the tailnet ingress apply to it as well; the
+public address stays what it is.
 
 ### `TS_AUTHKEY_HOST_PATH` and `TS_AUTHKEY`
 
@@ -468,6 +473,37 @@ non-sensitive.
 Choose it before the first run. Renaming the machine or the tailnet later
 changes the address, and everyone registers their passkey again. Setup
 stops when it sees the name has changed.
+
+## Tailnet browser endpoint
+
+Off unless you turn it on with `varlatch setup --tailnet-endpoint`; turn it
+off again with `--no-tailnet-endpoint` (the Tailscale sidecar stays).
+varlatchd then also serves its tailnet listener over HTTPS on port 8688 of
+the node, with the node's own certificate, so that people on approved
+devices can read tailnet-protected values in the dashboard. The device is
+checked on every request, as for the CLI on the tailnet listener; network
+requirements still decide which devices may read which values. It needs
+HTTPS certificates enabled for the tailnet. Setup writes these together,
+from `varlatch-install.json`:
+
+| Variable | Read by | Value |
+|---|---|---|
+| `VARLATCH_TAILNET_HTTPS_PORT` | `varlatchd` | `8688`; empty: off |
+| `VARLATCH_TAILNET_NODE` | `varlatchd`, as `VARLATCH_TAILNET_MACHINE` | the machine name the node actually got: its certificate is for `<name>.<tailnet>` |
+| `VARLATCH_TAILNET_ENDPOINT` | `varlatch-web` | `https://<name>.<tailnet>:8688`: the dashboard's Content-Security-Policy lets browsers connect to it |
+| `VARLATCH_TAILNET_CERT_UID` | `tailscale`, as `TS_PERMIT_CERT_UID` | `999`, varlatchd's user: it may fetch the node's certificate, and nothing more |
+
+`VARLATCH_TAILNET_BROWSER_ORIGINS` (read by `varlatchd`, not written by
+setup) lists further exact origins, comma-separated, that may read from the
+endpoint; the dashboard's own origin (`VARLATCH_PUBLIC_URL`, when it is
+HTTPS) always may. Wildcards and `null` are refused at startup.
+
+Browsers reach the endpoint only where your tailnet policy lets their
+device connect to the node on port 8688. Setup prints a grant to start
+from; it never edits the policy. `varlatch doctor` reports what varlatchd
+observes (listener, certificate, node), never whether a browser can reach
+it: only a browser can find that out, with Connect to tailnet in the
+dashboard.
 
 ## Client addresses
 
@@ -581,7 +617,10 @@ Three of them carry more weight than they seem to:
   point elsewhere, or when any `S3_STORAGE_` variable is set: installation
   backups need Convex's local storage layout.
 - varlatchd also accepts `VARLATCH_KEK` and `VARLATCH_TAILNET_BIND`, but the
-  Compose files pass neither, and you should not add them.
+  Compose files pass neither, and you should not add them. The tailnet
+  browser endpoint always binds 127.0.0.1 inside the sidecar's namespace,
+  where tailscaled's forwarding reaches it and other Compose services do
+  not.
 
 ## Operator CLI environment
 

@@ -48,15 +48,22 @@ const HEADER = ` GENERATED FILE — do not edit. Regenerate with \`pnpm compose:
  applied.
 
  Topology (ADR-0014): the tailscale sidecar owns the network namespace and
- varlatchd joins it, so connections to the tailnet listener (8687) arrive
- with their TRUE tailnet socket peer address and WhoIs runs over the shared
- LocalAPI socket. The sidecar carries the network alias \`varlatchd\` so the
- dashboard's same-origin nginx proxy (proxy_pass http://varlatchd:8686)
- keeps resolving after varlatchd gives up its own network identity.
+ varlatchd joins it. tailscaled forwards each tailnet connection to the
+ tailnet listener (8687) from 127.0.0.1:<port> and remembers which device
+ that port stands for; WhoIs over the shared LocalAPI socket, with the
+ socket peer's address and port, names the device (ADR-0046 spike S1). The
+ sidecar carries the network alias \`varlatchd\` so the dashboard's
+ same-origin nginx proxy (proxy_pass http://varlatchd:8686) keeps resolving
+ after varlatchd gives up its own network identity.
 
  Requires in .env (Coolify env settings):
    TS_AUTHKEY               tailnet auth key for the sidecar node
-   VARLATCH_TAILNET_NAME    the tailnet, e.g. example.ts.net`;
+   VARLATCH_TAILNET_NAME    the tailnet, e.g. example.ts.net
+ Optional, the tailnet browser endpoint (ADR-0046), all four together:
+   VARLATCH_TAILNET_HTTPS_PORT   8688
+   VARLATCH_TAILNET_NODE         the node's machine name (its certificate's host)
+   VARLATCH_TAILNET_ENDPOINT     https://<machine>.<tailnet>:8688
+   VARLATCH_TAILNET_CERT_UID     999 (varlatchd's user, for the certificate)`;
 
 const RESET = "!reset";
 

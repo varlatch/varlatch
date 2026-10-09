@@ -8,6 +8,7 @@ import type { AppCtx } from "./domain/ctx.js";
 import { SERVER_VERSION } from "./http/app.js";
 import { evaluateMirror, readMirrorStatus, type MirrorStatus } from "./mirror/status.js";
 import { custodyStatus } from "./domain/custody.js";
+import { readListenerReport, type ListenerReason, type TailnetListenerReport } from "./tailnet/observe.js";
 
 /**
  * Read-only Installation Health checks that need the Secret Plane's own view
@@ -38,6 +39,8 @@ export interface ServerFacts {
   publicUrl: string | null;
   convexConfigured: boolean;
   installationId: string | null;
+  /** The tailnet browser endpoint as configured (ADR-0046); null when off. */
+  tailnetBrowserEndpoint?: string | null;
 }
 
 export interface ServerDoctorReport {
@@ -60,6 +63,10 @@ export interface ServerDoctorInput {
   expectedFunctions?: () => string | null;
   /** What Convex's `meta:release` reports; null when it cannot say. */
   observeFunctions?: (convexUrl: string) => Promise<string | null>;
+  /** The tailnet listeners as configured; null without Tailscale. */
+  tailnet?: { browserEndpoint: string | null } | null;
+  readListeners?: (dir: string) => TailnetListenerReport | null;
+  now?: () => number;
 }
 
 export const FUNCTIONS_FINGERPRINT_FILE = "/opt/varlatch/convex-functions.fingerprint";
@@ -240,6 +247,86 @@ export async function checkMirror(input: ServerDoctorInput, maintenance: boolean
   }
 }
 
+/** A listener report older than this says nothing about now: the daemon is not running, or stuck. */
+const LISTENERS_STALE_MS = 10 * 60_000;
+
+const REASON_TEXT: Record<ListenerReason, string> = {
+  NOT_CHECKED: "not checked yet",
+  NOT_LISTENING: "a tailnet listener did not bind its port",
+  NO_CERTIFICATE: "no valid certificate is loaded",
+  LOCALAPI_UNAVAILABLE: "tailscaled's LocalAPI does not answer",
+  NOT_RUNNING: "the node is not connected to the tailnet",
+  OTHER_TAILNET: "the node is on another tailnet than the pinned one",
+  NAME_CHANGED: "the node's name is no longer the browser endpoint's host",
+};
+
+/**
+ * The tailnet listeners as varlatchd last observed them (ADR-0046, Listener
+ * metadata), and what no check here can know: whether a browser reaches the
+ * endpoint. Advisory: Tailscale never decides whether the installation is
+ * ready (ADR-0019).
+ */
+export function checkTailnet(input: ServerDoctorInput): Check[] {
+  if (!input.tailnet) return [];
+  const listener = { id: "tailnet.listener", title: "Tailnet listener", class: "advisory" as const };
+  let report: TailnetListenerReport | null;
+  try {
+    report = (input.readListeners ?? readListenerReport)(input.stateDir);
+  } catch {
+    report = null;
+  }
+  const checkedAt = report?.observed.checkedAt ? Date.parse(report.observed.checkedAt) : NaN;
+  const now = (input.now ?? Date.now)();
+  if (!report || !Number.isFinite(checkedAt) || now - checkedAt > LISTENERS_STALE_MS) {
+    const why = !report ? "varlatchd has not reported its tailnet listeners" : "varlatchd's last report is older than 10 minutes";
+    const unknown = (c: typeof listener) => ({ ...c, status: "unknown" as const, detail: `${why} (just started, not running, or older than this check)` });
+    return [
+      unknown(listener),
+      ...(input.tailnet.browserEndpoint ? [unknown({ id: "tailnet.browser-endpoint", title: "Tailnet browser endpoint", class: "advisory" })] : []),
+    ];
+  }
+  const { listener: bound, localApi, node } = report.observed.checks;
+  const failing = [bound, localApi, node].filter((c) => c.status === "fail");
+  const checks: Check[] = [
+    failing.length
+      ? {
+          ...listener,
+          status: "fail",
+          detail: failing.map((c) => REASON_TEXT[c.reason ?? "NOT_CHECKED"]).join("; "),
+          remedy: "Inspect: docker compose logs tailscale varlatchd",
+        }
+      : [bound, localApi, node].every((c) => c.status === "pass")
+        ? { ...listener, status: "pass", detail: `port ${report.configured.listenerPort}, tailnet ${report.configured.tailnet}, checked ${report.observed.checkedAt}` }
+        : { ...listener, status: "unknown", detail: "not every part could be checked yet" },
+  ];
+  if (input.tailnet.browserEndpoint) {
+    const tls = report.observed.checks.browserTls;
+    const base = { id: "tailnet.browser-endpoint", title: "Tailnet browser endpoint", class: "advisory" as const };
+    checks.push(
+      tls?.status === "pass"
+        ? { ...base, status: "pass", detail: `${input.tailnet.browserEndpoint}, certificate valid until ${tls.certificateNotAfter}` }
+        : tls?.status === "fail"
+          ? {
+              ...base,
+              status: "fail",
+              detail: `${input.tailnet.browserEndpoint}: ${REASON_TEXT[tls.reason ?? "NO_CERTIFICATE"]}`,
+              remedy:
+                "The sidecar must let varlatchd's user fetch certificates (TS_PERMIT_CERT_UID) and the tailnet must have HTTPS certificates enabled: run `varlatch setup --tailnet-endpoint` again",
+            }
+          : { ...base, status: "unknown", detail: "not checked yet" },
+      {
+        id: "tailnet.browser-reachability",
+        title: "Tailnet browser endpoint reachable from browsers",
+        class: "advisory",
+        status: "unknown",
+        detail:
+          "only a browser on an approved device can tell: use Connect to tailnet in the dashboard. Its device needs an access rule allowing the endpoint's port",
+      },
+    );
+  }
+  return checks;
+}
+
 export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoctorReport> {
   const checks: Check[] = [];
   let gate: ReturnType<typeof activeGate> = null;
@@ -275,6 +362,7 @@ export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoct
   checks.push(await checkFunctions(input, gate !== null || gateUnreadable));
   checks.push(checkBackups(input.stateDir));
   checks.push(await checkCustody(input.db));
+  checks.push(...checkTailnet(input));
 
   return {
     facts: {
@@ -284,6 +372,7 @@ export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoct
       publicUrl: input.publicUrl ?? null,
       convexConfigured: Boolean(input.convexUrl),
       installationId: installation?.id ?? null,
+      tailnetBrowserEndpoint: input.tailnet?.browserEndpoint ?? null,
     },
     checks,
   };

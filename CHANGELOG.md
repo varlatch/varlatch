@@ -98,6 +98,24 @@ fixes.
   on the `varlatch-web` container). The container refuses to start when
   `CONVEX_URL` or `VARLATCH_TAILNET_ENDPOINT` holds anything but a plain
   URL.
+- **`varlatch setup --tailnet-endpoint` turns the tailnet browser endpoint
+  on** (`--no-tailnet-endpoint` turns it off). Setup writes the settings
+  varlatchd, the dashboard and the Tailscale sidecar need (the sidecar lets
+  varlatchd's user, uid 999, fetch the node's certificate and nothing
+  else), requires HTTPS certificates for the tailnet, and prints a tailnet
+  access rule for port 8688 to start from; it never edits the tailnet
+  policy. With the public or external ingress it adds the Tailscale
+  sidecar without changing the public address.
+- `varlatch doctor` reports the tailnet listener and the browser endpoint
+  as varlatchd last observed them (listening, certificate and its expiry,
+  LocalAPI, node running on the pinned tailnet under the endpoint's name),
+  whether the dashboard's security policy allows the endpoint, and fails
+  when Tailscale Serve claims the endpoint's port. Whether a browser can
+  reach the endpoint stays unknown: only a browser can tell.
+- API: `GET /v1/installation/listeners` (Installation Admins): the tailnet
+  listeners as configured and as varlatchd last observed them, with the
+  time.
+- varlatchd's image pins its user to uid 999 (it already was).
 - On the tailnet listener, each recognized device now has its own request
   window. Before, every tailnet client shared one, since all of them
   arrive from the sidecar's 127.0.0.1.

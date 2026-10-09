@@ -9,6 +9,7 @@ import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { TrustedProxies, clientAddressResolver } from "./http/client-address.js";
 import { NodeCertificate } from "./tailnet/cert.js";
+import { TailnetObserver } from "./tailnet/observe.js";
 import { serveTailnetHttps, TAILNET_HTTPS_BIND, tailnetResolver } from "./tailnet/listener.js";
 import { selfNodeResolver } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
@@ -128,6 +129,17 @@ async function serveCommand(): Promise<void> {
   const trustedProxies = config.trustedProxies ? await new TrustedProxies(config.trustedProxies).start() : null;
   const browser = config.tailscale?.browser ?? null;
   const browserEndpoint = browser ? `https://${browser.host}:${browser.port}` : null;
+  const certificate = config.tailscale && browser ? new NodeCertificate({ socketPath: config.tailscale.socketPath, host: browser.host }) : null;
+  const observer = config.tailscale
+    ? new TailnetObserver({
+        socketPath: config.tailscale.socketPath,
+        expectedTailnet: config.tailscale.expectedTailnet,
+        listenerPort: config.tailscale.port,
+        browser,
+        certificate,
+        stateDir: stateDir(),
+      })
+    : null;
   const app = buildApp(ctx, {
     clientAddress: clientAddressResolver(c => getConnInfo(c).remote.address ?? "unknown", trustedProxies),
     issuer,
@@ -136,6 +148,7 @@ async function serveCommand(): Promise<void> {
     enrollBundlePath: fileURLToPath(new URL("./enroll.js", import.meta.url)),
     sync: config.sync,
     browserEndpoint,
+    ...(observer ? { tailnetListeners: () => observer.report() } : {}),
   });
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`varlatchd ${SERVER_VERSION} listening on :${info.port} (ordinary listener)`);
@@ -184,6 +197,7 @@ async function serveCommand(): Promise<void> {
     serve(
       { fetch: tailnetApp.fetch, port: ts.port, hostname: ts.bind },
       (info) => {
+        observer?.listening("plain", true);
         console.log(
           `varlatchd tailnet listener on ${ts.bind}:${info.port} (tailnet ${ts.expectedTailnet})`,
         );
@@ -193,9 +207,8 @@ async function serveCommand(): Promise<void> {
     // The browser endpoint (ADR-0046): the same device check over HTTPS
     // with the node's certificate, for the allowlisted dashboard origins.
     // Off unless VARLATCH_TAILNET_HTTPS_PORT is set.
-    if (ts.browser) {
+    if (ts.browser && certificate) {
       const { host, port, origins } = ts.browser;
-      const certificate = new NodeCertificate({ socketPath: ts.socketPath, host });
       void certificate.start();
       const browserApp = buildApp(ctx, {
         clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
@@ -204,12 +217,20 @@ async function serveCommand(): Promise<void> {
         sync: config.sync,
         browserEndpoint,
       });
-      serveTailnetHttps({ fetch: browserApp.fetch, host, port, certificate }, (info) => {
+      const browserServer = serveTailnetHttps({ fetch: browserApp.fetch, host, port, certificate }, (info) => {
+        observer?.listening("browser", true);
         console.log(
           `varlatchd tailnet browser endpoint on ${TAILNET_HTTPS_BIND}:${info.port} as https://${host}:${port} (origins ${origins.join(", ")})`,
         );
       });
+      // A port the browser endpoint cannot bind must not take the ordinary
+      // listener down with it: record it, and say so.
+      browserServer.on("error", (err: Error) => {
+        observer?.listening("browser", false);
+        console.error(`varlatchd: tailnet browser endpoint on ${TAILNET_HTTPS_BIND}:${port} failed: ${err.message}`);
+      });
     }
+    observer?.start();
   }
 }
 
@@ -334,6 +355,9 @@ async function adminCommand(rest: string[]): Promise<void> {
         publicUrl: config.publicUrl,
         convexUrl: config.convexUrl,
         waitMs: Number.isFinite(waitSeconds) ? Math.max(0, waitSeconds) * 1000 : 15_000,
+        tailnet: config.tailscale
+          ? { browserEndpoint: config.tailscale.browser ? `https://${config.tailscale.browser.host}:${config.tailscale.browser.port}` : null }
+          : null,
       });
       rootKek?.fill(0);
       console.log(JSON.stringify(report));

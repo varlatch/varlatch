@@ -21,6 +21,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/installation/listeners": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Installation Admin only, the tailnet listeners as configured and as varlatchd last observed them
+         * @description What varlatchd checks at start and every 60 seconds: listeners bound, the browser endpoint's certificate, the LocalAPI answering, the node running on the pinned tailnet under the endpoint's name. Never reachability from a client, which only the client can observe (ADR-0046, Listener metadata).
+         */
+        get: operations["getInstallationListeners"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/meta": {
         parameters: {
             query?: never;
@@ -1494,6 +1514,42 @@ export interface components {
             /** @description Contract Semantics versions this server evaluates. Absent on servers older than 0.11.0, which evaluate only version 1. Version 3 (from 0.13.0) adds the `integer` item type. */
             semanticsVersions?: number[];
         };
+        InstallationListeners: {
+            tailnet: null | components["schemas"]["TailnetListenerReport"];
+        };
+        TailnetListenerReport: {
+            /** @description From configuration only. */
+            configured: {
+                tailnet: string;
+                listenerPort: number;
+                browserEndpoint: string | null;
+            };
+            observed: {
+                /**
+                 * Format: date-time
+                 * @description Null before the first check.
+                 */
+                checkedAt: string | null;
+                checks: {
+                    listener: components["schemas"]["ObservedCheck"];
+                    /** @description Present only when the browser endpoint is configured. */
+                    browserTls?: components["schemas"]["ObservedCheck"];
+                    localApi: components["schemas"]["ObservedCheck"];
+                    node: components["schemas"]["ObservedCheck"];
+                };
+            };
+        };
+        ObservedCheck: {
+            /** @enum {string} */
+            status: "pass" | "fail" | "unknown";
+            /** @enum {string} */
+            reason?: "NOT_CHECKED" | "NOT_LISTENING" | "NO_CERTIFICATE" | "LOCALAPI_UNAVAILABLE" | "NOT_RUNNING" | "OTHER_TAILNET" | "NAME_CHANGED";
+            /**
+             * Format: date-time
+             * @description browserTls only, when the certificate in use expires.
+             */
+            certificateNotAfter?: string;
+        };
         TailnetEndpoint: {
             /** @description The HTTPS URL of the tailnet browser endpoint, such as https://varlatch.example.ts.net:8688; null when it is off. */
             browserEndpoint: string | null;
@@ -2456,6 +2512,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstallationBackups"];
+                };
+            };
+            /** @description Installation Admin authority required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getInstallationListeners: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tailnet listeners, or null without a tailnet listener */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationListeners"];
                 };
             };
             /** @description Installation Admin authority required */

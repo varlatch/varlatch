@@ -3,10 +3,13 @@
 #   docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
 #
 # Topology: the tailscale sidecar owns the network namespace; varlatchd joins
-# it (network_mode) so connections to the tailnet listener arrive with their
-# TRUE tailnet socket peer address, and WhoIs runs over the shared LocalAPI
-# socket. This is what makes Tailnet Context sound — never reverse-proxy the
-# tailnet listener or forward identity headers into it.
+# it (network_mode) and runs WhoIs over the shared LocalAPI socket. In this
+# userspace mode tailscaled forwards each tailnet connection to the listener
+# from 127.0.0.1:<port> and remembers which device that port stands for;
+# WhoIs with the socket peer's address and port names the device (ADR-0046
+# spike S1). That holds while only tailscaled and varlatchd share the
+# namespace. Never reverse-proxy the tailnet listeners or forward identity
+# headers into them: a proxy's connection names no device.
 #
 # Requires in .env:
 #   TS_AUTHKEY               a tailnet auth key (tag the node, e.g. tag:varlatch),
@@ -14,7 +17,10 @@
 #   VARLATCH_TAILNET_NAME    your tailnet, e.g. example.ts.net
 #
 # The ordinary listener (8686) stays reachable through the host port mapping
-# on the sidecar; the tailnet listener (8687) is reachable only via Tailscale.
+# on the sidecar; the tailnet listener (8687) is reachable only via Tailscale,
+# and so is the optional browser endpoint (HTTPS on VARLATCH_TAILNET_HTTPS_PORT,
+# usually 8688, bound to 127.0.0.1 inside the namespace; ADR-0046), which
+# `varlatch setup --tailnet-endpoint` turns on.
 #
 # Requires Docker Compose 2.24+ (`!reset`). This file is also an input of the
 # generated Coolify file (infra/coolify/generate-compose.mjs): edit here, then
@@ -46,6 +52,9 @@ services:
       # /healthz is 200 only once the node holds a tailnet address.
       TS_ENABLE_HEALTH_CHECK: "true"
       TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+      # The browser endpoint only: lets varlatchd's user (uid 999) fetch the
+      # node's certificate from the LocalAPI, and nothing else (ADR-0046 S3).
+      TS_PERMIT_CERT_UID: ${VARLATCH_TAILNET_CERT_UID:-}
     volumes:
       - tailscale-state:/var/lib/tailscale
       - tailscale-socket:/var/run/tailscale
@@ -81,6 +90,10 @@ services:
       VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
       VARLATCH_TAILSCALE_TAILNET: ${VARLATCH_TAILNET_NAME:?set in .env}
       VARLATCH_TAILNET_PORT: "8687"
+      # The tailnet browser endpoint (ADR-0046): off while the port is empty.
+      VARLATCH_TAILNET_HTTPS_PORT: ${VARLATCH_TAILNET_HTTPS_PORT:-}
+      VARLATCH_TAILNET_MACHINE: ${VARLATCH_TAILNET_NODE:-}
+      VARLATCH_TAILNET_BROWSER_ORIGINS: ${VARLATCH_TAILNET_BROWSER_ORIGINS:-}
     volumes:
       - tailscale-socket:/var/run/tailscale:ro
     depends_on:

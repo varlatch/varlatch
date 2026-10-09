@@ -2242,6 +2242,7 @@ async function main(): Promise<void> {
             publicUrl: flag(args, "--public-url"),
             tailnetMachine: flag(args, "--tailnet-machine"),
             tailscaleAuthKeyFile: flag(args, "--tailscale-auth-key-file"),
+            tailnetEndpoint: has(args, "--tailnet-endpoint") ? true : has(args, "--no-tailnet-endpoint") ? false : undefined,
             webPort: flag(args, "--port") ? Number(flag(args, "--port")) : undefined,
             noWait: has(args, "--no-wait"),
             enrollTimeoutMs: Number(flag(args, "--enroll-timeout") ?? "900") * 1000,

@@ -36,6 +36,8 @@ interface ServerFacts {
   publicUrl: string | null;
   convexConfigured: boolean;
   installationId: string | null;
+  /** The tailnet browser endpoint varlatchd serves (ADR-0046); absent from older servers, null when off. */
+  tailnetBrowserEndpoint?: string | null;
 }
 export interface DoctorReport {
   dir: string;
@@ -261,6 +263,62 @@ export function checkComposeVersion(output: string | null): Check {
 
 const isLoopback = (host: string) => ["localhost", "127.0.0.1", "[::1]"].includes(host);
 
+/**
+ * The tailnet browser endpoint from the host's side (ADR-0046): the
+ * dashboard's Content-Security-Policy must let browsers connect to it
+ * (otherwise Connect fails with "not reachable from this browser"), and no
+ * Tailscale Serve handler may sit on its port, where it would take the
+ * connection and its device identity away from varlatchd.
+ */
+export function checkTailnetBrowser(
+  endpoint: string | null | undefined,
+  cspConf: string | null,
+  webEndpoint: string | null,
+  serveJson: string | null,
+): Check[] {
+  const checks: Check[] = [];
+  const policy = { id: "tailnet.browser-policy", title: "Dashboard allows the tailnet browser endpoint", class: "advisory" as const };
+  const connect = cspConf?.match(/connect-src ([^;"]*)/)?.[1]?.split(/\s+/) ?? null;
+  if (endpoint) {
+    checks.push(
+      cspConf === null
+        ? { ...policy, status: "unknown", detail: "could not read the dashboard's security policy (a varlatch-web image older than this check?)" }
+        : connect?.includes(endpoint)
+          ? { ...policy, status: "pass", detail: `connect-src allows ${endpoint}` }
+          : {
+              ...policy,
+              status: "fail",
+              detail: `varlatchd serves ${endpoint}, but the dashboard's connect-src allows only ${connect?.join(" ") ?? "nothing"}: browsers cannot reach the endpoint`,
+              remedy: "Run `varlatch setup --tailnet-endpoint` again: it sets VARLATCH_TAILNET_ENDPOINT for varlatch-web",
+            },
+    );
+    const port = new URL(endpoint).port;
+    let claimed = false;
+    try {
+      const serve = serveJson ? (JSON.parse(serveJson) as { TCP?: Record<string, unknown>; Web?: Record<string, unknown> }) : {};
+      claimed = Object.keys(serve.TCP ?? {}).includes(port) || Object.keys(serve.Web ?? {}).some((k) => k.endsWith(`:${port}`));
+    } catch {
+      claimed = false;
+    }
+    checks.push(
+      claimed
+        ? {
+            id: "tailnet.browser-direct", title: "Tailnet browser endpoint reached directly", class: "mandatory", status: "fail",
+            detail: `tailscale-serve.json claims port ${port}: Serve would take those connections, and with them the device's identity`,
+            remedy: `Remove port ${port} from tailscale-serve.json; nothing may proxy the browser endpoint`,
+          }
+        : { id: "tailnet.browser-direct", title: "Tailnet browser endpoint reached directly", class: "mandatory", status: "pass", detail: `no Serve handler on port ${port}` },
+    );
+  } else if (webEndpoint) {
+    checks.push({
+      ...policy, status: "fail",
+      detail: `varlatch-web allows ${webEndpoint} (VARLATCH_TAILNET_ENDPOINT), but varlatchd serves no tailnet browser endpoint`,
+      remedy: "Run `varlatch setup` again (or `--tailnet-endpoint` to serve one)",
+    });
+  }
+  return checks;
+}
+
 export function checkWebConfig(configJs: string | null, publicUrl: string | null): Check[] {
   const convexUrl = configJs?.match(/convexUrl:\s*"([^"]*)"/)?.[1] ?? "";
   const configured: Check = convexUrl
@@ -345,6 +403,17 @@ export async function runDoctor(opts: { dir: string; waitSeconds?: number; run?:
 
   const web = await run(["compose", "exec", "-T", "varlatch-web", "cat", "/usr/share/nginx/html/varlatch-config.js"]);
   checks.push(...checkWebConfig(web.code === 0 ? web.stdout : null, facts?.publicUrl ?? null));
+  const csp = await run(["compose", "exec", "-T", "varlatch-web", "cat", "/etc/nginx/varlatch/csp.conf"]);
+  const webEndpoint = await run(["compose", "exec", "-T", "varlatch-web", "printenv", "VARLATCH_TAILNET_ENDPOINT"]);
+  const serveFile = join(dir, "tailscale-serve.json");
+  checks.push(
+    ...checkTailnetBrowser(
+      facts?.tailnetBrowserEndpoint,
+      csp.code === 0 ? csp.stdout : null,
+      webEndpoint.code === 0 ? webEndpoint.stdout.trim() || null : null,
+      existsSync(serveFile) ? readFileSync(serveFile, "utf8") : null,
+    ),
+  );
   const resolved = await run(["compose", "--profile", "deploy", "config", "--format", "json"]);
   let config: import("./adopt.js").ComposeConfig | null = null;
   try { config = resolved.code === 0 ? JSON.parse(resolved.stdout) : null; } catch { /* unknown below */ }

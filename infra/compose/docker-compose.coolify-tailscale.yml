@@ -9,15 +9,22 @@
 # applied.
 
 # Topology (ADR-0014): the tailscale sidecar owns the network namespace and
-# varlatchd joins it, so connections to the tailnet listener (8687) arrive
-# with their TRUE tailnet socket peer address and WhoIs runs over the shared
-# LocalAPI socket. The sidecar carries the network alias `varlatchd` so the
-# dashboard's same-origin nginx proxy (proxy_pass http://varlatchd:8686)
-# keeps resolving after varlatchd gives up its own network identity.
+# varlatchd joins it. tailscaled forwards each tailnet connection to the
+# tailnet listener (8687) from 127.0.0.1:<port> and remembers which device
+# that port stands for; WhoIs over the shared LocalAPI socket, with the
+# socket peer's address and port, names the device (ADR-0046 spike S1). The
+# sidecar carries the network alias `varlatchd` so the dashboard's
+# same-origin nginx proxy (proxy_pass http://varlatchd:8686) keeps resolving
+# after varlatchd gives up its own network identity.
 
 # Requires in .env (Coolify env settings):
 #   TS_AUTHKEY               tailnet auth key for the sidecar node
 #   VARLATCH_TAILNET_NAME    the tailnet, e.g. example.ts.net
+# Optional, the tailnet browser endpoint (ADR-0046), all four together:
+#   VARLATCH_TAILNET_HTTPS_PORT   8688
+#   VARLATCH_TAILNET_NODE         the node's machine name (its certificate's host)
+#   VARLATCH_TAILNET_ENDPOINT     https://<machine>.<tailnet>:8688
+#   VARLATCH_TAILNET_CERT_UID     999 (varlatchd's user, for the certificate)
 
 name: varlatch
 
@@ -113,6 +120,10 @@ services:
       VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
       VARLATCH_TAILSCALE_TAILNET: ${VARLATCH_TAILNET_NAME:?set in .env}
       VARLATCH_TAILNET_PORT: "8687"
+      # The tailnet browser endpoint (ADR-0046): off while the port is empty.
+      VARLATCH_TAILNET_HTTPS_PORT: ${VARLATCH_TAILNET_HTTPS_PORT:-}
+      VARLATCH_TAILNET_MACHINE: ${VARLATCH_TAILNET_NODE:-}
+      VARLATCH_TAILNET_BROWSER_ORIGINS: ${VARLATCH_TAILNET_BROWSER_ORIGINS:-}
     volumes:
       - varlatch-state:/var/lib/varlatch
       - ./backups:/backups
@@ -153,6 +164,10 @@ services:
       # Browser-facing Convex origin — runtime config (varlatch-config.js),
       # not a build arg, so digest-pinned release images work unmodified.
       CONVEX_URL: ${CONVEX_CLOUD_ORIGIN:-}
+      # The tailnet browser endpoint, when served (ADR-0046): the dashboard's
+      # security policy lets browsers connect to it. Set by
+      # `varlatch setup --tailnet-endpoint`.
+      VARLATCH_TAILNET_ENDPOINT: ${VARLATCH_TAILNET_ENDPOINT:-}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCH_WEB_PORT:-8787}:80"
     # Static probe, never /readyz through the proxy: web must stay routable
@@ -272,6 +287,9 @@ services:
       # /healthz is 200 only once the node holds a tailnet address.
       TS_ENABLE_HEALTH_CHECK: "true"
       TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+      # The browser endpoint only: lets varlatchd's user (uid 999) fetch the
+      # node's certificate from the LocalAPI, and nothing else (ADR-0046 S3).
+      TS_PERMIT_CERT_UID: ${VARLATCH_TAILNET_CERT_UID:-}
     volumes:
       - tailscale-state:/var/lib/tailscale
       - tailscale-socket:/var/run/tailscale

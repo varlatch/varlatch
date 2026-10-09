@@ -338,21 +338,38 @@ through the host, made explicit and audited here.
 docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
 ```
 
-varlatchd joins the Tailscale sidecar's network namespace, so its dedicated
-tailnet listener (port 8687, reachable only over Tailscale) sees true tailnet
-peer addresses and verifies them via WhoIs with your tailnet pinned. Tailnet
-Requirements ("require tailnet for production-tier retrieval") are created
-through the API/CLI; without this overlay they simply fail closed. Never
-reverse-proxy the tailnet listener: that would break the socket-level
-identity guarantee.
+varlatchd joins the Tailscale sidecar's network namespace and runs its
+dedicated tailnet listener there (port 8687, reachable only over Tailscale).
+In this userspace mode tailscaled forwards each tailnet connection from
+127.0.0.1:<port> and remembers which device that port stands for; varlatchd
+asks WhoIs with the socket peer's address and port, with your tailnet
+pinned, and so learns the device. Tailnet Requirements ("require tailnet
+for production-tier retrieval") are created through the API/CLI; without
+this overlay they simply fail closed. Never reverse-proxy the tailnet
+listener, and let nothing but tailscaled and varlatchd share the sidecar's
+namespace: a proxy's connection names no device, and a third process there
+would sit inside the trust boundary.
 
 A Tailnet Requirement covers every value read, non-secret values included.
-The dashboard reaches varlatchd through its ordinary listener, never the
-tailnet listener, so it cannot read values that a requirement covers. It
-marks those environments "Values: tailnet only" (the API's
-`tailnetRequired`), shows their items and states, and explains where Reveal
-would be. Read the values with the CLI on an approved device, pointed at the
-tailnet listener.
+The dashboard reaches varlatchd through its ordinary listener, where no
+device is ever known, so by default it cannot read values that a
+requirement covers. It marks those environments "Values: tailnet only" (the
+API's `tailnetRequired`), shows their items and states, and explains where
+Reveal would be. Read the values with the CLI on an approved device, pointed
+at the tailnet listener, or turn on the tailnet browser endpoint:
+
+```sh
+varlatch setup --tailnet-endpoint
+```
+
+varlatchd then also serves the tailnet listener over HTTPS on port 8688 of
+the node, with the node's own certificate (the sidecar lets varlatchd's
+user fetch it), and the dashboard offers "Connect to tailnet" where values
+are tailnet only. Its device is checked on every request; only the
+dashboard's origin may read from the endpoint, and only values. Add a
+tailnet access rule for port 8688 for the devices that may use it: setup
+prints one to start from. See
+[Tailnet browser endpoint](../../docs/self-hosting/configuration.md#tailnet-browser-endpoint).
 
 The overlay needs Docker Compose 2.24 or newer (it uses `!reset` to drop
 varlatchd's own port mapping; the sidecar publishes 8686 instead). Earlier
