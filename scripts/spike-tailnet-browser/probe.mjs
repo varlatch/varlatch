@@ -37,8 +37,9 @@ if (process.argv[2] === "ctl") {
     let body = "";
     res.on("data", (d) => (body += d));
     res.on("end", () => {
+      // exitCode, not exit(): exiting at once cut piped output at 64 KB.
+      process.exitCode = res.statusCode === 200 ? 0 : 1;
       process.stdout.write(body);
-      process.exit(res.statusCode === 200 ? 0 : 1);
     });
   });
   req.on("error", (err) => {
@@ -50,10 +51,10 @@ if (process.argv[2] === "ctl") {
   await serve();
 }
 
-function localApi(method, path, body) {
+function localApi(method, path, body, timeoutMs = 15000) {
   return new Promise((resolve) => {
     const req = http.request(
-      { socketPath: SOCKET, path, method, headers: { Host: "local-tailscaled.sock" }, timeout: 15000 },
+      { socketPath: SOCKET, path, method, headers: { Host: "local-tailscaled.sock" }, timeout: timeoutMs },
       (res) => {
         let text = "";
         res.on("data", (d) => (text += d));
@@ -102,7 +103,8 @@ async function fetchCert(minValidity) {
   if (!domain) return { ok: false, error: "no cert domain (are HTTPS certificates enabled for the tailnet?)" };
   const query = `type=pair${minValidity ? `&min_validity=${encodeURIComponent(minValidity)}` : ""}`;
   const t0 = Date.now();
-  const res = await localApi("GET", `/localapi/v0/cert/${encodeURIComponent(domain)}?${query}`);
+  // An ACME order (first issuance or renewal) takes far longer than other calls.
+  const res = await localApi("GET", `/localapi/v0/cert/${encodeURIComponent(domain)}?${query}`, undefined, 180000);
   const ms = Date.now() - t0;
   if (res.status !== 200) return { ok: false, domain, status: res.status, ms, error: res.body.trim().slice(0, 300) };
   const blocks = [...res.body.matchAll(/-----BEGIN ([A-Z ]+)-----[\s\S]+?-----END \1-----/g)];
@@ -139,10 +141,15 @@ async function serve() {
       ),
       remoteAddress: addr,
       remotePort: port,
-      whois: await whois(addr, port),
-      whoisPort0: await whois(addr, 0),
+      whoisMs: null,
+      whois: null,
+      whoisPort0: null,
       whoisAfterClose: null,
     };
+    const t0 = Date.now();
+    entry.whois = await whois(addr, port);
+    entry.whoisMs = Date.now() - t0;
+    entry.whoisPort0 = await whois(addr, 0);
     log.push(entry);
     // After close: an entry must not outlive its connection.
     sock.once("close", () => {
@@ -252,7 +259,11 @@ async function serve() {
 
   const control = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://ctl.invalid");
-    if (url.pathname === "/log") return answer(res, 200, log);
+    if (url.pathname === "/log") {
+      const run = url.searchParams.get("run");
+      const since = Number(url.searchParams.get("since") ?? 0);
+      return answer(res, 200, log.filter((e) => e.id > since && (!run || new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run)));
+    }
     if (url.pathname === "/reports") return answer(res, 200, reports);
     if (url.pathname === "/status") return answer(res, 200, { status: await status(), listeners, cert: certSummary(cert), uid: process.getuid?.() });
     if (url.pathname === "/cert") return answer(res, 200, certSummary(await fetchCert(url.searchParams.get("min_validity") ?? undefined)));

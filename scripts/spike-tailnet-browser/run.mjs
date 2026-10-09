@@ -313,12 +313,21 @@ const ctlAsync = (method, path) =>
       (err, out) => (err ? fail(err) : done(JSON.parse(out))),
     ),
   );
-function curlLines(args) {
-  const out = dc(["exec", "-T", "client-curl", "curl", "-sS", "--socks5-hostname", "localhost:1055", "-m", "30", "-H", "Connection: close", "-w", "\\n", ...args]);
-  return out
+/** Requests from the client node: the answers that came, and curl's errors for the rest (a partial result, not an exception). */
+function curlRun(args) {
+  let out = "";
+  let error = null;
+  try {
+    out = dc(["exec", "-T", "client-curl", "curl", "-sS", "--socks5-hostname", "localhost:1055", "-m", "30", "-H", "Connection: close", "-w", "\\n", ...args]);
+  } catch (err) {
+    out = String(err.stdout ?? "");
+    error = String(err.stderr ?? err).trim().split("\n").slice(0, 5).join(" | ");
+  }
+  const lines = out
     .split("\n")
     .filter((l) => l.startsWith("{"))
     .map((l) => JSON.parse(l));
+  return { lines, error };
 }
 
 /** One request from the client node, with its outcome and timing; a failure is a result, not an exception. */
@@ -467,7 +476,7 @@ async function recreateServer(ctx, permitCert) {
 // ---- S1: the socket peer and WhoIs, from two nodes, under concurrency.
 async function s1(ctx) {
   const a = await request(`http://${ctx.name}:8687/probe?s1=a`);
-  const b = curlLines([`http://${ctx.name}:8687/probe?s1=b`])[0];
+  const b = curlRun([`http://${ctx.name}:8687/probe?s1=b`]).lines[0];
   if (!a.json || !b) return expect("s1", "both nodes reach the tailnet listener shape", false, { a: a.error, b: !!b });
   observe("s1", "socket peer seen for this machine", `${a.json.remoteAddress}:${a.json.remotePort}`);
   observe("s1", "socket peer seen for the client node", `${b.remoteAddress}:${b.remotePort}`);
@@ -482,14 +491,23 @@ async function s1(ctx) {
   expect("s1", "WhoIs fails after the connection closed (client node)", after(b.id)?.ok === false, after(b.id));
   const N = 50;
   const fromA = await Promise.all(Array.from({ length: N }, (_, i) => request(`http://${ctx.name}:8687/probe?s1=pa${i}`)));
-  const fromB = curlLines(["--parallel", "--parallel-max", String(N), `http://${ctx.name}:8687/probe?s1=pb[1-${N}]`]);
-  const wrongA = fromA.filter((r) => r.json?.whois?.nodeId !== ctx.localId).length;
-  const wrongB = fromB.filter((r) => r.whois?.nodeId !== ctx.clientId).length;
-  expect("s1", `${N} parallel connections from each node each resolve to their own node`, wrongA === 0 && wrongB === 0 && fromB.length === N, {
-    wrongA,
-    wrongB,
-    answeredB: fromB.length,
-  });
+  const fromB = curlRun(["--parallel", "--parallel-max", String(N), `http://${ctx.name}:8687/probe?s1=pb[1-${N}]`]);
+  // An unanswered request is not a misattributed one: count them apart.
+  const answeredA = fromA.filter((r) => r.json?.whois);
+  const answeredB = fromB.lines.filter((r) => r.whois);
+  const wrongA = answeredA.filter((r) => r.json.whois.nodeId !== ctx.localId).length;
+  const wrongB = answeredB.filter((r) => r.whois.nodeId !== ctx.clientId).length;
+  const counts = { answeredA: answeredA.length, answeredB: answeredB.length, wrongA, wrongB, errorsA: [...new Set(fromA.filter((r) => !r.json).map((r) => r.error))], errorB: fromB.error };
+  observe("s1", `${N} parallel connections from each node`, counts);
+  judge(
+    "s1",
+    `${N} parallel connections from each node each resolve to their own node`,
+    wrongA > 0 || wrongB > 0
+      ? verdict("FAIL", counts)
+      : answeredA.length === N && answeredB.length === N
+        ? verdict("PASS", counts)
+        : verdict("INCONCLUSIVE", { problem: "not every parallel request was answered; none was misattributed", ...counts }),
+  );
 }
 
 // ---- S2: a 127.0.0.1 bind still gets tailnet traffic and keeps Compose peers out.
@@ -543,13 +561,38 @@ async function s4(ctx) {
   if (!cur.ok) return expect("s4", "a certificate to renew", false, cur);
   if (process.env.SPIKE_S4_FORCE_RENEW === "1") {
     const hours = Math.ceil((Date.parse(cur.notAfter) - Date.now()) / 3_600_000) + 24;
-    const renewed = ctl("GET", `/cert?min_validity=${hours}h`);
+    // While the renewal runs, keep asking: does WhoIs stay available? varlatchd
+    // gives WhoIs 3 s before it fails closed.
+    let renewing = true;
+    const during = [];
+    const watcher = (async () => {
+      while (renewing) {
+        const r = await request(`http://${ctx.name}:8687/probe?s4=renewal`, { timeoutMs: 20000 });
+        during.push({ ok: r.ok && r.json?.whois?.ok === true, whoisMs: r.json?.whoisMs ?? null, ms: r.ms, error: r.error });
+        await sleep(500);
+      }
+    })();
+    const renewed = await ctlAsync("GET", `/cert?min_validity=${hours}h`).catch((err) => ({ ok: false, error: String(err).slice(0, 200) }));
+    renewing = false;
+    await watcher;
     expect("s4", "min_validity beyond the remaining lifetime renews the certificate", renewed.ok && renewed.serial !== cur.serial, {
       before: cur.notAfter,
       after: renewed.notAfter,
       fetchMs: renewed.ms,
       error: renewed.error,
     });
+    const slow = during.filter((d) => !d.ok || d.whoisMs === null || d.whoisMs > 3000);
+    observe("s4", "WhoIs while the renewal ran", {
+      samples: during.length,
+      renewalMs: renewed.ms,
+      maxWhoisMs: Math.max(0, ...during.map((d) => d.whoisMs ?? 0)),
+      failed: during.filter((d) => !d.ok).length,
+    });
+    judge(
+      "s4",
+      "WhoIs keeps answering within 3 s while a renewal runs",
+      during.length === 0 ? verdict("INCONCLUSIVE", "no sample was taken during the renewal") : slow.length === 0 ? verdict("PASS", { samples: during.length }) : verdict("FAIL", { samples: during.length, slow: slow.slice(0, 5) }),
+    );
   } else {
     notRun("s4", "forced renewal: set SPIKE_S4_FORCE_RENEW=1 (one Let's Encrypt issuance for the spike node's name)");
   }
@@ -630,7 +673,7 @@ async function s5(ctx, local) {
           outcome = { completed: false, error: String(err).slice(0, 200) };
         }
         observe("s5", `${type}, ${c.origin} origin: what happened`, { ...outcome, console: notes });
-        const serverEntries = ctl("GET", "/log").filter((e) => new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run);
+        const serverEntries = ctl("GET", `/log?run=${run}`);
         judge(
           "s5",
           `${type}, ${c.origin} origin: ${c.expected === "reachable" ? "read an answer naming this machine, matching the probe's record" : "fails"}`,
@@ -653,7 +696,7 @@ async function s5(ctx, local) {
     const run = runId();
     console.log(`S5 Safari: on ${safariNode}, open https://${ctx.name}:8690/page?run=${run} in Safari within ${safariWait} s and leave it until it shows "reported: true".`);
     const end = Date.now() + safariWait * 1000;
-    const state = () => ({ entries: ctl("GET", "/log"), reports: ctl("GET", "/reports"), node: safariNode, run });
+    const state = () => ({ entries: ctl("GET", `/log?run=${run}`), reports: ctl("GET", "/reports"), node: safariNode, run });
     // The browser's report settles it; without one, the deadline does.
     while (Date.now() < end && !ctl("GET", "/reports").some((r) => r.run === run)) await sleep(3000);
     judge("s5", "Safari (by hand), ts.net origin: the browser read an answer naming the Mac, matching the probe's record", judgeSafari({ ...state(), browser: "safari" }));
@@ -836,6 +879,18 @@ async function selftest() {
     await sleep(1000);
     const log = inside(get(9099, "/log"));
     expect("selftest", "WhoIs is asked again after the connection closed", log[0]?.whoisAfterClose !== null, log[0]?.whoisAfterClose);
+    // The probe's own ctl path (what the harness reads through docker exec)
+    // once cut piped output at 64 KB: read a log well past that and parse it.
+    inside(`const http=require("http");let n=0;const go=()=>{if(n++>=250)return console.log("{}");http.get({host:"127.0.0.1",port:8687,path:"/probe?bulk="+n},r=>{r.resume();r.on("end",go)})};go()`);
+    const big = docker(["exec", name, "node", "/spike/probe.mjs", "ctl", "GET", "/log"]);
+    let bigLog = null;
+    try {
+      bigLog = JSON.parse(big);
+    } catch {}
+    expect("selftest", "a log over 64 KB arrives whole through the probe's ctl", big.length > 65536 && Array.isArray(bigLog) && bigLog.length >= 250, { bytes: big.length, entries: bigLog?.length });
+    const filtered = JSON.parse(docker(["exec", name, "node", "/spike/probe.mjs", "ctl", "GET", "/log?since=" + (bigLog?.at(-1)?.id ?? 0)]));
+    expect("selftest", "the log can be read from an entry on", Array.isArray(filtered) && filtered.length === 0, filtered.length);
+    expect("selftest", "each entry records how long WhoIs took", typeof bigLog?.[0]?.whoisMs === "number", bigLog?.[0]?.whoisMs);
     const status = inside(get(9099, "/status"));
     expect("selftest", "without cert permission the probe reports the refusal and starts no HTTPS listener", status.cert.ok === false && status.cert.status === 403 && !status.listeners.some((l) => l.port === 8688), status.cert);
     const write = inside(get(9099, "/write-check"));
