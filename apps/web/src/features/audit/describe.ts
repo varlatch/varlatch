@@ -465,6 +465,25 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         ],
       };
     }
+    case "sync.destinations_listed": {
+      const status = str(m.status);
+      const count = typeof m.count === "number" ? m.count : null;
+      return {
+        icon: status === "ok" ? "plug" : "alert",
+        title: "Destinations listed",
+        segments: [
+          "listed what ",
+          PLATFORM_LABELS[str(m.platform) ?? ""] ?? "a platform",
+          ...(str(m.baseIdentity) ? [" ", { kind: "mono" as const, text: str(m.baseIdentity)! }] : []),
+          " lets the credential see",
+          ...(status && status !== "ok"
+            ? [`: ${status.replace(/-/g, " ")}`]
+            : count !== null
+              ? [` (${count}${m.truncated === true ? "+" : ""})`]
+              : []),
+        ],
+      };
+    }
     case "sync.connection_credential_replaced":
       return { icon: "key", title: "Credential replaced", segments: ["replaced the credential of ", { kind: "name", text: names.connection(str(r.connectionId)) ?? "a connection" }] };
     case "sync.connection_revoked":
