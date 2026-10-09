@@ -98,6 +98,35 @@ describe("useBoundCheck", () => {
     expect(hook.settled).toBe(true);
   });
 
+  it("lets only the latest attempt count, even for the same inputs", async () => {
+    const checks = deferredChecks();
+    const then = vi.fn();
+    await act(async () => {
+      root = create(<Probe input="same" check={(i) => checks.check("org", i)} />);
+    });
+    await act(async () => hook.run(then));
+    await act(async () => hook.run(then));
+    await settle(() => checks.calls[1]!.resolve(REJECTED));
+    expect(hook.result).toEqual(REJECTED);
+    await settle(() => checks.calls[0]!.resolve(OK));
+    expect(hook.result).toEqual(REJECTED);
+    expect(then).toHaveBeenCalledTimes(1);
+    expect(then).toHaveBeenCalledWith(REJECTED, "same");
+  });
+
+  it("stays pending while a newer attempt is out, whatever an older one says", async () => {
+    const checks = deferredChecks();
+    await act(async () => {
+      root = create(<Probe input="same" check={(i) => checks.check("org", i)} />);
+    });
+    await act(async () => hook.run());
+    await act(async () => hook.run());
+    await settle(() => checks.calls[0]!.resolve(OK));
+    expect(hook.pending).toBe(true);
+    expect(hook.settled).toBe(false);
+    expect(hook.result).toBeUndefined();
+  });
+
   it("drops a completion after unmount", async () => {
     const checks = deferredChecks();
     const then = vi.fn();
@@ -235,5 +264,40 @@ describe("Add integration", () => {
     expect(text(byTestId("confirm-integration"))).toBe("Create integration");
     await click("confirm-integration");
     expect(createdTargets).toHaveLength(1);
+  });
+
+  it("keeps Create disabled when an older review check returns before the newer one", async () => {
+    const checks = deferredChecks();
+    fake.api = {
+      checkPlatformAccess: checks.check as never,
+      effectiveConfiguration: (async () => ({ items: [] })) as never,
+      getActiveContract: (async () => ({ contract: { items: [] } })) as never,
+    };
+    const connection = { id: "pcn_1", platform: "convex", name: "Convex", baseIdentity: "https://happy-animal-123.convex.cloud", version: 1 } as PlatformConnection;
+    await mount(
+      <AddIntegrationDialog
+        open
+        onClose={() => {}}
+        onCreated={() => {}}
+        org="acme"
+        project="api"
+        envName="development"
+        adapters={["convex"]}
+        connections={[connection]}
+      />,
+    );
+    await click("connection-option-pcn_1");
+    await click("wizard-next");
+    await click("wizard-next");
+    await click("wizard-next");
+    // Back to Items and to Review again: a second check of the same inputs.
+    await click("wizard-step-3");
+    await click("wizard-next");
+    expect(checks.calls).toHaveLength(2);
+    await settle(() => checks.calls[0]!.resolve(OK));
+    expect(byTestId("confirm-integration").props.disabled).toBe(true);
+    await settle(() => checks.calls[1]!.resolve(REJECTED));
+    expect(byTestId("confirm-integration").props.disabled).toBe(false);
+    expect(text(byTestId("confirm-integration"))).toBe("Create anyway");
   });
 });

@@ -8,10 +8,11 @@ type Outcome<R> =
 
 /**
  * An access check bound to the inputs it checked. Its outcome counts only
- * while the inputs are exactly those: a check that completes after an edit,
- * or after the dialog closed, is dropped, and its continuation never runs.
- * The continuation receives the checked inputs, so a dialog saves what was
- * checked, never what the fields hold by then.
+ * while the inputs are exactly those, and only for the latest attempt: a
+ * check that completes after an edit, after the dialog closed, or after a
+ * newer check started (of the same inputs too) is dropped, and its
+ * continuation never runs. The continuation receives the checked inputs, so
+ * a dialog saves what was checked, never what the fields hold by then.
  */
 export function useBoundCheck<I, R>(input: I, check: (input: I) => Promise<R>) {
   const key = JSON.stringify(input);
@@ -27,12 +28,16 @@ export function useBoundCheck<I, R>(input: I, check: (input: I) => Promise<R>) {
     },
     [],
   );
+  // Same inputs do not make an older attempt current: a newer check may
+  // see a revoked token or a changed permission.
+  const attempts = useRef(0);
   const [outcome, setOutcome] = useState<Outcome<R> | null>(null);
 
   const run = useCallback((then?: (result: R, checked: I) => void) => {
     const { key: checkedKey, input: checked, check: fn } = live.current;
     if (checkedKey === null) return;
-    const fresh = () => live.current.key === checkedKey;
+    const attempt = ++attempts.current;
+    const fresh = () => attempts.current === attempt && live.current.key === checkedKey;
     setOutcome({ key: checkedKey, status: "pending" });
     fn(checked).then(
       (result) => {
