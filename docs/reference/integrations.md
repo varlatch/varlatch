@@ -130,11 +130,14 @@ is no redeploy.
 On the Destination step, Varlatch lists what the connection's credential
 can see: the GitHub repositories in its owner (archived ones left out),
 or the applications of the Coolify token's team. Pick one, or type it
-when it is not listed: a repository you have not created yet, or one the
-list leaves out (it shows the first 1,000). If the list cannot load, the
+when it is not listed: a repository you have not created yet, or one a
+partial list leaves out (Varlatch stops reading at 1,000, or after 30
+pages of GitHub repositories, and says so). If the list cannot load, the
 step says why, as a failed check does, and **Try again** reloads it;
-typing works meanwhile. Choosing another connection clears the
-destination and loads its own list.
+typing works meanwhile. After creating a repository or application on
+the platform, reload the list from the same step. Choosing another
+connection, or changing a new connection's owner or address, clears the
+destination and loads the new list.
 
 Seeing a destination is not permission to push to it: Review still checks
 the one you picked or typed, and the first push confirms it.

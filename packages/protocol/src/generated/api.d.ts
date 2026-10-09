@@ -1979,7 +1979,7 @@ export interface components {
             /** @description ok when the listing ran; otherwise why not, and items is empty. */
             check: components["schemas"]["AccessCheck"];
             items: components["schemas"]["DestinationOption"][];
-            /** @description More exist than Varlatch reads (1,000); type the exact name. */
+            /** @description The listing is partial: Varlatch stopped reading (at 1,000 options, or after 30 pages of GitHub repositories), so more may exist than it shows, possibly with none listed. Type the exact name. */
             truncated: boolean;
         };
         /** @description Item mapping: wildcard (every current AND future item of the Environment, optionally minus an exclusion list of exact names or trailing-* prefixes) or an explicit list with optional destination renames. A wildcard with exclusions gates exactly like a plain wildcard: the remainder still covers unknown future items. */
