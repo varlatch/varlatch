@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { AccessCheck } from "@varlatch/protocol";
+import { credentialExpiry } from "./credentialExpiry";
 
 /**
  * Reading an access check for the connection and integration dialogs. A
@@ -48,4 +49,15 @@ export function fixStep(check: AccessCheck): 0 | 1 | null {
     case "failed":
       return check.where === "destination" ? 1 : 0;
   }
+}
+
+/**
+ * A check a dialog can save on without asking: ok, and the token not
+ * expired or expiring within the warning window. Anything else is shown
+ * first, with the dialog's "anyway" action.
+ */
+export function checkPasses(check: AccessCheck, now: number = Date.now()): boolean {
+  if (check.status !== "ok") return false;
+  const expiry = credentialExpiry(check.credentialExpiresAt, now);
+  return expiry === null || expiry.state === "later";
 }

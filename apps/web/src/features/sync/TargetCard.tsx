@@ -20,11 +20,12 @@ import {
 } from "lucide-react";
 import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
-import { timeAgo, useNow } from "../../lib/time";
+import { formatDate, timeAgo, useNow } from "../../lib/time";
 import { Button, Menu, Mono, Spinner, cn } from "../../components/ui";
 import { PlatformLogo } from "../../components/brand-logos";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
+import { credentialExpiry, expiryText } from "./credentialExpiry";
 import { platformMeta } from "./platform-meta";
 import { mappingSummary, targetDestination, targetOptions, targetStatus, type TargetStatus } from "./status";
 
@@ -118,6 +119,9 @@ export function TargetCard({
     staleTime: 30_000,
   });
   const status = targetStatus(target);
+  const now = useNow();
+  // Warned here too: the integration stops when its connection's token expires.
+  const expiry = credentialExpiry(connection?.credentialExpiresAt, now);
   const dest = targetDestination(target, connection);
   const mapping = mappingSummary(target);
   const options = targetOptions(target);
@@ -216,6 +220,19 @@ export function TargetCard({
             via {platform?.shortLabel ?? "a revoked connection"}
             {connection && <span> ({connection.name})</span>}
           </p>
+          {expiry && expiry.state !== "later" && (
+            <p
+              className={cn("mt-0.5 flex items-center gap-1.5 text-[13px]", expiry.state === "expired" ? "text-deny" : "text-warn")}
+              data-testid={`credential-expiry-${target.id}`}
+            >
+              <KeyRound size={12} aria-hidden="true" />
+              {expiryText(expiry, formatDate(expiry.expiresAt))}
+              {" · "}
+              <Link className="underline underline-offset-2" to={`/o/${org}/connections?replace=${encodeURIComponent(target.connectionId)}`}>
+                Replace it
+              </Link>
+            </p>
+          )}
         </div>
         <TargetStatusLine status={status} className="min-w-0 flex-[1_1_16rem]" />
         <div className="ml-auto flex shrink-0 items-center gap-2">

@@ -12,7 +12,7 @@ import { AccessCheckNotice } from "./AccessCheckNotice";
 import { DestinationPicker } from "./DestinationPicker";
 import { useBoundCheck } from "./useBoundCheck";
 import { CredentialHint } from "./CredentialHint";
-import { fixStep } from "./accessCheck";
+import { checkPasses, fixStep } from "./accessCheck";
 import { platformMeta } from "./platform-meta";
 import { hostOf } from "./status";
 import { PlatformTile } from "./TargetCard";
@@ -198,7 +198,7 @@ export function AddIntegrationDialog({
   }, [step, checkAccess]);
   const fix = access.result ? fixStep(access.result) : null;
 
-  const accessFailed = Boolean((access.result && access.result.status !== "ok") || access.error);
+  const accessFailed = Boolean((access.result && !checkPasses(access.result)) || access.error);
 
   const create = useMutation({
     mutationFn: async () => {
