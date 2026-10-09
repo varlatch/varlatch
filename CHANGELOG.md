@@ -7,6 +7,25 @@ fixes.
 
 ## Unreleased (0.16.1)
 
+### Tailnet
+
+- **The tailnet listener refuses two more kinds of device.** A device
+  shared into the tailnet from elsewhere (WhoIs says who shared it) and the
+  Varlatch node itself get no Tailnet Context any more, whatever their
+  name, tags or user, so they cannot satisfy a network requirement.
+  Before, a shared device was refused only when its name gave away another
+  tailnet, and the node itself was treated like any other device. If one
+  of your requirements names the Varlatch node, its tags, or (for an
+  untagged node) the user who registered it, those matches stop working.
+- **The audit log says which listener a request came in on, and from which
+  device.** Events a request records for its own identity now carry
+  `listener` (`ordinary` or `tailnet`) and, on the tailnet listener,
+  `tailnet`: the device WhoIs resolved, or why there was none
+  (`{"refused": ...}`: `resolver-unavailable`, `unrecognized`,
+  `other-tailnet`, `shared`, `self`). Before, only strict retrievals and
+  capability exercises recorded a listener, and nothing recorded the
+  device.
+
 ### Integrations
 
 - Varlatch checks a platform credential before it saves anything: when a

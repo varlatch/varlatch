@@ -147,6 +147,7 @@ import {
 export const SERVER_VERSION = "0.16.0";
 
 import { evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
+import type { WhoisResult } from "../tailnet/whois.js";
 import {
   addGroupMember,
   addTeamProject,
@@ -168,6 +169,8 @@ type Vars = {
   requestId: string;
   principal: Principal;
   tailnetContext: TailnetContext | undefined;
+  /** What the tailnet listener resolved the peer to, or why not (for audit, ADR-0046 Decision 8). */
+  tailnetResolution: Record<string, unknown> | undefined;
 };
 
 export interface BuildAppOptions {
@@ -183,7 +186,7 @@ export interface BuildAppOptions {
    * never receives a resolver, so trusted Tailnet Context is structurally
    * impossible there — headers and source IPs can never create it.
    */
-  resolveTailnetContext?: (c: Context) => Promise<TailnetContext | null>;
+  resolveTailnetContext?: (c: Context) => Promise<TailnetContext | WhoisResult | null>;
   /** Test hook: fetch used for OIDC issuer discovery/JWKS retrieval. */
   oidcFetch?: typeof fetch;
   /** Test hook: fetch used by Platform Connection access checks. */
@@ -421,8 +424,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     c.set("requestId", id);
     c.header("X-Request-Id", id);
     if (options.resolveTailnetContext) {
-      const context = await options.resolveTailnetContext(c);
-      if (context) c.set("tailnetContext", context);
+      const resolved = await options.resolveTailnetContext(c);
+      // The listener's resolver says why a peer has no context; a test
+      // resolver may hand over a context, or null, directly.
+      const result: WhoisResult =
+        resolved === null ? { ok: false, reason: "unrecognized" } : "ok" in resolved ? resolved : { ok: true, context: resolved };
+      if (result.ok) c.set("tailnetContext", result.context);
+      c.set("tailnetResolution", result.ok ? { ...result.context } : { refused: result.reason });
     }
     await next();
   });
@@ -608,6 +616,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         identityId: result.identity.id,
         credentialId: result.credential.id,
         client: clientLabel(c.req.header("User-Agent")),
+        // And which listener it came in on, with the device or the reason
+        // there is none (ADR-0046 Decision 8).
+        listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
+        tailnet: (c.get("tailnetResolution") as Record<string, unknown> | undefined) ?? null,
       },
       () => next(),
     );

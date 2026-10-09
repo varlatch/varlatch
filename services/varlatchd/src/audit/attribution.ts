@@ -19,6 +19,13 @@ export interface Attribution {
    * authorization input. Null when not recognized.
    */
   client: string | null;
+  /** The listener the request came in on (ADR-0046 Decision 8). */
+  listener: "ordinary" | "tailnet";
+  /**
+   * On the tailnet listener, the device WhoIs resolved the peer to, or
+   * `{ refused: <reason> }`; null on the ordinary listener.
+   */
+  tailnet: Record<string, unknown> | null;
 }
 
 const storage = new AsyncLocalStorage<Attribution>();

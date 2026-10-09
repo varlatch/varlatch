@@ -99,7 +99,7 @@ export async function strictRetrieval(
     organizationId: org.id,
     resource: { projectId: project.id, environmentId: env.id },
     requestId: opts.requestId ?? null,
-    listener: opts.listener ?? null,
+    listener: opts.listener,
   };
   if (plain.length > 0) {
     events.push({
