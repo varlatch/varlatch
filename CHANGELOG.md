@@ -131,6 +131,10 @@ fixes.
   `credential_expiry_seen_at` columns, nullable and unknown for every
   existing connection until its token is next used. Backup archives of
   0.16.0 (migration 27) restore into this release.
+- Database migration 29 prepares GitHub App connections: a `github_apps`
+  table and a credential kind on connections (`token` or `github-app`).
+  Every existing connection becomes `token` and works as before; nothing
+  creates an App yet. Backup archives of 0.16.0 restore into this release.
 
 ### Dashboard
 
