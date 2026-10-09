@@ -16,10 +16,12 @@ fixes.
   organization (null for a person, who joins organizations as a member),
   the credential the request presented (`id`, `name`, `kind`,
   `expiresAt`; never the token, never the identity's other credentials),
-  and the listener the request came in on. On the tailnet listener it adds
-  `tailnet`: the device WhoIs resolved the connection to, or
-  `recognized: false` and why. It needs no grant and describes the caller
-  only. Before, a machine could not find out: `/v1/me/profile` is for
+  and the listener the request came in on. On the tailnet listeners it
+  adds `tailnet`: the device WhoIs resolved the connection to, with its
+  machine name (`nodeName`), or `recognized: false` and why, exactly as
+  `GET /v1/tailnet/context` reports it. It needs no grant and describes
+  the caller only. It is not a cross-origin route on the tailnet browser
+  endpoint. Before, a machine could not find out: `/v1/me/profile` is for
   people, `/v1/me/credentials` lists credentials by name, and
   `/v1/organizations` lists memberships, which machines have none of. Now a
   program that shares its host's identity with others can, for instance,
@@ -38,6 +40,12 @@ fixes.
   `status` does not change.
 - MCP: `varlatch_whoami` adds `caller`, the same answer, or `null` with
   `callerUnavailable` saying why (an older server, a refused credential).
+- **For programs that rely on it:** fall back to another way of finding
+  the identity only when the server lacks `identity.whoami`. A refused
+  credential, a server error, or an identity that is not the expected one
+  (organization, naming convention) is an error to report: identities can
+  be renamed. Each call is an authenticated request, so it spends a use of
+  a use-limited credential; ask once per process and keep the answer.
 
 ### Tailnet
 

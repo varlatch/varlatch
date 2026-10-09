@@ -347,7 +347,13 @@ needs: like a person, it starts with no access.
   `GET /v1/me` answers with the identity, its organization, and the
   credential's own name, and needs no grant. On the command line,
   `varlatch whoami` prints the same for the credential the CLI would use
-  (`VARLATCH_TOKEN`, else the stored one).
+  (`VARLATCH_TOKEN`, else the stored one). A program that relies on the
+  answer should use another way only when the server lacks the
+  `identity.whoami` capability. A refused credential, a server error, or
+  an identity it does not expect (another organization, a name outside its
+  convention: identities can be renamed) is an error to report. Each call
+  spends a use of a use-limited credential, so ask once and keep the
+  answer.
 
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
 or Convex, for platforms that keep their own copy: add an integration on the
