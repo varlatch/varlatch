@@ -43,6 +43,8 @@ import { RotateDialog } from "../values/RotateDialog";
 import { ExportDialog, ImportDialog } from "../values/TransferDialogs";
 import { AddItemForm } from "../values/AddItemForm";
 import { DisclosureNotice, SaveBar, TypeBadge } from "../values/bits";
+import { TailnetOnlyBadge } from "../values/TailnetOnly";
+import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
 import type { CommitHow } from "../values/ValueEditor";
 import { targetCoversItem, targetLabel } from "../sync/syncStatus";
 
@@ -126,7 +128,14 @@ export function ValuesGrid() {
           if (byName && cellStateOf(server, r.contract, env) === "missing_required") missing++;
           if (server && isSensitive(server, r.contract)) secrets.push(r.name);
         }
-        return { missing, secrets, loading: col?.isLoading ?? true, error: col?.isError ?? false };
+        return {
+          missing,
+          secrets,
+          loading: col?.isLoading ?? true,
+          error: col?.isError ?? false,
+          // A Tailnet Requirement covers the column: no value can be read here.
+          tailnetOnly: col?.data?.tailnetOnly ?? isTailnetOnly(env),
+        };
       }),
     [roots, columns, rows],
   );
@@ -222,6 +231,10 @@ export function ValuesGrid() {
 
   const reveal = async (env: Environment, items: string[]) => {
     if (items.length === 0) return;
+    if (stats[roots.indexOf(env)]?.tailnetOnly ?? isTailnetOnly(env)) {
+      toast.info(`Not revealed in ${env.name}`, { description: TAILNET_ONLY_GUIDANCE });
+      return;
+    }
     try {
       const result = await disclosure.reveal(env.name, items);
       if (result.withheld.length > 0) {
@@ -340,7 +353,7 @@ export function ValuesGrid() {
     );
   }
 
-  const revealable = roots.filter((_, i) => (stats[i]?.secrets.length ?? 0) > 0);
+  const revealable = roots.filter((_, i) => (stats[i]?.secrets.length ?? 0) > 0 && !stats[i]?.tailnetOnly);
 
   return (
     <div className="space-y-4">
@@ -412,6 +425,7 @@ export function ValuesGrid() {
                 <span className="truncate font-mono text-[13px]">{env.name}</span>
               </span>
             ),
+            ...(isTailnetOnly(env) ? { hint: "tailnet only" } : {}),
             onSelect: () => setExportEnv(env),
             "data-testid": `export-${env.name}`,
           }))}
@@ -467,6 +481,11 @@ export function ValuesGrid() {
                   env={root}
                   derived={derived}
                   stat={stats[i]!}
+                  tailnetBadge={
+                    stats[i]!.tailnetOnly && (
+                      <TailnetOnlyBadge org={org} project={project} env={root} environments={environments} compact />
+                    )
+                  }
                   revealed={stats[i]!.secrets.length > 0 && stats[i]!.secrets.every((s) => disclosure.isDisclosed(root.name, s))}
                   onReveal={() => void reveal(root, stats[i]!.secrets)}
                   onMask={() => disclosure.maskEnv(root.name)}
@@ -538,6 +557,7 @@ export function ValuesGrid() {
                       draft={drafts.drafts.get(env.name)?.get(row.name)}
                       disclosed={disclosure.shown(env.name, row.name)}
                       withheld={column?.data?.withheld.has(row.name) ?? false}
+                      tailnetOnly={stats[col]?.tailnetOnly ?? false}
                       loading={column?.isLoading ?? true}
                       unavailable={column?.isError ?? false}
                       conflict={review.conflicts.has(`${env.name}\u0000${row.name}`)}
@@ -624,6 +644,7 @@ function ColumnHeader({
   env,
   derived,
   stat,
+  tailnetBadge,
   revealed,
   onReveal,
   onMask,
@@ -633,7 +654,8 @@ function ColumnHeader({
   project: string;
   env: Environment;
   derived: Environment[];
-  stat: { missing: number; secrets: string[]; loading: boolean; error: boolean };
+  stat: { missing: number; secrets: string[]; loading: boolean; error: boolean; tailnetOnly: boolean };
+  tailnetBadge: React.ReactNode;
   revealed: boolean;
   onReveal: () => void;
   onMask: () => void;
@@ -666,6 +688,7 @@ function ColumnHeader({
               valid
             </Badge>
           ))}
+        {tailnetBadge}
         <span className="flex-1" />
         {derived.length > 0 && (
           <Menu
@@ -676,14 +699,14 @@ function ColumnHeader({
             buttonClassName="h-6 shrink-0 gap-1 whitespace-nowrap rounded-md px-1.5 text-[11.5px] font-medium"
             items={derived.map((d) => ({
               label: <span className="font-mono text-[13px]">{d.name}</span>,
-              hint: d.kind,
+              hint: isTailnetOnly(d) ? `${d.kind} · tailnet only` : d.kind,
               onSelect: () => onOpenDerived(d),
             }))}
           >
             +{derived.length} derived
           </Menu>
         )}
-        {stat.secrets.length > 0 && (
+        {stat.secrets.length > 0 && !stat.tailnetOnly && (
           <IconButton
             size="sm"
             label={revealed ? `Mask secrets in ${env.name}` : `Reveal ${plural(stat.secrets.length, "secret")} in ${env.name} (audited)`}

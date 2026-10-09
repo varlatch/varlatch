@@ -22,6 +22,8 @@ import {
 } from "../projects/hooks";
 import { cellStateOf, contractItemsOf, envPath, listNames, plural } from "../values/model";
 import { usePlatformConnections } from "../values/queries";
+import { TailnetOnlyBadge } from "../values/TailnetOnly";
+import { isTailnetOnly } from "../../lib/tailnet";
 import { targetLabel } from "../sync/syncStatus";
 
 /**
@@ -34,8 +36,9 @@ export function EnvironmentLayout() {
   const envName = decodeURIComponent(env);
   useOrgRealtime(
     org,
-    ["environment", "sync", "value", "contract"],
-    [keys.environments(org, slug), keys.syncTargets(org, slug, envName), ["effective-meta", org, slug]],
+    // "requirement": a Tailnet Requirement changes environments' tailnetRequired.
+    ["environment", "sync", "value", "contract", "requirement"],
+    [keys.environments(org, slug), keys.syncTargets(org, slug, envName), ["effective-meta", org, slug], ["requirements", org]],
   );
   const orgName = useOrgName(org);
   const { api } = useSession();
@@ -185,7 +188,14 @@ export function EnvironmentLayout() {
             </span>
           </span>
         }
-        badges={<TierChip tier={tier} />}
+        badges={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            <TierChip tier={tier} />
+            {isTailnetOnly(environment) && (
+              <TailnetOnlyBadge org={org} project={project} env={environment} environments={envs.data?.items ?? []} />
+            )}
+          </span>
+        }
         subtitle={
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>{environment.kind}</span>

@@ -37,6 +37,8 @@ import { DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, Secret
 import { ValueEditor, type CommitHow } from "../values/ValueEditor";
 import { targetCoversItem, targetLabel } from "../sync/syncStatus";
 import { ItemPanelBody, panelHeading, type PanelActions } from "./ItemPanel";
+import { TailnetOnlyNotice } from "../values/TailnetOnly";
+import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
 
 /**
  * One environment's values: a list of items with an inline panel for the
@@ -67,7 +69,7 @@ function useWide(): boolean {
 }
 
 export function EditorPage() {
-  const { org, project, environment } = useEnvironmentContext();
+  const { org, project, environment, environments } = useEnvironmentContext();
   const slug = project.slug;
   const envName = environment.name;
   useOrgRealtime(
@@ -87,7 +89,7 @@ export function EditorPage() {
   const toast = useToast();
   const wide = useWide();
 
-  const values = useEnvValues(org, slug, envName);
+  const values = useEnvValues(org, slug, environment);
   const contract = useContractItems(org, slug);
   const targets = useEnvSyncTargets(org, slug, envName);
   const connections = usePlatformConnections(org);
@@ -118,6 +120,8 @@ export function EditorPage() {
     }
   }, [itemParam]);
   const revealParam = params.get("reveal") === "1";
+  // A Tailnet Requirement covers this environment: no value can be read here.
+  const tailnetOnly = values.data?.tailnetOnly ?? isTailnetOnly(environment);
   const revealedOnce = useRef(false);
 
   const serverByName = values.data?.byName;
@@ -177,6 +181,10 @@ export function EditorPage() {
 
   const reveal = useCallback(
     async (request: string[] | "all") => {
+      if (tailnetOnly) {
+        toast.info(`Not revealed in ${envName}`, { description: TAILNET_ONLY_GUIDANCE });
+        return;
+      }
       setBusy((b) => ({ ...b, reveal: true }));
       try {
         const result = await disclosure.reveal(envName, request);
@@ -191,10 +199,11 @@ export function EditorPage() {
         setBusy((b) => ({ ...b, reveal: false }));
       }
     },
-    [disclosure, envName, toast],
+    [disclosure, envName, toast, tailnetOnly],
   );
 
-  // ?reveal=1: one audited reveal-all, then the flag leaves the URL.
+  // ?reveal=1: one audited reveal-all, then the flag leaves the URL. In a
+  // tailnet-only environment reveal() explains instead of disclosing.
   useEffect(() => {
     if (!revealParam || revealedOnce.current || !values.data) return;
     revealedOnce.current = true;
@@ -345,6 +354,7 @@ export function EditorPage() {
           draft={drafts.get(envName, selectedRow.name)}
           disclosed={disclosure.shown(envName, selectedRow.name)}
           withheld={values.data?.withheld.has(selectedRow.name) ?? false}
+          tailnetOnly={tailnetOnly}
           rotationDeadline={deadlines.get(selectedRow.name)}
           targets={envTargets.filter((t) => targetCoversItem(t, selectedRow.name))}
           connections={connections.data?.items}
@@ -413,7 +423,8 @@ export function EditorPage() {
         />
         <div className="flex-1" />
         {authorizedSecrets.length > 0 &&
-          !revealedHere && (
+          !revealedHere &&
+          !tailnetOnly && (
             <Button
               icon={<Eye size={14} />}
               data-testid="reveal-all"
@@ -426,6 +437,7 @@ export function EditorPage() {
           )}
       </div>
 
+      {tailnetOnly && <TailnetOnlyNotice org={org} project={project} env={environment} environments={environments} />}
       <DisclosureNotice envs={revealedHere ? [envName] : []} onMaskAll={disclosure.maskAll} />
       {review.error && (
         <Callout
@@ -481,6 +493,7 @@ export function EditorPage() {
                 disclosed={disclosure.shown(envName, row.name)}
                 isDisclosed={disclosure.isDisclosed(envName, row.name)}
                 withheld={values.data?.withheld.has(row.name) ?? false}
+                tailnetOnly={tailnetOnly}
                 selected={selected === row.name}
                 active={active === row.name || (!active && row === visible[0])}
                 editing={editing === row.name}
@@ -575,6 +588,7 @@ function ValueRow({
   disclosed,
   isDisclosed,
   withheld,
+  tailnetOnly,
   selected,
   active,
   editing,
@@ -593,6 +607,7 @@ function ValueRow({
   disclosed: { value: string } | undefined;
   isDisclosed: boolean;
   withheld: boolean;
+  tailnetOnly: boolean;
   selected: boolean;
   active: boolean;
   editing: boolean;
@@ -655,7 +670,13 @@ function ValueRow({
       <SecretMask />
     );
   } else if (withheld) {
-    value = <span className="text-[12.5px] text-muted">set · value hidden</span>;
+    value = tailnetOnly ? (
+      <span className="text-[12.5px] text-muted" title={TAILNET_ONLY_GUIDANCE}>
+        set · tailnet only
+      </span>
+    ) : (
+      <span className="text-[12.5px] text-muted">set · value hidden</span>
+    );
   } else {
     value = (
       <span className="min-w-0 truncate font-mono text-[13px]" title={server.value ?? ""}>
@@ -720,7 +741,7 @@ function ValueRow({
       )}
       {!editing && (
         <span className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md border border-bd bg-raised p-0.5 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100">
-          {sensitive && server && !draft && (
+          {sensitive && server && !draft && !tailnetOnly && (
             <IconButton
               size="sm"
               label={disclosed ? "Hide" : isDisclosed ? "Show again" : "Reveal (audited)"}

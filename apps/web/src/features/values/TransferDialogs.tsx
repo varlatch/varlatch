@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from "react";
-import { Download, Lock, ShieldAlert } from "lucide-react";
+import { Download, Lock, ShieldAlert, Wifi } from "lucide-react";
 import type { Environment, Tier } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
+import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
 import { Dialog } from "../../components/Dialog";
 import { Button, Callout, Checkbox, Field, Select, Skeleton, TierDot } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
@@ -107,9 +108,11 @@ export function ExportDialog({
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // A Tailnet Requirement covers the environment: no value can be read here.
+  const tailnetOnly = isTailnetOnly(env ?? undefined);
 
   useEffect(() => {
-    if (!env) return;
+    if (!env || tailnetOnly) return;
     let live = true;
     setItems(null);
     setIncludeSecrets(false);
@@ -125,7 +128,7 @@ export function ExportDialog({
     return () => {
       live = false;
     };
-  }, [api, org, project, env]);
+  }, [api, org, project, env, tailnetOnly]);
 
   const secrets = (items ?? []).filter((i) => i.sensitive);
   const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);
@@ -189,7 +192,7 @@ export function ExportDialog({
             variant="primary"
             icon={<Download size={14} />}
             data-testid="export-download"
-            disabled={!items}
+            disabled={!items || tailnetOnly}
             loading={busy}
             onClick={() => void download()}
           >
@@ -199,7 +202,12 @@ export function ExportDialog({
       }
     >
       <div className="space-y-4 text-[13px]">
-        {!items && !error && <Skeleton className="h-10 w-full" />}
+        {tailnetOnly && (
+          <Callout tone="info" icon={<Wifi size={15} />} data-testid="export-tailnet-only" title="Nothing to export here">
+            {TAILNET_ONLY_GUIDANCE}
+          </Callout>
+        )}
+        {!items && !error && !tailnetOnly && <Skeleton className="h-10 w-full" />}
         {items && (
           <p className="text-muted">
             <span className="text-fg">{plural(plain.length, "value")}</span> exported.{" "}

@@ -18,6 +18,7 @@ import {
   type ServerItem,
 } from "../values/model";
 import type { Disclosed } from "../values/useDisclosure";
+import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
 
 export type CellActions = {
   edit: () => void;
@@ -47,6 +48,7 @@ export function ValuesGridCell({
   draft,
   disclosed,
   withheld,
+  tailnetOnly,
   loading,
   unavailable,
   conflict,
@@ -66,6 +68,8 @@ export function ValuesGridCell({
   draft: Draft | undefined;
   disclosed: Disclosed | undefined;
   withheld: boolean;
+  /** A Tailnet Requirement covers the environment: values cannot be read here. */
+  tailnetOnly: boolean;
   loading: boolean;
   unavailable: boolean;
   conflict: boolean;
@@ -137,6 +141,10 @@ export function ValuesGridCell({
           ) : (
             <SecretMask />
           )
+        ) : withheld && tailnetOnly ? (
+          <span className="text-[12.5px] text-muted" title={TAILNET_ONLY_GUIDANCE}>
+            set · tailnet only
+          </span>
         ) : withheld ? (
           <span className="text-[12.5px] text-muted" title="Set; your access shows that it exists, not its value">
             set · value hidden
@@ -185,7 +193,7 @@ export function ValuesGridCell({
 
   const menu: MenuItem[] = [];
   if (editable) menu.push({ label: sensitive && server ? "Overwrite…" : "Edit", onSelect: actions.edit, hint: "E" });
-  if (sensitive && server && !disclosed && !draft) {
+  if (sensitive && server && !disclosed && !draft && !tailnetOnly) {
     menu.push({ label: "Reveal", icon: <Eye size={14} />, hint: "audited", onSelect: actions.reveal });
   }
   if (sensitive && disclosed) menu.push({ label: "Hide again", icon: <Eye size={14} />, onSelect: actions.hide });

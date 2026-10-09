@@ -312,6 +312,70 @@ check(
 );
 check("export made no disclosure", disclosures.length === 4);
 
+// 10b. Tailnet-only values: a Tailnet Requirement on production keeps every
+// value out of the dashboard, which never has Tailnet Context. The
+// environment says so, every Reveal path gives way to the explanation
+// (?reveal=1 included), and the page asks for no values and no disclosure.
+const valueReads = [];
+page.on("request", (req) => {
+  if (req.url().includes("/environments/production/effective-configuration?include=values")) valueReads.push(req.url());
+});
+const tailnetReq = await apiJson("/v1/organizations/acme/requirements", "POST", {
+  kind: "tailnet",
+  target: { kind: "tier", tier: "production" },
+  selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
+});
+check("tailnet requirement on production created", tailnetReq.status === 201, `status ${tailnetReq.status}`);
+const tailnetReqId = (await tailnetReq.json()).id;
+const disclosuresBefore = disclosureRequests.length;
+const flagged = (await (await apiJson(`${API}/environments`, "GET")).json()).items;
+check(
+  "environments say which values need the tailnet",
+  flagged.find((e) => e.name === "production")?.tailnetRequired === true &&
+    flagged.find((e) => e.name === "development")?.tailnetRequired === false,
+);
+
+await page.goto(`${base}/o/acme/p/api`);
+await page.waitForSelector('[data-testid="tailnet-only-production"]', { timeout: 20000 });
+await page.waitForSelector(cellSel("DATABASE_URL", "production", "set"), { timeout: 20000 });
+check("grid column has no Reveal", (await page.locator('[data-testid="reveal-column-production"]').count()) === 0);
+if ((await page.locator('[data-testid="reveal-menu"]').count()) > 0) {
+  await page.click('[data-testid="reveal-menu"]');
+  check("bulk Reveal leaves production out", (await page.locator('[data-testid="reveal-in-production"]').count()) === 0);
+  await page.keyboard.press("Escape");
+}
+await page.hover(cellSel("DATABASE_URL", "production", "set"));
+await page.click('[aria-label="More for DATABASE_URL in production"]');
+const cellMenu = (await page.textContent('[role="menu"]')) ?? "";
+check("cell menu has no Reveal", !cellMenu.includes("Reveal"), cellMenu);
+await page.keyboard.press("Escape");
+await page.click('[data-testid="export-menu"]');
+await page.click('[data-testid="export-production"]');
+await page.waitForSelector('[data-testid="export-tailnet-only"]', { timeout: 10000 });
+check("export explains instead of exporting", await page.locator('[data-testid="export-download"]').isDisabled());
+await page.keyboard.press("Escape");
+
+await page.goto(`${base}/o/acme/p/api/e/production?reveal=1`);
+await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 20000 });
+await page.waitForSelector('[data-row="DATABASE_URL"]', { timeout: 20000 });
+await page.waitForFunction(() => !location.search.includes("reveal=1"), null, { timeout: 10000 });
+check("environment header says tailnet only", (await page.locator('[data-testid="tailnet-only-production"]').count()) > 0);
+check(
+  "editor has no Reveal all and no row Reveal",
+  (await page.locator('[data-testid="reveal-all"]').count()) === 0 &&
+    (await page.locator('[data-testid="eye-DATABASE_URL"]').count()) === 0,
+);
+await page.goto(`${base}/o/acme/p/api/e/production?item=DATABASE_URL`);
+await page.waitForSelector('[data-testid="item-panel"]', { timeout: 20000 });
+check("item panel has no Reveal", (await page.locator('[data-testid="panel-reveal"]').count()) === 0);
+check(
+  "a tailnet-only environment gets no disclosure and no values request",
+  disclosureRequests.length === disclosuresBefore && valueReads.length === 0,
+  `${disclosureRequests.length - disclosuresBefore} disclosures, ${valueReads.length} value reads`,
+);
+const tailnetRemoved = await apiJson(`/v1/organizations/acme/requirements/${tailnetReqId}`, "DELETE");
+check("tailnet requirement removed", tailnetRemoved.status === 204, `status ${tailnetRemoved.status}`);
+
 // 11. Deleting an environment: plain confirm for development tier, typed name for production.
 const scratch = await apiJson(`${API}/environments`, "POST", { name: "scratch", tier: "development" });
 check("scratch environment created", scratch.ok, `status ${scratch.status}`);
