@@ -370,7 +370,7 @@ function isRsaKey(pem: string): boolean {
 }
 
 /** The live App and its private key, unwrapped. */
-async function appWithKey(ctx: AppCtx, org: OrgRow): Promise<{ app: GitHubAppRow; pem: string }> {
+export async function appWithKey(ctx: AppCtx, org: OrgRow): Promise<{ app: GitHubAppRow; pem: string }> {
   const res = await ctx.db.query(
     `SELECT ${APP_COLUMNS}, key_envelope FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL`,
     [org.id],

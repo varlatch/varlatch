@@ -48,6 +48,15 @@ export interface AdapterRequest {
   destination: Record<string, string>;
   /** The Platform Credential, plaintext, in memory only. Never log. */
   credential: string;
+  /**
+   * What the credential is (GitHub only): a stored personal access token
+   * (`token`, the default), or a one-hour installation token Varlatch
+   * minted for this use from a GitHub App (`github-app`, ADR-0047). For an
+   * App, the connection-only check and the listing read the installation,
+   * and a minted token's expiry is never reported: it is not the
+   * Connection's.
+   */
+  credentialKind?: "token" | "github-app";
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   /**

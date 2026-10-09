@@ -1158,3 +1158,114 @@ describe("credential expiry (GitHub)", () => {
     expect(seen).toEqual(["2026-11-08T09:30:00.000Z", "2026-11-08T09:30:00.000Z"]);
   });
 });
+
+describe("GitHub App connections (ADR-0047 Decision 4)", () => {
+  const EXPIRES = { "github-authentication-token-expiration": "2026-11-08 09:30:00 UTC" };
+  const app = (fetchImpl: typeof fetch, destination: Record<string, string> = {}, onCredentialExpiry?: (d: string) => void): AdapterRequest => ({
+    baseIdentity: "acme",
+    destination,
+    credential: "ghs_minted_for_this_use",
+    credentialKind: "github-app",
+    fetchImpl,
+    ...(onCredentialExpiry ? { onCredentialExpiry } : {}),
+  });
+  const repo = (name: string, extra: Record<string, unknown> = {}) => ({ name, owner: { login: "acme" }, private: true, archived: false, ...extra });
+
+  it("checks the Connection alone through the installation's own listing, read as an object", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const check = await githubActionsAdapter.checkAccess(
+      app(fakeFetch(() => ({ status: 200, body: { total_count: 2, repositories: [repo("api")], repository_selection: "selected" } }), calls)),
+    );
+    expect(check).toEqual({ status: "ok", where: "connection", message: "The GitHub App is installed on acme, with access to 2 repositories." });
+    expect(calls.map((c) => c.url)).toEqual(["https://api.github.com/installation/repositories?per_page=1"]);
+    expect(new Headers(calls[0]!.init.headers).get("authorization")).toBe("Bearer ghs_minted_for_this_use");
+  });
+
+  it("reads a refused minted token, a refusal, and an answer that is not the installation's", async () => {
+    expect(await githubActionsAdapter.checkAccess(app(fakeFetch(() => ({ status: 401 }))))).toMatchObject({
+      status: "credential-rejected",
+      where: "connection",
+      httpStatus: 401,
+      message: expect.stringContaining("had just issued for the App's installation"),
+    });
+    expect(await githubActionsAdapter.checkAccess(app(fakeFetch(() => ({ status: 403 }))))).toMatchObject({ status: "failed", httpStatus: 403 });
+    for (const body of [[repo("api")], { repositories: [] }, { total_count: 1 }, "<html>"]) {
+      expect(await githubActionsAdapter.checkAccess(app(fakeFetch(() => ({ status: 200, body }))))).toMatchObject({ status: "failed", where: "connection" });
+    }
+    const unreachable = await githubActionsAdapter.checkAccess(app((async () => { throw new TypeError("fetch failed"); }) as typeof fetch));
+    expect(unreachable.status).toBe("unreachable");
+  });
+
+  it("checks a destination exactly as for a token: the owner, then the public key", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const check = await githubActionsAdapter.checkAccess(
+      app(
+        fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: { login: "acme", type: "Organization" } } : { status: 200, body: { key_id: "k", key: "a2V5" } }), calls),
+        { repo: "api" },
+      ),
+    );
+    expect(check.status).toBe("ok");
+    expect(calls.map((c) => c.url)).toEqual(["https://api.github.com/users/acme", "https://api.github.com/repos/acme/api/actions/secrets/public-key"]);
+  });
+
+  it("lists exactly the installation's repositories, across pages, without archived ones or other owners", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const page1 = Array.from({ length: 100 }, (_, i) => repo(`r${String(i).padStart(3, "0")}`));
+    const page2 = [repo("api"), repo("old", { archived: true }), { name: "theirs", owner: { login: "someone" } }, repo("web", { private: false })];
+    const listing = await githubActionsAdapter.listDestinations!(
+      app(
+        fakeFetch((url) => {
+          const page = new URL(url).searchParams.get("page");
+          return { status: 200, body: { total_count: 104, repositories: page === "1" ? page1 : page2, repository_selection: "selected" } };
+        }, calls),
+      ),
+    );
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.github.com/installation/repositories?per_page=100&page=1",
+      "https://api.github.com/installation/repositories?per_page=100&page=2",
+    ]);
+    expect(listing.truncated).toBe(false);
+    expect(listing.check).toMatchObject({ status: "ok", message: "The GitHub App's installation includes 102 repositories in acme." });
+    expect(listing.items.slice(-2)).toEqual([
+      { destination: { repo: "api" }, label: "api", detail: "private" },
+      { destination: { repo: "web" }, label: "web", detail: "public" },
+    ]);
+  });
+
+  it("fails a listing whose page is not the installation's object", async () => {
+    for (const body of [[repo("api")], { repositories: [repo("api")] }, { total_count: 1 }]) {
+      const listing = await githubActionsAdapter.listDestinations!(app(fakeFetch(() => ({ status: 200, body }))));
+      expect(listing).toMatchObject({ check: { status: "failed", where: "connection" }, items: [], truncated: false });
+    }
+  });
+
+  it("never reports a minted token's expiry: not on a check, a listing, or a push", async () => {
+    const seen: string[] = [];
+    const check = await githubActionsAdapter.checkAccess(
+      app(fakeFetch(() => ({ status: 200, body: { total_count: 1, repositories: [repo("api")] }, headers: EXPIRES })), {}, (d) => seen.push(d)),
+    );
+    expect(check).not.toHaveProperty("credentialExpiresAt");
+    const destination = await githubActionsAdapter.checkAccess(
+      app(fakeFetch((url) => ({ status: 200, body: url.endsWith("/users/acme") ? { login: "acme" } : { key_id: "k", key: "a2V5" }, headers: EXPIRES })), { repo: "api" }, (d) => seen.push(d)),
+    );
+    expect(destination).not.toHaveProperty("credentialExpiresAt");
+    const listing = await githubActionsAdapter.listDestinations!(
+      app(fakeFetch(() => ({ status: 200, body: { total_count: 1, repositories: [repo("api")] }, headers: EXPIRES })), {}, (d) => seen.push(d)),
+    );
+    expect(listing.check).not.toHaveProperty("credentialExpiresAt");
+    const recipient = nacl.box.keyPair();
+    await githubActionsAdapter.writeValues(
+      app(
+        fakeFetch((url) =>
+          url.endsWith("/public-key")
+            ? { status: 200, body: { key_id: "k", key: Buffer.from(recipient.publicKey).toString("base64") }, headers: EXPIRES }
+            : { status: 204, headers: EXPIRES },
+        ),
+        { repo: "api" },
+        (d) => seen.push(d),
+      ),
+      [{ name: "PORT", value: "8080" }],
+    );
+    expect(seen).toEqual([]);
+  });
+});

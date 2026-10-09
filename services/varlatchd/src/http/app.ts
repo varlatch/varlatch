@@ -71,6 +71,7 @@ import {
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import {
+  createAppConnection,
   createConnection,
   createTarget,
   getConnection,
@@ -2959,6 +2960,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     updatedAt: r.updated_at ? iso(r.updated_at) : null,
     credentialExpiresAt: r.credential_expires_at ? iso(r.credential_expires_at) : null,
     credentialExpirySeenAt: r.credential_expiry_seen_at ? iso(r.credential_expiry_seen_at) : null,
+    credentialKind: r.credential_kind,
+    githubAppId: r.github_app_id,
+    installationId: r.github_installation_id === null ? null : Number(r.github_installation_id),
   });
 
   const serializeTarget = (t: SyncTargetRow) => ({
@@ -3043,14 +3047,31 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    const raw = await c.req.json();
+    // A Connection on an installation of the Organization's GitHub App
+    // (ADR-0047 Decision 2): no credential, only the installation.
+    if (typeof raw === "object" && raw !== null && (raw as { credentialKind?: unknown }).credentialKind === "github-app") {
+      const appBody = parseBody(
+        z.object({
+          credentialKind: z.literal("github-app"),
+          installationId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+          name: z.string().min(1).max(200),
+        }),
+        raw,
+      );
+      const connection = await createAppConnection(ctx, org, appBody, principal.identity.id, syncEnabled.adapters, options.syncFetch);
+      c.header("Cache-Control", "no-store");
+      return c.json(serializeConnection(connection), 201);
+    }
     const body = parseBody(
       z.object({
         platform: z.string().min(1).max(50),
         baseIdentity: z.string().min(1).max(500),
         name: z.string().min(1).max(200),
         credential: z.string().min(1).max(10_000),
+        credentialKind: z.literal("token").optional(),
       }),
-      await c.req.json(),
+      raw,
     );
     if (syncEnabled.adapters && !syncEnabled.adapters.includes(body.platform)) {
       throw new DomainError(

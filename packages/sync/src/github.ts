@@ -68,6 +68,13 @@ const TOKEN_REJECTED: AccessCheck = {
   httpStatus: 401,
   message: "GitHub rejected the token: it is mistyped, expired, or revoked.",
 };
+/** A token Varlatch minted moments ago, refused: the App or its installation changed meanwhile. */
+const APP_TOKEN_REJECTED: AccessCheck = {
+  status: "credential-rejected",
+  where: "connection",
+  httpStatus: 401,
+  message: "GitHub refused the token Varlatch had just issued for the App's installation. The installation may have been removed or suspended; check it on GitHub, then try again.",
+};
 
 /** GitHub signals its primary rate limit with a 403 as well as a 429. */
 function rateLimited(res: Response): boolean {
@@ -76,6 +83,9 @@ function rateLimited(res: Response): boolean {
 
 function listed(owner: string, count: number): AccessCheck {
   return { status: "ok", where: "connection", message: `The token can see ${count} repositories in ${owner}.` };
+}
+function listedInstallation(owner: string, count: number): AccessCheck {
+  return { status: "ok", where: "connection", message: `The GitHub App's installation includes ${count} repositories in ${owner}.` };
 }
 
 /** A 200 that is not GitHub's API: a proxy or a sign-in page in the way. */
@@ -124,7 +134,8 @@ async function request(
   } catch (err) {
     throw new AdapterError(err instanceof Error ? err.name : "fetch failed", true, { cause: err });
   }
-  const expiresAt = parseTokenExpiration(res.headers.get("github-authentication-token-expiration"));
+  // A minted installation token's expiry is not the Connection's (ADR-0047 Decision 4).
+  const expiresAt = req.credentialKind === "github-app" ? null : parseTokenExpiration(res.headers.get("github-authentication-token-expiration"));
   if (expiresAt) req.onCredentialExpiry?.(expiresAt);
   return res;
 }
@@ -264,6 +275,7 @@ async function checkGitHubAccess(req: AdapterRequest): Promise<AccessCheck> {
   const owner = req.baseIdentity;
   const { repo, environment } = req.destination;
   let where: AccessCheckWhere = "connection";
+  if (req.credentialKind === "github-app" && !repo) return checkInstallation(req);
   try {
     const user = await request(req, "GET", `${API}/users/${owner}`);
     if (user.status === 401) return TOKEN_REJECTED;
@@ -322,6 +334,65 @@ async function checkGitHubAccess(req: AdapterRequest): Promise<AccessCheck> {
 }
 
 /**
+ * An App Connection alone (ADR-0047 Decision 4): the installation's own
+ * listing, one repository, with a token minted for it. Its answer is an
+ * object ({total_count, repositories, repository_selection}), and a success
+ * shows the key, the installation, and the token work.
+ */
+async function checkInstallation(req: AdapterRequest): Promise<AccessCheck> {
+  const where = "connection";
+  try {
+    const res = await request(req, "GET", `${API}/installation/repositories?per_page=1`);
+    if (res.status === 401) return APP_TOKEN_REJECTED;
+    if (!res.ok) return refused(res, where);
+    const body = await jsonBody(res);
+    if (!isRecord(body) || typeof body.total_count !== "number" || !Array.isArray(body.repositories)) return notGitHub(where);
+    return {
+      status: "ok",
+      where,
+      message: `The GitHub App is installed on ${req.baseIdentity}, with access to ${body.total_count} ${body.total_count === 1 ? "repository" : "repositories"}.`,
+    };
+  } catch (err) {
+    return unreachable("api.github.com", err, where);
+  }
+}
+
+/**
+ * An App Connection's repositories (ADR-0047 Decision 4): exactly the
+ * installation's, read from GET /installation/repositories (an object, not
+ * an array), with the token listing's archived filter, owner check, cap,
+ * and page bound.
+ */
+async function listInstallationRepositories(req: AdapterRequest): Promise<DestinationListing> {
+  const owner = req.baseIdentity;
+  const where = "connection";
+  try {
+    const items: DestinationOption[] = [];
+    for (let page = 1; ; page++) {
+      if (page > MAX_PAGES) return { check: listedInstallation(owner, items.length), items, truncated: true };
+      const res = await request(req, "GET", `${API}/installation/repositories?per_page=100&page=${page}`);
+      if (res.status === 401) return listingFailed(APP_TOKEN_REJECTED);
+      if (!res.ok) return listingFailed(refused(res, where));
+      const body = await jsonBody(res);
+      if (!isRecord(body) || typeof body.total_count !== "number" || !Array.isArray(body.repositories)) {
+        return listingFailed(notGitHub(where));
+      }
+      const repos = body.repositories as unknown[];
+      for (const repo of repos) {
+        if (!isRecord(repo) || !isRecord(repo.owner) || repo.archived === true) continue;
+        const name = typeof repo.name === "string" ? repo.name : "";
+        if (!REPO_PATTERN.test(name) || String(repo.owner.login).toLowerCase() !== owner) continue;
+        if (items.length === MAX_DESTINATIONS) return { check: listedInstallation(owner, items.length), items, truncated: true };
+        items.push({ destination: { repo: name }, label: name, detail: repo.private === true ? "private" : "public" });
+      }
+      if (repos.length < 100) return { check: listedInstallation(owner, items.length), items, truncated: false };
+    }
+  } catch (err) {
+    return listingFailed(unreachable("api.github.com", err, where));
+  }
+}
+
+/**
  * The repositories the token can see in the owner, archived ones left out
  * (they take no secrets). The owner's type picks the listing: an
  * organization's own, or the user's repositories (owned or shared)
@@ -329,6 +400,7 @@ async function checkGitHubAccess(req: AdapterRequest): Promise<AccessCheck> {
  * permission on it; the access check on the chosen one tells.
  */
 async function listGitHubRepositories(req: AdapterRequest): Promise<DestinationListing> {
+  if (req.credentialKind === "github-app") return listInstallationRepositories(req);
   const owner = req.baseIdentity;
   const where = "connection";
   try {

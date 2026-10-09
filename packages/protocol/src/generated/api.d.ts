@@ -2156,6 +2156,15 @@ export interface components {
              * @description When the platform said so; null with credentialExpiresAt.
              */
             credentialExpirySeenAt: string | null;
+            /**
+             * @description token: a stored Platform Credential. github-app: none; tokens are minted from the Organization's GitHub App for each use, so the Connection has no expiry (always null) and no credential to replace (the App's key is rotated instead).
+             * @enum {string}
+             */
+            credentialKind: "token" | "github-app";
+            /** @description The GitHub App (github-app Connections) */
+            githubAppId: string | null;
+            /** @description The App's installation (github-app Connections) */
+            installationId: number | null;
         };
         GitHubAccount: {
             login: string;
@@ -5386,6 +5395,13 @@ export interface operations {
                     baseIdentity: string;
                     name: string;
                     credential: string;
+                    /** @enum {string} */
+                    credentialKind?: "token";
+                } | {
+                    /** @enum {string} */
+                    credentialKind: "github-app";
+                    installationId: number;
+                    name: string;
                 };
             };
         };
