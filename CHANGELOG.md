@@ -25,6 +25,28 @@ fixes.
   `other-tailnet`, `shared`, `self`). Before, only strict retrievals and
   capability exercises recorded a listener, and nothing recorded the
   device.
+- **varlatchd can serve a tailnet browser endpoint, off by default.** With
+  `VARLATCH_TAILNET_HTTPS_PORT` (and `VARLATCH_TAILNET_MACHINE`, the
+  node's machine name), varlatchd serves the tailnet listener over HTTPS
+  on that port too, with the node's own Tailscale certificate, which it
+  fetches from tailscaled and keeps in memory. A browser on an approved
+  device can then read tailnet-protected values: the device is checked on
+  each request's own connection, as on the plain tailnet listener, and the
+  bearer as everywhere. Only exact origins may read cross-origin: the
+  dashboard's HTTPS origin, plus any in `VARLATCH_TAILNET_BROWSER_ORIGINS`,
+  and only for value reads, disclosures, validation and
+  `GET /v1/tailnet/context`. Other origins and routes get 403 before
+  authentication; requests without an `Origin` (the CLI) are unaffected.
+  The dashboard does not use it yet, and `varlatch setup` does not
+  configure it yet. Nothing changes until the port is set.
+- On the tailnet listener, each recognized device now has its own request
+  window. Before, every tailnet client shared one, since all of them
+  arrive from the sidecar's 127.0.0.1.
+- API: `GET /v1/tailnet/endpoint` (any authenticated caller: the browser
+  endpoint's URL, or null), `GET /v1/tailnet/context` (on the browser
+  endpoint only: the caller's verified device, or why there is none), and
+  the capability `tailnet.browser-reads`, advertised when the endpoint is
+  configured.
 
 ### Integrations
 

@@ -8,7 +8,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { serve } from "@hono/node-server";
 import { getConnInfo } from "@hono/node-server/conninfo";
 import { TrustedProxies, clientAddressResolver } from "./http/client-address.js";
-import { resolveWhois, selfNodeResolver } from "./tailnet/whois.js";
+import { NodeCertificate } from "./tailnet/cert.js";
+import { serveTailnetHttps, TAILNET_HTTPS_BIND, tailnetResolver } from "./tailnet/listener.js";
+import { selfNodeResolver } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
 import { DomainError } from "./domain/errors.js";
@@ -124,6 +126,8 @@ async function serveCommand(): Promise<void> {
   // The ordinary listener sits behind the dashboard's nginx (and often a TLS
   // ingress): believe X-Forwarded-For from the configured proxies only.
   const trustedProxies = config.trustedProxies ? await new TrustedProxies(config.trustedProxies).start() : null;
+  const browser = config.tailscale?.browser ?? null;
+  const browserEndpoint = browser ? `https://${browser.host}:${browser.port}` : null;
   const app = buildApp(ctx, {
     clientAddress: clientAddressResolver(c => getConnInfo(c).remote.address ?? "unknown", trustedProxies),
     issuer,
@@ -131,6 +135,7 @@ async function serveCommand(): Promise<void> {
     humanAuth,
     enrollBundlePath: fileURLToPath(new URL("./enroll.js", import.meta.url)),
     sync: config.sync,
+    browserEndpoint,
   });
   serve({ fetch: app.fetch, port: config.port }, (info) => {
     console.log(`varlatchd ${SERVER_VERSION} listening on :${info.port} (ordinary listener)`);
@@ -165,21 +170,16 @@ async function serveCommand(): Promise<void> {
     // Tailnet Context can be created, from the true socket peer via WhoIs.
     // A peer that is the Varlatch node itself, or shared in from another
     // tailnet, gets none (ADR-0046 Decision 7).
-    const selfNodeId = selfNodeResolver(ts.socketPath);
+    const resolveTailnetContext = tailnetResolver({
+      socketPath: ts.socketPath,
+      expectedTailnet: ts.expectedTailnet,
+      selfNodeId: selfNodeResolver(ts.socketPath),
+    });
     const tailnetApp = buildApp(ctx, {
       clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
-      resolveTailnetContext: async (c) => {
-        const info = getConnInfo(c);
-        const addr = info.remote.address;
-        const port = info.remote.port;
-        if (!addr || port === undefined) return { ok: false, reason: "unrecognized" };
-        return resolveWhois(
-          { socketPath: ts.socketPath, expectedTailnet: ts.expectedTailnet, selfNodeId },
-          addr,
-          port,
-        );
-      },
+      resolveTailnetContext,
       sync: config.sync,
+      browserEndpoint,
     });
     serve(
       { fetch: tailnetApp.fetch, port: ts.port, hostname: ts.bind },
@@ -189,6 +189,27 @@ async function serveCommand(): Promise<void> {
         );
       },
     );
+
+    // The browser endpoint (ADR-0046): the same device check over HTTPS
+    // with the node's certificate, for the allowlisted dashboard origins.
+    // Off unless VARLATCH_TAILNET_HTTPS_PORT is set.
+    if (ts.browser) {
+      const { host, port, origins } = ts.browser;
+      const certificate = new NodeCertificate({ socketPath: ts.socketPath, host });
+      void certificate.start();
+      const browserApp = buildApp(ctx, {
+        clientAddress: c => getConnInfo(c).remote.address ?? "unknown",
+        resolveTailnetContext,
+        tailnetBrowser: { host, port, origins },
+        sync: config.sync,
+        browserEndpoint,
+      });
+      serveTailnetHttps({ fetch: browserApp.fetch, host, port, certificate }, (info) => {
+        console.log(
+          `varlatchd tailnet browser endpoint on ${TAILNET_HTTPS_BIND}:${info.port} as https://${host}:${port} (origins ${origins.join(", ")})`,
+        );
+      });
+    }
   }
 }
 

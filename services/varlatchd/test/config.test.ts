@@ -81,3 +81,67 @@ describe("database password file (#28)", () => {
     expect(cfg.databaseUrl).toBe("postgres://varlatchd_runtime:x@postgres:5432/varlatch");
   });
 });
+
+describe("tailnet browser endpoint (ADR-0046)", () => {
+  const tailnet = {
+    ...base,
+    VARLATCH_KEK: "a".repeat(64),
+    VARLATCH_PUBLIC_URL: "https://varlatch.example.com",
+    VARLATCH_TAILSCALE_SOCKET: "/var/run/tailscale/tailscaled.sock",
+    VARLATCH_TAILSCALE_TAILNET: "example.ts.net",
+    VARLATCH_TAILNET_PORT: "8687",
+  };
+  const on = { ...tailnet, VARLATCH_TAILNET_HTTPS_PORT: "8688", VARLATCH_TAILNET_MACHINE: "varlatch" };
+
+  it("is off unless its port is set, even with the other settings present", () => {
+    expect(loadConfig(tailnet).tailscale?.browser).toBeNull();
+    expect(
+      loadConfig({ ...tailnet, VARLATCH_TAILNET_MACHINE: "varlatch", VARLATCH_TAILNET_BROWSER_ORIGINS: "https://a.example.com", VARLATCH_TAILNET_HTTPS_PORT: "" })
+        .tailscale?.browser,
+    ).toBeNull();
+  });
+
+  it("serves the node's name and, by default, exactly the dashboard's origin", () => {
+    expect(loadConfig({ ...on, VARLATCH_TAILNET_MACHINE: "varlatch", VARLATCH_TAILSCALE_TAILNET: "Example.ts.net" }).tailscale?.browser).toEqual({
+      host: "varlatch.example.ts.net",
+      port: 8688,
+      origins: ["https://varlatch.example.com"],
+    });
+    expect(loadConfig({ ...on, VARLATCH_PUBLIC_URL: "https://varlatch.example.com:8443/app/" }).tailscale?.browser?.origins).toEqual([
+      "https://varlatch.example.com:8443",
+    ]);
+  });
+
+  it("adds listed origins, each exactly an https origin", () => {
+    const extra = (v: string) => loadConfig({ ...on, VARLATCH_TAILNET_BROWSER_ORIGINS: v }).tailscale?.browser?.origins;
+    expect(extra(" https://varlatch.example.ts.net , http://localhost:5173")).toEqual([
+      "https://varlatch.example.com",
+      "https://varlatch.example.ts.net",
+      "http://localhost:5173",
+    ]);
+    for (const bad of ["*", "null", "https://a.example.com/", "https://a.example.com/path", "http://a.example.com", "HTTPS://a.example.com", "a.example.com", "https://*.example.com"]) {
+      expect(() => extra(bad), bad).toThrow(ConfigError);
+    }
+  });
+
+  it("never allows a plain-http dashboard by default, and needs some origin", () => {
+    const plain = { ...on, VARLATCH_PUBLIC_URL: "http://varlatch.internal:8080" };
+    expect(() => loadConfig(plain)).toThrow(/needs a dashboard origin/);
+    expect(loadConfig({ ...plain, VARLATCH_TAILNET_BROWSER_ORIGINS: "https://varlatch.example.ts.net" }).tailscale?.browser?.origins).toEqual([
+      "https://varlatch.example.ts.net",
+    ]);
+    expect(() => loadConfig({ ...on, VARLATCH_PUBLIC_URL: "" })).toThrow(/needs a dashboard origin/);
+  });
+
+  it("needs the tailnet listener, a machine name, and a port of its own", () => {
+    expect(() => loadConfig({ ...base, VARLATCH_KEK: "a".repeat(64), VARLATCH_TAILNET_HTTPS_PORT: "8688", VARLATCH_TAILNET_MACHINE: "varlatch" })).toThrow(
+      /needs the tailnet listener/,
+    );
+    expect(() => loadConfig({ ...on, VARLATCH_TAILNET_MACHINE: "" })).toThrow(/VARLATCH_TAILNET_MACHINE/);
+    for (const bad of ["Varlatch", "varlatch.example.ts.net", "-varlatch", "var latch"]) {
+      expect(() => loadConfig({ ...on, VARLATCH_TAILNET_MACHINE: bad }), bad).toThrow(/VARLATCH_TAILNET_MACHINE/);
+    }
+    expect(() => loadConfig({ ...on, VARLATCH_TAILNET_HTTPS_PORT: "8687" })).toThrow(/must differ/);
+    expect(() => loadConfig({ ...on, VARLATCH_TAILNET_HTTPS_PORT: "8686" })).toThrow(/must differ/);
+  });
+});

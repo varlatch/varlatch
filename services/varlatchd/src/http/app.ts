@@ -148,6 +148,7 @@ export const SERVER_VERSION = "0.16.0";
 
 import { evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 import type { WhoisResult } from "../tailnet/whois.js";
+import { tailnetBrowserGate, type TailnetBrowserOptions } from "./tailnet-browser.js";
 import {
   addGroupMember,
   addTeamProject,
@@ -187,6 +188,19 @@ export interface BuildAppOptions {
    * impossible there — headers and source IPs can never create it.
    */
   resolveTailnetContext?: (c: Context) => Promise<TailnetContext | WhoisResult | null>;
+  /**
+   * Present ONLY on the tailnet browser endpoint (ADR-0046), alongside
+   * resolveTailnetContext: answers the node's own name only, lets the
+   * allowlisted origins call the browser read routes cross-origin, and
+   * serves GET /v1/tailnet/context.
+   */
+  tailnetBrowser?: TailnetBrowserOptions;
+  /**
+   * The browser endpoint's URL when this installation serves one, given to
+   * every listener: GET /v1/tailnet/endpoint returns it and /v1/meta then
+   * advertises tailnet.browser-reads. Unset or null: off.
+   */
+  browserEndpoint?: string | null;
   /** Test hook: fetch used for OIDC issuer discovery/JWKS retrieval. */
   oidcFetch?: typeof fetch;
   /** Test hook: fetch used by Platform Connection access checks. */
@@ -423,17 +437,26 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const id = requestId();
     c.set("requestId", id);
     c.header("X-Request-Id", id);
-    if (options.resolveTailnetContext) {
-      const resolved = await options.resolveTailnetContext(c);
+    await next();
+  });
+
+  // The browser endpoint refuses foreign hosts and origins, and answers
+  // preflights, before anything costs a WhoIs lookup or authentication.
+  if (options.tailnetBrowser) app.use("*", tailnetBrowserGate(options.tailnetBrowser));
+
+  const resolveTailnetContext = options.resolveTailnetContext;
+  if (resolveTailnetContext) {
+    app.use("*", async (c, next) => {
+      const resolved = await resolveTailnetContext(c);
       // The listener's resolver says why a peer has no context; a test
       // resolver may hand over a context, or null, directly.
       const result: WhoisResult =
         resolved === null ? { ok: false, reason: "unrecognized" } : "ok" in resolved ? resolved : { ok: true, context: resolved };
       if (result.ok) c.set("tailnetContext", result.context);
       c.set("tailnetResolution", result.ok ? { ...result.context } : { refused: result.reason });
-    }
-    await next();
-  });
+      await next();
+    });
+  }
 
   // Admission precedes authentication: even GETs can write audit/session state.
   app.use("*", async (c, next) => {
@@ -458,12 +481,15 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     onError: c => c.json(errorBody("VALIDATION_FAILED", "Request body exceeds 1 MiB", c.get("requestId")), 413),
   }));
   // Bound per-process work before authentication or audit insertion. Never
-  // trust caller-supplied forwarding headers for the peer identity.
+  // trust caller-supplied forwarding headers for the peer identity. On the
+  // tailnet listeners every forwarded peer is 127.0.0.1, so a recognized
+  // device gets a window of its own (ADR-0046, Consequences).
   const windows = new Map<string, { until: number; count: number }>();
   app.use("*", async (c, next) => {
     if (c.req.path === "/healthz" || c.req.path === "/readyz") return next();
     const now = Date.now();
-    const peer = options.clientAddress?.(c) ?? "local";
+    const device = c.get("tailnetContext");
+    const peer = device ? `node:${device.nodeId}` : options.clientAddress?.(c) ?? "local";
     let window = windows.get(peer);
     if (!window || window.until <= now) {
       for (const [key, value] of windows) if (value.until <= now) windows.delete(key);
@@ -557,7 +583,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // syncAdapters lets the dashboard offer exactly what varlatchd will push.
     const syncOn = options.sync !== null;
     // auth.device only where device sign-in can run (an HTTPS public URL).
-    const hidden = new Set([...(syncOn ? [] : ["sync.targets"]), ...(deviceBase ? [] : ["auth.device"])]);
+    const hidden = new Set([
+      ...(syncOn ? [] : ["sync.targets"]),
+      ...(deviceBase ? [] : ["auth.device"]),
+      // Advertised when configured; the endpoint itself is never in this
+      // unauthenticated document (GET /v1/tailnet/endpoint has it).
+      ...(options.browserEndpoint ? [] : ["tailnet.browser-reads"]),
+    ]);
     return c.json({
       apiMajor: 1,
       serverVersion: SERVER_VERSION,
@@ -624,6 +656,32 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       () => next(),
     );
   });
+
+  // Where a browser reads tailnet-protected values, for any authenticated
+  // caller; null when this installation serves no browser endpoint. Says
+  // nothing about whether this browser can reach it (ADR-0046 Decision 6).
+  app.get("/v1/tailnet/endpoint", (c) => c.json({ browserEndpoint: options.browserEndpoint ?? null }));
+
+  // The caller's own device as this endpoint verified it, on this request's
+  // connection; evaluates no Requirement. The dashboard's Connect action
+  // (ADR-0046 Decision 5).
+  if (options.tailnetBrowser) {
+    app.get("/v1/tailnet/context", (c) => {
+      const device = c.get("tailnetContext");
+      if (!device) {
+        const resolution = c.get("tailnetResolution") as { refused?: string } | undefined;
+        return c.json({ recognized: false, reason: resolution?.refused ?? "unrecognized" });
+      }
+      return c.json({
+        recognized: true,
+        tailnet: device.tailnet,
+        nodeId: device.nodeId,
+        ...(device.nodeName ? { nodeName: device.nodeName } : {}),
+        tags: device.tags,
+        ...(device.userLogin ? { userLogin: device.userLogin } : {}),
+      });
+    });
+  }
 
   app.get("/v1/installation/backups", (c) => {
     if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");

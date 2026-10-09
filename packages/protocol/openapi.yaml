@@ -53,6 +53,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Meta" }
 
+  /tailnet/endpoint:
+    get:
+      tags: [meta]
+      operationId: getTailnetEndpoint
+      summary: Where a browser reads tailnet-protected values (capability tailnet.browser-reads)
+      description: >
+        Any authenticated caller, on any listener. The URL is configuration:
+        it says nothing about whether this browser can reach it, which only
+        the browser can find out (ADR-0046 Decision 6).
+      responses:
+        "200":
+          description: The browser endpoint, or null when this installation serves none
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TailnetEndpoint" }
+        "401":
+          description: No valid bearer credential
+
+  /tailnet/context:
+    get:
+      tags: [meta]
+      operationId: getTailnetContext
+      summary: The caller's device as the tailnet browser endpoint verified it
+      description: >
+        Served only on the tailnet browser endpoint (404 elsewhere). The
+        device comes from this request's own connection through Tailscale
+        WhoIs, never from anything the request says; no Requirement is
+        evaluated. A recognized device is no promise that a read will be
+        allowed: every read checks the device again against the
+        Requirements that apply (ADR-0046 Decision 5).
+      responses:
+        "200":
+          description: The verified device, or why there is none
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TailnetDevice" }
+        "401":
+          description: No valid bearer credential
+        "404":
+          description: Not the tailnet browser endpoint
+
   /organizations:
     get:
       tags: [organizations]
@@ -3162,6 +3203,37 @@ components:
             Contract Semantics versions this server evaluates. Absent on
             servers older than 0.11.0, which evaluate only version 1.
             Version 3 (from 0.13.0) adds the `integer` item type.
+
+    TailnetEndpoint:
+      type: object
+      required: [browserEndpoint]
+      properties:
+        browserEndpoint:
+          type: [string, "null"]
+          description: >
+            The HTTPS URL of the tailnet browser endpoint, such as
+            https://varlatch.example.ts.net:8688; null when it is off.
+
+    TailnetDevice:
+      type: object
+      required: [recognized]
+      properties:
+        recognized: { type: boolean }
+        reason:
+          type: string
+          enum: [resolver-unavailable, unrecognized, other-tailnet, shared, self]
+          description: >
+            Why the connection has no verified device; present only when
+            recognized is false. Every reason fails closed.
+        tailnet: { type: string }
+        nodeId: { type: string, description: "The device's Tailscale StableID." }
+        nodeName: { type: string, description: "The device's machine name." }
+        tags:
+          type: array
+          items: { type: string }
+        userLogin:
+          type: string
+          description: The device's Tailscale user; only for untagged devices.
 
     Organization:
       type: object

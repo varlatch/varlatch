@@ -38,6 +38,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tailnet/endpoint": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where a browser reads tailnet-protected values (capability tailnet.browser-reads)
+         * @description Any authenticated caller, on any listener. The URL is configuration: it says nothing about whether this browser can reach it, which only the browser can find out (ADR-0046 Decision 6).
+         */
+        get: operations["getTailnetEndpoint"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tailnet/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's device as the tailnet browser endpoint verified it
+         * @description Served only on the tailnet browser endpoint (404 elsewhere). The device comes from this request's own connection through Tailscale WhoIs, never from anything the request says; no Requirement is evaluated. A recognized device is no promise that a read will be allowed: every read checks the device again against the Requirements that apply (ADR-0046 Decision 5).
+         */
+        get: operations["getTailnetContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations": {
         parameters: {
             query?: never;
@@ -1349,6 +1389,26 @@ export interface components {
             /** @description Contract Semantics versions this server evaluates. Absent on servers older than 0.11.0, which evaluate only version 1. Version 3 (from 0.13.0) adds the `integer` item type. */
             semanticsVersions?: number[];
         };
+        TailnetEndpoint: {
+            /** @description The HTTPS URL of the tailnet browser endpoint, such as https://varlatch.example.ts.net:8688; null when it is off. */
+            browserEndpoint: string | null;
+        };
+        TailnetDevice: {
+            recognized: boolean;
+            /**
+             * @description Why the connection has no verified device; present only when recognized is false. Every reason fails closed.
+             * @enum {string}
+             */
+            reason?: "resolver-unavailable" | "unrecognized" | "other-tailnet" | "shared" | "self";
+            tailnet?: string;
+            /** @description The device's Tailscale StableID. */
+            nodeId?: string;
+            /** @description The device's machine name. */
+            nodeName?: string;
+            tags?: string[];
+            /** @description The device's Tailscale user; only for untagged devices. */
+            userLogin?: string;
+        };
         Organization: {
             id: string;
             slug: components["schemas"]["Slug"];
@@ -2191,6 +2251,67 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Meta"];
                 };
+            };
+        };
+    };
+    getTailnetEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The browser endpoint, or null when this installation serves none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TailnetEndpoint"];
+                };
+            };
+            /** @description No valid bearer credential */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getTailnetContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The verified device, or why there is none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TailnetDevice"];
+                };
+            };
+            /** @description No valid bearer credential */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not the tailnet browser endpoint */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
