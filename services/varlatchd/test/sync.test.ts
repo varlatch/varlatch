@@ -1238,6 +1238,39 @@ describe("credential expiry (ADR-0031 amendment 2026-10-09)", () => {
     expect((await stored(connection.id)).credentialExpiresAt).toBe("2027-01-01T00:00:00.000Z");
   });
 
+  it("records the expiry even when the push throws (a refused public-key fetch)", async () => {
+    const connection = await githubConnection();
+    expect((await createTarget(connection.id, { destination: { repo: "api" } })).status).toBe(201);
+    const refusing = (async () =>
+      new Response(JSON.stringify({ message: "Forbidden" }), {
+        status: 403,
+        headers: { "github-authentication-token-expiration": "2026-11-08 09:30:00 UTC" },
+      })) as typeof fetch;
+    await runSyncOnce(ctx, { fetchImpl: refusing });
+    expect((await targetRowFromDb()).failure_count).toBe(1);
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2026-11-08T09:30:00.000Z");
+  });
+
+  it("a stored token's known expiry stands in when GitHub does not repeat it; a supplied one never borrows it", async () => {
+    const github = fakeGitHub();
+    const checkApp = buildApp(ctx, { syncFetch: github.fetchImpl });
+    const post = (path: string, body: unknown) =>
+      checkApp.request(path, { method: "POST", headers: auth(), body: JSON.stringify(body) });
+    const connection = await githubConnection();
+    await recordCredentialExpiry(ctx.db, connection.id, connection.version, "2026-10-12T09:30:00.000Z");
+    github.state.expiry = "";
+
+    const check = await (await post(CHECK, { connectionId: connection.id, destination: { repo: "api" } })).json();
+    expect(check).toMatchObject({ status: "ok", credentialExpiresAt: "2026-10-12T09:30:00.000Z" });
+    const listing = await (await post(LIST, { connectionId: connection.id })).json();
+    expect(listing.check.credentialExpiresAt).toBe("2026-10-12T09:30:00.000Z");
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2026-10-12T09:30:00.000Z");
+
+    const candidate = await (await post(CHECK, { connectionId: connection.id, credential: "ghp_candidate" })).json();
+    expect(candidate.status).toBe("ok");
+    expect(candidate).not.toHaveProperty("credentialExpiresAt");
+  });
+
   it("says nothing for a token GitHub reports no expiry for", async () => {
     const github = fakeGitHub();
     github.state.expiry = "";

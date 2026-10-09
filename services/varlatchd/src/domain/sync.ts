@@ -430,7 +430,7 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
-  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion } = await resolveCredential(
+  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt } = await resolveCredential(
     ctx,
     org,
     input,
@@ -442,15 +442,16 @@ export async function checkConnectionAccess(
     ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
     : null;
 
-  const result = await adapter.checkAccess({
+  const checked = await adapter.checkAccess({
     baseIdentity,
     destination: destination?.destination ?? {},
     credential,
     ...(fetchImpl ? { fetchImpl } : {}),
   });
-  if (connectionId && storedVersion !== null && result.credentialExpiresAt) {
-    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, result.credentialExpiresAt);
+  if (connectionId && storedVersion !== null && checked.credentialExpiresAt) {
+    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, checked.credentialExpiresAt);
   }
+  const result = withKnownExpiry(checked, storedExpiresAt);
   await recordAuditEvent(ctx.db, {
     eventType: "sync.connection_checked",
     decision: "info",
@@ -484,7 +485,7 @@ export async function listConnectionDestinations(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
-  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion } = await resolveCredential(
+  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt } = await resolveCredential(
     ctx,
     org,
     input,
@@ -525,7 +526,16 @@ export async function listConnectionDestinations(
       truncated: listing.truncated,
     },
   });
-  return { ...listing, items };
+  return { ...listing, check: withKnownExpiry(listing.check, storedExpiresAt), items };
+}
+
+/**
+ * GitHub does not repeat the expiry header on every answer. For a stored
+ * credential, the date recorded for it stands in when this answer said
+ * nothing; a supplied credential (null here) never borrows one.
+ */
+function withKnownExpiry(check: AccessCheck, storedExpiresAt: string | null): AccessCheck {
+  return check.credentialExpiresAt || !storedExpiresAt ? check : { ...check, credentialExpiresAt: storedExpiresAt };
 }
 
 /**
@@ -546,12 +556,15 @@ async function resolveCredential(
   supplied: boolean;
   /** The Connection's version the stored credential was read at; null for a supplied one. */
   storedVersion: number | null;
+  /** When the stored credential expires, as last recorded for it; null for a supplied one. */
+  storedExpiresAt: string | null;
 }> {
   let platform: string;
   let baseIdentity: string;
   let credential: string;
   let connectionId: string | null = null;
   let storedVersion: number | null = null;
+  let storedExpiresAt: string | null = null;
   if ("connectionId" in input) {
     const connection = await getConnection(ctx, org.id, input.connectionId);
     connectionId = connection.id;
@@ -562,9 +575,13 @@ async function resolveCredential(
     } else {
       // The credential and its version in one read: an expiry the platform
       // reports for it is recorded only against that version.
-      const res = await ctx.db.query("SELECT credential_envelope, version FROM platform_connections WHERE id = $1", [connection.id]);
-      const stored = res.rows[0] as { credential_envelope: unknown; version: number };
+      const res = await ctx.db.query(
+        "SELECT credential_envelope, version, credential_expires_at FROM platform_connections WHERE id = $1",
+        [connection.id],
+      );
+      const stored = res.rows[0] as { credential_envelope: unknown; version: number; credential_expires_at: string | Date | null };
       storedVersion = stored.version;
+      storedExpiresAt = stored.credential_expires_at ? new Date(stored.credential_expires_at).toISOString() : null;
       credential = decryptPlatformCredential(orgKekOf(ctx, org), org.id, connection.id, parseJson<Envelope>(stored.credential_envelope));
     }
   } else {
@@ -581,7 +598,7 @@ async function resolveCredential(
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
   const supplied = !("connectionId" in input) || input.credential !== undefined;
-  return { adapter, baseIdentity, credential, connectionId, supplied, storedVersion };
+  return { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt };
 }
 
 /**

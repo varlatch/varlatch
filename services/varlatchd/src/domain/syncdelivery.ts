@@ -215,13 +215,19 @@ export async function reconcileTarget(
       Date.now() - new Date(target.last_repair_at).getTime() >=
         (opts.repairIntervalMs ?? REPAIR_INTERVAL_MS);
 
-    const outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts);
-    // Whatever the outcome, the platform may have said when the credential
-    // expires; recorded only if the Connection still holds that credential.
-    if (live.observed_expiry) {
-      await recordCredentialExpiry(ctx.db, target.connection_id, live.connection_version, live.observed_expiry).catch((e) =>
-        console.error("credential expiry bookkeeping failed:", e),
-      );
+    let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
+    try {
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts);
+    } finally {
+      // Whatever the outcome, even a throw (a refused public-key fetch), the
+      // platform may have said when the credential expires; recorded only if
+      // the Connection still holds that credential, and never masking the
+      // run's own error.
+      if (live.observed_expiry) {
+        await recordCredentialExpiry(ctx.db, target.connection_id, live.connection_version, live.observed_expiry).catch((e) =>
+          console.error("credential expiry bookkeeping failed:", e),
+        );
+      }
     }
     if (outcome === LEASE_LOST) {
       // Aborting was right either way, but only a MOVED generation proves a

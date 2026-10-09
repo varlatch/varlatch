@@ -34,6 +34,7 @@ import { EXPIRY_WARNING_DAYS, credentialExpiry, expiryText, expiryTone } from ".
 import { checkPasses } from "../src/features/sync/accessCheck";
 import { ConnectionCard, NewConnectionDialog } from "../src/features/sync/ConnectionsPage";
 import { TargetCard } from "../src/features/sync/TargetCard";
+import { AddIntegrationDialog } from "../src/features/sync/AddIntegrationDialog";
 
 const DAY = 86_400_000;
 const NOW = Date.parse("2026-10-09T12:00:00Z");
@@ -214,5 +215,49 @@ describe("New connection", () => {
     await fill();
     await act(async () => byTestId("save-connection").props.onClick());
     expect(created).toHaveLength(1);
+  });
+});
+
+describe("Add integration Review", () => {
+  let answer: AccessCheck;
+  beforeEach(() => {
+    fake.api = {
+      checkPlatformAccess: (async () => answer) as never,
+      listPlatformDestinations: (async () => ({ check: { status: "ok", where: "connection", message: "ok" }, items: [], truncated: false })) as never,
+      effectiveConfiguration: (async () => ({ items: [] })) as never,
+      getActiveContract: (async () => ({ contract: { items: [] } })) as never,
+    };
+  });
+  const review = async (known: string | null) => {
+    await mount(
+      <AddIntegrationDialog
+        open
+        onClose={() => {}}
+        onCreated={() => {}}
+        org="acme"
+        project="api"
+        envName="production"
+        adapters={["github-actions"]}
+        connections={[connection(known)]}
+      />,
+    );
+    await act(async () => byTestId("connection-option-pcn_1").props.onClick());
+    await act(async () => byTestId("wizard-next").props.onClick());
+    await act(async () => byTestId("dest-repo").props.onChange({ target: { value: "api" } }));
+    await act(async () => byTestId("wizard-next").props.onClick());
+    await act(async () => byTestId("wizard-next").props.onClick());
+  };
+
+  it("asks before attaching a connection already known to expire soon, when GitHub does not repeat the date", async () => {
+    answer = { status: "ok", where: "destination", message: "The token can read the secrets of acme/api." };
+    await review(inDays(3));
+    expect(text(byTestId("confirm-integration"))).toBe("Create anyway");
+    expect(text(byTestId("access-check-expiry"))).toContain("Token expires in 3 days");
+  });
+
+  it("goes by the date GitHub reports now over the one known before", async () => {
+    answer = { status: "ok", where: "destination", message: "ok", credentialExpiresAt: inDays(60) };
+    await review(inDays(3));
+    expect(text(byTestId("confirm-integration"))).toBe("Create integration");
   });
 });

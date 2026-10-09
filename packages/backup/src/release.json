@@ -84,6 +84,10 @@
     {
       "version": "0.15.2",
       "migrationVersion": 26
+    },
+    {
+      "version": "0.16.0",
+      "migrationVersion": 27
     }
   ]
 }

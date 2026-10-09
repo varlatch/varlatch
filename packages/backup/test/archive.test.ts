@@ -88,4 +88,10 @@ describe('authenticated installation archives', () => {
     expect(compatible(source, { ...source, supportedPostgresMajor: 18 })).toBe(false);
     expect(compatible(source, { ...target, migrationVersion: source.migrationVersion - 1, supportedRestoreSources: [{ version: source.version, migrationVersion: source.migrationVersion }] })).toBe(false);
   });
+  it('restores archives of the published 0.16.0 (migration 27) after a later migration', () => {
+    // The release.json v0.16.0 shipped with; a new migration must keep its archives restorable.
+    const published = { ...EMBEDDED_RELEASE, version: '0.16.0', migrationVersion: 27, supportedRestoreSources: [] };
+    expect(EMBEDDED_RELEASE.migrationVersion).toBeGreaterThanOrEqual(27);
+    expect(compatible(published, EMBEDDED_RELEASE)).toBe(true);
+  });
 });

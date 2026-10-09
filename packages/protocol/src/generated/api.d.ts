@@ -1976,7 +1976,7 @@ export interface components {
             httpStatus?: number;
             /**
              * Format: date-time
-             * @description When the checked credential expires, if the platform said (GitHub personal access tokens). For a credential supplied with the check, it is reported and not stored.
+             * @description When the checked credential expires, if the platform said (GitHub personal access tokens). For a credential supplied with the check, it is reported and not stored. For a Connection's stored credential, the date recorded for it stands in when the platform does not repeat it; a supplied credential never borrows one.
              */
             credentialExpiresAt?: string;
         };
