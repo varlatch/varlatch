@@ -50,6 +50,7 @@ export type AuditEventFilters = Omit<
   "limit" | "cursor"
 >;
 export type Meta = components["schemas"]["Meta"];
+export type TailnetEndpoint = components["schemas"]["TailnetEndpoint"];
 export type CapabilitySummary = components["schemas"]["Capability"];
 export type IssuedCapability = components["schemas"]["IssuedCapability"];
 export type IssuedAgentCredential = components["schemas"]["IssuedAgentCredential"];

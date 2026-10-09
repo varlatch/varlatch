@@ -25,8 +25,11 @@ RUN pnpm --filter @varlatch/protocol generate \
 FROM nginx:1.29-alpine
 COPY apps/web/nginx.conf /etc/nginx/conf.d/default.conf
 COPY apps/web/docker-entrypoint.d/10-varlatch-config.sh /docker-entrypoint.d/
-RUN chmod +x /docker-entrypoint.d/10-varlatch-config.sh
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
+# A default policy for an nginx started without the entrypoint scripts; the
+# entrypoint rewrites it from runtime config on every start.
+RUN chmod +x /docker-entrypoint.d/10-varlatch-config.sh \
+ && /docker-entrypoint.d/10-varlatch-config.sh
 COPY LICENSE THIRD-PARTY-NOTICES.md /usr/share/doc/varlatch/
 COPY LICENSES /usr/share/doc/varlatch/LICENSES
 # Varlatch's own code here is AGPL-3.0-or-later and Apache-2.0 (LICENSE maps

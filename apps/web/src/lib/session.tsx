@@ -39,6 +39,8 @@ interface SessionState {
   /** Increments on every (re-)authentication: disclosed state must reset. */
   authEpoch: number;
   api: VarlatchClient;
+  /** fetch with this session's bearer and its one silent re-exchange on 401, for another origin of this installation. */
+  fetch: typeof fetch;
   mintConvexToken: () => Promise<string | null>;
   signInWithPasskey: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -255,8 +257,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, api, mintConvexToken, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, api, mintConvexToken, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, api, fetch: sessionFetch, mintConvexToken, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, api, sessionFetch, mintConvexToken, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;

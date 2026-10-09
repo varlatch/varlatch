@@ -34,7 +34,7 @@ import {
   storedText,
   type ContractItemMeta,
 } from "../values/model";
-import { useContractItems, useManyEnvValues, usePlatformConnections, useProjectSyncTargets } from "../values/queries";
+import { markTailnetOnly, tailnetAccess, useContractItems, useManyEnvValues, usePlatformConnections, useProjectSyncTargets } from "../values/queries";
 import { useDisclosure } from "../values/useDisclosure";
 import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
 import { useReviewSave } from "../values/useReviewSave";
@@ -43,7 +43,7 @@ import { RotateDialog } from "../values/RotateDialog";
 import { ExportDialog, ImportDialog } from "../values/TransferDialogs";
 import { AddItemForm } from "../values/AddItemForm";
 import { DisclosureNotice, SaveBar, TypeBadge } from "../values/bits";
-import { TailnetOnlyBadge } from "../values/TailnetOnly";
+import { TailnetConnectPrompt, TailnetOnlyBadge } from "../values/TailnetOnly";
 import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
 import type { CommitHow } from "../values/ValueEditor";
 import { targetCoversItem, targetLabel } from "../sync/syncStatus";
@@ -81,13 +81,23 @@ export function ValuesGrid() {
   const targetsByEnv = useProjectSyncTargets(org, project.id);
   const connections = usePlatformConnections(org);
   const drafts = useDrafts();
-  // Columns a Tailnet Requirement covers: no value can be read there.
+  // Columns a Tailnet Requirement covers: read through the tailnet endpoint
+  // once this tab has connected, otherwise held back (`restricted`).
+  const access = roots.map((env, i) => tailnetAccess(env, columns[i]?.data));
   const restrictedKey = roots
-    .filter((env, i) => isTailnetOnly(env) || columns[i]?.data?.tailnetOnly === true)
+    .filter((_, i) => access[i]!.blocked)
+    .map((env) => env.name)
+    .join("\u0000");
+  const protectedKey = roots
+    .filter((_, i) => access[i]!.isProtected)
     .map((env) => env.name)
     .join("\u0000");
   const restricted = useMemo(() => new Set(restrictedKey ? restrictedKey.split("\u0000") : []), [restrictedKey]);
-  const disclosure = useDisclosure(org, slug, restricted);
+  const protectedEnvs = useMemo(() => new Set(protectedKey ? protectedKey.split("\u0000") : []), [protectedKey]);
+  const disclosure = useDisclosure(org, slug, restricted, {
+    protectedEnvs,
+    onTailnetOnly: (env) => markTailnetOnly(qc, org, slug, env),
+  });
 
   const [filter, setFilter] = useState("");
   const [segment, setSegment] = useState<Segment>("all");
@@ -444,6 +454,7 @@ export function ValuesGrid() {
         </Menu>
       </div>
 
+      <TailnetConnectPrompt envs={[...restricted]} />
       <DisclosureNotice envs={disclosure.revealedEnvs} onMaskAll={disclosure.maskAll} />
       {review.error && (
         <Callout
@@ -490,7 +501,7 @@ export function ValuesGrid() {
                   derived={derived}
                   stat={stats[i]!}
                   tailnetBadge={
-                    stats[i]!.tailnetOnly && (
+                    protectedEnvs.has(root.name) && (
                       <TailnetOnlyBadge org={org} project={project} env={root} environments={environments} compact />
                     )
                   }

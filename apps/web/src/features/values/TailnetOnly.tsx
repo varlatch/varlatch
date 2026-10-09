@@ -3,10 +3,11 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Wifi } from "lucide-react";
-import type { Environment, Project } from "@varlatch/protocol";
+import type { Environment, Project, TailnetDevice } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { TAILNET_ONLY_GUIDANCE, TAILNET_ONLY_LABEL } from "../../lib/tailnet";
-import { Callout, cn } from "../../components/ui";
+import { unrecognizedReason, useTailnetConnection, type TailnetConnection } from "../../lib/tailnetConnection";
+import { Button, Callout, cn } from "../../components/ui";
 import { requirementSentence } from "../access/requirements";
 import type { Names } from "../access/model";
 
@@ -109,19 +110,83 @@ export function TailnetOnlyBadge({
   );
 }
 
-/** In place of Reveal: why values here cannot be read in the dashboard. */
+const deviceName = (device: TailnetDevice) => device.nodeName ?? device.nodeId ?? "this device";
+
+/**
+ * Where this tab stands with the tailnet browser endpoint (ADR-0046
+ * Decision 5), with the Connect action. Labels say who observed what: the
+ * endpoint is configured, the device is checked by Varlatch, reachability
+ * is known only from this browser. Nothing is sent to the endpoint before
+ * the person chooses Connect.
+ */
+export function TailnetConnectStatus({ connection, connect, deviceRefused }: { connection: TailnetConnection; connect: () => void; deviceRefused?: boolean | undefined }) {
+  if (connection.status === "unavailable") return null;
+  const action = (label: string) => (
+    <Button size="sm" icon={<Wifi size={13} />} loading={connection.status === "connecting"} onClick={connect} data-testid="tailnet-connect">
+      {label}
+    </Button>
+  );
+  switch (connection.status) {
+    case "idle":
+    case "connecting":
+      return (
+        <span className="mt-2 block" data-testid="tailnet-connect-status" data-status={connection.status}>
+          <span className="block">
+            This installation has a tailnet endpoint (configured). Connect to read these values from this browser:
+            Varlatch then checks this device on every request. Your browser may ask to allow access to devices on your
+            local network.
+          </span>
+          <span className="mt-2 block">{action(connection.status === "connecting" ? "Connecting" : "Connect to tailnet")}</span>
+        </span>
+      );
+    case "unreachable":
+      return (
+        <span className="mt-2 block" data-testid="tailnet-connect-status" data-status="unreachable">
+          <span className="block">
+            {connection.blockedByPolicy
+              ? "This dashboard's security policy does not allow the tailnet endpoint, so this browser could not reach it. Ask the operator to run setup again."
+              : "The tailnet endpoint did not answer from this browser. This device may not be on the tailnet, or the tailnet's access rules may not let it reach the endpoint."}
+          </span>
+          <span className="mt-2 block">{action("Try again")}</span>
+        </span>
+      );
+    case "unrecognized":
+      return (
+        <span className="mt-2 block" data-testid="tailnet-connect-status" data-status="unrecognized">
+          <span className="block">
+            The endpoint answered, but Varlatch did not recognize this device: {unrecognizedReason(connection.reason)}.
+          </span>
+          <span className="mt-2 block">{action("Try again")}</span>
+        </span>
+      );
+    case "connected":
+      return (
+        <span className="mt-2 block" data-testid="tailnet-connect-status" data-status={deviceRefused ? "refused" : "connected"}>
+          {deviceRefused
+            ? `Connected from this browser as ${deviceName(connection.device)}, but this device does not meet the requirements here (checked by Varlatch).`
+            : `Connected from this browser as ${deviceName(connection.device)} (checked by Varlatch). Reading values through the tailnet.`}
+        </span>
+      );
+  }
+}
+
+/** In place of Reveal: why values here cannot be read in the dashboard, and how this browser can, where it can. */
 export function TailnetOnlyNotice({
   org,
   project,
   env,
   environments,
+  deviceRefused,
 }: {
   org: string;
   project: Project;
   env: Environment;
   environments: Environment[];
+  deviceRefused?: boolean | undefined;
 }) {
   const rules = useCoveringRules(org, project, env, environments);
+  const { connection, connect } = useTailnetConnection();
+  const offered = connection.status !== "unavailable";
   return (
     <Callout
       tone="info"
@@ -137,16 +202,42 @@ export function TailnetOnlyNotice({
             </span>
           ))}
           <span className="mt-1 block">
-            The dashboard cannot read them: it never connects through the tailnet. Use the CLI configured for the
-            Tailscale endpoint on an approved device.{" "}
+            {offered
+              ? "The dashboard reads them only through the tailnet, from an approved device."
+              : "The dashboard cannot read them: it never connects through the tailnet. Use the CLI configured for the Tailscale endpoint on an approved device."}{" "}
             <Link to={rulesHref(org)} className="text-accent hover:underline">
               Network requirements
             </Link>
           </span>
         </>
+      ) : offered ? (
+        "Values here require an approved device on the tailnet."
       ) : (
         TAILNET_ONLY_GUIDANCE
       )}
+      <TailnetConnectStatus connection={connection} connect={connect} deviceRefused={deviceRefused} />
+    </Callout>
+  );
+}
+
+/** Where values were read through the tailnet: from this browser, as this device. */
+export function TailnetReadNote({ device }: { device: TailnetDevice }) {
+  return (
+    <p className="flex items-center gap-1.5 text-xs text-muted" data-testid="tailnet-read-note">
+      <Wifi size={12} className="text-info" aria-hidden="true" />
+      Values here were read through the tailnet from this browser, as {deviceName(device)}. Varlatch checks this device on
+      every request.
+    </p>
+  );
+}
+
+/** Above a grid with protected columns: the same Connect action, for all of them. */
+export function TailnetConnectPrompt({ envs }: { envs: string[] }) {
+  const { connection, connect } = useTailnetConnection();
+  if (envs.length === 0 || connection.status === "unavailable" || connection.status === "connected") return null;
+  return (
+    <Callout tone="info" icon={<Wifi size={15} />} data-testid="tailnet-connect-prompt" title={`Values in ${envs.join(", ")} need this device's tailnet identity`}>
+      <TailnetConnectStatus connection={connection} connect={connect} />
     </Callout>
   );
 }

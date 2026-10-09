@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { ConvexReactClient, ConvexProviderWithAuth } from "convex/react";
 import { LiveUpdatesStatus } from "./components/LiveUpdatesStatus";
 import { SessionProvider, useSession } from "./lib/session";
+import { TailnetConnectionProvider } from "./lib/tailnetConnection";
 import { showPreferredTheme } from "./lib/theme";
 import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toast";
@@ -185,9 +186,11 @@ export function App() {
         <DialogProvider>
           <SessionProvider>
             <AuthGate>
-              <ConvexWithSession>
-                <RouterProvider router={router} />
-              </ConvexWithSession>
+              <TailnetConnectionProvider>
+                <ConvexWithSession>
+                  <RouterProvider router={router} />
+                </ConvexWithSession>
+              </TailnetConnectionProvider>
             </AuthGate>
           </SessionProvider>
         </DialogProvider>

@@ -79,6 +79,25 @@ fixes.
   authentication; requests without an `Origin` (the CLI) are unaffected.
   The dashboard does not use it yet, and `varlatch setup` does not
   configure it yet. Nothing changes until the port is set.
+- **The dashboard reads tailnet-protected values from an approved device.**
+  Where the installation serves a tailnet browser endpoint, the notice in
+  place of Reveal offers "Connect to tailnet". Nothing goes to the endpoint
+  before that; the first request checks this device, and the browser may
+  ask to allow access to the local network. After that, in that tab only,
+  protected environments' values, reveals and exports go to the endpoint,
+  which checks the device on every request; navigation and everything else
+  stay where they were. Once an environment is known to need the tailnet,
+  its values are never asked for on the dashboard's own address. When the
+  endpoint stops answering, a reveal is not sent again: the dashboard says
+  so and checks the connection. The notice says what was configured, what
+  Varlatch checked, and what this browser could reach.
+- **The dashboard is served with a strict Content-Security-Policy**:
+  scripts and styles from its own address only, nothing inline, no
+  framing, and connections only to itself, the Convex address it uses
+  and, when set, the tailnet browser endpoint (`VARLATCH_TAILNET_ENDPOINT`
+  on the `varlatch-web` container). The container refuses to start when
+  `CONVEX_URL` or `VARLATCH_TAILNET_ENDPOINT` holds anything but a plain
+  URL.
 - On the tailnet listener, each recognized device now has its own request
   window. Before, every tailnet client shared one, since all of them
   arrive from the sidecar's 127.0.0.1.

@@ -10,6 +10,7 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  * Usage: node scripts/e2e-device.mjs <recovery-enroll-url-on-dashboard-origin>
  */
 import { spawn } from "node:child_process";
+import { watchCsp } from "./e2e-csp.mjs";
 import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +50,7 @@ const pendingEntry = () => (existsSync(pendingFile) ? Object.values(JSON.parse(r
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
+const cspViolations = watchCsp(context);
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send("WebAuthn.enable");
@@ -146,5 +148,6 @@ check("no passkey, no approval", /did not complete/.test(await page.textContent(
 const stillPending = await cli(["login", "--server", base, "--wait", "--timeout", "2"]);
 check("the sign-in is still pending (75)", stillPending.code === 75, String(stillPending.code));
 
+check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
 if (failed) process.exit(1);

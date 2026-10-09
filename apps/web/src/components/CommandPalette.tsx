@@ -27,6 +27,7 @@ import { applyTheme } from "../lib/theme";
 import { modKey } from "../lib/hotkeys";
 import { keys, useCapability, useEnvironments } from "../features/projects/hooks";
 import { isTailnetOnly } from "../lib/tailnet";
+import { useTailnetConnection } from "../lib/tailnetConnection";
 import { NewProjectDialog } from "../features/projects/NewProjectDialog";
 import { NewEnvironmentDialog } from "../features/projects/NewEnvironmentDialog";
 import { Highlight, matchesFilter } from "./FilterInput";
@@ -193,9 +194,11 @@ export function CommandPalette() {
     })),
   });
   const routeProjectId = projectList.find((p) => p.slug === routeProject)?.id;
-  const routeTailnetOnly = isTailnetOnly(
-    envQueries.flatMap((q) => q.data?.items ?? []).find((e) => e.projectId === routeProjectId && e.name === routeEnv),
-  );
+  const { connection } = useTailnetConnection();
+  // Held back unless this tab reads it through the tailnet endpoint.
+  const routeTailnetOnly =
+    connection.status !== "connected" &&
+    isTailnetOnly(envQueries.flatMap((q) => q.data?.items ?? []).find((e) => e.projectId === routeProjectId && e.name === routeEnv));
   // Feature-detect rather than probe: servers without search.items keep
   // the client-side search above.
   const canSearchItems = useCapability("search.items");
@@ -284,7 +287,7 @@ export function CommandPalette() {
             },
           ]
         : []),
-      // Not offered where a Tailnet Requirement keeps values out of the dashboard.
+      // Not offered where a Tailnet Requirement keeps values out of this tab.
       ...(org && routeProject && routeEnv && !routeTailnetOnly
         ? [
             {

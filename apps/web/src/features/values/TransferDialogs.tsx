@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { Download, Lock, ShieldAlert, Wifi } from "lucide-react";
 import type { Environment, Tier } from "@varlatch/protocol";
 import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
+import { useTailnetConnection } from "../../lib/tailnetConnection";
+import { TailnetConnectStatus } from "./TailnetOnly";
 import { Dialog } from "../../components/Dialog";
 import { Button, Callout, Checkbox, Field, Select, Skeleton, TierDot } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
@@ -105,6 +107,7 @@ export function ExportDialog({
   // `env` is the environment as it is now (the grid resolves it from current
   // data), so a Requirement added while the dialog is open takes effect here.
   const { items, withheld, secrets, plain, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } = useExport(org, project, env);
+  const { connection, connect } = useTailnetConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -164,7 +167,8 @@ export function ExportDialog({
       <div className="space-y-4 text-[13px]">
         {tailnetOnly && (
           <Callout tone="info" icon={<Wifi size={15} />} data-testid="export-tailnet-only" title="Nothing to export here">
-            {TAILNET_ONLY_GUIDANCE}
+            {connection.status === "unavailable" ? TAILNET_ONLY_GUIDANCE : "Values here require an approved device on the tailnet."}
+            <TailnetConnectStatus connection={connection} connect={connect} />
           </Callout>
         )}
         {!items && !shownError && !tailnetOnly && <Skeleton className="h-10 w-full" />}

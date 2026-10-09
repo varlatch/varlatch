@@ -10,6 +10,7 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  * Usage: e2e-onboarding.mjs <enroll-url> <api-token>
  */
 import { chromium } from "playwright";
+import { watchCsp } from "./e2e-csp.mjs";
 
 const [enrollUrl, apiToken] = process.argv.slice(2);
 if (!enrollUrl?.includes("#") || !apiToken) {
@@ -27,6 +28,7 @@ const api = (method, path, body) =>
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
+const cspViolations = watchCsp(context);
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send("WebAuthn.enable");
@@ -184,5 +186,6 @@ check(
     (await page.locator('[data-testid="project-filter"]').count()) === 1,
 );
 
+check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
 process.exit(failed ? 1 : 0);

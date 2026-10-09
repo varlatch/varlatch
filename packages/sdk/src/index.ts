@@ -3,6 +3,8 @@ import type {
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
+  TailnetDevice,
+  TailnetEndpoint,
   ApiError,
   CapabilityExercise,
   CapabilitySummary,
@@ -174,7 +176,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -299,6 +301,16 @@ export class VarlatchClient {
 
   meta(): Promise<Meta> {
     return this.request("GET", "/v1/meta");
+  }
+
+  /** Where a browser reads tailnet-protected values; null when this installation serves none (capability tailnet.browser-reads). */
+  tailnetEndpoint(): Promise<TailnetEndpoint> {
+    return this.request("GET", "/v1/tailnet/endpoint");
+  }
+
+  /** The caller's device as the tailnet browser endpoint verified it; only that endpoint serves this. */
+  tailnetContext(): Promise<TailnetDevice> {
+    return this.request("GET", "/v1/tailnet/context");
   }
 
   listOrganizations(): Promise<Page<Organization>> {
