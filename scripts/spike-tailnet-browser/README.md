@@ -59,6 +59,8 @@ SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey \
 | `SPIKE_S5_BROWSERS` | S5: which Playwright browsers to run (default `chromium,firefox,webkit`; `none` for a Safari-only run) |
 | `SPIKE_SAFARI_NODE` | S5 in Safari: the Mac's MagicDNS short name or node ID (see below) |
 | `SPIKE_SAFARI_WAIT_SECONDS` | S5 in Safari: how long to wait for someone to open the page there |
+| `SPIKE_SAFARI_ORIGIN` | S5 in Safari: `tsnet` (default, the page on the spike node) or `public` (the page behind a temporary public tunnel) |
+| `SPIKE_CLOUDFLARED` | S5 in Safari, public origin: the `cloudflared` binary (default `~/.local/share/varlatch-spike/bin/cloudflared`) |
 | `SPIKE_S7_WAIT_SECONDS` | S7: how long to wait for the request from a shared-in device |
 | `SPIKE_S8_RULE_APPLIED=1` | S8: the owner applied the deny rule below |
 | `SPIKE_KEEP=1` | Keep the containers (the nodes stay joined until you log them out) |
@@ -132,9 +134,17 @@ where the probe answers but drops the CORS header, so the request arrives
 and the browser rejects the response, and checks the judge does not pass
 it.
 
-This covers the ts.net origin. The public-origin case needs the test page
-on a public HTTPS origin, which needs the owner's approval; until then it
-is NOT RUN.
+That is the ts.net origin. **The public origin** (`SPIKE_SAFARI_ORIGIN=public`)
+serves the same page from a small server on the machine running the
+harness, behind a Cloudflare quick tunnel: a temporary
+`https://<random>.trycloudflare.com` origin, no account, up only while the
+step waits. The probe is told to allow that origin. The page reports to
+its own origin, which does not cross the tailnet, so who sent the report
+is unknown. The run ID, Safari's user agent, the read naming the Mac and
+the probe's own WhoIs record of that request must still agree. Get
+`cloudflared` from Cloudflare's GitHub releases and check it against the
+SHA-256 in the release notes. The selftest drives this path too, through a
+real browser but without the tunnel.
 
 ## What the test tailnet must allow
 
@@ -188,27 +198,31 @@ of a second tailnet, then runs with `SPIKE_S7_WAIT_SECONDS=300`; from that
 user's device, request the URL the script prints. The share is removed with
 the node when it logs out.
 
-**S8, a device denied `tcp:8688`.** Tailscale policies only allow, so denying
-one port means narrowing an allow rule. The rule lets only this machine use
-8688. The spike's client node is then the denied device, and this machine
-an allowed control on the same port. `preflight` prints this machine's
-Tailscale addresses. On a test tailnet with the default allow-all policy,
-the owner would replace that rule with (proposed, not applied):
+**S8, a device denied `tcp:8688`.** Tailscale policies only allow. Where
+members may reach everything (a common default), a temporary tag gets
+there without narrowing any existing rule. Both spike nodes join with a key
+tagged `tag:spike`. Tagged devices are not members, so the only access the
+spike client then has is what the policy grants the tag. The owner would
+add, for the test only (proposed, not applied):
 
 ```jsonc
-// Every port except 8688 for everyone; 8688 only from this machine.
-{ "action": "accept", "src": ["*"], "dst": ["*:1-8687,8689-65535"] },
-{ "action": "accept", "src": ["<this machine's Tailscale IPv4>"], "dst": ["*:8688"] }
+// tagOwners:
+"tag:spike": ["autogroup:admin"],
+// grants: spike nodes reach each other on 8687 only, so the client is denied 8688.
+{ "src": ["tag:spike"], "dst": ["tag:spike"], "ip": ["tcp:8687"] },
 ```
 
-Then run `SPIKE_S8_RULE_APPLIED=1 node scripts/spike-tailnet-browser/run.mjs s8`
-and restore the policy afterwards. S8 enables the spike node's HTTPS
-listener itself. It accepts the client node's failure only when:
+This machine, a member, keeps reaching the spike node on every port, so it
+is the allowed control. The spike client is the denied device. Run with
+the tagged key:
+`SPIKE_TS_AUTHKEY_FILE=<tagged key file> SPIKE_S8_RULE_APPLIED=1 node scripts/spike-tailnet-browser/run.mjs s8`,
+then remove the two additions. S8 enables the spike node's HTTPS listener
+itself. It accepts the client's failure only when:
 - this machine got an HTTPS answer on 8688 that names it, which proves
   there is a listener and the rule lets the allowed device through
-- the client node still reaches the spike node on tcp:8687, which proves
-  the failure is the rule's and not a broken node
+- the client still reaches the spike node on tcp:8687, which proves the
+  failure is the rule's and not a broken node
 
-Otherwise the result is inconclusive. The client node's failure is
-measured with curl through its proxy; a browser on a denied device would
-need a manual run on such a device.
+Otherwise the result is inconclusive. The client's failure is measured with
+curl through its proxy; a browser on a denied device would need a manual
+run on such a device.

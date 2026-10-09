@@ -18,7 +18,7 @@
 // prerequisite is missing). Only PASS is passing. Results also go to a
 // JSONL file. Both spike nodes log out and every container and volume is
 // removed at the end, unless SPIKE_KEEP=1.
-import { execFile, execFileSync } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -110,7 +110,7 @@ function judgeS5(expected, outcome, { headed, localId, serverEntries = [], permi
  */
 const SAFARI_UA = (ua) => /Version\/[\d.]+.*Safari\//.test(ua ?? "") && !/(Chrome|Chromium|CriOS|FxiOS|EdgiOS|Edg\/|OPR\/|Firefox)/.test(ua ?? "");
 
-function judgeSafari({ entries, reports, node, run, browser = null }) {
+function judgeSafari({ entries, reports, node, run, browser = null, reporterKnown = true }) {
   const names = (w) => !!w?.ok && (w.nodeId === node || w.name?.split(".")[0] === node);
   const mine = entries.filter((e) => new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run);
   const answered = mine.filter((e) => e.listener === "tailnet-https");
@@ -120,7 +120,10 @@ function judgeSafari({ entries, reports, node, run, browser = null }) {
       ? verdict("NOT RUN", "nothing arrived from the browser for this run")
       : verdict("INCONCLUSIVE", { problem: "requests arrived, but the browser never reported completing them", arrived: mine.map((e) => ({ listener: e.listener, url: e.url })) });
   }
-  if (!names(report.reporter?.whois)) return verdict("INCONCLUSIVE", { problem: "the report did not come from the Mac", reporter: report.reporter?.whois });
+  // A page on a public origin reports to that origin, off the tailnet, so who
+  // sent the report is not known; the run ID, the browser and the probe's
+  // own record of the request the report names still have to agree.
+  if (reporterKnown && !names(report.reporter?.whois)) return verdict("INCONCLUSIVE", { problem: "the report did not come from the Mac", reporter: report.reporter?.whois });
   // The step is about Safari: the same page opened in another browser on the Mac proves nothing about it.
   if (browser === "safari" && !SAFARI_UA(report.userAgent)) return verdict("INCONCLUSIVE", { problem: "the report came from a browser other than Safari", userAgent: report.userAgent });
   const read = (report.results ?? []).filter((r) => r.ok && r.status === 200 && r.json === true);
@@ -656,6 +659,59 @@ async function s4(ctx) {
   );
 }
 
+/**
+ * The test page on an origin off the tailnet: a local server for the page
+ * and its same-origin report. The reports it receives carry no WhoIs.
+ */
+async function startPublicPageServer(endpoint, { abortMs = 60000, query = "" } = {}) {
+  const reports = [];
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://x.invalid");
+    if (url.pathname === "/report" && req.method === "POST") {
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 65536) return res.writeHead(413).end();
+      }
+      try {
+        const parsed = JSON.parse(body);
+        if (/^[A-Za-z0-9-]{8,64}$/.test(parsed.run ?? "") && Array.isArray(parsed.results)) {
+          reports.push({ at: new Date().toISOString(), run: parsed.run, results: parsed.results.slice(0, 10), userAgent: String(parsed.userAgent ?? "").slice(0, 300), reporter: null });
+          return res.writeHead(204, { "Cache-Control": "no-store" }).end();
+        }
+      } catch {}
+      return res.writeHead(400).end();
+    }
+    if (url.pathname === "/health") return res.writeHead(200).end("ok");
+    const run = url.searchParams.get("run");
+    if (url.pathname !== "/page" || !/^[A-Za-z0-9-]{8,64}$/.test(run ?? "")) return res.writeHead(404).end();
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    res.end(pageHtml(endpoint, abortMs, { run, report: "/report", query }));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  return { port: server.address().port, reports, close: () => new Promise((done) => server.close(done)) };
+}
+
+/** A Cloudflare quick tunnel to a local port: a public HTTPS origin, up only while it runs. */
+async function startTunnel(port) {
+  const bin = process.env.SPIKE_CLOUDFLARED ?? join(homedir(), ".local/share/varlatch-spike/bin/cloudflared");
+  if (!existsSync(bin)) throw new Error(`cloudflared not found at ${bin} (SPIKE_CLOUDFLARED)`);
+  const child = spawn(bin, ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${port}`], { stdio: ["ignore", "pipe", "pipe"] });
+  let log = "";
+  child.stdout.on("data", (d) => (log += d));
+  child.stderr.on("data", (d) => (log += d));
+  const stop = () => child.kill("SIGTERM");
+  try {
+    const url = await until("the tunnel's public URL", () => log.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)?.[0], 60_000);
+    // DNS and the edge take a moment; the origin is ready once it answers.
+    await until("the tunnel to answer", async () => (await request(`${url}/health`, { timeoutMs: 5000 })).status === 200, 120_000);
+    return { url, stop };
+  } catch (err) {
+    stop();
+    throw err;
+  }
+}
+
 // ---- S5: browsers calling the endpoint cross-origin, from a public and a ts.net origin.
 async function s5(ctx, local) {
   if (!ctx.permitCert) await recreateServer(ctx, true);
@@ -739,21 +795,51 @@ async function s5(ctx, local) {
     }
   }
   // Safari, by hand on a Mac on the tailnet (README): Playwright's WebKit is
-  // not Safari, and may not launch here at all. The probe judges what arrives.
+  // not Safari, and may not launch here at all. The page reports what the
+  // browser saw; the probe has its own record. SPIKE_SAFARI_ORIGIN picks the
+  // page's origin: ts.net (the spike node) or public (a temporary tunnel).
   const safariNode = process.env.SPIKE_SAFARI_NODE;
   const safariWait = Number(process.env.SPIKE_SAFARI_WAIT_SECONDS ?? 0);
+  const safariOrigin = process.env.SPIKE_SAFARI_ORIGIN === "public" ? "public" : "ts.net";
+  const otherOrigin = safariOrigin === "public" ? "ts.net" : "public";
   if (!safariNode || !(safariWait > 0)) {
     notRun("s5", "Safari: by hand on a Mac on the tailnet, see README.md (SPIKE_SAFARI_NODE, SPIKE_SAFARI_WAIT_SECONDS)");
   } else {
     // A fresh run ID: only this attempt's requests and report count.
     const run = runId();
-    console.log(`S5 Safari: on ${safariNode}, open https://${ctx.name}:8690/page?run=${run} in Safari within ${safariWait} s and leave it until it shows "reported: true".`);
-    const end = Date.now() + safariWait * 1000;
-    const state = () => ({ entries: ctl("GET", `/log?run=${run}`), reports: ctl("GET", "/reports"), node: safariNode, run });
-    // The browser's report settles it; without one, the deadline does.
-    while (Date.now() < end && !ctl("GET", "/reports").some((r) => r.run === run)) await sleep(3000);
-    judge("s5", "Safari (by hand), ts.net origin: the browser read an answer naming the Mac, matching the probe's record", judgeSafari({ ...state(), browser: "safari" }));
-    notRun("s5", "Safari, public origin: needs the test page on a public HTTPS origin, which needs the owner's approval");
+    let pageUrl = `https://${ctx.name}:8690/page?run=${run}`;
+    let reportsNow = () => ctl("GET", "/reports");
+    let cleanup = async () => {};
+    if (safariOrigin === "public") {
+      const site = await startPublicPageServer(`https://${ctx.name}:8688`);
+      try {
+        const tunnel = await startTunnel(site.port);
+        cleanup = async () => {
+          tunnel.stop();
+          await site.close();
+        };
+        ctl("POST", `/allow-origin?origin=${encodeURIComponent(tunnel.url)}`);
+        pageUrl = `${tunnel.url}/page?run=${run}`;
+        reportsNow = () => site.reports;
+      } catch (err) {
+        await site.close();
+        throw err;
+      }
+    }
+    try {
+      console.log(`S5 Safari: on ${safariNode}, open ${pageUrl} in Safari within ${safariWait} s and leave it until it shows "reported: true".`);
+      const end = Date.now() + safariWait * 1000;
+      // The browser's report settles it; without one, the deadline does.
+      while (Date.now() < end && !reportsNow().some((r) => r.run === run)) await sleep(3000);
+      judge(
+        "s5",
+        `Safari (by hand), ${safariOrigin} origin: the browser read an answer naming the Mac, matching the probe's record`,
+        judgeSafari({ entries: ctl("GET", `/log?run=${run}`), reports: reportsNow(), node: safariNode, run, browser: "safari", reporterKnown: safariOrigin === "ts.net" }),
+      );
+    } finally {
+      await cleanup();
+    }
+    notRun("s5", `Safari, ${otherOrigin} origin: a separate run (SPIKE_SAFARI_ORIGIN=${otherOrigin === "public" ? "public" : "tsnet"})`);
   }
   const preflights = ctl("GET", "/log").filter((e) => e.listener === "tailnet-https-preflight");
   observe("s5", "preflights the probe saw", preflights.map((e) => ({ url: e.url, origin: e.origin, requestPrivateNetwork: e.requestPrivateNetwork })));
@@ -882,6 +968,16 @@ function selftestJudges() {
     ["Safari: a refused origin: fail", safari([entry("tailnet-https-refused-origin", "nMAC")], [report([rejected])]), "FAIL"],
     ["Safari: nothing arriving is not run", safari([], []), "NOT RUN"],
     ["Safari: the page opened in Chrome on the Mac is inconclusive", safari([entry("tailnet-https", "nMAC")], [report([macRead("nMAC")], { userAgent: CHROME })]), "INCONCLUSIVE"],
+  );
+  // A public origin's report crosses no tailnet: no reporter WhoIs, the rest must agree.
+  const publicSafari = (entries, reports) => judgeSafari({ entries, reports, node: "nMAC", run: "r1", browser: "safari", reporterKnown: false });
+  const anonymous = (results, opts) => ({ ...report(results, opts), reporter: null });
+  cases.push(
+    ["Safari, public origin: report and probe record agree on the Mac: pass", publicSafari([entry("tailnet-https", "nMAC")], [anonymous([macRead("nMAC")])]), "PASS"],
+    ["Safari, public origin regression: the request reached the probe but the browser rejected the response: fail", publicSafari([entry("tailnet-https", "nMAC")], [anonymous([rejected])]), "FAIL"],
+    ["Safari, public origin: a request without a report is inconclusive", publicSafari([entry("tailnet-https", "nMAC")], []), "INCONCLUSIVE"],
+    ["Safari, public origin: a report from another browser is inconclusive", publicSafari([entry("tailnet-https", "nMAC")], [anonymous([macRead("nMAC")], { userAgent: CHROME })]), "INCONCLUSIVE"],
+    ["Safari, public origin: a read the probe has no record of is inconclusive", publicSafari([], [anonymous([macRead("nMAC", 99)])]), "INCONCLUSIVE"],
     ["Safari: another run's requests and report do not count", safari([entry("tailnet-https", "nMAC", { run: "r2" })], [report([macRead("nMAC")], { run: "r2" })]), "NOT RUN"],
   );
   for (const [name, got, want] of cases) expect("selftest", name, got.kind === want, got.kind === want ? undefined : { want, got });
@@ -1005,6 +1101,34 @@ async function selftest() {
           "regression: the request reaches the probe, the browser rejects the response, and the judge does not pass it",
           bad.browserSaw.reported === true && bad.browserSaw.results.every((r) => !r.ok) && bad.verdict.kind === "FAIL" && /rejected the response/.test(bad.verdict.detail?.problem ?? ""),
           bad,
+        );
+        // The public-origin path: the page from the harness's own server (as
+        // behind the tunnel), reporting to that server, judged without a
+        // reporter WhoIs. No tunnel here: nothing is exposed.
+        const publicTrip = async (query) => {
+          const run = `selftest-${randomBytes(6).toString("hex")}`;
+          const site = await startPublicPageServer(`https://localhost:${apiPort}`, { abortMs: 4000, query });
+          try {
+            inside(`require("http").request({host:"127.0.0.1",port:9099,method:"POST",path:"/allow-origin?origin="+encodeURIComponent("http://localhost:${site.port}")},r=>{let b="";r.on("data",d=>b+=d);r.on("end",()=>console.log(b))}).end()`);
+            const context = await browser.newContext({ ignoreHTTPSErrors: true });
+            const tab = await context.newPage();
+            await tab.goto(`http://localhost:${site.port}/page?run=${run}`);
+            await tab.waitForFunction(() => window.__spikeDone === true, null, { timeout: 30000 });
+            const browserSaw = await tab.evaluate(() => ({ results: window.__spike, reported: window.__spikeReported }));
+            await context.close();
+            return { browserSaw, verdict: judgeSafari({ entries: inside(get(9099, `/log?run=${run}`)), reports: site.reports, node: "nFAKEPEER", run, reporterKnown: false }) };
+          } finally {
+            await site.close();
+          }
+        };
+        const publicGood = await publicTrip("");
+        expect("selftest", "public-origin round trip: the page reports to its own origin, and the judge passes it", publicGood.browserSaw.reported === true && publicGood.verdict.kind === "PASS", publicGood);
+        const publicBad = await publicTrip("&nocors=1");
+        expect(
+          "selftest",
+          "public-origin regression: the request reaches the probe, the browser rejects the response, and the judge does not pass it",
+          publicBad.browserSaw.reported === true && publicBad.verdict.kind === "FAIL" && /rejected the response/.test(publicBad.verdict.detail?.problem ?? ""),
+          publicBad,
         );
       } finally {
         await browser.close();

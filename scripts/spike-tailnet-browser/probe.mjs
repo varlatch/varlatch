@@ -268,6 +268,15 @@ async function serve() {
       return answer(res, 200, log.filter((e) => e.id > since && (!run || new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run)));
     }
     if (url.pathname === "/reports") return answer(res, 200, reports);
+    // A public origin known only once its tunnel is up (S5, Safari on a public origin).
+    if (url.pathname === "/allow-origin" && req.method === "POST") {
+      const origin = url.searchParams.get("origin") ?? "";
+      // The selftest serves its "public" page from http://localhost:<port>.
+      const ok = /^https:\/\/[a-z0-9.-]+$/.test(origin) || (SELFTEST && /^http:\/\/localhost:\d+$/.test(origin));
+      if (!ok) return answer(res, 400, { error: "origin must be https://<host>" });
+      if (!ORIGINS.includes(origin)) ORIGINS.push(origin);
+      return answer(res, 200, { origins: ORIGINS });
+    }
     if (url.pathname === "/status") return answer(res, 200, { status: await status(), listeners, cert: certSummary(cert), uid: process.getuid?.() });
     if (url.pathname === "/cert") return answer(res, 200, certSummary(await fetchCert(url.searchParams.get("min_validity") ?? undefined)));
     if (url.pathname === "/write-check") {
