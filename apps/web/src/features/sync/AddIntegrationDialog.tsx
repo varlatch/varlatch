@@ -9,6 +9,7 @@ import { Button, Callout, Checkbox, Field, Input, Mono, Segmented, Select, cn } 
 import { useToast } from "../../components/Toast";
 import { keys } from "../projects/hooks";
 import { AccessCheckNotice } from "./AccessCheckNotice";
+import { useBoundCheck } from "./useBoundCheck";
 import { CredentialHint } from "./CredentialHint";
 import { fixStep } from "./accessCheck";
 import { platformMeta } from "./platform-meta";
@@ -153,23 +154,22 @@ export function AddIntegrationDialog({
         : hostOf(owner);
 
   // Read-only, nothing saved: a new credential is checked as typed, an
-  // existing connection with its stored one.
-  const access = useMutation({
-    mutationFn: () =>
-      api.checkPlatformAccess(
-        org,
-        isNew
-          ? { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential, destination }
-          : { connectionId, destination },
-      ),
-  });
-  const checkAccess = access.mutate;
+  // existing connection with its stored one. The outcome is bound to these
+  // inputs, and Create waits for it: an integration is never created while
+  // its check is still out.
+  const access = useBoundCheck(
+    isNew
+      ? { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential, destination }
+      : { connectionId, destination },
+    (checked) => api.checkPlatformAccess(org, checked),
+  );
+  const checkAccess = access.run;
   useEffect(() => {
     // Every arrival at the review checks again: earlier steps may have changed.
     if (step === STEPS.length - 1) checkAccess();
   }, [step, checkAccess]);
-  const fix = access.data ? fixStep(access.data) : null;
-  const accessFailed = Boolean(access.data && access.data.status !== "ok");
+  const fix = access.result ? fixStep(access.result) : null;
+  const accessFailed = Boolean((access.result && access.result.status !== "ok") || access.error);
 
   const create = useMutation({
     mutationFn: async () => {
@@ -546,11 +546,11 @@ export function AddIntegrationDialog({
                   {mappingMode === "wildcard" ? ", and every item added later." : "."}
                 </p>
                 <AccessCheckNotice
-                  pending={access.isPending}
-                  check={access.data}
+                  pending={!access.settled}
+                  check={access.result}
                   error={access.error}
                   actions={
-                    accessFailed || access.error ? (
+                    accessFailed ? (
                       <>
                         {fix !== null && (
                           <Button size="sm" variant="secondary" data-testid="access-fix" onClick={() => setStep(fix)}>
@@ -614,7 +614,13 @@ export function AddIntegrationDialog({
                 Continue
               </Button>
             ) : (
-              <Button variant="primary" data-testid="confirm-integration" loading={create.isPending} onClick={() => create.mutate()}>
+              <Button
+                variant="primary"
+                data-testid="confirm-integration"
+                disabled={!access.settled}
+                loading={create.isPending}
+                onClick={() => create.mutate()}
+              >
                 {accessFailed ? "Create anyway" : "Create integration"}
               </Button>
             )}

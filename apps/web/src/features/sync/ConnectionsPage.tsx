@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, MoreHorizontal, Plug, Plus, ShieldAlert, Trash2 } from "lucide-react";
-import type { AccessCheck, PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
+import type { PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { timeAgo, useNow } from "../../lib/time";
@@ -13,6 +13,7 @@ import { Dialog, useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { keys, useMeta, useOrgName } from "../projects/hooks";
 import { AccessCheckNotice } from "./AccessCheckNotice";
+import { useBoundCheck } from "./useBoundCheck";
 import { connectionsKey } from "./keys";
 import { CredentialHint } from "./CredentialHint";
 import { platformMeta } from "./platform-meta";
@@ -340,7 +341,7 @@ function ConnectionCard({
   );
 }
 
-function NewConnectionDialog({
+export function NewConnectionDialog({
   org,
   adapters,
   initial,
@@ -360,31 +361,22 @@ function NewConnectionDialog({
   const [name, setName] = useState("");
   const [credential, setCredential] = useState("");
   const meta = platform ? platformMeta(platform) : null;
+  type Checked = { platform: SyncPlatform; baseIdentity: string; credential: string };
   const create = useMutation({
-    mutationFn: () =>
-      api.createPlatformConnection(org, { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), name: name.trim(), credential }),
+    mutationFn: (checked: Checked) => api.createPlatformConnection(org, { ...checked, name: name.trim() }),
     onSuccess: (c) => {
       toast.success("Connection created", { description: `${c.name} is ready for integrations.` });
       onCreated();
     },
     onError: (err) => toast.error("Could not create the connection", { description: err instanceof Error ? err.message : String(err) }),
   });
-  // Checked, read-only, before saving. A failed check (or one that could
-  // not run) stays shown until an input changes; meanwhile the button saves
-  // anyway.
-  const [failed, setFailed] = useState<AccessCheck | null>(null);
-  const verify = useMutation({
-    mutationFn: () => api.checkPlatformAccess(org, { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential }),
-    onSuccess: (result) => (result.status === "ok" ? create.mutate() : setFailed(result)),
-  });
-  const edit =
-    <T,>(set: (v: T) => void) =>
-    (v: T) => {
-      set(v);
-      setFailed(null);
-      verify.reset();
-    };
-  const skipCheck = Boolean(failed || verify.error);
+  // Checked, read-only, before saving, and saved as checked. A failed check
+  // (or one that could not run) shows until an input changes; meanwhile the
+  // button saves anyway.
+  const inputs: Checked = { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential };
+  const access = useBoundCheck(inputs, (checked) => api.checkPlatformAccess(org, checked));
+  const failed = access.result && access.result.status !== "ok" ? access.result : undefined;
+  const skipCheck = Boolean(failed || access.error);
   const ready = Boolean(platform && baseIdentity.trim() && name.trim() && credential);
 
   return (
@@ -404,8 +396,10 @@ function NewConnectionDialog({
             variant="primary"
             data-testid="save-connection"
             disabled={!ready}
-            loading={verify.isPending || create.isPending}
-            onClick={() => (skipCheck ? create.mutate() : verify.mutate())}
+            loading={access.pending || create.isPending}
+            onClick={() =>
+              skipCheck ? create.mutate(inputs) : access.run((result, checked) => result.status === "ok" && create.mutate(checked))
+            }
           >
             {skipCheck ? "Save anyway" : "Create connection"}
           </Button>
@@ -423,7 +417,7 @@ function NewConnectionDialog({
                 role="radio"
                 aria-checked={platform === a}
                 data-testid={`platform-card-${a}`}
-                onClick={() => edit(setPlatform)(a)}
+                onClick={() => setPlatform(a)}
                 className={cn(
                   "flex cursor-pointer flex-col items-center gap-2 rounded-xl border bg-inset/40 px-3 py-4 text-center transition-colors",
                   platform === a ? "border-accent bg-accent/[0.06] ring-2 ring-accent/20" : "border-bd hover:border-bd-strong",
@@ -445,7 +439,7 @@ function NewConnectionDialog({
                 className="w-full"
                 placeholder={meta.identityPlaceholder}
                 value={baseIdentity}
-                onChange={(e) => edit(setBaseIdentity)(e.target.value)}
+                onChange={(e) => setBaseIdentity(e.target.value)}
               />
             </Field>
             <Field label="Name">
@@ -466,10 +460,10 @@ function NewConnectionDialog({
                 className="w-full"
                 placeholder={meta.credentialPlaceholder}
                 value={credential}
-                onChange={(e) => edit(setCredential)(e.target.value)}
+                onChange={(e) => setCredential(e.target.value)}
               />
             </Field>
-            <AccessCheckNotice pending={verify.isPending} check={failed ?? undefined} error={verify.error} />
+            <AccessCheckNotice pending={access.pending} check={failed} error={access.error} />
           </div>
         )}
       </div>
@@ -477,7 +471,7 @@ function NewConnectionDialog({
   );
 }
 
-function ReplaceCredentialDialog({
+export function ReplaceCredentialDialog({
   org,
   connection,
   targets,
@@ -497,7 +491,8 @@ function ReplaceCredentialDialog({
   const [credential, setCredential] = useState("");
   const meta = platformMeta(connection.platform);
   const replace = useMutation({
-    mutationFn: () => api.replacePlatformCredential(org, connection.id, { credential, expectedVersion: connection.version }),
+    mutationFn: (checked: string) =>
+      api.replacePlatformCredential(org, connection.id, { credential: checked, expectedVersion: connection.version }),
     onSuccess: () => {
       toast.success("Credential replaced", { description: "Failing integrations retry with it now." });
       onReplaced();
@@ -505,28 +500,25 @@ function ReplaceCredentialDialog({
     onError: (err) => toast.error("The credential was not replaced", { description: err instanceof Error ? err.message : String(err) }),
   });
   // The new credential is checked, read-only, against every destination
-  // that will use it (or the account or instance when none does yet). Any
-  // failure, or a check that could not run, is shown first; the button then
+  // that will use it (or the account or instance when none does yet), and
+  // replaced as checked. Any failure, or a check that could not run, shows
+  // until the credential or the integrations change; the button then
   // replaces anyway.
-  const [failures, setFailures] = useState<{ target: SyncTarget | null; check: AccessCheck }[] | null>(null);
-  const verify = useMutation({
-    mutationFn: () =>
-      Promise.all(
-        (targets.length > 0 ? targets : [null]).map(async (target) => ({
-          target,
-          check: await api.checkPlatformAccess(org, {
-            connectionId: connection.id,
-            credential,
-            ...(target ? { destination: target.destination } : {}),
-          }),
-        })),
-      ),
-    onSuccess: (results) => {
-      const failed = results.filter((r) => r.check.status !== "ok");
-      if (failed.length === 0) replace.mutate();
-      else setFailures(failed);
-    },
-  });
+  const inputs = { credential, destinations: targets.map((t) => ({ id: t.id, destination: t.destination })) };
+  const access = useBoundCheck(inputs, (checked) =>
+    Promise.all(
+      (checked.destinations.length > 0 ? checked.destinations : [null]).map(async (target) => ({
+        targetId: target?.id ?? null,
+        check: await api.checkPlatformAccess(org, {
+          connectionId: connection.id,
+          credential: checked.credential,
+          ...(target ? { destination: target.destination } : {}),
+        }),
+      })),
+    ),
+  );
+  const failures = access.result?.filter((r) => r.check.status !== "ok") ?? [];
+  const skipCheck = failures.length > 0 || Boolean(access.error);
   return (
     <Dialog
       open
@@ -548,10 +540,14 @@ function ReplaceCredentialDialog({
             variant="primary"
             data-testid={`confirm-credential-${connection.id}`}
             disabled={!credential}
-            loading={verify.isPending || replace.isPending}
-            onClick={() => (failures || verify.error ? replace.mutate() : verify.mutate())}
+            loading={access.pending || replace.isPending}
+            onClick={() =>
+              skipCheck
+                ? replace.mutate(credential)
+                : access.run((results, checked) => results.every((r) => r.check.status === "ok") && replace.mutate(checked.credential))
+            }
           >
-            {failures || verify.error ? "Replace anyway" : "Replace credential"}
+            {skipCheck ? "Replace anyway" : "Replace credential"}
           </Button>
         </>
       }
@@ -582,22 +578,21 @@ function ReplaceCredentialDialog({
             className="w-full"
             placeholder={meta.credentialPlaceholder}
             value={credential}
-            onChange={(e) => {
-              setCredential(e.target.value);
-              setFailures(null);
-              verify.reset();
-            }}
+            onChange={(e) => setCredential(e.target.value)}
           />
         </Field>
-        {verify.isPending || verify.error ? (
-          <AccessCheckNotice pending={verify.isPending} check={undefined} error={verify.error} />
+        {access.pending || access.error ? (
+          <AccessCheckNotice pending={access.pending} check={undefined} error={access.error} />
         ) : (
-          failures?.map(({ target, check }) => (
-            <div key={target?.id ?? "connection"} className="space-y-1.5">
-              {target && <EnvChip org={org} target={target} envs={envs} />}
-              <AccessCheckNotice pending={false} check={check} error={null} />
-            </div>
-          ))
+          failures.map(({ targetId, check }) => {
+            const target = targets.find((t) => t.id === targetId);
+            return (
+              <div key={targetId ?? "connection"} className="space-y-1.5">
+                {target && <EnvChip org={org} target={target} envs={envs} />}
+                <AccessCheckNotice pending={false} check={check} error={null} />
+              </div>
+            );
+          })
         )}
       </div>
     </Dialog>
