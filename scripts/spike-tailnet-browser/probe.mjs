@@ -12,7 +12,8 @@
 //   8687  HTTP,  0.0.0.0    the tailnet listener's shape (S1, S2 peer, S6 target)
 //   8691  HTTP,  127.0.0.1  the loopback bind under test (S2)
 //   8688  HTTPS, 0.0.0.0    the browser endpoint, node certificate, CORS (S3-S5, S8)
-//   8690  HTTPS, 0.0.0.0    the S5 test page on the ts.net origin
+//   8690  HTTPS, 0.0.0.0    the S5 test page on the ts.net origin, and /report, where
+//                           the page posts what the browser saw (same origin)
 //   9099  HTTP,  127.0.0.1  control, for `probe.mjs ctl` via docker exec
 //
 //   node probe.mjs                 serve
@@ -24,6 +25,11 @@ import { pageHtml } from "./page.mjs";
 const SOCKET = process.env.SPIKE_TS_SOCKET ?? "/var/run/tailscale/tailscaled.sock";
 const ORIGINS = (process.env.SPIKE_ALLOWED_ORIGINS ?? "").split(",").filter(Boolean);
 const CONTROL = 9099;
+// The harness's own selftest only: lets a local browser point the page at a
+// mapped port and makes the endpoint drop CORS on its answer, so the browser
+// rejects a response the probe did send. Never set for a tailnet run.
+const SELFTEST = process.env.SPIKE_SELFTEST === "1";
+const RUN_ID = /^[A-Za-z0-9-]{8,64}$/;
 
 if (process.argv[2] === "ctl") {
   const [method, path] = process.argv.slice(3);
@@ -110,6 +116,7 @@ async function fetchCert(minValidity) {
 
 async function serve() {
   const log = [];
+  const reports = [];
   let nextId = 1;
 
   async function record(listener, req) {
@@ -182,7 +189,43 @@ async function serve() {
       return res.end();
     }
     const entry = await record("tailnet-https", req);
-    answer(res, 200, entry, cors);
+    // Selftest: the answer goes out without CORS, so the browser must reject it.
+    answer(res, 200, entry, SELFTEST && url.searchParams.get("nocors") === "1" ? {} : cors);
+  };
+
+  // The page and its report, on the ts.net origin.
+  const pageServer = async (req, res) => {
+    const url = new URL(req.url ?? "/", "https://spike.invalid");
+    if (url.pathname === "/report" && req.method === "POST") {
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 65536) return answer(res, 413, { error: "report too large" });
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return answer(res, 400, { error: "report is not JSON" });
+      }
+      if (!RUN_ID.test(parsed.run ?? "") || !Array.isArray(parsed.results)) return answer(res, 400, { error: "report needs a run ID and results" });
+      const sock = req.socket;
+      reports.push({
+        at: new Date().toISOString(),
+        run: parsed.run,
+        results: parsed.results.slice(0, 10),
+        userAgent: String(parsed.userAgent ?? "").slice(0, 300),
+        // Who sent the report, by the same WhoIs as everything else.
+        reporter: { remoteAddress: sock.remoteAddress, remotePort: sock.remotePort, whois: await whois(sock.remoteAddress ?? "", sock.remotePort ?? 0) },
+      });
+      res.writeHead(204, { "Cache-Control": "no-store" });
+      return res.end();
+    }
+    const run = url.searchParams.get("run");
+    const endpointUrl = SELFTEST && url.searchParams.get("endpoint") ? url.searchParams.get("endpoint") : `https://${cert.domain}:8688`;
+    const query = SELFTEST && url.searchParams.get("nocors") === "1" ? "&nocors=1" : "";
+    res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
+    res.end(pageHtml(endpointUrl, Number(url.searchParams.get("abort_ms")) || 60000, RUN_ID.test(run ?? "") ? { run, report: "/report", query } : { query }));
   };
 
   const listen = (server, port, host) =>
@@ -200,10 +243,7 @@ async function serve() {
   const tlsServers = [];
   if (cert.ok) {
     const api = https.createServer({ key: cert.key, cert: cert.cert }, endpoint);
-    const page = https.createServer({ key: cert.key, cert: cert.cert }, (req, res) => {
-      res.writeHead(200, { "Content-Type": "text/html", "Cache-Control": "no-store" });
-      res.end(pageHtml(`https://${cert.domain}:8688`));
-    });
+    const page = https.createServer({ key: cert.key, cert: cert.cert }, pageServer);
     tlsServers.push(api, page);
     listeners.push(await listen(api, 8688, "0.0.0.0"));
     listeners.push(await listen(page, 8690, "0.0.0.0"));
@@ -213,6 +253,7 @@ async function serve() {
   const control = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://ctl.invalid");
     if (url.pathname === "/log") return answer(res, 200, log);
+    if (url.pathname === "/reports") return answer(res, 200, reports);
     if (url.pathname === "/status") return answer(res, 200, { status: await status(), listeners, cert: certSummary(cert), uid: process.getuid?.() });
     if (url.pathname === "/cert") return answer(res, 200, certSummary(await fetchCert(url.searchParams.get("min_validity") ?? undefined)));
     if (url.pathname === "/write-check") {

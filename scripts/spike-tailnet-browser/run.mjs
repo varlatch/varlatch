@@ -21,6 +21,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import http from "node:http";
+import net from "node:net";
 import https from "node:https";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
@@ -66,27 +67,74 @@ const verdict = (kind, detail) => ({ kind, ...(detail === undefined ? {} : { det
 
 /**
  * S5 acceptance for one browser and one page. A reachable endpoint passes
- * only when a fetch was answered and WhoIs named this machine; an
- * unreachable one only when every fetch failed. A page that did not
- * complete is inconclusive, and so is a headless run where every fetch
- * failed, since a permission prompt nobody could answer may explain it.
+ * only when the browser read a JSON answer naming this machine AND the
+ * probe's own record of that request (the entry the answer names) shows the
+ * same WhoIs; an unreachable one only when every fetch failed. A page that
+ * did not complete is inconclusive, and so is a headless run where every
+ * fetch failed, since a permission prompt nobody could answer may explain
+ * it. `serverEntries` are the probe's entries for this page's run ID.
  */
-function judgeS5(expected, outcome, { headed, localId }) {
+function judgeS5(expected, outcome, { headed, localId, serverEntries = [] }) {
   if (!outcome.completed) return verdict("INCONCLUSIVE", `the test page did not complete: ${outcome.error ?? "no result"}`);
   const results = outcome.results ?? [];
   if (results.length === 0) return verdict("INCONCLUSIVE", "the page recorded no fetch");
   if (expected === "unreachable") {
     return results.every((r) => !r.ok) ? verdict("PASS", results.map((r) => ({ ms: r.ms, error: r.error }))) : verdict("FAIL", { answered: results.filter((r) => r.ok) });
   }
-  const answered = results.find((r) => r.ok && r.status === 200);
-  if (answered) {
-    return answered.whois?.ok && answered.whois.nodeId === localId
-      ? verdict("PASS", { pna: answered.pna, ms: answered.ms })
-      : verdict("FAIL", { problem: "answered, but WhoIs did not name this machine", whois: answered.whois });
+  const read = results.find((r) => r.ok && r.status === 200 && r.json === true);
+  if (read) {
+    if (!(read.whois?.ok && read.whois.nodeId === localId)) return verdict("FAIL", { problem: "the browser read an answer that does not name this machine", whois: read.whois });
+    const entry = serverEntries.find((e) => e.id === read.id && e.listener === "tailnet-https");
+    if (!entry) return verdict("INCONCLUSIVE", { problem: "the browser read an answer the probe has no record of", id: read.id });
+    if (entry.whois?.nodeId !== localId) return verdict("FAIL", { problem: "the probe's own WhoIs for that request names another node", whois: entry.whois });
+    return verdict("PASS", { pna: read.pna, ms: read.ms, id: entry.id });
+  }
+  const reached = serverEntries.filter((e) => e.listener === "tailnet-https");
+  if (reached.length > 0) {
+    return verdict("FAIL", { problem: "the request reached the probe, but the browser did not read the answer", browser: results, server: reached.map((e) => ({ id: e.id, whois: e.whois })) });
   }
   return headed
     ? verdict("FAIL", { problem: "every fetch failed in a headed browser", results })
     : verdict("INCONCLUSIVE", { problem: "every fetch failed headless; a permission prompt may explain it: rerun with SPIKE_HEADED=1", results });
+}
+
+/**
+ * S5 by hand in Safari. Two independent records must agree: the page's own
+ * report of what the browser read (posted to its origin after the fetches,
+ * from the Mac), and the probe's record of the request that answer names.
+ * A request that arrived without a report is inconclusive: arriving is not
+ * completing. `entries` and `reports` are the probe's, `node` is the Mac's
+ * MagicDNS short name or node ID, `run` the unique ID of this attempt.
+ */
+function judgeSafari({ entries, reports, node, run }) {
+  const names = (w) => !!w?.ok && (w.nodeId === node || w.name?.split(".")[0] === node);
+  const mine = entries.filter((e) => new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run);
+  const answered = mine.filter((e) => e.listener === "tailnet-https");
+  const report = reports.find((r) => r.run === run);
+  if (!report) {
+    return mine.length === 0
+      ? verdict("NOT RUN", "nothing arrived from the browser for this run")
+      : verdict("INCONCLUSIVE", { problem: "requests arrived, but the browser never reported completing them", arrived: mine.map((e) => ({ listener: e.listener, url: e.url })) });
+  }
+  if (!names(report.reporter?.whois)) return verdict("INCONCLUSIVE", { problem: "the report did not come from the Mac", reporter: report.reporter?.whois });
+  const read = (report.results ?? []).filter((r) => r.ok && r.status === 200 && r.json === true);
+  if (read.length === 0) {
+    const browser = (report.results ?? []).map((r) => ({ pna: r.pna, status: r.status, error: r.error }));
+    if (answered.length > 0) {
+      return verdict("FAIL", { problem: "the request reached the probe, but the browser rejected the response", browser, server: answered.map((e) => ({ id: e.id, whois: e.whois })) });
+    }
+    if (mine.some((e) => e.listener === "tailnet-https-refused-origin")) return verdict("FAIL", { problem: "the endpoint refused the page's origin", browser });
+    if (mine.some((e) => e.listener === "tailnet-https-preflight")) return verdict("FAIL", { problem: "only the preflight arrived; the browser never sent the request", browser });
+    return verdict("FAIL", { problem: "the browser reported every fetch failed, and nothing reached the endpoint", browser });
+  }
+  for (const r of read) {
+    const entry = answered.find((e) => e.id === r.id);
+    if (entry && names(r.whois) && names(entry.whois) && r.whois.nodeId === entry.whois.nodeId) {
+      return verdict("PASS", { id: entry.id, nodeId: entry.whois.nodeId, pna: r.pna, ms: r.ms, userAgent: report.userAgent });
+    }
+  }
+  if (read.every((r) => !answered.some((e) => e.id === r.id))) return verdict("INCONCLUSIVE", { problem: "the browser reported an answer the probe has no record of", read });
+  return verdict("FAIL", { problem: "the browser read an answer, but WhoIs did not name the Mac", browser: read.map((r) => r.whois), server: answered.map((e) => e.whois) });
 }
 
 /**
@@ -95,24 +143,6 @@ function judgeS5(expected, outcome, { headed, localId }) {
  * and the rule lets someone through) and the denied device still reaches
  * the node on another port (the failure is the rule's, not a broken node).
  */
-/**
- * S5 by hand in Safari: what the probe received from the Mac while someone
- * opened the ts.net test page there. `entries` are the probe's log entries
- * since the prompt; `node` is the Mac's MagicDNS short name or node ID.
- */
-function judgeSafari(entries, node) {
-  const fromNode = (e) => e.whois?.ok && (e.whois.nodeId === node || e.whois.name?.split(".")[0] === node);
-  const fetches = entries.filter((e) => e.url?.startsWith("/probe?pna="));
-  const answered = fetches.filter((e) => e.listener === "tailnet-https");
-  if (answered.some(fromNode)) return verdict("PASS", answered.filter(fromNode).map((e) => ({ url: e.url, nodeId: e.whois.nodeId })));
-  if (answered.length > 0) return verdict("FAIL", { problem: "the page's requests arrived, but WhoIs did not name the Mac", whois: answered.map((e) => e.whois) });
-  if (fetches.some((e) => e.listener === "tailnet-https-refused-origin")) return verdict("FAIL", { problem: "the endpoint refused the page's origin", origins: fetches.map((e) => e.origin) });
-  if (fetches.some((e) => e.listener === "tailnet-https-preflight")) {
-    return verdict("FAIL", { problem: "Safari sent the preflight but never the request", preflights: fetches.map((e) => ({ url: e.url, requestPrivateNetwork: e.requestPrivateNetwork })) });
-  }
-  return verdict("NOT RUN", "nothing arrived from the Mac's Safari");
-}
-
 function judgeS8({ control, denied, deniedPlain, allowedId }) {
   if (!control.ok || control.status !== 200) {
     return verdict("INCONCLUSIVE", { problem: "the allowed device's HTTPS request failed, so the denied device's failure proves nothing", control });
@@ -558,11 +588,14 @@ async function s5(ctx, local) {
   const endpoint = `https://${ctx.name}:8688`;
   const taken = new Set([...local.peerIPs, ...local.selfIPs]);
   const blackhole = ["100.88.77.66", "100.99.88.77", "100.77.66.55"].find((ip) => !taken.has(ip));
+  // Every page gets its own run ID, carried by its fetches: the probe's
+  // entries for it are the server side of the judgement.
+  const runId = () => `s5-${randomBytes(6).toString("hex")}`;
   const cases = [
-    { origin: "public", expected: "reachable", url: `${PUBLIC_ORIGIN}/`, html: pageHtml(endpoint, abortMs) },
-    { origin: "ts.net", expected: "reachable", url: `https://${ctx.name}:8690/page` },
-    { origin: "public, name does not resolve", expected: "unreachable", url: `${PUBLIC_ORIGIN}/nxdomain`, html: pageHtml(`https://no-such-spike-node.${ctx.tailnet}:8688`, 30000) },
-    { origin: "public, address not on the tailnet", expected: "unreachable", url: `${PUBLIC_ORIGIN}/blackhole`, html: pageHtml(`https://${blackhole}:8688`, 30000) },
+    { origin: "public", expected: "reachable", url: `${PUBLIC_ORIGIN}/`, page: (run) => pageHtml(endpoint, abortMs, { run }) },
+    { origin: "ts.net", expected: "reachable", url: `https://${ctx.name}:8690/page`, query: (run) => `?run=${run}&abort_ms=${abortMs}` },
+    { origin: "public, name does not resolve", expected: "unreachable", url: `${PUBLIC_ORIGIN}/nxdomain`, page: (run) => pageHtml(`https://no-such-spike-node.${ctx.tailnet}:8688`, 30000, { run }) },
+    { origin: "public, address not on the tailnet", expected: "unreachable", url: `${PUBLIC_ORIGIN}/blackhole`, page: (run) => pageHtml(`https://${blackhole}:8688`, 30000, { run }) },
   ];
   for (const type of ["chromium", "firefox", "webkit"]) {
     if (!existsSync(pw[type].executablePath())) {
@@ -578,21 +611,27 @@ async function s5(ctx, local) {
     }
     try {
       for (const c of cases) {
+        const run = runId();
         const context = await browser.newContext();
         const notes = [];
-        if (c.html) await context.route(`${c.url}*`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: c.html }));
+        if (c.page) await context.route(`${c.url}*`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: c.page(run) }));
         const page = await context.newPage();
         page.on("console", (m) => /private|local network|cors|blocked/i.test(m.text()) && notes.push(m.text().slice(0, 200)));
         let outcome;
         try {
-          await page.goto(c.url, { timeout: 30000 });
+          await page.goto(c.query ? `${c.url}${c.query(run)}` : c.url, { timeout: 30000 });
           await page.waitForFunction(() => window.__spikeDone === true, null, { timeout: abortMs * 2 + 70000 });
           outcome = { completed: true, results: await page.evaluate(() => window.__spike) };
         } catch (err) {
           outcome = { completed: false, error: String(err).slice(0, 200) };
         }
         observe("s5", `${type}, ${c.origin} origin: what happened`, { ...outcome, console: notes });
-        judge("s5", `${type}, ${c.origin} origin: ${c.expected === "reachable" ? "answered, identifying this machine" : "fails"}`, judgeS5(c.expected, outcome, { headed, localId: ctx.localId }));
+        const serverEntries = ctl("GET", "/log").filter((e) => new URL(e.url ?? "/", "https://x.invalid").searchParams.get("run") === run);
+        judge(
+          "s5",
+          `${type}, ${c.origin} origin: ${c.expected === "reachable" ? "read an answer naming this machine, matching the probe's record" : "fails"}`,
+          judgeS5(c.expected, outcome, { headed, localId: ctx.localId, serverEntries }),
+        );
         await context.close();
       }
     } finally {
@@ -606,16 +645,14 @@ async function s5(ctx, local) {
   if (!safariNode || !(safariWait > 0)) {
     notRun("s5", "Safari: by hand on a Mac on the tailnet, see README.md (SPIKE_SAFARI_NODE, SPIKE_SAFARI_WAIT_SECONDS)");
   } else {
-    const since = ctl("GET", "/log").length;
-    console.log(`S5 Safari: on ${safariNode}, open https://${ctx.name}:8690/page in Safari within ${safariWait} s and leave it until its results show.`);
+    // A fresh run ID: only this attempt's requests and report count.
+    const run = runId();
+    console.log(`S5 Safari: on ${safariNode}, open https://${ctx.name}:8690/page?run=${run} in Safari within ${safariWait} s and leave it until it shows "reported: true".`);
     const end = Date.now() + safariWait * 1000;
-    let found = verdict("NOT RUN", "nothing arrived from the Mac's Safari");
-    while (Date.now() < end) {
-      found = judgeSafari(ctl("GET", "/log").slice(since), safariNode);
-      if (found.kind === "PASS") break;
-      await sleep(3000);
-    }
-    judge("s5", "Safari (by hand), ts.net origin: answered, identifying the Mac", found);
+    const state = () => ({ entries: ctl("GET", "/log"), reports: ctl("GET", "/reports"), node: safariNode, run });
+    // The browser's report settles it; without one, the deadline does.
+    while (Date.now() < end && !ctl("GET", "/reports").some((r) => r.run === run)) await sleep(3000);
+    judge("s5", "Safari (by hand), ts.net origin: the browser read an answer naming the Mac, matching the probe's record", judgeSafari(state()));
     notRun("s5", "Safari, public origin: needs the test page on a public HTTPS origin, which needs the owner's approval");
   }
   const preflights = ctl("GET", "/log").filter((e) => e.listener === "tailnet-https-preflight");
@@ -697,18 +734,21 @@ http.createServer((req, res) => {
 /** The acceptance rules on made-up outcomes: what may and may not count as a pass. */
 function selftestJudges() {
   const me = { headed: false, localId: "nME" };
-  const ok = (whois) => ({ pna: "0", ok: true, status: 200, ms: 40, whois });
-  const failed = { pna: "0", ok: false, error: "TypeError: Failed to fetch", ms: 30 };
+  const read = (whois, id = 7) => ({ pna: "0", ok: true, status: 200, json: true, id, ms: 40, whois });
+  const failed = { pna: "0", ok: false, json: false, error: "TypeError: Failed to fetch", ms: 30 };
+  const server = (id, nodeId) => ({ id, listener: "tailnet-https", url: "/probe?pna=0&run=r", whois: { ok: true, nodeId } });
   const cases = [
     ["S5: a page that did not complete is inconclusive", judgeS5("reachable", { completed: false, error: "net::ERR_NAME_NOT_RESOLVED" }, me), "INCONCLUSIVE"],
     ["S5: a page with no fetch result is inconclusive", judgeS5("reachable", { completed: true, results: [] }, me), "INCONCLUSIVE"],
-    ["S5: an answer naming this machine passes", judgeS5("reachable", { completed: true, results: [failed, ok({ ok: true, nodeId: "nME" })] }, me), "PASS"],
-    ["S5: an answer naming another node fails", judgeS5("reachable", { completed: true, results: [ok({ ok: true, nodeId: "nOTHER" })] }, me), "FAIL"],
-    ["S5: an answer without identity fails", judgeS5("reachable", { completed: true, results: [ok({ ok: false, status: 404 })] }, me), "FAIL"],
-    ["S5: every fetch failing headless is inconclusive", judgeS5("reachable", { completed: true, results: [failed, failed] }, me), "INCONCLUSIVE"],
+    ["S5: a JSON read naming this machine, matching the probe's record, passes", judgeS5("reachable", { completed: true, results: [failed, read({ ok: true, nodeId: "nME" })] }, { ...me, serverEntries: [server(7, "nME")] }), "PASS"],
+    ["S5: a JSON read the probe has no record of is inconclusive", judgeS5("reachable", { completed: true, results: [read({ ok: true, nodeId: "nME" })] }, me), "INCONCLUSIVE"],
+    ["S5: a JSON read whose probe record names another node fails", judgeS5("reachable", { completed: true, results: [read({ ok: true, nodeId: "nME" })] }, { ...me, serverEntries: [server(7, "nOTHER")] }), "FAIL"],
+    ["S5: a JSON read naming another node fails", judgeS5("reachable", { completed: true, results: [read({ ok: true, nodeId: "nOTHER" })] }, { ...me, serverEntries: [server(7, "nOTHER")] }), "FAIL"],
+    ["S5: a request that reached the probe without the browser reading the answer fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, serverEntries: [server(7, "nME")] }), "FAIL"],
+    ["S5: every fetch failing headless, nothing reaching the probe, is inconclusive", judgeS5("reachable", { completed: true, results: [failed, failed] }, me), "INCONCLUSIVE"],
     ["S5: every fetch failing headed fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, headed: true }), "FAIL"],
     ["S5: an unreachable endpoint failing passes", judgeS5("unreachable", { completed: true, results: [failed, failed] }, me), "PASS"],
-    ["S5: an unreachable endpoint answering fails", judgeS5("unreachable", { completed: true, results: [ok({ ok: true, nodeId: "nME" })] }, me), "FAIL"],
+    ["S5: an unreachable endpoint answering fails", judgeS5("unreachable", { completed: true, results: [read({ ok: true, nodeId: "nME" })] }, me), "FAIL"],
     ["S5: an unreachable case that did not complete is inconclusive", judgeS5("unreachable", { completed: false, error: "timeout" }, me), "INCONCLUSIVE"],
   ];
   const control = { ok: true, status: 200, whois: { ok: true, nodeId: "nME" } };
@@ -721,16 +761,37 @@ function selftestJudges() {
     ["S8: a denied device answered on 8688 fails", judgeS8({ control, denied: { ok: true, status: 200 }, deniedPlain: plainOk, allowedId: "nME" }), "FAIL"],
     ["S8: allowed answered, denied refused, denied reaching 8687 passes", judgeS8({ control, denied: refused, deniedPlain: plainOk, allowedId: "nME" }), "PASS"],
   );
-  const entry = (listener, nodeId, extra = {}) => ({ listener, url: "/probe?pna=0", origin: "https://spike.example.ts.net:8690", whois: nodeId ? { ok: true, nodeId, name: "jeremys-mac-mini.example.ts.net." } : { ok: false }, ...extra });
+  const mac = (nodeId) => ({ ok: true, nodeId, name: `${nodeId === "nMAC" ? "jeremys-mac-mini" : "other"}.example.ts.net.` });
+  const entry = (listener, nodeId, { id = 11, run = "r1" } = {}) => ({ id, listener, url: `/probe?pna=0&run=${run}`, whois: nodeId ? mac(nodeId) : { ok: false } });
+  const report = (results, { reporter = "nMAC", run = "r1" } = {}) => ({ run, results, userAgent: "Safari", reporter: { whois: mac(reporter) } });
+  const macRead = (nodeId, id = 11) => ({ pna: "0", ok: true, status: 200, json: true, id, whois: mac(nodeId) });
+  const rejected = { pna: "0", ok: false, json: false, error: "TypeError: Load failed" };
+  const safari = (entries, reports, node = "nMAC") => judgeSafari({ entries, reports, node, run: "r1" });
   cases.push(
-    ["Safari: a request naming the Mac by node ID passes", judgeSafari([entry("tailnet-https-preflight", "nMAC"), entry("tailnet-https", "nMAC")], "nMAC"), "PASS"],
-    ["Safari: a request naming the Mac by name passes", judgeSafari([entry("tailnet-https", "nMAC")], "jeremys-mac-mini"), "PASS"],
-    ["Safari: a request naming another node fails", judgeSafari([entry("tailnet-https", "nOTHER", { whois: { ok: true, nodeId: "nOTHER", name: "other.example.ts.net." } })], "nMAC"), "FAIL"],
-    ["Safari: only a preflight arriving fails", judgeSafari([entry("tailnet-https-preflight", "nMAC")], "nMAC"), "FAIL"],
-    ["Safari: a refused origin fails", judgeSafari([entry("tailnet-https-refused-origin", "nMAC")], "nMAC"), "FAIL"],
-    ["Safari: nothing arriving is not run", judgeSafari([], "nMAC"), "NOT RUN"],
+    ["Safari: the browser's report and the probe's record agree on the Mac (node ID): pass", safari([entry("tailnet-https-preflight", "nMAC"), entry("tailnet-https", "nMAC")], [report([macRead("nMAC")])]), "PASS"],
+    ["Safari: the same, the Mac named by its MagicDNS name: pass", safari([entry("tailnet-https", "nMAC")], [report([macRead("nMAC")])], "jeremys-mac-mini"), "PASS"],
+    ["Safari regression: the request reached the probe but the browser rejected the response: fail", safari([entry("tailnet-https-preflight", "nMAC"), entry("tailnet-https", "nMAC")], [report([rejected, rejected])]), "FAIL"],
+    ["Safari: a request that arrived without the browser reporting completion is inconclusive", safari([entry("tailnet-https", "nMAC")], []), "INCONCLUSIVE"],
+    ["Safari: a report that did not come from the Mac is inconclusive", safari([entry("tailnet-https", "nMAC")], [report([macRead("nMAC")], { reporter: "nOTHER" })]), "INCONCLUSIVE"],
+    ["Safari: a reported answer the probe has no record of is inconclusive", safari([], [report([macRead("nMAC", 99)])]), "INCONCLUSIVE"],
+    ["Safari: report and record agree on another node: fail", safari([entry("tailnet-https", "nOTHER")], [report([macRead("nOTHER")])]), "FAIL"],
+    ["Safari: only a preflight arriving, the browser reporting failure: fail", safari([entry("tailnet-https-preflight", "nMAC")], [report([rejected])]), "FAIL"],
+    ["Safari: a refused origin: fail", safari([entry("tailnet-https-refused-origin", "nMAC")], [report([rejected])]), "FAIL"],
+    ["Safari: nothing arriving is not run", safari([], []), "NOT RUN"],
+    ["Safari: another run's requests and report do not count", safari([entry("tailnet-https", "nMAC", { run: "r2" })], [report([macRead("nMAC")], { run: "r2" })]), "NOT RUN"],
   );
   for (const [name, got, want] of cases) expect("selftest", name, got.kind === want, got.kind === want ? undefined : { want, got });
+}
+
+/** A free port on 127.0.0.1 for the selftest's browser round trip. */
+function freePort() {
+  return new Promise((done) => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => done(port));
+    });
+  });
 }
 
 async function selftest() {
@@ -741,12 +802,23 @@ async function selftest() {
   // the directory holds nothing but the fake.
   chmodSync(dir, 0o777);
   const name = `vlt-spike-selftest-${randomBytes(3).toString("hex")}`;
+  const apiPort = await freePort();
+  const pagePort = await freePort();
   const docker = (args) => execFileSync("docker", args, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   const inside = (script) => JSON.parse(docker(["exec", name, "node", "-e", script]));
   const get = (port, path) =>
     `require("http").get({host:"127.0.0.1",port:${port},path:${JSON.stringify(path)}},r=>{let b="";r.on("data",d=>b+=d);r.on("end",()=>console.log(b))}).on("error",e=>console.log(JSON.stringify({error:String(e.code||e)})))`;
   try {
-    docker(["run", "-d", "--name", name, "--user", `${PROBE_UID}:${PROBE_UID}`, "-v", `${here}:/spike:ro`, "-v", `${dir}:/scratch`, "-e", "SPIKE_TS_SOCKET=/scratch/ts.sock", "-e", "SPIKE_ALLOWED_ORIGINS=https://allowed.example", NODE_IMAGE, "sh", "-c", "node /scratch/fake.cjs & sleep 1; exec node /spike/probe.mjs"]);
+    // SPIKE_SELFTEST=1: the page may point at the published port, and
+    // ?nocors=1 makes the endpoint answer without CORS (phase three).
+    docker([
+      "run", "-d", "--name", name, "--user", `${PROBE_UID}:${PROBE_UID}`,
+      "-p", `127.0.0.1:${apiPort}:8688`, "-p", `127.0.0.1:${pagePort}:8690`,
+      "-v", `${here}:/spike:ro`, "-v", `${dir}:/scratch`,
+      "-e", "SPIKE_TS_SOCKET=/scratch/ts.sock", "-e", "SPIKE_SELFTEST=1",
+      "-e", `SPIKE_ALLOWED_ORIGINS=https://allowed.example,https://localhost:${pagePort}`,
+      NODE_IMAGE, "sh", "-c", "node /scratch/fake.cjs & sleep 1; exec node /spike/probe.mjs",
+    ]);
     await until("the probe in the selftest container", () => inside(get(9099, "/status")).status?.ok, 60_000);
     const first = inside(get(8687, "/probe?selftest=1"));
     expect("selftest", "the probe records the socket peer", first.remoteAddress === "127.0.0.1" && first.remotePort > 0, `${first.remoteAddress}:${first.remotePort}`);
@@ -785,6 +857,43 @@ async function selftest() {
     expect("selftest", "the TLS context can be swapped", swap.swapped === true, swap);
     const page = inside(`require("https").get({host:"127.0.0.1",port:8690,path:"/page",rejectUnauthorized:false},r=>{let b="";r.on("data",d=>b+=d);r.on("end",()=>console.log(JSON.stringify({status:r.statusCode,endpoint:b.includes("https://spike.example.ts.net:8688")})))})`);
     expect("selftest", "the ts.net test page points at the endpoint", page.status === 200 && page.endpoint, page);
+
+    // Phase three: a real browser (Playwright's Chromium) through page,
+    // endpoint and report, the way the Safari step uses them, judged by
+    // judgeSafari. The fake LocalAPI names every peer nFAKEPEER.
+    let pw = null;
+    try {
+      pw = createRequire(join(root, "apps/web/package.json"))("playwright");
+    } catch {}
+    if (!pw || !existsSync(pw.chromium.executablePath())) {
+      notRun("selftest", "the browser round trip needs Playwright's Chromium (pnpm install; npx playwright install chromium in apps/web)");
+    } else {
+      const browser = await pw.chromium.launch();
+      try {
+        const roundTrip = async (extra) => {
+          const run = `selftest-${randomBytes(6).toString("hex")}`;
+          const context = await browser.newContext({ ignoreHTTPSErrors: true });
+          const tab = await context.newPage();
+          await tab.goto(`https://localhost:${pagePort}/page?run=${run}&abort_ms=4000&endpoint=${encodeURIComponent(`https://localhost:${apiPort}`)}${extra}`);
+          await tab.waitForFunction(() => window.__spikeDone === true, null, { timeout: 30000 });
+          const browserSaw = await tab.evaluate(() => ({ results: window.__spike, reported: window.__spikeReported }));
+          await context.close();
+          const found = judgeSafari({ entries: inside(get(9099, "/log")), reports: inside(get(9099, "/reports")), node: "nFAKEPEER", run });
+          return { browserSaw, verdict: found };
+        };
+        const good = await roundTrip("");
+        expect("selftest", "browser round trip: the page reports what it read, and the judge passes it", good.browserSaw.reported === true && good.verdict.kind === "PASS", good);
+        const bad = await roundTrip("&nocors=1");
+        expect(
+          "selftest",
+          "regression: the request reaches the probe, the browser rejects the response, and the judge does not pass it",
+          bad.browserSaw.reported === true && bad.browserSaw.results.every((r) => !r.ok) && bad.verdict.kind === "FAIL" && /rejected the response/.test(bad.verdict.detail?.problem ?? ""),
+          bad,
+        );
+      } finally {
+        await browser.close();
+      }
+    }
   } finally {
     try {
       docker(["rm", "-f", name]);
@@ -812,8 +921,9 @@ if (args[0] === "selftest") {
     expect("selftest", "selftest ran to completion", false, String(err).slice(0, 400));
   }
   const failed = results.filter((r) => r.kind === "FAIL").length;
-  console.log(`\nselftest: ${results.length - failed} passed, ${failed} failed`);
-  process.exit(failed ? 1 : 0);
+  const unsettled = results.filter((r) => r.kind === "NOT RUN" || r.kind === "INCONCLUSIVE").length;
+  console.log(`\nselftest: ${results.filter((r) => r.kind === "PASS").length} passed, ${failed} failed, ${unsettled} not run or inconclusive`);
+  process.exit(failed ? 1 : unsettled ? 3 : 0);
 }
 if (args[0] === "plan") {
   scratchDir = mkdtempSync(join(tmpdir(), "varlatch-browser-spike-plan-"));

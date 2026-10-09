@@ -72,8 +72,12 @@ and passed; 1 when anything failed; 3 when anything was inconclusive or not
 run.
 
 **S5's acceptance checks**, per browser and page:
-- The public and ts.net origins pass only when a fetch was answered and
-  WhoIs named this machine. An answer naming anything else fails.
+- Every page has its own run ID, carried by its fetches. The public and
+  ts.net origins pass only when the browser read a JSON answer naming this
+  machine and the probe's own record of that request (the entry the
+  answer names) shows the same WhoIs. An answer naming anything else
+  fails. A request that reached the probe while the browser read no
+  answer fails. A read the probe has no record of is inconclusive.
 - If every fetch failed, a headless run is inconclusive, because a
   permission prompt nobody could answer may explain it. A headed run
   (`SPIKE_HEADED=1`, with 60 seconds to answer a prompt) fails.
@@ -94,14 +98,32 @@ a Mac that is a device on the same tailnet (the Mac mini is):
 1. On the machine running the harness:
    `SPIKE_SAFARI_NODE=<the Mac's MagicDNS short name> SPIKE_SAFARI_WAIT_SECONDS=300 node scripts/spike-tailnet-browser/run.mjs s5`
    (with the auth key variable as above).
-2. When it prints the page's URL (`https://<spike node>:8690/page`), open it
-   in Safari on the Mac and leave the tab until the page shows its results.
-   If Safari or macOS asks to allow access to devices on the local network,
-   note it and allow it: that prompt is part of what S5 measures.
-3. The harness judges what the probe received from the Mac: PASS when the
-   page's request arrived and WhoIs named the Mac; FAIL when it arrived
-   naming another node, only the preflight arrived, or the origin was
-   refused; NOT RUN when nothing arrived in time.
+2. It prints the page's URL, `https://<spike node>:8690/page?run=<run ID>`,
+   with a run ID unique to this attempt. Open it in Safari on the Mac and
+   leave the tab until the page shows `reported: true`. If Safari or macOS
+   asks to allow access to devices on the local network, note it and allow
+   it: that prompt is part of what S5 measures.
+3. After its fetches the page posts what the browser itself saw to
+   `/report` on its own origin: for each fetch whether it was answered,
+   whether the JSON was read, and which probe entry the answer names. The
+   probe records who sent the report, by WhoIs.
+4. The harness judges two independent records, which must agree:
+   - **PASS** only when the report came from the Mac, it shows a JSON
+     answer read whose WhoIs names the Mac, and the probe's own record of
+     that request names the Mac too
+   - **FAIL** when the request reached the probe but the browser rejected
+     the response; when only the preflight arrived; when the origin was
+     refused; or when the browser read an answer naming another node
+   - **INCONCLUSIVE** when requests arrived but no report came: arriving
+     is not completing. Also when the report did not come from the Mac,
+     or names an answer the probe has no record of
+   - **NOT RUN** when nothing for this run ID arrived in time
+
+The selftest drives the same page, endpoint and report through a real
+browser (Playwright's Chromium) against the probe. It includes the case
+where the probe answers but drops the CORS header, so the request arrives
+and the browser rejects the response, and checks the judge does not pass
+it.
 
 This covers the ts.net origin. The public-origin case needs the test page
 on a public HTTPS origin, which needs the owner's approval; until then it
