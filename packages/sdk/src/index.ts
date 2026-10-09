@@ -38,6 +38,7 @@ import type {
   StrictRetrieval,
   ValueVersion,
   ValueRotation,
+  WhoAmI,
   Webhook,
   CreatedWebhook,
   OidcBinding,
@@ -173,7 +174,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -1104,6 +1105,17 @@ export class VarlatchClient {
 
   getInstallationBackups(): Promise<InstallationBackups> {
     return this.request("GET", "/v1/installation/backups");
+  }
+
+  /**
+   * Who the caller is (capability identity.whoami): the identity this
+   * client's credential belongs to, human or machine, its organization
+   * (null for humans), the credential itself (never its token), and the
+   * listener the request came in on. Needs no Grant. Servers without the
+   * capability answer 404.
+   */
+  whoami(): Promise<WhoAmI> {
+    return this.request("GET", "/v1/me");
   }
 
   /** The caller's own profile (humans only; machines get RESOURCE_NOT_FOUND). */
