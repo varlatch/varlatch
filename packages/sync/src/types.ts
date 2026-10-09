@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { AccessCheck } from "./access.js";
+import type { AccessCheck, DestinationListing } from "./access.js";
 
 /**
  * Platform Adapters (ADR-0031 §8): the closed allowlist of platforms Sync
@@ -105,6 +105,12 @@ export interface PlatformAdapter {
    * `ok` means "reachable and readable"; the first push confirms the rest.
    */
   checkAccess(req: AdapterRequest): Promise<AccessCheck>;
+  /**
+   * Read-only: the destinations the credential can see on the base
+   * identity, for a picker. Absent where the base identity is the
+   * destination (Convex). Never throws.
+   */
+  listDestinations?(req: AdapterRequest): Promise<DestinationListing>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;

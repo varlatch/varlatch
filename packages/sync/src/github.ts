@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
-import { isRecord, jsonBody, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
+import {
+  MAX_DESTINATIONS,
+  isRecord,
+  jsonBody,
+  listingFailed,
+  unexpected,
+  unreachable,
+  type AccessCheck,
+  type AccessCheckWhere,
+  type DestinationListing,
+  type DestinationOption,
+} from "./access.js";
 import { sealedBox } from "./sealedbox.js";
 import {
   AdapterError,
@@ -48,6 +59,9 @@ function secretsBase(req: AdapterRequest): string {
     : `${repoPath}/actions/secrets`;
 }
 
+/** Pages of 100 a repository listing reads at most. */
+const MAX_PAGES = 30;
+
 const TOKEN_REJECTED: AccessCheck = {
   status: "credential-rejected",
   where: "connection",
@@ -58,6 +72,10 @@ const TOKEN_REJECTED: AccessCheck = {
 /** GitHub signals its primary rate limit with a 403 as well as a 429. */
 function rateLimited(res: Response): boolean {
   return res.status === 429 || res.headers.get("x-ratelimit-remaining") === "0";
+}
+
+function listed(owner: string, count: number): AccessCheck {
+  return { status: "ok", where: "connection", message: `The token can see ${count} repositories in ${owner}.` };
 }
 
 /** A 200 that is not GitHub's API: a proxy or a sign-in page in the way. */
@@ -253,6 +271,53 @@ export const githubActionsAdapter: PlatformAdapter = {
       return refused(key, where);
     } catch (err) {
       return unreachable("api.github.com", err, where);
+    }
+  },
+
+  /**
+   * The repositories the token can see in the owner, archived ones left out
+   * (they take no secrets). The owner's type picks the listing: an
+   * organization's own, or the user's repositories (owned or shared)
+   * filtered to that owner. Seeing a repository is not the Secrets
+   * permission on it; the access check on the chosen one tells.
+   */
+  async listDestinations(req: AdapterRequest): Promise<DestinationListing> {
+    const owner = req.baseIdentity;
+    const where = "connection";
+    try {
+      const user = await request(req, "GET", `${API}/users/${owner}`);
+      if (user.status === 401) return listingFailed(TOKEN_REJECTED);
+      if (user.status === 404) {
+        return listingFailed({ status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` });
+      }
+      if (!user.ok) return listingFailed(refused(user, where));
+      const account = await jsonBody(user);
+      if (!isRecord(account) || typeof account.login !== "string") return listingFailed(notGitHub(where));
+      const listing =
+        account.type === "Organization"
+          ? `${API}/orgs/${owner}/repos?type=all&sort=full_name&per_page=100`
+          : `${API}/user/repos?affiliation=owner,collaborator&sort=full_name&per_page=100`;
+
+      const items: DestinationOption[] = [];
+      for (let page = 1; ; page++) {
+        // Filtering a user's listing to one owner can skip many pages.
+        if (page > MAX_PAGES) return { check: listed(owner, items.length), items, truncated: true };
+        const res = await request(req, "GET", `${listing}&page=${page}`);
+        if (res.status === 401) return listingFailed(TOKEN_REJECTED);
+        if (!res.ok) return listingFailed(refused(res, where));
+        const repos = await jsonBody(res);
+        if (!Array.isArray(repos)) return listingFailed(notGitHub(where));
+        for (const repo of repos) {
+          if (!isRecord(repo) || !isRecord(repo.owner) || repo.archived === true) continue;
+          const name = typeof repo.name === "string" ? repo.name : "";
+          if (!REPO_PATTERN.test(name) || String(repo.owner.login).toLowerCase() !== owner) continue;
+          if (items.length === MAX_DESTINATIONS) return { check: listed(owner, items.length), items, truncated: true };
+          items.push({ destination: { repo: name }, label: name, detail: repo.private === true ? "private" : "public" });
+        }
+        if (repos.length < 100) return { check: listed(owner, items.length), items, truncated: false };
+      }
+    } catch (err) {
+      return listingFailed(unreachable("api.github.com", err, where));
     }
   },
 };

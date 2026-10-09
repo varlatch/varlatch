@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
-import { foreign, isRecord, jsonBody, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
+import {
+  MAX_DESTINATIONS,
+  foreign,
+  isRecord,
+  jsonBody,
+  listingFailed,
+  shortText,
+  unexpected,
+  unreachable,
+  type AccessCheck,
+  type AccessCheckWhere,
+  type DestinationListing,
+  type DestinationOption,
+} from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -401,6 +414,44 @@ export const coolifyAdapter: PlatformAdapter = {
       return unexpected("Coolify", res.status, where);
     } catch (err) {
       return unreachable(host, err, where);
+    }
+  },
+
+  /**
+   * The applications of the token's team, by name, with their first address.
+   * Coolify answers with whole application records; only the uuid, name and
+   * address leave the adapter, whatever else a broad token can read.
+   */
+  async listDestinations(req: AdapterRequest): Promise<DestinationListing> {
+    const host = new URL(req.baseIdentity).host;
+    const where = "connection";
+    try {
+      const res = await request(req, "GET", "/applications");
+      if (res.status === 401) return listingFailed(TOKEN_REJECTED);
+      if (res.status === 403) return listingFailed(await forbidden(res, where));
+      if (res.status === 404) {
+        return listingFailed({ status: "not-found", where, httpStatus: 404, message: `No Coolify API answered at ${host}. Check the instance URL.` });
+      }
+      const apps = res.ok ? await jsonBody(res) : undefined;
+      if (!Array.isArray(apps)) return listingFailed(foreign("Coolify", "instance", host, res.status));
+      const items: DestinationOption[] = [];
+      for (const app of apps) {
+        if (!isRecord(app) || typeof app.uuid !== "string" || !UUID_PATTERN.test(app.uuid)) continue;
+        const address = shortText(typeof app.fqdn === "string" ? app.fqdn.split(",")[0]?.replace(/^https?:\/\//, "") : undefined);
+        items.push({
+          destination: { applicationUuid: app.uuid },
+          label: shortText(app.name) ?? app.uuid,
+          ...(address ? { detail: address } : {}),
+        });
+      }
+      items.sort((a, b) => a.label.localeCompare(b.label));
+      return {
+        check: { status: "ok", where, message: `The token's team has ${items.length} applications on ${host}.` },
+        items: items.slice(0, MAX_DESTINATIONS),
+        truncated: items.length > MAX_DESTINATIONS,
+      };
+    } catch (err) {
+      return listingFailed(unreachable(host, err, where));
     }
   },
 };

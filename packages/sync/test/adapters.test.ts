@@ -971,3 +971,120 @@ describe("access checks", () => {
     });
   });
 });
+
+describe("destination listings", () => {
+  const github = (fetchImpl: typeof fetch): AdapterRequest => ({ baseIdentity: "acme", destination: {}, credential: "github_pat_test", fetchImpl });
+  const coolify = (fetchImpl: typeof fetch): AdapterRequest => ({
+    baseIdentity: "https://coolify.example.com",
+    destination: {},
+    credential: "tok",
+    fetchImpl,
+  });
+  const repo = (name: string, extra: Record<string, unknown> = {}) => ({ name, owner: { login: "acme" }, private: true, archived: false, ...extra });
+
+  it("Convex has nothing to list: the deployment is the destination", () => {
+    expect(convexAdapter.listDestinations).toBeUndefined();
+  });
+
+  describe("github-actions", () => {
+    it("lists an organization's repositories, archived ones left out", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const listing = await githubActionsAdapter.listDestinations!(
+        github(
+          fakeFetch((url) => {
+            if (url.endsWith("/users/acme")) return { status: 200, body: { login: "Acme", type: "Organization" } };
+            return { status: 200, body: [repo("API"), repo("web", { private: false }), repo("old", { archived: true })] };
+          }, calls),
+        ),
+      );
+      expect(listing.check.status).toBe("ok");
+      expect(listing.items).toEqual([
+        { destination: { repo: "API" }, label: "API", detail: "private" },
+        { destination: { repo: "web" }, label: "web", detail: "public" },
+      ]);
+      expect(listing.truncated).toBe(false);
+      expect(calls.map((c) => c.url)).toEqual([
+        "https://api.github.com/users/acme",
+        "https://api.github.com/orgs/acme/repos?type=all&sort=full_name&per_page=100&page=1",
+      ]);
+      expect(calls.every((c) => c.init.method === "GET")).toBe(true);
+    });
+
+    it("lists a user's own and shared repositories, filtered to that owner, across pages", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const firstPage = [...Array.from({ length: 99 }, (_, i) => repo(`r${i}`)), repo("theirs", { owner: { login: "someone-else" } })];
+      const listing = await githubActionsAdapter.listDestinations!(
+        github(
+          fakeFetch((url) => {
+            if (url.endsWith("/users/acme")) return { status: 200, body: { login: "acme", type: "User" } };
+            return { status: 200, body: url.endsWith("page=1") ? firstPage : [repo("last")] };
+          }, calls),
+        ),
+      );
+      expect(listing.items).toHaveLength(100);
+      expect(listing.items.some((i) => i.label === "theirs")).toBe(false);
+      expect(listing.items.at(-1)!.label).toBe("last");
+      expect(calls[1]!.url).toBe("https://api.github.com/user/repos?affiliation=owner,collaborator&sort=full_name&per_page=100&page=1");
+      expect(calls).toHaveLength(3);
+    });
+
+    it("stops at the cap and says the list is truncated", async () => {
+      const full = Array.from({ length: 100 }, (_, i) => repo(`r${i}`));
+      const listing = await githubActionsAdapter.listDestinations!(
+        github(fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: { login: "acme", type: "Organization" } } : { status: 200, body: full }))),
+      );
+      expect(listing.items).toHaveLength(1000);
+      expect(listing.truncated).toBe(true);
+    });
+
+    it("fails like an access check, with no items", async () => {
+      const rejected = await githubActionsAdapter.listDestinations!(github(fakeFetch(() => ({ status: 401 }))));
+      expect(rejected).toEqual({ check: expect.objectContaining({ status: "credential-rejected" }), items: [], truncated: false });
+      const missing = await githubActionsAdapter.listDestinations!(github(fakeFetch(() => ({ status: 404 }))));
+      expect(missing.check).toMatchObject({ status: "not-found", where: "connection" });
+      const page = (async () => new Response("<html>proxy</html>", { status: 200 })) as typeof fetch;
+      expect((await githubActionsAdapter.listDestinations!(github(page))).check.status).toBe("failed");
+      const down = (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch;
+      expect((await githubActionsAdapter.listDestinations!(github(down))).check.status).toBe("unreachable");
+    });
+  });
+
+  describe("coolify", () => {
+    it("lists the team's applications by name, keeping only uuid, name and address", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const listing = await coolifyAdapter.listDestinations!(
+        coolify(
+          fakeFetch(
+            () => ({
+              status: 200,
+              body: [
+                { uuid: "web123", name: "web", fqdn: "https://web.example.com,https://www.example.com", manual_webhook_secret_github: "s3cret" },
+                { uuid: "api123", name: "api", fqdn: null },
+                { uuid: "../bad", name: "invalid uuid" },
+              ],
+            }),
+            calls,
+          ),
+        ),
+      );
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([["GET", "https://coolify.example.com/api/v1/applications"]]);
+      expect(listing.items).toEqual([
+        { destination: { applicationUuid: "api123" }, label: "api" },
+        { destination: { applicationUuid: "web123" }, label: "web", detail: "web.example.com" },
+      ]);
+      expect(JSON.stringify(listing)).not.toContain("s3cret");
+    });
+
+    it("fails like an access check, with no items", async () => {
+      expect((await coolifyAdapter.listDestinations!(coolify(fakeFetch(() => ({ status: 401 }))))).check.status).toBe("credential-rejected");
+      const off = await coolifyAdapter.listDestinations!(coolify(fakeFetch(() => ({ status: 403, body: { message: "API is disabled." } }))));
+      expect(off.check.message).toContain("API is off");
+      expect((await coolifyAdapter.listDestinations!(coolify(fakeFetch(() => ({ status: 404 }))))).check.status).toBe("not-found");
+      const signIn = (async () => new Response("<!doctype html>", { status: 200 })) as typeof fetch;
+      const page = await coolifyAdapter.listDestinations!(coolify(signIn));
+      expect(page).toMatchObject({ check: { status: "failed" }, items: [] });
+    });
+  });
+});
