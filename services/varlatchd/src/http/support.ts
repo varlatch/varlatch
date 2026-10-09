@@ -48,6 +48,9 @@ export interface Principal {
   identity: IdentityRow;
   credentialId: string;
   credentialKind: CredentialRow["kind"];
+  /** The presenting credential's name and expiry, for GET /v1/me. */
+  credentialName?: string | null;
+  credentialExpiresAt?: string | null;
   /** Browser bearers: the Better Auth session the bearer was minted from. */
   authSessionId?: string | null;
 }

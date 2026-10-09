@@ -1485,6 +1485,31 @@ paths:
         "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
 
+  /me:
+    get:
+      tags: [identities]
+      operationId: whoami
+      summary: >
+        Who the caller is (capability identity.whoami): the identity this
+        request authenticated as, its organization, the credential it
+        presented, and the listener it came in on. Any authenticated caller,
+        human or machine, with no Grant; it describes the caller only, never
+        another identity or another credential.
+      description: >
+        No Security Audit Event records a successful call, as for the other
+        /v1/me reads: describing the caller exercises no authority (ADR-0016).
+        A refused credential (revoked, expired, spent, or of a retired
+        identity) gets 401 INVALID_CREDENTIAL, and the refusal is audited as
+        authentication.failed, as for every route. Like every authenticated
+        request, it spends one use of a credential with a use budget.
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WhoAmI" }
+        default: { $ref: "#/components/responses/Error" }
+
   /me/profile:
     get:
       tags: [identities]
@@ -3617,6 +3642,63 @@ components:
         name: { type: string }
         email: { type: [string, "null"] }
         image: { type: [string, "null"] }
+
+    WhoAmI:
+      type: object
+      required: [identity, organization, credential, listener]
+      description: >
+        The caller as this request authenticated it (GET /v1/me). Never
+        contains token material, another identity, or another credential.
+      properties:
+        identity:
+          type: object
+          required: [id, name, kind, email]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            kind:
+              type: string
+              enum: [human, service, workload, ci, broker, agent]
+            email:
+              type: [string, "null"]
+              description: >
+                The Better Auth account email of a human identity, as in its
+                profile; null for machines and for humans without one. The
+                profile's avatar image is left to GET /v1/me/profile.
+        organization:
+          description: >
+            The organization a machine identity belongs to. Null for humans,
+            who belong to the Installation and join organizations as
+            members: GET /v1/organizations lists those.
+          oneOf:
+            - $ref: "#/components/schemas/Organization"
+            - type: "null"
+        credential:
+          type: object
+          required: [id, name, kind, expiresAt]
+          description: >
+            The credential this request presented, and only that one; its
+            token is never returned.
+          properties:
+            id: { type: string }
+            name: { type: [string, "null"] }
+            kind:
+              type: string
+              description: service, cli, browser (a dashboard session), agent-run, or oidc.
+            expiresAt: { type: [string, "null"], format: date-time }
+        listener:
+          type: string
+          enum: [ordinary, tailnet]
+          description: The listener this request came in on (ADR-0014 §7).
+        tailnet:
+          $ref: "#/components/schemas/TailnetDevice"
+          description: >
+            Only on the tailnet listeners: the device this request's own
+            connection resolved to through Tailscale WhoIs, or why there is
+            none, as GET /v1/tailnet/context reports it (nodeName included
+            when Tailscale gives one). No Requirement is evaluated: a
+            recognized device is no promise that a constrained read will be
+            allowed.
 
     CreatedIdentity:
       allOf:

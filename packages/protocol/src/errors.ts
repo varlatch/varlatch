@@ -80,6 +80,7 @@ export const CAPABILITIES = [
   "audit.attribution",
   "environments.tailnet-required",
   "tailnet.browser-reads",
+  "identity.whoami",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

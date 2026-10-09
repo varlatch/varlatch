@@ -644,6 +644,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Who the caller is (capability identity.whoami): the identity this request authenticated as, its organization, the credential it presented, and the listener it came in on. Any authenticated caller, human or machine, with no Grant; it describes the caller only, never another identity or another credential.
+         * @description No Security Audit Event records a successful call, as for the other /v1/me reads: describing the caller exercises no authority (ADR-0016). A refused credential (revoked, expired, spent, or of a retired identity) gets 401 INVALID_CREDENTIAL, and the refusal is audited as authentication.failed, as for every route. Like every authenticated request, it spends one use of a credential with a use budget.
+         */
+        get: operations["whoami"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me/profile": {
         parameters: {
             query?: never;
@@ -1638,6 +1658,35 @@ export interface components {
             name: string;
             email: string | null;
             image: string | null;
+        };
+        /** @description The caller as this request authenticated it (GET /v1/me). Never contains token material, another identity, or another credential. */
+        WhoAmI: {
+            identity: {
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "human" | "service" | "workload" | "ci" | "broker" | "agent";
+                /** @description The Better Auth account email of a human identity, as in its profile; null for machines and for humans without one. The profile's avatar image is left to GET /v1/me/profile. */
+                email: string | null;
+            };
+            /** @description The organization a machine identity belongs to. Null for humans, who belong to the Installation and join organizations as members: GET /v1/organizations lists those. */
+            organization: components["schemas"]["Organization"] | null;
+            /** @description The credential this request presented, and only that one; its token is never returned. */
+            credential: {
+                id: string;
+                name: string | null;
+                /** @description service, cli, browser (a dashboard session), agent-run, or oidc. */
+                kind: string;
+                /** Format: date-time */
+                expiresAt: string | null;
+            };
+            /**
+             * @description The listener this request came in on (ADR-0014 §7).
+             * @enum {string}
+             */
+            listener: "ordinary" | "tailnet";
+            /** @description Only on the tailnet listeners: the device this request's own connection resolved to through Tailscale WhoIs, or why there is none, as GET /v1/tailnet/context reports it (nodeName included when Tailscale gives one). No Requirement is evaluated: a recognized device is no promise that a constrained read will be allowed. */
+            tailnet?: components["schemas"]["TailnetDevice"];
         };
         CreatedIdentity: components["schemas"]["Identity"] & {
             /** @description Shown exactly once at creation; stored hashed; never retrievable. */
@@ -3778,6 +3827,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    whoami: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhoAmI"];
+                };
             };
             default: components["responses"]["Error"];
         };
