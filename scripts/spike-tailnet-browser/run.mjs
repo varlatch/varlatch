@@ -95,6 +95,24 @@ function judgeS5(expected, outcome, { headed, localId }) {
  * and the rule lets someone through) and the denied device still reaches
  * the node on another port (the failure is the rule's, not a broken node).
  */
+/**
+ * S5 by hand in Safari: what the probe received from the Mac while someone
+ * opened the ts.net test page there. `entries` are the probe's log entries
+ * since the prompt; `node` is the Mac's MagicDNS short name or node ID.
+ */
+function judgeSafari(entries, node) {
+  const fromNode = (e) => e.whois?.ok && (e.whois.nodeId === node || e.whois.name?.split(".")[0] === node);
+  const fetches = entries.filter((e) => e.url?.startsWith("/probe?pna="));
+  const answered = fetches.filter((e) => e.listener === "tailnet-https");
+  if (answered.some(fromNode)) return verdict("PASS", answered.filter(fromNode).map((e) => ({ url: e.url, nodeId: e.whois.nodeId })));
+  if (answered.length > 0) return verdict("FAIL", { problem: "the page's requests arrived, but WhoIs did not name the Mac", whois: answered.map((e) => e.whois) });
+  if (fetches.some((e) => e.listener === "tailnet-https-refused-origin")) return verdict("FAIL", { problem: "the endpoint refused the page's origin", origins: fetches.map((e) => e.origin) });
+  if (fetches.some((e) => e.listener === "tailnet-https-preflight")) {
+    return verdict("FAIL", { problem: "Safari sent the preflight but never the request", preflights: fetches.map((e) => ({ url: e.url, requestPrivateNetwork: e.requestPrivateNetwork })) });
+  }
+  return verdict("NOT RUN", "nothing arrived from the Mac's Safari");
+}
+
 function judgeS8({ control, denied, deniedPlain, allowedId }) {
   if (!control.ok || control.status !== 200) {
     return verdict("INCONCLUSIVE", { problem: "the allowed device's HTTPS request failed, so the denied device's failure proves nothing", control });
@@ -356,6 +374,7 @@ function printPreflight(f) {
   line(!!f.browsers && Object.values(f.browsers).every((v) => v === true || v === "launches"), `browsers for S5: ${f.browsers ? Object.entries(f.browsers).map(([b, v]) => `${b} ${v === true ? "installed" : v === false ? "missing" : v}`).join(", ") : "Playwright not found"}`);
   line(process.env.SPIKE_S7_WAIT_SECONDS > 0, "S7 needs the spike node shared with a user of another tailnet (SPIKE_S7_WAIT_SECONDS)");
   line(process.env.SPIKE_S8_RULE_APPLIED === "1", "S8 needs the approved rule from README.md applied (SPIKE_S8_RULE_APPLIED=1)");
+  line(!!process.env.SPIKE_SAFARI_NODE, "S5 in Safari needs a person at a Mac on the tailnet (SPIKE_SAFARI_NODE, SPIKE_SAFARI_WAIT_SECONDS)");
   if (f.selfIPs?.length) console.log(`         this machine's Tailscale addresses, for the S8 rule: ${f.selfIPs.join(", ")}`);
 }
 
@@ -580,6 +599,25 @@ async function s5(ctx, local) {
       await browser.close();
     }
   }
+  // Safari, by hand on a Mac on the tailnet (README): Playwright's WebKit is
+  // not Safari, and may not launch here at all. The probe judges what arrives.
+  const safariNode = process.env.SPIKE_SAFARI_NODE;
+  const safariWait = Number(process.env.SPIKE_SAFARI_WAIT_SECONDS ?? 0);
+  if (!safariNode || !(safariWait > 0)) {
+    notRun("s5", "Safari: by hand on a Mac on the tailnet, see README.md (SPIKE_SAFARI_NODE, SPIKE_SAFARI_WAIT_SECONDS)");
+  } else {
+    const since = ctl("GET", "/log").length;
+    console.log(`S5 Safari: on ${safariNode}, open https://${ctx.name}:8690/page in Safari within ${safariWait} s and leave it until its results show.`);
+    const end = Date.now() + safariWait * 1000;
+    let found = verdict("NOT RUN", "nothing arrived from the Mac's Safari");
+    while (Date.now() < end) {
+      found = judgeSafari(ctl("GET", "/log").slice(since), safariNode);
+      if (found.kind === "PASS") break;
+      await sleep(3000);
+    }
+    judge("s5", "Safari (by hand), ts.net origin: answered, identifying the Mac", found);
+    notRun("s5", "Safari, public origin: needs the test page on a public HTTPS origin, which needs the owner's approval");
+  }
   const preflights = ctl("GET", "/log").filter((e) => e.listener === "tailnet-https-preflight");
   observe("s5", "preflights the probe saw", preflights.map((e) => ({ url: e.url, origin: e.origin, requestPrivateNetwork: e.requestPrivateNetwork })));
 }
@@ -682,6 +720,15 @@ function selftestJudges() {
     ["S8: a denied device that reaches nothing at all is inconclusive", judgeS8({ control, denied: refused, deniedPlain: { ok: false, error: "timeout" }, allowedId: "nME" }), "INCONCLUSIVE"],
     ["S8: a denied device answered on 8688 fails", judgeS8({ control, denied: { ok: true, status: 200 }, deniedPlain: plainOk, allowedId: "nME" }), "FAIL"],
     ["S8: allowed answered, denied refused, denied reaching 8687 passes", judgeS8({ control, denied: refused, deniedPlain: plainOk, allowedId: "nME" }), "PASS"],
+  );
+  const entry = (listener, nodeId, extra = {}) => ({ listener, url: "/probe?pna=0", origin: "https://spike.example.ts.net:8690", whois: nodeId ? { ok: true, nodeId, name: "jeremys-mac-mini.example.ts.net." } : { ok: false }, ...extra });
+  cases.push(
+    ["Safari: a request naming the Mac by node ID passes", judgeSafari([entry("tailnet-https-preflight", "nMAC"), entry("tailnet-https", "nMAC")], "nMAC"), "PASS"],
+    ["Safari: a request naming the Mac by name passes", judgeSafari([entry("tailnet-https", "nMAC")], "jeremys-mac-mini"), "PASS"],
+    ["Safari: a request naming another node fails", judgeSafari([entry("tailnet-https", "nOTHER", { whois: { ok: true, nodeId: "nOTHER", name: "other.example.ts.net." } })], "nMAC"), "FAIL"],
+    ["Safari: only a preflight arriving fails", judgeSafari([entry("tailnet-https-preflight", "nMAC")], "nMAC"), "FAIL"],
+    ["Safari: a refused origin fails", judgeSafari([entry("tailnet-https-refused-origin", "nMAC")], "nMAC"), "FAIL"],
+    ["Safari: nothing arriving is not run", judgeSafari([], "nMAC"), "NOT RUN"],
   );
   for (const [name, got, want] of cases) expect("selftest", name, got.kind === want, got.kind === want ? undefined : { want, got });
 }

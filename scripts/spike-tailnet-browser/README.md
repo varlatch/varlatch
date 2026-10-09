@@ -51,6 +51,8 @@ SPIKE_TS_AUTHKEY_FILE=~/.config/varlatch-spike/ts-authkey \
 | `SPIKE_PROBE_UID` | The probe's uid, varlatchd's user (default 999, `useradd -r` in the varlatchd image) |
 | `SPIKE_S4_FORCE_RENEW=1` | Let S4 force one certificate renewal (one more Let's Encrypt issuance) |
 | `SPIKE_HEADED=1` | S5 with visible browsers, to see permission prompts headless browsers never show |
+| `SPIKE_SAFARI_NODE` | S5 in Safari: the Mac's MagicDNS short name or node ID (see below) |
+| `SPIKE_SAFARI_WAIT_SECONDS` | S5 in Safari: how long to wait for someone to open the page there |
 | `SPIKE_S7_WAIT_SECONDS` | S7: how long to wait for the request from a shared-in device |
 | `SPIKE_S8_RULE_APPLIED=1` | S8: the owner applied the deny rule below |
 | `SPIKE_KEEP=1` | Keep the containers (the nodes stay joined until you log them out) |
@@ -82,8 +84,28 @@ run.
 Browsers come from Playwright: `npx playwright install firefox webkit` in
 `apps/web`. Playwright's WebKit needs system libraries some Linux
 distributions lack, and installing them needs root. Where it does not
-launch, S5 reports WebKit NOT RUN. Safari itself is better tested by hand
-on a Mac on the tailnet.
+launch, S5 reports WebKit NOT RUN; on the Linux machine these spikes were
+prepared on (2026-10-09) it does not, so WebKit is recorded NOT RUN there.
+Playwright's WebKit is not Safari in any case.
+
+**Safari, by hand on the Mac mini.** A separate step of S5, for a person at
+a Mac that is a device on the same tailnet (the Mac mini is):
+
+1. On the machine running the harness:
+   `SPIKE_SAFARI_NODE=<the Mac's MagicDNS short name> SPIKE_SAFARI_WAIT_SECONDS=300 node scripts/spike-tailnet-browser/run.mjs s5`
+   (with the auth key variable as above).
+2. When it prints the page's URL (`https://<spike node>:8690/page`), open it
+   in Safari on the Mac and leave the tab until the page shows its results.
+   If Safari or macOS asks to allow access to devices on the local network,
+   note it and allow it: that prompt is part of what S5 measures.
+3. The harness judges what the probe received from the Mac: PASS when the
+   page's request arrived and WhoIs named the Mac; FAIL when it arrived
+   naming another node, only the preflight arrived, or the origin was
+   refused; NOT RUN when nothing arrived in time.
+
+This covers the ts.net origin. The public-origin case needs the test page
+on a public HTTPS origin, which needs the owner's approval; until then it
+is NOT RUN.
 
 ## What the test tailnet must allow
 
