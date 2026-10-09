@@ -9,9 +9,9 @@
  *   Credential. version is the expected-version guard for key rotation
  *   (Decision 5). Removal deletes the wrapped key and keeps the row for the
  *   Connections that name it: removed_at and a NULL key go together.
- *   At most one live App per Organization and GitHub account, and a GitHub
- *   App is live in at most one Organization, so its key never rests under
- *   two KEKs that a rotation would leave apart.
+ *   At most one live App per Organization (Decision 1), and a GitHub App is
+ *   live in at most one Organization, so its key never rests under two KEKs
+ *   that a rotation would leave apart. A removed App blocks neither.
  * - platform_connections.credential_kind: 'token' (a Platform Credential in
  *   credential_envelope, as before) or 'github-app' (no stored token: the
  *   App and the installation tokens are minted from, on github-actions
@@ -46,8 +46,8 @@ CREATE TABLE github_apps (
 );
 CREATE UNIQUE INDEX github_apps_live_app
   ON github_apps(github_app_id) WHERE removed_at IS NULL;
-CREATE UNIQUE INDEX github_apps_live_owner
-  ON github_apps(organization_id, owner_id) WHERE removed_at IS NULL;
+CREATE UNIQUE INDEX github_apps_live_org
+  ON github_apps(organization_id) WHERE removed_at IS NULL;
 
 ALTER TABLE platform_connections
   ADD COLUMN credential_kind text NOT NULL DEFAULT 'token'

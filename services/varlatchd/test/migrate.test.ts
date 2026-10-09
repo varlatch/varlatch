@@ -251,11 +251,14 @@ it("adds GitHub Apps and a credential kind; existing connections are tokens", as
   await expect(
     db.query("INSERT INTO github_apps(id,organization_id,github_app_id,slug,client_id,owner_login,owner_id,owner_type,key_envelope) VALUES ('gha_x','org_a',1,'s','c','acme',1,'Organization','{}')"),
   ).rejects.toThrow(/check constraint/);
-  // One live App per Organization and GitHub account; a GitHub App is live in one Organization.
-  await expect(app("gha_same_owner", "org_a", 999, 1009)).rejects.toThrow(/github_apps_live_owner/);
+  // One live App per Organization, whichever GitHub account it is on; a GitHub App is live in one Organization.
+  await expect(app("gha_same_owner", "org_a", 999, 1009)).rejects.toThrow(/github_apps_live_org/);
+  await expect(app("gha_other_account", "org_a", 999, 2000)).rejects.toThrow(/github_apps_live_org/);
   await expect(app("gha_same_app", "org_b", 5254113, 2000)).rejects.toThrow(/github_apps_live_app/);
-  await app("gha_other_account", "org_a", 999, 2000);
+  // A removed App blocks neither: not its Organization, not its GitHub App id.
+  await app("gha_a_earlier", "org_a", 777, 2000, true);
   await app("gha_removed", "org_b", 5254113, 1009, true);
+  await app("gha_b", "org_b", 888, 2000);
 
   const connection = (id: string, values: Record<string, unknown>) => {
     const row = {
