@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
+import { isRecord, jsonBody, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
 import { sealedBox } from "./sealedbox.js";
 import {
   AdapterError,
@@ -58,6 +58,16 @@ const TOKEN_REJECTED: AccessCheck = {
 /** GitHub signals its primary rate limit with a 403 as well as a 429. */
 function rateLimited(res: Response): boolean {
   return res.status === 429 || res.headers.get("x-ratelimit-remaining") === "0";
+}
+
+/** A 200 that is not GitHub's API: a proxy or a sign-in page in the way. */
+function notGitHub(where: AccessCheckWhere): AccessCheck {
+  return {
+    status: "failed",
+    where,
+    httpStatus: 200,
+    message: "The answer from api.github.com was not GitHub's. A proxy between this server and GitHub may be in the way.",
+  };
 }
 
 function refused(res: Response, where: AccessCheckWhere): AccessCheck {
@@ -196,6 +206,8 @@ export const githubActionsAdapter: PlatformAdapter = {
         return { status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` };
       }
       if (!user.ok) return refused(user, where);
+      const account = await jsonBody(user);
+      if (!isRecord(account) || typeof account.login !== "string") return notGitHub(where);
       if (!repo) return { status: "ok", where, message: `GitHub accepted the token, and ${owner} exists.` };
 
       where = "destination";
@@ -203,6 +215,10 @@ export const githubActionsAdapter: PlatformAdapter = {
       const permission = environment ? "Environments" : "Secrets";
       const key = await request(req, "GET", `${secretsBase(req)}/public-key`);
       if (key.ok) {
+        const publicKey = await jsonBody(key);
+        if (!isRecord(publicKey) || typeof publicKey.key_id !== "string" || typeof publicKey.key !== "string") {
+          return notGitHub(where);
+        }
         return {
           status: "ok",
           where,

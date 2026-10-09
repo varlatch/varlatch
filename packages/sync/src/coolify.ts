@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { foreign, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
+import { foreign, isRecord, jsonBody, unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -49,6 +49,9 @@ const TOKEN_REJECTED: AccessCheck = {
   httpStatus: 401,
   message: "Coolify rejected the token: it is mistyped, or was deleted.",
 };
+
+/** What /api/v1/version answers: the bare version, e.g. 4.0.0-beta.420. */
+const VERSION_TEXT = /^"?v?\d+\.\d+[\w.+-]*"?$/;
 
 const UUID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{2,63}$/;
 const NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -360,13 +363,25 @@ export const coolifyAdapter: PlatformAdapter = {
       if (version.status === 404) {
         return { status: "not-found", where, httpStatus: 404, message: `No Coolify API answered at ${host}. Check the instance URL.` };
       }
-      if (!version.ok) return foreign("Coolify", "instance", host, version.status);
+      // A sign-in page in front of the instance answers 200 as well.
+      if (!version.ok || !VERSION_TEXT.test((await version.text()).trim())) {
+        return foreign("Coolify", "instance", host, version.status);
+      }
       const app = req.destination.applicationUuid;
       if (!app) return { status: "ok", where, message: "Coolify accepted the token." };
 
       where = "destination";
       const res = await request(req, "GET", `/applications/${app}`);
       if (res.ok) {
+        const found = await jsonBody(res);
+        if (!isRecord(found) || found.uuid !== app) {
+          return {
+            status: "failed",
+            where,
+            httpStatus: res.status,
+            message: `${host} did not answer with application ${app}. Check the instance URL and the UUID.`,
+          };
+        }
         return {
           status: "ok",
           where,

@@ -105,7 +105,9 @@ A key works for one deployment only, so each deployment is its own
 connection, and the deployment is the destination: the integration has
 nothing more to fill in. A production and a development deployment have
 different keys. The key must be allowed to change environment variables; a
-read-only key fails the check.
+read-only key fails the check. A self-hosted backend from before March 2025
+has no key check at all: the check then reports the deployment as not
+found, so update the backend, or save anyway.
 
 If the environment also holds the deployment's own key or URL
 (`CONVEX_DEPLOY_KEY`, `CONVEX_URL`), keep them out of the push with **All
@@ -127,7 +129,9 @@ is no redeploy.
 
 A check only reads. It sends the credential to the platform and nothing
 else; a stored credential goes only to its connection's own address. It
-reads nothing from the environment and stores nothing.
+reads nothing from the environment and stores nothing. An answer counts
+only when it has the platform's own shape, so a sign-in page in front of
+an instance, which answers too, does not pass.
 
 | Platform | Requests |
 | --- | --- |

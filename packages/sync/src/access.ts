@@ -37,6 +37,23 @@ export interface AccessCheck {
   httpStatus?: number;
 }
 
+/**
+ * A 2xx answer's JSON body, or undefined when it is not JSON. A 2xx is not
+ * proof of the platform: a sign-in page or another API answers 200 too, so
+ * every check reads the shape it expects before reporting ok.
+ */
+export async function jsonBody(res: Response): Promise<unknown> {
+  try {
+    return (await res.json()) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Node's fetch reports the transport problem on the cause of its TypeError. */
 function transportProblem(err: unknown): "timeout" | "redirect" | "dns" | "refused" | "tls" | null {
   if (!(err instanceof AdapterError)) return null;

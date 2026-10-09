@@ -742,7 +742,7 @@ describe("access checks", () => {
   describe("github-actions", () => {
     it("checks the owner with the token, and nothing else, without a destination", async () => {
       const calls: { url: string; init: RequestInit }[] = [];
-      const result = await githubActionsAdapter.checkAccess(github(fakeFetch(() => ({ status: 200, body: {} }), calls)));
+      const result = await githubActionsAdapter.checkAccess(github(fakeFetch(() => ({ status: 200, body: { login: "acme" } }), calls)));
       expect(result.status).toBe("ok");
       expect(calls.map((c) => [c.init.method, c.url])).toEqual([["GET", "https://api.github.com/users/acme"]]);
       expect((calls[0]!.init.headers as Record<string, string>).Authorization).toBe("Bearer github_pat_test");
@@ -760,7 +760,10 @@ describe("access checks", () => {
     it("reads the destination's public key, the request every push starts with", async () => {
       const calls: { url: string; init: RequestInit }[] = [];
       const result = await githubActionsAdapter.checkAccess(
-        github(fakeFetch(() => ({ status: 200, body: { key_id: "k", key: "x" } }), calls), { repo: "api", environment: "production" }),
+        github(
+          fakeFetch((url) => ({ status: 200, body: url.endsWith("/users/acme") ? { login: "acme" } : { key_id: "k", key: "x" } }), calls),
+          { repo: "api", environment: "production" },
+        ),
       );
       expect(result.status).toBe("ok");
       expect(calls.map((c) => c.url)).toEqual([
@@ -771,7 +774,7 @@ describe("access checks", () => {
     });
 
     it("names the permission the destination needs", async () => {
-      const refuse = fakeFetch((url) => (url.endsWith("/public-key") ? { status: 403 } : { status: 200, body: {} }));
+      const refuse = fakeFetch((url) => (url.endsWith("/public-key") ? { status: 403 } : { status: 200, body: { login: "acme" } }));
       const repoSecrets = await githubActionsAdapter.checkAccess(github(refuse, { repo: "api" }));
       expect(repoSecrets.status).toBe("permission-missing");
       expect(repoSecrets.message).toContain("Secrets: Read and write");
@@ -783,7 +786,7 @@ describe("access checks", () => {
       const result = await githubActionsAdapter.checkAccess(
         github(
           fakeFetch((url) =>
-            url.endsWith("/public-key") ? { status: 403, headers: { "x-ratelimit-remaining": "0" } } : { status: 200, body: {} },
+            url.endsWith("/public-key") ? { status: 403, headers: { "x-ratelimit-remaining": "0" } } : { status: 200, body: { login: "acme" } },
           ),
           { repo: "api" },
         ),
@@ -793,7 +796,7 @@ describe("access checks", () => {
 
     it("tells a missing environment from a repository the token cannot see", async () => {
       const noEnvironment = await githubActionsAdapter.checkAccess(
-        github(fakeFetch((url) => (url.endsWith("/public-key") ? { status: 404 } : { status: 200, body: {} })), {
+        github(fakeFetch((url) => (url.endsWith("/public-key") ? { status: 404 } : { status: 200, body: { login: "acme", name: "api" } })), {
           repo: "api",
           environment: "staging",
         }),
@@ -801,12 +804,23 @@ describe("access checks", () => {
       expect(noEnvironment).toMatchObject({ status: "not-found", where: "destination" });
       expect(noEnvironment.message).toContain("no environment named staging");
       const noRepo = await githubActionsAdapter.checkAccess(
-        github(fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: {} } : { status: 404 })), {
+        github(fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: { login: "acme" } } : { status: 404 })), {
           repo: "api",
           environment: "staging",
         }),
       );
       expect(noRepo.message).toContain("cannot find acme/api");
+    });
+
+    it("does not take a 200 that is not GitHub's for GitHub", async () => {
+      const page = (async () => new Response("<html>Sign in to the proxy</html>", { status: 200 })) as typeof fetch;
+      expect(await githubActionsAdapter.checkAccess(github(page))).toMatchObject({ status: "failed", where: "connection" });
+      const noKey = await githubActionsAdapter.checkAccess(
+        github(fakeFetch((url) => ({ status: 200, body: url.endsWith("/users/acme") ? { login: "acme" } : { message: "ok" } })), {
+          repo: "api",
+        }),
+      );
+      expect(noKey).toMatchObject({ status: "failed", where: "destination" });
     });
 
     it("never throws and never repeats what the platform said", async () => {
@@ -824,7 +838,10 @@ describe("access checks", () => {
     it("checks the instance, then the application, read-only", async () => {
       const calls: { url: string; init: RequestInit }[] = [];
       const result = await coolifyAdapter.checkAccess(
-        coolify(fakeFetch(() => ({ status: 200, body: {} }), calls), { applicationUuid: "app123" }),
+        coolify(
+          fakeFetch((url) => ({ status: 200, body: url.endsWith("/version") ? "4.0.0-beta.420" : { uuid: "app123", name: "api" } }), calls),
+          { applicationUuid: "app123" },
+        ),
       );
       expect(result.status).toBe("ok");
       expect(calls.map((c) => [c.init.method, c.url])).toEqual([
@@ -878,6 +895,20 @@ describe("access checks", () => {
       }
     });
 
+    it("does not take a sign-in page or another application for Coolify", async () => {
+      const signIn = (async () => new Response("<!doctype html><title>Sign in</title>", { status: 200 })) as typeof fetch;
+      const page = await coolifyAdapter.checkAccess(coolify(signIn, { applicationUuid: "app123" }));
+      expect(page).toMatchObject({ status: "failed", where: "connection", httpStatus: 200 });
+      expect(page.message).toContain("does not answer like a Coolify instance");
+      const other = await coolifyAdapter.checkAccess(
+        coolify(fakeFetch((url) => ({ status: 200, body: url.endsWith("/version") ? "4.0.0-beta.420" : { uuid: "other" } })), {
+          applicationUuid: "app123",
+        }),
+      );
+      expect(other).toMatchObject({ status: "failed", where: "destination" });
+      expect(other.message).toContain("did not answer with application app123");
+    });
+
     it("says when the address answers, but not like Coolify", async () => {
       const result = await coolifyAdapter.checkAccess(coolify(fakeFetch(() => ({ status: 410, body: { message: "Gone" } }))));
       expect(result).toMatchObject({ status: "failed", where: "connection", httpStatus: 410 });
@@ -908,17 +939,28 @@ describe("access checks", () => {
 
     it("refuses a key that may not set environment variables", async () => {
       const readOnly = await convexAdapter.checkAccess(
-        convex(fakeFetch(() => ({ status: 200, body: { allowedOps: [], isReadOnly: true } }))),
+        convex(fakeFetch(() => ({ status: 200, body: { success: true, allowedOps: [], isReadOnly: true } }))),
       );
       expect(readOnly.status).toBe("permission-missing");
       const narrowed = await convexAdapter.checkAccess(
-        convex(fakeFetch(() => ({ status: 200, body: { allowedOps: ["ViewData"], isReadOnly: false } }))),
+        convex(fakeFetch(() => ({ status: 200, body: { success: true, allowedOps: ["ViewData"], isReadOnly: false } }))),
       );
       expect(narrowed.status).toBe("permission-missing");
       const allowed = await convexAdapter.checkAccess(
-        convex(fakeFetch(() => ({ status: 200, body: { allowedOps: ["WriteEnvironmentVariables"], isReadOnly: false } }))),
+        convex(fakeFetch(() => ({ status: 200, body: { success: true, allowedOps: ["WriteEnvironmentVariables"], isReadOnly: false } }))),
       );
       expect(allowed.status).toBe("ok");
+    });
+
+    it("accepts the March 2025 answer, and nothing that lacks success: true", async () => {
+      expect((await convexAdapter.checkAccess(convex(fakeFetch(() => ({ status: 200, body: { success: true } }))))).status).toBe("ok");
+      for (const body of [{}, { status: "ok" }, { allowedOps: [], isReadOnly: false }, [true]]) {
+        const result = await convexAdapter.checkAccess(convex(fakeFetch(() => ({ status: 200, body }))));
+        expect(result.status, JSON.stringify(body)).toBe("failed");
+        expect(result.message).toContain("does not answer like a Convex deployment");
+      }
+      const old = await convexAdapter.checkAccess(convex(fakeFetch(() => ({ status: 404 }))));
+      expect(old.message).toContain("before March 2025");
     });
 
     it("reports a key for another deployment, and a URL that is not one", async () => {

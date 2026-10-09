@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { foreign, unreachable, type AccessCheck } from "./access.js";
+import { foreign, isRecord, jsonBody, unreachable, type AccessCheck } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -41,9 +41,11 @@ import {
  *   also enforces per-deployment count and aggregate-size limits; those
  *   still reject a batch as a whole.
  *
- * - Access check: GET /api/check_admin_key, the dashboard's own key check;
- *   it answers {isReadOnly, allowedOps} (an empty list allows everything)
- *   and 403 for a key made for another deployment.
+ * - Access check: GET /api/check_admin_key, the dashboard's own key check.
+ *   Every backend with the route (since March 2025) answers
+ *   {"success": true}; since April 2026 also {allowedOps, isReadOnly} (an
+ *   empty list allows everything). A key made for another deployment is a
+ *   403. Self-hosted backends from before March 2025 have no such route.
  *
  * Functions read env vars live on each call — there is no restart concept,
  * so supportsRedeploy is false and no triggerRedeploy exists.
@@ -237,15 +239,16 @@ export const convexAdapter: PlatformAdapter = {
         };
       }
       if (res.status === 404) {
-        return { status: "not-found", where, httpStatus: 404, message: `No Convex deployment answered at ${host}. Check the deployment URL.` };
+        return {
+          status: "not-found",
+          where,
+          httpStatus: 404,
+          message: `No Convex deployment answered at ${host}. Check the deployment URL; a self-hosted backend from before March 2025 also answers this way.`,
+        };
       }
       if (!res.ok) return foreign("Convex", "deployment", host, res.status);
-      let key: { isReadOnly?: unknown; allowedOps?: unknown };
-      try {
-        key = (await res.json()) as typeof key;
-      } catch {
-        return { status: "failed", where, httpStatus: res.status, message: `${host} answered, but not like a Convex deployment. Check the deployment URL.` };
-      }
+      const key = await jsonBody(res);
+      if (!isRecord(key) || key.success !== true) return foreign("Convex", "deployment", host, res.status);
       const ops = Array.isArray(key.allowedOps) ? key.allowedOps : [];
       if (key.isReadOnly === true || (ops.length > 0 && !ops.includes("WriteEnvironmentVariables"))) {
         return {
