@@ -398,6 +398,47 @@ await page.waitForFunction(
 );
 check("requirement selector edited in place", true);
 
+// 6c. A requirement the form cannot represent (one Environment, devices
+// pinned by node ID, as the API allows) is shown in full and cannot be
+// edited: saving the tier/tag form over it would let more devices in.
+const asHuman = (method, path, body) =>
+  page.evaluate(
+    async ({ method, path, body }) => {
+      const { token } = await (await fetch("/auth/varlatch-token", { method: "POST", credentials: "include" })).json();
+      const res = await fetch(`/v1${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      return { status: res.status, json: res.status === 204 ? null : await res.json() };
+    },
+    { method, path, body },
+  );
+const prodEnv = await asHuman("GET", "/organizations/acme/projects/api/environments/production");
+const pinned = await asHuman("POST", "/organizations/acme/requirements", {
+  kind: "tailnet",
+  target: { kind: "environments", environmentIds: [prodEnv.json.id] },
+  selector: { tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"] },
+});
+check("device-pinned requirement created through the API", pinned.status === 201, `status ${pinned.status}`);
+await page.reload();
+await page.waitForSelector('[data-testid="access-tab-advanced"]', { timeout: 20000 });
+await page.click('[data-testid="access-tab-advanced"]');
+const pinnedRow = `[data-requirement="${pinned.json.id}"]`;
+await page.waitForSelector(`${pinnedRow} [data-target-environment]`, { timeout: 10000 });
+const pinnedText = await page.textContent(pinnedRow);
+check(
+  "device-pinned requirement names its environment and device",
+  pinnedText.includes("api / production") && pinnedText.includes("nE2eDevice1CNTRL"),
+  pinnedText,
+);
+check(
+  "device-pinned requirement cannot be edited in the form",
+  await page.isDisabled(`${pinnedRow} [data-testid="edit-requirement-${pinned.json.id}"]`),
+);
+const removed = await asHuman("DELETE", `/organizations/acme/requirements/${pinned.json.id}`);
+check("device-pinned requirement removed", removed.status === 204, `status ${removed.status}`);
+
 // 7. Broker capabilities (ADR-0022): oversight list + revoke-from-dashboard.
 // Broker/agent identities are created on the Machines tab first.
 await page.click('[data-testid="access-tab-machines"]');
