@@ -1037,6 +1037,16 @@ describe("destination listings", () => {
       expect(listing.truncated).toBe(true);
     });
 
+    it("stops after 30 pages even when none of them held the owner's repositories", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const others = Array.from({ length: 100 }, (_, i) => repo(`r${i}`, { owner: { login: "someone-else" } }));
+      const listing = await githubActionsAdapter.listDestinations!(
+        github(fakeFetch((url) => (url.endsWith("/users/acme") ? { status: 200, body: { login: "acme", type: "User" } } : { status: 200, body: others }), calls)),
+      );
+      expect(listing).toEqual({ check: expect.objectContaining({ status: "ok" }), items: [], truncated: true });
+      expect(calls).toHaveLength(31);
+    });
+
     it("fails like an access check, with no items", async () => {
       const rejected = await githubActionsAdapter.listDestinations!(github(fakeFetch(() => ({ status: 401 }))));
       expect(rejected).toEqual({ check: expect.objectContaining({ status: "credential-rejected" }), items: [], truncated: false });

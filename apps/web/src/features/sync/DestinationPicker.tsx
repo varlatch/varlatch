@@ -48,6 +48,8 @@ export function DestinationPicker({
     );
   }
   const { check, items, truncated } = listing.result;
+  // A truncated listing is partial: Varlatch stopped reading (at 1,000
+  // options, or after 30 GitHub pages), so more may exist than it shows.
   if (check.status !== "ok") {
     return (
       <div className="space-y-1.5" data-testid="destination-list" data-status="failed">
@@ -57,10 +59,17 @@ export function DestinationPicker({
     );
   }
   if (items.length === 0) {
+    // On the platform, one may have been created since: Try again lists anew.
     return (
-      <p className="text-[13px] text-muted" data-testid="destination-list" data-status="empty">
-        This credential sees no {noun.many}. {typeInstead}
-      </p>
+      <div className="flex items-center gap-3" data-testid="destination-list" data-status="empty" data-truncated={truncated}>
+        <p className="min-w-0 flex-1 text-[13px] text-muted">
+          {truncated
+            ? `Varlatch stopped reading before it found any ${noun.many} here: the credential sees more than Varlatch reads.`
+            : `This credential sees no ${noun.many}.`}{" "}
+          {typeInstead}
+        </p>
+        {retry}
+      </div>
     );
   }
 
@@ -98,10 +107,15 @@ export function DestinationPicker({
           No listed {noun.one} matches <Mono>{value.trim()}</Mono>. Varlatch uses it as typed; Review checks it.
         </p>
       )}
-      <p className="text-xs text-muted" data-testid="destination-list-count">
-        {shown.length === items.length ? `${items.length}` : `${shown.length} of ${items.length}`} {noun.many} this credential can see
-        {truncated ? ", the first 1,000" : ""}. Not listed? Type it; Review checks it.
-      </p>
+      <div className="flex items-center gap-3">
+        <p className="min-w-0 flex-1 text-xs text-muted" data-testid="destination-list-count">
+          {shown.length === items.length ? `${items.length}` : `${shown.length} of ${items.length}`} {noun.many} this credential can see
+          {truncated ? ", a partial list: Varlatch stopped reading early" : ""}. Not listed? Type it; Review checks it.
+        </p>
+        <Button size="sm" variant="ghost" data-testid="destination-retry" onClick={onRetry}>
+          Reload list
+        </Button>
+      </div>
     </div>
   );
 }

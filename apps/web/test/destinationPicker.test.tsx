@@ -173,6 +173,40 @@ describe("Destination step", () => {
     expect(options()).toEqual(["from-b"]);
   });
 
+  it("clears a picked destination when a new connection's owner changes", async () => {
+    await open([]);
+    await click("platform-card-github-actions");
+    await type("base-identity", "acme");
+    await type("connection-name", "GitHub");
+    await type("connection-credential", "test-token");
+    await click("wizard-next");
+    await settle(() => listings.calls[0]!.resolve(listed("api")));
+    await click("destination-option-api");
+    await type("dest-gh-environment", "production");
+
+    await click("wizard-back");
+    await type("base-identity", "other-owner");
+    await click("wizard-next");
+    expect(listings.calls[1]!.input).toMatchObject({ platform: "github-actions", baseIdentity: "other-owner" });
+    expect(byTestId("dest-repo").props.value).toBe("");
+    expect(byTestId("dest-gh-environment").props.value).toBe("");
+  });
+
+  it("keeps the destination when the owner is only retyped in another case", async () => {
+    await open([]);
+    await click("platform-card-github-actions");
+    await type("base-identity", "acme");
+    await type("connection-name", "GitHub");
+    await type("connection-credential", "test-token");
+    await click("wizard-next");
+    await settle(() => listings.calls[0]!.resolve(listed("api")));
+    await click("destination-option-api");
+    await click("wizard-back");
+    await type("base-identity", "Acme");
+    await click("wizard-next");
+    expect(byTestId("dest-repo").props.value).toBe("api");
+  });
+
   it("says when the credential sees nothing, and takes a typed name", async () => {
     await open([github("pcn_a", "acme")]);
     await toDestination("pcn_a");
@@ -181,6 +215,26 @@ describe("Destination step", () => {
     expect(text(byTestId("destination-list"))).toContain("This credential sees no repositories");
     await type("dest-repo", "not-created-yet");
     expect(byTestId("wizard-next").props.disabled).toBe(false);
+  });
+
+  it("offers Try again on an empty list, for a destination created since", async () => {
+    await open([github("pcn_a", "acme")]);
+    await toDestination("pcn_a");
+    await settle(() => listings.calls[0]!.resolve(listed()));
+    await click("destination-retry");
+    expect(listings.calls).toHaveLength(2);
+    await settle(() => listings.calls[1]!.resolve(listed("created-since")));
+    expect(options()).toEqual(["created-since"]);
+  });
+
+  it("reloads a loaded list too", async () => {
+    await open([github("pcn_a", "acme")]);
+    await toDestination("pcn_a");
+    await settle(() => listings.calls[0]!.resolve(listed("api")));
+    await click("destination-retry");
+    expect(listStatus()).toBe("pending");
+    await settle(() => listings.calls[1]!.resolve(listed("api", "new-repo")));
+    expect(options()).toEqual(["api", "new-repo"]);
   });
 
   it("shows why a listing failed, retries it, and still takes a typed name", async () => {
@@ -203,11 +257,19 @@ describe("Destination step", () => {
     expect(listStatus()).toBe("ok");
   });
 
-  it("says when the list stops at 1,000", async () => {
+  it("calls a truncated list partial, and never claims an empty one is complete", async () => {
     await open([github("pcn_a", "acme")]);
     await toDestination("pcn_a");
     await settle(() => listings.calls[0]!.resolve({ ...listed("api"), truncated: true }));
-    expect(text(byTestId("destination-list-count"))).toContain("the first 1,000");
+    expect(text(byTestId("destination-list-count"))).toContain("a partial list");
+    expect(text(byTestId("destination-list-count"))).not.toContain("1,000");
+
+    await click("destination-retry");
+    await settle(() => listings.calls[1]!.resolve({ ...listed(), truncated: true }));
+    const empty = text(byTestId("destination-list"));
+    expect(empty).not.toContain("This credential sees no repositories");
+    expect(empty).toContain("stopped reading before it found any repositories");
+    expect(all("destination-retry")).toHaveLength(1);
   });
 
   it("lists a Coolify team's applications by name, picks the UUID, and Review still checks it", async () => {

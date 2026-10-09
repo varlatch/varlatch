@@ -56,7 +56,10 @@ export interface DestinationOption {
 export interface DestinationListing {
   check: AccessCheck;
   items: DestinationOption[];
-  /** More exist than Varlatch reads (MAX_DESTINATIONS); type the exact name. */
+  /**
+   * The listing is partial: the adapter stopped reading (MAX_DESTINATIONS,
+   * or a page bound), so more may exist, even with no items.
+   */
   truncated: boolean;
 }
 

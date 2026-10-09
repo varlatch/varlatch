@@ -159,8 +159,8 @@ export function AddIntegrationDialog({
   useEffect(() => {
     if (step === 1 && listable && !destinations.settled && !destinations.pending) runListing();
   }, [step, listable, listKey, destinations.settled, destinations.pending, runListing]);
-  // Another connection is another account or instance: a destination picked
-  // for the previous one does not carry over.
+  // Another connection, platform, or base identity is another account or
+  // instance: a destination picked for the previous one does not carry over.
   const clearDestination = () => {
     setRepo("");
     setGhEnvironment("");
@@ -371,7 +371,12 @@ export function AddIntegrationDialog({
                             className="w-full"
                             placeholder={meta.identityPlaceholder}
                             value={baseIdentity}
-                            onChange={(e) => setBaseIdentity(e.target.value)}
+                            onChange={(e) => {
+                              // Another account or instance: a destination picked for the
+                              // previous one does not carry over.
+                              if (e.target.value.trim().toLowerCase() !== baseIdentity.trim().toLowerCase()) clearDestination();
+                              setBaseIdentity(e.target.value);
+                            }}
                           />
                         </Field>
                         <Field label="Name" hint="How this connection shows up in Varlatch.">
