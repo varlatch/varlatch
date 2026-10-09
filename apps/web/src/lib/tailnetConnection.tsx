@@ -66,15 +66,26 @@ export function tailnetReadKey(connection: TailnetConnection): string {
   return connection.status === "connected" ? `tailnet:${connection.device.nodeId ?? ""}` : "ordinary";
 }
 
-/** Calls `run` with a signal that aborts after `ms`, as a TimeoutError. */
+/**
+ * Runs `run` with a signal that aborts after `ms` (or when `given` aborts),
+ * and settles by then whatever `run` is waiting for, a token re-exchange
+ * included: the operation as a whole has the deadline, not only its fetch.
+ */
 async function withTimeout<T>(ms: number, given: AbortSignal | null | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  if (given) return run(given);
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(new DOMException("The tailnet endpoint did not answer in time", "TimeoutError")), ms);
+  const forward = () => ctl.abort(given!.reason);
+  if (given?.aborted) forward();
+  else given?.addEventListener("abort", forward, { once: true });
+  const deadline = new Promise<never>((_, reject) => {
+    if (ctl.signal.aborted) reject(ctl.signal.reason);
+    else ctl.signal.addEventListener("abort", () => reject(ctl.signal.reason), { once: true });
+  });
   try {
-    return await run(ctl.signal);
+    return await Promise.race([run(ctl.signal), deadline]);
   } finally {
     clearTimeout(timer);
+    given?.removeEventListener("abort", forward);
   }
 }
 

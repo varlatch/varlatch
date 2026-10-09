@@ -12,6 +12,7 @@ vi.mock("@better-auth/passkey/client", () => ({ passkeyClient: () => ({}) }));
 import { SessionProvider } from "../src/lib/session";
 import {
   PROBE_TIMEOUT_MS,
+  READ_TIMEOUT_MS,
   TailnetConnectionProvider,
   TailnetUnreachableError,
   useTailnetConnection,
@@ -198,5 +199,78 @@ describe("the tailnet browser endpoint, from the dashboard", () => {
     expect(state.connection.status).toBe("unrecognized");
     expect(client.getQueryData(["effective-values", "acme", "api", "production", true, "tailnet:nLAPTOP"])).toBeUndefined();
     expect(client.getQueryData(["effective-values", "acme", "api", "development", false, "ordinary"])).toEqual({ plain: "kept" });
+  });
+
+  describe("deadlines cover a token re-exchange (review regression)", () => {
+    /** The dashboard's own token exchange stalls until `release` is called. */
+    let release: () => void;
+    const stallExchange = () => {
+      const usual = globalThis.fetch;
+      let answer!: (r: Response) => void;
+      const stalled = new Promise<Response>((r) => (answer = r));
+      release = () => answer(Response.json({ token: "bearer-2", identityId: "idn_me" }));
+      vi.stubGlobal("fetch", async (input: unknown, init: RequestInit = {}) => {
+        if (String(input).endsWith("/auth/varlatch-token")) {
+          sent.push({ url: String(input), method: init.method ?? "GET", credentials: init.credentials, auth: undefined });
+          return stalled;
+        }
+        return usual(input as RequestInfo, init);
+      });
+    };
+
+    it("Connect settles at four seconds while the re-exchange after a 401 stalls", async () => {
+      await mount();
+      stallExchange();
+      endpoint = async () => new Response(null, { status: 401 });
+      vi.useFakeTimers();
+      await act(async () => state.connect());
+      await act(async () => void (await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS - 1)));
+      expect(state.connection.status).toBe("connecting");
+      await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
+      expect(state.connection).toMatchObject({ status: "unreachable" });
+      // The exchange lands late: nothing is asked again.
+      const before = toEndpoint().length;
+      await act(async () => {
+        release();
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(toEndpoint()).toHaveLength(before);
+      expect(state.connection.status).toBe("unreachable");
+    });
+
+    it("a protected read settles at its deadline, and a disclosure given up on is never sent again", async () => {
+      endpoint = async () => Response.json(DEVICE);
+      await mount();
+      await connect();
+      const reader = state.client!;
+      stallExchange();
+      endpoint = async (url) => (url.endsWith("/v1/tailnet/context") ? Response.json(DEVICE) : new Response(null, { status: 401 }));
+      vi.useFakeTimers();
+      let read: unknown = "pending";
+      let disclosure: unknown = "pending";
+      await act(async () => {
+        void reader.effectiveConfiguration("acme", "api", "production", { includeValues: true }).then(
+          () => (read = "resolved"),
+          (e: unknown) => (read = e),
+        );
+        void reader.discloseSecrets("acme", "api", "production", { scope: "all-authorized-secrets" }).then(
+          () => (disclosure = "resolved"),
+          (e: unknown) => (disclosure = e),
+        );
+      });
+      await act(async () => void (await vi.advanceTimersByTimeAsync(READ_TIMEOUT_MS - 1)));
+      expect(read).toBe("pending");
+      expect(disclosure).toBe("pending");
+      await act(async () => void (await vi.advanceTimersByTimeAsync(2)));
+      expect(read).toBeInstanceOf(TailnetUnreachableError);
+      expect(disclosure).toBeInstanceOf(TailnetUnreachableError);
+      // The re-exchange lands after the deadline: the disclosure is not replayed, and neither is the read.
+      await act(async () => {
+        release();
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 10);
+      });
+      expect(toEndpoint().filter((r) => r.url.endsWith("/disclosures"))).toHaveLength(1);
+      expect(toEndpoint().filter((r) => r.url.includes("/effective-configuration"))).toHaveLength(1);
+    });
   });
 });
