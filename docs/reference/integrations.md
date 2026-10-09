@@ -58,7 +58,12 @@ Create the token on GitHub under **Settings**, **Developer settings**,
    secrets, **Environments: Read and write** for environment secrets.
    GitHub adds **Metadata: Read-only** itself.
 4. **Expiration**: when the token expires, pushes stop with "Credential
-   rejected" until you replace it under Connections. Note the date.
+   rejected" until you replace it under Connections. Varlatch shows the
+   date GitHub reports: in the check while you create or replace the
+   credential, and on the connection once it has used the token. From two
+   weeks ahead it warns on the connection and on every integration that
+   uses it, and a dialog asks before saving a token that expires within
+   two weeks. A token without an expiry gets no date: GitHub reports none.
 
 To push to another repository later, add it to the token's repository
 access on GitHub; the token stays the same, so use **Check again** on the
