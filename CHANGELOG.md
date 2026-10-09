@@ -7,6 +7,46 @@ fixes.
 
 ## Unreleased (0.16.1)
 
+### Machine identities
+
+- **A credential can say whose it is.** `GET /v1/me` (capability
+  `identity.whoami`) tells any authenticated caller, a person or a
+  machine, which identity its credential belongs to (`id`, `name`,
+  `kind`, and for a person the profile's `email`), that identity's
+  organization (null for a person, who joins organizations as a member),
+  the credential the request presented (`id`, `name`, `kind`,
+  `expiresAt`; never the token, never the identity's other credentials),
+  and the listener the request came in on. On the tailnet listeners it
+  adds `tailnet`: the device WhoIs resolved the connection to, with its
+  machine name (`nodeName`), or `recognized: false` and why, exactly as
+  `GET /v1/tailnet/context` reports it. It needs no grant and describes
+  the caller only. It is not a cross-origin route on the tailnet browser
+  endpoint. Before, a machine could not find out: `/v1/me/profile` is for
+  people, `/v1/me/credentials` lists credentials by name, and
+  `/v1/organizations` lists memberships, which machines have none of. Now a
+  program that shares its host's identity with others can, for instance,
+  find the host's own environment from the identity's name. A successful
+  call records no audit event, like the other `/v1/me` reads; a refused
+  credential (revoked, expired, spent, or of a retired identity) gets 401
+  and is recorded as `authentication.failed`, as everywhere. SDK:
+  `whoami()`.
+- CLI: `varlatch whoami [--server <url>] [--json]` prints the identity,
+  organization, credential, listener, and device for the credential the
+  CLI would use: `VARLATCH_TOKEN`, else the stored one. The server is
+  `--server`, `VARLATCH_SERVER`, the repository's, or else the only one
+  with a stored credential. Against an older server it says so and exits 1.
+  `varlatch status --probe --json` adds each valid credential's `identity`
+  and `organization` where the server can say; the human format of
+  `status` does not change.
+- MCP: `varlatch_whoami` adds `caller`, the same answer, or `null` with
+  `callerUnavailable` saying why (an older server, a refused credential).
+- **For programs that rely on it:** fall back to another way of finding
+  the identity only when the server lacks `identity.whoami`. A refused
+  credential, a server error, or an identity that is not the expected one
+  (organization, naming convention) is an error to report: identities can
+  be renamed. Each call is an authenticated request, so it spends a use of
+  a use-limited credential; ask once per process and keep the answer.
+
 ### Tailnet
 
 - **The tailnet listener refuses two more kinds of device.** A device

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
+import { VarlatchApiError, type VarlatchClient, type WhoAmI } from "@varlatch/sdk";
 
 export interface McpDefaults {
   organization?: string;
@@ -156,17 +156,41 @@ export function createVarlatchMcpServer(options: VarlatchMcpOptions): McpServer 
   server.registerTool(
     "varlatch_whoami",
     {
-      title: "Server and context info",
+      title: "Caller, server, and context info",
       description:
-        "Show the varlatch server, resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.",
+        "Show who this MCP server acts as (the identity, its organization, and the credential, a person's or a machine's), the varlatch server, the resolved default organization/project/environment, and whether this MCP server was started with writes enabled. No tool ever returns a Secret's value.",
       inputSchema: {},
     },
     () =>
       run(async () => {
         const meta = await client.meta();
-        return { server: client.server, meta, defaults, allowWrites, secretValues: "never returned or written through MCP" };
+        return {
+          server: client.server,
+          ...(await caller(meta.capabilities, meta.serverVersion)),
+          meta,
+          defaults,
+          allowWrites,
+          secretValues: "never returned or written through MCP",
+        };
       }),
   );
+
+  /**
+   * The caller from GET /v1/me (capability identity.whoami), or why there
+   * is none: an older server, or a credential the server refuses. Either
+   * way the rest of whoami still answers, as it did before.
+   */
+  async function caller(capabilities: string[], serverVersion: string): Promise<{ caller: WhoAmI | null; callerUnavailable?: string }> {
+    if (!capabilities.includes("identity.whoami")) {
+      return { caller: null, callerUnavailable: `this server (${serverVersion}) cannot say who a credential belongs to (no identity.whoami capability)` };
+    }
+    try {
+      return { caller: await client.whoami() };
+    } catch (err) {
+      if (!(err instanceof VarlatchApiError)) throw err;
+      return { caller: null, callerUnavailable: `varlatch API error ${err.status} (${err.code}, request ${err.requestId}): ${err.message}` };
+    }
+  }
 
   server.registerTool(
     "varlatch_list_organizations",

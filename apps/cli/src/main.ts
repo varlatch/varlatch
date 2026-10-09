@@ -62,7 +62,6 @@ import {
   formatStatusHuman,
   repoStatus,
   serverStatus,
-  type ProbeState,
   type ServerStatus,
   type StatusDocument,
 } from "./status.js";
@@ -333,7 +332,7 @@ function warnIfExpiring(server: string): void {
  * credential is looked up, and a missing one refused (77), when the command
  * first talks to the server, always before any child process starts.
  */
-function client(ctx: ResolvedContext): VarlatchClient {
+function client(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   let connected: VarlatchClient | null = null;
   const connect = (): VarlatchClient => (connected ??= connectClient(ctx));
   return new Proxy({} as VarlatchClient, {
@@ -345,7 +344,7 @@ function client(ctx: ResolvedContext): VarlatchClient {
   });
 }
 
-function connectClient(ctx: ResolvedContext): VarlatchClient {
+function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   const token = loadToken(ctx.server);
   const agentRun = agentRunOf();
   if (!token && agentRun) {
@@ -372,10 +371,10 @@ function connectClient(ctx: ResolvedContext): VarlatchClient {
 async function probeServer(
   server: string,
   token: string,
-): Promise<{ state: ProbeState; detail: string | null }> {
+): Promise<NonNullable<ServerStatus["probe"]>> {
   try {
     const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
-    await api.meta();
+    const meta = await api.meta();
     // Verifies the credential AND identifies it: OwnCredential.current marks
     // the one authenticating this request, so a probe can backfill store
     // metadata that pre-ADR-0032 logins never recorded.
@@ -392,7 +391,16 @@ async function probeServer(
       };
       if (JSON.stringify(backfilled) !== JSON.stringify(stored)) saveCredential(server, backfilled);
     }
-    return { state: "valid", detail: null };
+    // The resolved identity (ADR-0032 Decision 3), where the server can say.
+    const { WHOAMI_CAPABILITY } = await import("./whoami.js");
+    if (!meta.capabilities.includes(WHOAMI_CAPABILITY)) return { state: "valid", detail: null };
+    const { identity, organization } = await api.whoami();
+    return {
+      state: "valid",
+      detail: null,
+      identity: { id: identity.id, name: identity.name, kind: identity.kind },
+      organization: organization ? { id: organization.id, slug: organization.slug, name: organization.name } : null,
+    };
   } catch (err) {
     if (err instanceof VarlatchApiError) return { state: "invalid", detail: err.code };
     return { state: "unreachable", detail: err instanceof Error ? err.message : String(err) };
@@ -669,6 +677,42 @@ async function credentialIssue(args: string[], assisted: AssistedMode): Promise<
   console.log(`Issued credential ${issued.id} (${issued.name}) for ${identityId}; ${limits}.`);
   console.log(`The token is in ${file}, readable by you only, and is never shown again.`);
   if (assisted.on) console.log("The file holds a credential: do not print or read it; give its path to the program that uses it.");
+}
+
+const WHOAMI_USAGE = "Usage: varlatch whoami [--server <url>] [--json]";
+
+/** Parsed strictly: a misspelled option is a usage error (64), never ignored. */
+const WHOAMI_OPTIONS: OptionSpec = { values: ["--server"], booleans: ["--json"] };
+
+/**
+ * `varlatch whoami` (whoami.ts): the identity, organization, and credential
+ * the credential this CLI would use belongs to, a person's or a machine's.
+ */
+async function whoamiCommand(args: string[]): Promise<void> {
+  const parsed = strictOptions("whoami", args, WHOAMI_OPTIONS, WHOAMI_USAGE);
+  const { WhoamiUnsupportedError, fetchWhoami, formatWhoamiHuman, whoamiServer } = await import("./whoami.js");
+  const stored = listCredentials().map((entry) => entry.server);
+  const server = whoamiServer({ server: parsed.values.get("--server"), env: process.env, cwd: process.cwd(), stored });
+  if (!server) {
+    usageError(
+      stored.length > 1
+        ? `varlatch whoami: credentials are stored for ${stored.join(", ")}; pass --server <url>\n${WHOAMI_USAGE}`
+        : `varlatch whoami: no server; pass --server <url>, set VARLATCH_SERVER, or run inside a varlatch repository\n${WHOAMI_USAGE}`,
+    );
+  }
+  let caller: Awaited<ReturnType<typeof fetchWhoami>>;
+  try {
+    caller = await fetchWhoami(client({ server }));
+  } catch (err) {
+    if (err instanceof WhoamiUnsupportedError) fail(err.message);
+    throw err;
+  }
+  const base = server.replace(/\/+$/, "");
+  if (parsed.booleans.has("--json")) {
+    printJson({ server: base, ...caller });
+    return;
+  }
+  console.log(formatWhoamiHuman(base, caller));
 }
 
 async function main(): Promise<void> {
@@ -1014,6 +1058,11 @@ async function main(): Promise<void> {
         }
         const doc: StatusDocument = { version: STATUS_SCHEMA_VERSION, servers, repo };
         console.log(has(args, "--json") ? JSON.stringify(doc, null, 2) : formatStatusHuman(doc));
+        return;
+      }
+
+      case "whoami": {
+        await whoamiCommand(args);
         return;
       }
 

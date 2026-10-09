@@ -44,6 +44,23 @@ describe("organization rename", () => {
   });
 });
 
+describe("whoami", () => {
+  it("gets /v1/me with the client's credential and returns the caller", async () => {
+    const caller = {
+      identity: { id: "idn_1", name: "runner-macmini", kind: "service", email: null },
+      organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-10-01T00:00:00.000Z" },
+      credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
+      listener: "tailnet",
+      tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
+    };
+    const { requests, client } = recorder(() => new Response(JSON.stringify(caller)));
+    await expect(client.whoami()).resolves.toEqual(caller);
+    expect(requests).toMatchObject([
+      { method: "GET", url: "https://v.example/v1/me", headers: { Authorization: "Bearer vlt_cli_x" }, body: undefined },
+    ]);
+  });
+});
+
 describe("machine credential issuance", () => {
   it("posts the name and the optional limits to the identity's credentials", async () => {
     const issued = { id: "crd_1", kind: "service", name: "backup job", token: "vlt_svc_x", expiresAt: null, maxUses: null };

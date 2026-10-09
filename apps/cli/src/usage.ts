@@ -29,6 +29,8 @@ Usage:
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
   varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
+  varlatch whoami [--server <url>] [--json]              # who this credential belongs to: identity, organization, credential
+               (a person's or a machine's; uses VARLATCH_TOKEN, else the stored credential, as every command does)
   varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
                (also writes the files coding agents read, as agents install does; --no-agent-files skips them)
   varlatch agents guide [setup|run|agent-run|self-hosting|contract]

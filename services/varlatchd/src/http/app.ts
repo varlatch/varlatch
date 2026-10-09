@@ -9,7 +9,7 @@ import {
   semanticsVersionOf,
   type ConfigurationContract,
 } from "@varlatch/contract";
-import { CAPABILITIES } from "@varlatch/protocol";
+import { CAPABILITIES, type TailnetDevice } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { authenticateBearer } from "../auth/credentials.js";
 import { clientLabel } from "../auth/client-label.js";
@@ -173,6 +173,28 @@ type Vars = {
   /** What the tailnet listener resolved the peer to, or why not (for audit, ADR-0046 Decision 8). */
   tailnetResolution: Record<string, unknown> | undefined;
 };
+
+/**
+ * The device a tailnet listener request's own connection resolved to, or
+ * why there is none, in the protocol's TailnetDevice shape (ADR-0046
+ * Decision 5). The one serializer for GET /v1/tailnet/context and the
+ * tailnet field of GET /v1/me; it evaluates no Requirement.
+ */
+function tailnetDeviceOf(c: Context<{ Variables: Vars }>): TailnetDevice {
+  const device = c.get("tailnetContext");
+  if (!device) {
+    const resolution = c.get("tailnetResolution") as { refused?: TailnetDevice["reason"] } | undefined;
+    return { recognized: false, reason: resolution?.refused ?? "unrecognized" };
+  }
+  return {
+    recognized: true,
+    tailnet: device.tailnet,
+    nodeId: device.nodeId,
+    ...(device.nodeName ? { nodeName: device.nodeName } : {}),
+    tags: device.tags,
+    ...(device.userLogin ? { userLogin: device.userLogin } : {}),
+  };
+}
 
 export interface BuildAppOptions {
   /** JWT issuer identifier for Application Plane tokens (public URL). */
@@ -639,6 +661,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       identity: result.identity,
       credentialId: result.credential.id,
       credentialKind: result.credential.kind,
+      credentialName: result.credential.name,
+      credentialExpiresAt: result.credential.expires_at,
       authSessionId: result.credential.auth_session_id ?? null,
     });
     // The rest of the request is attributed to this credential and client:
@@ -666,21 +690,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // connection; evaluates no Requirement. The dashboard's Connect action
   // (ADR-0046 Decision 5).
   if (options.tailnetBrowser) {
-    app.get("/v1/tailnet/context", (c) => {
-      const device = c.get("tailnetContext");
-      if (!device) {
-        const resolution = c.get("tailnetResolution") as { refused?: string } | undefined;
-        return c.json({ recognized: false, reason: resolution?.refused ?? "unrecognized" });
-      }
-      return c.json({
-        recognized: true,
-        tailnet: device.tailnet,
-        nodeId: device.nodeId,
-        ...(device.nodeName ? { nodeName: device.nodeName } : {}),
-        tags: device.tags,
-        ...(device.userLogin ? { userLogin: device.userLogin } : {}),
-      });
-    });
+    app.get("/v1/tailnet/context", (c) => c.json(tailnetDeviceOf(c)));
   }
 
   app.get("/v1/installation/backups", (c) => {
@@ -707,6 +717,55 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       installationAdmin: principal.identity.installation_admin,
     });
     return c.json(minted);
+  });
+
+  // ---- Who am I (capability identity.whoami): the caller as this request
+  // authenticated it, for any principal, human or machine, with no Grant.
+  // Only the caller's own identity, organization, presenting credential and
+  // connection: nothing here can name another identity, so there is nothing
+  // to hide. As for the other /v1/me reads, a successful call records no
+  // audit event (ADR-0016: describing the caller exercises no authority); a
+  // refused credential is the bearer middleware's authentication.failed.
+  app.get("/v1/me", async (c) => {
+    const principal = c.get("principal");
+    const { identity } = principal;
+    let email: string | null = null;
+    let organization: ReturnType<typeof serialize.org> | null = null;
+    if (identity.kind === "human") {
+      // The profile's email; its image (up to 100 KB) stays in /v1/me/profile.
+      const res = await ctx.db.query(
+        `SELECT u."email" AS email
+         FROM auth_user_links l JOIN "user" u ON u.id = l.better_auth_user_id
+         WHERE l.identity_id = $1`,
+        [identity.id],
+      );
+      email = (res.rows[0] as { email: string | null } | undefined)?.email ?? null;
+    } else if (identity.organization_id) {
+      // A machine identity belongs to exactly one organization; a human to
+      // none, joining organizations as a member (GET /v1/organizations).
+      const res = await ctx.db.query("SELECT * FROM organizations WHERE id = $1 AND deleted_at IS NULL", [
+        identity.organization_id,
+      ]);
+      const row = res.rows[0] as OrgRow | undefined;
+      organization = row ? serialize.org(row) : null;
+    }
+    const listener = options.resolveTailnetContext ? "tailnet" : "ordinary";
+    // On the tailnet listener, the device this request's own connection
+    // resolved to, as GET /v1/tailnet/context reports it.
+    const tailnet = listener === "tailnet" ? tailnetDeviceOf(c) : undefined;
+    return c.json({
+      identity: { id: identity.id, name: identity.name, kind: identity.kind, email },
+      organization,
+      // The presenting credential only, never its token or its siblings.
+      credential: {
+        id: principal.credentialId,
+        name: principal.credentialName ?? null,
+        kind: principal.credentialKind,
+        expiresAt: principal.credentialExpiresAt ? iso(principal.credentialExpiresAt) : null,
+      },
+      listener,
+      ...(tailnet ? { tailnet } : {}),
+    });
   });
 
   // ---- My profile (user-scoped). Humans only: the display name and the

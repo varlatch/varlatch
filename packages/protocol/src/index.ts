@@ -24,6 +24,10 @@ export type DisclosurePurpose = components["schemas"]["DisclosurePurpose"];
 export type ContractRevision = components["schemas"]["ContractRevision"];
 export type Identity = components["schemas"]["Identity"];
 export type Profile = components["schemas"]["Profile"];
+/** The caller as its request authenticated it: GET /v1/me (capability identity.whoami). */
+export type WhoAmI = components["schemas"]["WhoAmI"];
+/** A tailnet listener request's device, or why there is none. */
+export type TailnetDevice = components["schemas"]["TailnetDevice"];
 export type CreatedIdentity = components["schemas"]["CreatedIdentity"];
 export type Invitation = components["schemas"]["Invitation"];
 export type InvitationStatus = components["schemas"]["InvitationStatus"];

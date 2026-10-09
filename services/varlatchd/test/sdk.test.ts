@@ -14,6 +14,7 @@ import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
 let client: VarlatchClient;
+let fetchImpl: typeof fetch;
 
 beforeEach(async () => {
   const db = await migratedTestDb();
@@ -24,7 +25,7 @@ beforeEach(async () => {
   const cred = await issueCredential(ctx.db, { identityId, kind: "cli" });
   const app = buildApp(ctx);
   // The SDK exercises the exact same /v1 surface third parties get (ADR-0018 §7).
-  const fetchImpl: typeof fetch = (input, init) =>
+  fetchImpl = (input, init) =>
     app.request(input instanceof Request ? input : String(input).replace("http://varlatch", ""), init);
   client = new VarlatchClient({ server: "http://varlatch", token: cred.token, fetch: fetchImpl });
 });
@@ -144,6 +145,30 @@ describe("SDK against the real app", () => {
       .deleteEnvironment("acme", "api", "development")
       .catch((e: unknown) => e);
     expect((gone as VarlatchApiError).code).toBe("RESOURCE_NOT_FOUND");
+  });
+
+  it("says who the caller is, a person or a machine, and refuses a revoked credential (identity.whoami)", async () => {
+    expect((await client.meta()).capabilities).toContain("identity.whoami");
+    expect(await client.whoami()).toMatchObject({
+      identity: { kind: "human", name: "Jeremy", email: null },
+      organization: null,
+      credential: { kind: "cli" },
+      listener: "ordinary",
+    });
+    await client.createOrganization({ name: "Acme", slug: "acme" });
+    const runner = await client.createIdentity("acme", { name: "runner-macmini", kind: "service" });
+    const issued = await client.issueMachineCredential("acme", runner.id, { name: "desktop-runner" });
+    const machine = new VarlatchClient({ server: "http://varlatch", token: issued.token, fetch: fetchImpl });
+    expect(await machine.whoami()).toEqual({
+      identity: { id: runner.id, name: "runner-macmini", kind: "service", email: null },
+      organization: expect.objectContaining({ slug: "acme", name: "Acme" }),
+      credential: { id: issued.id, name: "desktop-runner", kind: "service", expiresAt: null },
+      listener: "ordinary",
+    });
+    await client.revokeIdentityCredential("acme", runner.id, issued.id);
+    const refused = await machine.whoami().catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(VarlatchApiError);
+    expect((refused as VarlatchApiError).code).toBe("INVALID_CREDENTIAL");
   });
 
   it("surfaces the error envelope as typed errors", async () => {

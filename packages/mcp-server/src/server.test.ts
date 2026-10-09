@@ -219,6 +219,43 @@ describe("varlatch MCP server", () => {
     expect(requests).toMatchObject([{ method: "DELETE", url: expect.stringContaining("/environments/production/values/API_KEY") }]);
   });
 
+  describe("varlatch_whoami", () => {
+    const caller = {
+      identity: { id: "idn_1", name: "runner-macmini", kind: "service", email: null },
+      organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-09-01T00:00:00.000Z" },
+      credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
+      listener: "tailnet",
+      tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
+    };
+    const meta = (capabilities: string[]) => ({ apiMajor: 1, serverVersion: "0.17.0", capabilities });
+    const whoami = async (responses: Record<string, unknown>) => {
+      const { client, requests } = fakeClient(responses);
+      const mcp = await connect({ client, defaults });
+      const result = await mcp.callTool({ name: "varlatch_whoami", arguments: {} });
+      expect(result.isError).toBeFalsy();
+      return { body: JSON.parse(textOf(result)) as Record<string, unknown>, requests };
+    };
+
+    it("names the caller: identity, organization, credential, and device, never a token", async () => {
+      const { body, requests } = await whoami({ "/v1/meta": meta(["identity.whoami"]), "/v1/me": caller });
+      expect(body).toMatchObject({ server: "https://varlatch.test", caller, defaults, allowWrites: false });
+      expect(body).not.toHaveProperty("callerUnavailable");
+      expect(JSON.stringify(body)).not.toContain("tok");
+      expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/meta", "/v1/me"]);
+    });
+
+    it("on a server without identity.whoami, says so and still answers, without asking /v1/me", async () => {
+      const { body, requests } = await whoami({ "/v1/meta": meta([]) });
+      expect(body).toMatchObject({ caller: null, callerUnavailable: expect.stringMatching(/no identity\.whoami capability/), defaults });
+      expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/meta"]);
+    });
+
+    it("with a credential the server refuses, says why and still answers", async () => {
+      const { body } = await whoami({ "/v1/meta": meta(["identity.whoami"]), "/v1/me": { status: 401, error: "INVALID_CREDENTIAL" } });
+      expect(body).toMatchObject({ caller: null, callerUnavailable: expect.stringMatching(/401 \(INVALID_CREDENTIAL/) });
+    });
+  });
+
   it("returns a tool error when scope cannot be resolved", async () => {
     const { client } = fakeClient({});
     const mcp = await connect({ client, defaults: {} });

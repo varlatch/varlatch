@@ -43,6 +43,14 @@ const REPORTS: Record<string, unknown> = {
   },
 };
 
+const WHOAMI = {
+  identity: { id: "idn_1", name: "runner-macmini", kind: "service", email: null },
+  organization: { id: "org_1", slug: "acme", name: "Acme", createdAt: "2026-09-01T00:00:00.000Z" },
+  credential: { id: "crd_1", name: "desktop-runner", kind: "service", expiresAt: null },
+  listener: "tailnet",
+  tailnet: { recognized: true, tailnet: "example.ts.net", nodeId: "nRunner", nodeName: "macmini", tags: ["tag:desktop-runner"] },
+};
+
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   req.resume();
   req.on("end", () => {
@@ -66,6 +74,22 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (auth === "Bearer vlt_html200") {
       res.writeHead(200, { "Content-Type": "text/html" });
       return res.end("<html><body>portal-page-marker</body></html>");
+    }
+    // vlt_old: a server from before GET /v1/me (no identity.whoami).
+    if (url === "/v1/meta") {
+      return json(200, {
+        apiMajor: 1,
+        serverVersion: auth === "Bearer vlt_old" ? "0.16.0" : "0.17.0",
+        semanticsVersions: [1, 2, 3],
+        capabilities: auth === "Bearer vlt_old" ? ["identity.lifecycle"] : ["identity.lifecycle", "identity.whoami"],
+      });
+    }
+    if (url === "/v1/me") return json(200, WHOAMI);
+    if (url === "/v1/me/credentials") {
+      return json(200, {
+        items: [{ id: "crd_1", kind: "service", name: "desktop-runner", createdAt: "2026-09-01T00:00:00.000Z", expiresAt: null, current: true }],
+        nextCursor: null,
+      });
     }
     if (url === "/v1/organizations") return json(200, { items: [{ id: "org_1", slug: "acme", name: "Acme" }] });
     if (url === `${ORG}/projects`) return json(200, { items: [{ slug: "web", name: "Web", contractAuthority: "git", id: "prj_1" }] });
@@ -180,7 +204,7 @@ describe("help", () => {
   });
 
   it("every command has help entries", () => {
-    const commands = ["login", "logout", "status", "init", "context", "env", "run", "validate", "values", "import", "contract", "types", "sync", "admin", "setup", "adopt", "doctor", "scan", "invite", "tailnet", "audit", "org", "project", "env-create", "env-delete", "identity", "credential", "self-update", "upgrade", "request", "mcp", "agents"];
+    const commands = ["login", "logout", "status", "whoami", "init", "context", "env", "run", "validate", "values", "import", "contract", "types", "sync", "admin", "setup", "adopt", "doctor", "scan", "invite", "tailnet", "audit", "org", "project", "env-create", "env-delete", "identity", "credential", "self-update", "upgrade", "request", "mcp", "agents"];
     for (const command of commands) expect(commandHelp(command), command).not.toBeNull();
     expect(commandHelp("nosuch")).toBeNull();
   });
@@ -212,6 +236,8 @@ describe("exit statuses", () => {
     ["an unknown org subcommand", ["org", "bogus"]],
     ["org create without a slug", ["org", "create"]],
     ["credential list without an identity", ["credential", "list"]],
+    ["an unknown whoami option", ["whoami", "--jsno"]],
+    ["whoami with an argument", ["whoami", "me"]],
   ];
 
   it.each(malformed)("%s: 64 (usage) with a credential, before any request", async (_name, args) => {
@@ -337,6 +363,11 @@ describe("--json documents", () => {
     });
   });
 
+  it("whoami: the caller as the server answers, never a token", async () => {
+    expect(await doc(["whoami"])).toEqual({ version: 1, server: origin, ...WHOAMI });
+    expect(requests.map((r) => r.url)).toEqual(["/v1/meta", "/v1/me"]);
+  });
+
   it("audit list and tailnet requirements carry the server's records", async () => {
     expect(await doc(["audit", "list"])).toMatchObject({ version: 1, organization: "acme", events: [{ id: "evt_1", eventType: "value.set" }] });
     expect(await doc(["tailnet", "requirements"])).toMatchObject({ version: 1, organization: "acme", requirements: [{ id: "req_t1" }] });
@@ -376,5 +407,89 @@ describe("--json documents", () => {
       deleted: false,
     });
     for (const r of [plan, done]) expect(r.stdout + r.stderr).not.toContain("import-json-canary-17");
+  });
+});
+
+describe("whoami", () => {
+  it("prints the identity, organization, credential, listener, and device", async () => {
+    const r = await cli(["whoami"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toBe(
+      [
+        "Identity      runner-macmini (service, idn_1)",
+        "Organization  acme (Acme, org_1)",
+        "Credential    desktop-runner (service, crd_1), no expiry",
+        `Server        ${origin} (tailnet listener)`,
+        "Device        macmini (nRunner), tags tag:desktop-runner, on example.ts.net",
+        "",
+      ].join("\n"),
+    );
+    expect(r.stdout + r.stderr).not.toContain("vlt_test");
+  });
+
+  it("asks the server --server names, outside any repository too", async () => {
+    const elsewhere = mkdtempSync(join(tmpdir(), "varlatch-whoami-"));
+    try {
+      const r = await new Promise<Result>((resolve) => {
+        const child = spawn(process.execPath, [bundle, "whoami", "--server", `${origin}/`, "--json"], {
+          cwd: elsewhere,
+          env: { PATH: process.env.PATH, HOME: elsewhere, VARLATCH_CONFIG_DIR: join(elsewhere, "config"), VARLATCH_TOKEN: "vlt_test", VARLATCH_ASSISTED: "0" },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+        child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+        child.on("close", (code) => resolve({ code, stdout, stderr }));
+      });
+      expect(r.code, r.stderr).toBe(0);
+      expect(JSON.parse(r.stdout)).toMatchObject({ version: 1, server: origin, identity: { name: "runner-macmini" } });
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("against a server without identity.whoami: 1, saying so, and never asks /v1/me", async () => {
+    const r = await cli(["whoami"], { VARLATCH_TOKEN: "vlt_old" });
+    expect(r.code).toBe(EXIT.failure);
+    expect(r.stderr).toMatch(/this server \(0\.16\.0\) cannot say which identity a credential belongs to \(it lacks the identity\.whoami capability\)/);
+    expect(requests.map((r) => r.url)).toEqual(["/v1/meta"]);
+  });
+
+  it("status --probe --json adds what the stored credential resolves to; its human format does not change", async () => {
+    const config = join(dir, "probe-config");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "credentials.json"), JSON.stringify({ servers: { [origin]: { token: "vlt_test" } } }));
+    const env = { VARLATCH_CONFIG_DIR: config, VARLATCH_TOKEN: "" };
+    const machine = await cli(["status", "--probe", "--json"], env);
+    expect(machine.code, machine.stderr).toBe(0);
+    expect(JSON.parse(machine.stdout).servers).toMatchObject([
+      {
+        server: origin,
+        probe: {
+          state: "valid",
+          detail: null,
+          identity: { id: "idn_1", name: "runner-macmini", kind: "service" },
+          organization: { id: "org_1", slug: "acme", name: "Acme" },
+        },
+      },
+    ]);
+    const human = await cli(["status", "--probe"], env);
+    expect(human.code).toBe(0);
+    expect(human.stdout.split("\n")[0]).toBe(`${origin}  (no expiry recorded, desktop-runner, probe: valid)`);
+    expect(human.stdout).not.toContain("runner-macmini");
+    // A server without identity.whoami: valid, and no identity.
+    writeFileSync(join(config, "credentials.json"), JSON.stringify({ servers: { [origin]: { token: "vlt_old" } } }));
+    const old = JSON.parse((await cli(["status", "--probe", "--json"], env)).stdout).servers[0].probe;
+    expect(old).toEqual({ state: "valid", detail: null });
+  });
+
+  it("a refused credential: 77; no credential at all: 77 before any request", async () => {
+    expect((await cli(["whoami"], { VARLATCH_TOKEN: "vlt_bad" })).code).toBe(EXIT.denied);
+    requests = [];
+    const none = await cli(["whoami"], { VARLATCH_TOKEN: "" });
+    expect(none.code).toBe(EXIT.denied);
+    expect(none.stderr).toMatch(/Not authenticated to/);
+    expect(requests).toEqual([]);
   });
 });

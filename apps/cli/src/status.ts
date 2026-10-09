@@ -17,6 +17,16 @@ const WARN_LIFETIME_FRACTION = 0.2;
 
 export type ProbeState = "valid" | "invalid" | "unreachable";
 
+/**
+ * What a valid probe resolved the credential to (ADR-0032 Decision 3), from
+ * GET /v1/me; absent from servers without the identity.whoami capability.
+ * Only in the JSON document: the human format is frozen (Decision 6).
+ */
+export interface ProbeIdentity {
+  identity: { id: string; name: string; kind: string };
+  organization: { id: string; slug: string; name: string } | null;
+}
+
 export interface ServerStatus {
   server: string;
   name: string | null;
@@ -27,7 +37,7 @@ export interface ServerStatus {
   /** Inside the proportional warning window (less than 20% of the lifetime
       left) but not yet expired; null when issuedAt/expiresAt are missing. */
   expiring: boolean | null;
-  probe?: { state: ProbeState; detail: string | null };
+  probe?: { state: ProbeState; detail: string | null } & Partial<ProbeIdentity>;
 }
 
 export interface RepoStatus {
