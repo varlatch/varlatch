@@ -14,6 +14,7 @@ import { activeContractOf } from "./contracts.js";
 import { DomainError } from "./errors.js";
 import { envelope, resolveItems } from "./retrieval.js";
 import {
+  recordCredentialExpiry,
   describeDestination,
   matchesExclusion,
   targetRow,
@@ -46,6 +47,10 @@ interface LiveConnection {
   credential_envelope: Envelope | string;
   wrapped_org_kek: Envelope | string;
   connection_revoked_at: string | null;
+  /** The Connection's version this run's credential was read at. */
+  connection_version: number;
+  /** When the platform said, during this run, the credential expires. */
+  observed_expiry?: string;
 }
 
 interface LedgerRow {
@@ -186,7 +191,7 @@ export async function reconcileTarget(
     // Connection and org facts also post-lease: a re-point that raced the
     // batch changed connection_id on the row we just snapshotted.
     const connRes = await ctx.db.query(
-      `SELECT c.platform, c.base_identity, c.credential_envelope,
+      `SELECT c.platform, c.base_identity, c.credential_envelope, c.version AS connection_version,
               c.revoked_at AS connection_revoked_at, o.wrapped_org_kek
        FROM platform_connections c, organizations o
        WHERE c.id = $1 AND o.id = $2 AND o.deleted_at IS NULL`,
@@ -211,6 +216,13 @@ export async function reconcileTarget(
         (opts.repairIntervalMs ?? REPAIR_INTERVAL_MS);
 
     const outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts);
+    // Whatever the outcome, the platform may have said when the credential
+    // expires; recorded only if the Connection still holds that credential.
+    if (live.observed_expiry) {
+      await recordCredentialExpiry(ctx.db, target.connection_id, live.connection_version, live.observed_expiry).catch((e) =>
+        console.error("credential expiry bookkeeping failed:", e),
+      );
+    }
     if (outcome === LEASE_LOST) {
       // Aborting was right either way, but only a MOVED generation proves a
       // successor exists (whose mutation re-set needs_sync). A failed probe
@@ -690,6 +702,9 @@ function adapterRequest(
       envelope,
     ),
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
+    onCredentialExpiry: (expiresAt: string) => {
+      live.observed_expiry = expiresAt;
+    },
     // Per-request cancellation for writes/deletes/redeploy (preparatory
     // reads are not gated): a batch whose intents were accepted would
     // otherwise keep sending after a mid-batch fence. This narrows the

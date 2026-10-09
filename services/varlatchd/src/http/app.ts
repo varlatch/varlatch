@@ -2790,6 +2790,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     createdAt: iso(r.created_at),
     version: r.version,
     updatedAt: r.updated_at ? iso(r.updated_at) : null,
+    credentialExpiresAt: r.credential_expires_at ? iso(r.credential_expires_at) : null,
+    credentialExpirySeenAt: r.credential_expiry_seen_at ? iso(r.credential_expiry_seen_at) : null,
   });
 
   const serializeTarget = (t: SyncTargetRow) => ({

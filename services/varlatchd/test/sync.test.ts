@@ -9,7 +9,7 @@ import {
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
 import { ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
-import { mappingWidens } from "../src/domain/sync.js";
+import { mappingWidens, recordCredentialExpiry } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { traceLog, traced, type TraceLog } from "./helpers/trace.js";
@@ -1154,6 +1154,100 @@ describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
     expect((await list(body, buildApp(ctx, { sync: null, syncFetch: instance.fetchImpl }))).status).toBe(403);
     expect((await list(body, buildApp(ctx, { sync: { adapters: ["github-actions"] }, syncFetch: instance.fetchImpl }))).status).toBe(422);
     expect(instance.calls).toHaveLength(0);
+  });
+});
+
+describe("credential expiry (ADR-0031 amendment 2026-10-09)", () => {
+  const CHECK = "/v1/organizations/acme/platform-connections/check";
+  const LIST = "/v1/organizations/acme/platform-connections/destinations";
+
+  /** GitHub, answering every request with the token's expiry header. */
+  function fakeGitHub() {
+    const state = { expiry: "2026-11-08 09:30:00 UTC" };
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const headers = { "Content-Type": "application/json", "github-authentication-token-expiration": state.expiry };
+      const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
+      if (url.endsWith("/users/acme")) return json({ login: "acme", type: "Organization" });
+      if (url.endsWith("/public-key")) return json({ key_id: "k1", key });
+      if (url.includes("/orgs/acme/repos")) return json([{ name: "api", owner: { login: "acme" }, private: true }]);
+      if (method === "PUT" || method === "DELETE") return new Response(null, { status: 204, headers });
+      return json({ message: "Not Found" }, 404);
+    }) as typeof fetch;
+    return { fetchImpl, state };
+  }
+
+  const githubConnection = async (credential = "ghp_old") =>
+    (await createConnection({ platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential })).json();
+  const stored = async (id: string) => (await get(`/v1/organizations/acme/platform-connections/${id}`)).json();
+
+  it("a push records when GitHub says the token expires, without changing the connection", async () => {
+    const github = fakeGitHub();
+    const connection = await githubConnection();
+    expect(connection).toMatchObject({ credentialExpiresAt: null, credentialExpirySeenAt: null });
+    expect((await createTarget(connection.id, { destination: { repo: "api" } })).status).toBe(201);
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const after = await stored(connection.id);
+    expect(after.credentialExpiresAt).toBe("2026-11-08T09:30:00.000Z");
+    expect(after.credentialExpirySeenAt).not.toBeNull();
+    expect(after).toMatchObject({ version: connection.version, updatedAt: null });
+  });
+
+  it("a check or listing records it for the stored token, and only reports it for a supplied one", async () => {
+    const github = fakeGitHub();
+    const checkApp = buildApp(ctx, { syncFetch: github.fetchImpl });
+    const post = (path: string, body: unknown) =>
+      checkApp.request(path, { method: "POST", headers: auth(), body: JSON.stringify(body) });
+
+    const fresh = await (await post(CHECK, { platform: "github-actions", baseIdentity: "acme", credential: "ghp_new" })).json();
+    expect(fresh).toMatchObject({ status: "ok", credentialExpiresAt: "2026-11-08T09:30:00.000Z" });
+
+    const connection = await githubConnection();
+    await post(CHECK, { connectionId: connection.id });
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2026-11-08T09:30:00.000Z");
+
+    github.state.expiry = "2026-12-01 00:00:00 UTC";
+    const candidate = await (await post(CHECK, { connectionId: connection.id, credential: "ghp_candidate" })).json();
+    expect(candidate.credentialExpiresAt).toBe("2026-12-01T00:00:00.000Z");
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2026-11-08T09:30:00.000Z");
+
+    await post(LIST, { connectionId: connection.id });
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2026-12-01T00:00:00.000Z");
+  });
+
+  it("replacing the credential clears it, and a late report about the old token never lands", async () => {
+    const github = fakeGitHub();
+    const checkApp = buildApp(ctx, { syncFetch: github.fetchImpl });
+    const connection = await githubConnection();
+    await checkApp.request(CHECK, { method: "POST", headers: auth(), body: JSON.stringify({ connectionId: connection.id }) });
+    expect((await stored(connection.id)).credentialExpiresAt).not.toBeNull();
+
+    const replaced = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, {
+      credential: "ghp_rotated",
+      expectedVersion: connection.version,
+    });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ credentialExpiresAt: null, credentialExpirySeenAt: null });
+
+    // A push that read the old token reports after the replacement: dropped.
+    await recordCredentialExpiry(ctx.db, connection.id, connection.version, "2026-11-08T09:30:00.000Z");
+    expect((await stored(connection.id)).credentialExpiresAt).toBeNull();
+    await recordCredentialExpiry(ctx.db, connection.id, connection.version + 1, "2027-01-01T00:00:00.000Z");
+    expect((await stored(connection.id)).credentialExpiresAt).toBe("2027-01-01T00:00:00.000Z");
+  });
+
+  it("says nothing for a token GitHub reports no expiry for", async () => {
+    const github = fakeGitHub();
+    github.state.expiry = "";
+    const checkApp = buildApp(ctx, { syncFetch: github.fetchImpl });
+    const connection = await githubConnection();
+    const check = await (
+      await checkApp.request(CHECK, { method: "POST", headers: auth(), body: JSON.stringify({ connectionId: connection.id }) })
+    ).json();
+    expect(check).not.toHaveProperty("credentialExpiresAt");
+    expect(await stored(connection.id)).toMatchObject({ credentialExpiresAt: null, credentialExpirySeenAt: null });
   });
 });
 

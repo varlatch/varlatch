@@ -38,6 +38,9 @@ export interface PlatformConnectionRow {
   revoked_at: string | null;
   version: number;
   updated_at: string | null;
+  /** When the platform last said the stored credential expires; NULL is unknown. */
+  credential_expires_at: string | null;
+  credential_expiry_seen_at: string | null;
 }
 
 export type SyncMappingItem = {
@@ -103,7 +106,7 @@ export const TARGET_COLUMNS = `id, organization_id, project_id, environment_id, 
   last_result, last_repair_at, created_at, revoked_at, version, updated_at`;
 
 const CONNECTION_COLUMNS = `id, organization_id, platform, base_identity, name,
-  created_at, revoked_at, version, updated_at`;
+  created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at`;
 
 function parseJson<T>(v: unknown): T {
   return (typeof v === "string" ? JSON.parse(v) : v) as T;
@@ -345,7 +348,8 @@ export async function replaceConnectionCredential(
     }
     const updated = await db.query(
       `UPDATE platform_connections
-       SET credential_envelope = $1, version = version + 1, updated_at = now()
+       SET credential_envelope = $1, version = version + 1, updated_at = now(),
+           credential_expires_at = NULL, credential_expiry_seen_at = NULL
        WHERE id = $2 RETURNING ${CONNECTION_COLUMNS}`,
       [JSON.stringify(envelope), connectionId],
     );
@@ -426,7 +430,12 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
-  const { adapter, baseIdentity, credential, connectionId, supplied } = await resolveCredential(ctx, org, input, allowedAdapters);
+  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion } = await resolveCredential(
+    ctx,
+    org,
+    input,
+    allowedAdapters,
+  );
   // No destination fields: the check stops at the base identity.
   const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
   const destination = named
@@ -439,6 +448,9 @@ export async function checkConnectionAccess(
     credential,
     ...(fetchImpl ? { fetchImpl } : {}),
   });
+  if (connectionId && storedVersion !== null && result.credentialExpiresAt) {
+    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, result.credentialExpiresAt);
+  }
   await recordAuditEvent(ctx.db, {
     eventType: "sync.connection_checked",
     decision: "info",
@@ -472,7 +484,12 @@ export async function listConnectionDestinations(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
-  const { adapter, baseIdentity, credential, connectionId, supplied } = await resolveCredential(ctx, org, input, allowedAdapters);
+  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion } = await resolveCredential(
+    ctx,
+    org,
+    input,
+    allowedAdapters,
+  );
   if (!adapter.listDestinations) {
     throw new DomainError(
       "VALIDATION_FAILED",
@@ -480,6 +497,9 @@ export async function listConnectionDestinations(
     );
   }
   const listing = await adapter.listDestinations({ baseIdentity, destination: {}, credential, ...(fetchImpl ? { fetchImpl } : {}) });
+  if (connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
+    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, listing.check.credentialExpiresAt);
+  }
   const items = listing.items.filter((item) => {
     try {
       adapter.canonicalizeDestination(item.destination);
@@ -518,11 +538,20 @@ async function resolveCredential(
   org: OrgRow,
   input: CredentialInput,
   allowedAdapters: string[] | null,
-): Promise<{ adapter: PlatformAdapter; baseIdentity: string; credential: string; connectionId: string | null; supplied: boolean }> {
+): Promise<{
+  adapter: PlatformAdapter;
+  baseIdentity: string;
+  credential: string;
+  connectionId: string | null;
+  supplied: boolean;
+  /** The Connection's version the stored credential was read at; null for a supplied one. */
+  storedVersion: number | null;
+}> {
   let platform: string;
   let baseIdentity: string;
   let credential: string;
   let connectionId: string | null = null;
+  let storedVersion: number | null = null;
   if ("connectionId" in input) {
     const connection = await getConnection(ctx, org.id, input.connectionId);
     connectionId = connection.id;
@@ -531,13 +560,12 @@ async function resolveCredential(
     if (input.credential !== undefined) {
       credential = input.credential;
     } else {
-      const res = await ctx.db.query("SELECT credential_envelope FROM platform_connections WHERE id = $1", [connection.id]);
-      credential = decryptPlatformCredential(
-        orgKekOf(ctx, org),
-        org.id,
-        connection.id,
-        parseJson<Envelope>((res.rows[0] as { credential_envelope: unknown }).credential_envelope),
-      );
+      // The credential and its version in one read: an expiry the platform
+      // reports for it is recorded only against that version.
+      const res = await ctx.db.query("SELECT credential_envelope, version FROM platform_connections WHERE id = $1", [connection.id]);
+      const stored = res.rows[0] as { credential_envelope: unknown; version: number };
+      storedVersion = stored.version;
+      credential = decryptPlatformCredential(orgKekOf(ctx, org), org.id, connection.id, parseJson<Envelope>(stored.credential_envelope));
     }
   } else {
     platform = input.platform;
@@ -553,7 +581,27 @@ async function resolveCredential(
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
   const supplied = !("connectionId" in input) || input.credential !== undefined;
-  return { adapter, baseIdentity, credential, connectionId, supplied };
+  return { adapter, baseIdentity, credential, connectionId, supplied, storedVersion };
+}
+
+/**
+ * Record when the platform says a stored credential expires (ADR-0031,
+ * amendment 2026-10-09), but only if the Connection still holds the
+ * credential that was used: `version` is the one it was read at, and a
+ * replacement bumps it, so a late report about an old token never lands on
+ * a new one. Not a Connection change: the version and updated_at stay.
+ */
+export async function recordCredentialExpiry(
+  db: Querier,
+  connectionId: string,
+  version: number,
+  expiresAt: string,
+): Promise<void> {
+  await db.query(
+    `UPDATE platform_connections SET credential_expires_at = $3, credential_expiry_seen_at = now()
+     WHERE id = $1 AND version = $2 AND revoked_at IS NULL`,
+    [connectionId, version, expiresAt],
+  );
 }
 
 // ---------------------------------------------------------------------------

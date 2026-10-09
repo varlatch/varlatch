@@ -27,6 +27,7 @@ import { sql as credentialClient } from "./0024_credential_client.js";
 import { sql as deviceSignIn } from "./0025_device_sign_in.js";
 import { sql as reenrollmentGrants } from "./0026_reenrollment_grants.js";
 import { sql as auditClient } from "./0027_audit_client.js";
+import { sql as credentialExpiry } from "./0028_credential_expiry.js";
 
 export interface Migration {
   id: number;
@@ -63,4 +64,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 25, name: "device_sign_in", sql: deviceSignIn },
   { id: 26, name: "reenrollment_grants", sql: reenrollmentGrants },
   { id: 27, name: "audit_client", sql: auditClient },
+  { id: 28, name: "credential_expiry", sql: credentialExpiry },
 ];
