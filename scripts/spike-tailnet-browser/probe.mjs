@@ -99,8 +99,9 @@ async function status() {
 /** The node certificate pair from the LocalAPI, as varlatchd would fetch it (S3, S4). */
 async function fetchCert(minValidity) {
   const st = await status();
+  if (!st.ok) return { ok: false, error: `LocalAPI status failed (${st.status}): ${st.error}` };
   const domain = st.certDomains?.[0] ?? st.dnsName;
-  if (!domain) return { ok: false, error: "no cert domain (are HTTPS certificates enabled for the tailnet?)" };
+  if (!domain) return { ok: false, error: "no cert domain (are HTTPS certificates enabled for the tailnet?)", backendState: st.backendState };
   const query = `type=pair${minValidity ? `&min_validity=${encodeURIComponent(minValidity)}` : ""}`;
   const t0 = Date.now();
   // An ACME order (first issuance or renewal) takes far longer than other calls.

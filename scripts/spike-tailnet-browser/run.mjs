@@ -74,7 +74,7 @@ const verdict = (kind, detail) => ({ kind, ...(detail === undefined ? {} : { det
  * fetch failed, since a permission prompt nobody could answer may explain
  * it. `serverEntries` are the probe's entries for this page's run ID.
  */
-function judgeS5(expected, outcome, { headed, localId, serverEntries = [] }) {
+function judgeS5(expected, outcome, { headed, localId, serverEntries = [], permissionGranted = false }) {
   if (!outcome.completed) return verdict("INCONCLUSIVE", `the test page did not complete: ${outcome.error ?? "no result"}`);
   const results = outcome.results ?? [];
   if (results.length === 0) return verdict("INCONCLUSIVE", "the page recorded no fetch");
@@ -93,8 +93,10 @@ function judgeS5(expected, outcome, { headed, localId, serverEntries = [] }) {
   if (reached.length > 0) {
     return verdict("FAIL", { problem: "the request reached the probe, but the browser did not read the answer", browser: results, server: reached.map((e) => ({ id: e.id, whois: e.whois })) });
   }
-  return headed
-    ? verdict("FAIL", { problem: "every fetch failed in a headed browser", results })
+  // Headed, or with the local-network permission already granted, no
+  // unanswered prompt can explain the failure.
+  return headed || permissionGranted
+    ? verdict("FAIL", { problem: headed ? "every fetch failed in a headed browser" : "every fetch failed with the local-network permission granted", results })
     : verdict("INCONCLUSIVE", { problem: "every fetch failed headless; a permission prompt may explain it: rerun with SPIKE_HEADED=1", results });
 }
 
@@ -656,30 +658,44 @@ async function s5(ctx, local) {
       notRun("s5", `${type} does not launch on this machine: ${String(err).split("\n").find((l) => /missing|error/i.test(l))?.trim() ?? String(err).slice(0, 120)}`);
       continue;
     }
+    // Chromium asks before a page reaches the local network: once without
+    // the permission (a measurement: does it block?), once with it granted,
+    // as after a person clicks Allow (judged). Other browsers have no such
+    // permission to grant.
+    const passes = type === "chromium" ? [{ grant: false }, { grant: true }] : [{ grant: null }];
     try {
-      for (const c of cases) {
-        const run = runId();
-        const context = await browser.newContext();
-        const notes = [];
-        if (c.page) await context.route(`${c.url}*`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: c.page(run) }));
-        const page = await context.newPage();
-        page.on("console", (m) => /private|local network|cors|blocked/i.test(m.text()) && notes.push(m.text().slice(0, 200)));
-        let outcome;
-        try {
-          await page.goto(c.query ? `${c.url}${c.query(run)}` : c.url, { timeout: 30000 });
-          await page.waitForFunction(() => window.__spikeDone === true, null, { timeout: abortMs * 2 + 70000 });
-          outcome = { completed: true, results: await page.evaluate(() => window.__spike) };
-        } catch (err) {
-          outcome = { completed: false, error: String(err).slice(0, 200) };
+      for (const { grant } of passes) {
+        for (const c of cases) {
+          const run = runId();
+          const context = await browser.newContext();
+          if (grant) await context.grantPermissions(["local-network-access"]);
+          const label = `${type}${grant === true ? " (local-network permission granted)" : grant === false ? " (no local-network permission)" : ""}, ${c.origin} origin`;
+          const notes = [];
+          if (c.page) await context.route(`${c.url}*`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: c.page(run) }));
+          const page = await context.newPage();
+          page.on("console", (m) => /private|local network|cors|blocked/i.test(m.text()) && notes.push(m.text().slice(0, 200)));
+          let outcome;
+          try {
+            await page.goto(c.query ? `${c.url}${c.query(run)}` : c.url, { timeout: 30000 });
+            await page.waitForFunction(() => window.__spikeDone === true, null, { timeout: abortMs * 2 + 70000 });
+            outcome = { completed: true, results: await page.evaluate(() => window.__spike) };
+          } catch (err) {
+            outcome = { completed: false, error: String(err).slice(0, 200) };
+          }
+          observe("s5", `${label}: what happened`, { ...outcome, console: notes });
+          const serverEntries = ctl("GET", `/log?run=${run}`);
+          if (grant === false) {
+            // Without the permission only what happened is recorded.
+            observe("s5", `${label}: read the endpoint`, (outcome.results ?? []).some((r) => r.ok && r.json === true));
+          } else {
+            judge(
+              "s5",
+              `${label}: ${c.expected === "reachable" ? "read an answer naming this machine, matching the probe's record" : "fails"}`,
+              judgeS5(c.expected, outcome, { headed, localId: ctx.localId, serverEntries, permissionGranted: grant === true }),
+            );
+          }
+          await context.close();
         }
-        observe("s5", `${type}, ${c.origin} origin: what happened`, { ...outcome, console: notes });
-        const serverEntries = ctl("GET", `/log?run=${run}`);
-        judge(
-          "s5",
-          `${type}, ${c.origin} origin: ${c.expected === "reachable" ? "read an answer naming this machine, matching the probe's record" : "fails"}`,
-          judgeS5(c.expected, outcome, { headed, localId: ctx.localId, serverEntries }),
-        );
-        await context.close();
       }
     } finally {
       await browser.close();
@@ -794,6 +810,7 @@ function selftestJudges() {
     ["S5: a request that reached the probe without the browser reading the answer fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, serverEntries: [server(7, "nME")] }), "FAIL"],
     ["S5: every fetch failing headless, nothing reaching the probe, is inconclusive", judgeS5("reachable", { completed: true, results: [failed, failed] }, me), "INCONCLUSIVE"],
     ["S5: every fetch failing headed fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, headed: true }), "FAIL"],
+    ["S5: every fetch failing with the local-network permission granted fails", judgeS5("reachable", { completed: true, results: [failed, failed] }, { ...me, permissionGranted: true }), "FAIL"],
     ["S5: an unreachable endpoint failing passes", judgeS5("unreachable", { completed: true, results: [failed, failed] }, me), "PASS"],
     ["S5: an unreachable endpoint answering fails", judgeS5("unreachable", { completed: true, results: [read({ ok: true, nodeId: "nME" })] }, me), "FAIL"],
     ["S5: an unreachable case that did not complete is inconclusive", judgeS5("unreachable", { completed: false, error: "timeout" }, me), "INCONCLUSIVE"],
