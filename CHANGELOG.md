@@ -89,7 +89,10 @@ fixes.
   (`POST /v1/organizations/{org}/github-app/import`). Varlatch verifies
   the pair with GitHub first, takes the App's details from GitHub, and
   needs the App to hold secrets and environments (write) and metadata
-  (read). `GET /v1/organizations/{org}/github-app/installations` lists
+  (read). An App with more permissions is accepted, and the audit event
+  names them; the stored key keeps all of them, even though the tokens
+  Varlatch mints are narrowed to each use, so grant the App no more than
+  it needs. `GET /v1/organizations/{org}/github-app/installations` lists
   where the App is installed. When GitHub refuses the App's signed
   request, the answer says whether the key was refused or this server's
   clock is too far off GitHub's.

@@ -2767,7 +2767,10 @@ paths:
         with a JWT signed by the key and GET /app answering that id, and
         takes the client id, slug, and owner from GitHub. The App needs
         secrets and environments (write) and metadata (read); it may have
-        more, which the audit event names. A refused JWT is read by its own
+        more, which the audit event names with their levels. The stored key
+        keeps everything the App holds: the tokens Varlatch mints are
+        narrowed to each use, but the key itself could mint broader ones,
+        so grant the App no more than it needs. A refused JWT is read by its own
         time claims against GitHub's Date header: the key, or this server's
         clock. Refused (409) when the Organization already has a live App,
         or another Organization has this one.
@@ -2802,7 +2805,8 @@ paths:
       summary: >
         Where the Organization's GitHub App is installed (ADR-0047 Decision
         2), signed as the App: the installations a Connection can be created
-        on. check says why not when the listing did not run (the key, this
+        on. Every installation must be this App's (its app_id); one that is
+        not fails the listing. check says why not when the listing did not run (the key, this
         server's clock, GitHub unreachable, or an answer that is not
         GitHub's), and items is then empty. Audited as a use of the key.
       parameters: [{ $ref: "#/components/parameters/org" }]

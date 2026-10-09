@@ -390,7 +390,9 @@ export type ImportOutcome = { outcome: "registered"; app: GitHubAppRow } | ({ ou
  * (issued as the App id, the only identifier given) and GET /app answering
  * that id; the client id, slug, and owner are then GitHub's. The App needs
  * the permissions Varlatch pushes with; it may have more, which the audit
- * event names (minted tokens are narrowed whatever the App holds).
+ * event names with their levels. The stored key keeps everything the App
+ * holds: tokens Varlatch mints are narrowed per use, but whoever has the
+ * key could mint broader ones.
  */
 export async function importGitHubApp(
   ctx: AppCtx,
@@ -445,7 +447,10 @@ export async function importGitHubApp(
       message: `The App ${body.slug} lacks ${missing.join(", ")}. Give it those permissions in its settings on GitHub (and have the installation accept them), then import it again.`,
     };
   }
-  const extra = Object.keys(permissions).filter((name) => !(name in GITHUB_APP_PERMISSIONS)).sort();
+  const extra = Object.keys(permissions)
+    .filter((name) => !(name in GITHUB_APP_PERMISSIONS))
+    .sort()
+    .map((name) => `${name}:${String(permissions[name])}`);
   const slug = body.slug;
   const clientId = body.client_id;
   const id = newId("githubApp");
@@ -502,8 +507,9 @@ export interface InstallationListing {
 
 /**
  * Where the App is installed (Decision 2: the user picks one to create a
- * Connection), signed as the App. Every entry must be GitHub's: one that is
- * not fails the listing rather than being skipped. Audited like a
+ * Connection), signed as the App. Every entry must be GitHub's, and this
+ * App's (its app_id): one that is not fails the listing rather than being
+ * skipped. Audited like a
  * destination listing, as a use of the stored key.
  */
 export async function listAppInstallations(
@@ -514,7 +520,7 @@ export async function listAppInstallations(
   now: number = Date.now(),
 ): Promise<InstallationListing> {
   const { app, pem } = await appWithKey(ctx, org);
-  const listing = await readInstallations(fetchImpl, app.client_id, pem, now);
+  const listing = await readInstallations(fetchImpl, Number(app.github_app_id), app.client_id, pem, now);
   await recordAuditEvent(ctx.db, {
     eventType: "sync.github_app_installations_listed",
     decision: "info",
@@ -532,7 +538,7 @@ export async function listAppInstallations(
   return listing;
 }
 
-async function readInstallations(fetchImpl: typeof fetch, clientId: string, pem: string, now: number): Promise<InstallationListing> {
+async function readInstallations(fetchImpl: typeof fetch, githubAppId: number, clientId: string, pem: string, now: number): Promise<InstallationListing> {
   const failed = (check: AccessCheck): InstallationListing => ({ check, items: [], truncated: false });
   const items: AppInstallation[] = [];
   for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
@@ -547,8 +553,11 @@ async function readInstallations(fetchImpl: typeof fetch, clientId: string, pem:
     for (const entry of body as unknown[]) {
       const e = entry as Record<string, unknown> | null;
       const account = readAccount(e?.account);
+      // Every installation must be this App's: a foreign or missing app_id
+      // is not GitHub's answer to this App, and fails the whole listing.
       if (
         !e || !account || !Number.isSafeInteger(e.id) || (e.id as number) <= 0 ||
+        e.app_id !== githubAppId ||
         (e.repository_selection !== "all" && e.repository_selection !== "selected")
       ) {
         return failed(NOT_GITHUB(res.status));

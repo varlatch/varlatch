@@ -119,7 +119,7 @@ describe("importing an App", () => {
   it("imports an App with more permissions than Varlatch needs, and names them in the audit event", async () => {
     const pem = github.addApp({ ...APP, permissions: { ...APP.permissions, contents: "write", actions: "read" } });
     expect((await importApp(APP.id, pem)).res.status).toBe(201);
-    expect((await audit("sync.github_app_registered"))[0]!.metadata.extraPermissions).toBe("actions,contents");
+    expect((await audit("sync.github_app_registered"))[0]!.metadata.extraPermissions).toBe("actions:read,contents:write");
   });
 
   it("refuses an App that lacks a permission Varlatch pushes with, and names it", async () => {
@@ -289,6 +289,32 @@ describe("listing the App's installations", () => {
     }
     rebuild({ syncFetch: (async () => { throw new TypeError("fetch failed"); }) as typeof fetch });
     expect((await installations()).body.check.status).toBe("unreachable");
+  });
+
+  it("fails the whole listing on an installation of another App, or without an App id, on any page", async () => {
+    await imported();
+    const entry = (n: number, appId?: unknown) => ({
+      id: 9000 + n,
+      ...(appId === undefined ? {} : { app_id: appId }),
+      account: { login: `acct${n}`, id: 4000 + n, type: "User" },
+      repository_selection: "selected",
+      suspended_at: null,
+    });
+    const pages = (second: unknown[]) => (async (input: RequestInfo | URL) => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      return Response.json(page === 1 ? Array.from({ length: 100 }, (_, i) => entry(i, APP.id)) : second, { headers: { date: new Date().toUTCString() } });
+    }) as typeof fetch;
+    rebuild({ syncFetch: pages([entry(100, APP.id)]) });
+    expect((await installations()).body).toMatchObject({ check: { status: "ok" }, truncated: false });
+    expect((await installations()).body.items).toHaveLength(101);
+    for (const appId of [5254114, null, "5254113", 0]) {
+      rebuild({ syncFetch: pages([entry(100, APP.id), entry(101, appId)]) });
+      const { body } = await installations();
+      expect(body, String(appId)).toMatchObject({ check: { status: "failed", where: "connection" }, items: [], truncated: false });
+      expect(body.check.message).toContain("not GitHub's");
+    }
+    rebuild({ syncFetch: pages([entry(100)]) });
+    expect((await installations()).body).toMatchObject({ check: { status: "failed" }, items: [] });
   });
 
   it("is not found without an App, and hidden from a caller without config.sync.manage", async () => {
