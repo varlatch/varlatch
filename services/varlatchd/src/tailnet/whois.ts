@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import http from "node:http";
 import type { TailnetContext } from "../authz/evaluate.js";
+import { localApiGet } from "./localapi.js";
 
 /**
  * Tailscale LocalAPI WhoIs client (ADR-0014). WhoIs is a pure netmap lookup —
@@ -80,29 +80,6 @@ function decodeWhois(body: string): WhoisNode | null {
   const loginName = profile?.LoginName ?? null;
   if (loginName !== null && typeof loginName !== "string") return null;
   return { stableId: node.StableID, name: node.Name, tags: tags as string[], sharer, loginName };
-}
-
-function localApiGet(socketPath: string, path: string): Promise<{ status: number; body: string }> {
-  return new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        socketPath,
-        path,
-        method: "GET",
-        // LocalAPI requires this literal host; no DNS lookup happens.
-        headers: { Host: "local-tailscaled.sock" },
-        timeout: 3000,
-      },
-      (res) => {
-        let body = "";
-        res.on("data", (chunk: Buffer) => (body += chunk.toString("utf8")));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
-      },
-    );
-    req.on("timeout", () => req.destroy(new Error("LocalAPI timeout")));
-    req.on("error", reject);
-    req.end();
-  });
 }
 
 /**
@@ -210,6 +187,7 @@ export async function resolveWhois(
   const context: TailnetContext = {
     tailnet,
     nodeId: node.stableId,
+    nodeName: name.split(".")[0]!,
     tags: node.tags,
   };
   // Tagged nodes' identity is the tag set; the synthetic user profile is

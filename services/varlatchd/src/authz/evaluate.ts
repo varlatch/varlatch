@@ -94,6 +94,8 @@ export interface TailnetRequirementRecord {
 export interface TailnetContext {
   tailnet: string;
   nodeId: string;
+  /** The device's machine name, for people reading audit; never matched by a selector. */
+  nodeName?: string;
   tags: string[];
   userLogin?: string;
 }

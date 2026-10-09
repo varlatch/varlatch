@@ -56,7 +56,7 @@ describe("whois client", () => {
       },
     };
     const ctx = await whois(config(), "127.0.0.1", 51234);
-    expect(ctx).toEqual({ tailnet: "example.ts.net", nodeId: "nSTABLE1", tags: ["tag:ci"] });
+    expect(ctx).toEqual({ tailnet: "example.ts.net", nodeId: "nSTABLE1", nodeName: "ci-runner", tags: ["tag:ci"] });
   });
 
   it("surfaces the user for untagged human devices", async () => {

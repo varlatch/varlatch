@@ -58,9 +58,17 @@ function servedOperations(): Set<string> {
     db: { query: async () => ({ rows: [] }) },
     rootKek: generateKey(),
   } as unknown as AppCtx;
-  const app = buildApp(ctx);
+  // Every listener: the ordinary one, and the tailnet browser endpoint,
+  // which alone serves GET /v1/tailnet/context (ADR-0046).
+  const apps = [
+    buildApp(ctx),
+    buildApp(ctx, {
+      resolveTailnetContext: async () => null,
+      tailnetBrowser: { host: "varlatch.example.ts.net", port: 8688, origins: ["https://varlatch.example.com"] },
+    }),
+  ];
   const ops = new Set<string>();
-  for (const route of app.routes) {
+  for (const route of apps.flatMap((app) => app.routes)) {
     const method = route.method.toLowerCase();
     if (!METHODS.has(method)) continue; // middleware registers as ALL
     if (!route.path.startsWith("/v1")) continue;
