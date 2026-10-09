@@ -42,6 +42,7 @@ import type {
   CreatedWebhook,
   OidcBinding,
   IssuedOidcCredential,
+  AccessCheck,
   PlatformConnection,
   SyncLedgerName,
   SyncMappingInput,
@@ -923,6 +924,21 @@ export class VarlatchClient {
     input: { platform: SyncPlatform; baseIdentity: string; name: string; credential: string },
   ): Promise<PlatformConnection> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/platform-connections`, input);
+  }
+
+  /**
+   * Read-only access check: a new credential (platform, baseIdentity,
+   * credential), or a Connection's stored one (connectionId), optionally
+   * replaced by a candidate; with a destination, checks that too.
+   */
+  checkPlatformAccess(
+    org: string,
+    input: { destination?: Record<string, unknown> } & (
+      | { connectionId: string; credential?: string }
+      | { platform: SyncPlatform; baseIdentity: string; credential: string }
+    ),
+  ): Promise<AccessCheck> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/platform-connections/check`, input);
   }
 
   getPlatformConnection(

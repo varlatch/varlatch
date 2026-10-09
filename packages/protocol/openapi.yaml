@@ -2532,6 +2532,42 @@ paths:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/platform-connections/check:
+    post:
+      tags: [sync]
+      operationId: checkPlatformAccess
+      summary: >
+        Read-only access check (ADR-0031, amendment 2026-10-09): does a
+        credential reach the base identity, and the destination when one
+        is named? Either a new credential (platform, baseIdentity,
+        credential) or a Connection's stored one (connectionId), optionally
+        replaced by a candidate credential. Nothing is stored or pushed;
+        the outcome is audited. A completed check answers 200 whatever the
+        platform said.
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                connectionId: { type: string, minLength: 1 }
+                platform: { $ref: "#/components/schemas/SyncPlatform" }
+                baseIdentity: { type: string, minLength: 1, maxLength: 500 }
+                credential: { type: string, minLength: 1, maxLength: 10000 }
+                destination:
+                  type: object
+                  additionalProperties: true
+                  description: The adapter-specific destination, as for a Sync Target; omitted or empty checks the base identity only.
+      responses:
+        "200":
+          description: The check's outcome (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessCheck" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/platform-connections/{connection}:
     get:
       tags: [sync]
@@ -4043,6 +4079,25 @@ components:
         createdAt: { type: string, format: date-time }
         version: { $ref: "#/components/schemas/EntityVersion" }
         updatedAt: { type: [string, "null"], format: date-time }
+
+    AccessCheck:
+      type: object
+      required: [status, where, message]
+      properties:
+        status:
+          type: string
+          enum: [ok, credential-rejected, permission-missing, not-found, unreachable, failed]
+          description: >
+            ok means reachable and readable: platforms cannot show write
+            permission without a write, so the first push confirms it.
+        where:
+          type: string
+          enum: [connection, destination]
+          description: What the outcome is about, the credential and base identity or the destination, so a client can point at the field to fix.
+        message:
+          type: string
+          description: One sentence for the person who fixes it; never platform response text.
+        httpStatus: { type: integer, description: "The platform's HTTP status, when it answered." }
 
     SyncMappingInput:
       description: >

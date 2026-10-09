@@ -915,6 +915,138 @@ describe("credential replacement", () => {
   });
 });
 
+describe("access check (ADR-0031 amendment 2026-10-09)", () => {
+  const CHECK = "/v1/organizations/acme/platform-connections/check";
+
+  /** A Coolify instance that knows one application and records who asked. */
+  function fakeInstance() {
+    const calls: { method: string; url: string; authorization: string }[] = [];
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      calls.push({ method: init?.method ?? "GET", url, authorization: headers.Authorization ?? "" });
+      if (headers.Authorization === "Bearer wrong") return new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+      if (url.endsWith("/api/v1/version")) return new Response("4.0.0", { status: 200 });
+      if (url.endsWith("/api/v1/applications/app1")) return new Response(JSON.stringify({ uuid: "app1" }), { status: 200 });
+      return new Response(JSON.stringify({ message: "Application not found" }), { status: 404 });
+    }) as typeof fetch;
+    return { fetchImpl, calls };
+  }
+
+  async function check(body: unknown, checkApp: ReturnType<typeof buildApp>, token = adminToken) {
+    return checkApp.request(CHECK, { method: "POST", headers: auth(token), body: JSON.stringify(body) });
+  }
+
+  async function checkedEvents() {
+    const res = await ctx.db.query(
+      "SELECT resource, metadata FROM audit_events WHERE event_type = 'sync.connection_checked' ORDER BY event_order",
+    );
+    return res.rows.map((r) => ({
+      resource: asJson<Record<string, string> | null>((r as { resource: unknown }).resource),
+      metadata: asJson<Record<string, unknown>>((r as { metadata: unknown }).metadata),
+    }));
+  }
+
+  it("checks a credential before it is saved, read-only, and audits the outcome without it", async () => {
+    const instance = fakeInstance();
+    const checkApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
+    const res = await check(
+      {
+        platform: "coolify",
+        baseIdentity: "https://Coolify.example.com/",
+        credential: "fresh-token",
+        destination: { applicationUuid: "app1", buildTime: "true" },
+      },
+      checkApp,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect((await res.json()).status).toBe("ok");
+    expect(instance.calls.map((c) => [c.method, c.url, c.authorization])).toEqual([
+      ["GET", "https://coolify.example.com/api/v1/version", "Bearer fresh-token"],
+      ["GET", "https://coolify.example.com/api/v1/applications/app1", "Bearer fresh-token"],
+    ]);
+    // Nothing is stored.
+    expect((await ctx.db.query("SELECT id FROM platform_connections")).rows).toHaveLength(0);
+    const events = await checkedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]!.metadata).toMatchObject({
+      platform: "coolify",
+      baseIdentity: "https://coolify.example.com",
+      destination: "coolify:app1",
+      credential: "supplied",
+      status: "ok",
+    });
+    expect(JSON.stringify(events)).not.toContain("fresh-token");
+  });
+
+  it("checks a stored credential, or a replacement for it, against the connection's own base", async () => {
+    const instance = fakeInstance();
+    const checkApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
+    const connection = await (await createConnection()).json();
+
+    const stored = await check({ connectionId: connection.id, destination: { applicationUuid: "app1" } }, checkApp);
+    expect((await stored.json()).status).toBe("ok");
+    expect(instance.calls.every((c) => c.authorization === "Bearer coolify-token-123")).toBe(true);
+
+    const replacement = await check({ connectionId: connection.id, credential: "wrong" }, checkApp);
+    expect(await replacement.json()).toMatchObject({ status: "credential-rejected", httpStatus: 401 });
+    expect(instance.calls.at(-1)!.url).toBe("https://coolify.example.com/api/v1/version");
+
+    const events = await checkedEvents();
+    expect(events.map((e) => [e.resource?.connectionId, e.metadata.credential, e.metadata.status])).toEqual([
+      [connection.id, "stored", "ok"],
+      [connection.id, "supplied", "credential-rejected"],
+    ]);
+  });
+
+  it("reports what the platform found without failing the request", async () => {
+    const checkApp = buildApp(ctx, { syncFetch: fakeInstance().fetchImpl });
+    const res = await check(
+      { platform: "coolify", baseIdentity: "https://coolify.example.com", credential: "tok", destination: { applicationUuid: "app9" } },
+      checkApp,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toMatchObject({ status: "not-found", httpStatus: 404 });
+    expect(body.message).not.toContain("Application not found");
+  });
+
+  it("validates the request like creation does", async () => {
+    const checkApp = buildApp(ctx, { syncFetch: fakeInstance().fetchImpl });
+    const connection = await (await createConnection()).json();
+    const statuses = await Promise.all(
+      [
+        { connectionId: connection.id, platform: "coolify", baseIdentity: "https://coolify.example.com" },
+        { platform: "coolify", baseIdentity: "https://coolify.example.com" },
+        { platform: "coolify", baseIdentity: "http://coolify.example.com", credential: "tok" },
+        { platform: "generic-url", baseIdentity: "https://x.example.com", credential: "tok" },
+        { connectionId: connection.id, destination: { applicationUuid: "../../etc" } },
+      ].map(async (body) => (await check(body, checkApp)).status),
+    );
+    expect(statuses).toEqual([422, 422, 422, 422, 422]);
+    expect((await check({ connectionId: "pcn_missing" }, checkApp)).status).toBe(404);
+    expect(await checkedEvents()).toHaveLength(0);
+  });
+
+  it("needs config.sync.manage, a sync-enabled installation, and an allowed adapter", async () => {
+    const instance = fakeInstance();
+    const svc = await (await post("/v1/organizations/acme/identities", { name: "reader", kind: "service" })).json();
+    await post("/v1/organizations/acme/grants", {
+      subjectIdentityId: svc.id,
+      scope: { kind: "organization" },
+      actions: ["organization.read"],
+    });
+    const body = { platform: "coolify", baseIdentity: "https://coolify.example.com", credential: "tok" };
+    expect((await check(body, buildApp(ctx, { syncFetch: instance.fetchImpl }), svc.credential)).status).toBe(403);
+    expect((await check(body, buildApp(ctx, { sync: null, syncFetch: instance.fetchImpl }))).status).toBe(403);
+    expect(
+      (await check(body, buildApp(ctx, { sync: { adapters: ["github-actions"] }, syncFetch: instance.fetchImpl }))).status,
+    ).toBe(422);
+    expect(instance.calls).toHaveLength(0);
+  });
+});
+
 describe("installation switch", () => {
   it("disabling sync hides the capability and blocks creation, not visibility", async () => {
     const offApp = buildApp(ctx, { sync: null });

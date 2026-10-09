@@ -1111,6 +1111,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/platform-connections/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Read-only access check (ADR-0031, amendment 2026-10-09): does a credential reach the base identity, and the destination when one is named? Either a new credential (platform, baseIdentity, credential) or a Connection's stored one (connectionId), optionally replaced by a candidate credential. Nothing is stored or pushed; the outcome is audited. A completed check answers 200 whatever the platform said. */
+        post: operations["checkPlatformAccess"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/platform-connections/{connection}": {
         parameters: {
             query?: never;
@@ -1914,6 +1931,22 @@ export interface components {
             version: components["schemas"]["EntityVersion"];
             /** Format: date-time */
             updatedAt: string | null;
+        };
+        AccessCheck: {
+            /**
+             * @description ok means reachable and readable: platforms cannot show write permission without a write, so the first push confirms it.
+             * @enum {string}
+             */
+            status: "ok" | "credential-rejected" | "permission-missing" | "not-found" | "unreachable" | "failed";
+            /**
+             * @description What the outcome is about, the credential and base identity or the destination, so a client can point at the field to fix.
+             * @enum {string}
+             */
+            where: "connection" | "destination";
+            /** @description One sentence for the person who fixes it; never platform response text. */
+            message: string;
+            /** @description The platform's HTTP status, when it answered. */
+            httpStatus?: number;
         };
         /** @description Item mapping: wildcard (every current AND future item of the Environment, optionally minus an exclusion list of exact names or trailing-* prefixes) or an explicit list with optional destination renames. A wildcard with exclusions gates exactly like a plain wildcard: the remainder still covers unknown future items. */
         SyncMappingInput: {
@@ -4936,6 +4969,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlatformConnection"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    checkPlatformAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    connectionId?: string;
+                    platform?: components["schemas"]["SyncPlatform"];
+                    baseIdentity?: string;
+                    credential?: string;
+                    /** @description The adapter-specific destination, as for a Sync Target; omitted or empty checks the base identity only. */
+                    destination?: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The check's outcome (Cache-Control no-store) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessCheck"];
                 };
             };
             default: components["responses"]["Error"];
