@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { unexpected, unreachable, type AccessCheck, type AccessCheckWhere } from "./access.js";
 import { sealedBox } from "./sealedbox.js";
 import {
   AdapterError,
@@ -45,6 +46,22 @@ function secretsBase(req: AdapterRequest): string {
   return environment
     ? `${repoPath}/environments/${encodeURIComponent(environment)}/secrets`
     : `${repoPath}/actions/secrets`;
+}
+
+const TOKEN_REJECTED: AccessCheck = {
+  status: "credential-rejected",
+  where: "connection",
+  httpStatus: 401,
+  message: "GitHub rejected the token: it is mistyped, expired, or revoked.",
+};
+
+/** GitHub signals its primary rate limit with a 403 as well as a 429. */
+function rateLimited(res: Response): boolean {
+  return res.status === 429 || res.headers.get("x-ratelimit-remaining") === "0";
+}
+
+function refused(res: Response, where: AccessCheckWhere): AccessCheck {
+  return unexpected("GitHub", rateLimited(res) ? 429 : res.status, where);
 }
 
 async function request(
@@ -158,5 +175,68 @@ export const githubActionsAdapter: PlatformAdapter = {
       );
     }
     return outcomes;
+  },
+
+  /**
+   * The owner first (a bad token is a 401 on any route), then, for a
+   * destination, the public-key read every push starts with: it needs
+   * Secrets (repository secrets) or Environments (environment secrets)
+   * read permission. GitHub answers 404 for a repository outside the
+   * token's selection, so a missing environment is told apart by reading
+   * the repository itself.
+   */
+  async checkAccess(req: AdapterRequest): Promise<AccessCheck> {
+    const owner = req.baseIdentity;
+    const { repo, environment } = req.destination;
+    let where: AccessCheckWhere = "connection";
+    try {
+      const user = await request(req, "GET", `${API}/users/${owner}`);
+      if (user.status === 401) return TOKEN_REJECTED;
+      if (user.status === 404) {
+        return { status: "not-found", where, httpStatus: 404, message: `GitHub has no user or organization named ${owner}.` };
+      }
+      if (!user.ok) return refused(user, where);
+      if (!repo) return { status: "ok", where, message: `GitHub accepted the token, and ${owner} exists.` };
+
+      where = "destination";
+      const place = environment ? `${owner}/${repo} (environment ${environment})` : `${owner}/${repo}`;
+      const permission = environment ? "Environments" : "Secrets";
+      const key = await request(req, "GET", `${secretsBase(req)}/public-key`);
+      if (key.ok) {
+        return {
+          status: "ok",
+          where,
+          message: `The token can read the secrets of ${place}. The first push shows whether it may also write them.`,
+        };
+      }
+      if (key.status === 401) return TOKEN_REJECTED;
+      if (key.status === 403 && !rateLimited(key)) {
+        return {
+          status: "permission-missing",
+          where,
+          httpStatus: 403,
+          message: `GitHub refused the token access to the secrets of ${place}. Give it ${permission}: Read and write, and check that the organization approved it.`,
+        };
+      }
+      if (key.status === 404) {
+        if (environment && (await request(req, "GET", `${API}/repos/${owner}/${repo}`)).ok) {
+          return {
+            status: "not-found",
+            where,
+            httpStatus: 404,
+            message: `${owner}/${repo} has no environment named ${environment}. Create it in the repository settings, or leave the field empty for repository secrets.`,
+          };
+        }
+        return {
+          status: "not-found",
+          where,
+          httpStatus: 404,
+          message: `GitHub cannot find ${owner}/${repo} with this token. Check the name, and that the token's repository access includes it.`,
+        };
+      }
+      return refused(key, where);
+    } catch (err) {
+      return unreachable("api.github.com", err, where);
+    }
   },
 };

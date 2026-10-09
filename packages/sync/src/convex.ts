@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { unexpected, unreachable, type AccessCheck } from "./access.js";
 import {
   AdapterError,
   DEFAULT_TIMEOUT_MS,
@@ -40,6 +41,10 @@ import {
  *   also enforces per-deployment count and aggregate-size limits; those
  *   still reject a batch as a whole.
  *
+ * - Access check: GET /api/check_admin_key, the dashboard's own key check;
+ *   it answers {isReadOnly, allowedOps} (an empty list allows everything)
+ *   and 403 for a key made for another deployment.
+ *
  * Functions read env vars live on each call — there is no restart concept,
  * so supportsRedeploy is false and no triggerRedeploy exists.
  */
@@ -57,10 +62,11 @@ interface ConvexEnvVar {
   value: string;
 }
 
+/** POST with a body; GET without one (the access check). */
 async function request(
   req: AdapterRequest,
   path: string,
-  body: unknown,
+  body?: unknown,
 ): Promise<Response> {
   const url = new URL(`${req.baseIdentity}${path}`);
   // Host pinning: the base identity is an https origin; nothing (including a
@@ -68,13 +74,13 @@ async function request(
   const fetchImpl = req.fetchImpl ?? fetch;
   try {
     return await fetchImpl(url.toString(), {
-      method: "POST",
+      method: body === undefined ? "GET" : "POST",
       headers: {
         Authorization: `Convex ${req.credential}`,
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(body),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       redirect: "error",
       signal: AbortSignal.timeout(req.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
@@ -214,5 +220,44 @@ export const convexAdapter: PlatformAdapter = {
         .filter((e) => e && typeof e.name === "string")
         .map((e) => [e.name, typeof e.value === "string" ? e.value : ""]),
     );
+  },
+
+  async checkAccess(req: AdapterRequest): Promise<AccessCheck> {
+    const host = new URL(req.baseIdentity).host;
+    // The deployment is both the Connection and the destination.
+    const where = "connection";
+    try {
+      const res = await request(req, "/api/check_admin_key");
+      if (res.status === 401 || res.status === 403) {
+        return {
+          status: "credential-rejected",
+          where,
+          httpStatus: res.status,
+          message: "Convex rejected the key for this deployment. A key works only for the deployment it was made for: check that it matches this URL.",
+        };
+      }
+      if (res.status === 404) {
+        return { status: "not-found", where, httpStatus: 404, message: `No Convex deployment answered at ${host}. Check the deployment URL.` };
+      }
+      if (!res.ok) return unexpected("Convex", res.status, where);
+      let key: { isReadOnly?: unknown; allowedOps?: unknown };
+      try {
+        key = (await res.json()) as typeof key;
+      } catch {
+        return { status: "failed", where, httpStatus: res.status, message: `${host} answered, but not like a Convex deployment. Check the deployment URL.` };
+      }
+      const ops = Array.isArray(key.allowedOps) ? key.allowedOps : [];
+      if (key.isReadOnly === true || (ops.length > 0 && !ops.includes("WriteEnvironmentVariables"))) {
+        return {
+          status: "permission-missing",
+          where,
+          httpStatus: res.status,
+          message: "Convex accepted the key, but it may not change environment variables. Use a deploy key with full access, or the admin key.",
+        };
+      }
+      return { status: "ok", where, message: "Convex accepted the key, and it may set environment variables." };
+    } catch (err) {
+      return unreachable(host, err, where);
+    }
   },
 };
