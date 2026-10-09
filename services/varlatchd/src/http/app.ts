@@ -139,13 +139,14 @@ import {
   encodeCursor,
   errorBody,
   loadGrants,
+  loadTailnetRequirements,
   requestId,
   type Principal,
 } from "./support.js";
 
 export const SERVER_VERSION = "0.16.0";
 
-import { evaluate, type Action, type TailnetContext } from "../authz/evaluate.js";
+import { evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 import {
   addGroupMember,
   addTeamProject,
@@ -348,6 +349,33 @@ function envResource(org: OrgRow, project: ProjectRow, env: EnvironmentRow) {
     projectId: project.id,
     environment: { id: env.id, rootId: rootIdOf(env), tier: env.tier },
   };
+}
+
+/**
+ * Environments as their callers see them. tailnetRequired says reading
+ * values here (non-sensitive ones included) needs verified Tailnet Context:
+ * derived per response from the active Requirements with the evaluator's
+ * own targeting, never stored. The covering Requirements' IDs are policy,
+ * so they go only to callers holding policy.read.
+ */
+async function environmentsOut(
+  ctx: AppCtx,
+  c: Context,
+  principal: Principal,
+  org: OrgRow,
+  project: ProjectRow,
+  envs: EnvironmentRow[],
+) {
+  const requirements = await loadTailnetRequirements(ctx, org.id);
+  const covering = envs.map((e) => requirementsCovering(requirements, envResource(org, project, e)));
+  const showIds =
+    covering.some((r) => r.length > 0) &&
+    (await decide(ctx, c, principal, "policy.read", { organizationId: org.id })).allowed;
+  return envs.map((e, i) => ({
+    ...serialize.environment(e),
+    tailnetRequired: covering[i]!.length > 0,
+    ...(showIds && covering[i]!.length > 0 ? { tailnetRequirementIds: covering[i]!.map((r) => r.id) } : {}),
+  }));
 }
 
 /** Idempotency-Key support (ADR-0018 §8). */
@@ -1184,7 +1212,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org, project } = await projectScope(ctx, c);
     await authorize(ctx, c, principal, "project.read", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
     const envs = await listEnvironments(ctx, project.id);
-    return c.json({ items: envs.map(serialize.environment), nextCursor: null });
+    return c.json({ items: await environmentsOut(ctx, c, principal, org, project, envs), nextCursor: null });
   });
 
   app.post("/v1/organizations/:org/projects/:project/environments", async (c) => {
@@ -1209,14 +1237,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await authorize(ctx, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
     }
     const env = await createEnvironment(ctx, org.id, project.id, body, principal.identity.id);
-    return c.json(serialize.environment(env), 201);
+    return c.json((await environmentsOut(ctx, c, principal, org, project, [env]))[0], 201);
   });
 
   app.get("/v1/organizations/:org/projects/:project/environments/:environment", async (c) => {
     const principal = c.get("principal");
     const { org, project, env } = await envScope(ctx, c);
     await authorize(ctx, c, principal, "environment.read", envResource(org, project, env), { hideExistence: true });
-    return c.json(serialize.environment(env));
+    return c.json((await environmentsOut(ctx, c, principal, org, project, [env]))[0]);
   });
 
   app.delete("/v1/organizations/:org/projects/:project/environments/:environment", async (c) => {

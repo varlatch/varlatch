@@ -5,7 +5,7 @@ import type { Names } from "./model";
 /**
  * Network requirements (ADR-0014) as the dashboard shows and edits them.
  * Within one requirement a device passes by matching ANY of its devices,
- * tags or users; a secret is readable only when EVERY requirement that
+ * tags or users; a value is readable only when EVERY requirement that
  * applies to it passes (services/varlatchd/src/authz/evaluate.ts).
  */
 
@@ -110,5 +110,5 @@ export function requirementSentence(req: Requirement, names: Names): string {
   const matches = matchParts(req.selector)
     .map((m) => `${m.kind} ${m.value}`)
     .join(", ");
-  return `Secrets in ${targets} can only be read from devices on ${req.selector.tailnet} that match any of: ${matches}`;
+  return `Values in ${targets} can only be read from devices on ${req.selector.tailnet} that match any of: ${matches}`;
 }

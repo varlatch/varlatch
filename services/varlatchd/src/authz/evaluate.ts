@@ -253,6 +253,19 @@ function requirementTargets(
   );
 }
 
+/**
+ * The Requirements that constrain value reads (the tailnet-constrained
+ * actions) in this resource: a tier, the Environment itself, or the root it
+ * derives from. Authorization and the Environment listing's tailnetRequired
+ * flag both use this, so the flag cannot drift from what is enforced.
+ */
+export function requirementsCovering(
+  requirements: TailnetRequirementRecord[],
+  resource: ResourceContext,
+): TailnetRequirementRecord[] {
+  return requirements.filter((r) => requirementTargets(r, resource));
+}
+
 function evaluateTailnetRequirement(
   req: TailnetRequirementRecord,
   ctx: TailnetContext | null,
@@ -329,7 +342,7 @@ export function evaluate(input: EvaluateInput): Evaluation {
 
   // Requirements restrict — admins do not bypass them (ADR-0015 §4).
   const applicable = TAILNET_CONSTRAINED_ACTIONS.has(action)
-    ? input.requirements.filter((r) => requirementTargets(r, resource))
+    ? requirementsCovering(input.requirements, resource)
     : [];
   const outcomes = applicable.map((r) =>
     evaluateTailnetRequirement(r, input.tailnetContext),

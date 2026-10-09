@@ -30,10 +30,11 @@ import {
  */
 export function ProjectLayout() {
   const { org, project: slug } = useParams() as { org: string; project: string };
-  useOrgRealtime(org, ["project", "environment", "contract", "sync"], [
+  useOrgRealtime(org, ["project", "environment", "contract", "sync", "requirement"], [
     keys.projects(org),
     keys.environments(org, slug),
     keys.contract(org, slug),
+    ["requirements", org],
   ]);
   const orgName = useOrgName(org);
   const { project, isLoading } = useProject(org, slug);

@@ -41,15 +41,43 @@ fixes.
   root environment also covers the environments derived from it, and lists
   every device (Tailscale node ID), tag, and user it accepts. It also says
   how they combine: a device passes a requirement by matching any one of
-  them, and every requirement that covers a secret must pass. Before, a
+  them, and every requirement that covers a value must pass. Before, a
   requirement for specific environments read "1 environments", and its
   devices and users were not shown.
 - **Edit is off for requirements the form cannot represent.** The form
   edits a tier and its tags. Saved over a requirement for specific
   environments, or one that names devices or users, it replaced them with
-  a tier and tags, which could let more devices read the secrets. Those
+  a tier and tags, which could let more devices read the values. Those
   requirements now say why Edit is unavailable; change them through the
   API.
+- **Tailnet-only values are marked where they are used.** A network
+  requirement keeps every value of the environments it covers, non-secret
+  ones included, to verified devices on the tailnet, and the dashboard
+  never connects through the tailnet. Those environments now carry a
+  "Values: tailnet only" badge in their header and their values grid
+  column. Instead of Reveal (one item, a column, Reveal all, the palette's
+  `?reveal=1`, and export) they explain where the values can be read.
+  Viewers who may see access policy get the requirements and a link to
+  them; others get the general guidance. Before, the environment page
+  showed "Values unavailable" with the server's error and recorded a denial
+  in the audit log on every visit; now it shows the items and their states
+  and asks for no values. Secrets revealed on a page before a requirement
+  covers its environment stop showing, and can no longer be copied, as soon
+  as the page learns of the requirement. A reveal still in flight then is
+  discarded, and stays discarded if the requirement is removed before it
+  lands. An export dialog already open drops the values it loaded and stops
+  offering Download, and an export in flight writes no file. This tidies
+  the screen only: plaintext the browser already received is not revoked.
+
+### API
+
+- Environments carry `tailnetRequired` (capability
+  `environments.tailnet-required`): true when a network requirement covers
+  the environment, so that reading its values needs the tailnet listener.
+  It is worked out on each response with the same targeting authorization
+  uses: a tier, the environment, or the root it derives from.
+  `tailnetRequirementIds` lists the covering requirements, for callers
+  with `policy.read`.
 
 ## 0.16.0 (2026-10-08)
 

@@ -6,6 +6,7 @@ import type { Environment, PlatformConnection, SyncTarget } from "@varlatch/prot
 import { useSession } from "../../lib/session";
 import { shortId } from "../../lib/identity";
 import { timeAgo, timeUntil, useNow } from "../../lib/time";
+import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
 import { PanelSection } from "../../components/Drawer";
 import { CopyButton } from "../../components/CodeBlock";
 import { PlatformLogo } from "../../components/brand-logos";
@@ -48,8 +49,9 @@ export function ItemPanelBody({
   sensitive,
   state,
   draft,
-  disclosed,
+  disclosed: revealed,
   withheld,
+  tailnetOnly = false,
   rotationDeadline,
   targets,
   connections,
@@ -67,6 +69,8 @@ export function ItemPanelBody({
   draft: Draft | undefined;
   disclosed: Disclosed | undefined;
   withheld: boolean;
+  /** A Tailnet Requirement covers the environment: values cannot be read here. */
+  tailnetOnly?: boolean;
   /** Known only when the rotation was started from this page. */
   rotationDeadline: string | undefined;
   targets: SyncTarget[];
@@ -75,6 +79,8 @@ export function ItemPanelBody({
   actions: PanelActions;
 }) {
   const now = useNow(30_000);
+  // Plaintext disclosed before a Tailnet Requirement appeared is never shown or copied.
+  const disclosed = tailnetOnly ? undefined : revealed;
   const kind = draftKind(draft, server);
   const own = server?.source === "self";
   return (
@@ -126,10 +132,11 @@ export function ItemPanelBody({
               draft={draft}
               disclosed={disclosed}
               withheld={withheld}
+              tailnetOnly={tailnetOnly}
               contract={contract}
             />
           </div>
-          {sensitive && server && !draft && (
+          {sensitive && server && !draft && !tailnetOnly && (
             <Button
               className="h-auto min-h-10 flex-col gap-0 px-3 py-1 leading-tight"
               data-testid="panel-reveal"
@@ -150,7 +157,7 @@ export function ItemPanelBody({
               <CopyButton value={copy} className="h-auto min-h-10" data-testid="panel-copy">
                 Copy
               </CopyButton>
-            ) : sensitive ? (
+            ) : sensitive && !tailnetOnly ? (
               <Button className="h-auto min-h-10" disabled title="Reveal first to copy a secret">
                 Copy
               </Button>
@@ -256,6 +263,7 @@ function ValueText({
   draft,
   disclosed,
   withheld,
+  tailnetOnly,
   contract,
 }: {
   server: ServerItem | undefined;
@@ -264,6 +272,7 @@ function ValueText({
   draft: Draft | undefined;
   disclosed: Disclosed | undefined;
   withheld: boolean;
+  tailnetOnly: boolean;
   contract: ContractItemMeta | undefined;
 }) {
   const mono = "min-w-0 break-all font-mono text-[13px]";
@@ -276,6 +285,7 @@ function ValueText({
     return <span className="font-mono text-[13px] italic text-muted">default {contract?.defaultValue}</span>;
   }
   if (!server) return <span className="text-[13px] text-muted">Not set</span>;
+  if (tailnetOnly) return <span className="text-[13px] text-muted">Set. {TAILNET_ONLY_GUIDANCE}</span>;
   if (sensitive) return disclosed ? <span className={mono}>{disclosed.value}</span> : <SecretMask />;
   if (withheld) return <span className="text-[13px] text-muted">Set; your access does not include reading it</span>;
   return <span className={mono}>{server.value === "" ? <em className="text-muted">(empty)</em> : server.value}</span>;

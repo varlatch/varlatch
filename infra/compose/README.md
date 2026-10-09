@@ -346,6 +346,14 @@ through the API/CLI; without this overlay they simply fail closed. Never
 reverse-proxy the tailnet listener: that would break the socket-level
 identity guarantee.
 
+A Tailnet Requirement covers every value read, non-secret values included.
+The dashboard reaches varlatchd through its ordinary listener, never the
+tailnet listener, so it cannot read values that a requirement covers. It
+marks those environments "Values: tailnet only" (the API's
+`tailnetRequired`), shows their items and states, and explains where Reveal
+would be. Read the values with the CLI on an approved device, pointed at the
+tailnet listener.
+
 The overlay needs Docker Compose 2.24 or newer (it uses `!reset` to drop
 varlatchd's own port mapping; the sidecar publishes 8686 instead). Earlier
 revisions of this overlay did not start: Docker refuses published ports on a

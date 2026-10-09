@@ -78,6 +78,7 @@ export const CAPABILITIES = [
   "audit.filters",
   "auth.device",
   "audit.attribution",
+  "environments.tailnet-required",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

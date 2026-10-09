@@ -31,6 +31,7 @@ import { Button } from "../components/ui";
 import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { BrandMark } from "./BrandMark";
+import { TAILNET_ONLY_GUIDANCE, isTailnetDenial } from "../lib/tailnet";
 
 const LAST_ORG_KEY = "varlatch:last-org";
 const SIDEBAR_KEY = "varlatch:sidebar";
@@ -388,6 +389,7 @@ export function NewOrgDialog({
 }
 
 export function errorMessage(err: unknown): string {
+  if (isTailnetDenial(err)) return TAILNET_ONLY_GUIDANCE;
   if (err && typeof err === "object" && "message" in err) return String((err as { message: unknown }).message);
   return String(err);
 }

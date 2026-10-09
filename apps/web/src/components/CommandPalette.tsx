@@ -26,6 +26,7 @@ import { useSession } from "../lib/session";
 import { applyTheme } from "../lib/theme";
 import { modKey } from "../lib/hotkeys";
 import { keys, useCapability, useEnvironments } from "../features/projects/hooks";
+import { isTailnetOnly } from "../lib/tailnet";
 import { NewProjectDialog } from "../features/projects/NewProjectDialog";
 import { NewEnvironmentDialog } from "../features/projects/NewEnvironmentDialog";
 import { Highlight, matchesFilter } from "./FilterInput";
@@ -191,6 +192,10 @@ export function CommandPalette() {
       enabled: open && Boolean(org),
     })),
   });
+  const routeProjectId = projectList.find((p) => p.slug === routeProject)?.id;
+  const routeTailnetOnly = isTailnetOnly(
+    envQueries.flatMap((q) => q.data?.items ?? []).find((e) => e.projectId === routeProjectId && e.name === routeEnv),
+  );
   // Feature-detect rather than probe: servers without search.items keep
   // the client-side search above.
   const canSearchItems = useCapability("search.items");
@@ -279,7 +284,8 @@ export function CommandPalette() {
             },
           ]
         : []),
-      ...(org && routeProject && routeEnv
+      // Not offered where a Tailnet Requirement keeps values out of the dashboard.
+      ...(org && routeProject && routeEnv && !routeTailnetOnly
         ? [
             {
               id: "action:reveal",

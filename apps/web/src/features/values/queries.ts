@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { useMemo } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo } from "react";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { EffectiveConfiguration, Environment, SyncTarget } from "@varlatch/protocol";
+import type { VarlatchClient } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
+import { isTailnetDenial, isTailnetOnly } from "../../lib/tailnet";
 import { keys, useCapability } from "../projects/hooks";
 import { contractItemsOf, type ContractItemMeta, type ServerItem } from "./model";
 
@@ -31,6 +33,11 @@ export type EnvValues = {
   byName: Map<string, ServerItem>;
   /** Non-sensitive values this caller may not read: show state only. */
   withheld: Set<string>;
+  /**
+   * A Tailnet Requirement covers the environment: every value read needs
+   * Tailnet Context the dashboard never has, so names and states only.
+   */
+  tailnetOnly: boolean;
 };
 
 function toEnvValues(result: EffectiveConfiguration): EnvValues {
@@ -38,26 +45,65 @@ function toEnvValues(result: EffectiveConfiguration): EnvValues {
   const withheld = new Set((result.callerView?.withheld ?? []).map((w) => w.name));
   // Older servers: a non-sensitive item with a null value was withheld.
   for (const i of items) if (!i.sensitive && i.value === null) withheld.add(i.name);
-  return { items, byName: new Map(items.map((i) => [i.name, i])), withheld };
+  return { items, byName: new Map(items.map((i) => [i.name, i])), withheld, tailnetOnly: false };
+}
+
+function tailnetOnlyValues(result: EffectiveConfiguration): EnvValues {
+  const items = result.items ?? [];
+  const withheld = new Set(items.filter((i) => !i.sensitive).map((i) => i.name));
+  return { items, byName: new Map(items.map((i) => [i.name, i])), withheld, tailnetOnly: true };
+}
+
+/**
+ * A tailnet-only environment loads metadata only: asking for values there
+ * fails and records a denial on every load. A Requirement added since the
+ * environment list loaded is caught the same way, from the denial.
+ */
+export async function loadEnvValues(api: VarlatchClient, org: string, project: string, env: Environment): Promise<EnvValues> {
+  if (isTailnetOnly(env)) return tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name));
+  try {
+    return toEnvValues(await api.effectiveConfiguration(org, project, env.name, { includeValues: true }));
+  } catch (err) {
+    if (!isTailnetDenial(err)) throw err;
+    return tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name));
+  }
+}
+
+const valuesKey = (org: string, project: string, env: Environment) =>
+  [...keys.effectiveValues(org, project, env.name), isTailnetOnly(env)] as const;
+
+/**
+ * Once an environment turns tailnet-only, drop what was cached before: its
+ * non-sensitive plaintext, under the key without the restriction.
+ */
+function useForgetUnrestricted(org: string, project: string, envs: Environment[]) {
+  const qc = useQueryClient();
+  const tailnetOnly = envs.filter(isTailnetOnly).map((e) => e.name).join("\u0000");
+  useEffect(() => {
+    for (const env of tailnetOnly ? tailnetOnly.split("\u0000") : []) {
+      qc.removeQueries({ queryKey: [...keys.effectiveValues(org, project, env), false], exact: true });
+    }
+  }, [qc, org, project, tailnetOnly]);
 }
 
 /** Effective configuration with non-sensitive values, for one environment. */
-export function useEnvValues(org: string, project: string, env: string) {
+export function useEnvValues(org: string, project: string, env: Environment) {
   const { api } = useSession();
+  useForgetUnrestricted(org, project, [env]);
   return useQuery({
-    queryKey: keys.effectiveValues(org, project, env),
-    queryFn: async () => toEnvValues(await api.effectiveConfiguration(org, project, env, { includeValues: true })),
+    queryKey: valuesKey(org, project, env),
+    queryFn: () => loadEnvValues(api, org, project, env),
   });
 }
 
 /** The same, for several environments at once (the grid's columns). */
 export function useManyEnvValues(org: string, project: string, envs: Environment[]) {
   const { api } = useSession();
+  useForgetUnrestricted(org, project, envs);
   return useQueries({
     queries: envs.map((env) => ({
-      queryKey: keys.effectiveValues(org, project, env.name),
-      queryFn: async () =>
-        toEnvValues(await api.effectiveConfiguration(org, project, env.name, { includeValues: true })),
+      queryKey: valuesKey(org, project, env),
+      queryFn: () => loadEnvValues(api, org, project, env),
     })),
   });
 }
