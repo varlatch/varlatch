@@ -128,7 +128,7 @@ function judgeSafari({ entries, reports, node, run, browser = null, reporterKnow
   if (browser === "safari" && !SAFARI_UA(report.userAgent)) return verdict("INCONCLUSIVE", { problem: "the report came from a browser other than Safari", userAgent: report.userAgent });
   const read = (report.results ?? []).filter((r) => r.ok && r.status === 200 && r.json === true);
   if (read.length === 0) {
-    const browser = (report.results ?? []).map((r) => ({ pna: r.pna, status: r.status, error: r.error }));
+    const browser = (report.results ?? []).map((r) => ({ pna: r.pna, status: r.status, error: r.error, ms: r.ms }));
     if (answered.length > 0) {
       return verdict("FAIL", { problem: "the request reached the probe, but the browser rejected the response", browser, server: answered.map((e) => ({ id: e.id, whois: e.whois })) });
     }
@@ -831,6 +831,9 @@ async function s5(ctx, local) {
       const end = Date.now() + safariWait * 1000;
       // The browser's report settles it; without one, the deadline does.
       while (Date.now() < end && !reportsNow().some((r) => r.run === run)) await sleep(3000);
+      // The whole report, timings included: a failure in milliseconds and one
+      // at the abort mean different things.
+      observe("s5", `Safari (by hand), ${safariOrigin} origin: what the browser reported`, reportsNow().find((r) => r.run === run) ?? null);
       judge(
         "s5",
         `Safari (by hand), ${safariOrigin} origin: the browser read an answer naming the Mac, matching the probe's record`,
