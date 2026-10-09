@@ -18,7 +18,17 @@ export type PlatformMeta = {
   credentialLabel: string;
   credentialPlaceholder: string;
   credentialHelp: string;
+  /** Heading of this platform in the setup guide. */
+  guideAnchor?: string;
 };
+
+/** The published setup guide: per platform, the credential and where to find each field. */
+export const SETUP_GUIDE_URL = "https://docs.varlatch.com/reference/integrations/";
+
+export function setupGuideUrl(platform: SyncPlatform | (string & {})): string {
+  const anchor = PLATFORM_META[platform as SyncPlatform]?.guideAnchor;
+  return anchor ? `${SETUP_GUIDE_URL}#${anchor}` : SETUP_GUIDE_URL;
+}
 
 export const PLATFORM_META: Record<SyncPlatform, PlatformMeta> = {
   "github-actions": {
@@ -30,7 +40,9 @@ export const PLATFORM_META: Record<SyncPlatform, PlatformMeta> = {
     identityNoun: "account",
     credentialLabel: "Access token",
     credentialPlaceholder: "Fine-grained token with secrets write access",
-    credentialHelp: "Scope it to the repositories you sync, with Secrets read and write only.",
+    credentialHelp:
+      "Fine-grained, limited to the repositories you sync, with Secrets: Read and write (Environments: Read and write for environment secrets).",
+    guideAnchor: "github-actions",
   },
   coolify: {
     label: "Coolify",
@@ -41,7 +53,9 @@ export const PLATFORM_META: Record<SyncPlatform, PlatformMeta> = {
     identityNoun: "instance",
     credentialLabel: "API token",
     credentialPlaceholder: "Coolify API token",
-    credentialHelp: "Coolify tokens reach the whole instance; create one for Varlatch alone so you can revoke it on its own.",
+    credentialHelp:
+      "Needs the read and write permissions, plus deploy to redeploy. A token reaches every application of its team; create one for Varlatch alone so you can revoke it on its own.",
+    guideAnchor: "coolify",
   },
   convex: {
     label: "Convex",
@@ -54,6 +68,7 @@ export const PLATFORM_META: Record<SyncPlatform, PlatformMeta> = {
     credentialPlaceholder: "Deploy key or admin key",
     credentialHelp:
       "Convex Cloud uses a deploy key (CONVEX_DEPLOY_KEY); a self-hosted backend uses its admin key (CONVEX_SELF_HOSTED_ADMIN_KEY). Both reach one deployment only.",
+    guideAnchor: "convex",
   },
 };
 

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, MoreHorizontal, Plug, Plus, ShieldAlert, Trash2 } from "lucide-react";
-import type { PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
+import type { AccessCheck, PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { timeAgo, useNow } from "../../lib/time";
@@ -12,7 +12,9 @@ import { PageHeader } from "../../components/PageHeader";
 import { Dialog, useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { keys, useMeta, useOrgName } from "../projects/hooks";
+import { AccessCheckNotice } from "./AccessCheckNotice";
 import { connectionsKey } from "./keys";
+import { CredentialHint } from "./CredentialHint";
 import { platformMeta } from "./platform-meta";
 import { connectionHealth, targetDestination } from "./status";
 import { PlatformTile } from "./TargetCard";
@@ -367,6 +369,20 @@ function NewConnectionDialog({
     },
     onError: (err) => toast.error("Could not create the connection", { description: err instanceof Error ? err.message : String(err) }),
   });
+  // Checked, read-only, before saving. A failed check stays shown until an
+  // input changes; meanwhile the button saves anyway.
+  const [failed, setFailed] = useState<AccessCheck | null>(null);
+  const verify = useMutation({
+    mutationFn: () => api.checkPlatformAccess(org, { platform: platform as SyncPlatform, baseIdentity: baseIdentity.trim(), credential }),
+    onSuccess: (result) => (result.status === "ok" ? create.mutate() : setFailed(result)),
+  });
+  const edit =
+    <T,>(set: (v: T) => void) =>
+    (v: T) => {
+      set(v);
+      setFailed(null);
+      verify.reset();
+    };
   const ready = Boolean(platform && baseIdentity.trim() && name.trim() && credential);
 
   return (
@@ -382,8 +398,14 @@ function NewConnectionDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" data-testid="save-connection" disabled={!ready} loading={create.isPending} onClick={() => create.mutate()}>
-            Create connection
+          <Button
+            variant="primary"
+            data-testid="save-connection"
+            disabled={!ready}
+            loading={verify.isPending || create.isPending}
+            onClick={() => (failed ? create.mutate() : verify.mutate())}
+          >
+            {failed ? "Save anyway" : "Create connection"}
           </Button>
         </>
       }
@@ -399,7 +421,7 @@ function NewConnectionDialog({
                 role="radio"
                 aria-checked={platform === a}
                 data-testid={`platform-card-${a}`}
-                onClick={() => setPlatform(a)}
+                onClick={() => edit(setPlatform)(a)}
                 className={cn(
                   "flex cursor-pointer flex-col items-center gap-2 rounded-xl border bg-inset/40 px-3 py-4 text-center transition-colors",
                   platform === a ? "border-accent bg-accent/[0.06] ring-2 ring-accent/20" : "border-bd hover:border-bd-strong",
@@ -421,7 +443,7 @@ function NewConnectionDialog({
                 className="w-full"
                 placeholder={meta.identityPlaceholder}
                 value={baseIdentity}
-                onChange={(e) => setBaseIdentity(e.target.value)}
+                onChange={(e) => edit(setBaseIdentity)(e.target.value)}
               />
             </Field>
             <Field label="Name">
@@ -433,7 +455,7 @@ function NewConnectionDialog({
                 onChange={(e) => setName(e.target.value)}
               />
             </Field>
-            <Field label={meta.credentialLabel} hint={meta.credentialHelp}>
+            <Field label={meta.credentialLabel} hint={<CredentialHint platform={platform as SyncPlatform} />}>
               <Input
                 data-testid="connection-new-credential"
                 mono
@@ -442,9 +464,10 @@ function NewConnectionDialog({
                 className="w-full"
                 placeholder={meta.credentialPlaceholder}
                 value={credential}
-                onChange={(e) => setCredential(e.target.value)}
+                onChange={(e) => edit(setCredential)(e.target.value)}
               />
             </Field>
+            <AccessCheckNotice pending={verify.isPending} check={failed ?? undefined} error={verify.error} />
           </div>
         )}
       </div>
@@ -479,6 +502,28 @@ function ReplaceCredentialDialog({
     },
     onError: (err) => toast.error("The credential was not replaced", { description: err instanceof Error ? err.message : String(err) }),
   });
+  // The new credential is checked, read-only, against every destination
+  // that will use it (or the account or instance when none does yet). Any
+  // failure is shown first; the button then replaces anyway.
+  const [failures, setFailures] = useState<{ target: SyncTarget | null; check: AccessCheck }[] | null>(null);
+  const verify = useMutation({
+    mutationFn: () =>
+      Promise.all(
+        (targets.length > 0 ? targets : [null]).map(async (target) => ({
+          target,
+          check: await api.checkPlatformAccess(org, {
+            connectionId: connection.id,
+            credential,
+            ...(target ? { destination: target.destination } : {}),
+          }),
+        })),
+      ),
+    onSuccess: (results) => {
+      const failed = results.filter((r) => r.check.status !== "ok");
+      if (failed.length === 0) replace.mutate();
+      else setFailures(failed);
+    },
+  });
   return (
     <Dialog
       open
@@ -500,10 +545,10 @@ function ReplaceCredentialDialog({
             variant="primary"
             data-testid={`confirm-credential-${connection.id}`}
             disabled={!credential}
-            loading={replace.isPending}
-            onClick={() => replace.mutate()}
+            loading={verify.isPending || replace.isPending}
+            onClick={() => (failures ? replace.mutate() : verify.mutate())}
           >
-            Replace credential
+            {failures ? "Replace anyway" : "Replace credential"}
           </Button>
         </>
       }
@@ -525,7 +570,7 @@ function ReplaceCredentialDialog({
             </span>
           </Callout>
         )}
-        <Field label={meta.credentialLabel} hint={meta.credentialHelp}>
+        <Field label={meta.credentialLabel} hint={<CredentialHint platform={connection.platform} />}>
           <Input
             data-testid={`new-credential-${connection.id}`}
             mono
@@ -534,9 +579,23 @@ function ReplaceCredentialDialog({
             className="w-full"
             placeholder={meta.credentialPlaceholder}
             value={credential}
-            onChange={(e) => setCredential(e.target.value)}
+            onChange={(e) => {
+              setCredential(e.target.value);
+              setFailures(null);
+              verify.reset();
+            }}
           />
         </Field>
+        {verify.isPending || verify.error ? (
+          <AccessCheckNotice pending={verify.isPending} check={undefined} error={verify.error} />
+        ) : (
+          failures?.map(({ target, check }) => (
+            <div key={target?.id ?? "connection"} className="space-y-1.5">
+              {target && <EnvChip org={org} target={target} envs={envs} />}
+              <AccessCheckNotice pending={false} check={check} error={null} />
+            </div>
+          ))
+        )}
       </div>
     </Dialog>
   );
