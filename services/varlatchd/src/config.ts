@@ -193,7 +193,17 @@ function tailnetBrowser(
 
 export function loadConfig(
   env: NodeJS.ProcessEnv = process.env,
-  opts: { requireKek?: boolean } = {},
+  opts: {
+    requireKek?: boolean;
+    /**
+     * False for an entrypoint that serves no listener (migrate): the tailnet
+     * listener and browser endpoint settings are then neither checked nor
+     * returned. On Coolify every environment variable reaches every service
+     * (#28), so migrate sees the endpoint's port without the listener
+     * settings only varlatchd gets, and must not refuse to run for them.
+     */
+    listeners?: boolean;
+  } = {},
 ): VarlatchdConfig {
   const parsed = envSchema.safeParse(env);
   if (!parsed.success) {
@@ -212,18 +222,19 @@ export function loadConfig(
         "secret file such as /run/secrets/varlatch-kek) or VARLATCH_KEK.",
     );
   }
+  const listeners = opts.listeners ?? true;
   const tailscaleVars = [
     cfg.VARLATCH_TAILSCALE_SOCKET,
     cfg.VARLATCH_TAILSCALE_TAILNET,
     cfg.VARLATCH_TAILNET_PORT,
   ];
-  if (tailscaleVars.some(Boolean) && !tailscaleVars.every(Boolean)) {
+  if (listeners && tailscaleVars.some(Boolean) && !tailscaleVars.every(Boolean)) {
     throw new ConfigError(
       "Partial Tailscale configuration: set all of VARLATCH_TAILSCALE_SOCKET, " +
         "VARLATCH_TAILSCALE_TAILNET, and VARLATCH_TAILNET_PORT, or none.",
     );
   }
-  const browser = tailnetBrowser(cfg, cfg.VARLATCH_TAILSCALE_TAILNET);
+  const browser = listeners ? tailnetBrowser(cfg, cfg.VARLATCH_TAILSCALE_TAILNET) : null;
   const trustedProxies = cfg.VARLATCH_TRUSTED_PROXIES?.trim() || null;
   if (trustedProxies) {
     try {
@@ -252,7 +263,7 @@ export function loadConfig(
               : null,
           },
     tailscale:
-      cfg.VARLATCH_TAILSCALE_SOCKET && cfg.VARLATCH_TAILSCALE_TAILNET && cfg.VARLATCH_TAILNET_PORT
+      listeners && cfg.VARLATCH_TAILSCALE_SOCKET && cfg.VARLATCH_TAILSCALE_TAILNET && cfg.VARLATCH_TAILNET_PORT
         ? {
             socketPath: cfg.VARLATCH_TAILSCALE_SOCKET,
             expectedTailnet: cfg.VARLATCH_TAILSCALE_TAILNET,

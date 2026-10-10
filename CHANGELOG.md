@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.17.1)
+
+### Fixes
+
+- **Migrate runs on Coolify with the tailnet browser endpoint turned on.**
+  Coolify hands every environment variable of an app to every service, so
+  `varlatch-migrate` received `VARLATCH_TAILNET_HTTPS_PORT` without the
+  tailnet listener settings only varlatchd gets, refused to run ("needs the
+  tailnet listener"), and varlatchd, which waits for it, never started.
+  Migrate no longer checks listener settings: it serves nothing. Plain
+  Compose installations were not affected.
+
 ## 0.17.0 (2026-10-10)
 
 ### Machine identities

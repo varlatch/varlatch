@@ -144,4 +144,29 @@ describe("tailnet browser endpoint (ADR-0046)", () => {
     expect(() => loadConfig({ ...on, VARLATCH_TAILNET_HTTPS_PORT: "8687" })).toThrow(/must differ/);
     expect(() => loadConfig({ ...on, VARLATCH_TAILNET_HTTPS_PORT: "8686" })).toThrow(/must differ/);
   });
+
+  it("is ignored by an entrypoint that serves no listener (migrate on Coolify)", () => {
+    // What Coolify hands varlatch-migrate with the endpoint on: every variable of the
+    // app, so the endpoint's port and origins, but none of the listener settings that
+    // only varlatchd's own environment sets (2026-10-10 production incident).
+    const migrate = {
+      ...base,
+      VARLATCH_PUBLIC_URL: "https://varlatch.example.com",
+      VARLATCH_TAILNET_HTTPS_PORT: "8688",
+      VARLATCH_TAILNET_BROWSER_ORIGINS: "https://a.example.com",
+      VARLATCH_TAILNET_NODE: "varlatch",
+    };
+    expect(() => loadConfig(migrate, { requireKek: false })).toThrow(/needs the tailnet listener/);
+    const cfg = loadConfig(migrate, { requireKek: false, listeners: false });
+    expect(cfg.tailscale).toBeNull();
+    expect(cfg.databaseUrl).toBe("postgres://x/varlatch");
+    // A partial listener configuration is not migrate's concern either.
+    expect(() => loadConfig({ ...migrate, VARLATCH_TAILNET_PORT: "8687" }, { requireKek: false })).toThrow(/Partial Tailscale/);
+    expect(loadConfig({ ...migrate, VARLATCH_TAILNET_PORT: "8687" }, { requireKek: false, listeners: false }).tailscale).toBeNull();
+  });
+
+  it("is still checked by default, as varlatchd serve loads it", () => {
+    expect(loadConfig(on).tailscale?.browser).toMatchObject({ host: "varlatch.example.ts.net", port: 8688 });
+    expect(() => loadConfig({ ...on, VARLATCH_TAILSCALE_SOCKET: "" })).toThrow(/Partial Tailscale|needs the tailnet listener/);
+  });
 });
