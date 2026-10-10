@@ -107,6 +107,20 @@ describe("tailnet listener observer", () => {
     expect(r.observed.checks.node).toEqual({ status: "unknown", reason: "NOT_CHECKED" });
   });
 
+  it("checks again as soon as a listener binds, not at the next minute (real-tailnet finding)", async () => {
+    const o = observer({ browser: false });
+    o.start();
+    try {
+      await vi.waitFor(() => expect(o.report().observed.checks.localApi.status).toBe("pass"));
+      // Started before the listener bound, as varlatchd does: unknown until it binds.
+      expect(o.report().observed.checks.listener).toEqual({ status: "unknown", reason: "NOT_CHECKED" });
+      o.listening("plain", true);
+      await vi.waitFor(() => expect(o.report().observed.checks.listener).toEqual({ status: "pass" }));
+    } finally {
+      o.stop();
+    }
+  });
+
   it("has no browserTls check, and no endpoint, while the browser endpoint is off", async () => {
     const o = observer({ browser: false });
     o.listening("plain", true);

@@ -82,11 +82,14 @@ export class NodeCertificate {
   #timer: NodeJS.Timeout | null = null;
   #failures = 0;
   #running = false;
+  readonly #onChange: () => void;
 
-  constructor(opts: { socketPath: string; host: string; now?: () => number }) {
+  /** `onChange` hears of every pair swapped in, so what reports on it need not wait for its next round. */
+  constructor(opts: { socketPath: string; host: string; now?: () => number; onChange?: () => void }) {
     this.#socketPath = opts.socketPath;
     this.#host = opts.host;
     this.#now = opts.now ?? Date.now;
+    this.#onChange = opts.onChange ?? (() => {});
   }
 
   /** What to serve now, or null when no valid certificate is loaded: the handshake is then refused. */
@@ -178,6 +181,7 @@ export class NodeCertificate {
     this.#lastError = null;
     if (!replaced || replaced.notAfter !== outcome.notAfter) {
       console.log(`varlatchd: tailnet browser endpoint certificate for ${this.#host} loaded, valid until ${new Date(outcome.notAfter).toISOString()}`);
+      this.#onChange();
     }
     return true;
   }

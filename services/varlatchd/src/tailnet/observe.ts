@@ -92,6 +92,7 @@ export class TailnetObserver {
   #checkedAt: number | null = null;
   #persisted: { json: string; at: number } | null = null;
   #timer: NodeJS.Timeout | null = null;
+  #started = false;
 
   constructor(opts: {
     socketPath: string;
@@ -117,9 +118,10 @@ export class TailnetObserver {
     this.#checks = { listener: UNCHECKED, ...(opts.browser ? { browserTls: UNCHECKED } : {}), localApi: UNCHECKED, node: UNCHECKED };
   }
 
-  /** A listener bound its port (or failed to). */
+  /** A listener bound its port (or failed to): checked again at once, not at the next minute. */
   listening(which: "plain" | "browser", ok: boolean): void {
     this.#listening[which] = ok;
+    if (this.#started) void this.check();
   }
 
   report(): TailnetListenerReport {
@@ -131,6 +133,7 @@ export class TailnetObserver {
 
   /** Check now, then every 60 seconds. */
   start(): void {
+    this.#started = true;
     void this.check();
     this.#timer = setInterval(() => void this.check(), CHECK_EVERY_MS);
     this.#timer.unref();
