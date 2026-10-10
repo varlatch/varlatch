@@ -183,6 +183,46 @@ describe("setup --tailnet-endpoint / --no-tailnet-endpoint", () => {
     await expect(runSetup(options(noCerts, true))).rejects.toThrow(/enable HTTPS certificates/);
   });
 
+  it("joins a fresh tailnet ingress before it knows the public URL, which Compose requires (regression of #110)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "setup-tailnet-fresh-"));
+    writeFileSync(join(dir, "docker-compose.yml"), "name: vltest\nservices: {}\n");
+    for (const file of ["docker-compose.tailscale.yml", "docker-compose.tailnet-https.yml", "tailscale-serve.json"]) writeFileSync(join(dir, file), "");
+    const bin = mkdtempSync(join(tmpdir(), "setup-bin-"));
+    const status = JSON.stringify({ BackendState: "Running", MagicDNSSuffix: "tail1.ts.net", CertDomains: ["vault.tail1.ts.net"], Self: { DNSName: "vault.tail1.ts.net." } });
+    // Like Compose: every command but the version check refuses while
+    // VARLATCH_PUBLIC_URL is empty in both the environment and .env.
+    writeFileSync(
+      join(bin, "docker"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = compose ] && [ "$2" = version ]; then echo 2.30.0; exit 0; fi',
+        'case "$*" in "volume inspect "*) exit 1;; esac',
+        'if [ "$1" = compose ] && [ -z "$VARLATCH_PUBLIC_URL" ] && ! grep -q "^VARLATCH_PUBLIC_URL=." .env; then',
+        '  echo "required variable VARLATCH_PUBLIC_URL is missing a value" >&2; exit 1',
+        "fi",
+        'case "$*" in',
+        '  "compose up -d tailscale") exit 0;;',
+        `  "compose exec -T tailscale tailscale status --json") echo '${status}'; exit 0;;`,
+        "esac",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const keyFile = join(dir, "key");
+    writeFileSync(keyFile, "tskey-auth-test\n");
+    await expect(
+      runSetup({ dir, ingress: "tailnet", tailnetMachine: "vault", tailscaleAuthKeyFile: keyFile, noWait: true, enrollTimeoutMs: 0, attest: false }),
+    ).rejects.toThrow(/up -d --remove-orphans failed/);
+    expect(saved(dir).publicUrl).toBe("https://vault.tail1.ts.net");
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    expect(line(env, "VARLATCH_PUBLIC_URL")).toBe("https://vault.tail1.ts.net");
+    expect(env).not.toContain("pending.invalid\nCONVEX");
+    expect(env).not.toMatch(/^VARLATCH_PUBLIC_URL=https:\/\/pending/m);
+  });
+
   it("leaves the configuration alone without either flag", async () => {
     const config = { ...base, ingress: "external" as const };
     const dir = installDir(config, []);

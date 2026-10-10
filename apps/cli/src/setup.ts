@@ -462,11 +462,12 @@ export function requireComposeVersion(output: string | null): string {
   return check.detail!;
 }
 
-export function docker(dir: string, args: string[], opts: { stream?: boolean; input?: string } = {}): string {
+export function docker(dir: string, args: string[], opts: { stream?: boolean; input?: string; env?: Record<string, string> } = {}): string {
   const result = spawnSync("docker", ["compose", ...args], {
     cwd: dir,
     encoding: "utf8",
     input: opts.input,
+    ...(opts.env ? { env: { ...process.env, ...opts.env } } : {}),
     stdio: [opts.input === undefined ? "ignore" : "pipe", opts.stream ? "inherit" : "pipe", opts.stream ? "inherit" : "pipe"],
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -629,11 +630,16 @@ async function joinTailnet(
     if (!key.startsWith("tskey-")) throw new SetupError("That does not look like a Tailscale auth key (tskey-…)");
     writeFileSync(keyPath, `${key}\n`, { mode: 0o600 });
   }
-  docker(dir, ["up", "-d", "tailscale"], { stream: true });
+  // Before the node has joined, the tailnet ingress has no public URL yet,
+  // and Compose refuses to read the files without one (#110). The join only
+  // starts the sidecar and asks it, and the sidecar never reads the URL: a
+  // placeholder in these commands' own environment, never in .env.
+  const env = config.publicUrl ? undefined : { VARLATCH_PUBLIC_URL: "https://pending.invalid" };
+  docker(dir, ["up", "-d", "tailscale"], { stream: true, ...(env ? { env } : {}) });
   const deadline = Date.now() + 3 * 60_000;
   for (;;) {
     let status: TailscaleStatus = {};
-    try { status = JSON.parse(docker(dir, ["exec", "-T", "tailscale", "tailscale", "status", "--json"])) as TailscaleStatus; } catch { /* starting */ }
+    try { status = JSON.parse(docker(dir, ["exec", "-T", "tailscale", "tailscale", "status", "--json"], env ? { env } : {})) as TailscaleStatus; } catch { /* starting */ }
     const found = tailnetUrl(status, { requireCertificates: ingressMode || config.tailnetEndpoint !== undefined });
     if (found) {
       const host = new URL(found.url).hostname;

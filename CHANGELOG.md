@@ -49,6 +49,13 @@ fixes.
 
 ### Tailnet
 
+- **`varlatch setup --ingress tailnet` works on a fresh installation
+  again.** Since 0.14.3, Compose requires `VARLATCH_PUBLIC_URL`, which the
+  tailnet ingress learns only once its node has joined; setup stopped
+  before the node could join ("required variable VARLATCH_PUBLIC_URL is
+  missing a value"). The join now runs with a placeholder in its own
+  commands' environment, never in `.env`. Existing installations were not
+  affected.
 - **The tailnet listener refuses two more kinds of device.** A device
   shared into the tailnet from elsewhere (WhoIs says who shared it) and the
   Varlatch node itself get no Tailnet Context any more, whatever their
