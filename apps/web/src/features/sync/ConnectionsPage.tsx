@@ -17,6 +17,7 @@ import { checkPasses } from "./accessCheck";
 import { useBoundCheck } from "./useBoundCheck";
 import { connectionsKey } from "./keys";
 import { CredentialHint } from "./CredentialHint";
+import { GitHubAppPanel } from "./GitHubApp";
 import { credentialExpiry, expiryText, expiryTone } from "./credentialExpiry";
 import { platformMeta } from "./platform-meta";
 import { connectionHealth, targetDestination } from "./status";
@@ -50,11 +51,16 @@ export function ConnectionsPage() {
   const [params, setParams] = useSearchParams();
   const [creating, setCreating] = useState<SyncPlatform | "pick" | null>(null);
   const [replacing, setReplacing] = useState<string | null>(null);
+  const [rotatingApp, setRotatingApp] = useState(false);
+  // A GitHub App Connection has no credential of its own: fixing one means rotating the App's key.
+  const replaceOrRotate = (connection: PlatformConnection) =>
+    connection.credentialKind === "github-app" ? setRotatingApp(true) : setReplacing(connection.id);
   // Integrations link here with ?replace=<connection> to fix a rejected credential.
   useEffect(() => {
     const id = params.get("replace");
-    if (id && connections.data?.items.some((c) => c.id === id)) {
-      setReplacing(id);
+    const connection = id ? connections.data?.items.find((c) => c.id === id) : undefined;
+    if (connection) {
+      replaceOrRotate(connection);
       params.delete("replace");
       setParams(params, { replace: true });
     }
@@ -84,6 +90,19 @@ export function ConnectionsPage() {
         <Callout tone="warn" className="mb-4" title="Outbound sync is off on this installation">
           Connections can be listed and revoked, but no integration pushes values until an operator enables sync.
         </Callout>
+      )}
+
+      {syncEnabled && adapters.includes("github-actions") && (
+        <GitHubAppPanel
+          org={org}
+          connections={list}
+          targets={allTargets}
+          envs={envs.byId}
+          onChanged={refresh}
+          rotating={rotatingApp}
+          onRotate={() => setRotatingApp(true)}
+          onRotateDone={() => setRotatingApp(false)}
+        />
       )}
 
       {connections.isLoading ? (
@@ -130,7 +149,7 @@ export function ConnectionsPage() {
               connection={c}
               targets={allTargets.filter((t) => t.connectionId === c.id)}
               envs={envs.byId}
-              onReplace={() => setReplacing(c.id)}
+              onReplace={() => replaceOrRotate(c)}
               onChanged={refresh}
             />
           ))}
@@ -240,6 +259,8 @@ export function ConnectionCard({
   const toast = useToast();
   const now = useNow();
   const meta = platformMeta(connection.platform);
+  const viaApp = connection.credentialKind === "github-app";
+  const fixLabel = viaApp ? "Rotate the App's key" : "Replace credential";
   const health = connectionHealth(targets);
   const expiry = credentialExpiry(connection.credentialExpiresAt, now);
   const replaceSoon = health.credentialRejected || (expiry !== null && expiry.state !== "later");
@@ -257,7 +278,9 @@ export function ConnectionCard({
       title: `Revoke ${connection.name}?`,
       tone: "danger",
       confirmLabel: "Revoke connection",
-      description: "Varlatch deletes the stored credential. Values already pushed stay on the platform.",
+      description: viaApp
+        ? "Varlatch stops issuing tokens for this installation. The GitHub App and its other connections stay. Values already pushed stay on GitHub."
+        : "Varlatch deletes the stored credential. Values already pushed stay on the platform.",
       consequences:
         targets.length === 0
           ? [{ text: "No integration uses this connection." }]
@@ -290,6 +313,11 @@ export function ConnectionCard({
           <p className="mt-0.5 truncate font-mono text-[13px] text-muted" title={connection.baseIdentity}>
             {connection.platform === "coolify" || connection.platform === "convex" ? connection.baseIdentity.replace(/^https?:\/\//, "") : connection.baseIdentity}
           </p>
+          {viaApp && (
+            <p className="mt-0.5 text-xs text-muted" data-testid={`connection-via-app-${connection.id}`}>
+              Through the GitHub App
+            </p>
+          )}
         </div>
         <Menu
           data-testid={`connection-menu-${connection.id}`}
@@ -297,7 +325,7 @@ export function ConnectionCard({
           buttonClassName="size-8 justify-center border border-bd"
           items={[
             {
-              label: "Replace credential",
+              label: fixLabel,
               icon: <KeyRound size={14} />,
               "data-testid": `replace-credential-${connection.id}`,
               onSelect: onReplace,
@@ -334,7 +362,7 @@ export function ConnectionCard({
         {replaceSoon && (
           <div>
             <Button variant="danger" size="sm" onClick={onReplace} data-testid={`fix-connection-${connection.id}`}>
-              Replace credential
+              {fixLabel}
             </Button>
           </div>
         )}
@@ -350,7 +378,9 @@ export function ConnectionCard({
         </div>
       </div>
       <p className="border-t border-bd px-5 py-3 text-xs text-muted" title={new Date(connection.updatedAt ?? connection.createdAt).toLocaleString()}>
-        {connection.updatedAt ? "Credential replaced" : "Credential set"} {age(connection.updatedAt ?? connection.createdAt, now)}
+        {viaApp
+          ? `Tokens issued for each push · connected ${age(connection.createdAt, now)}`
+          : `${connection.updatedAt ? "Credential replaced" : "Credential set"} ${age(connection.updatedAt ?? connection.createdAt, now)}`}
       </p>
     </article>
   );

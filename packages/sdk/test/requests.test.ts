@@ -128,3 +128,32 @@ describe("userAgent", () => {
     expect(seen).toEqual([ua, ua, ua, undefined]);
   });
 });
+
+describe("GitHub App", () => {
+  it("builds each request on the Organization's github-app routes, and creates an App Connection by installation", async () => {
+    const { requests, client } = recorder(() => new Response(JSON.stringify({})));
+    await client.getGitHubApp("acme");
+    await client.startGitHubAppRegistration("acme", { login: "acme-gh", type: "organization" });
+    await client.completeGitHubAppRegistration("acme", { state: "s", code: "c" });
+    await client.importGitHubApp("acme", { appId: 5254113, privateKey: "KEY" });
+    await client.listGitHubAppInstallations("acme");
+    await client.rotateGitHubAppKey("acme", { privateKey: "NEW", expectedVersion: 2 });
+    await client.createAppConnection("acme", { installationId: 169698431, name: "GitHub (acme-gh)" });
+    const removing = recorder(() => new Response(null, { status: 204 }));
+    await expect(removing.client.removeGitHubApp("acme", "gha_1")).resolves.toBeUndefined();
+    expect(requests.map((r) => [r.method, r.url, r.body])).toEqual([
+      ["GET", "https://v.example/v1/organizations/acme/github-app", undefined],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations", { account: { login: "acme-gh", type: "organization" } }],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/complete", { state: "s", code: "c" }],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/import", { appId: 5254113, privateKey: "KEY" }],
+      ["GET", "https://v.example/v1/organizations/acme/github-app/installations", undefined],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/key", { privateKey: "NEW", expectedVersion: 2 }],
+      [
+        "POST",
+        "https://v.example/v1/organizations/acme/platform-connections",
+        { credentialKind: "github-app", installationId: 169698431, name: "GitHub (acme-gh)" },
+      ],
+    ]);
+    expect(removing.requests.map((r) => [r.method, r.url])).toEqual([["DELETE", "https://v.example/v1/organizations/acme/github-app?appId=gha_1"]]);
+  });
+});

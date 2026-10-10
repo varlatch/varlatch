@@ -183,7 +183,7 @@ export function TargetCard({
         className="inline-flex h-8 items-center gap-1.5 rounded-md border border-deny/50 px-3 text-sm font-medium text-deny hover:bg-deny/10"
         data-testid={`fix-credential-${target.id}`}
       >
-        <KeyRound size={14} /> Replace credential
+        <KeyRound size={14} /> {connection?.credentialKind === "github-app" ? "Rotate the App's key" : "Replace credential"}
       </Link>
     ) : status.fix === "reaffirm" && target.mapping.kind === "explicit" ? (
       <Button variant="secondary" data-testid={`reaffirm-${target.id}`} disabled={busy} onClick={() => act.mutate("reaffirm")} icon={<ShieldCheck size={14} />}>
@@ -218,7 +218,7 @@ export function TargetCard({
           </p>
           <p className="mt-0.5 truncate text-[13px] text-muted">
             via {platform?.shortLabel ?? "a revoked connection"}
-            {connection && <span> ({connection.name})</span>}
+            {connection && <span> ({connection.name}{connection.credentialKind === "github-app" ? ", GitHub App" : ""})</span>}
           </p>
           {expiry && expiry.state !== "later" && (
             <p
