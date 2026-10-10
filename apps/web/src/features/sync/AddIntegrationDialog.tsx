@@ -446,6 +446,7 @@ export function AddIntegrationDialog({
                   <DestinationPicker
                     noun={{ one: "repository", many: "repositories" }}
                     seenBy={!isNew && selected?.credentialKind === "github-app" ? "installation" : "credential"}
+                    omitsArchived
                     value={repo}
                     valueOf={(o) => o.destination.repo ?? ""}
                     listing={destinations}
