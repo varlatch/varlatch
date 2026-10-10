@@ -147,7 +147,7 @@ export function GitHubAppPanel({
           ? [{ text: "No connection uses this App." }]
           : [
               { text: `${appConnections.length} connection${appConnections.length === 1 ? "" : "s"} revoked: ${appConnections.map((c) => c.name).join(", ")}` },
-              { text: `${appTargets.length} integration${appTargets.length === 1 ? "" : "s"} stop pushing until pointed at another connection.` },
+              { text: `${appTargets.length} integration${appTargets.length === 1 ? " stops" : "s stop"} pushing until pointed at another connection.` },
             ],
     });
     if (ok) remove.mutate(a.id);

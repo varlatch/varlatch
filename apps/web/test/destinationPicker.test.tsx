@@ -217,6 +217,21 @@ describe("Destination step", () => {
     expect(byTestId("wizard-next").props.disabled).toBe(false);
   });
 
+  it("names the App's installation, not a credential, for an App connection", async () => {
+    await open([{ ...github("pcn_app", "acme"), name: "GitHub (acme)", credentialKind: "github-app" } as PlatformConnection]);
+    await toDestination("pcn_app");
+    await settle(() => listings.calls[0]!.resolve(listed("api", "web")));
+    expect(text(byTestId("destination-list-count"))).toContain("2 repositories the App's installation includes");
+    expect(text(byTestId("destination-list-count"))).not.toContain("credential");
+  });
+
+  it("says the App's installation includes nothing, and where to add repositories", async () => {
+    await open([{ ...github("pcn_app", "acme"), credentialKind: "github-app" } as PlatformConnection]);
+    await toDestination("pcn_app");
+    await settle(() => listings.calls[0]!.resolve(listed()));
+    expect(text(byTestId("destination-list"))).toContain("The App's installation includes no repositories: add them to it on GitHub.");
+  });
+
   it("offers Try again on an empty list, for a destination created since", async () => {
     await open([github("pcn_a", "acme")]);
     await toDestination("pcn_a");

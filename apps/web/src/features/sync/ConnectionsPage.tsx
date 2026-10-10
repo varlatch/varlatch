@@ -285,7 +285,7 @@ export function ConnectionCard({
         targets.length === 0
           ? [{ text: "No integration uses this connection." }]
           : [
-              { text: `${targets.length} integration${targets.length === 1 ? "" : "s"} stop pushing until pointed at another connection:` },
+              { text: `${targets.length} integration${targets.length === 1 ? " stops" : "s stop"} pushing until pointed at another connection:` },
               ...targets.map((t) => {
                 const ref = targetEnv(t, envs);
                 return {

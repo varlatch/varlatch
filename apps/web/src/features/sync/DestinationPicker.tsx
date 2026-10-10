@@ -11,6 +11,7 @@ import { AccessCheckNotice } from "./AccessCheckNotice";
  */
 export function DestinationPicker({
   noun,
+  seenBy = "credential",
   value,
   valueOf,
   listing,
@@ -18,6 +19,11 @@ export function DestinationPicker({
   onRetry,
 }: {
   noun: { one: string; many: string };
+  /**
+   * Whose view the list is: a credential's (what a token can see), or a
+   * GitHub App installation's (exactly the repositories it includes).
+   */
+  seenBy?: "credential" | "installation";
   /** What the field holds now. */
   value: string;
   /** What the field takes for an option (a repository name, an application UUID). */
@@ -27,6 +33,8 @@ export function DestinationPicker({
   onRetry: () => void;
 }) {
   const typeInstead = `Type the ${noun.one} instead; Review checks it.`;
+  const app = seenBy === "installation";
+  const seen = app ? "the App's installation includes" : "this credential can see";
   const retry = (
     <Button size="sm" variant="secondary" data-testid="destination-retry" onClick={onRetry}>
       Try again
@@ -43,7 +51,7 @@ export function DestinationPicker({
   if (!listing.settled || !listing.result) {
     return (
       <p className="flex items-center gap-2 text-[13px] text-muted" data-testid="destination-list" data-status="pending">
-        <Spinner /> Loading the {noun.many} this credential can see…
+        <Spinner /> Loading the {noun.many} {seen}…
       </p>
     );
   }
@@ -64,8 +72,10 @@ export function DestinationPicker({
       <div className="flex items-center gap-3" data-testid="destination-list" data-status="empty" data-truncated={truncated}>
         <p className="min-w-0 flex-1 text-[13px] text-muted">
           {truncated
-            ? `Varlatch stopped reading before it found any ${noun.many} here: the credential sees more than Varlatch reads.`
-            : `This credential sees no ${noun.many}.`}{" "}
+            ? `Varlatch stopped reading before it found any ${noun.many} here: the ${app ? "installation includes" : "credential sees"} more than Varlatch reads.`
+            : app
+              ? `The App's installation includes no ${noun.many}: add them to it on GitHub.`
+              : `This credential sees no ${noun.many}.`}{" "}
           {typeInstead}
         </p>
         {retry}
@@ -80,7 +90,7 @@ export function DestinationPicker({
   return (
     <div className="space-y-1.5" data-testid="destination-list" data-status="ok">
       {shown.length > 0 ? (
-        <div role="group" aria-label={`${noun.many} this credential can see`} className="max-h-56 overflow-y-auto rounded-xl border border-bd">
+        <div role="group" aria-label={`${noun.many} ${seen}`} className="max-h-56 overflow-y-auto rounded-xl border border-bd">
           {shown.map((option) => {
             const optionValue = valueOf(option);
             const selected = option === picked;
@@ -109,7 +119,7 @@ export function DestinationPicker({
       )}
       <div className="flex items-center gap-3">
         <p className="min-w-0 flex-1 text-xs text-muted" data-testid="destination-list-count">
-          {shown.length === items.length ? `${items.length}` : `${shown.length} of ${items.length}`} {noun.many} this credential can see
+          {shown.length === items.length ? `${items.length}` : `${shown.length} of ${items.length}`} {noun.many} {seen}
           {truncated ? ", a partial list: Varlatch stopped reading early" : ""}. Not listed? Type it; Review checks it.
         </p>
         <Button size="sm" variant="ghost" data-testid="destination-retry" onClick={onRetry}>

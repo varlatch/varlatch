@@ -26,7 +26,7 @@ import { PlatformLogo } from "../../components/brand-logos";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { credentialExpiry, expiryText } from "./credentialExpiry";
-import { platformMeta } from "./platform-meta";
+import { connectionLabel, platformMeta } from "./platform-meta";
 import { mappingSummary, targetDestination, targetOptions, targetStatus, type TargetStatus } from "./status";
 
 /** Square logo tile used on integration and connection cards. */
@@ -217,8 +217,8 @@ export function TargetCard({
             )}
           </p>
           <p className="mt-0.5 truncate text-[13px] text-muted">
-            via {platform?.shortLabel ?? "a revoked connection"}
-            {connection && <span> ({connection.name}{connection.credentialKind === "github-app" ? ", GitHub App" : ""})</span>}
+            via {connection ? connectionLabel(connection) : (platform?.shortLabel ?? "a revoked connection")}
+            {connection?.credentialKind === "github-app" && <span> · GitHub App</span>}
           </p>
           {expiry && expiry.state !== "later" && (
             <p
