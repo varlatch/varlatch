@@ -108,9 +108,11 @@ async function mount(element: React.ReactElement, path = "/") {
     );
   });
 }
-const settle = () => act(async () => {
-  await new Promise((r) => setTimeout(r, 0));
-});
+// A few ticks: a query that starts after another settles (the App check after a refused completion) needs more than one.
+const settle = () =>
+  act(async () => {
+    for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  });
 beforeEach(() => {
   fake.api = {};
   fake.toasts = [];
@@ -154,16 +156,16 @@ describe("the GitHub App panel", () => {
 
   it("removes the App after saying what it revokes, and that the App stays on GitHub", async () => {
     fake.api.getGitHubApp = async () => APP;
-    const removed: string[] = [];
-    fake.api.removeGitHubApp = (async (org: string) => {
-      removed.push(org);
+    const removed: string[][] = [];
+    fake.api.removeGitHubApp = (async (org: string, appId: string) => {
+      removed.push([org, appId]);
     }) as never;
     const target = { id: "snt_1", connectionId: "pcn_app", environmentId: "env_1" } as SyncTarget;
     await mount(<GitHubAppPanel org="acme" connections={[appConnection]} targets={[target]} envs={new Map()} onChanged={() => {}} rotating={false} onRotate={() => {}} onRotateDone={() => {}} />);
     await settle();
     await act(async () => menuItem("github-app-remove").onSelect());
     await settle();
-    expect(removed).toEqual(["acme"]);
+    expect(removed).toEqual([["acme", "gha_1"]]);
     const asked = fake.confirmed[0] as { description: string; consequences: { text: string }[] };
     expect(asked.description).toContain("The App itself stays on GitHub");
     expect(asked.consequences.map((c) => c.text)).toEqual([
@@ -171,6 +173,20 @@ describe("the GitHub App panel", () => {
       "1 integration stop pushing until pointed at another connection.",
     ]);
     expect(fake.toasts[0]).toMatchObject({ kind: "success", title: "GitHub App removed" });
+  });
+});
+
+describe("removing an App that was replaced meanwhile", () => {
+  it("says so and removes nothing", async () => {
+    fake.api.getGitHubApp = async () => APP;
+    fake.api.removeGitHubApp = (async () => {
+      throw new VarlatchApiError(409, { code: "STATE_CHANGED", message: "changed", requestId: "r" });
+    }) as never;
+    await mount(<GitHubAppPanel org="acme" connections={[appConnection]} targets={[]} envs={new Map()} onChanged={() => {}} rotating={false} onRotate={() => {}} onRotateDone={() => {}} />);
+    await settle();
+    await act(async () => menuItem("github-app-remove").onSelect());
+    await settle();
+    expect(fake.toasts).toEqual([{ kind: "error", title: "The GitHub App changed", description: expect.stringContaining("Nothing was removed") }]);
   });
 });
 
@@ -283,23 +299,67 @@ describe("where GitHub sends the browser back", () => {
     expect(text(byTestId("github-app-recovery"))).toContain("If GitHub created the App, it is still there");
     await act(async () => root.unmount());
 
+    // A used link, and no App in Varlatch: the earlier attempt stopped partway.
     fake.api.completeGitHubAppRegistration = (async () => {
       throw new VarlatchApiError(410, { code: "CONSUMED", message: "already", requestId: "r" });
     }) as never;
+    fake.api.getGitHubApp = async () => {
+      throw notFound();
+    };
     await callback("?code=c1&state=s1");
     await settle();
     expect(status()).toBe("CONSUMED");
+    expect(byTestId("github-app-callback").props["data-app"]).toBe("absent");
     expect(text(byTestId("github-app-callback"))).toContain("the earlier attempt stopped partway");
     expect(all("github-app-recovery")).toHaveLength(1);
+  });
+
+  it("never sends anyone to delete the App a refresh shows was saved", async () => {
+    fake.api.completeGitHubAppRegistration = (async () => {
+      throw new VarlatchApiError(410, { code: "CONSUMED", message: "already", requestId: "r" });
+    }) as never;
+    fake.api.getGitHubApp = async () => APP;
+    await callback("?code=c1&state=s1");
+    await settle();
+    expect(byTestId("github-app-callback").props["data-app"]).toBe("present");
+    expect(text(byTestId("github-app-callback"))).toContain("This organization's GitHub App is varlatch-acme");
+    expect(all("github-app-recovery")).toHaveLength(0);
+    expect(byTestId("github-app-install").props.href).toBe("https://github.com/apps/varlatch-acme/installations/new");
+  });
+
+  it("keeps the live App when an expired link is opened, and does not offer deletion when the App cannot be checked", async () => {
+    fake.api.completeGitHubAppRegistration = (async () => {
+      throw new VarlatchApiError(410, { code: "EXPIRED", message: "expired", requestId: "r" });
+    }) as never;
+    fake.api.getGitHubApp = async () => APP;
+    await callback("?code=c1&state=s1");
+    await settle();
+    expect(byTestId("github-app-callback").props["data-app"]).toBe("present");
+    expect(text(byTestId("github-app-callback"))).toContain("keep it");
+    expect(all("github-app-recovery")).toHaveLength(0);
+    await act(async () => root.unmount());
+
+    fake.api.getGitHubApp = async () => {
+      throw new VarlatchApiError(500, { code: "INTERNAL", message: "boom", requestId: "r" });
+    };
+    await callback("?code=c1&state=s1");
+    await settle();
+    expect(byTestId("github-app-callback").props["data-app"]).toBe("unknown");
+    expect(text(byTestId("github-app-callback"))).toContain("Open Connections before deleting anything on GitHub");
+    expect(all("github-app-recovery")).toHaveLength(0);
   });
 
   it("says an expired or unknown registration should start again, and does nothing without a code", async () => {
     fake.api.completeGitHubAppRegistration = (async () => {
       throw new VarlatchApiError(410, { code: "EXPIRED", message: "expired", requestId: "r" });
     }) as never;
+    fake.api.getGitHubApp = async () => {
+      throw notFound();
+    };
     await callback("?code=c1&state=s1");
     await settle();
     expect(text(byTestId("github-app-callback"))).toContain("GitHub's code lasts an hour");
+    expect(all("github-app-recovery")).toHaveLength(1);
     await act(async () => root.unmount());
 
     let calls = 0;
@@ -423,14 +483,37 @@ describe("rotating the App's key", () => {
     expect(byTestId("access-check").props["data-status"]).toBe("credential-rejected");
     await act(async () => root.unmount());
 
-    fake.api.rotateGitHubAppKey = (async () => {
-      throw new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "changed", requestId: "r" });
+  });
+
+  it("re-reads the App after a version conflict, and asks again only with the new version", async () => {
+    // The server's App moves from version 3 to 4 while the dialog is open.
+    let serverVersion = 3;
+    const reread = deferred<GitHubApp>();
+    let reads = 0;
+    fake.api.getGitHubApp = (async () => (++reads === 1 ? { ...APP, version: serverVersion } : reread.promise)) as never;
+    const sent: number[] = [];
+    fake.api.rotateGitHubAppKey = (async (_org: string, input: { expectedVersion: number }) => {
+      sent.push(input.expectedVersion);
+      if (input.expectedVersion !== serverVersion) throw new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "changed", requestId: "r" });
+      return { outcome: "rotated", app: { ...APP, version: serverVersion + 1 } };
     }) as never;
-    await mount(<RotateKeyDialog org="acme" app={APP} connections={[]} targets={[]} envs={new Map()} onClose={() => {}} onRotated={() => {}} />);
+    await mount(<GitHubAppPanel org="acme" connections={[appConnection]} targets={[]} envs={new Map()} onChanged={() => {}} rotating onRotate={() => {}} onRotateDone={() => {}} />);
+    await settle();
+    serverVersion = 4;
     await type("github-app-key", "K");
     await click("github-app-rotate-submit");
     await settle();
-    expect(text(byTestId("github-app-rotate-refused"))).toContain("The App changed while this was open");
+    // Refused at 3; reading again: nothing to submit until the new version is in.
+    expect(sent).toEqual([3]);
+    expect(byTestId("github-app-rotate-conflict").props["data-status"]).toBe("reloading");
+    expect(byTestId("github-app-rotate-submit").props.disabled).toBe(true);
+    await act(async () => reread.resolve({ ...APP, version: 4 }));
+    await settle();
+    expect(byTestId("github-app-rotate-conflict").props["data-status"]).toBe("reloaded");
+    expect(byTestId("github-app-rotate-submit").props.disabled).toBe(false);
+    await click("github-app-rotate-submit");
+    await settle();
+    expect(sent).toEqual([3, 4]);
   });
 
   it("points a personal account's App to the personal settings", () => {

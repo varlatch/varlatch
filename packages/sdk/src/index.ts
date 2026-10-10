@@ -1041,9 +1041,13 @@ export class VarlatchClient {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/key`, input);
   }
 
-  /** Remove the App from Varlatch: its Connections are revoked and its key deleted. GitHub is not touched. */
-  removeGitHubApp(org: string): Promise<void> {
-    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app`);
+  /**
+   * Remove the App from Varlatch: its Connections are revoked and its key
+   * deleted. GitHub is not touched. `appId` is the App the caller confirmed:
+   * STATE_CHANGED when another App has replaced it since.
+   */
+  removeGitHubApp(org: string, appId: string): Promise<void> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app?appId=${encodeURIComponent(appId)}`);
   }
 
   revokePlatformConnection(org: string, connectionId: string): Promise<void> {

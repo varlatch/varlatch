@@ -140,7 +140,7 @@ describe("GitHub App", () => {
     await client.rotateGitHubAppKey("acme", { privateKey: "NEW", expectedVersion: 2 });
     await client.createAppConnection("acme", { installationId: 169698431, name: "GitHub (acme-gh)" });
     const removing = recorder(() => new Response(null, { status: 204 }));
-    await expect(removing.client.removeGitHubApp("acme")).resolves.toBeUndefined();
+    await expect(removing.client.removeGitHubApp("acme", "gha_1")).resolves.toBeUndefined();
     expect(requests.map((r) => [r.method, r.url, r.body])).toEqual([
       ["GET", "https://v.example/v1/organizations/acme/github-app", undefined],
       ["POST", "https://v.example/v1/organizations/acme/github-app/registrations", { account: { login: "acme-gh", type: "organization" } }],
@@ -154,6 +154,6 @@ describe("GitHub App", () => {
         { credentialKind: "github-app", installationId: 169698431, name: "GitHub (acme-gh)" },
       ],
     ]);
-    expect(removing.requests.map((r) => [r.method, r.url])).toEqual([["DELETE", "https://v.example/v1/organizations/acme/github-app"]]);
+    expect(removing.requests.map((r) => [r.method, r.url])).toEqual([["DELETE", "https://v.example/v1/organizations/acme/github-app?appId=gha_1"]]);
   });
 });

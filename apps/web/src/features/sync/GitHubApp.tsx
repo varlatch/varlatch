@@ -109,12 +109,20 @@ export function GitHubAppPanel({
     onChanged();
   };
   const remove = useMutation({
-    mutationFn: () => api.removeGitHubApp(org),
+    // The App confirmed, by its id: if another one replaced it meanwhile, the server refuses.
+    mutationFn: (appId: string) => api.removeGitHubApp(org, appId),
     onSuccess: () => {
       changed();
       toast.success("GitHub App removed", { description: "It is still on GitHub. Delete it there too if you no longer need it." });
     },
-    onError: (err) => toast.error("Could not remove the GitHub App", { description: errorText(err) }),
+    onError: (err) => {
+      if (err instanceof VarlatchApiError && err.code === "STATE_CHANGED") {
+        changed();
+        toast.error("The GitHub App changed", { description: "Another App replaced it since you confirmed. Nothing was removed; check it and try again." });
+        return;
+      }
+      toast.error("Could not remove the GitHub App", { description: errorText(err) });
+    },
   });
 
   if (app.isLoading) return <Skeleton className="mb-6 h-28 rounded-xl" />;
@@ -142,7 +150,7 @@ export function GitHubAppPanel({
               { text: `${appTargets.length} integration${appTargets.length === 1 ? "" : "s"} stop pushing until pointed at another connection.` },
             ],
     });
-    if (ok) remove.mutate();
+    if (ok) remove.mutate(a.id);
   };
 
   return (
@@ -245,6 +253,7 @@ export function GitHubAppPanel({
             onRotateDone();
             changed();
           }}
+          onConflict={changed}
         />
       )}
     </section>
@@ -346,6 +355,12 @@ export function GitHubAppCallbackPage() {
       if (result.outcome === "registered") void qc.invalidateQueries({ queryKey: githubAppKey(org) });
     },
   });
+  // A used or expired link: whether the Organization has its App decides
+  // what to say. A refresh after a successful registration lands here too,
+  // and must not send anyone to delete the App that works.
+  const errorCode = complete.error instanceof VarlatchApiError ? complete.error.code : undefined;
+  const needsAppCheck = errorCode === "CONSUMED" || errorCode === "EXPIRED";
+  const current = useGitHubApp(org, needsAppCheck);
   // Once per visit: the state is single-use.
   const ran = useRef(false);
   useEffect(() => {
@@ -379,18 +394,51 @@ export function GitHubAppCallbackPage() {
         Varlatch asks GitHub for the App it just created.
       </Callout>
     );
+  } else if (complete.error && needsAppCheck) {
+    const expired = errorCode === "EXPIRED";
+    if (current.isLoading) {
+      body = (
+        <Callout tone="neutral" icon={<Spinner />} title="Checking this organization's GitHub App" data-testid="github-app-callback" data-status={errorCode} data-app="checking">
+          {expired ? "This registration expired." : "This registration was already finished."} Varlatch checks whether the organization has its App.
+        </Callout>
+      );
+    } else if (current.error) {
+      body = (
+        <Callout tone="warn" title="Could not check this organization's GitHub App" actions={back} data-testid="github-app-callback" data-status={errorCode} data-app="unknown">
+          {expired ? "This registration expired." : "This registration was already finished."} Open Connections before deleting anything on GitHub: it
+          shows whether this organization has its App.
+        </Callout>
+      );
+    } else if (current.data) {
+      const app = current.data;
+      body = expired ? (
+        <Callout tone="warn" title="This registration expired" actions={back} data-testid="github-app-callback" data-status={errorCode} data-app="present">
+          GitHub's code lasts an hour. This organization's GitHub App is <span className="font-mono">{app.slug}</span>: keep it. If GitHub created
+          another App during this attempt, you can delete that one on GitHub, not {app.slug}.
+        </Callout>
+      ) : (
+        <Callout tone="success" title="This registration already finished" actions={back} data-testid="github-app-callback" data-status={errorCode} data-app="present">
+          This organization's GitHub App is <span className="font-mono">{app.slug}</span>. If you have not yet,{" "}
+          <ExternalAnchor href={installUrl(app.slug)} testId="github-app-install">install it on GitHub</ExternalAnchor>, then connect the installation
+          from Connections.
+        </Callout>
+      );
+    } else {
+      body = (
+        <Callout tone="danger" title="The registration did not finish" actions={back} data-testid="github-app-callback" data-status={errorCode} data-app="absent">
+          {expired
+            ? "This registration expired: GitHub's code lasts an hour, and this organization has no GitHub App."
+            : "This registration was already used, but this organization has no GitHub App: the earlier attempt stopped partway."}
+          {recovery}
+        </Callout>
+      );
+    }
   } else if (complete.error) {
-    const code = complete.error instanceof VarlatchApiError ? complete.error.code : undefined;
     body = (
-      <Callout tone="danger" title="The registration did not finish" actions={back} data-testid="github-app-callback" data-status={code ?? "error"}>
-        {code === "EXPIRED"
-          ? "This registration expired: GitHub's code lasts an hour. Start again from Connections."
-          : code === "CONSUMED"
-            ? "This registration was already finished. If Connections shows no GitHub App, the earlier attempt stopped partway."
-            : code === "RESOURCE_NOT_FOUND"
-              ? "No registration of yours in this organization matches this link. Start again from Connections."
-              : errorText(complete.error)}
-        {(code === "EXPIRED" || code === "CONSUMED") && recovery}
+      <Callout tone="danger" title="The registration did not finish" actions={back} data-testid="github-app-callback" data-status={errorCode ?? "error"}>
+        {errorCode === "RESOURCE_NOT_FOUND"
+          ? "No registration of yours in this organization matches this link. Start again from Connections."
+          : errorText(complete.error)}
       </Callout>
     );
   } else {
@@ -671,6 +719,7 @@ export function RotateKeyDialog({
   envs,
   onClose,
   onRotated,
+  onConflict,
 }: {
   org: string;
   app: GitHubApp;
@@ -679,14 +728,28 @@ export function RotateKeyDialog({
   envs: Map<string, EnvironmentRef>;
   onClose: () => void;
   onRotated: () => void;
+  /** Reload the App (and what it covers) after a version conflict. */
+  onConflict?: () => void;
 }) {
   const { api } = useSession();
+  const qc = useQueryClient();
   const toast = useToast();
   const [key, setKey] = useState("");
   const [failed, setFailed] = useState<AccessCheck | null>(null);
+  // The version GitHub's rotation was refused at: until the App is read
+  // again with a newer one, asking again would only repeat the conflict.
+  const [conflictedAt, setConflictedAt] = useState<number | null>(null);
+  const stale = conflictedAt !== null && app.version <= conflictedAt;
+  const reload = () => (onConflict ? onConflict() : void qc.invalidateQueries({ queryKey: githubAppKey(org) }));
   const settings = appSettingsUrl(app);
   const rotate = useMutation({
     mutationFn: () => api.rotateGitHubAppKey(org, { privateKey: key, expectedVersion: app.version }),
+    onError: (err) => {
+      if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
+        setConflictedAt(app.version);
+        reload();
+      }
+    },
     onSuccess: (result) => {
       if (result.outcome === "rotated") {
         toast.success("Key rotated", { description: "Now delete the old key on GitHub: the App's settings, Credentials, Key pairs." });
@@ -697,12 +760,8 @@ export function RotateKeyDialog({
       }
     },
   });
-  const refusal =
-    rotate.error instanceof VarlatchApiError && rotate.error.code === "VERSION_CONFLICT"
-      ? "The App changed while this was open. Close this and try again."
-      : rotate.error
-        ? errorText(rotate.error)
-        : null;
+  const conflict = rotate.error instanceof VarlatchApiError && rotate.error.code === "VERSION_CONFLICT";
+  const refusal = rotate.error && !conflict ? errorText(rotate.error) : null;
 
   return (
     <Dialog
@@ -713,7 +772,13 @@ export function RotateKeyDialog({
       footer={
         <>
           <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={rotate.isPending} disabled={key.trim() === ""} onClick={() => rotate.mutate()} data-testid="github-app-rotate-submit">
+          <Button
+            variant="primary"
+            loading={rotate.isPending}
+            disabled={key.trim() === "" || stale}
+            onClick={() => rotate.mutate()}
+            data-testid="github-app-rotate-submit"
+          >
             Rotate key
           </Button>
         </>
@@ -748,6 +813,27 @@ export function RotateKeyDialog({
           )}
         </Callout>
         {failed && <AccessCheckNotice pending={false} check={failed} error={undefined} />}
+        {conflictedAt !== null &&
+          (stale ? (
+            <Callout
+              tone="warn"
+              icon={<Spinner />}
+              title="The App changed while this was open"
+              data-testid="github-app-rotate-conflict"
+              data-status="reloading"
+              actions={
+                <Button size="sm" onClick={reload}>
+                  Reload
+                </Button>
+              }
+            >
+              Varlatch is reading it again. Nothing was rotated.
+            </Callout>
+          ) : (
+            <Callout tone="info" title="The App changed while this was open" data-testid="github-app-rotate-conflict" data-status="reloaded">
+              Varlatch read it again. Check the integrations above, then rotate the key again.
+            </Callout>
+          ))}
         {refusal && (
           <Callout tone="danger" title="The key was not rotated" data-testid="github-app-rotate-refused">
             {refusal}
