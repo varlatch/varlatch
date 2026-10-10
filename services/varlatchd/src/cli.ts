@@ -241,7 +241,9 @@ async function serveCommand(): Promise<void> {
 }
 
 async function migrateCommand(): Promise<void> {
-  const config = loadConfig(process.env, { requireKek: false });
+  // Migrate serves nothing: its own container may carry another service's
+  // listener settings (Coolify hands every variable to every service).
+  const config = loadConfig(process.env, { requireKek: false, listeners: false });
   const db = createPgQuerier(config.databaseUrl);
   const release = await operatorLease(db);
   try {
