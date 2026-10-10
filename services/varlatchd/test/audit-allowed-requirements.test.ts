@@ -115,7 +115,9 @@ describe("allowed reads record the Requirement outcomes (issue #22)", () => {
       ]),
     );
     for (const e of events) {
+      // The admin's built-in role allowed it; Requirements still applied, and are recorded.
       expect(e.authz, `${e.eventType} via ${e.action}`).toMatchObject({
+        role: "admin",
         grantIds: expect.any(Array),
         requirements: [{ requirementId: byNode, satisfied: true, by: "node:nLAPTOP" }],
       });

@@ -356,14 +356,17 @@ export function evaluate(input: EvaluateInput): Evaluation {
 }
 
 /**
- * What an allowed action records in its audit events: the decision-time
- * Grants (ADR-0029 §6) and, for tailnet-constrained actions, each
- * applicable Requirement's outcome, `by` what it was satisfied, in the
+ * What an allowed action records in its audit events: the built-in
+ * Organization role, when that role allowed it (the evaluator's
+ * decision-time role, never inferred from an empty Grant list), the
+ * decision-time Grants (ADR-0029 §6), and, for tailnet-constrained actions,
+ * each applicable Requirement's outcome, `by` what it was satisfied, in the
  * shape denials record them (ADR-0046 Decision 8). No Requirement applies:
  * an empty list.
  */
 export function auditAuthz(evaluation: Evaluation): Record<string, unknown> {
   return {
+    ...(evaluation.provenance.role ? { role: evaluation.provenance.role } : {}),
     grantIds: evaluation.provenance.grantIds,
     ...(evaluation.provenance.applied ? { applied: evaluation.provenance.applied } : {}),
     requirements: evaluation.requirements,

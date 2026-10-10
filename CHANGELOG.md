@@ -288,6 +288,19 @@ fixes.
   offering Download, and an export in flight writes no file. This tidies
   the screen only: plaintext the browser already received is not revoked.
 
+### Audit
+
+- **Allowed actions say when the Organization role let them through.** An
+  allowed event's `authorization` now carries `role` (`admin` or
+  `member`) when the actor's built-in Organization role allowed the
+  action, next to the Grants that applied. Before, an admin's action
+  recorded only an empty Grant list, as if nothing had allowed it; the
+  dashboard's audit log now says "Allowed as organization admin." for
+  it. Integrations record it too: creating or re-pointing an integration,
+  replacing a connection's credential, and rotating the GitHub App's key
+  record, for each Target, the role or Grants that passed its disclosure
+  gate. Requirement outcomes are recorded as before.
+
 ### API
 
 - Environments carry `tailnetRequired` (capability
