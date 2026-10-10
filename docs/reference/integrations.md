@@ -79,10 +79,13 @@ you back to Varlatch.
   ([`VARLATCH_PUBLIC_URL`](../self-hosting/configuration.md#varlatch_public_url)), or a
   loopback address in local development: GitHub sends the browser back
   there.
-- The link GitHub sends you back with works once, for an hour. If the
-  registration did not finish (the page says so), GitHub may still have
-  created the App: delete it on GitHub under **Settings**, **Developer
-  settings**, **GitHub Apps**, then start again.
+- The link GitHub sends you back with works once, for an hour. Opening
+  it again (a refresh, for example) says whether the registration
+  finished and names the organization's App when there is one: keep
+  that App. Only when the page says the registration did not finish,
+  and the organization has no GitHub App in Varlatch, may GitHub still
+  have created one: delete that App on GitHub under **Settings**,
+  **Developer settings**, **GitHub Apps**, then start again.
 
 **Or import one.** If an owner registered the App, **Import an App** takes
 its App ID and a private key (the `.pem` file GitHub downloads under the
@@ -113,8 +116,9 @@ lack it for one, nothing changes. Once Varlatch confirms, delete the old
 key on GitHub. An App connection has no credential of its own: its
 **Rotate the App's key** button leads here. It never shows an expiry.
 
-**Remove the App.** **Remove App** revokes every connection on it at
-once: their integrations are disabled and keep their destinations, and
+**Remove the App.** **Remove App** removes the App you confirmed (if
+another one replaced it meanwhile, nothing changes) and revokes every
+connection on it at once: their integrations are disabled and keep their destinations, and
 Varlatch deletes the key. The App stays on GitHub; delete it there,
 under the App's **Advanced** settings, if you no longer need it.
 
