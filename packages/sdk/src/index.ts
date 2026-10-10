@@ -48,6 +48,14 @@ import type {
   AccessCheck,
   DestinationListing,
   PlatformConnection,
+  GitHubAccount,
+  GitHubApp,
+  GitHubAppImportFailed,
+  GitHubAppInstallationListing,
+  GitHubAppRegistrationFailed,
+  GitHubAppRegistrationRefused,
+  GitHubAppRegistrationRegistered,
+  GitHubAppRegistrationStart,
   SyncLedgerName,
   SyncMappingInput,
   SyncPlatform,
@@ -987,6 +995,55 @@ export class VarlatchClient {
       `/v1/organizations/${encodeURIComponent(org)}/platform-connections/${encodeURIComponent(connectionId)}/credential`,
       input,
     );
+  }
+
+  /** A Connection on an installation of the Organization's GitHub App: no credential, only the installation. */
+  createAppConnection(org: string, input: { installationId: number; name: string }): Promise<PlatformConnection> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/platform-connections`, {
+      credentialKind: "github-app",
+      ...input,
+    });
+  }
+
+  // ---- GitHub App (one per Organization)
+
+  /** The Organization's GitHub App; RESOURCE_NOT_FOUND when it has none. */
+  getGitHubApp(org: string): Promise<GitHubApp> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/github-app`);
+  }
+
+  /** Start GitHub's manifest flow: the manifest, where the browser posts it, and a single-use state. */
+  startGitHubAppRegistration(org: string, account: GitHubAccount): Promise<GitHubAppRegistrationStart> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations`, { account });
+  }
+
+  /** Complete it with the state and GitHub's code. */
+  completeGitHubAppRegistration(
+    org: string,
+    input: { state: string; code: string },
+  ): Promise<GitHubAppRegistrationRegistered | GitHubAppRegistrationRefused | GitHubAppRegistrationFailed> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/complete`, input);
+  }
+
+  importGitHubApp(org: string, input: { appId: number; privateKey: string }): Promise<GitHubAppRegistrationRegistered | GitHubAppImportFailed> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/import`, input);
+  }
+
+  listGitHubAppInstallations(org: string): Promise<GitHubAppInstallationListing> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/github-app/installations`);
+  }
+
+  /** Rotate the App's key: a new disclosure grant for every integration on its Connections. */
+  rotateGitHubAppKey(
+    org: string,
+    input: { privateKey: string; expectedVersion: number },
+  ): Promise<{ outcome: "rotated"; app: GitHubApp } | GitHubAppImportFailed> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/github-app/key`, input);
+  }
+
+  /** Remove the App from Varlatch: its Connections are revoked and its key deleted. GitHub is not touched. */
+  removeGitHubApp(org: string): Promise<void> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app`);
   }
 
   revokePlatformConnection(org: string, connectionId: string): Promise<void> {

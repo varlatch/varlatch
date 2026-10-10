@@ -206,6 +206,19 @@ fixes.
   from Varlatch: its connections are revoked, their integrations are
   disabled and keep their destinations, and the stored key is deleted.
   The App itself stays on GitHub until you delete it there.
+- The dashboard sets up GitHub through your own GitHub App. On
+  Connections, register one (GitHub shows its form, then sends you back)
+  or import one an owner registered, connect its installations, rotate
+  its key, and remove it. If GitHub creates the App on your own account
+  because you may not register Apps on the organization, Varlatch keeps
+  nothing, says so, and links to where you delete it. A connection
+  through the App shows no expiry, and fixing one rotates the App's key.
+  The dashboard's Content-Security-Policy now lets forms post to
+  github.com, for GitHub's App form.
+- SDK: `getGitHubApp`, `startGitHubAppRegistration`,
+  `completeGitHubAppRegistration`, `importGitHubApp`,
+  `listGitHubAppInstallations`, `createAppConnection`,
+  `rotateGitHubAppKey`, and `removeGitHubApp`.
 
 ### Dashboard
 

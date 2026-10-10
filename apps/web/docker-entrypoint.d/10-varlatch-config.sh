@@ -48,7 +48,7 @@ case "$convex_origin" in
 esac
 
 connect="'self' $convex_origin $convex_ws${endpoint:+ $endpoint}"
-policy="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; font-src 'self' data:; connect-src $connect; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+policy="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https:; font-src 'self' data:; connect-src $connect; manifest-src 'self'; base-uri 'none'; form-action 'self' https://github.com; frame-ancestors 'none'; object-src 'none'"
 
 mkdir -p "$(dirname "$CSP_FILE")"
 printf 'add_header Content-Security-Policy "%s" always;\n' "$policy" > "$CSP_FILE"

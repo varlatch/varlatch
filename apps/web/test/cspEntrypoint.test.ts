@@ -47,6 +47,10 @@ describe("the dashboard's Content-Security-Policy", () => {
     expect(policy).not.toMatch(/unsafe-inline|unsafe-eval|\*/);
   });
 
+  it("lets forms post to the dashboard and to github.com only (a GitHub App's manifest)", () => {
+    expect(directive(policyOf(run({ CONVEX_URL: "https://varlatch.example.com/convex" }).conf), "form-action")).toBe("form-action 'self' https://github.com");
+  });
+
   it("connects only to the dashboard, its Convex origin (HTTP and WebSocket), and the tailnet endpoint when set", () => {
     expect(directive(policyOf(run({ CONVEX_URL: "https://convex.example.com" }).conf), "connect-src")).toBe(
       "connect-src 'self' https://convex.example.com wss://convex.example.com",
