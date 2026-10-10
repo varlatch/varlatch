@@ -885,11 +885,19 @@ describe("credential replacement", () => {
       { credential: "coolify-token-v2", expectedVersion: 1 },
     );
     expect(replaced.status).toBe(200);
-    expect((await targetRowFromDb()).needs_sync).toBe(true);
+    const target = await targetRowFromDb();
+    expect(target.needs_sync).toBe(true);
     const audit = await ctx.db.query(
-      "SELECT id FROM audit_events WHERE event_type = 'sync.connection_credential_replaced'",
+      "SELECT id, authz FROM audit_events WHERE event_type = 'sync.connection_credential_replaced'",
     );
     expect(audit.rows).toHaveLength(1);
+    // Each re-authorized Target's gate, as it decided.
+    const authz = (audit.rows[0] as { authz: { reauthorizedTargets: Record<string, Record<string, { grantIds: string[] }>> } }).authz;
+    expect(Object.keys(authz.reauthorizedTargets)).toEqual([target.id]);
+    const decided = authz.reauthorizedTargets[target.id as string]!;
+    expect(decided).toHaveProperty(["secret.reveal", "grantIds"]);
+    expect(decided).toHaveProperty(["secret.reveal", "requirements"]);
+    expect(decided).toHaveProperty(["config.value.read", "grantIds"]);
   });
 
   it("is refused wholesale when the actor lacks authority for any referencing target", async () => {

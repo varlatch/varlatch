@@ -2762,7 +2762,16 @@ paths:
         and the stored private key is deleted. Removal narrows disclosure,
         so it needs config.sync.manage only. GitHub is not touched: the App
         stays registered and installed there until its owner deletes it.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+        appId names the App the caller confirmed: if the Organization's live
+        App is another one (it was replaced meanwhile), nothing changes and
+        the answer is 409 STATE_CHANGED.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - name: appId
+          in: query
+          required: true
+          description: The id of the App being removed (GitHubApp.id), as the caller saw it
+          schema: { type: string, minLength: 1, maxLength: 100 }
       responses:
         "204": { description: Removed }
         default: { $ref: "#/components/responses/Error" }
@@ -2906,7 +2915,9 @@ paths:
         auto-disabled ones included: the caller must pass each Target's
         write-time disclosure gate, or the whole rotation is refused (403).
         expectedVersion must be the App's current version (409 otherwise).
-        Every Target is then queued to converge with the new key.
+        Every Target is then queued to converge with the new key, and the
+        audit event records each Target's gate decisions (Grants, applied
+        Roles and Groups, Requirements).
       parameters: [{ $ref: "#/components/parameters/org" }]
       requestBody:
         required: true

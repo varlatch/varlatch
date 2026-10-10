@@ -379,7 +379,7 @@ export async function rotateGitHubAppKey(
   ctx: AppCtx,
   org: OrgRow,
   input: { privateKey: string; expectedVersion: number },
-  gate: (target: SyncTargetRow) => Promise<void>,
+  gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
   actorIdentityId: string,
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
@@ -416,7 +416,8 @@ export async function rotateGitHubAppKey(
       throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
     }
     const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
-    for (const target of targets) await gate(target);
+    const provenance: Record<string, unknown> = {};
+    for (const target of targets) provenance[target.id] = (await gate(target)) ?? null;
     const updated = await db.query(
       `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
        WHERE id = $2 RETURNING ${APP_COLUMNS}`,
@@ -435,6 +436,8 @@ export async function rotateGitHubAppKey(
       organizationId: org.id,
       action: "config.sync.manage",
       resource: { githubAppId: seen.id },
+      // Decision 7: the gate's provenance for every Target in the set.
+      authz: { reauthorizedTargets: provenance },
       metadata: {
         appId: githubAppId,
         slug: seen.slug,
@@ -448,20 +451,26 @@ export async function rotateGitHubAppKey(
 }
 
 /**
- * Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5).
+ * Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5):
+ * the App the caller confirmed, by its id, checked under its lock.
  * Every Connection on it is revoked in one transaction, as revocation does
  * for one: their Targets are disabled and keep their destination claims.
  * The wrapped key is deleted. Removal narrows disclosure, so it needs no
  * gate. It does not touch GitHub: the App stays registered and installed
  * there until its owner deletes it.
  */
-export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, actorIdentityId: string): Promise<void> {
+export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
     const locked = (await db.query(
       "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
     )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    // The App the caller confirmed, and no other: another one may have
+    // replaced it since (removed, then registered or imported).
+    if (locked.id !== appRowId) {
+      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App changed since you confirmed; reload and try again");
+    }
     const { connections, targets } = await lockAppConnectionsAndTargets(db, locked.id);
     await db.query(
       "UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now() WHERE id = ANY($1::text[])",
@@ -555,7 +564,7 @@ export async function replaceConnectionCredential(
   org: OrgRow,
   connectionId: string,
   input: { credential: string; expectedVersion: number },
-  gate: (target: SyncTargetRow) => Promise<void>,
+  gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
   actorIdentityId: string,
 ): Promise<PlatformConnectionRow> {
   if (input.credential.trim().length === 0) {
@@ -586,8 +595,9 @@ export async function replaceConnectionCredential(
       [connectionId],
     );
     const rows = (targets.rows as Record<string, unknown>[]).map(targetRow);
+    const provenance: Record<string, unknown> = {};
     for (const target of rows) {
-      await gate(target);
+      provenance[target.id] = (await gate(target)) ?? null;
     }
     const updated = await db.query(
       `UPDATE platform_connections
@@ -603,6 +613,8 @@ export async function replaceConnectionCredential(
       organizationId: org.id,
       action: "config.sync.manage",
       resource: { connectionId },
+      // Each re-authorized Target's write-time gate, as it decided.
+      authz: { reauthorizedTargets: provenance },
       metadata: { reauthorizedTargets: rows.map((t) => t.id).join(",") || null },
     });
     // A replacement is a Target mutation class trigger (ADR-0031 §6):

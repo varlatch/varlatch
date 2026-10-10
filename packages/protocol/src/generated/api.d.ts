@@ -1251,7 +1251,7 @@ export interface paths {
         get: operations["getGitHubApp"];
         put?: never;
         post?: never;
-        /** Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5): every Connection on it is revoked in one transaction, their Sync Targets are disabled and keep their destination claims, and the stored private key is deleted. Removal narrows disclosure, so it needs config.sync.manage only. GitHub is not touched: the App stays registered and installed there until its owner deletes it. */
+        /** Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5): every Connection on it is revoked in one transaction, their Sync Targets are disabled and keep their destination claims, and the stored private key is deleted. Removal narrows disclosure, so it needs config.sync.manage only. GitHub is not touched: the App stays registered and installed there until its owner deletes it. appId names the App the caller confirmed: if the Organization's live App is another one (it was replaced meanwhile), nothing changes and the answer is 409 STATE_CHANGED. */
         delete: operations["removeGitHubApp"];
         options?: never;
         head?: never;
@@ -1318,7 +1318,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate the GitHub App's private key (ADR-0047 Decision 5): generate a new key on GitHub, send it here, then delete the old one on GitHub. Varlatch verifies the new key first (GET /app as the App, before any lock). The rotation is a new disclosure grant for every non-revoked Sync Target of every non-revoked Connection on the App, paused and auto-disabled ones included: the caller must pass each Target's write-time disclosure gate, or the whole rotation is refused (403). expectedVersion must be the App's current version (409 otherwise). Every Target is then queued to converge with the new key. */
+        /** Rotate the GitHub App's private key (ADR-0047 Decision 5): generate a new key on GitHub, send it here, then delete the old one on GitHub. Varlatch verifies the new key first (GET /app as the App, before any lock). The rotation is a new disclosure grant for every non-revoked Sync Target of every non-revoked Connection on the App, paused and auto-disabled ones included: the caller must pass each Target's write-time disclosure gate, or the whole rotation is refused (403). expectedVersion must be the App's current version (409 otherwise). Every Target is then queued to converge with the new key, and the audit event records each Target's gate decisions (Grants, applied Roles and Groups, Requirements). */
         post: operations["rotateGitHubAppKey"];
         delete?: never;
         options?: never;
@@ -5615,7 +5615,10 @@ export interface operations {
     };
     removeGitHubApp: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The id of the App being removed (GitHubApp.id), as the caller saw it */
+                appId: string;
+            };
             header?: never;
             path: {
                 /** @description Organization slug or ID */

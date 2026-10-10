@@ -180,7 +180,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
 
   it("an attachment that arrives while removal holds its locks waits, then is refused", async () => {
     const pause = paused.pauseAfter(ROTATION_TARGETS);
-    const removing = removeGitHubApp(pctx, await org(), identityId);
+    const removing = removeGitHubApp(pctx, await org(), "gha_rot", identityId);
     await pause.reached;
     const attaching = attach(ctx, connA);
     await waitingOnLock();
@@ -196,7 +196,7 @@ describe.skipIf(!url)("GitHub App rotation and removal against attachment on rea
     const pause = paused.pauseAfter(ATTACH_APP_LOCK);
     const attaching = attach(pctx, connA);
     await pause.reached;
-    const removing = removeGitHubApp(ctx, await org(), identityId);
+    const removing = removeGitHubApp(ctx, await org(), "gha_rot", identityId);
     await waitingOnLock();
     pause.release();
     const [attached] = await Promise.all([attaching, removing]);

@@ -3168,14 +3168,15 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // gate must pass for THIS actor, or the whole change is refused.
   const reauthorizationGate =
     (c: Context<{ Variables: Vars }>, principal: Principal, org: OrgRow, refusal: string) =>
-    async (target: SyncTargetRow) => {
+    async (target: SyncTargetRow): Promise<Record<string, unknown> | undefined> => {
       const project = await ctx.db.query("SELECT * FROM projects WHERE id = $1", [target.project_id]);
       const env = await ctx.db.query("SELECT * FROM environments WHERE id = $1", [target.environment_id]);
       const projectRow = project.rows[0] as ProjectRow | undefined;
       const envRow = env.rows[0] as EnvironmentRow | undefined;
-      if (!projectRow || !envRow) return;
+      if (!projectRow || !envRow) return undefined;
       try {
-        await syncDisclosureGate(c, principal, org, projectRow, envRow, target.mapping);
+        // The decisions (Grants, applied Roles and Groups, Requirements), for the caller's audit event.
+        return await syncDisclosureGate(c, principal, org, projectRow, envRow, target.mapping);
       } catch (err) {
         if (err instanceof DomainError && err.code !== "INTERNAL") {
           throw new DomainError("PERMISSION_DENIED", refusal, { targetId: target.id, environmentId: target.environment_id });
@@ -3351,7 +3352,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
-    await removeGitHubApp(ctx, org, principal.identity.id);
+    const { appId } = parseBody(z.object({ appId: z.string().min(1).max(100) }), { appId: c.req.query("appId") });
+    await removeGitHubApp(ctx, org, appId, principal.identity.id);
     return c.body(null, 204);
   });
 
