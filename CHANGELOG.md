@@ -182,6 +182,19 @@ fixes.
   where the App is installed. When GitHub refuses the App's signed
   request, the answer says whether the key was refused or this server's
   clock is too far off GitHub's.
+- API: a GitHub Actions connection can now use the Organization's GitHub
+  App instead of a personal access token:
+  `POST /v1/organizations/{org}/platform-connections` with
+  `{"credentialKind": "github-app", "installationId": ..., "name": ...}`.
+  Varlatch stores no token for it. Each push, access check, and listing
+  gets a one-hour token from the App, limited to what it needs: one
+  repository with write access to its secrets (or environment secrets)
+  for a push, read access for a destination check, and only repository
+  metadata for checking the connection alone or listing its
+  repositories, which are exactly the installation's. Such a connection
+  never shows an expiry and has no credential to replace. Connections
+  carry `credentialKind`, `githubAppId`, and `installationId`. The
+  dashboard does not offer this yet.
 
 ### Dashboard
 

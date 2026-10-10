@@ -2583,13 +2583,28 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [platform, baseIdentity, name, credential]
-              properties:
-                platform: { $ref: "#/components/schemas/SyncPlatform" }
-                baseIdentity: { type: string, minLength: 1, maxLength: 500 }
-                name: { type: string, minLength: 1, maxLength: 200 }
-                credential: { type: string, minLength: 1, maxLength: 10000 }
+              oneOf:
+                - type: object
+                  required: [platform, baseIdentity, name, credential]
+                  properties:
+                    platform: { $ref: "#/components/schemas/SyncPlatform" }
+                    baseIdentity: { type: string, minLength: 1, maxLength: 500 }
+                    name: { type: string, minLength: 1, maxLength: 200 }
+                    credential: { type: string, minLength: 1, maxLength: 10000 }
+                    credentialKind: { type: string, enum: [token] }
+                - type: object
+                  description: >
+                    A Connection on an installation of the Organization's
+                    GitHub App (ADR-0047 Decision 2): no credential, only the
+                    installation. Varlatch reads it as the App (it must be
+                    this App's, and not suspended), and its account becomes
+                    the base identity. Every push, check, and listing then
+                    mints a one-hour token narrowed to the use.
+                  required: [credentialKind, installationId, name]
+                  properties:
+                    credentialKind: { type: string, enum: [github-app] }
+                    installationId: { type: integer, minimum: 1 }
+                    name: { type: string, minLength: 1, maxLength: 200 }
       responses:
         "201":
           description: Created Connection (the credential is never returned; Cache-Control no-store)
@@ -4419,7 +4434,7 @@ components:
 
     PlatformConnection:
       type: object
-      required: [id, organizationId, platform, baseIdentity, name, createdAt, version, updatedAt, credentialExpiresAt, credentialExpirySeenAt]
+      required: [id, organizationId, platform, baseIdentity, name, createdAt, version, updatedAt, credentialExpiresAt, credentialExpirySeenAt, credentialKind, githubAppId, installationId]
       properties:
         id: { type: string }
         organizationId: { type: string }
@@ -4445,6 +4460,16 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the platform said so; null with credentialExpiresAt.
+        credentialKind:
+          type: string
+          enum: [token, github-app]
+          description: >
+            token: a stored Platform Credential. github-app: none; tokens are
+            minted from the Organization's GitHub App for each use, so the
+            Connection has no expiry (always null) and no credential to
+            replace (the App's key is rotated instead).
+        githubAppId: { type: [string, "null"], description: "The GitHub App (github-app Connections)" }
+        installationId: { type: [integer, "null"], description: "The App's installation (github-app Connections)" }
 
     GitHubAccount:
       type: object

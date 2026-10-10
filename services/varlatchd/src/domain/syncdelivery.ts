@@ -7,6 +7,7 @@ import { decryptPlatformCredential, decryptValue, syncFingerprintKey } from "../
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { isExpired, type EnvironmentRow } from "./environments.js";
+import { APP_REMOVED, appCredentialFrom, mintInstallationToken } from "./githubmint.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 import { ReferenceExpansionError, expandReferences } from "./references.js";
@@ -44,13 +45,29 @@ export const REPAIR_INTERVAL_MS = 6 * 3_600_000;
 interface LiveConnection {
   platform: string;
   base_identity: string;
-  credential_envelope: Envelope | string;
+  /** NULL for an App Connection, which stores no token. */
+  credential_envelope: Envelope | string | null;
   wrapped_org_kek: Envelope | string;
   connection_revoked_at: string | null;
   /** The Connection's version this run's credential was read at. */
   connection_version: number;
   /** When the platform said, during this run, the credential expires. */
   observed_expiry?: string;
+  credential_kind: "token" | "github-app";
+  github_installation_id: string | number | null;
+  /** An App Connection's App (ADR-0047): NULL for a token Connection. */
+  app_row_id: string | null;
+  app_github_id: string | number | null;
+  app_client_id: string | null;
+  app_key_envelope: Envelope | string | null;
+  app_removed_at: string | null;
+  /** The installation token minted for this run's pushes: never stored. */
+  minted_token?: string;
+}
+
+/** Varlatch could not get a token for an App Connection's push: the run fails with GitHub's reason, as Varlatch reads it. */
+class GitHubAppTokenError extends Error {
+  override name = "GitHub App";
 }
 
 interface LedgerRow {
@@ -192,9 +209,14 @@ export async function reconcileTarget(
     // batch changed connection_id on the row we just snapshotted.
     const connRes = await ctx.db.query(
       `SELECT c.platform, c.base_identity, c.credential_envelope, c.version AS connection_version,
-              c.revoked_at AS connection_revoked_at, o.wrapped_org_kek
-       FROM platform_connections c, organizations o
-       WHERE c.id = $1 AND o.id = $2 AND o.deleted_at IS NULL`,
+              c.revoked_at AS connection_revoked_at, o.wrapped_org_kek,
+              c.credential_kind, c.github_installation_id,
+              a.id AS app_row_id, a.github_app_id AS app_github_id, a.client_id AS app_client_id,
+              a.key_envelope AS app_key_envelope, a.removed_at AS app_removed_at
+       FROM platform_connections c
+       JOIN organizations o ON o.id = $2 AND o.deleted_at IS NULL
+       LEFT JOIN github_apps a ON a.id = c.github_app_id
+       WHERE c.id = $1`,
       [target.connection_id, target.organization_id],
     );
     const live = connRes.rows[0] as LiveConnection | undefined;
@@ -369,7 +391,7 @@ async function reconcileUnderLease(
   let remote: Map<string, string> | null = null;
   if (force && adapter.supportsReadBack && adapter.readValues) {
     try {
-      remote = await adapter.readValues(adapterRequest(ctx, org, target, live, opts));
+      remote = await adapter.readValues(await adapterRequest(ctx, org, target, live, opts));
     } catch {
       remote = null; // fall back to force-writes
     }
@@ -446,7 +468,7 @@ async function reconcileUnderLease(
     },
   });
 
-  const req = adapterRequest(ctx, org, target, live, opts, generation);
+  const req = await adapterRequest(ctx, org, target, live, opts, generation);
   let writeOutcomes: NameOutcome[] = [];
   if (writes.length > 0) {
     for (const w of writes) {
@@ -686,7 +708,7 @@ function destinationKey(target: SyncTargetRow): string {
   }
 }
 
-function adapterRequest(
+async function adapterRequest(
   ctx: AppCtx,
   org: OrgRow,
   target: SyncTargetRow,
@@ -694,23 +716,11 @@ function adapterRequest(
   opts: SyncRunOptions,
   generation?: number,
 ) {
-  const envelope =
-    typeof live.credential_envelope === "string"
-      ? (JSON.parse(live.credential_envelope) as Envelope)
-      : live.credential_envelope;
   return {
     baseIdentity: live.base_identity,
     destination: target.destination,
-    credential: decryptPlatformCredential(
-      orgKekOf(ctx, org),
-      target.organization_id,
-      target.connection_id,
-      envelope,
-    ),
+    ...(await credentialOf(ctx, org, target, live, opts)),
     ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
-    onCredentialExpiry: (expiresAt: string) => {
-      live.observed_expiry = expiresAt;
-    },
     // Per-request cancellation for writes/deletes/redeploy (preparatory
     // reads are not gated): a batch whose intents were accepted would
     // otherwise keep sending after a mid-batch fence. This narrows the
@@ -734,6 +744,44 @@ function adapterRequest(
           },
         }
       : {}),
+  };
+}
+
+/**
+ * The run's credential. A token Connection's stored token, whose expiry the
+ * platform may report. An App Connection's token is minted for this run
+ * (ADR-0047 Decision 3), narrowed to the Target's repository (and
+ * environment) with write on its secrets, once per run; its expiry is
+ * never recorded (Decision 4). A refused mint fails the run with Varlatch's
+ * reading of GitHub's answer.
+ */
+async function credentialOf(
+  ctx: AppCtx,
+  org: OrgRow,
+  target: SyncTargetRow,
+  live: LiveConnection,
+  opts: SyncRunOptions,
+): Promise<{ credential: string; credentialKind: "token" | "github-app"; onCredentialExpiry?: (expiresAt: string) => void }> {
+  if (live.credential_kind === "github-app") {
+    if (live.minted_token === undefined) {
+      const app = appCredentialFrom(ctx, org, live);
+      if (!app) throw new GitHubAppTokenError(APP_REMOVED.message);
+      const minted = await mintInstallationToken(opts.fetchImpl ?? fetch, app, "push", target.destination);
+      if (!minted.ok) throw new GitHubAppTokenError(minted.check.message);
+      live.minted_token = minted.token;
+    }
+    return { credential: live.minted_token, credentialKind: "github-app" };
+  }
+  const envelope =
+    typeof live.credential_envelope === "string"
+      ? (JSON.parse(live.credential_envelope) as Envelope)
+      : (live.credential_envelope as Envelope);
+  return {
+    credential: decryptPlatformCredential(orgKekOf(ctx, org), target.organization_id, target.connection_id, envelope),
+    credentialKind: "token",
+    onCredentialExpiry: (expiresAt: string) => {
+      live.observed_expiry = expiresAt;
+    },
   };
 }
 

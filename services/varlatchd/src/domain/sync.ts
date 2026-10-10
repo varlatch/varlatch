@@ -15,6 +15,15 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { appWithKey } from "./githubapps.js";
+import {
+  APP_REMOVED,
+  appCredentialFrom,
+  mintInstallationToken,
+  readInstallation,
+  type AppCredential,
+  type MintUse,
+} from "./githubmint.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -41,6 +50,10 @@ export interface PlatformConnectionRow {
   /** When the platform last said the stored credential expires; NULL is unknown. */
   credential_expires_at: string | null;
   credential_expiry_seen_at: string | null;
+  /** 'token': a stored Platform Credential; 'github-app': none, tokens minted from the App (ADR-0047). */
+  credential_kind: "token" | "github-app";
+  github_app_id: string | null;
+  github_installation_id: string | number | null;
 }
 
 export type SyncMappingItem = {
@@ -106,7 +119,8 @@ export const TARGET_COLUMNS = `id, organization_id, project_id, environment_id, 
   last_result, last_repair_at, created_at, revoked_at, version, updated_at`;
 
 const CONNECTION_COLUMNS = `id, organization_id, platform, base_identity, name,
-  created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at`;
+  created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at,
+  credential_kind, github_app_id, github_installation_id`;
 
 function parseJson<T>(v: unknown): T {
   return (typeof v === "string" ? JSON.parse(v) : v) as T;
@@ -270,6 +284,78 @@ export async function createConnection(
   });
 }
 
+/**
+ * A Connection on an installation of the Organization's GitHub App
+ * (ADR-0047 Decision 2): no stored token, only the App and the
+ * installation. The installation is read as the App first: it must be this
+ * App's and not suspended, and its account becomes the base identity. No
+ * network call holds a lock. Creation then takes the App's row lock, as
+ * attachment and key rotation do, and checks the App is still live under it.
+ */
+export async function createAppConnection(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: { installationId: number; name: string },
+  actorIdentityId: string,
+  allowedAdapters: string[] | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PlatformConnectionRow> {
+  if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
+    throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
+  }
+  const { app, pem } = await appWithKey(ctx, org);
+  const installation = await readInstallation(
+    fetchImpl,
+    { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
+    input.installationId,
+  );
+  if (!installation.ok) {
+    throw new DomainError("VALIDATION_FAILED", installation.check.message, { check: installation.check });
+  }
+  if (installation.suspended) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      `The GitHub App's installation on ${installation.account.login} is suspended. Unsuspend it on GitHub, then try again.`,
+    );
+  }
+  const adapter = getAdapter("github-actions");
+  const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
+  const id = newId("platformConnection");
+  return withTx(ctx.db, async (db) => {
+    const locked = await db.query(
+      "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+      [app.id, org.id],
+    );
+    if (!locked.rows[0]) {
+      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
+    }
+    await recordAuditEvent(db, {
+      eventType: "sync.connection_created",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { connectionId: id },
+      metadata: {
+        platform: adapter.platform,
+        baseIdentity,
+        name: input.name,
+        credentialKind: "github-app",
+        githubAppId: app.id,
+        installationId: input.installationId,
+      },
+    });
+    const res = await db.query(
+      `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
+         credential_kind, github_app_id, github_installation_id)
+       VALUES ($1,$2,$3,$4,$5,NULL,$6,'github-app',$7,$8)
+       RETURNING ${CONNECTION_COLUMNS}`,
+      [id, org.id, adapter.platform, baseIdentity, input.name, actorIdentityId, app.id, input.installationId],
+    );
+    return res.rows[0] as PlatformConnectionRow;
+  });
+}
+
 export async function listConnections(
   ctx: AppCtx,
   organizationId: string,
@@ -333,6 +419,7 @@ export async function replaceConnectionCredential(
     );
     const row = res.rows[0] as PlatformConnectionRow | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    if (row.credential_kind === "github-app") throw appHasNoCredential();
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
     }
@@ -379,6 +466,9 @@ export async function revokeConnection(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    // An App Connection's App first (ADR-0047 Decision 5), then the
+    // Connection, then its Targets.
+    await lockConnectionsAndApps(db, org.id, [connectionId]);
     const res = await db.query(
       `UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now()
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
@@ -430,28 +520,29 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
-  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt } = await resolveCredential(
-    ctx,
-    org,
-    input,
-    allowedAdapters,
-  );
+  const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
+  const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   // No destination fields: the check stops at the base identity.
   const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
   const destination = named
     ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
     : null;
 
-  const checked = await adapter.checkAccess({
-    baseIdentity,
-    destination: destination?.destination ?? {},
-    credential,
-    ...(fetchImpl ? { fetchImpl } : {}),
-  });
-  if (connectionId && storedVersion !== null && checked.credentialExpiresAt) {
+  const credential = await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, fetchImpl);
+  const checked = credential.ok
+    ? await adapter.checkAccess({
+        baseIdentity,
+        destination: destination?.destination ?? {},
+        credential: credential.credential,
+        credentialKind: resolved.kind,
+        ...(fetchImpl ? { fetchImpl } : {}),
+      })
+    : credential.check;
+  if (resolved.kind === "token" && connectionId && storedVersion !== null && checked.credentialExpiresAt) {
     await recordCredentialExpiry(ctx.db, connectionId, storedVersion, checked.credentialExpiresAt);
   }
-  const result = withKnownExpiry(checked, storedExpiresAt);
+  // An App Connection has no expiry (ADR-0047 Decision 4): none recorded, none returned.
+  const result = resolved.kind === "token" ? withKnownExpiry(checked, storedExpiresAt) : withoutExpiry(checked);
   await recordAuditEvent(ctx.db, {
     eventType: "sync.connection_checked",
     decision: "info",
@@ -464,6 +555,7 @@ export async function checkConnectionAccess(
       baseIdentity,
       destination: destination ? describeDestination(adapter.platform, destination.key) : null,
       credential: supplied ? "supplied" : "stored",
+      credentialKind: resolved.kind,
       status: result.status,
       httpStatus: result.httpStatus ?? null,
     },
@@ -485,20 +577,25 @@ export async function listConnectionDestinations(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
-  const { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt } = await resolveCredential(
-    ctx,
-    org,
-    input,
-    allowedAdapters,
-  );
+  const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
+  const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   if (!adapter.listDestinations) {
     throw new DomainError(
       "VALIDATION_FAILED",
       "This platform has no destinations to list: the Connection's base identity is the destination",
     );
   }
-  const listing = await adapter.listDestinations({ baseIdentity, destination: {}, credential, ...(fetchImpl ? { fetchImpl } : {}) });
-  if (connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
+  const credential = await credentialForUse(resolved, "listing", {}, fetchImpl);
+  const listing: DestinationListing = credential.ok
+    ? await adapter.listDestinations({
+        baseIdentity,
+        destination: {},
+        credential: credential.credential,
+        credentialKind: resolved.kind,
+        ...(fetchImpl ? { fetchImpl } : {}),
+      })
+    : { check: credential.check, items: [], truncated: false };
+  if (resolved.kind === "token" && connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
     await recordCredentialExpiry(ctx.db, connectionId, storedVersion, listing.check.credentialExpiresAt);
   }
   const items = listing.items.filter((item) => {
@@ -520,13 +617,18 @@ export async function listConnectionDestinations(
       platform: adapter.platform,
       baseIdentity,
       credential: supplied ? "supplied" : "stored",
+      credentialKind: resolved.kind,
       status: listing.check.status,
       httpStatus: listing.check.httpStatus ?? null,
       count: items.length,
       truncated: listing.truncated,
     },
   });
-  return { ...listing, check: withKnownExpiry(listing.check, storedExpiresAt), items };
+  return {
+    ...listing,
+    check: resolved.kind === "token" ? withKnownExpiry(listing.check, storedExpiresAt) : withoutExpiry(listing.check),
+    items,
+  };
 }
 
 /**
@@ -538,30 +640,58 @@ function withKnownExpiry(check: AccessCheck, storedExpiresAt: string | null): Ac
   return check.credentialExpiresAt || !storedExpiresAt ? check : { ...check, credentialExpiresAt: storedExpiresAt };
 }
 
+/** An App Connection's check or listing never carries a date: a minted token's expiry is not the Connection's. */
+function withoutExpiry(check: AccessCheck): AccessCheck {
+  const { credentialExpiresAt: _minted, ...rest } = check;
+  return rest;
+}
+
+type ResolvedCredential = {
+  adapter: PlatformAdapter;
+  baseIdentity: string;
+  connectionId: string | null;
+  supplied: boolean;
+  /** The Connection's version the stored credential was read at; null for a supplied one, and for an App Connection. */
+  storedVersion: number | null;
+  /** When the stored credential expires, as last recorded for it; null for a supplied one, and for an App Connection. */
+  storedExpiresAt: string | null;
+} & (
+  | { kind: "token"; credential: string }
+  /** An App Connection: what it mints with, or null when its App was removed. */
+  | { kind: "github-app"; app: AppCredential | null }
+);
+
+/** The credential for one use: a token as stored or supplied, or one minted from the App, narrowed to the use. */
+async function credentialForUse(
+  resolved: ResolvedCredential,
+  use: MintUse,
+  destination: Record<string, string>,
+  fetchImpl?: typeof fetch,
+): Promise<{ ok: true; credential: string } | { ok: false; check: AccessCheck }> {
+  if (resolved.kind === "token") return { ok: true, credential: resolved.credential };
+  if (!resolved.app) return { ok: false, check: APP_REMOVED };
+  const minted = await mintInstallationToken(fetchImpl ?? fetch, resolved.app, use, destination);
+  return minted.ok ? { ok: true, credential: minted.token } : minted;
+}
+
 /**
  * The credential an access check or a listing uses: supplied now (a new
  * Connection, or a replacement for a stored one) or the Connection's stored
- * one. Either way it goes only to the Connection's base identity.
+ * one. Either way it goes only to the Connection's base identity. An App
+ * Connection has none of its own: its App's key and installation, to mint
+ * from; a supplied credential is refused for it.
  */
 async function resolveCredential(
   ctx: AppCtx,
   org: OrgRow,
   input: CredentialInput,
   allowedAdapters: string[] | null,
-): Promise<{
-  adapter: PlatformAdapter;
-  baseIdentity: string;
-  credential: string;
-  connectionId: string | null;
-  supplied: boolean;
-  /** The Connection's version the stored credential was read at; null for a supplied one. */
-  storedVersion: number | null;
-  /** When the stored credential expires, as last recorded for it; null for a supplied one. */
-  storedExpiresAt: string | null;
-}> {
+): Promise<ResolvedCredential> {
   let platform: string;
   let baseIdentity: string;
-  let credential: string;
+  let credential: string | null = null;
+  let app: AppCredential | null = null;
+  let kind: "token" | "github-app" = "token";
   let connectionId: string | null = null;
   let storedVersion: number | null = null;
   let storedExpiresAt: string | null = null;
@@ -570,7 +700,20 @@ async function resolveCredential(
     connectionId = connection.id;
     platform = connection.platform;
     baseIdentity = connection.base_identity;
-    if (input.credential !== undefined) {
+    if (connection.credential_kind === "github-app") {
+      if (input.credential !== undefined) throw appHasNoCredential();
+      kind = "github-app";
+      const res = await ctx.db.query(
+        `SELECT id AS app_row_id, github_app_id AS app_github_id, client_id AS app_client_id,
+                key_envelope AS app_key_envelope, removed_at AS app_removed_at
+         FROM github_apps WHERE id = $1 AND organization_id = $2`,
+        [connection.github_app_id, org.id],
+      );
+      const row = res.rows[0] as Parameters<typeof appCredentialFrom>[2] | undefined;
+      app = row
+        ? appCredentialFrom(ctx, org, { ...row, github_installation_id: connection.github_installation_id, base_identity: connection.base_identity })
+        : null;
+    } else if (input.credential !== undefined) {
       credential = input.credential;
     } else {
       // The credential and its version in one read: an expiry the platform
@@ -594,11 +737,13 @@ async function resolveCredential(
   }
   const adapter = canonicalizeOrValidationError(() => getAdapter(platform));
   baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(baseIdentity));
-  if (credential.trim().length === 0) {
+  const supplied = !("connectionId" in input) || input.credential !== undefined;
+  const common = { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt };
+  if (kind === "github-app") return { ...common, kind, app };
+  if (credential === null || credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
-  const supplied = !("connectionId" in input) || input.credential !== undefined;
-  return { adapter, baseIdentity, credential, connectionId, supplied, storedVersion, storedExpiresAt };
+  return { ...common, kind, credential };
 }
 
 /**
@@ -643,8 +788,10 @@ export async function createTarget(
 ): Promise<SyncTargetRow> {
   const id = newId("syncTarget");
   return withTx(ctx.db, async (db) => {
-    // Lock the Connection: attachment serializes with credential replacement.
-    const connection = await lockConnection(db, org.id, input.connectionId);
+    // Lock the Connection (and an App Connection's App before it):
+    // attachment serializes with credential replacement and key rotation.
+    const locked = await lockConnectionsAndApps(db, org.id, [input.connectionId]);
+    const connection = usableConnection(locked, input.connectionId);
     const adapter = getAdapter(connection.platform);
     const { destination, key } = canonicalizeOrValidationError(() =>
       adapter.canonicalizeDestination(input.destination),
@@ -722,12 +869,12 @@ export async function updateTarget(
   actorIdentityId: string,
 ): Promise<SyncTargetRow> {
   return withTx(ctx.db, async (db) => {
-    // Lock order: Connections, then the Target, as credential replacement
-    // and Connection revocation take them, so a Target edit serializes with
-    // either instead of deadlocking. The Target's Connection is read
-    // unlocked to know which to lock; both it and a re-point's new
-    // Connection are locked, in id order, then the Target, which is checked
-    // again under the lock.
+    // Lock order: Apps, then Connections, then the Target, as key rotation,
+    // credential replacement, and Connection revocation take them, so a
+    // Target edit serializes with each instead of deadlocking. The Target's
+    // Connection is read unlocked to know which to lock; it and a
+    // re-point's new Connection (with their Apps) are locked in id order,
+    // then the Target, which is checked again under the lock.
     const seen = await db.query(
       "SELECT connection_id FROM sync_targets WHERE id = $1 AND revoked_at IS NULL",
       [target.id],
@@ -735,12 +882,8 @@ export async function updateTarget(
     const seenConnectionId = (seen.rows[0] as { connection_id: string } | undefined)?.connection_id;
     if (!seenConnectionId) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
     const connectionId = patch.connectionId ?? seenConnectionId;
-    const connections = (await db.query(
-      `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
-       WHERE id = ANY($1::text[]) AND organization_id = $2
-       ORDER BY id FOR UPDATE`,
-      [[...new Set([seenConnectionId, connectionId])], org.id],
-    )).rows as PlatformConnectionRow[];
+    const lockedConnections = await lockConnectionsAndApps(db, org.id, [seenConnectionId, connectionId]);
+    const connections = lockedConnections.connections;
 
     const locked = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets WHERE id = $1 AND revoked_at IS NULL FOR UPDATE`,
@@ -753,8 +896,7 @@ export async function updateTarget(
     if (current.version !== patch.expectedVersion || current.connection_id !== seenConnectionId) {
       throw new DomainError("VERSION_CONFLICT", "Sync Target was modified concurrently; reload and retry");
     }
-    const connection = connections.find((c) => c.id === connectionId && c.revoked_at === null);
-    if (!connection) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    const connection = usableConnection(lockedConnections, connectionId);
     if (patch.connectionId !== undefined) {
       const oldPlatform = connections.find((c) => c.id === current.connection_id)?.platform;
       if (oldPlatform !== undefined && connection.platform !== oldPlatform) {
@@ -967,20 +1109,58 @@ function mappingSummary(mapping: SyncMapping): string {
   return mapping.items.map((i) => (i.rename ? `${i.name}->${i.rename}` : i.name)).join(",");
 }
 
-async function lockConnection(
+/**
+ * Locks for a change that touches Connections (ADR-0047 Decision 5): the
+ * Apps of App Connections first, then the Connections, each in id order,
+ * so every path takes them in the order key rotation does (App,
+ * Connections, Targets). A Connection's App never changes, so it is read
+ * unlocked to know which to lock. Revoked Connections and removed Apps are
+ * locked too; callers decide what they may still use.
+ */
+async function lockConnectionsAndApps(
   db: Querier,
   organizationId: string,
-  connectionId: string,
-): Promise<PlatformConnectionRow> {
-  const res = await db.query(
+  connectionIds: string[],
+): Promise<{ connections: PlatformConnectionRow[]; liveApps: Set<string> }> {
+  const ids = [...new Set(connectionIds)];
+  const appIds = ((await db.query(
+    `SELECT DISTINCT github_app_id FROM platform_connections
+     WHERE id = ANY($1::text[]) AND organization_id = $2 AND github_app_id IS NOT NULL`,
+    [ids, organizationId],
+  )).rows as { github_app_id: string }[]).map((r) => r.github_app_id);
+  const apps = appIds.length === 0
+    ? []
+    : ((await db.query(
+        "SELECT id, removed_at FROM github_apps WHERE id = ANY($1::text[]) AND organization_id = $2 ORDER BY id FOR UPDATE",
+        [appIds, organizationId],
+      )).rows as { id: string; removed_at: string | null }[]);
+  const connections = (await db.query(
     `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
-     WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
-    [connectionId, organizationId],
-  );
-  const row = res.rows[0] as PlatformConnectionRow | undefined;
-  if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
-  return row;
+     WHERE id = ANY($1::text[]) AND organization_id = $2
+     ORDER BY id FOR UPDATE`,
+    [ids, organizationId],
+  )).rows as PlatformConnectionRow[];
+  return { connections, liveApps: new Set(apps.filter((a) => a.removed_at === null).map((a) => a.id)) };
 }
+
+/** A locked Connection a Target may use: not revoked, and an App Connection's App still live. */
+function usableConnection(
+  locked: { connections: PlatformConnectionRow[]; liveApps: Set<string> },
+  connectionId: string,
+): PlatformConnectionRow {
+  const connection = locked.connections.find((c) => c.id === connectionId && c.revoked_at === null);
+  if (!connection) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+  if (connection.credential_kind === "github-app" && !locked.liveApps.has(connection.github_app_id ?? "")) {
+    throw new DomainError("VALIDATION_FAILED", "This Connection's GitHub App was removed from Varlatch");
+  }
+  return connection;
+}
+
+const appHasNoCredential = () =>
+  new DomainError(
+    "VALIDATION_FAILED",
+    "A GitHub App Connection has no credential of its own to replace or supply: its tokens are issued from the App's key. Rotate the App's key instead.",
+  );
 
 function canonicalizeOrValidationError<T>(fn: () => T): T {
   try {
