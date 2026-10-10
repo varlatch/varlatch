@@ -73,7 +73,7 @@ export interface GitHubAppRow {
   updated_at: string | Date | null;
 }
 
-const APP_COLUMNS =
+export const APP_COLUMNS =
   "id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, created_by, created_at, version, updated_at";
 
 /** Where the browser goes back to after GitHub: the dashboard's page for this Organization. */
@@ -361,7 +361,7 @@ function readAccount(value: unknown): (GitHubAccount & { id: number }) | null {
   return { login: a.login, id: a.id as number, type: a.type === "Organization" ? "organization" : "user" };
 }
 
-function isRsaKey(pem: string): boolean {
+export function isRsaKey(pem: string): boolean {
   try {
     return createPrivateKey(pem).asymmetricKeyType === "rsa";
   } catch {

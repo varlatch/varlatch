@@ -496,6 +496,30 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         segments: [imported ? "imported the GitHub App " : "registered the GitHub App ", { kind: "mono", text: str(m.slug) ?? "an App" }, ...(str(m.owner) ? [" on ", { kind: "mono" as const, text: str(m.owner)! }] : [])],
       };
     }
+    case "sync.github_app_key_rotated": {
+      const count = (str(m.reauthorizedTargets) ?? "").split(",").filter(Boolean).length;
+      return {
+        icon: "rotate",
+        title: "GitHub App key rotated",
+        segments: [
+          "rotated the key of the GitHub App ",
+          { kind: "mono", text: str(m.slug) ?? "an App" },
+          `, re-authorizing ${count} integration${count === 1 ? "" : "s"}`,
+        ],
+      };
+    }
+    case "sync.github_app_removed": {
+      const count = (str(m.revokedConnections) ?? "").split(",").filter(Boolean).length;
+      return {
+        icon: "trash",
+        title: "GitHub App removed",
+        segments: [
+          "removed the GitHub App ",
+          { kind: "mono", text: str(m.slug) ?? "an App" },
+          `, revoking ${count} connection${count === 1 ? "" : "s"}`,
+        ],
+      };
+    }
     case "sync.github_app_installations_listed": {
       const status = str(m.status);
       const count = typeof m.count === "number" ? m.count : null;

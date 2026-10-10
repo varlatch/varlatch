@@ -9,13 +9,14 @@ import {
 } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
-import { decryptPlatformCredential, encryptPlatformCredential } from "../crypto/hierarchy.js";
+import { decryptPlatformCredential, encryptGitHubAppKey, encryptPlatformCredential } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { appWithKey } from "./githubapps.js";
+import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
+import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
 import {
   APP_REMOVED,
   appCredentialFrom,
@@ -354,6 +355,161 @@ export async function createAppConnection(
     );
     return res.rows[0] as PlatformConnectionRow;
   });
+}
+
+export type KeyRotationOutcome = { outcome: "rotated"; app: GitHubAppRow } | ({ outcome: "failed" } & AccessCheck);
+
+/**
+ * Rotate the GitHub App's private key (ADR-0047 Decision 5). The key
+ * belongs to the App, and every App Connection uses it, so a rotation is a
+ * new disclosure grant for every non-revoked Target of every non-revoked
+ * Connection on the App, paused and auto-disabled ones included: `gate`
+ * runs each one's write-time disclosure gate, and any refusal refuses the
+ * whole rotation, leaving every Connection on the old key.
+ *
+ * The new key is verified first, with no lock held: a JWT signed with it
+ * must get the App from GET /app. GitHub keeps the old key valid until it
+ * is deleted there, so the rotation works before the old key goes. Then,
+ * in one transaction: the App row, its Connections, and their Targets are
+ * locked in that order (each set in id order), the App's version must be
+ * the one the caller saw, every Target passes the gate, the key is
+ * replaced and the version moves, and every Target is queued to converge.
+ */
+export async function rotateGitHubAppKey(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: { privateKey: string; expectedVersion: number },
+  gate: (target: SyncTargetRow) => Promise<void>,
+  actorIdentityId: string,
+  fetchImpl: typeof fetch = fetch,
+  now: number = Date.now(),
+): Promise<KeyRotationOutcome> {
+  if (!isRsaKey(input.privateKey)) {
+    throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
+  }
+  const seen = await getGitHubApp(ctx, org.id);
+  const githubAppId = Number(seen.github_app_id);
+  const { res, claims } = await appRequest(fetchImpl, "/app", seen.client_id, input.privateKey, now);
+  if (!res) return { outcome: "failed", ...GITHUB_UNREACHABLE };
+  if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
+  if (!res.ok) {
+    return {
+      outcome: "failed",
+      status: "failed",
+      where: "connection",
+      httpStatus: res.status,
+      message: `GitHub did not confirm the new key for the App ${seen.slug} (HTTP ${res.status}).`,
+    };
+  }
+  const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+  if (!body || typeof body !== "object" || Array.isArray(body) || body.id !== githubAppId) {
+    return { outcome: "failed", ...NOT_GITHUB(res.status) };
+  }
+  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
+  return withTx(ctx.db, async (db) => {
+    const locked = (await db.query(
+      "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+      [seen.id, org.id],
+    )).rows[0] as { id: string; version: number } | undefined;
+    if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    if (locked.version !== input.expectedVersion) {
+      throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
+    }
+    const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
+    for (const target of targets) await gate(target);
+    const updated = await db.query(
+      `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
+       WHERE id = $2 RETURNING ${APP_COLUMNS}`,
+      [JSON.stringify(envelope), seen.id],
+    );
+    // A rotation is a Target mutation class trigger (ADR-0031 §6): enqueue directly.
+    await db.query(
+      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE id = ANY($1::text[])",
+      [targets.map((t) => t.id)],
+    );
+    const app = updated.rows[0] as GitHubAppRow;
+    await recordAuditEvent(db, {
+      eventType: "sync.github_app_key_rotated",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { githubAppId: seen.id },
+      metadata: {
+        appId: githubAppId,
+        slug: seen.slug,
+        version: app.version,
+        connections: connections.map((c) => c.id).join(",") || null,
+        reauthorizedTargets: targets.map((t) => t.id).join(",") || null,
+      },
+    });
+    return { outcome: "rotated" as const, app };
+  });
+}
+
+/**
+ * Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5).
+ * Every Connection on it is revoked in one transaction, as revocation does
+ * for one: their Targets are disabled and keep their destination claims.
+ * The wrapped key is deleted. Removal narrows disclosure, so it needs no
+ * gate. It does not touch GitHub: the App stays registered and installed
+ * there until its owner deletes it.
+ */
+export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, actorIdentityId: string): Promise<void> {
+  await withTx(ctx.db, async (db) => {
+    const locked = (await db.query(
+      "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
+      [org.id],
+    )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
+    if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    const { connections, targets } = await lockAppConnectionsAndTargets(db, locked.id);
+    await db.query(
+      "UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now() WHERE id = ANY($1::text[])",
+      [connections.map((c) => c.id)],
+    );
+    await db.query(
+      `UPDATE sync_targets
+       SET state = 'disabled', disabled_reason = 'connection-revoked', version = version + 1, updated_at = now()
+       WHERE id = ANY($1::text[])`,
+      [targets.map((t) => t.id)],
+    );
+    await db.query(
+      "UPDATE github_apps SET removed_at = now(), key_envelope = NULL, version = version + 1, updated_at = now() WHERE id = $1",
+      [locked.id],
+    );
+    await recordAuditEvent(db, {
+      eventType: "sync.github_app_removed",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { githubAppId: locked.id },
+      metadata: {
+        appId: Number(locked.github_app_id),
+        slug: locked.slug,
+        revokedConnections: connections.map((c) => c.id).join(",") || null,
+        disabledTargets: targets.map((t) => t.id).join(",") || null,
+      },
+    });
+  });
+}
+
+/** With the App row already locked: its non-revoked Connections, then their non-revoked Targets, each in id order. */
+async function lockAppConnectionsAndTargets(
+  db: Querier,
+  appRowId: string,
+): Promise<{ connections: PlatformConnectionRow[]; targets: SyncTargetRow[] }> {
+  const connections = (await db.query(
+    `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
+     WHERE github_app_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE`,
+    [appRowId],
+  )).rows as PlatformConnectionRow[];
+  const targets = ((await db.query(
+    `SELECT ${TARGET_COLUMNS} FROM sync_targets
+     WHERE connection_id = ANY($1::text[]) AND revoked_at IS NULL ORDER BY id FOR UPDATE`,
+    [connections.map((c) => c.id)],
+  )).rows as Record<string, unknown>[]).map(targetRow);
+  return { connections, targets };
 }
 
 export async function listConnections(

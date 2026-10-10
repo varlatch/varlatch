@@ -195,6 +195,17 @@ fixes.
   never shows an expiry and has no credential to replace. Connections
   carry `credentialKind`, `githubAppId`, and `installationId`. The
   dashboard does not offer this yet.
+- API: the GitHub App's key can be rotated
+  (`POST /v1/organizations/{org}/github-app/key`, with the new private
+  key and the App's version). Varlatch checks the new key with GitHub
+  first. The rotation re-authorizes every integration on the App's
+  connections at once, including paused and disabled ones, so you need
+  permission to send each one's values; otherwise nothing changes. Every
+  integration then re-syncs with the new key, and you delete the old one
+  on GitHub. `DELETE /v1/organizations/{org}/github-app` removes the App
+  from Varlatch: its connections are revoked, their integrations are
+  disabled and keep their destinations, and the stored key is deleted.
+  The App itself stays on GitHub until you delete it there.
 
 ### Dashboard
 

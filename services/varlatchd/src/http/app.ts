@@ -73,6 +73,8 @@ import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow
 import {
   createAppConnection,
   createConnection,
+  removeGitHubApp,
+  rotateGitHubAppKey,
   createTarget,
   getConnection,
   getTarget,
@@ -3161,6 +3163,27 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json({ ...serializeConnection(connection), targets: targets.map(serializeTarget) });
   });
 
+  // A change that re-authorizes Sync Targets at once (a credential
+  // replacement, an App key rotation): each Target's write-time disclosure
+  // gate must pass for THIS actor, or the whole change is refused.
+  const reauthorizationGate =
+    (c: Context<{ Variables: Vars }>, principal: Principal, org: OrgRow, refusal: string) =>
+    async (target: SyncTargetRow) => {
+      const project = await ctx.db.query("SELECT * FROM projects WHERE id = $1", [target.project_id]);
+      const env = await ctx.db.query("SELECT * FROM environments WHERE id = $1", [target.environment_id]);
+      const projectRow = project.rows[0] as ProjectRow | undefined;
+      const envRow = env.rows[0] as EnvironmentRow | undefined;
+      if (!projectRow || !envRow) return;
+      try {
+        await syncDisclosureGate(c, principal, org, projectRow, envRow, target.mapping);
+      } catch (err) {
+        if (err instanceof DomainError && err.code !== "INTERNAL") {
+          throw new DomainError("PERMISSION_DENIED", refusal, { targetId: target.id, environmentId: target.environment_id });
+        }
+        throw err;
+      }
+    };
+
   app.post("/v1/organizations/:org/platform-connections/:connection/credential", async (c) => {
     assertSyncEnabled();
     const principal = c.get("principal");
@@ -3178,25 +3201,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       org,
       c.req.param("connection"),
       body,
-      async (target) => {
-        const project = await ctx.db.query("SELECT * FROM projects WHERE id = $1", [target.project_id]);
-        const env = await ctx.db.query("SELECT * FROM environments WHERE id = $1", [target.environment_id]);
-        const projectRow = project.rows[0] as ProjectRow | undefined;
-        const envRow = env.rows[0] as EnvironmentRow | undefined;
-        if (!projectRow || !envRow) return;
-        try {
-          await syncDisclosureGate(c, principal, org, projectRow, envRow, target.mapping);
-        } catch (err) {
-          if (err instanceof DomainError && err.code !== "INTERNAL") {
-            throw new DomainError(
-              "PERMISSION_DENIED",
-              "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
-              { targetId: target.id, environmentId: target.environment_id },
-            );
-          }
-          throw err;
-        }
-      },
+      reauthorizationGate(
+        c,
+        principal,
+        org,
+        "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
+      ),
       principal.identity.id,
     );
     c.header("Cache-Control", "no-store");
@@ -3308,6 +3318,41 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
     }
     return c.json(result);
+  });
+
+  app.post("/v1/organizations/:org/github-app/key", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAdapterAllowed();
+    const body = parseBody(
+      z.object({ privateKey: z.string().min(1).max(10_000), expectedVersion: z.number().int().min(1) }),
+      await c.req.json(),
+    );
+    const result = await rotateGitHubAppKey(
+      ctx,
+      org,
+      body,
+      reauthorizationGate(
+        c,
+        principal,
+        org,
+        "Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one",
+      ),
+      principal.identity.id,
+      options.syncFetch,
+    );
+    c.header("Cache-Control", "no-store");
+    return result.outcome === "rotated" ? c.json({ outcome: "rotated", app: serializeGitHubApp(result.app) }) : c.json(result);
+  });
+
+  app.delete("/v1/organizations/:org/github-app", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    await removeGitHubApp(ctx, org, principal.identity.id);
+    return c.body(null, 204);
   });
 
   app.get("/v1/organizations/:org/github-app/installations", async (c) => {

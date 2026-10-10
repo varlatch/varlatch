@@ -1251,7 +1251,8 @@ export interface paths {
         get: operations["getGitHubApp"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Remove the Organization's GitHub App from Varlatch (ADR-0047 Decision 5): every Connection on it is revoked in one transaction, their Sync Targets are disabled and keep their destination claims, and the stored private key is deleted. Removal narrows disclosure, so it needs config.sync.manage only. GitHub is not touched: the App stays registered and installed there until its owner deletes it. */
+        delete: operations["removeGitHubApp"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1302,6 +1303,23 @@ export interface paths {
         put?: never;
         /** Import a GitHub App someone registered on GitHub (ADR-0047 Decision 1): its App id and private key. Varlatch verifies the pair first, with a JWT signed by the key and GET /app answering that id, and takes the client id, slug, and owner from GitHub. The App needs secrets and environments (write) and metadata (read); it may have more, which the audit event names with their levels. The stored key keeps everything the App holds: the tokens Varlatch mints are narrowed to each use, but the key itself could mint broader ones, so grant the App no more than it needs. A refused JWT is read by its own time claims against GitHub's Date header: the key, or this server's clock. Refused (409) when the Organization already has a live App, or another Organization has this one. */
         post: operations["importGitHubApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate the GitHub App's private key (ADR-0047 Decision 5): generate a new key on GitHub, send it here, then delete the old one on GitHub. Varlatch verifies the new key first (GET /app as the App, before any lock). The rotation is a new disclosure grant for every non-revoked Sync Target of every non-revoked Connection on the App, paused and auto-disabled ones included: the caller must pass each Target's write-time disclosure gate, or the whole rotation is refused (403). expectedVersion must be the App's current version (409 otherwise). Every Target is then queued to converge with the new key. */
+        post: operations["rotateGitHubAppKey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2243,6 +2261,7 @@ export interface components {
             httpStatus?: number;
             message: string;
         };
+        /** @description An import or key rotation that did not happen, and why, read as an access check is; nothing was stored. */
         GitHubAppImportFailed: components["schemas"]["AccessCheck"] & {
             /** @enum {string} */
             outcome: "failed";
@@ -5594,6 +5613,28 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    removeGitHubApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     startGitHubAppRegistration: {
         parameters: {
             query?: never;
@@ -5700,6 +5741,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    rotateGitHubAppKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The App's new RSA private key in PEM */
+                    privateKey: string;
+                    expectedVersion: components["schemas"]["EntityVersion"];
+                };
+            };
+        };
+        responses: {
+            /** @description Rotated, or not, and why (Cache-Control no-store; the key is never returned) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        outcome: "rotated";
+                        app: components["schemas"]["GitHubApp"];
+                    } | components["schemas"]["GitHubAppImportFailed"];
                 };
             };
             default: components["responses"]["Error"];
