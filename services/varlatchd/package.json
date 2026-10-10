@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/varlatchd",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "description": "The Varlatch Secret Plane daemon: authentication, identity, authorization, contracts, secret material, crypto, audit (ADR-0001/0005/0009)",
   "license": "AGPL-3.0-or-later",

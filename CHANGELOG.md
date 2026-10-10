@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.16.1)
+## 0.17.0 (2026-10-10)
 
 ### Machine identities
 
@@ -199,9 +199,8 @@ fixes.
   register Apps there, GitHub creates it on their own account instead;
   Varlatch then keeps nothing, and the answer says where to delete it on
   GitHub. The App's private key rests under the Organization KEK and is
-  never returned. Connections on an App, and the dashboard, come later.
-  Database migration 30 holds registrations in progress (only a hash of
-  each, for an hour).
+  never returned. Database migration 30 holds registrations in progress
+  (only a hash of each, for an hour).
 - API: an Organization can instead import a GitHub App registered on
   GitHub, by its App id and private key
   (`POST /v1/organizations/{org}/github-app/import`). Varlatch verifies
@@ -225,8 +224,7 @@ fixes.
   metadata for checking the connection alone or listing its
   repositories, which are exactly the installation's. Such a connection
   never shows an expiry and has no credential to replace. Connections
-  carry `credentialKind`, `githubAppId`, and `installationId`. The
-  dashboard does not offer this yet.
+  carry `credentialKind`, `githubAppId`, and `installationId`.
 - API: the GitHub App's key can be rotated
   (`POST /v1/organizations/{org}/github-app/key`, with the new private
   key and the App's version). Varlatch checks the new key with GitHub
@@ -310,6 +308,44 @@ fixes.
   uses: a tier, the environment, or the root it derives from.
   `tailnetRequirementIds` lists the covering requirements, for callers
   with `policy.read`.
+
+
+### Upgrading
+
+Database schema: migrations 28 (the connections' credential expiry), 29
+(GitHub Apps, and a credential kind on connections) and 30 (GitHub App
+registrations in progress). All three only add: every existing connection
+becomes a `token` connection and works as before. Check `SHA256SUMS` and
+its signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- From 0.16.0: download `varlatch-cli-0.17.0.cjs` from the `v0.17.0`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.17.0.cjs upgrade 0.17.0 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. The upgrade captures and
+  verifies an archive while the installation keeps serving, applies
+  migrations 28 to 30, and completes only once the new release passes its
+  health gate. Then replace the host CLI with `varlatch-cli-0.17.0.cjs`, or
+  run `varlatch self-update`.
+- From 0.15.2 or older: follow the 0.16.0 notes below with the 0.17.0 CLI
+  and version. The upgrade applies migrations 27 to 30.
+- Back up first: there is no way back to 0.16.0 but restoring an archive
+  taken before the upgrade. 0.16.0 refuses a database with migrations 28
+  to 30, and everything written after that archive is lost.
+- Before upgrading, check that no network requirement names the Varlatch
+  node, its tags, or (for an untagged node) the user who registered it:
+  the node itself no longer satisfies a requirement, and neither does a
+  device shared into the tailnet from elsewhere (see Tailnet).
+- The dashboard is served with a strict Content-Security-Policy. Its
+  container refuses to start when `CONVEX_URL` (from `CONVEX_CLOUD_ORIGIN`)
+  is not a plain http(s) URL, and anything you added to the dashboard that
+  loads from another origin is blocked.
+- Registering a GitHub App needs the installation's public URL
+  (`VARLATCH_PUBLIC_URL`) over HTTPS.
+- Programs that ask `GET /v1/me` who they are should follow the rules
+  under Machine identities: fall back only when the server lacks
+  `identity.whoami`.
+- 0.17.0 restores everything 0.16.0 restores, and archives from 0.16.0.
 
 ## 0.16.0 (2026-10-08)
 

@@ -34,7 +34,7 @@ release. It needs only Node.js 22 or newer. Use the version your
 installation runs: the CLI and the installation are released together.
 
 ```sh
-V=0.16.0  # the release your installation runs
+V=0.17.0  # the release your installation runs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
@@ -78,7 +78,7 @@ In a new PowerShell window, so that it finds `node`, download the CLI and
 `SHA256SUMS`, and check the file against its line in `SHA256SUMS`:
 
 ```powershell
-$V = "0.16.0"  # the release your installation runs
+$V = "0.17.0"  # the release your installation runs
 curl.exe -fLO "https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs"
 curl.exe -fLO "https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS"
 $Line = Get-Content SHA256SUMS | Where-Object { $_ -like "* varlatch-cli-$V.cjs" }
