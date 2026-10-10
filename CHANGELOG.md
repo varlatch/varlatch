@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.17.1)
+## 0.17.1 (2026-10-10)
 
 ### Fixes
 
@@ -16,6 +16,22 @@ fixes.
   tailnet listener"), and varlatchd, which waits for it, never started.
   Migrate no longer checks listener settings: it serves nothing. Plain
   Compose installations were not affected.
+
+### Upgrading
+
+No database migration. Check `SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
+
+- From 0.17.0: download `varlatch-cli-0.17.1.cjs` from the `v0.17.1`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.17.1.cjs upgrade 0.17.1 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.17.1.cjs`, or run `varlatch self-update`. Going back
+  to 0.17.0 needs no restore: the database is the same.
+- From 0.16.0 or older: follow the 0.17.0 notes below with the 0.17.1 CLI
+  and version. The upgrade applies migrations 28 to 30.
+- On Coolify, turn on the tailnet browser endpoint only on 0.17.1 or later.
+- 0.17.1 restores everything 0.17.0 restores, and archives from 0.17.0.
 
 ## 0.17.0 (2026-10-10)
 
