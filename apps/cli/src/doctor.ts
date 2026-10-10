@@ -278,7 +278,11 @@ export function servePorts(statusJson: string): Set<string> | null {
   }
   const isMap = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
   if (!isMap(parsed)) return null;
-  const configs = [parsed, ...(isMap(parsed.Foreground) ? Object.values(parsed.Foreground) : [])];
+  // Absent or null (Go's empty map) is no foreground session; anything else
+  // that is not a map of sessions is a shape this check does not know.
+  const foreground = parsed.Foreground;
+  if (foreground !== undefined && foreground !== null && !isMap(foreground)) return null;
+  const configs = [parsed, ...(isMap(foreground) ? Object.values(foreground) : [])];
   const ports = new Set<string>();
   for (const config of configs) {
     if (!isMap(config)) return null;

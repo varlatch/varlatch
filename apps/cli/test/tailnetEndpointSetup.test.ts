@@ -219,13 +219,26 @@ describe("doctor: the endpoint from the host's side", () => {
   it("reads Serve's applied configuration, foreground sessions included; an empty one passes", () => {
     const direct = (status: string | null) => checkTailnetBrowser(endpoint, csp(`'self' ${endpoint}`), endpoint, status).find((c) => c.id === "tailnet.browser-direct");
     expect(direct("{}")).toMatchObject({ status: "pass" });
+    expect(direct(JSON.stringify({ TCP: null, Web: null, Foreground: null }))).toMatchObject({ status: "pass" });
     expect(direct(JSON.stringify({ TCP: { "443": { HTTPS: true } }, Web: { [`${HOST}:443`]: {} } }))).toMatchObject({ status: "pass" });
     expect(direct(JSON.stringify({ Foreground: { session1: { TCP: { "8688": { TCPForward: "127.0.0.1:8687" } } } } }))).toMatchObject({ status: "fail" });
   });
 
   it("never passes what it could not read (review regression)", () => {
     const direct = (status: string | null) => checkTailnetBrowser(endpoint, csp(`'self' ${endpoint}`), endpoint, status).find((c) => c.id === "tailnet.browser-direct");
-    for (const unreadable of [null, '{"TCP":', "[]", "null", '"text"', JSON.stringify({ TCP: ["8688"] }), JSON.stringify({ Foreground: { s: "x" } })]) {
+    for (const unreadable of [
+      null,
+      '{"TCP":',
+      "[]",
+      "null",
+      '"text"',
+      JSON.stringify({ TCP: ["8688"] }),
+      JSON.stringify({ Foreground: { s: "x" } }),
+      // A Foreground that is not a map of sessions (review 2).
+      JSON.stringify({ Foreground: [] }),
+      JSON.stringify({ Foreground: "bad-shape" }),
+      JSON.stringify({ Foreground: 7 }),
+    ]) {
       expect(direct(unreadable), String(unreadable)).toMatchObject({ status: "unknown" });
     }
   });
