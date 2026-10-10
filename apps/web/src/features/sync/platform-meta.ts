@@ -87,3 +87,14 @@ export function platformMeta(platform: SyncPlatform | (string & {})): PlatformMe
     }
   );
 }
+
+/**
+ * A connection as the dashboard names it: "GitHub (acme)" for a connection
+ * named "acme", but its own name alone when that already says the platform
+ * ("GitHub (acme)", the default for an App installation), never
+ * "GitHub (GitHub (acme))".
+ */
+export function connectionLabel(connection: { platform: SyncPlatform | (string & {}); name: string }): string {
+  const short = platformMeta(connection.platform).shortLabel;
+  return connection.name.toLowerCase().startsWith(short.toLowerCase()) ? connection.name : `${short} (${connection.name})`;
+}

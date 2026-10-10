@@ -171,7 +171,7 @@ describe("the GitHub App panel", () => {
     expect(asked.description).toContain("The App itself stays on GitHub");
     expect(asked.consequences.map((c) => c.text)).toEqual([
       "1 connection revoked: GitHub (acme-gh)",
-      "1 integration stop pushing until pointed at another connection.",
+      "1 integration stops pushing until pointed at another connection.",
     ]);
     expect(fake.toasts[0]).toMatchObject({ kind: "success", title: "GitHub App removed" });
   });
@@ -551,6 +551,18 @@ describe("rotating the App's key", () => {
 });
 
 describe("an App Connection's card", () => {
+  it("says one integration stops, in the singular, when it is revoked", async () => {
+    fake.api.revokePlatformConnection = (async () => undefined) as never;
+    const target = { id: "snt_1", connectionId: "pcn_app", environmentId: "env_1", state: "active", failureCount: 0, destination: { repo: "api" } } as unknown as SyncTarget;
+    await mount(<ConnectionCard org="acme" connection={appConnection} targets={[target]} envs={new Map()} onReplace={() => {}} onChanged={() => {}} />);
+    await act(async () => menuItem("revoke-connection-pcn_app").onSelect());
+    await settle();
+    const asked = fake.confirmed[0] as { description: string; consequences: { text: unknown }[] };
+    expect(asked.consequences[0]!.text).toBe("1 integration stops pushing until pointed at another connection:");
+    expect(asked.description).toContain("Varlatch stops issuing tokens for this installation");
+  });
+
+
   it("says it goes through the App, has no credential age, and leads to key rotation", async () => {
     let fixed = 0;
     const failing = { id: "snt_1", connectionId: "pcn_app", environmentId: "env_1", state: "active", failureCount: 3, lastResult: "GitHub App: GitHub refused the App's key", lastAttemptAt: "2026-10-09T10:00:00Z" } as unknown as SyncTarget;

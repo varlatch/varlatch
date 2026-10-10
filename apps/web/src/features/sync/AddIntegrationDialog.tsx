@@ -13,7 +13,7 @@ import { DestinationPicker } from "./DestinationPicker";
 import { useBoundCheck } from "./useBoundCheck";
 import { CredentialHint } from "./CredentialHint";
 import { checkPasses, fixStep } from "./accessCheck";
-import { platformMeta } from "./platform-meta";
+import { connectionLabel, platformMeta } from "./platform-meta";
 import { hostOf } from "./status";
 import { PlatformTile } from "./TargetCard";
 
@@ -246,7 +246,7 @@ export function AddIntegrationDialog({
         ? `New ${platformMeta(platform).shortLabel} connection`
         : undefined
       : selected
-        ? `${platformMeta(selected.platform).shortLabel} (${selected.name})`
+        ? connectionLabel(selected)
         : undefined,
     stepValid[1] ? `${destLabel}${ghEnvironment.trim() && effectivePlatform === "github-actions" ? ` · ${ghEnvironment.trim()}` : ""}` : undefined,
     stepValid[2]
@@ -445,6 +445,7 @@ export function AddIntegrationDialog({
                 {effectivePlatform === "github-actions" && (
                   <DestinationPicker
                     noun={{ one: "repository", many: "repositories" }}
+                    seenBy={!isNew && selected?.credentialKind === "github-app" ? "installation" : "credential"}
                     value={repo}
                     valueOf={(o) => o.destination.repo ?? ""}
                     listing={destinations}
