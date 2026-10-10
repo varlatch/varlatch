@@ -89,6 +89,18 @@ describe("describeEvent", () => {
     );
   });
 
+  it("describes a key rotation and an App's removal by what they covered", () => {
+    expect(
+      sentence(event({ eventType: "sync.github_app_key_rotated", metadata: { appId: 5254113, slug: "varlatch-acme", version: 2, connections: "pcn_a,pcn_b", reauthorizedTargets: "snt_1,snt_2,snt_3" } })),
+    ).toBe("rotated the key of the GitHub App varlatch-acme, re-authorizing 3 integrations");
+    expect(sentence(event({ eventType: "sync.github_app_key_rotated", metadata: { slug: "varlatch-acme", reauthorizedTargets: null } }))).toBe(
+      "rotated the key of the GitHub App varlatch-acme, re-authorizing 0 integrations",
+    );
+    expect(
+      sentence(event({ eventType: "sync.github_app_removed", metadata: { appId: 5254113, slug: "varlatch-acme", revokedConnections: "pcn_a", disabledTargets: "snt_1" } })),
+    ).toBe("removed the GitHub App varlatch-acme, revoking 1 connection");
+  });
+
   it("says imported for an imported App, and how an installation listing went", () => {
     expect(
       sentence(event({ eventType: "sync.github_app_registered", metadata: { via: "import", appId: 5254113, slug: "varlatch-acme", owner: "acme-gh", ownerType: "organization" } })),

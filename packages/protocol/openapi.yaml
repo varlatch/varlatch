@@ -2772,6 +2772,29 @@ paths:
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app:
+    delete:
+      tags: [sync]
+      operationId: removeGitHubApp
+      summary: >
+        Remove the Organization's GitHub App from Varlatch (ADR-0047
+        Decision 5): every Connection on it is revoked in one transaction,
+        their Sync Targets are disabled and keep their destination claims,
+        and the stored private key is deleted. Removal narrows disclosure,
+        so it needs config.sync.manage only. GitHub is not touched: the App
+        stays registered and installed there until its owner deletes it.
+        appId names the App the caller confirmed: if the Organization's live
+        App is another one (it was replaced meanwhile), nothing changes and
+        the answer is 409 STATE_CHANGED.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - name: appId
+          in: query
+          required: true
+          description: The id of the App being removed (GitHubApp.id), as the caller saw it
+          schema: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
     get:
       tags: [sync]
       operationId: getGitHubApp
@@ -2897,6 +2920,48 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppImportFailed" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/key:
+    post:
+      tags: [sync]
+      operationId: rotateGitHubAppKey
+      summary: >
+        Rotate the GitHub App's private key (ADR-0047 Decision 5): generate a
+        new key on GitHub, send it here, then delete the old one on GitHub.
+        Varlatch verifies the new key first (GET /app as the App, before any
+        lock). The rotation is a new disclosure grant for every non-revoked
+        Sync Target of every non-revoked Connection on the App, paused and
+        auto-disabled ones included: the caller must pass each Target's
+        write-time disclosure gate, or the whole rotation is refused (403).
+        expectedVersion must be the App's current version (409 otherwise).
+        Every Target is then queued to converge with the new key, and the
+        audit event records each Target's gate decisions (Grants, applied
+        Roles and Groups, Requirements).
+      parameters: [{ $ref: "#/components/parameters/org" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [privateKey, expectedVersion]
+              properties:
+                privateKey: { type: string, minLength: 1, maxLength: 10000, description: The App's new RSA private key in PEM }
+                expectedVersion: { $ref: "#/components/schemas/EntityVersion" }
+      responses:
+        "200":
+          description: Rotated, or not, and why (Cache-Control no-store; the key is never returned)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [outcome, app]
+                    properties:
+                      outcome: { type: string, enum: [rotated] }
+                      app: { $ref: "#/components/schemas/GitHubApp" }
+                  - { $ref: "#/components/schemas/GitHubAppImportFailed" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/installations:
@@ -4628,6 +4693,7 @@ components:
         message: { type: string }
 
     GitHubAppImportFailed:
+      description: An import or key rotation that did not happen, and why, read as an access check is; nothing was stored.
       allOf:
         - { $ref: "#/components/schemas/AccessCheck" }
         - type: object
