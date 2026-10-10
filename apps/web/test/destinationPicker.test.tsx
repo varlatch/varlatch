@@ -207,12 +207,14 @@ describe("Destination step", () => {
     expect(byTestId("dest-repo").props.value).toBe("api");
   });
 
-  it("says when the credential sees nothing, and takes a typed name", async () => {
+  it("says no unarchived repositories are listed for the credential, and takes a typed name", async () => {
     await open([github("pcn_a", "acme")]);
     await toDestination("pcn_a");
     await settle(() => listings.calls[0]!.resolve(listed()));
     expect(listStatus()).toBe("empty");
-    expect(text(byTestId("destination-list"))).toContain("This credential sees no repositories");
+    // GitHub's listing leaves archived repositories out: an empty list is not "none".
+    expect(text(byTestId("destination-list"))).toContain("No unarchived repositories are listed for this credential.");
+    expect(text(byTestId("destination-list"))).not.toContain("sees no");
     await type("dest-repo", "not-created-yet");
     expect(byTestId("wizard-next").props.disabled).toBe(false);
   });
@@ -225,11 +227,13 @@ describe("Destination step", () => {
     expect(text(byTestId("destination-list-count"))).not.toContain("credential");
   });
 
-  it("says the App's installation includes nothing, and where to add repositories", async () => {
+  it("says no unarchived repositories are listed for the App's installation, and how to change that", async () => {
     await open([{ ...github("pcn_app", "acme"), credentialKind: "github-app" } as PlatformConnection]);
     await toDestination("pcn_app");
     await settle(() => listings.calls[0]!.resolve(listed()));
-    expect(text(byTestId("destination-list"))).toContain("The App's installation includes no repositories: add them to it on GitHub.");
+    expect(text(byTestId("destination-list"))).toContain(
+      "No unarchived repositories are listed for the App's installation: add one to it on GitHub, or unarchive one there.",
+    );
   });
 
   it("offers Try again on an empty list, for a destination created since", async () => {
@@ -282,7 +286,7 @@ describe("Destination step", () => {
     await click("destination-retry");
     await settle(() => listings.calls[1]!.resolve({ ...listed(), truncated: true }));
     const empty = text(byTestId("destination-list"));
-    expect(empty).not.toContain("This credential sees no repositories");
+    expect(empty).not.toContain("No unarchived");
     expect(empty).toContain("stopped reading before it found any repositories");
     expect(all("destination-retry")).toHaveLength(1);
   });
@@ -316,6 +320,15 @@ describe("Destination step", () => {
     await click("confirm-integration");
     expect(createdTargets).toHaveLength(1);
     expect(createdTargets[0]!.destination).toMatchObject({ applicationUuid: "web123" });
+  });
+
+  it("says a Coolify credential sees no applications, with no word of archiving", async () => {
+    await open([coolify]);
+    await toDestination("pcn_c");
+    await settle(() => listings.calls[0]!.resolve({ check: OK, items: [], truncated: false }));
+    expect(listStatus()).toBe("empty");
+    expect(text(byTestId("destination-list"))).toContain("This credential sees no applications.");
+    expect(text(byTestId("destination-list"))).not.toContain("unarchived");
   });
 
   it("does not list for Convex, whose deployment is the destination", async () => {

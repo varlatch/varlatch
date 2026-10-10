@@ -12,6 +12,7 @@ import { AccessCheckNotice } from "./AccessCheckNotice";
 export function DestinationPicker({
   noun,
   seenBy = "credential",
+  omitsArchived = false,
   value,
   valueOf,
   listing,
@@ -24,6 +25,12 @@ export function DestinationPicker({
    * GitHub App installation's (exactly the repositories it includes).
    */
   seenBy?: "credential" | "installation";
+  /**
+   * The listing leaves archived destinations out, as both GitHub listings
+   * do: an empty list then says none unarchived is listed, not that there
+   * are none.
+   */
+  omitsArchived?: boolean;
   /** What the field holds now. */
   value: string;
   /** What the field takes for an option (a repository name, an application UUID). */
@@ -74,8 +81,10 @@ export function DestinationPicker({
           {truncated
             ? `Varlatch stopped reading before it found any ${noun.many} here: the ${app ? "installation includes" : "credential sees"} more than Varlatch reads.`
             : app
-              ? `The App's installation includes no ${noun.many}: add them to it on GitHub.`
-              : `This credential sees no ${noun.many}.`}{" "}
+              ? `No unarchived ${noun.many} are listed for the App's installation: add one to it on GitHub, or unarchive one there.`
+              : omitsArchived
+                ? `No unarchived ${noun.many} are listed for this credential.`
+                : `This credential sees no ${noun.many}.`}{" "}
           {typeInstead}
         </p>
         {retry}
