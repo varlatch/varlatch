@@ -95,9 +95,10 @@ const deferred = <T,>() => {
 };
 
 let root: ReactTestRenderer;
+let client: QueryClient;
 const submitted: string[] = [];
 async function mount(element: React.ReactElement, path = "/") {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
     root = create(
       <QueryClientProvider client={client}>
@@ -509,6 +510,34 @@ describe("rotating the App's key", () => {
     expect(byTestId("github-app-rotate-submit").props.disabled).toBe(true);
     await act(async () => reread.resolve({ ...APP, version: 4 }));
     await settle();
+    expect(byTestId("github-app-rotate-conflict").props["data-status"]).toBe("reloaded");
+    expect(byTestId("github-app-rotate-submit").props.disabled).toBe(false);
+    await click("github-app-rotate-submit");
+    await settle();
+    expect(sent).toEqual([3, 4]);
+  });
+
+  it("counts a version loaded while the refused request was in flight as new, and asks with it", async () => {
+    // Reverse order: the App is re-read (version 4) before version 3's rejection arrives.
+    let version = 3;
+    fake.api.getGitHubApp = (async () => ({ ...APP, version })) as never;
+    const pending = deferred<never>();
+    const sent: number[] = [];
+    fake.api.rotateGitHubAppKey = (async (_org: string, input: { expectedVersion: number }) => {
+      sent.push(input.expectedVersion);
+      if (sent.length === 1) return pending.promise;
+      return { outcome: "rotated", app: { ...APP, version: input.expectedVersion + 1 } };
+    }) as never;
+    await mount(<GitHubAppPanel org="acme" connections={[appConnection]} targets={[]} envs={new Map()} onChanged={() => {}} rotating onRotate={() => {}} onRotateDone={() => {}} />);
+    await settle();
+    await type("github-app-key", "K");
+    await click("github-app-rotate-submit");
+    version = 4;
+    await act(async () => client.invalidateQueries({ queryKey: ["github-app", "acme"] }));
+    await settle();
+    await act(async () => pending.reject(new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "changed", requestId: "r" })));
+    await settle();
+    expect(sent).toEqual([3]);
     expect(byTestId("github-app-rotate-conflict").props["data-status"]).toBe("reloaded");
     expect(byTestId("github-app-rotate-submit").props.disabled).toBe(false);
     await click("github-app-rotate-submit");

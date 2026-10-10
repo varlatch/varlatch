@@ -743,10 +743,13 @@ export function RotateKeyDialog({
   const reload = () => (onConflict ? onConflict() : void qc.invalidateQueries({ queryKey: githubAppKey(org) }));
   const settings = appSettingsUrl(app);
   const rotate = useMutation({
-    mutationFn: () => api.rotateGitHubAppKey(org, { privateKey: key, expectedVersion: app.version }),
-    onError: (err) => {
+    // The request's own inputs: the App may be re-read while it is in flight.
+    mutationFn: (input: { privateKey: string; expectedVersion: number }) => api.rotateGitHubAppKey(org, input),
+    onError: (err, input) => {
       if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
-        setConflictedAt(app.version);
+        // The version this request was refused at, not the one shown now:
+        // a newer one may already be loaded, and then nothing is stale.
+        setConflictedAt(input.expectedVersion);
         reload();
       }
     },
@@ -776,7 +779,7 @@ export function RotateKeyDialog({
             variant="primary"
             loading={rotate.isPending}
             disabled={key.trim() === "" || stale}
-            onClick={() => rotate.mutate()}
+            onClick={() => rotate.mutate({ privateKey: key, expectedVersion: app.version })}
             data-testid="github-app-rotate-submit"
           >
             Rotate key
