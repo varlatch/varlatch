@@ -107,6 +107,41 @@ describe("tailnet listener observer", () => {
     expect(r.observed.checks.node).toEqual({ status: "unknown", reason: "NOT_CHECKED" });
   });
 
+  it("review: a delayed startup check cannot replace a bound listener with its older snapshot", async () => {
+    server.removeAllListeners("request");
+    let first: http.ServerResponse | undefined;
+    let count = 0;
+    server.on("request", (_req, res) => {
+      if (++count === 1) { first = res; return; }
+      res.writeHead(status.code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(status.body));
+    });
+    const o = observer({ browser: false });
+    const older = o.check();
+    await vi.waitFor(() => expect(first).toBeDefined());
+    o.listening("plain", true);
+    await o.check();
+    expect(o.report().observed.checks.listener).toEqual({ status: "pass" });
+    first!.writeHead(status.code, { "Content-Type": "application/json" });
+    first!.end(JSON.stringify(status.body));
+    await older;
+    expect(o.report().observed.checks.listener).toEqual({ status: "pass" });
+  });
+
+  it("checks again as soon as a listener binds, not at the next minute (real-tailnet finding)", async () => {
+    const o = observer({ browser: false });
+    o.start();
+    try {
+      await vi.waitFor(() => expect(o.report().observed.checks.localApi.status).toBe("pass"));
+      // Started before the listener bound, as varlatchd does: unknown until it binds.
+      expect(o.report().observed.checks.listener).toEqual({ status: "unknown", reason: "NOT_CHECKED" });
+      o.listening("plain", true);
+      await vi.waitFor(() => expect(o.report().observed.checks.listener).toEqual({ status: "pass" }));
+    } finally {
+      o.stop();
+    }
+  });
+
   it("has no browserTls check, and no endpoint, while the browser endpoint is off", async () => {
     const o = observer({ browser: false });
     o.listening("plain", true);

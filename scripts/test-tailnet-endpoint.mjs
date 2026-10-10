@@ -133,7 +133,8 @@ try {
   check('setup completes and prints the access rule for the endpoint, without editing the policy',
     second.code === 0 && second.out.includes(`Tailnet browser endpoint: ${endpoint}`) && /"ip":\["tcp:8688"\]/.test(second.out), second.code === 0 ? '' : second.out.slice(-800));
   check('doctor: the tailnet listener and the endpoint pass; reachability stays unknown',
-    /✓ Tailnet listener/.test(second.out) && /✓ Tailnet browser endpoint\n/.test(second.out) && /\? Tailnet browser endpoint reachable from browsers/.test(second.out));
+    /✓ Tailnet listener/.test(second.out) && /✓ Tailnet browser endpoint\n/.test(second.out) && /\? Tailnet browser endpoint reachable from browsers/.test(second.out),
+    second.out.split('\n').filter((l, i, all) => /Tailnet|tailnet/.test(l) || /Tailnet/.test(all[i - 1] ?? '')).join(' | '));
 
   // ---- Data: a production secret behind a Requirement naming this machine.
   const adminId = sql("SELECT id FROM identities WHERE installation_admin LIMIT 1");
@@ -237,9 +238,18 @@ try {
   reqId = await requirement([self.ID]);
 
   // ---- Case 7: the LocalAPI unavailable for a moment.
+  // varlatchd keeps its connection to the socket open for 5 s after each use
+  // and reuses it (Node's keep-alive), so moving the socket away changes
+  // nothing until that connection is gone: nothing may reach the endpoint
+  // meanwhile, and the precondition is checked from inside varlatchd.
   const sock = '/var/run/tailscale/tailscaled.sock';
+  await page.goto('about:blank');
   try {
     dc(['exec', '-T', 'tailscale', 'mv', sock, `${sock}.away`]);
+    await new Promise((r) => setTimeout(r, 8000));
+    const fresh = dc(['exec', '-T', 'varlatchd', 'node', '-e',
+      `require('http').get({socketPath:'${sock}',path:'/localapi/v0/status',headers:{Host:'local-tailscaled.sock'}},r=>{r.resume();console.log('answered',r.statusCode)}).on('error',e=>console.log('error',e.code))`]);
+    check('case 7: varlatchd can no longer reach the LocalAPI', /error ENOENT/.test(fresh), fresh);
     const res = await fetch(`${endpoint}${PATH}/disclosures`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: 'all-authorized-secrets' }) });
     const refused = { status: res.status, body: await res.json().catch(() => null) };
     check('case 7: without the LocalAPI, constrained reads are refused', refused.status === 403 && refused.body?.error?.code === 'TAILNET_CONTEXT_REQUIRED', JSON.stringify(refused));

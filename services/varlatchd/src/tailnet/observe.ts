@@ -92,6 +92,15 @@ export class TailnetObserver {
   #checkedAt: number | null = null;
   #persisted: { json: string; at: number } | null = null;
   #timer: NodeJS.Timeout | null = null;
+  #started = false;
+  /**
+   * Checks overlap (the minute timer, a listener binding, a certificate
+   * loading), and a LocalAPI answer can take a while: each check takes a
+   * ticket when it starts, and one that ends after a newer check was
+   * applied is dropped, so an older snapshot never replaces a newer one.
+   */
+  #issued = 0;
+  #applied = 0;
 
   constructor(opts: {
     socketPath: string;
@@ -117,9 +126,10 @@ export class TailnetObserver {
     this.#checks = { listener: UNCHECKED, ...(opts.browser ? { browserTls: UNCHECKED } : {}), localApi: UNCHECKED, node: UNCHECKED };
   }
 
-  /** A listener bound its port (or failed to). */
+  /** A listener bound its port (or failed to): checked again at once, not at the next minute. */
   listening(which: "plain" | "browser", ok: boolean): void {
     this.#listening[which] = ok;
+    if (this.#started) void this.check();
   }
 
   report(): TailnetListenerReport {
@@ -131,6 +141,7 @@ export class TailnetObserver {
 
   /** Check now, then every 60 seconds. */
   start(): void {
+    this.#started = true;
     void this.check();
     this.#timer = setInterval(() => void this.check(), CHECK_EVERY_MS);
     this.#timer.unref();
@@ -142,6 +153,7 @@ export class TailnetObserver {
   }
 
   async check(): Promise<TailnetListenerReport> {
+    const ticket = ++this.#issued;
     const wanted = this.#configured.browserEndpoint ? [this.#listening.plain, this.#listening.browser] : [this.#listening.plain];
     const listener: ObservedCheck = wanted.every((l) => l === true)
       ? { status: "pass" }
@@ -183,6 +195,8 @@ export class TailnetObserver {
         : { status: "fail", reason: "NO_CERTIFICATE", ...(notAfter ? { certificateNotAfter: notAfter } : {}) };
     }
 
+    if (ticket < this.#applied) return this.report();
+    this.#applied = ticket;
     this.#checks = { listener, ...(browserTls ? { browserTls } : {}), localApi, node };
     this.#checkedAt = this.#now();
     this.#persist();

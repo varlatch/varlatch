@@ -442,6 +442,25 @@ describe("node certificate", () => {
     expect(decodePair(wildcard.key + wildcard.cert, HOST, now)).toBe(`the certificate does not name ${HOST}`);
   });
 
+  it("says when a different certificate is swapped in, so its observer checks at once (real-tailnet finding)", async () => {
+    const pair = makePair([HOST]);
+    answer = { status: 200, body: pair.key + pair.cert };
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    let changes = 0;
+    const cert = new NodeCertificate({ socketPath, host: HOST, onChange: () => changes++ });
+    expect(await cert.refresh()).toBe(true);
+    expect(await cert.refresh()).toBe(true);
+    expect(changes).toBe(1);
+    const next = makePair([HOST], 60);
+    answer = { status: 200, body: next.key + next.cert };
+    expect(await cert.refresh()).toBe(true);
+    expect(changes).toBe(2);
+    answer = { status: 500, body: "" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await cert.refresh()).toBe(false);
+    expect(changes).toBe(2);
+  });
+
   it("asks for early renewal only once it knows the lifetime, and never for more than a fresh certificate gives", async () => {
     const pair = makePair([HOST], 90);
     answer = { status: 200, body: pair.key + pair.cert };

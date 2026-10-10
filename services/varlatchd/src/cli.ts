@@ -129,7 +129,12 @@ async function serveCommand(): Promise<void> {
   const trustedProxies = config.trustedProxies ? await new TrustedProxies(config.trustedProxies).start() : null;
   const browser = config.tailscale?.browser ?? null;
   const browserEndpoint = browser ? `https://${browser.host}:${browser.port}` : null;
-  const certificate = config.tailscale && browser ? new NodeCertificate({ socketPath: config.tailscale.socketPath, host: browser.host }) : null;
+  // A certificate swapped in is checked at once, not at the observer's next minute.
+  let observed: TailnetObserver | null = null;
+  const certificate =
+    config.tailscale && browser
+      ? new NodeCertificate({ socketPath: config.tailscale.socketPath, host: browser.host, onChange: () => void observed?.check() })
+      : null;
   const observer = config.tailscale
     ? new TailnetObserver({
         socketPath: config.tailscale.socketPath,
@@ -140,6 +145,7 @@ async function serveCommand(): Promise<void> {
         stateDir: stateDir(),
       })
     : null;
+  observed = observer;
   const app = buildApp(ctx, {
     clientAddress: clientAddressResolver(c => getConnInfo(c).remote.address ?? "unknown", trustedProxies),
     issuer,
