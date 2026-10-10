@@ -77,6 +77,8 @@ export async function strictRetrieval(
     actorIdentityId: string;
     requestId?: string | undefined;
     listener?: "ordinary" | "tailnet" | undefined;
+    /** What each class was allowed by, for the audit events (auditAuthz). */
+    authz?: { plain?: Record<string, unknown> | undefined; secret?: Record<string, unknown> | undefined };
   },
 ): Promise<StrictRetrieval> {
   const preflight = opts.mode === "preflight";
@@ -106,6 +108,7 @@ export async function strictRetrieval(
       ...base,
       eventType: "value.disclosed",
       action: "config.value.read",
+      ...(opts.authz?.plain ? { authz: opts.authz.plain } : {}),
       metadata: { mode: "strict-retrieval", items: plain.map((i) => `${i.name}@${i.versionId}`).join(",") },
     });
   }
@@ -118,12 +121,14 @@ export async function strictRetrieval(
             ...base,
             eventType: "secret.validated",
             action: "secret.reveal",
+            ...(opts.authz?.secret ? { authz: opts.authz.secret } : {}),
             metadata: { purpose: "preflight-validation", items: secrets.map((i) => `${i.name}@${i.versionId}`).join(",") },
           }
         : {
             ...base,
             eventType: "secret.disclosed",
             action: "secret.reveal",
+            ...(opts.authz?.secret ? { authz: opts.authz.secret } : {}),
             metadata: {
               mode: "strict-retrieval",
               items: secrets

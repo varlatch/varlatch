@@ -391,6 +391,8 @@ export async function effectiveConfiguration(
     actorIdentityId: string;
     requestId?: string;
     listener?: "ordinary" | "tailnet";
+    /** What config.value.read was allowed by, for the audit event (auditAuthz). */
+    authz?: Record<string, unknown> | undefined;
   },
 ): Promise<{ items: EffectiveItem[]; unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env, items } = state;
@@ -419,6 +421,7 @@ export async function effectiveConfiguration(
         organizationId: org.id,
         action: "config.value.read",
         resource: { projectId: project.id, environmentId: env.id },
+        ...(opts.authz ? { authz: opts.authz } : {}),
         requestId: opts.requestId ?? null,
         listener: opts.listener,
         metadata: {
@@ -536,6 +539,8 @@ export async function validateEnvironment(
     access: ValidationAccessCheck;
     actorIdentityId: string;
     requestId?: string;
+    /** What each class was allowed by, for the audit events (auditAuthz). */
+    authz?: { plain?: Record<string, unknown> | undefined; secret?: Record<string, unknown> | undefined };
   },
 ): Promise<ValidationResult> {
   const { org, project, env, contract } = state;
@@ -600,6 +605,7 @@ export async function validateEnvironment(
     for (const sensitive of [true, false]) {
       const group = batch.filter((r) => r.sensitive === sensitive);
       if (group.length === 0) continue;
+      const authz = sensitive ? opts.authz?.secret : opts.authz?.plain;
       events.push({
         eventType: sensitive ? "secret.validated" : "value.validated",
         decision: "allow",
@@ -607,6 +613,7 @@ export async function validateEnvironment(
         organizationId: org.id,
         action: sensitive ? "secret.reveal" : "config.value.read",
         resource: { projectId: project.id, environmentId: env.id },
+        ...(authz ? { authz } : {}),
         requestId: opts.requestId ?? null,
         metadata: {
           purpose: "validation",
@@ -901,6 +908,8 @@ export async function discloseSecrets(
      * reference expansion pull NON-SENSITIVE values into disclosed secrets.
      */
     mayReadPlain?: boolean | undefined;
+    /** What secret.reveal and config.value.read were allowed by, for the audit events (auditAuthz). */
+    authz?: { secret?: Record<string, unknown> | undefined; plain?: Record<string, unknown> | undefined };
   },
 ): Promise<DisclosureResult & { unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env } = state;
@@ -919,6 +928,7 @@ export async function discloseSecrets(
         organizationId: org.id,
         action: "secret.reveal",
         resource: { projectId: project.id, environmentId: env.id },
+        ...(opts.authz?.secret ? { authz: opts.authz.secret } : {}),
         requestId: opts.requestId ?? null,
         listener: opts.listener,
         metadata: {
@@ -978,6 +988,7 @@ export async function discloseSecrets(
             organizationId: org.id,
             action: "config.value.read",
             resource: { projectId: project.id, environmentId: env.id },
+            ...(opts.authz?.plain ? { authz: opts.authz.plain } : {}),
             requestId: opts.requestId ?? null,
             listener: opts.listener,
             metadata: {

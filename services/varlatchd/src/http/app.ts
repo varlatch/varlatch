@@ -156,7 +156,7 @@ import {
 
 export const SERVER_VERSION = "0.16.0";
 
-import { evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
+import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 import type { WhoisResult } from "../tailnet/whois.js";
 import { tailnetBrowserGate, type TailnetBrowserOptions } from "./tailnet-browser.js";
 import type { TailnetListenerReport } from "../tailnet/observe.js";
@@ -330,6 +330,11 @@ function serializeInvitation(r: InvitationRow) {
     consumedAt: r.consumed_at ? iso(r.consumed_at) : null,
     revokedAt: r.revoked_at ? iso(r.revoked_at) : null,
   };
+}
+
+/** What an allowed decision records in its audit events (auditAuthz); nothing for a denial. */
+function allowedAuthz(decision: Decision | null): Record<string, unknown> | undefined {
+  return decision?.allowed ? auditAuthz(decision.evaluation) : undefined;
 }
 
 /** A list's `limit` query parameter: an integer in 1..500, 100 when absent. */
@@ -1463,6 +1468,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         },
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
+        authz: { plain: allowedAuthz(phase.decisions.plain), secret: allowedAuthz(phase.decisions.secret) },
       });
       c.header("Cache-Control", "no-store");
       return c.json(report);
@@ -1584,6 +1590,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         mayReadValue: (sensitive) => !sensitive && plain?.allowed === true,
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
+        authz: allowedAuthz(plain),
       });
       // Non-sensitive values withheld from this caller; Secrets are never on this path.
       const withheld: CallerView["withheld"] =
@@ -1637,7 +1644,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const state = await captureState(sctx, scope, now, (item) =>
           item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
         );
-        return { state, body, plain, metadata };
+        return { state, body, reveal, plain, metadata };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
       const { state, body, plain, metadata } = phase;
@@ -1649,6 +1656,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
         mayReadPlain: plain.allowed,
+        authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
       });
       c.header("Cache-Control", "no-store");
       return c.json(
@@ -1695,6 +1703,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           actorIdentityId: principal.identity.id,
           requestId: c.get("requestId"),
           listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
+          authz: { plain: allowedAuthz(phase.plain), secret: allowedAuthz(phase.secret) },
         },
       );
       c.header("Cache-Control", "no-store");

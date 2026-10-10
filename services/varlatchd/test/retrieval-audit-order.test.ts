@@ -220,6 +220,16 @@ describe("every decryption follows the audit commit that names it, and nothing i
       )
     ).rows as { items: string }[];
     expect(dependency).toEqual([{ items: `DB_PASS@${dbPass}` }]);
+    // Expansion levels record what they were allowed by, as the exercise does (issue #22).
+    const expansions = (
+      await ctx.db.query(
+        "SELECT event_type, action, authz FROM audit_events WHERE metadata::jsonb->>'mode' = 'reference-expansion' AND metadata::jsonb ? 'runId'",
+      )
+    ).rows as { event_type: string; action: string; authz: unknown }[];
+    expect(new Set(expansions.map((e) => `${e.event_type}:${e.action}`))).toEqual(new Set(["secret.disclosed:secret.use", "value.disclosed:config.value.read"]));
+    for (const e of expansions) {
+      expect(typeof e.authz === "string" ? JSON.parse(e.authz) : e.authz).toMatchObject({ grantIds: expect.any(Array), requirements: [] });
+    }
     expect(decrypted).toEqual(
       [
         await versionOf("DATABASE_URL"),

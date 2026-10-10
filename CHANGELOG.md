@@ -56,6 +56,13 @@ fixes.
   missing a value"). The join now runs with a placeholder in its own
   commands' environment, never in `.env`. Existing installations were not
   affected.
+- **Allowed reads say which network requirement let them through.** Audit
+  events for value reads, disclosures, validation and strict retrievals
+  (and a capability exercise's reference expansions) now carry
+  `authorization`: the Grants that applied and, for each network
+  requirement that applies, its outcome and what satisfied it (for
+  example `"by": "node:nLAPTOP"`), as denials already do. Where no
+  requirement applies, the list is empty.
 - **The tailnet listener refuses two more kinds of device.** A device
   shared into the tailnet from elsewhere (WhoIs says who shared it) and the
   Varlatch node itself get no Tailnet Context any more, whatever their
