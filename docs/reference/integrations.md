@@ -40,6 +40,92 @@ button.
 
 ## GitHub Actions
 
+A GitHub connection authenticates in one of two ways:
+
+- **Through your organization's GitHub App** (below). Varlatch issues a
+  token for each push, limited to one repository and valid for an hour.
+  Nothing expires with a person, and nothing breaks when someone leaves.
+- **With a personal access token**, which a person creates and which can
+  expire. It is quicker to set up, and works where you may not register
+  Apps.
+
+### Through a GitHub App
+
+Each Varlatch organization has at most one GitHub App, registered on the
+GitHub account it pushes to. Varlatch keeps the App's private key,
+encrypted, and stores no token: for each push, check, or listing, it asks
+GitHub for a token limited to that use.
+
+| Use | Repositories | Permissions |
+| --- | --- | --- |
+| Push | the destination | Secrets (or Environments) read and write, Metadata read |
+| Check a destination | the destination | Secrets (or Environments) read, Metadata read |
+| Check the connection, list repositories | the whole installation | Metadata read |
+
+**Register the App.** Under **Connections**, **GitHub App**, **Register an
+App**: choose the GitHub organization (or your personal account) and press
+**Continue to GitHub**. GitHub shows its form to create the App, filled in
+by Varlatch: secrets and environments (read and write) and metadata
+(read), no webhook, private. Press **Create GitHub App**, and GitHub sends
+you back to Varlatch.
+
+- On an organization, only an owner, or a member allowed to manage its
+  GitHub Apps, can register one. If GitHub says you don't have permission
+  and offers to create the App for your own account, stop there: that App
+  can only be installed on your account, not on the organization. If it
+  happens anyway, Varlatch keeps nothing, says so, and links to where you
+  delete the App on GitHub.
+- Registering needs this installation's public address over HTTPS
+  ([`VARLATCH_PUBLIC_URL`](../self-hosting/configuration.md#varlatch_public_url)), or a
+  loopback address in local development: GitHub sends the browser back
+  there.
+- The link GitHub sends you back with works once, for an hour. If the
+  registration did not finish (the page says so), GitHub may still have
+  created the App: delete it on GitHub under **Settings**, **Developer
+  settings**, **GitHub Apps**, then start again.
+
+**Or import one.** If an owner registered the App, **Import an App** takes
+its App ID and a private key (the `.pem` file GitHub downloads under the
+App's **Credentials**, **Key pairs**, **New key**). Varlatch checks the
+pair with GitHub before keeping it. The App needs Secrets and
+Environments (read and write) and Metadata (read). It may hold more, and
+the audit log names the extra permissions, but the stored key keeps
+everything the App holds: Varlatch limits each token it issues, not the
+key. Give the App no more than it needs.
+
+**Install it, then connect the installation.** On GitHub, install the App
+on the account (**Install on GitHub** links there) and choose the
+repositories Varlatch should push to. Back in Varlatch, **Connect an
+installation** creates a connection for it. The connection's owner is the
+installation's account, and its integrations can push only to the
+repositories the installation includes. To push to another repository,
+add it to the installation on GitHub; if you are not an owner there,
+GitHub sends your change to an owner to approve, and the repository is
+listed once it is reachable.
+
+**Rotate the key.** Under **GitHub App**, **Rotate key**: on GitHub, open
+the App's settings, **Credentials**, **Key pairs**, **New key**, then give
+Varlatch the new `.pem`. Varlatch checks it with GitHub first, then
+switches every integration on the App's connections to it at once,
+paused and disabled ones included. That is a new disclosure for each of
+them, so you need the authority to disclose what each pushes; if you
+lack it for one, nothing changes. Once Varlatch confirms, delete the old
+key on GitHub. An App connection has no credential of its own: its
+**Rotate the App's key** button leads here. It never shows an expiry.
+
+**Remove the App.** **Remove App** revokes every connection on it at
+once: their integrations are disabled and keep their destinations, and
+Varlatch deletes the key. The App stays on GitHub; delete it there,
+under the App's **Advanced** settings, if you no longer need it.
+
+The audit log records the App's registration or import (and a refused
+registration, with why), each listing of its installations, each key
+rotation with the integrations it re-authorized, and its removal with
+the connections it revoked; never the key. A token Varlatch issues is not
+logged on its own: the push, check, or listing that used it is.
+
+### With a personal access token
+
 | Field | What to enter |
 | --- | --- |
 | Owner | The user or organization in `github.com/<owner>`. |
@@ -129,6 +215,9 @@ is no redeploy.
 | Destination not found | Check the repository, GitHub environment, or application UUID, and that the token can see it. |
 | Could not check right now | Varlatch's server got no answer: the dialog says whether the address does not resolve, refuses the connection, redirects (a sign-in page in front of the API, for example), or has a certificate the server does not trust. A timeout, a rate limit, or a platform error clears with **Check again**. |
 | The platform refused the check | Most often the address answers but is not the platform's API: check the instance or deployment URL. |
+| GitHub refused the App's key | The key was deleted on GitHub, or belongs to another App: rotate the App's key. |
+| This server's clock is ahead of, or behind, GitHub's | GitHub refuses the App's signed requests when the server's clock is minutes off. Set it right (NTP), then check again. |
+| The App's installation cannot see the repository | Add the repository to the App's installation on GitHub, or check its name. |
 
 ## Picking the destination
 
@@ -158,6 +247,7 @@ an instance, which answers too, does not pass.
 | Platform | Requests |
 | --- | --- |
 | GitHub Actions | `GET /users/<owner>`; with a destination, the Actions secrets public key of the repository or environment (and the repository itself, to tell a missing environment from a repository the token cannot see) |
+| GitHub Actions, through the App | First a token for this check, from `POST /app/installations/<id>/access_tokens` (signed with the App's key); then, for the connection alone, `GET /installation/repositories?per_page=1`, and with a destination, the same requests as with a token |
 | Coolify | `GET /api/v1/version`; with a destination, `GET /api/v1/applications/<uuid>` |
 | Convex | `GET /api/check_admin_key` |
 
@@ -171,6 +261,7 @@ Listing destinations reads in the same way, with the same credential:
 | Platform | Requests |
 | --- | --- |
 | GitHub Actions | `GET /users/<owner>`, then `GET /orgs/<owner>/repos` for an organization or `GET /user/repos` (filtered to the owner) for a user, 100 per page |
+| GitHub Actions, through the App | A token for the listing, then `GET /installation/repositories`, 100 per page: exactly the installation's repositories |
 | Coolify | `GET /api/v1/applications`; only each application's uuid, name, and first address are kept |
 
 A listing appears in the audit log as **Destinations listed**, with how
