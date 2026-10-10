@@ -93,6 +93,14 @@ export class TailnetObserver {
   #persisted: { json: string; at: number } | null = null;
   #timer: NodeJS.Timeout | null = null;
   #started = false;
+  /**
+   * Checks overlap (the minute timer, a listener binding, a certificate
+   * loading), and a LocalAPI answer can take a while: each check takes a
+   * ticket when it starts, and one that ends after a newer check was
+   * applied is dropped, so an older snapshot never replaces a newer one.
+   */
+  #issued = 0;
+  #applied = 0;
 
   constructor(opts: {
     socketPath: string;
@@ -145,6 +153,7 @@ export class TailnetObserver {
   }
 
   async check(): Promise<TailnetListenerReport> {
+    const ticket = ++this.#issued;
     const wanted = this.#configured.browserEndpoint ? [this.#listening.plain, this.#listening.browser] : [this.#listening.plain];
     const listener: ObservedCheck = wanted.every((l) => l === true)
       ? { status: "pass" }
@@ -186,6 +195,8 @@ export class TailnetObserver {
         : { status: "fail", reason: "NO_CERTIFICATE", ...(notAfter ? { certificateNotAfter: notAfter } : {}) };
     }
 
+    if (ticket < this.#applied) return this.report();
+    this.#applied = ticket;
     this.#checks = { listener, ...(browserTls ? { browserTls } : {}), localApi, node };
     this.#checkedAt = this.#now();
     this.#persist();
