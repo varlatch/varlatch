@@ -4,7 +4,7 @@ import { CONFIG_ITEM_NAME_PATTERN } from "@varlatch/contract";
 import { TargetError, canonicalTargets, describeTargets } from "@varlatch/protocol";
 import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import type { Evaluation, TailnetContext } from "../authz/evaluate.js";
-import { evaluate } from "../authz/evaluate.js";
+import { auditAuthz, evaluate } from "../authz/evaluate.js";
 import {
   destinationMatches,
   formatSelector,
@@ -608,11 +608,7 @@ export async function exerciseCapability(
         },
         // Decision-time facts (ADR-0029 §6): Roles are editable and membership
         // unversioned, so the snapshot records what the evaluator actually saw.
-        authz: {
-          grantIds: evaluation.provenance.grantIds,
-          ...(evaluation.provenance.applied ? { applied: evaluation.provenance.applied } : {}),
-          requirements: evaluation.requirements,
-        },
+        authz: auditAuthz(evaluation),
         requestId: opts.requestId ?? null,
         listener: opts.listener,
         metadata: {
@@ -704,6 +700,7 @@ export async function exerciseCapability(
         organizationId: org.id,
         action: "secret.use",
         resource,
+        authz: auditAuthz(evaluation),
         requestId: opts.requestId ?? null,
         listener: opts.listener,
         metadata: {
@@ -721,6 +718,7 @@ export async function exerciseCapability(
         organizationId: org.id,
         action: "config.value.read",
         resource,
+        ...(captured.plainRead?.allowed ? { authz: auditAuthz(captured.plainRead) } : {}),
         requestId: opts.requestId ?? null,
         listener: opts.listener,
         metadata: {
