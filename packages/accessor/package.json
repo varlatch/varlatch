@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/accessor",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "description": "The Typed Accessor: reads process.env and converts it with Contract Semantics; bundled into every module varlatch types generates",
   "license": "Apache-2.0",

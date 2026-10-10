@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/backup",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "private": true,
   "description": "Installation backup format, maintenance gates, and archive status (ADR-0033)",
   "license": "Apache-2.0",
