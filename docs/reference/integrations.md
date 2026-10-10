@@ -225,9 +225,10 @@ is no redeploy.
 
 ## Picking the destination
 
-On the Destination step, Varlatch lists what the connection's credential
-can see: the GitHub repositories in its owner (archived ones left out),
-or the applications of the Coolify token's team. Pick one, or type it
+On the Destination step, Varlatch lists what the connection can reach:
+for GitHub, the repositories in its owner that the token can see, or that
+the App's installation includes, archived ones left out in both cases;
+for Coolify, the applications of the token's team. Pick one, or type it
 when it is not listed: a repository you have not created yet, or one a
 partial list leaves out (Varlatch stops reading at 1,000, or after 30
 pages of GitHub repositories, and says so). If the list cannot load, the

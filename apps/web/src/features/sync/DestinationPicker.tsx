@@ -68,13 +68,15 @@ export function DestinationPicker({
   }
   if (items.length === 0) {
     // On the platform, one may have been created since: Try again lists anew.
+    // Archived repositories are left out, so an App's empty list does not
+    // mean its installation includes none.
     return (
       <div className="flex items-center gap-3" data-testid="destination-list" data-status="empty" data-truncated={truncated}>
         <p className="min-w-0 flex-1 text-[13px] text-muted">
           {truncated
             ? `Varlatch stopped reading before it found any ${noun.many} here: the ${app ? "installation includes" : "credential sees"} more than Varlatch reads.`
             : app
-              ? `The App's installation includes no ${noun.many}: add them to it on GitHub.`
+              ? `No unarchived ${noun.many} are listed for the App's installation: add one to it on GitHub, or unarchive one there.`
               : `This credential sees no ${noun.many}.`}{" "}
           {typeInstead}
         </p>

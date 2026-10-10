@@ -225,11 +225,13 @@ describe("Destination step", () => {
     expect(text(byTestId("destination-list-count"))).not.toContain("credential");
   });
 
-  it("says the App's installation includes nothing, and where to add repositories", async () => {
+  it("says no unarchived repositories are listed for the App's installation, and how to change that", async () => {
     await open([{ ...github("pcn_app", "acme"), credentialKind: "github-app" } as PlatformConnection]);
     await toDestination("pcn_app");
     await settle(() => listings.calls[0]!.resolve(listed()));
-    expect(text(byTestId("destination-list"))).toContain("The App's installation includes no repositories: add them to it on GitHub.");
+    expect(text(byTestId("destination-list"))).toContain(
+      "No unarchived repositories are listed for the App's installation: add one to it on GitHub, or unarchive one there.",
+    );
   });
 
   it("offers Try again on an empty list, for a destination created since", async () => {
