@@ -11,6 +11,7 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  * Usage: e2e-realtime.mjs <enroll-url> <api-token> -- <docker compose command...>
  */
 import { spawnSync } from "node:child_process";
+import { watchCsp } from "./e2e-csp.mjs";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -50,6 +51,7 @@ const since = (t) => `${Math.round((Date.now() - t) / 100) / 10} s`;
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
+const cspViolations = watchCsp(context);
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send("WebAuthn.enable");
@@ -139,6 +141,7 @@ try {
   check("degraded realtime E2E", false, String(err).slice(0, 300));
 } finally {
   if (convexStopped) { try { dc("start", "convex-backend"); } catch { /* reported above */ } }
+  check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
   await browser.close();
 }
 process.exit(failed ? 1 : 0);

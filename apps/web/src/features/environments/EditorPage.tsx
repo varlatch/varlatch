@@ -25,7 +25,15 @@ import {
   type ContractItemMeta,
   type ServerItem,
 } from "../values/model";
-import { useContractItems, useEnvSyncTargets, useEnvValues, useItemChanges, usePlatformConnections } from "../values/queries";
+import {
+  markTailnetOnly,
+  tailnetAccess,
+  useContractItems,
+  useEnvSyncTargets,
+  useEnvValues,
+  useItemChanges,
+  usePlatformConnections,
+} from "../values/queries";
 import { useDisclosure } from "../values/useDisclosure";
 import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
 import { useReviewSave } from "../values/useReviewSave";
@@ -37,8 +45,8 @@ import { DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, Secret
 import { ValueEditor, type CommitHow } from "../values/ValueEditor";
 import { targetCoversItem, targetLabel } from "../sync/syncStatus";
 import { ItemPanelBody, panelHeading, type PanelActions } from "./ItemPanel";
-import { TailnetOnlyNotice } from "../values/TailnetOnly";
-import { TAILNET_ONLY_GUIDANCE, isTailnetOnly } from "../../lib/tailnet";
+import { TailnetOnlyNotice, TailnetReadNote } from "../values/TailnetOnly";
+import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
 
 /**
  * One environment's values: a list of items with an inline panel for the
@@ -90,16 +98,23 @@ export function EditorPage() {
   const wide = useWide();
 
   const values = useEnvValues(org, slug, environment);
-  // A Tailnet Requirement covers this environment: no value can be read here.
-  const tailnetOnly = isTailnetOnly(environment) || values.data?.tailnetOnly === true;
+  // A Tailnet Requirement covers this environment: its values are read
+  // through the tailnet endpoint once this tab has connected, and otherwise
+  // not at all (`tailnetOnly`: held back here).
+  const access = tailnetAccess(environment, values.data);
+  const tailnetOnly = access.blocked;
   const restricted = useMemo(() => new Set(tailnetOnly ? [envName] : []), [tailnetOnly, envName]);
+  const protectedEnvs = useMemo(() => new Set(access.isProtected ? [envName] : []), [access.isProtected, envName]);
   const contract = useContractItems(org, slug);
   const targets = useEnvSyncTargets(org, slug, envName);
   const connections = usePlatformConnections(org);
   const changes = useItemChanges(org, environment.id);
   const now = useNow(60_000);
   const drafts = useDrafts();
-  const disclosure = useDisclosure(org, slug, restricted);
+  const disclosure = useDisclosure(org, slug, restricted, {
+    protectedEnvs,
+    onTailnetOnly: (env) => markTailnetOnly(qc, org, slug, env),
+  });
 
   const [params, setParams] = useSearchParams();
   const [selected, setSelected] = useState<string | null>(() => params.get("item"));
@@ -438,7 +453,10 @@ export function EditorPage() {
           )}
       </div>
 
-      {tailnetOnly && <TailnetOnlyNotice org={org} project={project} env={environment} environments={environments} />}
+      {tailnetOnly && (
+        <TailnetOnlyNotice org={org} project={project} env={environment} environments={environments} deviceRefused={access.deviceRefused} />
+      )}
+      {access.readable && access.device && <TailnetReadNote device={access.device} />}
       <DisclosureNotice envs={revealedHere ? [envName] : []} onMaskAll={disclosure.maskAll} />
       {review.error && (
         <Callout

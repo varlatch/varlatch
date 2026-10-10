@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "../../lib/session";
 import { DisclosureDiscardedError, TailnetOnlyError, isTailnetDenial } from "../../lib/tailnet";
+import { useTailnetConnection } from "../../lib/tailnetConnection";
 
 /**
  * Server-disclosed Secret plaintext, held in component memory only: never
@@ -18,6 +19,12 @@ import { DisclosureDiscardedError, TailnetOnlyError, isTailnetDenial } from "../
  * stays discarded even if the restriction has been lifted by the time it
  * lands. Display cleanup only: plaintext already delivered to this browser
  * is not revoked.
+ *
+ * `protectedEnvs` are the environments a Tailnet Requirement covers that
+ * this tab can read (ADR-0046): their disclosures go to the tailnet browser
+ * endpoint while the tab is connected, never to the dashboard's origin, and
+ * are never sent again on failure. `onTailnetOnly` hears of a Requirement
+ * the page did not know about, from a denial on the dashboard's origin.
  */
 
 const REMASK_MS = 5 * 60 * 1000;
@@ -25,8 +32,16 @@ const NONE: ReadonlySet<string> = new Set();
 
 export type Disclosed = { value: string; retiring?: string | undefined };
 
-export function useDisclosure(org: string, project: string, restricted: ReadonlySet<string> = NONE) {
+export function useDisclosure(
+  org: string,
+  project: string,
+  restricted: ReadonlySet<string> = NONE,
+  { protectedEnvs = NONE, onTailnetOnly }: { protectedEnvs?: ReadonlySet<string>; onTailnetOnly?: (env: string) => void } = {},
+) {
   const { api, authEpoch } = useSession();
+  const { client: tailnetClient } = useTailnetConnection();
+  const routes = useRef({ protectedEnvs, tailnetClient, onTailnetOnly });
+  routes.current = { protectedEnvs, tailnetClient, onTailnetOnly };
   const [values, setValues] = useState<Map<string, Map<string, Disclosed>>>(() => new Map());
   // Disclosed but hidden again locally (the eye toggles without a new disclosure).
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -70,18 +85,24 @@ export function useDisclosure(org: string, project: string, restricted: Readonly
   const reveal = useCallback(
     async (env: string, request: string[] | "all") => {
       if (restrictedNow.current.has(env)) throw new TailnetOnlyError();
+      const viaTailnet = routes.current.protectedEnvs.has(env);
+      const client = viaTailnet ? routes.current.tailnetClient : api;
+      if (!client) throw new TailnetOnlyError();
       const started = generationOf(env);
       let result;
       try {
-        result = await api.discloseSecrets(
+        result = await client.discloseSecrets(
           org,
           project,
           env,
           request === "all" ? { scope: "all-authorized-secrets" } : { items: request },
         );
       } catch (err) {
-        // A Requirement this page did not know about yet.
-        if (isTailnetDenial(err)) maskEnv(env);
+        if (isTailnetDenial(err)) {
+          maskEnv(env);
+          // A Requirement this page did not know about yet.
+          if (!viaTailnet) routes.current.onTailnetOnly?.(env);
+        }
         throw err;
       }
       // A Requirement that appeared while the disclosure was in flight, or

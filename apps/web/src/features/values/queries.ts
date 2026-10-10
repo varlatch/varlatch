@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useMemo } from "react";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { EffectiveConfiguration, Environment, SyncTarget } from "@varlatch/protocol";
-import type { VarlatchClient } from "@varlatch/sdk";
+import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import type { EffectiveConfiguration, Environment, SyncTarget, TailnetDevice } from "@varlatch/protocol";
+import type { Page, VarlatchClient } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { isTailnetDenial, isTailnetOnly } from "../../lib/tailnet";
+import { TailnetUnreachableError, tailnetReadKey, useTailnetConnection, type TailnetConnection } from "../../lib/tailnetConnection";
 import { keys, useCapability } from "../projects/hooks";
 import { contractItemsOf, type ContractItemMeta, type ServerItem } from "./model";
 
@@ -34,11 +35,22 @@ export type EnvValues = {
   /** Non-sensitive values this caller may not read: show state only. */
   withheld: Set<string>;
   /**
-   * A Tailnet Requirement covers the environment: every value read needs
-   * Tailnet Context the dashboard never has, so names and states only.
+   * A Tailnet Requirement covers the environment and this tab cannot read
+   * its values: names and states only.
    */
   tailnetOnly: boolean;
+  /** Values read through the tailnet browser endpoint, as this device (ADR-0046). */
+  viaTailnet?: TailnetDevice | undefined;
+  /** Through the endpoint, this device did not meet the environment's Requirements. */
+  deviceRefused?: boolean | undefined;
 };
+
+/** The endpoint client and the device it was checked as, while this tab is connected. */
+export type TailnetReader = { client: VarlatchClient; device: TailnetDevice } | null;
+
+export function tailnetReader(connection: TailnetConnection, client: VarlatchClient | null): TailnetReader {
+  return connection.status === "connected" && client ? { client, device: connection.device } : null;
+}
 
 function toEnvValues(result: EffectiveConfiguration): EnvValues {
   const items = result.items ?? [];
@@ -55,22 +67,62 @@ function tailnetOnlyValues(result: EffectiveConfiguration): EnvValues {
 }
 
 /**
- * A tailnet-only environment loads metadata only: asking for values there
- * fails and records a denial on every load. A Requirement added since the
- * environment list loaded is caught the same way, from the denial.
+ * A protected environment's values never come from the dashboard's own
+ * origin, where they can only be refused: through the tailnet endpoint
+ * when this tab is connected, otherwise metadata only (ADR-0046 Decision 5).
  */
-export async function loadEnvValues(api: VarlatchClient, org: string, project: string, env: Environment): Promise<EnvValues> {
-  if (isTailnetOnly(env)) return tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name));
+async function loadProtected(api: VarlatchClient, tailnet: TailnetReader, org: string, project: string, env: Environment): Promise<EnvValues> {
+  if (tailnet) {
+    try {
+      return { ...toEnvValues(await tailnet.client.effectiveConfiguration(org, project, env.name, { includeValues: true })), viaTailnet: tailnet.device };
+    } catch (err) {
+      if (isTailnetDenial(err)) return { ...tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name)), deviceRefused: true };
+      // No answer: the connection is being checked again; show what the dashboard may.
+      if (!(err instanceof TailnetUnreachableError)) throw err;
+    }
+  }
+  return tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name));
+}
+
+/**
+ * A Requirement the page did not know about, found by a denial on the
+ * dashboard's origin: the cached environment list says so at once, so
+ * every later read follows the protected path, and the list is refetched.
+ */
+export function markTailnetOnly(qc: QueryClient, org: string, project: string, envName: string) {
+  qc.setQueryData<Page<Environment>>(keys.environments(org, project), (page) =>
+    page ? { ...page, items: page.items.map((e) => (e.name === envName ? { ...e, tailnetRequired: true } : e)) } : page,
+  );
+  void qc.invalidateQueries({ queryKey: keys.environments(org, project) });
+}
+
+/**
+ * A tailnet-only environment loads metadata only, or its values through the
+ * endpoint: asking the dashboard's origin for them fails and records a
+ * denial on every load. A Requirement added since the environment list
+ * loaded is caught the same way, from the denial.
+ */
+export async function loadEnvValues(
+  api: VarlatchClient,
+  org: string,
+  project: string,
+  env: Environment,
+  tailnet: TailnetReader = null,
+  onTailnetOnly: (env: string) => void = () => {},
+): Promise<EnvValues> {
+  if (isTailnetOnly(env)) return loadProtected(api, tailnet, org, project, env);
   try {
     return toEnvValues(await api.effectiveConfiguration(org, project, env.name, { includeValues: true }));
   } catch (err) {
     if (!isTailnetDenial(err)) throw err;
-    return tailnetOnlyValues(await api.effectiveConfiguration(org, project, env.name));
+    onTailnetOnly(env.name);
+    return loadProtected(api, tailnet, org, project, env);
   }
 }
 
-const valuesKey = (org: string, project: string, env: Environment) =>
-  [...keys.effectiveValues(org, project, env.name), isTailnetOnly(env)] as const;
+/** Values read through the endpoint are cached apart, per device, and only for protected environments. */
+const valuesKey = (org: string, project: string, env: Environment, readKey: string) =>
+  [...keys.effectiveValues(org, project, env.name), isTailnetOnly(env), isTailnetOnly(env) ? readKey : "ordinary"] as const;
 
 /**
  * Once an environment turns tailnet-only, drop what was cached before: its
@@ -81,31 +133,53 @@ function useForgetUnrestricted(org: string, project: string, envs: Environment[]
   const tailnetOnly = envs.filter(isTailnetOnly).map((e) => e.name).join("\u0000");
   useEffect(() => {
     for (const env of tailnetOnly ? tailnetOnly.split("\u0000") : []) {
-      qc.removeQueries({ queryKey: [...keys.effectiveValues(org, project, env), false], exact: true });
+      qc.removeQueries({ queryKey: [...keys.effectiveValues(org, project, env), false] });
     }
   }, [qc, org, project, tailnetOnly]);
 }
 
+function useValuesLoader(org: string, project: string) {
+  const { api } = useSession();
+  const qc = useQueryClient();
+  const { connection, client } = useTailnetConnection();
+  const tailnet = tailnetReader(connection, client);
+  return {
+    readKey: tailnetReadKey(connection),
+    load: (env: Environment) => loadEnvValues(api, org, project, env, tailnet, (name) => markTailnetOnly(qc, org, project, name)),
+  };
+}
+
 /** Effective configuration with non-sensitive values, for one environment. */
 export function useEnvValues(org: string, project: string, env: Environment) {
-  const { api } = useSession();
+  const { readKey, load } = useValuesLoader(org, project);
   useForgetUnrestricted(org, project, [env]);
   return useQuery({
-    queryKey: valuesKey(org, project, env),
-    queryFn: () => loadEnvValues(api, org, project, env),
+    queryKey: valuesKey(org, project, env, readKey),
+    queryFn: () => load(env),
   });
 }
 
 /** The same, for several environments at once (the grid's columns). */
 export function useManyEnvValues(org: string, project: string, envs: Environment[]) {
-  const { api } = useSession();
+  const { readKey, load } = useValuesLoader(org, project);
   useForgetUnrestricted(org, project, envs);
   return useQueries({
     queries: envs.map((env) => ({
-      queryKey: valuesKey(org, project, env),
-      queryFn: () => loadEnvValues(api, org, project, env),
+      queryKey: valuesKey(org, project, env, readKey),
+      queryFn: () => load(env),
     })),
   });
+}
+
+/**
+ * How an environment's values stand in this tab: protected by a Tailnet
+ * Requirement or not, and if protected, whether they were read through the
+ * endpoint (`readable`) or are held back (`blocked`).
+ */
+export function tailnetAccess(env: Environment | undefined, values: EnvValues | undefined) {
+  const isProtected = isTailnetOnly(env) || values?.tailnetOnly === true || values?.viaTailnet !== undefined;
+  const readable = isProtected && values?.viaTailnet !== undefined && !values.tailnetOnly;
+  return { isProtected, readable, blocked: isProtected && !readable, device: values?.viaTailnet, deviceRefused: values?.deviceRefused === true };
 }
 
 export function usePlatformConnections(org: string) {

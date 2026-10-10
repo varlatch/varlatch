@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Environment } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { DisclosureDiscardedError, TailnetOnlyError, isTailnetOnly } from "../../lib/tailnet";
+import { tailnetReadKey, useTailnetConnection } from "../../lib/tailnetConnection";
 import { dotenvLine, type ServerItem } from "./model";
 
 /**
@@ -11,19 +12,26 @@ import { dotenvLine, type ServerItem } from "./model";
  * When the environment turns tailnet-only the loaded values are dropped, and
  * a load or an export started before is discarded when it lands, so no file
  * is written from values the dashboard may no longer show.
+ *
+ * A tailnet-only environment exports through the tailnet endpoint while
+ * this tab is connected, never through the dashboard's origin (ADR-0046);
+ * a change of connection counts as a change of protection.
  */
 export function useExport(org: string, project: string, env: Environment | null) {
-  const { api } = useSession();
+  const { api: ordinary } = useSession();
+  const { connection, client: tailnetClient } = useTailnetConnection();
   const [items, setItems] = useState<ServerItem[] | null>(null);
   const [withheld, setWithheld] = useState<Set<string>>(new Set());
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const tailnetOnly = isTailnetOnly(env ?? undefined);
+  const isProtected = isTailnetOnly(env ?? undefined);
+  const api = isProtected ? tailnetClient : ordinary;
+  const tailnetOnly = isProtected && !api;
   const tailnetNow = useRef(tailnetOnly);
   tailnetNow.current = tailnetOnly;
-  // Bumped whenever the environment or its protection changes.
+  // Bumped whenever the environment, its protection or the connection changes.
   const generation = useRef(0);
-  const key = env ? `${env.id}\u0000${tailnetOnly}` : "";
+  const key = env ? `${env.id}\u0000${isProtected}\u0000${isProtected ? tailnetReadKey(connection) : ""}` : "";
 
   useEffect(() => {
     const mine = ++generation.current;
@@ -31,7 +39,7 @@ export function useExport(org: string, project: string, env: Environment | null)
     setWithheld(new Set());
     setIncludeSecrets(false);
     setError(null);
-    if (!env || tailnetOnly) return;
+    if (!env || !api) return;
     api
       .effectiveConfiguration(org, project, env.name, { includeValues: true })
       .then((r) => {
@@ -50,7 +58,7 @@ export function useExport(org: string, project: string, env: Environment | null)
 
   /** The file to write, or an error; never a file built across a change of protection. */
   const build = useCallback(async (): Promise<{ text: string; filename: string }> => {
-    if (!env || !items || tailnetNow.current) throw new TailnetOnlyError();
+    if (!env || !items || !api || tailnetNow.current) throw new TailnetOnlyError();
     const mine = generation.current;
     let disclosed = new Map<string, string>();
     if (includeSecrets && secrets.length > 0) {

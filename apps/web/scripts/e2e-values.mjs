@@ -12,6 +12,7 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  * Usage: e2e-values.mjs <enroll-url> <api-bearer-for-conflict-writes>
  */
 import { readFileSync } from "node:fs";
+import { watchCsp } from "./e2e-csp.mjs";
 import { chromium } from "playwright";
 
 const [enrollUrl, apiToken] = process.argv.slice(2);
@@ -23,6 +24,7 @@ const base = new URL(enrollUrl).origin;
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
+const cspViolations = watchCsp(context);
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send("WebAuthn.enable");
@@ -337,6 +339,8 @@ check("tailnet requirement on production created", tailnetReq.status === 201, `s
 const tailnetReqId = (await tailnetReq.json()).id;
 // No reload: the requirement reaches the open page as a live update.
 await page.waitForSelector('[data-testid="tailnet-only-notice"]', { timeout: 30000 });
+// This installation serves no tailnet browser endpoint: nothing to connect to.
+check("without a tailnet endpoint the notice offers no Connect", (await page.locator('[data-testid="tailnet-connect"]').count()) === 0);
 check(
   "plaintext revealed before the requirement leaves the open page",
   !(await rowText("DATABASE_URL")).includes("prod-rotated"),
@@ -420,5 +424,6 @@ await page.waitForSelector('[data-testid="confirm-type"]');
 check("production delete waits for the typed name", await page.locator('[data-testid="confirm-ok"]').isDisabled());
 await page.click('[data-testid="confirm-cancel"]');
 
+check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
 process.exit(failed ? 1 : 0);

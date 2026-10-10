@@ -8,6 +8,7 @@ import "../../../scripts/redact-tokens.mjs"; // public CI logs: mask Varlatch to
  *   node scripts/e2e-web.mjs <enroll-url-on-dashboard-origin>
  */
 import { chromium } from "playwright";
+import { watchCsp } from "./e2e-csp.mjs";
 
 const enrollUrl = process.argv[2];
 if (!enrollUrl?.includes("#")) {
@@ -18,6 +19,7 @@ const base = new URL(enrollUrl).origin;
 
 const browser = await chromium.launch();
 const context = await browser.newContext();
+const cspViolations = watchCsp(context);
 const page = await context.newPage();
 const cdp = await context.newCDPSession(page);
 await cdp.send("WebAuthn.enable");
@@ -50,8 +52,18 @@ await page.waitForFunction(
 );
 check("enrollment on dashboard origin", /API credential/.test(await page.textContent("#status")));
 
-// 2. The app resumes the session and redirects into the org shell.
-await page.goto(`${base}/`);
+// 2. The app resumes the session and redirects into the org shell, under a
+// strict Content-Security-Policy (ADR-0046 rollout step 4).
+const shell = await page.goto(`${base}/`);
+const csp = (await shell?.allHeaders())?.["content-security-policy"] ?? "";
+check(
+  "the dashboard is served with a strict Content-Security-Policy",
+  ["default-src 'none'", "script-src 'self'", "style-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'"].every((d) => csp.includes(d)) &&
+    !csp.includes("unsafe-inline") &&
+    !csp.includes("unsafe-eval"),
+  csp,
+);
+check("its connect-src names the Convex origin the dashboard uses", csp.includes(`connect-src 'self' ${base}`), csp);
 await page.waitForSelector('[data-testid="whoami"]', { timeout: 20000 });
 // The footer shows the profile display name; the identity id lives in `title`.
 check("session resume + whoami", /Signed in as idn_/.test(await page.getAttribute('[data-testid="whoami"]', "title")));
@@ -84,5 +96,6 @@ await page.waitForSelector('[data-testid="audit-feed"] [data-audit-row]', { time
 const rows = await page.locator('[data-testid="audit-feed"] [data-audit-row]').count();
 check("reactive audit mirror shows events", rows > 0, `${rows} rows`);
 
+check("no Content-Security-Policy violations", cspViolations.length === 0, cspViolations.slice(0, 3).join(" | "));
 await browser.close();
 process.exit(failed ? 1 : 0);

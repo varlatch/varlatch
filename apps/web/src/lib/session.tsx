@@ -39,6 +39,8 @@ interface SessionState {
   /** Increments on every (re-)authentication: disclosed state must reset. */
   authEpoch: number;
   api: VarlatchClient;
+  /** fetch with this session's bearer and its one silent re-exchange on 401, for another origin of this installation. */
+  fetch: typeof fetch;
   mintConvexToken: () => Promise<string | null>;
   signInWithPasskey: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -115,6 +117,30 @@ async function isMaintenance(res: Response): Promise<boolean> {
   if (res.status !== 503) return false;
   const body = (await res.clone().json().catch(() => null)) as { error?: { code?: string } } | null;
   return body?.error?.code === "MAINTENANCE";
+}
+
+/**
+ * Wait for `promise`, but stop at once when `signal` aborts, with its
+ * reason. What it waits for goes on (others may share it); this caller
+ * does not.
+ */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(err);
+      },
+    );
+  });
 }
 
 async function exchange(): Promise<Exchange> {
@@ -204,13 +230,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       assertCurrent();
       if (res.status === 401) {
         const pending = refreshing.current ??= exchange();
-        const refreshed = await pending.finally(() => {
-          if (refreshing.current === pending) refreshing.current = null;
-        });
+        pending
+          .finally(() => {
+            if (refreshing.current === pending) refreshing.current = null;
+          })
+          .catch(() => {});
+        // A caller's deadline covers the re-exchange too, and a request
+        // given up on is never sent again once it lands.
+        const refreshed = await untilAborted(pending, init?.signal);
         assertCurrent();
         if (refreshed.kind === "ok") {
           adopt(refreshed.token, refreshed.identityId);
           assertCurrent();
+          if (init?.signal?.aborted) throw init.signal.reason;
           res = await doFetch();
           assertCurrent();
         } else if (refreshed.kind === "signed-out") {
@@ -255,8 +287,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, api, mintConvexToken, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, api, mintConvexToken, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, api, fetch: sessionFetch, mintConvexToken, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, api, sessionFetch, mintConvexToken, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;
