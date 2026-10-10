@@ -206,6 +206,11 @@ describe("sync target lifecycle", () => {
     const authz = asJson<Record<string, unknown>>(event.authz);
     // A wildcard discloses Secrets AND non-sensitive values: both actions gated.
     expect(Object.keys(authz).sort()).toEqual(["config.value.read", "secret.reveal"]);
+    // The admin passed through the built-in role, with no Grant: the role is recorded, not just an empty list.
+    expect(authz).toEqual({
+      "secret.reveal": { role: "admin", grantIds: [], requirements: [] },
+      "config.value.read": { role: "admin", grantIds: [], requirements: [] },
+    });
     expect(JSON.stringify(event.metadata)).toContain("coolify:app1");
   });
 
@@ -894,10 +899,11 @@ describe("credential replacement", () => {
     // Each re-authorized Target's gate, as it decided.
     const authz = (audit.rows[0] as { authz: { reauthorizedTargets: Record<string, Record<string, { grantIds: string[] }>> } }).authz;
     expect(Object.keys(authz.reauthorizedTargets)).toEqual([target.id]);
-    const decided = authz.reauthorizedTargets[target.id as string]!;
-    expect(decided).toHaveProperty(["secret.reveal", "grantIds"]);
-    expect(decided).toHaveProperty(["secret.reveal", "requirements"]);
-    expect(decided).toHaveProperty(["config.value.read", "grantIds"]);
+    // The admin passed each Target's gate through the built-in role, with no Grant: that is what is recorded.
+    expect(authz.reauthorizedTargets[target.id as string]).toEqual({
+      "secret.reveal": { role: "admin", grantIds: [], requirements: [] },
+      "config.value.read": { role: "admin", grantIds: [], requirements: [] },
+    });
   });
 
   it("is refused wholesale when the actor lacks authority for any referencing target", async () => {

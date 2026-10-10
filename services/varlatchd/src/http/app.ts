@@ -3050,11 +3050,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const authz: Record<string, unknown> = {};
     for (const action of actions) {
       const evaluation = await authorize(ctx, c, principal, action, envResource(org, project, env));
-      authz[action] = {
-        grantIds: evaluation.provenance.grantIds,
-        ...(evaluation.provenance.applied ? { applied: evaluation.provenance.applied } : {}),
-        requirements: evaluation.requirements,
-      };
+      // The same projection every allowed action records, the Organization role included.
+      authz[action] = auditAuthz(evaluation);
     }
     return authz;
   };

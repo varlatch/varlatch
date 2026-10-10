@@ -219,6 +219,19 @@ describe("rotating the App's key", () => {
     }
     expect(decided[stagingTarget]!["secret.reveal"]!.grantIds).toEqual([stagingGrant]);
     expect(decided[stagingTarget]).toHaveProperty(["secret.reveal", "requirements"]);
+    // A service identity holds no Organization role: its authority is the Grants alone.
+    for (const id of Object.keys(decided)) expect(decided[id]!["secret.reveal"], id).not.toHaveProperty("role");
+  });
+
+  it("records the admin's role for each Target when the built-in role allowed the rotation", async () => {
+    expect((await rotate(github.addKey(APP.id))).body.outcome).toBe("rotated");
+    const event = (await ctx.db.query("SELECT authz FROM audit_events WHERE event_type = 'sync.github_app_key_rotated'")).rows[0] as {
+      authz: { reauthorizedTargets: Record<string, unknown> };
+    };
+    const admin = { role: "admin", grantIds: [], requirements: [] };
+    expect(event.authz.reauthorizedTargets).toEqual(
+      Object.fromEntries([targets.active, targets.paused, targets.autoDisabled].map((id) => [id, { "secret.reveal": admin, "config.value.read": admin }])),
+    );
   });
 
   it("refuses a stale version", async () => {
