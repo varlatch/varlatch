@@ -146,6 +146,10 @@ services:
       # Browser-facing Convex origin — runtime config (varlatch-config.js),
       # not a build arg, so digest-pinned release images work unmodified.
       CONVEX_URL: ${CONVEX_CLOUD_ORIGIN:-}
+      # The tailnet browser endpoint, when served (ADR-0046): the dashboard's
+      # security policy lets browsers connect to it. Set by
+      # `varlatch setup --tailnet-endpoint`.
+      VARLATCH_TAILNET_ENDPOINT: ${VARLATCH_TAILNET_ENDPOINT:-}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${VARLATCH_WEB_PORT:-8787}:80"
     # Static probe, never /readyz through the proxy: web must stay routable

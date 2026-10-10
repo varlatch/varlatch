@@ -127,7 +127,10 @@ no TUN device.
 
 Each fixed port must be free on the host, or the stack does not start.
 PostgreSQL publishes no port at all. varlatchd's tailnet listener (port
-8687) is reachable only over Tailscale, never through a host port.
+8687) is reachable only over Tailscale, never through a host port, and so is
+its optional tailnet browser endpoint (HTTPS on port 8688 of the node,
+`varlatch setup --tailnet-endpoint`): devices need a tailnet access rule for
+that port.
 
 Do not route a public domain at varlatchd's or Convex's port: passkey
 sign-in works only at the public URL, which the dashboard serves.

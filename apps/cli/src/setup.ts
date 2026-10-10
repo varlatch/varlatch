@@ -43,6 +43,17 @@ export interface InstallConfig {
   tailnetMachine?: string;
   /** Tailnet ingress: the tailnet's MagicDNS suffix, discovered from the node. */
   tailnetName?: string;
+  /**
+   * The node's actual MagicDNS name, discovered when it joins: Tailscale
+   * appends a suffix to the machine name asked for when it is taken.
+   */
+  tailnetHost?: string;
+  /**
+   * The tailnet browser endpoint (ADR-0046): browsers on approved devices read
+   * tailnet-protected values over HTTPS on this port of the node. Absent: off.
+   * With the public or external ingress it brings the Tailscale sidecar.
+   */
+  tailnetEndpoint?: { port: number };
   /** Host port of the dashboard (the only service that needs one). */
   webPort: number;
   bindAddress: string;
@@ -97,10 +108,12 @@ export const COMPOSE_OVERRIDE = "docker-compose.override.yml";
  * is unset, so it comes last when it exists, and only then: Compose refuses
  * a listed file that is missing.
  */
-export function composeFiles(ingress: Ingress, override = false): string[] {
-  const files = ingress === "public" ? ["docker-compose.yml", "docker-compose.caddy.yml"]
+export function composeFiles(ingress: Ingress, override = false, tailscale = ingress === "tailnet"): string[] {
+  const base = ingress === "public" ? ["docker-compose.yml", "docker-compose.caddy.yml"]
     : ingress === "tailnet" ? ["docker-compose.yml", "docker-compose.tailscale.yml", "docker-compose.tailnet-https.yml"]
     : ["docker-compose.yml"];
+  // The sidecar without the tailnet ingress: for the tailnet browser endpoint.
+  const files = tailscale && ingress !== "tailnet" ? [...base, "docker-compose.tailscale.yml"] : base;
   return override ? [...files, COMPOSE_OVERRIDE] : files;
 }
 export const INGRESS_FILES: Record<Ingress, string[]> = {
@@ -111,11 +124,32 @@ export const INGRESS_FILES: Record<Ingress, string[]> = {
 
 export const TAILNET_MACHINE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
+/** The tailnet browser endpoint's default port (ADR-0046). */
+export const TAILNET_ENDPOINT_PORT = 8688;
+/** varlatchd's user in its image (pinned in services/varlatchd/Dockerfile): the sidecar lets it, and only it, fetch the node's certificate. */
+export const VARLATCHD_UID = 999;
+
+/** The Tailscale sidecar runs: with the tailnet ingress, or for the tailnet browser endpoint. */
+export function usesTailscale(config: InstallConfig): boolean {
+  return (config.ingress ?? "external") === "tailnet" || config.tailnetMachine !== undefined;
+}
+
+/** The files an installation needs in its Compose directory, the sidecar's included. */
+export function requiredFiles(config: InstallConfig): string[] {
+  const ingress = config.ingress ?? "external";
+  return [...INGRESS_FILES[ingress], ...(usesTailscale(config) && ingress !== "tailnet" ? ["docker-compose.tailscale.yml"] : [])];
+}
+
+/** The browser endpoint's URL once the node's name is known. */
+export function tailnetEndpointUrl(config: InstallConfig): string | null {
+  return config.tailnetEndpoint && config.tailnetHost ? `https://${config.tailnetHost}:${config.tailnetEndpoint.port}` : null;
+}
+
 export interface TailscaleStatus {
   BackendState?: string;
   MagicDNSSuffix?: string;
   CertDomains?: string[] | null;
-  Self?: { DNSName?: string };
+  Self?: { DNSName?: string; Tags?: string[] | null; TailscaleIPs?: string[] | null };
 }
 
 /**
@@ -123,10 +157,10 @@ export interface TailscaleStatus {
  * may differ from the one asked for (Tailscale appends a suffix when it is
  * taken). Null while the node has not joined yet.
  */
-export function tailnetUrl(status: TailscaleStatus): { url: string; tailnet: string } | null {
+export function tailnetUrl(status: TailscaleStatus, opts: { requireCertificates?: boolean } = {}): { url: string; tailnet: string } | null {
   const name = status.Self?.DNSName?.replace(/\.$/, "");
   if (status.BackendState !== "Running" || !name || !status.MagicDNSSuffix) return null;
-  if (!(status.CertDomains ?? []).includes(name)) {
+  if ((opts.requireCertificates ?? true) && !(status.CertDomains ?? []).includes(name)) {
     throw new SetupError(
       `HTTPS certificates are not enabled for the tailnet ${status.MagicDNSSuffix}: in the Tailscale admin console, ` +
         "open DNS and enable HTTPS certificates (MagicDNS must be on), then rerun `varlatch setup`.",
@@ -207,15 +241,29 @@ export function renderEnv(config: InstallConfig, additions = "", opts: { overrid
 
 function ingressEnv(config: InstallConfig, override: boolean): string[] {
   const ingress = config.ingress ?? "external";
-  if (ingress === "external") return [];
-  const lines = [`# Ingress: ${ingress} (ADR-0035 D6).`, `COMPOSE_FILE=${composeFiles(ingress, override).join(":")}`];
+  const tailscale = usesTailscale(config);
+  if (ingress === "external" && !tailscale) return [];
+  const sidecar = tailscale && ingress !== "tailnet" ? ", with the Tailscale sidecar" : "";
+  const lines = [`# Ingress: ${ingress} (ADR-0035 D6)${sidecar}.`, `COMPOSE_FILE=${composeFiles(ingress, override, tailscale).join(":")}`];
   if (ingress === "public") lines.push(`VARLATCH_PUBLIC_HOST=${new URL(config.publicUrl).hostname}`);
-  else {
+  if (tailscale) {
     lines.push(
       `VARLATCH_TAILNET_MACHINE=${config.tailnetMachine ?? "varlatch"}`,
       // Required by the overlay before the node has joined and named its tailnet.
       `VARLATCH_TAILNET_NAME=${config.tailnetName ?? "pending.invalid"}`,
       "TS_AUTHKEY_HOST_PATH=./secrets/tailscale-authkey",
+    );
+  }
+  const endpoint = tailnetEndpointUrl(config);
+  if (endpoint) {
+    lines.push(
+      `# Tailnet browser endpoint (ADR-0046): ${endpoint}. varlatchd serves it, the`,
+      "# dashboard's security policy allows it, and the sidecar lets varlatchd's user",
+      "# fetch the node's certificate.",
+      `VARLATCH_TAILNET_HTTPS_PORT=${config.tailnetEndpoint!.port}`,
+      `VARLATCH_TAILNET_NODE=${config.tailnetHost!.split(".")[0]}`,
+      `VARLATCH_TAILNET_ENDPOINT=${endpoint}`,
+      `VARLATCH_TAILNET_CERT_UID=${VARLATCHD_UID}`,
     );
   }
   return lines;
@@ -356,6 +404,11 @@ export interface SetupOptions {
   tailnetMachine?: string | undefined;
   /** Tailnet ingress: a file holding the auth key the node joins with once. */
   tailscaleAuthKeyFile?: string | undefined;
+  /**
+   * The tailnet browser endpoint (ADR-0046): true serves it, false removes
+   * it, absent keeps what the configuration says.
+   */
+  tailnetEndpoint?: boolean | undefined;
   webPort?: number | undefined;
   /** Print the enrollment link and stop instead of waiting for it. */
   noWait: boolean;
@@ -556,7 +609,16 @@ async function askIngress(): Promise<Ingress> {
  * an enrollment link. A different name on a rerun means the machine or tailnet
  * was renamed: a domain change, not a setup rerun.
  */
-async function joinTailnet(dir: string, config: InstallConfig, opts: SetupOptions): Promise<InstallConfig> {
+async function joinTailnet(
+  dir: string,
+  config: InstallConfig,
+  opts: SetupOptions,
+  onJoined: (status: TailscaleStatus) => void = () => {},
+): Promise<InstallConfig> {
+  // With the public or external ingress the sidecar serves only the tailnet
+  // listeners: the public URL stays, and certificates matter only for the
+  // browser endpoint.
+  const ingressMode = (config.ingress ?? "external") === "tailnet";
   const keyPath = join(dir, "secrets", "tailscale-authkey");
   const enrolled = spawnSync("docker", ["volume", "inspect", `${projectName(dir)}_tailscale-state`], { stdio: "ignore" }).status === 0;
   if (!enrolled && !existsSync(keyPath)) {
@@ -572,8 +634,20 @@ async function joinTailnet(dir: string, config: InstallConfig, opts: SetupOption
   for (;;) {
     let status: TailscaleStatus = {};
     try { status = JSON.parse(docker(dir, ["exec", "-T", "tailscale", "tailscale", "status", "--json"])) as TailscaleStatus; } catch { /* starting */ }
-    const found = tailnetUrl(status);
+    const found = tailnetUrl(status, { requireCertificates: ingressMode || config.tailnetEndpoint !== undefined });
     if (found) {
+      const host = new URL(found.url).hostname;
+      onJoined(status);
+      if (!ingressMode) {
+        if (config.tailnetHost && config.tailnetHost !== host) {
+          throw new SetupError(
+            `This installation's tailnet node was ${config.tailnetHost}, but it is now ${host} (machine or tailnet renamed). ` +
+              `Update tailnetHost in ${CONFIG_FILE} to ${host} if that is intended, then rerun \`varlatch setup\`.`,
+          );
+        }
+        console.log(`  ✓ tailnet node joined: ${host}`);
+        return { ...config, tailnetName: found.tailnet, tailnetHost: host };
+      }
       if (config.publicUrl && config.publicUrl !== found.url) {
         throw new SetupError(
           `This installation's URL is ${config.publicUrl}, but the node is now ${found.url} (machine or tailnet renamed). ` +
@@ -581,7 +655,7 @@ async function joinTailnet(dir: string, config: InstallConfig, opts: SetupOption
         );
       }
       console.log(`  ✓ tailnet node joined: ${found.url}`);
-      return { ...config, publicUrl: found.url, tailnetName: found.tailnet };
+      return { ...config, publicUrl: found.url, tailnetName: found.tailnet, tailnetHost: host };
     }
     if (Date.now() > deadline) {
       throw new SetupError(
@@ -622,6 +696,27 @@ export function loadInstallConfig(dir: string): InstallConfig | null {
   const config = JSON.parse(readFileSync(path, "utf8")) as InstallConfig;
   if (config.schemaVersion !== 1) throw new SetupError(`${CONFIG_FILE}: unsupported schemaVersion`);
   return config;
+}
+
+/**
+ * The access rule the operator adds for the browser endpoint (ADR-0046
+ * Decision 9). Setup never edits the tailnet policy; it says what to add.
+ */
+export function endpointRule(endpoint: string, node: TailscaleStatus | null): string {
+  const port = new URL(endpoint).port;
+  const tags = node?.Self?.Tags ?? [];
+  const ip = node?.Self?.TailscaleIPs?.find((a) => !a.includes(":"));
+  const dst = tags.length ? tags : [ip ?? "<this node's Tailscale address or tag>"];
+  return JSON.stringify({ src: ["autogroup:member"], dst, ip: [`tcp:${port}`] });
+}
+
+function printEndpointRule(endpoint: string, node: TailscaleStatus | null): void {
+  console.log(`\nTailnet browser endpoint: ${endpoint}`);
+  console.log("  Browsers reach it only where the tailnet policy lets their device connect to this port. Add a grant");
+  console.log("  like this one to your tailnet policy (setup never edits it), narrowing the source to the people,");
+  console.log("  groups or devices that may read tailnet-protected values:");
+  console.log(`    ${endpointRule(endpoint, node)}`);
+  console.log("  Network requirements still decide which of those devices may read which values.");
 }
 
 export async function runSetup(opts: SetupOptions): Promise<number> {
@@ -686,8 +781,21 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
     saveConfig(config);
     console.log(`  ✓ ${config.publicUrl || `tailnet machine "${config.tailnetMachine}"`} (${ingress} ingress) → ${CONFIG_FILE}`);
   }
+  if (opts.tailnetEndpoint !== undefined && opts.tailnetEndpoint !== (config.tailnetEndpoint !== undefined)) {
+    if (opts.tailnetEndpoint) {
+      const machine = config.tailnetMachine ?? opts.tailnetMachine ?? "varlatch";
+      if (!TAILNET_MACHINE.test(machine)) throw new SetupError(`${machine}: a Tailscale machine name uses lowercase letters, digits and hyphens`);
+      config = { ...config, tailnetMachine: machine, tailnetEndpoint: { port: TAILNET_ENDPOINT_PORT } };
+      console.log(`  ✓ tailnet browser endpoint on, port ${TAILNET_ENDPOINT_PORT} (ADR-0046) → ${CONFIG_FILE}`);
+    } else {
+      const { tailnetEndpoint: _off, ...rest } = config;
+      config = rest;
+      console.log(`  ✓ tailnet browser endpoint off → ${CONFIG_FILE}`);
+    }
+    saveConfig(config);
+  }
   const ingress = config.ingress ?? "external";
-  const missingFiles = INGRESS_FILES[ingress].filter((f) => !existsSync(join(dir, f)));
+  const missingFiles = requiredFiles(config).filter((f) => !existsSync(join(dir, f)));
   if (missingFiles.length) throw new SetupError(`The ${ingress} ingress needs ${missingFiles.join(", ")} in ${dir}: use a release bundle that includes them, or infra/compose`);
 
   // 2. Secrets as files and the managed .env (derived, never hand-set).
@@ -713,9 +821,10 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
   writeFileSync(envPath, renderEnv(config, additions, { override }), { mode: 0o600 });
   mkdirSync(join(dir, "backups"), { recursive: true, mode: 0o700 }); // operator-owned, not Docker-created
   console.log(secrets.created.length ? `  ✓ generated ${secrets.created.join(", ")}` : "  ✓ secrets present (none regenerated)");
-  if (override) console.log(`  ✓ ${COMPOSE_OVERRIDE} applies${ingress === "external" ? "" : " (last in COMPOSE_FILE)"}`);
-  if (ingress === "tailnet") {
-    config = await joinTailnet(dir, config, opts);
+  if (override) console.log(`  ✓ ${COMPOSE_OVERRIDE} applies${ingress === "external" && !usesTailscale(config) ? "" : " (last in COMPOSE_FILE)"}`);
+  let node = null as TailscaleStatus | null;
+  if (usesTailscale(config)) {
+    config = await joinTailnet(dir, config, opts, (status) => (node = status));
     saveConfig(config);
     writeFileSync(envPath, renderEnv(config, additions, { override }), { mode: 0o600 });
   }
@@ -821,6 +930,8 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
     console.log(`\nRunning at ${config.publicUrl}, but recovery-key escrow is pending: rerun \`varlatch setup\` to finish.`);
     return 4;
   }
+  const endpoint = tailnetEndpointUrl(config);
+  if (endpoint) printEndpointRule(endpoint, node);
   if (moving) {
     clearMoveState(dir);
     console.log(`\nMoved: ${moving.from} → ${config.publicUrl}. The archive from before the move is ${moving.archive}.`);

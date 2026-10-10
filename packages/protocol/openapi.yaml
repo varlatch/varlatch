@@ -40,6 +40,26 @@ paths:
         "403":
           description: Installation Admin authority required
 
+  /installation/listeners:
+    get:
+      tags: [meta]
+      operationId: getInstallationListeners
+      summary: Installation Admin only, the tailnet listeners as configured and as varlatchd last observed them
+      description: >
+        What varlatchd checks at start and every 60 seconds: listeners bound,
+        the browser endpoint's certificate, the LocalAPI answering, the node
+        running on the pinned tailnet under the endpoint's name. Never
+        reachability from a client, which only the client can observe
+        (ADR-0046, Listener metadata).
+      responses:
+        "200":
+          description: The tailnet listeners, or null without a tailnet listener
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallationListeners" }
+        "403":
+          description: Installation Admin authority required
+
   /meta:
     get:
       tags: [meta]
@@ -3391,6 +3411,59 @@ components:
             Contract Semantics versions this server evaluates. Absent on
             servers older than 0.11.0, which evaluate only version 1.
             Version 3 (from 0.13.0) adds the `integer` item type.
+
+    InstallationListeners:
+      type: object
+      required: [tailnet]
+      properties:
+        tailnet:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/TailnetListenerReport"
+
+    TailnetListenerReport:
+      type: object
+      required: [configured, observed]
+      properties:
+        configured:
+          type: object
+          required: [tailnet, listenerPort, browserEndpoint]
+          description: From configuration only.
+          properties:
+            tailnet: { type: string }
+            listenerPort: { type: integer }
+            browserEndpoint: { type: [string, "null"] }
+        observed:
+          type: object
+          required: [checkedAt, checks]
+          properties:
+            checkedAt:
+              type: [string, "null"]
+              format: date-time
+              description: Null before the first check.
+            checks:
+              type: object
+              required: [listener, localApi, node]
+              properties:
+                listener: { $ref: "#/components/schemas/ObservedCheck" }
+                browserTls:
+                  $ref: "#/components/schemas/ObservedCheck"
+                  description: Present only when the browser endpoint is configured.
+                localApi: { $ref: "#/components/schemas/ObservedCheck" }
+                node: { $ref: "#/components/schemas/ObservedCheck" }
+
+    ObservedCheck:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [pass, fail, unknown] }
+        reason:
+          type: string
+          enum: [NOT_CHECKED, NOT_LISTENING, NO_CERTIFICATE, LOCALAPI_UNAVAILABLE, NOT_RUNNING, OTHER_TAILNET, NAME_CHANGED]
+        certificateNotAfter:
+          type: string
+          format: date-time
+          description: browserTls only, when the certificate in use expires.
 
     TailnetEndpoint:
       type: object
