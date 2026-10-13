@@ -37,6 +37,20 @@ fixes.
   refused by the server, the review and its confirmation are discarded,
   nothing is saved, and you start over from the current version. Tags
   follow Tailscale's rule.
+- **"Add this device" in the requirement editor.** With the tailnet
+  browser endpoint, the editor can add the device this browser is on: it
+  runs Connect and uses only an answer newer than the click, then adds the
+  node ID Varlatch verified for it, and nothing else (no tag, no user). An
+  answer that is older, failed, unrecognized or late adds nothing and says
+  why. A device on another tailnet than the requirement's is not added:
+  the editor offers to change the requirement's tailnet as a change of its
+  own, which the review shows as one that may loosen. Adding a device is
+  itself reviewed as loosening.
+- **A suggested tailnet for a new requirement.** The editor fills in the
+  tailnet of the device this browser is verified as, or else the one in
+  the browser endpoint's address, and says which. It stays editable and
+  stops following suggestions once you type in the field. Existing
+  requirements are never changed by it.
 
 ### API
 
