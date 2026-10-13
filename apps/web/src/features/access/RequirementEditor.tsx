@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RotateCcw, ShieldAlert, ShieldCheck, TriangleAlert, X } from "lucide-react";
+import { Monitor, RotateCcw, ShieldAlert, ShieldCheck, TriangleAlert, X } from "lucide-react";
 import type { Environment, Requirement, Tier } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
+import { PROBE_TIMEOUT_MS, useTailnetConnection } from "../../lib/tailnetConnection";
 import { Button, Callout, Checkbox, Field, Input, Segmented, Select, TierDot, cn } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { errorMessage } from "../../shell/Shell";
@@ -23,6 +24,7 @@ import {
   type ListKind,
   type RequirementDraft,
 } from "./requirements";
+import { deviceOutcome, tailnetSuggestion } from "./thisDevice";
 
 /**
  * Creates a requirement, or edits one with every field (target, tailnet,
@@ -60,6 +62,15 @@ export function RequirementEditor({
   const [otherTarget, setOtherTarget] = useState<RequirementDraft["target"] | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [refused, setRefused] = useState(false);
+  const { connection, connect } = useTailnetConnection();
+  // "This device": when it was asked for (only a Connect answer newer than that counts), and what came of it.
+  const [deviceAsked, setDeviceAsked] = useState<number | null>(null);
+  const [deviceNotice, setDeviceNotice] = useState<{ tone: "ok" | "warn"; text: string; otherTailnet?: string } | null>(null);
+  const [deviceNames, setDeviceNames] = useState<Record<string, string>>({});
+  const askedRef = useRef<number | null>(null);
+  askedRef.current = deviceAsked;
+  // A new requirement's tailnet is suggested until the person types in the field; then it is theirs.
+  const [tailnetTouched, setTailnetTouched] = useState(false);
 
   const editing = start !== undefined;
   // The list the section shows (same query, same cache): after a refused save
@@ -72,6 +83,49 @@ export function RequirementEditor({
   useEffect(() => {
     if (stale || removed) setReviewing(false);
   }, [stale, removed]);
+
+  const suggestion = base === undefined ? tailnetSuggestion(connection) : null;
+  useEffect(() => {
+    if (base !== undefined || tailnetTouched) return;
+    const tailnet = suggestion?.tailnet ?? "";
+    setDraft((d) => (d.selector.tailnet === tailnet ? d : { ...d, selector: { ...d.selector, tailnet } }));
+  }, [base, tailnetTouched, suggestion?.tailnet]);
+
+  // A "This device" request settles on the first Connect answer newer than the request.
+  useEffect(() => {
+    if (deviceAsked === null) return;
+    const outcome = deviceOutcome(connection, deviceAsked, draft.selector.tailnet);
+    if (outcome.kind === "waiting") return;
+    setDeviceAsked(null);
+    if (outcome.kind === "failed") return setDeviceNotice({ tone: "warn", text: outcome.message });
+    const named = outcome.nodeName ? `${outcome.nodeName} (${outcome.nodeId})` : outcome.nodeId;
+    if (outcome.kind === "other-tailnet") {
+      return setDeviceNotice({
+        tone: "warn",
+        text: `This device, ${named}, is on ${outcome.deviceTailnet}, but the requirement is for ${draft.selector.tailnet || "no tailnet yet"}. Nothing was added. Changing the requirement's tailnet is a separate change, reviewed as one.`,
+        otherTailnet: outcome.deviceTailnet,
+      });
+    }
+    if (outcome.nodeName) setDeviceNames((n) => ({ ...n, [outcome.nodeId]: outcome.nodeName! }));
+    if (draft.selector.nodes.includes(outcome.nodeId)) return setDeviceNotice({ tone: "ok", text: `This device, ${named}, is already in the list.` });
+    setDraft((d) => (d.selector.nodes.includes(outcome.nodeId) ? d : { ...d, selector: { ...d.selector, nodes: [...d.selector.nodes, outcome.nodeId] } }));
+    setDeviceNotice({ tone: "ok", text: `Added this device, ${named}, by its node ID, as Varlatch verified it just now.` });
+  }, [connection, deviceAsked, draft.selector.tailnet, draft.selector.nodes]);
+  // No current answer in time: nothing is added from an older one.
+  useEffect(() => {
+    if (deviceAsked === null) return;
+    const timer = setTimeout(() => {
+      if (askedRef.current !== deviceAsked) return;
+      setDeviceAsked(null);
+      setDeviceNotice({ tone: "warn", text: "No current answer from the tailnet endpoint. Nothing was added." });
+    }, PROBE_TIMEOUT_MS + 1_000);
+    return () => clearTimeout(timer);
+  }, [deviceAsked]);
+  const addThisDevice = () => {
+    setDeviceNotice(null);
+    setDeviceAsked(Date.now());
+    connect();
+  };
 
   const before = useMemo(() => (start ? draftFrom(start) : null), [start]);
   const errors = draftErrors(draft, before ?? undefined);
@@ -204,18 +258,73 @@ export function RequirementEditor({
             )}
           </div>
         </Field>
-        <Field label="Tailnet" hint="Devices must be on this tailnet, and match any one of the devices, tags or users below.">
+        <Field
+          label="Tailnet"
+          hint={
+            suggestion && !tailnetTouched
+              ? suggestion.source === "device"
+                ? "Suggested: this device's tailnet, as Varlatch verified it. Change it if the requirement is for another tailnet."
+                : "Suggested from the browser endpoint's address (configured, not verified). Change it if the requirement is for another tailnet."
+              : "Devices must be on this tailnet, and match any one of the devices, tags or users below."
+          }
+        >
           <Input
             data-testid="req-tailnet"
+            data-suggested={suggestion && !tailnetTouched ? suggestion.source : undefined}
             mono
             className="w-full max-w-sm"
             placeholder="example.ts.net"
             value={draft.selector.tailnet}
-            onChange={(e) => setDraft({ ...draft, selector: { ...draft.selector, tailnet: e.target.value } })}
+            onChange={(e) => {
+              setTailnetTouched(true);
+              setDraft({ ...draft, selector: { ...draft.selector, tailnet: e.target.value } });
+            }}
           />
         </Field>
         <div className="grid gap-4 lg:grid-cols-3">
-          <ListField kind="nodes" label="Devices" hint="Node IDs (StableIDs)" placeholder="nAbc123CNTRL" values={draft.selector.nodes} onChange={(v) => setList("nodes", v)} />
+          <div className="space-y-2">
+            <ListField
+              kind="nodes"
+              label="Devices"
+              hint="Node IDs (StableIDs)"
+              placeholder="nAbc123CNTRL"
+              values={draft.selector.nodes}
+              labels={deviceNames}
+              onChange={(v) => setList("nodes", v)}
+            />
+            {connection.status !== "unavailable" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Monitor size={13} />}
+                loading={deviceAsked !== null}
+                disabled={deviceAsked !== null}
+                onClick={addThisDevice}
+                data-testid="req-this-device"
+              >
+                Add this device
+              </Button>
+            )}
+            {deviceNotice && (
+              <div className={cn("text-xs", deviceNotice.tone === "warn" ? "text-warn" : "text-muted")} data-testid="req-this-device-notice">
+                <p>{deviceNotice.text}</p>
+                {deviceNotice.otherTailnet && (
+                  <button
+                    type="button"
+                    className="link mt-1"
+                    data-testid="req-use-device-tailnet"
+                    onClick={() => {
+                      setTailnetTouched(true);
+                      setDraft({ ...draft, selector: { ...draft.selector, tailnet: deviceNotice.otherTailnet! } });
+                      setDeviceNotice({ tone: "ok", text: `The tailnet is now ${deviceNotice.otherTailnet}: a change of its own, which the review shows. Add this device again to add it.` });
+                    }}
+                  >
+                    Change the requirement's tailnet to {deviceNotice.otherTailnet}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <ListField kind="tags" label="Tags" hint="Device tags" placeholder="tag:prod" values={draft.selector.tags} onChange={(v) => setList("tags", v)} />
           <ListField kind="users" label="Users" hint="Tailscale login names" placeholder="alice@example.com" values={draft.selector.users} onChange={(v) => setList("users", v)} />
         </div>
@@ -330,6 +439,7 @@ function ListField({
   hint,
   placeholder,
   values,
+  labels,
   onChange,
 }: {
   kind: ListKind;
@@ -337,6 +447,8 @@ function ListField({
   hint: string;
   placeholder: string;
   values: string[];
+  /** Names known for some values (a device's machine name), shown next to them. */
+  labels?: Record<string, string> | undefined;
   onChange: (next: string[]) => void;
 }) {
   const [text, setText] = useState("");
@@ -358,6 +470,7 @@ function ListField({
             {values.map((v) => (
               <span key={v} data-entry={v} className="inline-flex items-center gap-1 rounded-md border border-bd bg-inset py-0.5 pl-2 pr-1 font-mono text-[12.5px]">
                 {v}
+                {labels?.[v] && <span className="font-sans text-muted">{labels[v]}</span>}
                 <button type="button" aria-label={`Remove ${v}`} data-testid={`remove-${kind}-${v}`} className="rounded p-0.5 text-muted hover:bg-hover hover:text-fg" onClick={() => onChange(values.filter((x) => x !== v))}>
                   <X size={12} />
                 </button>
