@@ -21,6 +21,23 @@ fixes.
   configured tailnet. Without usable node details (an older server, or a
   failed read), the tab says so and keeps the placeholders.
 
+- **Every network requirement can be edited in the dashboard.** Access,
+  Advanced edits the whole requirement: what it applies to (a tier, or
+  environments, where a root environment also covers those derived from
+  it), the tailnet, and the devices (node IDs), tags and users a device
+  may match. Requirements scoped to environments or naming devices or
+  users, which the form could not edit before, are editable now, and every
+  field the edit does not change is saved as it was. An edit is saved only
+  after a review that shows the requirement before and after, names the
+  tier or environments it applies to, and lists what may loosen and what
+  tightens. Anything that may loosen (an added device, tag or user, a
+  different tailnet, values no longer covered, a tier no longer covered as
+  a whole, or environments you cannot see) needs the explicit "Loosen and
+  save". When the requirement changes while you edit it, seen live or
+  refused by the server, the review and its confirmation are discarded,
+  nothing is saved, and you start over from the current version. Tags
+  follow Tailscale's rule.
+
 ### API
 
 - `GET /v1/installation/listeners` (Installation Admins) reports
