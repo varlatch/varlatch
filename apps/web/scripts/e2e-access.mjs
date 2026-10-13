@@ -429,6 +429,9 @@ const asHuman = (method, path, body) =>
     { method, path, body },
   );
 const requirementNow = async (id) => (await asHuman("GET", "/organizations/acme/requirements")).json.items.find((r) => r.id === id);
+// The server stores target and selector as jsonb, which reorders keys: compare values, not key order.
+const canonical = (v) =>
+  JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
 const prodEnv = await asHuman("GET", "/organizations/acme/projects/api/environments/production");
 const pinned = await asHuman("POST", "/organizations/acme/requirements", {
   kind: "tailnet",
@@ -461,8 +464,8 @@ await page.waitForFunction((row) => document.querySelector(row)?.textContent.inc
 const afterEdit = await requirementNow(pinned.json.id);
 check(
   "editing keeps the environment target and the pinned device",
-  JSON.stringify(afterEdit.target) === JSON.stringify({ kind: "environments", environmentIds: [prodEnv.json.id] }) &&
-    JSON.stringify(afterEdit.selector) === JSON.stringify({ tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e"] }),
+  canonical(afterEdit.target) === canonical({ kind: "environments", environmentIds: [prodEnv.json.id] }) &&
+    canonical(afterEdit.selector) === canonical({ tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e"] }),
   JSON.stringify(afterEdit),
 );
 
