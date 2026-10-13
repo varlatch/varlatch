@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.17.2)
+## 0.17.2 (2026-10-13)
 
 ### Dashboard
 
@@ -28,6 +28,23 @@ fixes.
   the tailnet policy. Backups are the page's other tab;
   `/installation/settings` still opens them. SDK:
   `getInstallationListeners()`.
+
+### Upgrading
+
+No database migration. Check `SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
+
+- From 0.17.1: download `varlatch-cli-0.17.2.cjs` from the `v0.17.2`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.17.2.cjs upgrade 0.17.2 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.17.2.cjs`, or run `varlatch self-update`. Going back
+  to 0.17.1 needs no restore: the database is the same.
+- From 0.17.0: the same command. 0.17.1 added no migration either, and its
+  Coolify fix comes with this release.
+- From 0.16.0 or older: follow the 0.17.0 notes below with the 0.17.2 CLI
+  and version. The upgrade applies migrations 28 to 30.
+- 0.17.2 restores everything 0.17.1 restores, and archives from 0.17.1.
 
 ## 0.17.1 (2026-10-10)
 
