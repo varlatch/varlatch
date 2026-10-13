@@ -1555,7 +1555,24 @@ export interface components {
                     localApi: components["schemas"]["ObservedCheck"];
                     node: components["schemas"]["ObservedCheck"];
                 };
+                /** @description The node as varlatchd last read it, at checkedAt. Absent before the first successful LocalAPI read and after a failed one, and from older servers. */
+                node?: components["schemas"]["ObservedNode"];
             };
+        };
+        /** @description The node's own details from its LocalAPI status. Each field is validated: one that is absent or malformed is omitted. Nothing here says who can reach the node. */
+        ObservedNode: {
+            /** @description The node's actual machine name, the first label of its DNS name. */
+            name?: string;
+            /** @description Its MagicDNS name, without the trailing dot. */
+            dnsName?: string;
+            /** @description The tailnet it is on, its MagicDNS suffix. */
+            tailnet?: string;
+            /** @description Its ACL tags; absent for an untagged node. */
+            tags?: string[];
+            /** @description Its Tailscale addresses, IPv4 first. */
+            addresses?: string[];
+            /** @description Its Tailscale StableID. */
+            nodeId?: string;
         };
         ObservedCheck: {
             /** @enum {string} */

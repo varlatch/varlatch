@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { join } from "node:path";
 import { durableJson } from "@varlatch/backup";
 import type { NodeCertificate } from "./cert.js";
@@ -43,6 +44,27 @@ export type ListenerReason =
   /** The node's name is no longer the browser endpoint's host. */
   | "NAME_CHANGED";
 
+/**
+ * The node as varlatchd last read it from the LocalAPI status, at the
+ * report's checkedAt (Installation Admins only, like the rest). Each field
+ * is checked: one that is absent or malformed is omitted, never guessed.
+ * Who can reach the node is not here: only a client can find that out.
+ */
+export interface ObservedNode {
+  /** The node's actual machine name: the first label of its DNS name. */
+  name?: string;
+  /** Its MagicDNS name, without the trailing dot. */
+  dnsName?: string;
+  /** The tailnet it is on: its MagicDNS suffix. */
+  tailnet?: string;
+  /** Its ACL tags; absent for an untagged node. */
+  tags?: string[];
+  /** Its Tailscale addresses, IPv4 first. */
+  addresses?: string[];
+  /** Its StableID. */
+  nodeId?: string;
+}
+
 export interface TailnetListenerReport {
   configured: {
     tailnet: string;
@@ -60,6 +82,8 @@ export interface TailnetListenerReport {
       localApi: ObservedCheck;
       node: ObservedCheck;
     };
+    /** Absent before the first successful LocalAPI read, and after a failed one. */
+    node?: ObservedNode;
   };
 }
 
@@ -79,6 +103,35 @@ export function readListenerReport(dir: string): TailnetListenerReport | null {
 
 const UNCHECKED: ObservedCheck = { status: "unknown", reason: "NOT_CHECKED" };
 
+const DNS_NAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+const TAG = /^tag:[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+const STABLE_ID = /^[A-Za-z0-9]{1,64}$/;
+
+/** A list whose every entry passes, or nothing: a partial list would read as complete. */
+function allOf(value: unknown, ok: (entry: string) => boolean): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.every((v) => typeof v === "string" && ok(v)) ? [...(value as string[])] : undefined;
+}
+
+/** The node's own details from a LocalAPI status answer; undefined when none is usable. */
+export function observedNode(status: Record<string, unknown>): ObservedNode | undefined {
+  const self = status.Self && typeof status.Self === "object" ? (status.Self as Record<string, unknown>) : {};
+  const node: ObservedNode = {};
+  const dnsName = typeof self.DNSName === "string" ? self.DNSName.replace(/\.$/, "").toLowerCase() : "";
+  if (DNS_NAME.test(dnsName)) {
+    node.name = dnsName.split(".")[0]!;
+    node.dnsName = dnsName;
+  }
+  const suffix = typeof status.MagicDNSSuffix === "string" ? status.MagicDNSSuffix.toLowerCase() : "";
+  if (DNS_NAME.test(suffix)) node.tailnet = suffix;
+  const tags = allOf(self.Tags, (t) => TAG.test(t));
+  if (tags) node.tags = tags;
+  const addresses = allOf(self.TailscaleIPs, (a) => isIP(a) !== 0);
+  if (addresses) node.addresses = addresses.sort((a, b) => isIP(a) - isIP(b));
+  if (typeof self.ID === "string" && STABLE_ID.test(self.ID)) node.nodeId = self.ID;
+  return Object.keys(node).length ? node : undefined;
+}
+
 export class TailnetObserver {
   readonly #socketPath: string;
   readonly #configured: TailnetListenerReport["configured"];
@@ -89,6 +142,7 @@ export class TailnetObserver {
   readonly #now: () => number;
   #listening = { plain: null as boolean | null, browser: null as boolean | null };
   #checks: TailnetListenerReport["observed"]["checks"];
+  #node: ObservedNode | undefined;
   #checkedAt: number | null = null;
   #persisted: { json: string; at: number } | null = null;
   #timer: NodeJS.Timeout | null = null;
@@ -135,7 +189,11 @@ export class TailnetObserver {
   report(): TailnetListenerReport {
     return {
       configured: { ...this.#configured },
-      observed: { checkedAt: this.#checkedAt === null ? null : new Date(this.#checkedAt).toISOString(), checks: structuredClone(this.#checks) },
+      observed: {
+        checkedAt: this.#checkedAt === null ? null : new Date(this.#checkedAt).toISOString(),
+        checks: structuredClone(this.#checks),
+        ...(this.#node ? { node: structuredClone(this.#node) } : {}),
+      },
     };
   }
 
@@ -163,6 +221,8 @@ export class TailnetObserver {
 
     let localApi: ObservedCheck;
     let node: ObservedCheck = UNCHECKED;
+    // Cleared unless this read succeeds: stale details never sit next to a failing check.
+    let details: ObservedNode | undefined;
     try {
       const res = await localApiGet(this.#socketPath, "/localapi/v0/status?peers=false");
       const status = res.status === 200 ? (JSON.parse(res.body) as unknown) : null;
@@ -170,6 +230,7 @@ export class TailnetObserver {
       const self = s?.Self && typeof s.Self === "object" ? (s.Self as Record<string, unknown>) : null;
       if (!s || typeof s.BackendState !== "string") throw new Error(`LocalAPI status answered ${res.status}`);
       localApi = { status: "pass" };
+      details = observedNode(s);
       const dnsName = typeof self?.DNSName === "string" ? self.DNSName.replace(/\.$/, "").toLowerCase() : "";
       const suffix = typeof s.MagicDNSSuffix === "string" ? s.MagicDNSSuffix.toLowerCase() : "";
       node =
@@ -198,6 +259,7 @@ export class TailnetObserver {
     if (ticket < this.#applied) return this.report();
     this.#applied = ticket;
     this.#checks = { listener, ...(browserTls ? { browserTls } : {}), localApi, node };
+    this.#node = details;
     this.#checkedAt = this.#now();
     this.#persist();
     return this.report();
@@ -205,7 +267,7 @@ export class TailnetObserver {
 
   #persist(): void {
     if (!this.#stateDir) return;
-    const json = JSON.stringify(this.#checks);
+    const json = JSON.stringify({ checks: this.#checks, node: this.#node ?? null });
     const now = this.#now();
     if (this.#persisted && this.#persisted.json === json && now - this.#persisted.at < REFRESH_FILE_MS) return;
     try {

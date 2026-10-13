@@ -128,6 +128,84 @@ describe("tailnet listener observer", () => {
     expect(o.report().observed.checks.listener).toEqual({ status: "pass" });
   });
 
+  it("reports the node as it read it, under observed, with the shared checkedAt", async () => {
+    status = {
+      code: 200,
+      body: {
+        BackendState: "Running",
+        MagicDNSSuffix: "Example.ts.net",
+        Self: { ID: "nExampleNode1CNTRL", DNSName: `Varlatch.Example.ts.net.`, Tags: ["tag:server", "tag:varlatch"], TailscaleIPs: ["fd7a:115c:a1e0::7", "100.64.0.7"] },
+      },
+    };
+    const o = observer({ browser: false });
+    expect(o.report().observed).not.toHaveProperty("node");
+    const r = await o.check();
+    expect(r.observed.node).toEqual({
+      name: "varlatch",
+      dnsName: "varlatch.example.ts.net",
+      tailnet: "example.ts.net",
+      tags: ["tag:server", "tag:varlatch"],
+      addresses: ["100.64.0.7", "fd7a:115c:a1e0::7"],
+      nodeId: "nExampleNode1CNTRL",
+    });
+    // One time for the whole report: the node has none of its own.
+    expect(Object.keys(r.observed).sort()).toEqual(["checkedAt", "checks", "node"]);
+  });
+
+  it("omits what is absent or malformed, and a list with any bad entry, instead of guessing", async () => {
+    status = {
+      code: 200,
+      body: { BackendState: "Running", MagicDNSSuffix: 7, Self: { ID: "bad id!", DNSName: "not a name.", Tags: ["tag:ok", 5], TailscaleIPs: ["100.64.0.7", "nope"] } },
+    };
+    const o = observer({ browser: false });
+    expect((await o.check()).observed).not.toHaveProperty("node");
+    status = { code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { DNSName: `${HOST}.`, Tags: null, TailscaleIPs: [] } } };
+    expect((await o.check()).observed.node).toEqual({ name: "varlatch", dnsName: HOST, tailnet: "example.ts.net" });
+  });
+
+  it("clears the node after a failed read: stale details never sit next to a failing check", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const o = observer({ browser: false });
+    expect((await o.check()).observed.node?.nodeId).toBe("nSELF");
+    status = { code: 500, body: "boom" };
+    const failed = await o.check();
+    expect(failed.observed.checks.localApi).toEqual({ status: "fail", reason: "LOCALAPI_UNAVAILABLE" });
+    expect(failed.observed).not.toHaveProperty("node");
+  });
+
+  it("an older check that ends late cannot replace newer node details", async () => {
+    server.removeAllListeners("request");
+    let held: { res: http.ServerResponse; body: unknown } | undefined;
+    let count = 0;
+    server.on("request", (_req, res) => {
+      if (++count === 1) { held = { res, body: status.body }; return; }
+      res.writeHead(status.code, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(status.body));
+    });
+    status = { code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { ID: "nSELF", DNSName: `${HOST}.`, Tags: ["tag:old"] } } };
+    const o = observer({ browser: false });
+    const older = o.check();
+    await vi.waitFor(() => expect(held).toBeDefined());
+    status = { code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { ID: "nSELF", DNSName: `${HOST}.`, Tags: ["tag:new"] } } };
+    expect((await o.check()).observed.node?.tags).toEqual(["tag:new"]);
+    held!.res.writeHead(200, { "Content-Type": "application/json" });
+    held!.res.end(JSON.stringify(held!.body));
+    await older;
+    expect(o.report().observed.node?.tags).toEqual(["tag:new"]);
+  });
+
+  it("rewrites the file for `admin doctor` when only the node changes", async () => {
+    const write = vi.fn();
+    const o = new TailnetObserver({ socketPath, expectedTailnet: "example.ts.net", listenerPort: 8687, browser: null, certificate: null, stateDir: mkdtempSync(join(tmpdir(), "varlatch-state-")), write });
+    o.listening("plain", true);
+    await o.check();
+    expect(write).toHaveBeenCalledOnce();
+    status = { code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { ID: "nSELF", DNSName: `${HOST}.`, Tags: ["tag:server"] } } };
+    await o.check();
+    expect(write).toHaveBeenCalledTimes(2);
+    expect((write.mock.calls[1]![1] as TailnetListenerReport).observed.node?.tags).toEqual(["tag:server"]);
+  });
+
   it("checks again as soon as a listener binds, not at the next minute (real-tailnet finding)", async () => {
     const o = observer({ browser: false });
     o.start();

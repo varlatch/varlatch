@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Info, Network, TriangleAlert } from "lucide-react";
-import type { TailnetListenerReport } from "@varlatch/protocol";
+import type { ObservedNode, TailnetListenerReport } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { formatDateTime, timeAgo, timeUntil, useNow } from "../../lib/time";
 import { Callout, EmptyState, SectionCard, Segmented, Skeleton, Status, table, cn } from "../../components/ui";
@@ -17,6 +17,7 @@ import {
   enableEndpointLines,
   endpointRule,
   remedy,
+  ruleDestination,
   tailnetSummary,
   REASON_TEXT,
   type Deployment,
@@ -101,8 +102,8 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
       </SectionCard>
 
       <SectionCard
-        title="Server checks"
-        description="What varlatchd checks itself, at start and every 60 seconds."
+        title="Observed"
+        description="What varlatchd last read of its node and checked itself, at start and every 60 seconds."
         bodyClassName={table.wrap}
         data-testid="tailnet-checks"
         actions={
@@ -111,6 +112,7 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
           </span>
         }
       >
+        <NodeDetails node={observed.node} />
         <div className="flex items-center gap-2 border-b border-bd px-5 py-3">
           <span data-testid="tailnet-summary" data-tone={summary.tone}>
             <Status tone={summary.tone}>{summary.headline}</Status>
@@ -133,7 +135,7 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
           <tbody>
             {checkRows(report).map((row) => {
               const { check } = row;
-              const fix = check.status === "fail" ? remedy(check.reason, deployment, configured.browserEndpoint) : null;
+              const fix = check.status === "fail" ? remedy(check.reason, deployment, configured.browserEndpoint, observed.node) : null;
               return (
                 <tr key={row.key} className={table.tr} data-check={row.key} data-status={check.status}>
                   <td className={cn(table.td, "whitespace-nowrap font-medium")}>{row.label}</td>
@@ -167,8 +169,41 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
   );
 }
 
+/** The node as the server last read it; dated by the card's one "Last checked". */
+function NodeDetails({ node }: { node: ObservedNode | undefined }) {
+  if (!node) {
+    return (
+      <p className="border-b border-bd px-5 py-3 text-[13px] text-muted" data-testid="tailnet-node-missing">
+        No node details in this report: the last read of the node failed, or the server is older than this dashboard.
+      </p>
+    );
+  }
+  const rows: [string, React.ReactNode][] = [
+    ["Node", node.name ? <span className="font-mono text-[13px]">{node.name}</span> : null],
+    ["Tailnet", node.tailnet ? <span className="font-mono text-[13px]">{node.tailnet}</span> : null],
+    // Absent tags may mean untagged or unreadable: say nothing rather than "none".
+    ["Tags", node.tags ? <span className="font-mono text-[13px]">{node.tags.join(", ")}</span> : null],
+    ["Addresses", node.addresses ? <span className="font-mono text-[13px]">{node.addresses.join(", ")}</span> : null],
+    ["Node ID", node.nodeId ? <span className="font-mono text-[13px]">{node.nodeId}</span> : null],
+  ];
+  return (
+    <dl className="grid gap-x-8 gap-y-2 border-b border-bd px-5 py-4 text-[14px] sm:grid-cols-[max-content_1fr]" data-testid="tailnet-node">
+      {rows
+        .filter(([, value]) => value !== null)
+        .map(([label, value]) => (
+          <React.Fragment key={label}>
+            <dt className="text-muted">{label}</dt>
+            <dd>{value}</dd>
+          </React.Fragment>
+        ))}
+    </dl>
+  );
+}
+
 function Guidance({ report, deployment }: { report: TailnetListenerReport | null; deployment: Deployment }) {
   const endpoint = report?.configured.browserEndpoint ?? null;
+  const node = report?.observed.node;
+  const destination = ruleDestination(node);
   const setup = deployment === "setup";
   return (
     <SectionCard
@@ -206,15 +241,27 @@ function Guidance({ report, deployment }: { report: TailnetListenerReport | null
               The browser endpoint lets people on approved devices read tailnet-protected values in the dashboard. It needs HTTPS
               certificates enabled for the tailnet.
             </p>
-            <CodeBlock lines={enableEndpointLines(deployment, report.configured.tailnet)} data-testid="tailnet-endpoint-lines" />
+            <CodeBlock lines={enableEndpointLines(deployment, report.configured.tailnet, node)} data-testid="tailnet-endpoint-lines" />
           </>
         )}
         <p>
           {endpoint ? "Browsers" : "Then browsers"} reach the endpoint only where your tailnet policy lets their device connect
-          to it. Start from this grant, put in the node, and narrow the source to the people, groups or devices that may read
-          tailnet-protected values. Network requirements still decide which of those devices may read which values.
+          to it. Start from this grant{destination.kind === "placeholder" ? ", put in the node," : ""} and narrow the source to the
+          people, groups or devices that may read tailnet-protected values. Network requirements still decide which of those
+          devices may read which values.
         </p>
-        <CodeBlock lines={endpointRule(endpoint).split("\n")} data-testid="tailnet-rule" />
+        <CodeBlock lines={endpointRule(endpoint, node).split("\n")} data-testid="tailnet-rule" />
+        {destination.kind === "tags" && (
+          <p className="text-muted" data-testid="tailnet-rule-tags">
+            The destination is the node&apos;s tag: it covers every node that carries that tag, not only this one. To allow only
+            this node, use its address instead.
+          </p>
+        )}
+        {destination.kind === "address" && (
+          <p className="text-muted" data-testid="tailnet-rule-address">
+            The destination is this node&apos;s Tailscale address, as the server last read it.
+          </p>
+        )}
         <p className="flex flex-wrap gap-x-4 gap-y-1">
           <DocLink href={DOCS_TAILSCALE_URL}>Tailscale settings</DocLink>
           <DocLink href={DOCS_ENDPOINT_URL}>Tailnet browser endpoint</DocLink>

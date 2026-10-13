@@ -87,6 +87,7 @@ export type InstallationBackups = components["schemas"]["InstallationBackups"];
 export type InstallationListeners = components["schemas"]["InstallationListeners"];
 export type TailnetListenerReport = components["schemas"]["TailnetListenerReport"];
 export type ObservedCheck = components["schemas"]["ObservedCheck"];
+export type ObservedNode = components["schemas"]["ObservedNode"];
 export {
   MAX_TARGETS_PER_ITEM,
   TRANSPORT_OWNED_HEADERS,

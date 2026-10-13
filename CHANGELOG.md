@@ -5,6 +5,32 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.17.3)
+
+### Dashboard
+
+- **The Tailnet tab names the node.** Installation settings, Tailnet shows
+  the node under Observed, dated by the report's one "Last checked": its
+  machine name, tailnet, tags, Tailscale addresses and StableID. With
+  them, the access rule for the browser endpoint is filled in the way
+  `varlatch setup` fills it: the node's tags, or its IPv4 address when it
+  has none, on the configured endpoint's port. The tab says that a tag as
+  the destination covers every node carrying that tag. The Coolify fixes
+  for a renamed node or a node on another tailnet name the node's actual
+  name and tailnet, and the endpoint lines name the node when it is on the
+  configured tailnet. Without usable node details (an older server, or a
+  failed read), the tab says so and keeps the placeholders.
+
+### API
+
+- `GET /v1/installation/listeners` (Installation Admins) reports
+  `tailnet.observed.node`: the node as varlatchd last read it from the
+  LocalAPI status (`name`, `dnsName`, `tailnet`, `tags`, `addresses`,
+  `nodeId`). Each field is validated and omitted when absent or malformed;
+  a list with any bad entry is omitted whole. A failed read clears it, and
+  an older check never replaces newer details. It says nothing about who
+  can reach the node. Protocol: `ObservedNode`.
+
 ## 0.17.2 (2026-10-13)
 
 ### Dashboard
