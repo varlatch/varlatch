@@ -106,10 +106,23 @@ describe("guidance", () => {
   });
 
   it("says what to change for each deployment", () => {
-    expect(remedy("NOT_CHECKED", "setup")).toBeNull();
-    expect(remedy("NOT_RUNNING", "setup")).toBe("Inspect: docker compose logs tailscale varlatchd");
-    expect(remedy("NAME_CHANGED", "coolify")).toMatch(/VARLATCH_TAILNET_NODE and VARLATCH_TAILNET_ENDPOINT/);
-    expect(remedy("NO_CERTIFICATE", "coolify")).toMatch(/VARLATCH_TAILNET_CERT_UID must be 999/);
+    expect(remedy("NOT_CHECKED", "setup", true)).toBeNull();
+    expect(remedy("NOT_RUNNING", "setup", false)).toBe("Inspect: docker compose logs tailscale varlatchd");
+    expect(remedy("NAME_CHANGED", "coolify", true)).toMatch(/VARLATCH_TAILNET_NODE and VARLATCH_TAILNET_ENDPOINT/);
+    expect(remedy("NO_CERTIFICATE", "coolify", true)).toMatch(/VARLATCH_TAILNET_CERT_UID must be 999/);
+  });
+
+  it("never fixes the tailnet name without the endpoint URL that depends on it", () => {
+    // varlatchd's endpoint host is <machine>.<tailnet>; the dashboard's CSP allows VARLATCH_TAILNET_ENDPOINT.
+    const withEndpoint = remedy("OTHER_TAILNET", "coolify", true)!;
+    expect(withEndpoint).toMatch(/^Rejoin the node to the configured tailnet/);
+    expect(withEndpoint).toContain("VARLATCH_TAILNET_NAME");
+    expect(withEndpoint).toContain("VARLATCH_TAILNET_ENDPOINT");
+    expect(withEndpoint).toContain("VARLATCH_TAILNET_NODE");
+    const without = remedy("OTHER_TAILNET", "coolify", false)!;
+    expect(without).toMatch(/^Rejoin the node to the configured tailnet/);
+    expect(without).not.toContain("VARLATCH_TAILNET_ENDPOINT");
+    expect(remedy("OTHER_TAILNET", "setup", true)).toBe("Rerun varlatch setup: it stops and says what changed");
   });
 });
 
@@ -160,6 +173,9 @@ describe("Tailnet tab", () => {
 
   it("shows one check time for the whole report, each check's result, and the fix for the chosen deployment", async () => {
     await mount(async () => ({ tailnet: report({ node: { status: "fail", reason: "NAME_CHANGED" } }, ago(4 * 60_000)) }));
+    // The report says which port is configured, not who can connect to it: the listener may bind 0.0.0.0.
+    expect(text(byTestId("tailnet-configured"))).toContain("port 8687");
+    expect(text(byTestId("tailnet-configured"))).not.toMatch(/reachable|only over/i);
     expect(all("tailnet-checked-at")).toHaveLength(1);
     expect(text(byTestId("tailnet-checked-at"))).toBe("Last checked 4m ago");
     expect(byTestId("tailnet-summary").props["data-tone"]).toBe("error");

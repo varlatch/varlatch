@@ -99,8 +99,14 @@ export function tailnetSummary(report: TailnetListenerReport, now: number): Tail
 /** How the operator runs this installation; the dashboard cannot tell, so they choose. */
 export type Deployment = "setup" | "coolify";
 
-/** What to change for a failing check, per deployment; null when there is nothing to do but wait. */
-export function remedy(reason: ListenerReason | undefined, deployment: Deployment): string | null {
+/**
+ * What to change for a failing check, per deployment; null when there is
+ * nothing to do but wait. With the browser endpoint on, varlatchd derives
+ * the endpoint's host from the machine and tailnet names, while the
+ * dashboard's Content-Security-Policy allows VARLATCH_TAILNET_ENDPOINT:
+ * a fix that changes one of them changes the endpoint URL with it.
+ */
+export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpointOn: boolean): string | null {
   const logs =
     deployment === "setup"
       ? "Inspect: docker compose logs tailscale varlatchd"
@@ -120,7 +126,9 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
     case "OTHER_TAILNET":
       return deployment === "setup"
         ? "Rerun varlatch setup: it stops and says what changed"
-        : "Set VARLATCH_TAILNET_NAME to the node's tailnet, or join the node to the configured one, then redeploy";
+        : endpointOn
+          ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: VARLATCH_TAILNET_NAME to the node's tailnet, VARLATCH_TAILNET_ENDPOINT to https://<machine>.<that tailnet>:8688, and VARLATCH_TAILNET_NODE confirmed as the node's machine name"
+          : "Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to the node's tailnet, then redeploy";
     case "NAME_CHANGED":
       return deployment === "setup"
         ? "Rerun varlatch setup: it stops and says what changed"
