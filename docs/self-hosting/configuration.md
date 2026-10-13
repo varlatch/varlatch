@@ -503,7 +503,8 @@ device connect to the node on port 8688. Setup prints a grant to start
 from; it never edits the policy. `varlatch doctor` reports what varlatchd
 observes (listener, certificate, node), never whether a browser can reach
 it: only a browser can find that out, with Connect to tailnet in the
-dashboard.
+dashboard. Installation Admins see the same checks in the dashboard, under
+Installation settings, Tailnet.
 
 ## Client addresses
 

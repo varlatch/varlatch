@@ -84,6 +84,9 @@ export type SyncMappingInput = components["schemas"]["SyncMappingInput"];
 export type SyncLedgerName = components["schemas"]["SyncLedgerName"];
 
 export type InstallationBackups = components["schemas"]["InstallationBackups"];
+export type InstallationListeners = components["schemas"]["InstallationListeners"];
+export type TailnetListenerReport = components["schemas"]["TailnetListenerReport"];
+export type ObservedCheck = components["schemas"]["ObservedCheck"];
 export {
   MAX_TARGETS_PER_ITEM,
   TRANSPORT_OWNED_HEADERS,

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Archive, CircleCheck, Clock, FileArchive, RotateCcw, Terminal, TriangleAlert } from "lucide-react";
 import { useSession } from "../../lib/session";
@@ -7,28 +8,49 @@ import { formatDateTime, timeAgo, useNow } from "../../lib/time";
 import { Badge, Button, Callout, EmptyState, SectionCard, Status, table, cn } from "../../components/ui";
 import { CodeBlock } from "../../components/CodeBlock";
 import { Dialog } from "../../components/Dialog";
-import { PageHeader } from "../../components/PageHeader";
+import { PageHeader, Tabs } from "../../components/PageHeader";
 import { FullPageLoading } from "../../shell/AuthScreens";
 import { archivePassed, backupHealth } from "./backupHealth";
+import { TailnetTab } from "./TailnetTab";
 
 /**
- * Installation backups, for Installation Admins. Archives are created and
- * restored by the operator on the host (the API is read-only by design), so
- * the actions here explain the commands instead of running them.
+ * Installation settings, for Installation Admins: backups and Tailscale.
+ * The operator changes both on the host (the API is read-only by design),
+ * so the actions here explain the commands instead of running them. Tabs
+ * live in `?tab=` so links can deep-link.
  */
+
+const TABS = ["backups", "tailnet"] as const;
+type TabKey = (typeof TABS)[number];
+
 export function InstallationPage() {
   const { api } = useSession();
   const now = useNow();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const raw = searchParams.get("tab");
+  const tab: TabKey = (TABS as readonly string[]).includes(raw ?? "") ? (raw as TabKey) : "backups";
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
   const [howTo, setHowTo] = useState<"create" | "restore" | null>(null);
 
-  if (backups.isLoading) return <FullPageLoading />;
+  if (tab === "backups" && backups.isLoading) return <FullPageLoading />;
   const header = (
     <PageHeader
-      breadcrumbs={[{ label: "Installation" }, { label: "Backups" }]}
-      title="Backups"
-      subtitle="Encrypted archives of this whole installation."
+      breadcrumbs={[{ label: "Installation" }, { label: tab === "backups" ? "Backups" : "Tailnet" }]}
+      title="Installation"
+      subtitle={tab === "backups" ? "Encrypted archives of this whole installation." : "Tailscale on this installation, as varlatchd checks it."}
+      tabs={
+        <Tabs
+          aria-label="Installation sections"
+          active={tab}
+          onSelect={(key) => setSearchParams({ tab: key }, { replace: true })}
+          items={[
+            { key: "backups", label: "Backups", "data-testid": "installation-tab-backups" },
+            { key: "tailnet", label: "Tailnet", "data-testid": "installation-tab-tailnet" },
+          ]}
+        />
+      }
       actions={
+        tab === "backups" &&
         backups.data && (
           <>
             <Button variant="secondary" icon={<RotateCcw size={15} />} onClick={() => setHowTo("restore")}>
@@ -42,6 +64,16 @@ export function InstallationPage() {
       }
     />
   );
+  if (tab === "tailnet") {
+    return (
+      <>
+        {header}
+        <div role="tabpanel">
+          <TailnetTab />
+        </div>
+      </>
+    );
+  }
   if (backups.isError || !backups.data) {
     return (
       <>

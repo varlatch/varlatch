@@ -5,6 +5,30 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.17.2)
+
+### Dashboard
+
+- **Installation settings show the tailnet listeners.** A new Tailnet tab
+  (`/installation/settings?tab=tailnet`, for Installation Admins) shows
+  what `GET /v1/installation/listeners` reports: the configured tailnet,
+  listener port and browser endpoint, then varlatchd's own checks
+  (listeners, LocalAPI, node, endpoint certificate) as pass, fail or
+  unknown with the reason, the certificate's expiry, and one "last
+  checked" age for the whole report. A report older than 10 minutes is
+  flagged, as the server's doctor flags it. The tab says these are
+  server-side checks: whether a device reaches a listener depends on the
+  tailnet policy, and only that device can tell, with Connect to tailnet.
+  Without a tailnet listener it says so, and claims nothing about
+  Tailscale elsewhere on the host. For `varlatch setup` or Coolify, chosen
+  on the tab, it shows the commands or variables that add the Tailscale
+  sidecar or turn on the browser endpoint, a fix for each failing check,
+  and the access rule `varlatch setup` prints, with a placeholder for the
+  node. Read-only: the dashboard still changes neither the deployment nor
+  the tailnet policy. Backups are the page's other tab;
+  `/installation/settings` still opens them. SDK:
+  `getInstallationListeners()`.
+
 ## 0.17.1 (2026-10-10)
 
 ### Fixes
