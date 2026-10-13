@@ -133,7 +133,7 @@ function Report({ report, now, deployment }: { report: TailnetListenerReport; no
           <tbody>
             {checkRows(report).map((row) => {
               const { check } = row;
-              const fix = check.status === "fail" ? remedy(check.reason, deployment, configured.browserEndpoint !== null) : null;
+              const fix = check.status === "fail" ? remedy(check.reason, deployment, configured.browserEndpoint) : null;
               return (
                 <tr key={row.key} className={table.tr} data-check={row.key} data-status={check.status}>
                   <td className={cn(table.td, "whitespace-nowrap font-medium")}>{row.label}</td>

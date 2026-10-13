@@ -96,6 +96,17 @@ export function tailnetSummary(report: TailnetListenerReport, now: number): Tail
   return { tone: "ok", headline: "All server checks pass", stale: false };
 }
 
+/** The browser endpoint's port: the configured one, else the one setup would use. */
+export function endpointPort(endpoint: string | null): string {
+  return endpoint ? new URL(endpoint).port || "443" : String(ENDPOINT_PORT);
+}
+
+/** The tailnet in the endpoint's host, <machine>.<tailnet>. */
+function endpointTailnet(endpoint: string | null): string {
+  const host = endpoint ? new URL(endpoint).hostname : "";
+  return host.includes(".") ? host.slice(host.indexOf(".") + 1) : "<tailnet>";
+}
+
 /** How the operator runs this installation; the dashboard cannot tell, so they choose. */
 export type Deployment = "setup" | "coolify";
 
@@ -104,9 +115,10 @@ export type Deployment = "setup" | "coolify";
  * nothing to do but wait. With the browser endpoint on, varlatchd derives
  * the endpoint's host from the machine and tailnet names, while the
  * dashboard's Content-Security-Policy allows VARLATCH_TAILNET_ENDPOINT:
- * a fix that changes one of them changes the endpoint URL with it.
+ * a fix that changes one of them changes the endpoint URL with it, keeping
+ * the configured endpoint's port and whatever else did not change.
  */
-export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpointOn: boolean): string | null {
+export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpoint: string | null): string | null {
   const logs =
     deployment === "setup"
       ? "Inspect: docker compose logs tailscale varlatchd"
@@ -126,13 +138,15 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
     case "OTHER_TAILNET":
       return deployment === "setup"
         ? "Rerun varlatch setup: it stops and says what changed"
-        : endpointOn
-          ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: VARLATCH_TAILNET_NAME to the node's tailnet, VARLATCH_TAILNET_ENDPOINT to https://<machine>.<that tailnet>:8688, and VARLATCH_TAILNET_NODE confirmed as the node's machine name"
+        : endpoint
+          ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: " +
+            `VARLATCH_TAILNET_NAME to the node's tailnet, VARLATCH_TAILNET_ENDPOINT to https://<machine>.<that tailnet>:${endpointPort(endpoint)}, ` +
+            "and VARLATCH_TAILNET_NODE confirmed as the node's machine name"
           : "Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to the node's tailnet, then redeploy";
     case "NAME_CHANGED":
       return deployment === "setup"
         ? "Rerun varlatch setup: it stops and says what changed"
-        : "Set VARLATCH_TAILNET_NODE and VARLATCH_TAILNET_ENDPOINT to the node's new name, then redeploy";
+        : `Set VARLATCH_TAILNET_NODE to the node's new name and VARLATCH_TAILNET_ENDPOINT to https://<new name>.${endpointTailnet(endpoint)}:${endpointPort(endpoint)}, then redeploy`;
   }
 }
 
@@ -142,8 +156,7 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
  * people, groups or devices that may read tailnet-protected values.
  */
 export function endpointRule(endpoint: string | null): string {
-  const port = endpoint ? new URL(endpoint).port || "443" : String(ENDPOINT_PORT);
-  const rule = { src: ["autogroup:member"], dst: [NODE_PLACEHOLDER], ip: [`tcp:${port}`] };
+  const rule = { src: ["autogroup:member"], dst: [NODE_PLACEHOLDER], ip: [`tcp:${endpointPort(endpoint)}`] };
   // One line per field, as policy files are usually written.
   return `{\n${Object.entries(rule)
     .map(([key, value]) => `  ${JSON.stringify(key)}: ${JSON.stringify(value)}`)
