@@ -3,6 +3,7 @@ import type {
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
+  InstallationListeners,
   TailnetDevice,
   TailnetEndpoint,
   ApiError,
@@ -1178,6 +1179,16 @@ export class VarlatchClient {
 
   getInstallationBackups(): Promise<InstallationBackups> {
     return this.request("GET", "/v1/installation/backups");
+  }
+
+  /**
+   * Installation Admins: the tailnet listeners as configured and as
+   * varlatchd last observed them, with the time of that check. `tailnet` is
+   * null when varlatchd serves no tailnet listener. Server-side checks only:
+   * whether a device reaches a listener, only that device can tell.
+   */
+  getInstallationListeners(): Promise<InstallationListeners> {
+    return this.request("GET", "/v1/installation/listeners");
   }
 
   /**
