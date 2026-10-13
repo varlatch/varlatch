@@ -34,8 +34,10 @@ import {
   enableEndpointLines,
   endpointRule,
   remedy,
+  ruleDestination,
   tailnetSummary,
 } from "../src/features/installation/tailnetStatus";
+import type { ObservedNode } from "@varlatch/protocol";
 import { TailnetTab } from "../src/features/installation/TailnetTab";
 
 const NOW = Date.parse("2026-10-13T12:00:00Z");
@@ -128,6 +130,42 @@ describe("guidance", () => {
     expect(remedy("OTHER_TAILNET", "setup", ENDPOINT)).toBe("Rerun varlatch setup: it stops and says what changed");
   });
 
+  it("points the rule at the node's tags, else its IPv4 address, else the placeholder, on the configured port", () => {
+    const tagged: ObservedNode = { name: "varlatch", tailnet: "example.ts.net", tags: ["tag:server"], addresses: ["100.64.0.7", "fd7a::7"] };
+    expect(ruleDestination(tagged)).toEqual({ dst: ["tag:server"], kind: "tags" });
+    expect(JSON.parse(endpointRule("https://varlatch.example.ts.net:9443", tagged))).toEqual({ src: ["autogroup:member"], dst: ["tag:server"], ip: ["tcp:9443"] });
+    expect(ruleDestination({ addresses: ["fd7a::7", "100.64.0.7"] })).toEqual({ dst: ["100.64.0.7"], kind: "address" });
+    expect(ruleDestination({ addresses: ["fd7a::7"] })).toEqual({ dst: [NODE_PLACEHOLDER], kind: "placeholder" });
+    expect(ruleDestination(undefined)).toEqual({ dst: [NODE_PLACEHOLDER], kind: "placeholder" });
+  });
+
+  it("names the observed node in the Coolify fixes, keeping the port, and keeps placeholders without usable data", () => {
+    const custom = "https://varlatch.example.ts.net:9443";
+    expect(remedy("NAME_CHANGED", "coolify", custom, { name: "varlatch-1", tailnet: "example.ts.net" })).toBe(
+      "Set VARLATCH_TAILNET_NODE to varlatch-1 and VARLATCH_TAILNET_ENDPOINT to https://varlatch-1.example.ts.net:9443, then redeploy",
+    );
+    expect(remedy("OTHER_TAILNET", "coolify", custom, { name: "varlatch", tailnet: "other.ts.net" })).toContain(
+      "VARLATCH_TAILNET_NAME to other.ts.net, VARLATCH_TAILNET_ENDPOINT to https://varlatch.other.ts.net:9443, and VARLATCH_TAILNET_NODE to varlatch",
+    );
+    expect(remedy("OTHER_TAILNET", "coolify", null, { tailnet: "other.ts.net" })).toBe(
+      "Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to other.ts.net, then redeploy",
+    );
+    // A name without the node's tailnet is not enough to build its host.
+    expect(remedy("OTHER_TAILNET", "coolify", custom, { name: "varlatch" })).toContain("https://<machine>.<that tailnet>:9443");
+    expect(remedy("NAME_CHANGED", "setup", custom, { name: "varlatch-1" })).toBe("Rerun varlatch setup: it stops and says what changed");
+  });
+
+  it("fills the endpoint lines with the node's name only when it is on the configured tailnet", () => {
+    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch", tailnet: "example.ts.net" })).toEqual([
+      "VARLATCH_TAILNET_HTTPS_PORT=8688",
+      "VARLATCH_TAILNET_NODE=varlatch",
+      "VARLATCH_TAILNET_ENDPOINT=https://varlatch.example.ts.net:8688",
+      "VARLATCH_TAILNET_CERT_UID=999",
+    ]);
+    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch", tailnet: "other.ts.net" })).toContain("VARLATCH_TAILNET_NODE=<machine>");
+    expect(enableEndpointLines("coolify", "example.ts.net", { name: "varlatch" })).toContain("VARLATCH_TAILNET_NODE=<machine>");
+  });
+
   it("keeps a non-default endpoint port when a fix rewrites the endpoint URL", () => {
     // VARLATCH_TAILNET_HTTPS_PORT=9443: a fix that wrote :8688 would point the dashboard's CSP at a port varlatchd does not serve.
     const custom = "https://varlatch.example.ts.net:9443";
@@ -204,6 +242,28 @@ describe("Tailnet tab", () => {
     await act(async () => byTestId("tailnet-deployment-coolify").props.onClick());
     expect(text(row("node"))).toContain("VARLATCH_TAILNET_ENDPOINT to https://<new name>.example.ts.net:8688");
     expect(text(byTestId("tailnet-rule"))).toContain("tcp:8688");
+  });
+
+  it("shows the node under Observed with the one shared check time, and what a tag destination means", async () => {
+    const r = report();
+    r.observed.node = { name: "varlatch", dnsName: "varlatch.example.ts.net", tailnet: "example.ts.net", tags: ["tag:server"], addresses: ["100.64.0.7"], nodeId: "nExampleNode1CNTRL" };
+    await mount(async () => ({ tailnet: r }));
+    const checks = byTestId("tailnet-checks");
+    const node = checks.find((n) => n.props["data-testid"] === "tailnet-node");
+    expect(text(node)).toContain("tag:server");
+    expect(text(node)).toContain("nExampleNode1CNTRL");
+    expect(all("tailnet-checked-at")).toHaveLength(1);
+    expect(text(byTestId("tailnet-rule"))).toContain('"dst": ["tag:server"]');
+    expect(text(byTestId("tailnet-rule-tags"))).toContain("covers every node that carries that tag");
+    expect(text(byTestId("tailnet-guidance"))).not.toContain("put in the node");
+  });
+
+  it("without node details, says so and keeps the placeholders", async () => {
+    await mount(async () => ({ tailnet: report() }));
+    expect(text(byTestId("tailnet-node-missing"))).toContain("No node details");
+    expect(text(byTestId("tailnet-rule"))).toContain(NODE_PLACEHOLDER);
+    expect(text(byTestId("tailnet-guidance"))).toContain("put in the node");
+    expect(all("tailnet-rule-tags")).toHaveLength(0);
   });
 
   it("flags an old report and offers the endpoint when it is off", async () => {

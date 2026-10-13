@@ -3516,6 +3516,32 @@ components:
                   description: Present only when the browser endpoint is configured.
                 localApi: { $ref: "#/components/schemas/ObservedCheck" }
                 node: { $ref: "#/components/schemas/ObservedCheck" }
+            node:
+              $ref: "#/components/schemas/ObservedNode"
+              description: >
+                The node as varlatchd last read it, at checkedAt. Absent
+                before the first successful LocalAPI read and after a failed
+                one, and from older servers.
+
+    ObservedNode:
+      type: object
+      description: >
+        The node's own details from its LocalAPI status. Each field is
+        validated: one that is absent or malformed is omitted. Nothing here
+        says who can reach the node.
+      properties:
+        name: { type: string, description: "The node's actual machine name, the first label of its DNS name." }
+        dnsName: { type: string, description: "Its MagicDNS name, without the trailing dot." }
+        tailnet: { type: string, description: "The tailnet it is on, its MagicDNS suffix." }
+        tags:
+          type: array
+          items: { type: string }
+          description: Its ACL tags; absent for an untagged node.
+        addresses:
+          type: array
+          items: { type: string }
+          description: Its Tailscale addresses, IPv4 first.
+        nodeId: { type: string, description: "Its Tailscale StableID." }
 
     ObservedCheck:
       type: object

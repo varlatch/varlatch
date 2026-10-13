@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { ObservedCheck, TailnetListenerReport } from "@varlatch/protocol";
+import type { ObservedCheck, ObservedNode, TailnetListenerReport } from "@varlatch/protocol";
 
 /**
  * The Installation page's Tailnet tab (GET /v1/installation/listeners):
@@ -14,7 +14,7 @@ export const LISTENERS_STALE_MS = 10 * 60_000;
 /** The browser endpoint's port when `varlatch setup --tailnet-endpoint` turns it on. */
 export const ENDPOINT_PORT = 8688;
 
-/** What the report cannot name: setup reads the node's tags and address from the node itself. */
+/** For when the report names no usable node (an older server, or a failed read). */
 export const NODE_PLACEHOLDER = "<this node's tag or Tailscale address>";
 
 export const DOCS_TAILSCALE_URL = "https://docs.varlatch.com/self-hosting/configuration/#tailscale";
@@ -118,7 +118,7 @@ export type Deployment = "setup" | "coolify";
  * a fix that changes one of them changes the endpoint URL with it, keeping
  * the configured endpoint's port and whatever else did not change.
  */
-export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpoint: string | null): string | null {
+export function remedy(reason: ListenerReason | undefined, deployment: Deployment, endpoint: string | null, node?: ObservedNode): string | null {
   const logs =
     deployment === "setup"
       ? "Inspect: docker compose logs tailscale varlatchd"
@@ -135,28 +135,44 @@ export function remedy(reason: ListenerReason | undefined, deployment: Deploymen
       return deployment === "setup"
         ? "The tailnet must have HTTPS certificates enabled, and the sidecar must let varlatchd's user fetch them: run varlatch setup --tailnet-endpoint again"
         : "The tailnet must have HTTPS certificates enabled, and VARLATCH_TAILNET_CERT_UID must be 999 so varlatchd's user may fetch them";
-    case "OTHER_TAILNET":
-      return deployment === "setup"
-        ? "Rerun varlatch setup: it stops and says what changed"
-        : endpoint
-          ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: " +
-            `VARLATCH_TAILNET_NAME to the node's tailnet, VARLATCH_TAILNET_ENDPOINT to https://<machine>.<that tailnet>:${endpointPort(endpoint)}, ` +
-            "and VARLATCH_TAILNET_NODE confirmed as the node's machine name"
-          : "Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to the node's tailnet, then redeploy";
-    case "NAME_CHANGED":
-      return deployment === "setup"
-        ? "Rerun varlatch setup: it stops and says what changed"
-        : `Set VARLATCH_TAILNET_NODE to the node's new name and VARLATCH_TAILNET_ENDPOINT to https://<new name>.${endpointTailnet(endpoint)}:${endpointPort(endpoint)}, then redeploy`;
+    case "OTHER_TAILNET": {
+      if (deployment === "setup") return "Rerun varlatch setup: it stops and says what changed";
+      // The node's own tailnet, when the server could read it; the name only with it.
+      const theirs = node?.tailnet;
+      const machine = theirs ? node?.name : undefined;
+      return endpoint
+        ? "Rejoin the node to the configured tailnet. To keep the node's tailnet instead, change these together, then redeploy: " +
+            `VARLATCH_TAILNET_NAME to ${theirs ?? "the node's tailnet"}, ` +
+            `VARLATCH_TAILNET_ENDPOINT to https://${machine ?? "<machine>"}.${theirs ?? "<that tailnet>"}:${endpointPort(endpoint)}, ` +
+            `and VARLATCH_TAILNET_NODE ${machine ? `to ${machine}` : "confirmed as the node's machine name"}`
+        : `Rejoin the node to the configured tailnet, or set VARLATCH_TAILNET_NAME to ${theirs ?? "the node's tailnet"}, then redeploy`;
+    }
+    case "NAME_CHANGED": {
+      if (deployment === "setup") return "Rerun varlatch setup: it stops and says what changed";
+      // NAME_CHANGED is judged only on the configured tailnet, so the node's name is its new name there.
+      const renamed = node?.name;
+      return `Set VARLATCH_TAILNET_NODE to ${renamed ?? "the node's new name"} and VARLATCH_TAILNET_ENDPOINT to https://${renamed ?? "<new name>"}.${endpointTailnet(endpoint)}:${endpointPort(endpoint)}, then redeploy`;
+    }
   }
 }
 
+/** Where the access rule points: as `varlatch setup` chooses, the node's tags, else its IPv4 address. */
+export type RuleDestination = { dst: string[]; kind: "tags" | "address" | "placeholder" };
+
+export function ruleDestination(node: ObservedNode | undefined): RuleDestination {
+  if (node?.tags?.length) return { dst: [...node.tags], kind: "tags" };
+  const ipv4 = node?.addresses?.find((a) => !a.includes(":"));
+  if (ipv4) return { dst: [ipv4], kind: "address" };
+  return { dst: [NODE_PLACEHOLDER], kind: "placeholder" };
+}
+
 /**
- * The grant `varlatch setup` prints for the browser endpoint, with a
- * placeholder for the node. Its source is every member: narrow it to the
+ * The grant `varlatch setup` prints for the browser endpoint, on the
+ * configured endpoint's port. Its source is every member: narrow it to the
  * people, groups or devices that may read tailnet-protected values.
  */
-export function endpointRule(endpoint: string | null): string {
-  const rule = { src: ["autogroup:member"], dst: [NODE_PLACEHOLDER], ip: [`tcp:${endpointPort(endpoint)}`] };
+export function endpointRule(endpoint: string | null, node?: ObservedNode): string {
+  const rule = { src: ["autogroup:member"], dst: ruleDestination(node).dst, ip: [`tcp:${endpointPort(endpoint)}`] };
   // One line per field, as policy files are usually written.
   return `{\n${Object.entries(rule)
     .map(([key, value]) => `  ${JSON.stringify(key)}: ${JSON.stringify(value)}`)
@@ -176,12 +192,14 @@ export function addTailscaleLines(deployment: Deployment): string[] {
 }
 
 /** Turns the browser endpoint on where the node has joined. */
-export function enableEndpointLines(deployment: Deployment, tailnet: string | null): string[] {
+export function enableEndpointLines(deployment: Deployment, tailnet: string | null, node?: ObservedNode): string[] {
   if (deployment === "setup") return ["varlatch setup --dir /srv/varlatch --tailnet-endpoint"];
-  const host = `<machine>.${tailnet ?? "<your-tailnet>.ts.net"}`;
+  // The node's name only when it is on the configured tailnet: anything else names a host that is not there.
+  const machine = node?.name && tailnet && node.tailnet === tailnet.toLowerCase() ? node.name : "<machine>";
+  const host = `${machine}.${tailnet ?? "<your-tailnet>.ts.net"}`;
   return [
     `VARLATCH_TAILNET_HTTPS_PORT=${ENDPOINT_PORT}`,
-    "VARLATCH_TAILNET_NODE=<machine>",
+    `VARLATCH_TAILNET_NODE=${machine}`,
     `VARLATCH_TAILNET_ENDPOINT=https://${host}:${ENDPOINT_PORT}`,
     "VARLATCH_TAILNET_CERT_UID=999",
   ];
