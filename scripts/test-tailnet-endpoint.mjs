@@ -22,6 +22,17 @@
 //   case 5  spoofed identity at the endpoint: forwarding and Tailscale
 //           headers change nothing, a foreign Host is refused, a PROXY
 //           preamble gets no HTTP answer
+//   case 8  the listener report names the real node (its machine name,
+//           tailnet, StableID and address), and the Tailnet tab shows it and
+//           points the access rule at it
+//   case 9  the requirement editor's "Add this device": Connect from this
+//           browser, then only this machine's verified node ID is added
+//           (no tag, no user), and saving it is reviewed as loosening
+//   case 10 a requirement for another tailnet: "Add this device" adds
+//           nothing and changes nothing; the tailnet changes only through
+//           its own action, which the review shows as loosening
+//   case 11 a new requirement's tailnet is suggested from the verified
+//           device, and what is typed in the field survives a later Connect
 //   case 7  the LocalAPI unavailable (its socket moved away for a moment):
 //           constrained reads refused as resolver-unavailable, metadata
 //           still served
@@ -236,6 +247,88 @@ try {
   check('case 5: a PROXY preamble gets no HTTP answer', !preamble.includes('HTTP/1.1'));
   await api(`/v1/organizations/acme/requirements/${reqId}`, { method: 'DELETE' });
   reqId = await requirement([self.ID]);
+
+  // ---- Case 8: the node in the listener report and on the Tailnet tab.
+  const node = JSON.parse(dc(['exec', '-T', 'tailscale', 'tailscale', 'status', '--json', '--peers=false'])).Self;
+  const nodeName = node.DNSName.replace(/\.$/, '').split('.')[0];
+  const nodeIpv4 = (node.TailscaleIPs ?? []).find((a) => !a.includes(':'));
+  const report = (await (await api('/v1/installation/listeners')).json()).tailnet;
+  const seen = report?.observed?.node ?? {};
+  check('case 8: the listener report names the real node: machine name, tailnet, StableID, address',
+    seen.name === nodeName && seen.tailnet === tailnet && seen.nodeId === node.ID && (seen.addresses ?? []).includes(nodeIpv4), JSON.stringify(seen));
+  await page.goto(`${publicUrl}/installation/settings?tab=tailnet`);
+  await page.waitForSelector('[data-testid="tailnet-node"]', { timeout: 30000 });
+  const shownNode = await page.textContent('[data-testid="tailnet-node"]');
+  const rule = await page.textContent('[data-testid="tailnet-rule"]');
+  const ruleDst = node.Tags?.length ? node.Tags[0] : nodeIpv4;
+  check('case 8: the Tailnet tab shows the node and points the access rule at it', shownNode.includes(node.ID) && rule.includes(ruleDst) && rule.includes('tcp:8688'), `${shownNode} | ${rule}`);
+
+  // ---- Cases 9 to 11: the requirement editor, from this browser on the tailnet.
+  const staging = (selector) => api('/v1/organizations/acme/requirements', { method: 'POST', body: JSON.stringify({ kind: 'tailnet', target: { kind: 'tier', tier: 'staging' }, selector }) }).then((r) => r.json());
+  const current = async (id) => (await (await api('/v1/organizations/acme/requirements')).json()).items.find((r) => r.id === id);
+  const entries = (kind) => page.$$eval(`[data-testid="req-${kind}"] [data-entry]`, (els) => els.map((e) => e.getAttribute('data-entry')));
+  const openAdvanced = async () => {
+    await page.goto(`${publicUrl}/o/acme/access?tab=advanced`);
+    await page.waitForSelector('[data-testid="requirements-section"]', { timeout: 30000 });
+  };
+
+  // Case 9: "Add this device" adds only this machine's verified node ID.
+  const tagged = await staging({ tailnet, tags: ['tag:nobody'] });
+  await openAdvanced();
+  await page.click(`[data-testid="edit-requirement-${tagged.id}"]`);
+  await page.click('[data-testid="req-this-device"]');
+  await page.waitForSelector('[data-testid="req-this-device-notice"]', { timeout: 30000 });
+  const added = await page.textContent('[data-testid="req-this-device-notice"]');
+  check('case 9: Connect from this browser verifies this machine, and only its node ID is added',
+    added.includes(self.ID) && JSON.stringify(await entries('nodes')) === JSON.stringify([self.ID]) &&
+      JSON.stringify(await entries('tags')) === JSON.stringify(['tag:nobody']) && (await entries('users')).length === 0,
+    added);
+  check('case 9: Connect went to the endpoint', requests.some((r) => r.url === `${endpoint}/v1/tailnet/context`));
+  await page.click(`[data-testid="review-requirement-${tagged.id}"]`);
+  await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 30000 });
+  const loosenedBy = await page.textContent('[data-testid="review-loosens"]');
+  check('case 9: adding the device is reviewed as loosening', loosenedBy.includes(self.ID) && (await page.textContent(`[data-testid="save-requirement-${tagged.id}"]`)).includes('Loosen and save'), loosenedBy);
+  await page.click(`[data-testid="save-requirement-${tagged.id}"]`);
+  await page.waitForSelector('[data-testid="requirement-review"]', { state: 'detached', timeout: 30000 });
+  const saved = await current(tagged.id);
+  check('case 9: saved: this node ID added, the tag and tailnet as they were, no user',
+    JSON.stringify([...(saved.selector.nodes ?? [])]) === JSON.stringify([self.ID]) && JSON.stringify(saved.selector.tags) === JSON.stringify(['tag:nobody']) &&
+      saved.selector.tailnet === tailnet && !saved.selector.users,
+    JSON.stringify(saved.selector));
+
+  // Case 10: a requirement for another tailnet.
+  const elsewhere = await staging({ tailnet: 'other.example', tags: ['tag:nobody'] });
+  await openAdvanced();
+  await page.click(`[data-testid="edit-requirement-${elsewhere.id}"]`);
+  await page.click('[data-testid="req-this-device"]');
+  await page.waitForSelector('[data-testid="req-use-device-tailnet"]', { timeout: 30000 });
+  check('case 10: a device on another tailnet is not added, and the tailnet is not touched',
+    (await entries('nodes')).length === 0 && (await page.inputValue('[data-testid="req-tailnet"]')) === 'other.example',
+    await page.textContent('[data-testid="req-this-device-notice"]'));
+  await page.click('[data-testid="req-use-device-tailnet"]');
+  check('case 10: changing the tailnet is its own action, and adds no device',
+    (await page.inputValue('[data-testid="req-tailnet"]')) === tailnet && (await entries('nodes')).length === 0);
+  await page.click(`[data-testid="review-requirement-${elsewhere.id}"]`);
+  await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 30000 });
+  check('case 10: the review shows the tailnet change as loosening', (await page.textContent('[data-testid="review-loosens"]')).includes(`Devices on ${tailnet}`));
+  await page.click('[data-testid="requirement-review"] button:has-text("Back to editing")');
+  await page.click(`[data-testid="requirement-editor-${elsewhere.id}"] button:has-text("Cancel")`);
+  check('case 10: nothing was saved', (await current(elsewhere.id)).selector.tailnet === 'other.example');
+
+  // Case 11: a new requirement's tailnet, suggested; typed input survives Connect.
+  await openAdvanced();
+  await page.click('[data-testid="add-requirement"]');
+  await page.waitForSelector('[data-testid="requirement-editor-new"]', { timeout: 30000 });
+  await page.click('[data-testid="requirement-editor-new"] [data-testid="req-this-device"]');
+  await page.waitForFunction(() => document.querySelector('[data-testid="req-tailnet"]')?.getAttribute('data-suggested') === 'device', null, { timeout: 30000 });
+  check('case 11: the verified device\'s tailnet is suggested', (await page.inputValue('[data-testid="req-tailnet"]')) === tailnet);
+  await page.fill('[data-testid="req-tailnet"]', 'typed.example');
+  await page.click('[data-testid="requirement-editor-new"] [data-testid="req-this-device"]');
+  await page.waitForSelector('[data-testid="req-this-device-notice"]', { timeout: 30000 });
+  check('case 11: what was typed survives a later Connect',
+    (await page.inputValue('[data-testid="req-tailnet"]')) === 'typed.example' && (await page.getAttribute('[data-testid="req-tailnet"]', 'data-suggested')) === null);
+  await page.click('[data-testid="requirement-editor-new"] button:has-text("Cancel")');
+  for (const id of [tagged.id, elsewhere.id]) await api(`/v1/organizations/acme/requirements/${id}`, { method: 'DELETE' });
 
   // ---- Case 7: the LocalAPI unavailable for a moment.
   // varlatchd keeps its connection to the socket open for 5 s after each use
