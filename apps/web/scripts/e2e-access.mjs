@@ -378,31 +378,43 @@ check(
   (await page.locator('[data-team="platform"] [data-owned-project="api"]').count()) === 1,
 );
 
-// 6. Tailnet requirement (Advanced tab).
+// 6. Tailnet requirement (Advanced tab), created with the full editor.
 await page.click('[data-testid="access-tab-advanced"]');
 await page.waitForSelector('[data-testid="requirements-section"]', { timeout: 10000 });
 await page.click('[data-testid="add-requirement"]');
 await page.fill('[data-testid="req-tailnet"]', "example.ts.net");
-await page.fill('[data-testid="req-tags"]', "tag:prod");
+await page.fill('[data-testid="req-tags-input"]', "tag:prod");
+await page.press('[data-testid="req-tags-input"]', "Enter");
 await page.click('[data-testid="create-requirement"]');
 await page.waitForSelector('[data-requirement]', { timeout: 10000 });
 check("tailnet requirement listed", (await page.textContent('[data-requirement]')).includes("example.ts.net"));
 
-// 6b. Requirement edit (ADR-0029): selector widened in place; loosening is
-// exactly as audited as tightening.
-await page.locator('[data-requirement] [data-testid^="edit-requirement-"]').click();
-await page.locator('[data-requirement] input').nth(1).fill("tag:prod,tag:ci");
-await page.locator('[data-requirement] [data-testid^="save-requirement-"]').click();
+// 6b. Requirement edit (ADR-0029): an added tag loosens, so it is saved only
+// after a review that names the scope and the change, and an explicit
+// confirmation. Loosening is exactly as audited as tightening.
+const firstReq = await page.getAttribute("[data-requirement]", "data-requirement");
+await page.click(`[data-testid="edit-requirement-${firstReq}"]`);
+await page.fill('[data-testid="req-tags-input"]', "tag:ci");
+await page.press('[data-testid="req-tags-input"]', "Enter");
+await page.click(`[data-testid="review-requirement-${firstReq}"]`);
+await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 10000 });
+const reviewText = await page.textContent('[data-testid="requirement-review"]');
+check(
+  "a loosening edit is reviewed with its scope, before and after",
+  reviewText.includes("the production tier") && reviewText.includes("Devices tagged tag:ci") && reviewText.includes("Loosen and save"),
+  reviewText.slice(0, 300),
+);
+await page.click(`[data-testid="save-requirement-${firstReq}"]`);
 await page.waitForFunction(
-  () => document.querySelector('[data-requirement]')?.textContent.includes("tag:ci"),
+  () => document.querySelector("[data-requirement]")?.textContent.includes("tag:ci"),
   null,
   { timeout: 10000 },
 );
-check("requirement selector edited in place", true);
+check("requirement selector edited in place after confirmation", true);
 
-// 6c. A requirement the form cannot represent (one Environment, devices
-// pinned by node ID, as the API allows) is shown in full and cannot be
-// edited: saving the tier/tag form over it would let more devices in.
+// 6c. A requirement scoped to one Environment with devices pinned by node ID
+// (as the API allows) is shown in full and now edited in the dashboard:
+// every field it does not change survives the save.
 const asHuman = (method, path, body) =>
   page.evaluate(
     async ({ method, path, body }) => {
@@ -416,6 +428,7 @@ const asHuman = (method, path, body) =>
     },
     { method, path, body },
   );
+const requirementNow = async (id) => (await asHuman("GET", "/organizations/acme/requirements")).json.items.find((r) => r.id === id);
 const prodEnv = await asHuman("GET", "/organizations/acme/projects/api/environments/production");
 const pinned = await asHuman("POST", "/organizations/acme/requirements", {
   kind: "tailnet",
@@ -434,10 +447,60 @@ check(
   pinnedText.includes("api / production") && pinnedText.includes("nE2eDevice1CNTRL"),
   pinnedText,
 );
+await page.click(`[data-testid="edit-requirement-${pinned.json.id}"]`);
+await page.fill('[data-testid="req-tags-input"]', "tag:e2e");
+await page.press('[data-testid="req-tags-input"]', "Enter");
+await page.click(`[data-testid="review-requirement-${pinned.json.id}"]`);
+await page.waitForSelector('[data-testid="requirement-review"]', { timeout: 10000 });
 check(
-  "device-pinned requirement cannot be edited in the form",
-  await page.isDisabled(`${pinnedRow} [data-testid="edit-requirement-${pinned.json.id}"]`),
+  "the review names the environment the change applies to",
+  (await page.textContent('[data-testid="requirement-review"]')).includes("api / production (and environments derived from it)"),
 );
+await page.click(`[data-testid="save-requirement-${pinned.json.id}"]`);
+await page.waitForFunction((row) => document.querySelector(row)?.textContent.includes("tag:e2e"), pinnedRow, { timeout: 10000 });
+const afterEdit = await requirementNow(pinned.json.id);
+check(
+  "editing keeps the environment target and the pinned device",
+  JSON.stringify(afterEdit.target) === JSON.stringify({ kind: "environments", environmentIds: [prodEnv.json.id] }) &&
+    JSON.stringify(afterEdit.selector) === JSON.stringify({ tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e"] }),
+  JSON.stringify(afterEdit),
+);
+
+// 6d. A concurrent change invalidates an edit in progress: nothing from the
+// stale edit is saved, and the editor starts over from the current version.
+await page.click(`[data-testid="edit-requirement-${pinned.json.id}"]`);
+await page.fill('[data-testid="req-users-input"]', "late@example.com");
+await page.press('[data-testid="req-users-input"]', "Enter");
+const concurrent = await asHuman("PATCH", `/organizations/acme/requirements/${pinned.json.id}`, {
+  expectedVersion: afterEdit.version,
+  selector: { tailnet: "example.ts.net", nodes: ["nE2eDevice1CNTRL"], tags: ["tag:e2e", "tag:other"] },
+});
+check("concurrent change through the API", concurrent.status === 200, `status ${concurrent.status}`);
+// Either the live update arrives first (the form shows the conflict), or
+// the save is refused with VERSION_CONFLICT.
+const reviewButton = `[data-testid="review-requirement-${pinned.json.id}"]`;
+await page.waitForTimeout(1500);
+if (!(await page.isDisabled(reviewButton))) {
+  await page.click(reviewButton);
+  if (await page.locator('[data-testid="requirement-review"]').count()) await page.click(`[data-testid="save-requirement-${pinned.json.id}"]`);
+}
+await page.waitForSelector('[data-testid="requirement-conflict"]', { timeout: 10000 });
+check("the review and its confirmation are gone", (await page.locator('[data-testid="requirement-review"]').count()) === 0);
+const afterConflict = await requirementNow(pinned.json.id);
+check(
+  "nothing from the stale edit was saved",
+  !JSON.stringify(afterConflict.selector).includes("late@example.com") && afterConflict.selector.tags.includes("tag:other"),
+  JSON.stringify(afterConflict.selector),
+);
+await page.waitForSelector('[data-testid="requirement-start-over"]:not([disabled])', { timeout: 10000 });
+await page.click('[data-testid="requirement-start-over"]');
+await page.waitForSelector('[data-testid="req-tags"] [data-entry="tag:other"]', { timeout: 10000 });
+check(
+  "starting over loads the current version",
+  (await page.locator('[data-testid="requirement-conflict"]').count()) === 0 &&
+    (await page.locator('[data-testid="req-users"] [data-entry="late@example.com"]').count()) === 0,
+);
+await page.click(`[data-requirement="${pinned.json.id}"] button:has-text("Cancel")`);
 const removed = await asHuman("DELETE", `/organizations/acme/requirements/${pinned.json.id}`);
 check("device-pinned requirement removed", removed.status === 204, `status ${removed.status}`);
 

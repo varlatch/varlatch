@@ -10,9 +10,6 @@ import {
   Button,
   Callout,
   EmptyState,
-  Field,
-  InfoTip,
-  Input,
   Menu,
   SectionCard,
   Select,
@@ -23,19 +20,10 @@ import {
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
-import { TIERS, useIdentities } from "./shared";
+import { useIdentities } from "./shared";
 import { useAccessNames } from "./useAccessNames";
-import {
-  formEditBlocker,
-  matchParts,
-  parseTags,
-  requirementCreate,
-  requirementSentence,
-  requirementUpdate,
-  targetParts,
-  type MatchPart,
-  type TargetPart,
-} from "./requirements";
+import { matchParts, requirementSentence, targetParts, type MatchPart, type TargetPart } from "./requirements";
+import { RequirementEditor } from "./RequirementEditor";
 
 /**
  * Advanced: mechanisms that never grant. Network requirements narrow where
@@ -60,10 +48,11 @@ function RequirementsSection({ org }: { org: string }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
   const toast = useToast();
-  const { names } = useAccessNames(org);
+  const { names, environments } = useAccessNames(org);
   const reqs = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org) });
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
+  // The requirement as it was when editing started: the editor checks the live one against its version.
+  const [editing, setEditing] = useState<Requirement | null>(null);
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["requirements", org] });
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteRequirement(org, id),
@@ -71,6 +60,23 @@ function RequirementsSection({ org }: { org: string }) {
     onError: (err) => toast.error("Could not remove the requirement", { description: errorMessage(err) }),
   });
   const items = reqs.data?.items ?? [];
+  const editingGone = editing !== null && reqs.data !== undefined && !items.some((r) => r.id === editing.id);
+  const editor = (req: Requirement | undefined) =>
+    editing && (
+      <RequirementEditor
+        key={editing.id}
+        org={org}
+        base={editing}
+        current={req}
+        environments={environments}
+        names={names}
+        onDone={() => {
+          setEditing(null);
+          invalidate();
+        }}
+        onCancel={() => setEditing(null)}
+      />
+    );
   return (
     <SectionCard
       title="Network requirements"
@@ -94,18 +100,9 @@ function RequirementsSection({ org }: { org: string }) {
       )}
       <ul>
         {items.map((req) => {
-          const blocker = formEditBlocker(req);
-          return editing === req.id && !blocker ? (
+          return editing?.id === req.id ? (
             <li key={req.id} data-requirement={req.id} className="border-b border-bd px-5 py-4 last:border-b-0">
-              <RequirementForm
-                org={org}
-                initial={req}
-                onDone={() => {
-                  setEditing(null);
-                  invalidate();
-                }}
-                onCancel={() => setEditing(null)}
-              />
+              {editor(req)}
             </li>
           ) : (
             <li
@@ -122,18 +119,9 @@ function RequirementsSection({ org }: { org: string }) {
                 <span className="text-muted">can only be read on</span>
                 <Chip mono>{req.selector.tailnet}</Chip>
                 <span className="flex-1" />
-                {blocker ? (
-                  <span className="inline-flex items-center gap-1.5">
-                    <Button size="sm" variant="ghost" disabled data-testid={`edit-requirement-${req.id}`} data-edit-blocked="">
-                      Edit
-                    </Button>
-                    <InfoTip text={blocker} />
-                  </span>
-                ) : (
-                  <Button size="sm" variant="ghost" data-testid={`edit-requirement-${req.id}`} onClick={() => setEditing(req.id)}>
-                    Edit
-                  </Button>
-                )}
+                <Button size="sm" variant="ghost" data-testid={`edit-requirement-${req.id}`} onClick={() => setEditing(req)}>
+                  Edit
+                </Button>
                 <Menu
                   label="Requirement actions"
                   items={[
@@ -170,10 +158,13 @@ function RequirementsSection({ org }: { org: string }) {
           );
         })}
       </ul>
+      {editingGone && <div className="border-t border-bd px-5 py-4">{editor(undefined)}</div>}
       {adding && (
         <div className="border-t border-bd px-5 py-4">
-          <RequirementForm
+          <RequirementEditor
             org={org}
+            environments={environments}
+            names={names}
             onDone={() => {
               setAdding(false);
               invalidate();
@@ -228,77 +219,6 @@ function TargetChip({ part }: { part: TargetPart }) {
 function MatchIcon({ kind }: { kind: MatchPart["kind"] }) {
   const Icon = kind === "device" ? Monitor : kind === "tag" ? Tag : User;
   return <Icon size={12} aria-label={kind} className="text-muted" />;
-}
-
-function RequirementForm({
-  org,
-  initial,
-  onDone,
-  onCancel,
-}: {
-  org: string;
-  initial?: Requirement;
-  onDone: () => void;
-  onCancel: () => void;
-}) {
-  const { api } = useSession();
-  const [tier, setTier] = useState<Tier>(initial?.target.kind === "tier" ? initial.target.tier : "production");
-  const [tailnet, setTailnet] = useState(initial?.selector.tailnet ?? "");
-  const [tags, setTags] = useState((initial?.selector.tags ?? []).join(","));
-  const tagList = parseTags(tags);
-  const save = useMutation({
-    mutationFn: async () => {
-      const form = { tier, tailnet, tags: tagList };
-      // requirementUpdate refuses requirements this form cannot represent.
-      if (initial) await api.updateRequirement(org, initial.id, requirementUpdate(initial, form));
-      else await api.createTailnetRequirement(org, requirementCreate(form));
-    },
-    onSuccess: onDone,
-  });
-  return (
-    <form
-      className="space-y-3"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (tailnet.trim() && tagList.length > 0) save.mutate();
-      }}
-    >
-      <div className="grid gap-3 sm:grid-cols-[180px_1fr_1fr]">
-        <Field label="Tier">
-          <Select
-            className="w-full"
-            value={tier}
-            onChange={(v) => setTier(v as Tier)}
-            aria-label="Tier"
-            options={TIERS.map((t) => ({ value: t, label: t, icon: <TierDot tier={t} /> }))}
-          />
-        </Field>
-        <Field label="Tailnet">
-          <Input data-testid="req-tailnet" mono className="w-full" placeholder="example.ts.net" value={tailnet} onChange={(e) => setTailnet(e.target.value)} />
-        </Field>
-        <Field label="Device tags" hint="Comma-separated, e.g. tag:prod,tag:deploy">
-          <Input data-testid="req-tags" mono className="w-full" placeholder="tag:prod" value={tags} onChange={(e) => setTags(e.target.value)} />
-        </Field>
-      </div>
-      {initial && <p className="text-xs text-muted">Edited in place. Loosening is audited exactly like tightening.</p>}
-      {save.error && <p className="text-sm text-deny">{errorMessage(save.error)}</p>}
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          size="sm"
-          variant="primary"
-          type="submit"
-          data-testid={initial ? `save-requirement-${initial.id}` : "create-requirement"}
-          loading={save.isPending}
-          disabled={!tailnet.trim() || tagList.length === 0}
-        >
-          {initial ? "Save" : "Add requirement"}
-        </Button>
-      </div>
-    </form>
-  );
 }
 
 function CapabilitiesSection({ org }: { org: string }) {
