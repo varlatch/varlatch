@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.17.3)
+## 0.17.3 (2026-10-13)
 
 ### Dashboard
 
@@ -61,6 +61,24 @@ fixes.
   a list with any bad entry is omitted whole. A failed read clears it, and
   an older check never replaces newer details. It says nothing about who
   can reach the node. Protocol: `ObservedNode`.
+
+### Upgrading
+
+No database migration. Check `SHA256SUMS` and its signature as
+[Verifying a release](docs/operations/verify-release.md) describes.
+
+- From 0.17.2: download `varlatch-cli-0.17.3.cjs` from the `v0.17.3`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.17.3.cjs upgrade 0.17.3 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host CLI
+  with `varlatch-cli-0.17.3.cjs`, or run `varlatch self-update`. Going back
+  to 0.17.2 needs no restore: the database is the same.
+- From 0.17.0 or 0.17.1: the same command; neither added a migration.
+- From 0.16.0 or older: follow the 0.17.0 notes below with the 0.17.3 CLI
+  and version. The upgrade applies migrations 28 to 30.
+- No requirement changes on upgrade. The editor only changes one when
+  someone saves an edit after its review.
+- 0.17.3 restores everything 0.17.2 restores, and archives from 0.17.2.
 
 ## 0.17.2 (2026-10-13)
 
