@@ -163,6 +163,25 @@ describe("tailnet listener observer", () => {
     expect((await o.check()).observed.node).toEqual({ name: "varlatch", dnsName: HOST, tailnet: "example.ts.net" });
   });
 
+  it("review: validates tags as Tailscale does, a letter first, and drops the whole list for one bad tag", async () => {
+    const o = observer({ browser: false });
+    const withTags = (Tags: unknown) => ({ code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { ID: "nSELF", DNSName: `${HOST}.`, Tags } } });
+    // tailcfg.CheckTag: the name must start with a letter, so one such tag drops the whole list.
+    status = withTags(["tag:server", "tag:123"]);
+    expect((await o.check()).observed.node).not.toHaveProperty("tags");
+    for (const bad of [["tag:"], ["tag:-x"], ["server"], ["tag:a_b"], ["tag:é"]]) {
+      status = withTags(bad);
+      expect((await o.check()).observed.node, JSON.stringify(bad)).not.toHaveProperty("tags");
+    }
+  });
+
+  it("review: keeps a long valid tag: Tailscale sets no length limit", async () => {
+    const o = observer({ browser: false });
+    const long = `tag:a${"b1-".repeat(100)}`;
+    status = { code: 200, body: { BackendState: "Running", MagicDNSSuffix: "example.ts.net", Self: { ID: "nSELF", DNSName: `${HOST}.`, Tags: ["tag:server", long, "tag:A9"] } } };
+    expect((await o.check()).observed.node?.tags).toEqual(["tag:server", long, "tag:A9"]);
+  });
+
   it("clears the node after a failed read: stale details never sit next to a failing check", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const o = observer({ browser: false });

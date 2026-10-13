@@ -104,7 +104,9 @@ export function readListenerReport(dir: string): TailnetListenerReport | null {
 const UNCHECKED: ObservedCheck = { status: "unknown", reason: "NOT_CHECKED" };
 
 const DNS_NAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
-const TAG = /^tag:[A-Za-z0-9][A-Za-z0-9-]{0,127}$/;
+// Tailscale's own rule (tailcfg.CheckTag, v1.102.3, the pinned sidecar): "tag:", then an
+// ASCII letter, then ASCII letters, digits or dashes. No length limit.
+const TAG = /^tag:[A-Za-z][A-Za-z0-9-]*$/;
 const STABLE_ID = /^[A-Za-z0-9]{1,64}$/;
 
 /** A list whose every entry passes, or nothing: a partial list would read as complete. */
