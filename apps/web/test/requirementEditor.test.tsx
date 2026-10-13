@@ -50,6 +50,9 @@ const base: Requirement = {
   updatedAt: null,
 };
 
+const list = (req: Requirement) => vi.fn().mockResolvedValue({ items: [req], nextCursor: null });
+const conflict = () => new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "Requirement was modified concurrently; reload and retry", requestId: "r1" });
+
 let root: ReactTestRenderer;
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
 let qc: QueryClient;
@@ -95,14 +98,14 @@ async function confirm() {
 
 describe("requirement editor", () => {
   it("offers no review before anything changes", async () => {
-    fake.api = { updateRequirement: vi.fn() };
+    fake.api = { updateRequirement: vi.fn(), listRequirements: list(base) };
     await mount();
     expect(one("review-requirement-req_1").props.disabled).toBe(true);
   });
 
   it("saves every field, only after a review naming the scope and what may loosen", async () => {
     const done = vi.fn();
-    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}) };
+    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}), listRequirements: list(base) };
     await mount(base, done);
     await addEntry("tags", "tag:ci");
     await review();
@@ -124,7 +127,7 @@ describe("requirement editor", () => {
   });
 
   it("a tightening-only change is reviewed too, with a plain Save and the lockout warning", async () => {
-    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}) };
+    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}), listRequirements: list(base) };
     await mount();
     await act(async () => one("remove-nodes-nAbc123CNTRL").props.onClick());
     await review();
@@ -135,9 +138,7 @@ describe("requirement editor", () => {
   });
 
   it("VERSION_CONFLICT discards the review and its confirmation, and starting over loads the current version", async () => {
-    fake.api = {
-      updateRequirement: vi.fn().mockRejectedValue(new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "Requirement was modified concurrently; reload and retry", requestId: "r1" })),
-    };
+    fake.api = { updateRequirement: vi.fn().mockRejectedValue(conflict()), listRequirements: list(base) };
     await mount();
     await addEntry("tags", "tag:ci");
     await review();
@@ -151,6 +152,7 @@ describe("requirement editor", () => {
     expect(all("requirement-review")).toHaveLength(0);
 
     const newer: Requirement = { ...base, version: 8, selector: { ...base.selector, tags: ["tag:prod", "tag:other"] } };
+    await flush();
     await act(async () => root.update(ui(newer)));
     await act(async () => one("requirement-start-over").props.onClick());
     expect(all("requirement-conflict")).toHaveLength(0);
@@ -163,8 +165,55 @@ describe("requirement editor", () => {
     expect(fake.api.updateRequirement.mock.calls[0]![2].expectedVersion).toBe(8);
   });
 
+  it("review: after VERSION_CONFLICT, starting over needs an actually newer version, with a retry while it has not loaded", async () => {
+    fake.api = { updateRequirement: vi.fn().mockRejectedValue(conflict()), listRequirements: list(base) };
+    await mount();
+    await addEntry("tags", "tag:ci");
+    await review();
+    await confirm();
+    // The reload brought back the refused version: no way to start over from it.
+    await flush();
+    expect(all("requirement-start-over")).toHaveLength(0);
+    expect(text(one("requirement-not-loaded"))).toContain("has not loaded yet");
+    const calls = fake.api.listRequirements.mock.calls.length;
+    await act(async () => one("requirement-retry-load").props.onClick());
+    await flush();
+    expect(fake.api.listRequirements.mock.calls.length).toBe(calls + 1);
+    expect(all("requirement-conflict")).toHaveLength(1);
+    // Once a newer version is there, starting over is offered and works.
+    await act(async () => root.update(ui({ ...base, version: 8 })));
+    await act(async () => one("requirement-start-over").props.onClick());
+    expect(all("requirement-conflict")).toHaveLength(0);
+  });
+
+  it("review: a failed reload after VERSION_CONFLICT says so and offers a retry, never the old version", async () => {
+    fake.api = { updateRequirement: vi.fn().mockRejectedValue(conflict()), listRequirements: list(base) };
+    await mount();
+    await flush();
+    fake.api.listRequirements = vi.fn().mockRejectedValue(new Error("network down"));
+    await addEntry("tags", "tag:ci");
+    await review();
+    await confirm();
+    await flush();
+    expect(text(one("requirement-not-loaded"))).toContain("network down");
+    expect(all("requirement-start-over")).toHaveLength(0);
+    expect(all("requirement-retry-load")).toHaveLength(1);
+  });
+
+  it("review: a tailnet changed only in case is reviewed as a change that may loosen, and sent exactly", async () => {
+    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}), listRequirements: list(base) };
+    await mount();
+    await act(async () => one("req-tailnet").props.onChange({ target: { value: "EXAMPLE.TS.NET" } }));
+    expect(one("review-requirement-req_1").props.disabled).toBe(false);
+    await review();
+    expect(text(one("review-loosens"))).toContain("Tailscale compares tailnet names exactly");
+    expect(text(one("save-requirement-req_1"))).toBe("Loosen and save");
+    await confirm();
+    expect(fake.api.updateRequirement.mock.calls[0]![2].selector.tailnet).toBe("EXAMPLE.TS.NET");
+  });
+
   it("a newer version seen live closes an open review before anything is saved", async () => {
-    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}) };
+    fake.api = { updateRequirement: vi.fn().mockResolvedValue({}), listRequirements: list(base) };
     await mount();
     await addEntry("users", "bob@example.com");
     await review();
@@ -176,7 +225,7 @@ describe("requirement editor", () => {
   });
 
   it("says so when the requirement is removed while editing, and saves nothing", async () => {
-    fake.api = { updateRequirement: vi.fn() };
+    fake.api = { updateRequirement: vi.fn(), listRequirements: list(base) };
     await mount();
     await act(async () => root.update(ui(undefined)));
     expect(text(one("requirement-removed"))).toContain("Nothing was saved");

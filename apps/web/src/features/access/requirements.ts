@@ -35,13 +35,23 @@ export const NEW_REQUIREMENT: RequirementDraft = {
   selector: { tailnet: "", nodes: [], tags: [], users: [] },
 };
 
-/** The API body: target and selector whole; empty lists are left out, as the API stores them. */
+/**
+ * The API body: target and selector whole; empty lists are left out, as the
+ * API stores them. The tailnet goes exactly as entered: the evaluator
+ * compares it exactly (evaluate.ts), so trimming or lowercasing it here
+ * would change who passes without the review showing it.
+ */
 export function draftBody(draft: RequirementDraft): { target: RequirementTarget; selector: TailnetSelector } {
   const { tailnet, nodes, tags, users } = draft.selector;
   return {
     target: draft.target.kind === "tier" ? { kind: "tier", tier: draft.target.tier } : { kind: "environments", environmentIds: [...draft.target.environmentIds] },
-    selector: { tailnet: tailnet.trim(), ...(nodes.length ? { nodes } : {}), ...(tags.length ? { tags } : {}), ...(users.length ? { users } : {}) },
+    selector: { tailnet, ...(nodes.length ? { nodes } : {}), ...(tags.length ? { tags } : {}), ...(users.length ? { users } : {}) },
   };
+}
+
+/** A tailnet name as shown: quoted when it has spaces, which would otherwise not be seen. */
+export function shownTailnet(tailnet: string): string {
+  return /^\S+$/.test(tailnet) ? tailnet : JSON.stringify(tailnet);
 }
 
 export function sameDraft(a: RequirementDraft, b: RequirementDraft): boolean {
@@ -63,12 +73,18 @@ export function entryError(kind: ListKind, value: string): string | null {
   return null;
 }
 
-/** Why the draft cannot be saved, or an empty list. */
-export function draftErrors(draft: RequirementDraft): string[] {
+/**
+ * Why the draft cannot be saved, or an empty list. A tailnet kept exactly as
+ * `stored` has it is not checked again: the editor never changes it on its own.
+ */
+export function draftErrors(draft: RequirementDraft, stored?: RequirementDraft): string[] {
   const errors: string[] = [];
   if (draft.target.kind === "environments" && draft.target.environmentIds.length === 0) errors.push("Choose at least one environment");
-  const tailnet = draft.selector.tailnet.trim();
-  if (!tailnet) errors.push("Enter the tailnet, such as example.ts.net");
+  const tailnet = draft.selector.tailnet;
+  if (stored && tailnet === stored.selector.tailnet) {
+    // unchanged
+  } else if (!tailnet.trim()) errors.push("Enter the tailnet, such as example.ts.net");
+  else if (tailnet !== tailnet.trim()) errors.push("Remove the spaces around the tailnet name: Tailscale compares it exactly");
   else if (!DNS_NAME.test(tailnet)) errors.push("The tailnet is a DNS name, such as example.ts.net");
   const { nodes, tags, users } = draft.selector;
   if (nodes.length + tags.length + users.length === 0) errors.push("Name at least one device, tag or user");
@@ -138,7 +154,7 @@ export function requirementSentence(req: Pick<Requirement, "target" | "selector"
   const matches = matchParts(req.selector)
     .map((m) => `${m.kind} ${m.value}`)
     .join(", ");
-  return `Values in ${scopeLabel(req.target, names)} can only be read from devices on ${req.selector.tailnet} that match any of: ${matches}`;
+  return `Values in ${scopeLabel(req.target, names)} can only be read from devices on ${shownTailnet(req.selector.tailnet)} that match any of: ${matches}`;
 }
 
 /** Which environments a target covers now, by the evaluator's rule; and the tier that also covers later ones. */
@@ -203,18 +219,21 @@ export function consequences(before: RequirementDraft, after: RequirementDraft, 
     if (unseenGained.length) tightens.push({ text: `It covers ${unseenGained.join(", ")}, which you cannot see` });
   }
 
-  // Who passes: alternatives within the requirement, on its tailnet.
+  // Who passes: alternatives within the requirement, on its tailnet. The
+  // evaluator compares the tailnet exactly, so any difference counts.
   const scope = scopeLabel(after.target, names);
-  const tailnetBefore = before.selector.tailnet.trim().toLowerCase();
-  const tailnetAfter = after.selector.tailnet.trim().toLowerCase();
-  if (tailnetBefore !== tailnetAfter) {
-    loosens.push({ text: `Devices on ${after.selector.tailnet.trim()} that match it can now read values in ${scope}` });
-    tightens.push({ text: `Devices on ${before.selector.tailnet.trim()} no longer pass it` });
+  const tailnetBefore = shownTailnet(before.selector.tailnet);
+  const tailnetAfter = shownTailnet(after.selector.tailnet);
+  if (before.selector.tailnet !== after.selector.tailnet) {
+    const subtle = before.selector.tailnet.trim().toLowerCase() === after.selector.tailnet.trim().toLowerCase();
+    const why = subtle ? " (Tailscale compares tailnet names exactly, so a change of case or spaces alone changes which devices pass)" : "";
+    loosens.push({ text: `Devices on ${tailnetAfter} that match it can now read values in ${scope}${why}` });
+    tightens.push({ text: `Devices on ${tailnetBefore} no longer pass it` });
   }
   for (const kind of ["nodes", "tags", "users"] as const) {
     const was = new Set(before.selector[kind]);
     const now = new Set(after.selector[kind]);
-    for (const v of now) if (!was.has(v)) loosens.push({ text: `${capitalize(WHAT[kind](v))} on ${after.selector.tailnet.trim()} can now read values in ${scope}` });
+    for (const v of now) if (!was.has(v)) loosens.push({ text: `${capitalize(WHAT[kind](v))} on ${tailnetAfter} can now read values in ${scope}` });
     for (const v of was) if (!now.has(v)) tightens.push({ text: `${capitalize(WHAT[kind](v))} can no longer read values it covers` });
   }
   return { loosens, tightens };

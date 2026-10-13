@@ -87,10 +87,27 @@ describe("requirement drafts", () => {
     });
   });
 
-  it("sees an unchanged draft as unchanged, and trims the tailnet", () => {
+  it("sees an unchanged draft as unchanged, and a change of case or spaces in the tailnet as a change", () => {
     expect(sameDraft(draftFrom(users), draftFrom(users))).toBe(true);
-    expect(sameDraft(draftFrom(users), edit(draftFrom(users), (d) => (d.selector.tailnet = " example.ts.net ")))).toBe(true);
     expect(sameDraft(draftFrom(users), edit(draftFrom(users), (d) => d.selector.users.pop()))).toBe(false);
+    // The evaluator compares the tailnet exactly: nothing here may normalize it.
+    expect(sameDraft(draftFrom(users), edit(draftFrom(users), (d) => (d.selector.tailnet = "EXAMPLE.TS.NET")))).toBe(false);
+    expect(sameDraft(draftFrom(users), edit(draftFrom(users), (d) => (d.selector.tailnet = " example.ts.net ")))).toBe(false);
+    expect(draftBody(edit(draftFrom(users), (d) => (d.selector.tailnet = "Example.ts.net"))).selector.tailnet).toBe("Example.ts.net");
+  });
+
+  it("keeps a stored tailnet as it is, but refuses spaces in a new or changed one", () => {
+    const spaced: Requirement = { ...tagged, selector: { tailnet: " example.ts.net", tags: ["tag:prod"] } };
+    const stored = draftFrom(spaced);
+    expect(draftErrors(edit(stored, (d) => d.selector.tags.push("tag:ci")), stored)).toEqual([]);
+    expect(draftErrors(edit(stored, (d) => (d.selector.tailnet = "other.ts.net ")), stored)).toEqual([
+      "Remove the spaces around the tailnet name: Tailscale compares it exactly",
+    ]);
+    expect(draftErrors(edit(stored, (d) => (d.selector.tailnet = " example.ts.net")))).toContain(
+      "Remove the spaces around the tailnet name: Tailscale compares it exactly",
+    );
+    // The Before preview shows the stored value exactly, spaces included.
+    expect(requirementSentence(draftBody(stored), names)).toContain('devices on " example.ts.net"');
   });
 
   it("refuses what the API or Tailscale would not accept", () => {
@@ -125,6 +142,19 @@ describe("what a change does", () => {
     const removed = consequences(pinnedDraft, edit(pinnedDraft, (d) => (d.selector.nodes = [])), environments, names);
     expect(removed.loosens).toEqual([]);
     expect(texts(removed.tightens)).toEqual(["The device with node ID nAbc123CNTRL can no longer read values it covers"]);
+  });
+
+  it("review: a tailnet that differs only in case or spaces is a change that may loosen", () => {
+    const upper = edit(prodTier, (d) => (d.selector.tailnet = "EXAMPLE.TS.NET"));
+    const caseOnly = consequences(upper, prodTier, environments, names);
+    expect(texts(caseOnly.loosens)).toEqual([
+      "Devices on example.ts.net that match it can now read values in the production tier (Tailscale compares tailnet names exactly, so a change of case or spaces alone changes which devices pass)",
+    ]);
+    expect(texts(caseOnly.tightens)).toEqual(["Devices on EXAMPLE.TS.NET no longer pass it"]);
+    const spaced = edit(prodTier, (d) => (d.selector.tailnet = "example.ts.net "));
+    const spacesOnly = consequences(spaced, prodTier, environments, names);
+    expect(spacesOnly.loosens).toHaveLength(1);
+    expect(texts(spacesOnly.tightens)).toEqual(['Devices on "example.ts.net " no longer pass it']);
   });
 
   it("a different tailnet both loosens and tightens", () => {

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useMemo, useState } from "react";
-import { useIsFetching, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw, ShieldAlert, ShieldCheck, TriangleAlert, X } from "lucide-react";
 import type { Environment, Requirement, Tier } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
@@ -62,8 +62,10 @@ export function RequirementEditor({
   const [refused, setRefused] = useState(false);
 
   const editing = start !== undefined;
-  // After a refused save the list reloads; starting over before it has would load the same old version.
-  const reloading = useIsFetching({ queryKey: ["requirements", org] }) > 0;
+  // The list the section shows (same query, same cache): after a refused save
+  // it reloads, and only an actually newer version may replace the old one.
+  const list = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org) });
+  const newer = start !== undefined && current !== undefined && current.version > start.version;
   const removed = editing && current === undefined;
   const stale = editing && (refused || (current !== undefined && current.version !== start.version));
   // A newer version invalidates the preview and any confirmation already given.
@@ -72,7 +74,7 @@ export function RequirementEditor({
   }, [stale, removed]);
 
   const before = useMemo(() => (start ? draftFrom(start) : null), [start]);
-  const errors = draftErrors(draft);
+  const errors = draftErrors(draft, before ?? undefined);
   const unchanged = before !== null && sameDraft(before, draft);
   const effects = useMemo(() => (before ? consequences(before, draft, environments, names) : null), [before, draft, environments, names]);
 
@@ -95,7 +97,8 @@ export function RequirementEditor({
   });
 
   const startOver = () => {
-    if (!current) return;
+    // Never restart against the version the server refused.
+    if (!newer || !current) return;
     setStart(current);
     setDraft(draftFrom(current));
     setOtherTarget(null);
@@ -137,23 +140,35 @@ export function RequirementEditor({
           data-testid="requirement-conflict"
           title="This requirement changed while you were editing it"
           actions={
-            current && (
+            newer ? (
+              <Button size="sm" variant="secondary" icon={<RotateCcw size={13} />} onClick={startOver} data-testid="requirement-start-over">
+                Start over from the current version
+              </Button>
+            ) : (
               <Button
                 size="sm"
                 variant="secondary"
                 icon={<RotateCcw size={13} />}
-                onClick={startOver}
-                loading={reloading && current.version === start.version}
-                disabled={reloading && current.version === start.version}
-                data-testid="requirement-start-over"
+                loading={list.isFetching}
+                disabled={list.isFetching}
+                onClick={() => void list.refetch()}
+                data-testid="requirement-retry-load"
               >
-                Start over from the current version
+                Retry loading
               </Button>
             )
           }
         >
-          Your changes were not saved, and any review or confirmation is discarded. Start over from the current version, then make
-          your change again.
+          Your changes were not saved, and any review or confirmation is discarded.{" "}
+          {newer ? (
+            "Start over from the current version, then make your change again."
+          ) : list.isFetching ? (
+            "Loading the current version…"
+          ) : (
+            <span data-testid="requirement-not-loaded">
+              The current version has not loaded{list.isError ? `: ${errorMessage(list.error)}` : " yet"}. Retry loading it before starting over.
+            </span>
+          )}
         </Callout>
       )}
 
