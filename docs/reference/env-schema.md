@@ -11,6 +11,12 @@ revision. The server stores and enforces that contract, never the file
 itself. Values never come from `.env.schema`: they live in Varlatch, and
 `varlatch run` delivers them.
 
+The format comes from [@env-spec](https://varlock.dev/env-spec/overview/),
+which DMNO created for Varlock. Varlatch reads the subset on this page with
+its own parser and does not follow later changes to @env-spec, so a file
+another tool accepts may fail here or mean something different, as with
+`@defaultRequired=infer` below.
+
 ## Fail loudly
 
 A decorator the parser does not understand is an error, never ignored. So is
