@@ -155,13 +155,13 @@ describe("Integration card: a Coolify service", () => {
       redeploy: true,
       lastNotes: [
         { code: "shadowed", name: "DATABASE_URL", containers: ["backend"] },
-        { code: "usage-unchecked", reason: "the token cannot read the service's compose file (Coolify's read:sensitive permission)" },
+        { code: "usage-unchecked", reason: "Coolify did not return the service's compose file to this token (reading it takes its read:sensitive permission)" },
       ],
     });
     await mount(<TargetCard org="acme" project="api" envName="production" target={t} connection={coolify} onChanged={() => {}} />);
     const notes = text(byTestId("target-notes-snt_1"));
     expect(notes).toContain("DATABASE_URL: the compose file sets it in backend, which wins over the pushed value");
-    expect(notes).toContain("Usage not checked: the token cannot read the service's compose file");
+    expect(notes).toContain("Usage not checked: Coolify did not return the service's compose file");
     expect(text(root.root)).toContain("restarts the service after changes");
   });
 

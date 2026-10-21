@@ -471,7 +471,7 @@ describe("sync check against a Coolify service", () => {
     serviceCompose = null;
     const r = await cli(service("--json"));
     expect((JSON.parse(r.stdout) as { usage: unknown }).usage).toEqual([
-      { code: "usage-unchecked", reason: "the token cannot read the service's compose file (Coolify's read:sensitive permission)" },
+      { code: "usage-unchecked", reason: "Coolify did not return the service's compose file to this token (reading it takes its read:sensitive permission)" },
     ]);
   });
 

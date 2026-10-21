@@ -1165,7 +1165,16 @@ describe("access checks", () => {
       });
       const limited = await coolifyAdapter.checkAccess(coolify(withheld, { serviceUuid: "svc123" }));
       expect(limited.status).toBe("ok");
-      expect(limited.message).toContain("cannot read their values (Coolify's read:sensitive permission)");
+      expect(limited.message).toContain("Coolify returned none of their values to this token (reading them takes its read:sensitive permission)");
+
+      // Some withheld (shown once): counted, not blamed on a permission.
+      const some = fakeFetch((url) => {
+        if (url.endsWith("/version")) return { status: 200, body: "4.4.6" };
+        if (url.endsWith("/envs")) return { status: 200, body: [{ uuid: "e1", key: "A" }, { uuid: "e2", key: "B", value: "x" }] };
+        return { status: 200, body: { uuid: "svc123", name: "convex" } };
+      });
+      const partly = await coolifyAdapter.checkAccess(coolify(some, { serviceUuid: "svc123" }));
+      expect(partly.message).toContain("withheld 1 of 2 values");
     });
 
     it("tells a member's token, another team's service, and a sub-resource uuid apart", async () => {

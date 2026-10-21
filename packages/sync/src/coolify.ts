@@ -641,7 +641,7 @@ export const coolifyAdapter: PlatformAdapter = {
     }
     if (!isRecord(body) || body.uuid !== resource.uuid) return unchecked("Coolify did not answer with the service");
     if (!("docker_compose_raw" in body)) {
-      return unchecked("the token cannot read the service's compose file (Coolify's read:sensitive permission)");
+      return unchecked("Coolify did not return the service's compose file to this token (reading it takes its read:sensitive permission)");
     }
     const version = Number(body.compose_parsing_version);
     return classifyComposeUsage(
@@ -684,15 +684,19 @@ async function checkServiceVariables(
   const reach = containers.length > 0
     ? `Every variable reaches all of its containers (${containers.join(", ")}), and any added later.`
     : "Every variable reaches all of its containers, and any added later.";
-  const withheld = rows.some((r) => isRecord(r) && !("value" in r));
+  // What Coolify returned, not why: a row listed without its value is
+  // withheld (no read:sensitive, or shown once), and an empty list says
+  // nothing either way.
+  const withheld = rows.filter((r) => isRecord(r) && !("value" in r)).length;
+  const unreadable =
+    withheld === 0
+      ? ""
+      : withheld === rows.length
+        ? " Coolify returned none of their values to this token (reading them takes its read:sensitive permission): repairs rewrite every value, and the compose file is likely unreadable too."
+        : ` Coolify withheld ${withheld} of ${rows.length} values from this token (shown once, or no read:sensitive): repairs rewrite those.`;
   return {
     status: "ok",
     where,
-    message:
-      `The token can manage the variables of service ${name}. ${reach}` +
-      (withheld
-        ? " It cannot read their values (Coolify's read:sensitive permission), so repairs rewrite every value and usage is not checked."
-        : "") +
-      " The first push shows whether it may also write them.",
+    message: `The token can manage the variables of service ${name}. ${reach}${unreadable} The first push shows whether it may also write them.`,
   };
 }
