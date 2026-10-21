@@ -5,6 +5,47 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.18.0)
+
+### Integrations
+
+- **Coolify services.** An integration can now push to a Coolify service
+  (a one-click service or a Docker Compose stack), not only to an
+  application: choose **Service** on the Destination step, or pass
+  `--service <uuid>` to `varlatch sync push` and `varlatch sync check`. A
+  service's variables reach every container of the service, its databases
+  included, and the review says so. Names Coolify sets itself
+  (`SERVICE_FQDN_*`, `SERVICE_URL_*`, `SERVICE_NAME_*`, `COOLIFY_*`) cannot
+  be pushed to one, and its redeploy is a restart of the whole service,
+  off by default. With Coolify's Read sensitive permission, Varlatch reads
+  the service's compose file on every push and notes on the integration
+  card where it overrides a pushed value; such notes never fail a push.
+  See [Integrations](docs/reference/integrations.md#services).
+- **A removed name Coolify re-creates is deleted once.** When a service's
+  compose file references a name, Coolify creates it again at its next
+  start; Varlatch no longer deletes it again on every repair (nor restarts
+  the service each time), and notes it instead.
+
+### Changes for Coolify applications
+
+- **Values are written literal and multiline**, so Coolify quotes them
+  instead of expanding `$` or cutting them at ` #`. A value Coolify cannot
+  carry or would change (surrounding whitespace, a single quote, a
+  trailing backslash, `{{environment.…}}`, unquoted JSON with `$`) is no
+  longer pushed changed: the integration reports it, and the other values
+  still go. See [Values Coolify cannot carry](docs/reference/integrations.md#values-coolify-cannot-carry).
+- **A value Coolify withholds is unreadable, not empty.** Without Read
+  sensitive, Coolify lists variables without their values. Varlatch read
+  those as empty strings; repair now rewrites them without redeploying,
+  and `varlatch sync check` reports them as not compared
+  (`platform-withheld`) without disclosing the Secret to compare.
+
+### Upgrading
+
+- Migration 31 adds `sync_targets.last_notes` (the notes above). The API
+  returns them as `lastNotes` on every Sync Target, `null` where nothing
+  was inspected.
+
 ## 0.17.4 (2026-10-21)
 
 ### Self-hosting

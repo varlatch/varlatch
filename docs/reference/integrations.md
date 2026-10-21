@@ -2,7 +2,8 @@
 
 An integration pushes one environment's values to a platform that keeps
 its own copy: the Actions secrets of a GitHub repository, the environment
-variables of a Coolify application, or those of a Convex deployment. After
+variables of a Coolify application or service, or those of a Convex
+deployment. After
 that, every change and rotation in the environment reaches the platform
 without anyone re-entering it.
 
@@ -169,8 +170,10 @@ periodic repair writes them again instead.
 | --- | --- |
 | Instance URL | The address of your Coolify instance, with `https://` and nothing after the host: `https://coolify.example.com`. |
 | API token | A Coolify API token, below. |
-| Application UUID | On the integration: pick the application from those of the token's team, or paste the last part of its address in Coolify (`…/application/<uuid>`). |
-| Build time | On the integration: whether the variables exist during the build. Values compiled into a build (`VITE_*`, `NEXT_PUBLIC_*`) need it, and then end up in image layers. |
+| Application or service | On the integration: an application, or a service (a one-click service or a Docker Compose stack), below. |
+| Application UUID | For an application: pick it from those of the token's team, or paste the last part of its address in Coolify (`…/application/<uuid>`). |
+| Service UUID | For a service: pick it, or paste the last part of its address in Coolify (`…/service/<uuid>`). |
+| Build time | For an application: whether the variables exist during the build. Values compiled into a build (`VITE_*`, `NEXT_PUBLIC_*`) need it, and then end up in image layers. |
 
 Then, in Coolify:
 
@@ -184,10 +187,70 @@ Then, in Coolify:
    integration redeploys after changes. Check the selected permissions
    before you create it: in some versions, ticking Deploy clears the
    others.
+4. Add **Read sensitive** if Varlatch should read values back. Without
+   it, Coolify lists variables without their values: Varlatch's periodic
+   repair then writes every value again instead of fixing only what
+   changed, `varlatch sync check` reports those values as not compared,
+   and a service's compose file cannot be checked (below).
 
-A Coolify token reaches every application of its team, so one connection
-per instance is the honest unit. Create a token for Varlatch alone, so you
-can revoke it on its own.
+A Coolify token reaches every application and service of its team, so one
+connection per instance is the honest unit. Create a token for Varlatch
+alone, so you can revoke it on its own.
+
+### Services
+
+A Coolify service runs several containers from one compose file, and its
+variables belong to the whole service: Coolify writes them into one `.env`
+that every container loads, its bundled databases included. An integration
+with a service therefore discloses each value to every container of the
+service, and to any container added later; the review step lists today's.
+
+- **Names Coolify sets itself** cannot be pushed to a service:
+  `SERVICE_FQDN_*`, `SERVICE_URL_*`, `SERVICE_NAME_*`, and `COOLIFY_*`.
+  An explicit list that names one is refused; with **All items**, exclude
+  them. A name the compose file binds to a Coolify value
+  (`DB_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}`) is Coolify's too: the
+  integration reports it and never writes or deletes it.
+- **Passwords Coolify generated** (`SERVICE_PASSWORD_*`, `SERVICE_USER_*`
+  and the like) may be pushed. A database usually reads its password only
+  when it first starts, so changing one later can cut the link between
+  the database and the containers that use it.
+- **Restart after changes** restarts the whole service, its databases
+  included; Coolify queues it. It is off unless you turn it on.
+- **Removing a name** deletes the variable once. When the compose file
+  references the name, Coolify creates it again at its next start (with
+  the compose file's default, or empty), and Varlatch leaves it there
+  rather than delete it on every repair. It does the same when it cannot
+  read the compose file. The integration card notes such names.
+
+With **Read sensitive**, Varlatch also reads the service's compose file on
+every push and notes, on the integration card, what it finds for the names
+it pushes: a container whose compose file sets the name to another value,
+which wins over the pushed one; a name no container uses; or a form it
+does not read. These are hints from the compose file, not proof of what a
+container does with a value, and they never fail a push. Only names,
+container names, and these verdicts leave the compose file; Varlatch
+stores nothing else from it.
+
+### Values Coolify cannot carry
+
+Varlatch writes every value to Coolify as literal and multiline, so
+Coolify puts it in single quotes in the `.env` it deploys instead of
+expanding `$` or cutting it at `#`. What that format cannot carry, or what
+Coolify would change on the way, is not pushed: the integration reports
+the name and the reason, and the other values still go.
+
+- leading or trailing whitespace, a trailing line break included (Coolify
+  removes it);
+- a single quote, or a trailing backslash (they break the single-quoted
+  `.env`);
+- `{{team.…}}`, `{{project.…}}`, `{{environment.…}}`, `{{server.…}}`, or
+  `{{vault.…}}` (Coolify replaces them with its shared variables);
+- a JSON object or array containing `$`, ` #`, or a line break (Coolify
+  writes JSON unquoted);
+- for a service, a `$` in a value that the compose file copies into a
+  container's settings (`${NAME:-default}`), where Docker Compose expands
+  it.
 
 ## Convex
 
@@ -228,7 +291,7 @@ is no redeploy.
 On the Destination step, Varlatch lists what the connection can reach:
 for GitHub, the repositories in its owner that the token can see, or that
 the App's installation includes, archived ones left out in both cases;
-for Coolify, the applications of the token's team. Pick one, or type it
+for Coolify, the applications or the services of the token's team. Pick one, or type it
 when it is not listed: a repository you have not created yet, or one a
 partial list leaves out (Varlatch stops reading at 1,000, or after 30
 pages of GitHub repositories, and says so). If the list cannot load, the
@@ -253,7 +316,7 @@ an instance, which answers too, does not pass.
 | --- | --- |
 | GitHub Actions | `GET /users/<owner>`; with a destination, the Actions secrets public key of the repository or environment (and the repository itself, to tell a missing environment from a repository the token cannot see) |
 | GitHub Actions, through the App | First a token for this check, from `POST /app/installations/<id>/access_tokens` (signed with the App's key); then, for the connection alone, `GET /installation/repositories?per_page=1`, and with a destination, the same requests as with a token |
-| Coolify | `GET /api/v1/version`; with a destination, `GET /api/v1/applications/<uuid>` |
+| Coolify | `GET /api/v1/version`; with an application, `GET /api/v1/applications/<uuid>`; with a service, `GET /api/v1/services/<uuid>` and `GET /api/v1/services/<uuid>/envs` (the request every push starts with: Coolify lets only team admins and owners manage a service's variables). Values in the answer are discarded; the review names the service's containers. |
 | Convex | `GET /api/check_admin_key` |
 
 Each check appears in the audit log as **Access checked**, with the
@@ -267,7 +330,7 @@ Listing destinations reads in the same way, with the same credential:
 | --- | --- |
 | GitHub Actions | `GET /users/<owner>`, then `GET /orgs/<owner>/repos` for an organization or `GET /user/repos` (filtered to the owner) for a user, 100 per page |
 | GitHub Actions, through the App | A token for the listing, then `GET /installation/repositories`, 100 per page: exactly the installation's repositories |
-| Coolify | `GET /api/v1/applications`; only each application's uuid, name, and first address are kept |
+| Coolify | `GET /api/v1/applications`, then `GET /api/v1/services`; only each application's uuid, name, and first address, and each service's uuid and name, are kept |
 
 A listing appears in the audit log as **Destinations listed**, with how
 many it found and never their names. Through the API, it is
