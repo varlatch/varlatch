@@ -520,6 +520,7 @@ async function reconcileUnderLease(
       return LEASE_LOST;
     }
   }
+
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,
