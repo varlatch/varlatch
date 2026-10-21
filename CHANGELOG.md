@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.17.4)
+## 0.17.4 (2026-10-21)
 
 ### Self-hosting
 
@@ -20,11 +20,18 @@ fixes.
 
 ### Dependencies
 
-- `@modelcontextprotocol/sdk` 1.32.1, `hono` 4.13.13, and `vite` 7.3.7,
-  for newly published advisories. None reaches Varlatch as it uses these
+- `@modelcontextprotocol/sdk` 1.32.1, `hono` 4.13.13, and `vite` 7.3.7
+  (8.3.4 for the documentation site), for newly published advisories. None reaches Varlatch as it uses these
   libraries: its MCP server speaks only over stdio, `varlatchd` does not
   serve static files through `hono`, and the `vite` issues are in a
   Windows-only development path.
+
+### Documentation
+
+- [The `.env.schema` contract file](docs/reference/env-schema.md) says
+  where its format comes from: @env-spec, created by DMNO for Varlock.
+  Varlatch reads the subset the page lists with its own parser and does not
+  follow later changes to @env-spec.
 
 ## 0.17.3 (2026-10-13)
 
