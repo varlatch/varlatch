@@ -100,6 +100,25 @@ function isSelfReference(value: string, name: string): boolean {
 
 type Verdict = "delivered" | "shadowed" | "owned" | "unknown";
 
+/**
+ * The names whose stored value Coolify copies into the generated compose
+ * file for this entry, where Docker Compose expands `$` in it (Coolify's
+ * serviceParser: an empty value takes the stored one; a `$…` value other
+ * than the bare `NAME: ${NAME}` sets each variable it names to its stored
+ * value). Over-approximates the nested defaults.
+ */
+function copiedNames(key: string, value: EnvValue): string[] {
+  if (value === "") return [key];
+  if (typeof value !== "string" || !value.startsWith("$")) return [];
+  const content = referenceContent(value);
+  if (content === key || content.startsWith("SERVICE_")) return [];
+  const names = new Set<string>();
+  const head = /^[A-Za-z_][A-Za-z0-9_]*/.exec(content);
+  if (head) names.add(head[0]);
+  for (const m of value.matchAll(/(?<!\$)\$\{([A-Za-z_][A-Za-z0-9_]*)/g)) names.add(m[1] as string);
+  return [...names];
+}
+
 /** One container's reading of one name that its `environment:` (or build args) sets. */
 function verdictFor(name: string, value: EnvValue): Verdict {
   // Set without a value: Coolify keeps it unset in the generated file and
@@ -169,6 +188,13 @@ export function classifyComposeUsage(
   const containers = Object.keys(rawServices).sort();
   if (containers.length === 0) return unknown("the service's compose file defines no containers", names);
 
+  const copied = new Set<string>();
+  for (const container of containers) {
+    for (const [key, value] of environmentOf(rawServices[container])) {
+      for (const n of copiedNames(key, value)) copied.add(n);
+    }
+  }
+
   const report: UsageReport = { checked: true, names: new Map() };
   for (const name of names) {
     const usage: NameUsage = {};
@@ -194,6 +220,7 @@ export function classifyComposeUsage(
     // not this one; this one is owned when its own entry is.
     if (referencesName(raw, name)) usage.referenced = true;
     if (coolifyGeneratesName(name)) usage.generatedOnce = true;
+    if (copied.has(name)) usage.copiedIntoCompose = true;
     if (shadowed.length > 0) usage.shadowedIn = shadowed;
     if (unknownIn.length > 0) usage.unknownIn = unknownIn;
     if (!reaches && !usage.owned && shadowed.length === 0 && unknownIn.length === 0) usage.notDeliveredTo = containers;

@@ -27,7 +27,7 @@ describe("Coolify service names", () => {
 });
 
 describe("compose usage", () => {
-  it("reads a reference to the name itself as delivered, whatever its default or required marker", () => {
+  it("reads a reference to the name itself as delivered; with a default or required marker, Coolify copies the value in", () => {
     const raw = `services:
   app:
     environment:
@@ -41,9 +41,10 @@ describe("compose usage", () => {
 `;
     const report = classify(raw, ["A", "B", "C", "D", "E"]);
     expect(report.checked).toBe(true);
-    for (const name of ["A", "B", "C", "D", "E"]) {
-      expect(report.names.get(name)).toEqual({ referenced: true });
-    }
+    // The bare reference keeps ${NAME} for Compose to read from .env.
+    for (const name of ["A", "B"]) expect(report.names.get(name)).toEqual({ referenced: true });
+    // With a marker, Coolify writes the stored value into the compose file itself.
+    for (const name of ["C", "D", "E"]) expect(report.names.get(name)).toEqual({ referenced: true, copiedIntoCompose: true });
   });
 
   it("names the containers where a literal or another variable wins over .env", () => {
@@ -68,8 +69,9 @@ describe("compose usage", () => {
     expect(report.names.get("URL")).toEqual({ shadowedIn: ["app"] });
     // Delivered to app by its reference, overridden in db by a literal.
     expect(report.names.get("LISTED_ELSEWHERE")).toEqual({ referenced: true, shadowedIn: ["db"] });
-    // Used through other names: referenced, and reaching every container through .env.
-    expect(report.names.get("OTHER")).toEqual({ referenced: true });
+    // Used through other names. Coolify copies OTHER's value in for ALIAS;
+    // HOST is interpolated by Compose from .env inside a literal string.
+    expect(report.names.get("OTHER")).toEqual({ referenced: true, copiedIntoCompose: true });
     expect(report.names.get("HOST")).toEqual({ referenced: true });
   });
 
@@ -104,8 +106,8 @@ describe("compose usage", () => {
     expect(report.names.get("BUILD_REF")).toEqual({ unknownIn: ["app"] });
     expect(report.names.get("LITERAL")).toEqual({ shadowedIn: ["app"] });
     expect(report.names.get("BARE")).toEqual({ unknownIn: ["app"] });
-    // An empty value takes the stored one.
-    expect(report.names.get("EMPTY")).toEqual({});
+    // An empty value takes the stored one, copied into the compose file.
+    expect(report.names.get("EMPTY")).toEqual({ copiedIntoCompose: true });
   });
 
   it("says when a name reaches no container: no reference, and no container loads .env", () => {

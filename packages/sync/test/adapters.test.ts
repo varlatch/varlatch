@@ -221,9 +221,10 @@ describe("coolify adapter", () => {
       "POST https://coolify.example.com/api/v1/applications/app123/envs",
     ]);
     // No build-time option and no flag vocabulary on the rows: production
-    // scope only, nothing else sent — Coolify's own defaults apply.
-    expect(bodyOf(calls[1]!)).toEqual({ key: "EXISTING", value: "new", is_preview: false });
-    expect(bodyOf(calls[2]!)).toEqual({ key: "FRESH", value: "v", is_preview: false });
+    // scope, and literal (the flag every version names); a create guesses
+    // the current vocabulary, which also has multiline.
+    expect(bodyOf(calls[1]!)).toEqual({ key: "EXISTING", value: "new", is_preview: false, is_literal: true });
+    expect(bodyOf(calls[2]!)).toEqual({ key: "FRESH", value: "v", is_preview: false, is_literal: true, is_multiline: true });
 
     const del = await coolifyAdapter.deleteNames(req, ["EXISTING", "ABSENT"]);
     expect(del).toEqual([
@@ -272,7 +273,7 @@ describe("coolify adapter", () => {
     expect(deletes).toEqual(["https://coolify.example.com/api/v1/applications/app123/envs/prod1"]);
   });
 
-  it("mirrors an existing row's flags on PATCH so a value update never strips them (current vocabulary)", async () => {
+  it("mirrors an existing row's flags on PATCH, and makes the value literal and multiline (current vocabulary)", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetchImpl = fakeFetch((url, init) => {
       if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
@@ -300,15 +301,16 @@ describe("coolify adapter", () => {
       key: "VITE_API",
       value: "new",
       is_preview: false,
+      // Varlatch's values are delivered as stored: quoted, never expanded.
       is_literal: true,
-      is_multiline: false,
+      is_multiline: true,
       is_shown_once: false,
       is_buildtime: true,
       is_runtime: false,
     });
   });
 
-  it("mirrors flags on PATCH in the legacy vocabulary and sends only fields legacy PATCH accepts", async () => {
+  it("mirrors flags on PATCH in the legacy vocabulary, literal, and sends only fields legacy PATCH accepts", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const fetchImpl = fakeFetch((url, init) => {
       if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
@@ -335,7 +337,7 @@ describe("coolify adapter", () => {
       key: "VITE_API",
       value: "new",
       is_preview: false,
-      is_literal: false,
+      is_literal: true,
       is_build_time: true,
     });
   });
@@ -361,11 +363,13 @@ describe("coolify adapter", () => {
       key: "NEW",
       value: "n",
       is_preview: false,
+      is_literal: true,
+      is_multiline: true,
       is_buildtime: true,
       is_runtime: true,
     });
 
-    // Legacy instance: the flag has its old name and nothing else is sent.
+    // Legacy instance: the flag has its old name, and only literal besides.
     calls.length = 0;
     const legacy = fakeFetch((url, init) => {
       if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
@@ -376,7 +380,7 @@ describe("coolify adapter", () => {
     await coolifyAdapter.writeValues(baseReq(legacy, { applicationUuid: "app123", buildTime: "true" }), [
       { name: "NEW", value: "n" },
     ]);
-    expect(bodyOf(calls[1]!)).toEqual({ key: "NEW", value: "n", is_preview: false, is_build_time: true });
+    expect(bodyOf(calls[1]!)).toEqual({ key: "NEW", value: "n", is_preview: false, is_literal: true, is_build_time: true });
   });
 
   it("buildTime=false keeps a key reachable at runtime", async () => {
@@ -422,7 +426,19 @@ describe("coolify adapter", () => {
       "legacy",
       "legacy",
     ]);
-    expect(posts[2]).toEqual({ key: "B", value: "2", is_preview: false, is_build_time: true });
+    expect(posts[2]).toEqual({ key: "B", value: "2", is_preview: false, is_literal: true, is_build_time: true });
+  });
+
+  it("falls back to the legacy vocabulary without a build-time option too, since multiline is always sent", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = fakeFetch((url, init) => {
+      if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") return { status: 200, body: [] };
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return "is_multiline" in body ? { status: 422 } : { status: 201 };
+    }, calls);
+    const outcomes = await coolifyAdapter.writeValues(baseReq(fetchImpl), [{ name: "A", value: "1" }]);
+    expect(outcomes).toEqual([{ name: "A", ok: true }]);
+    expect(calls.filter((c) => c.init.method === "POST").map(bodyOf).at(-1)).toEqual({ key: "A", value: "1", is_preview: false, is_literal: true });
   });
 
   it("stops a batch when shouldAbort reports lost authority", async () => {
@@ -490,6 +506,61 @@ describe("coolify adapter", () => {
     expect(calls.filter((c) => c.init.method === "POST").map((c) => bodyOf(c).key)).toEqual(["INNER", "NBSP"]);
   });
 
+  it("refuses what Coolify's single-quoted .env cannot carry, and what it would interpret", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = fakeFetch((url, init) => ((init.method ?? "GET") === "GET" ? { status: 200, body: [] } : { status: 201 }), calls);
+    const cases: [string, string, string | null][] = [
+      ["QUOTE", "it's", "single quote"],
+      ["BACKSLASH_END", "C:\\path\\", "backslash"],
+      ["THREE_BACKSLASHES", "a\\\\\\", "backslash"],
+      ["SHARED", "{{ environment.DB_URL }}", "shared variables"],
+      ["VAULT", "x{{vault.KEY}}y", "shared variables"],
+      ["JSON_DOLLAR", '{"a":"$b"}', "JSON"],
+      ["JSON_HASH", '["a #b"]', "JSON"],
+      ["JSON_LINES", '{\n"a": 1\n}', "JSON"],
+      // Delivered as stored under literal quoting:
+      ["DOLLARS", "pa$$word$HOME${X}", null],
+      ["DOUBLE_QUOTES", 'say "hi"', null],
+      ["BACKSLASH_PAIR", "a\\\\", null],
+      ["HASH", "abc #x", null],
+      ["PEM", "-----BEGIN KEY-----\nabc\n-----END KEY-----", null],
+      ["JSON_PLAIN", '{"a":"b","n":1}', null],
+      ["BRACES", "{{notatype}} {{ other.x }}", null],
+    ];
+    const outcomes = await coolifyAdapter.writeValues(
+      baseReq(fetchImpl),
+      cases.map(([name, value]) => ({ name, value })),
+    );
+    for (const [i, [name, , problem]] of cases.entries()) {
+      const outcome = outcomes[i]!;
+      expect(outcome.name).toBe(name);
+      if (problem === null) expect(outcome).toEqual({ name, ok: true });
+      else {
+        expect(outcome.ok).toBe(false);
+        expect(outcome.error).toContain(problem);
+      }
+    }
+    // Nothing is sent for a refused value.
+    expect(calls.filter((c) => c.init.method === "POST").map((c) => bodyOf(c).key)).toEqual(
+      cases.filter(([, , p]) => p === null).map(([n]) => n),
+    );
+  });
+
+  it("refuses $ in a service value its compose file copies in, where Compose would expand it", async () => {
+    const fetchImpl = fakeFetch((url, init) => ((init.method ?? "GET") === "GET" ? { status: 200, body: [] } : { status: 201 }));
+    const req = {
+      ...baseReq(fetchImpl, { serviceUuid: "svc123" }),
+      usage: { checked: true, names: new Map([["COPIED", { copiedIntoCompose: true }], ["PLAIN", {}]]) },
+    };
+    const outcomes = await coolifyAdapter.writeValues(req, [
+      { name: "COPIED", value: "pa$word" },
+      { name: "COPIED", value: "no-dollar" },
+      { name: "PLAIN", value: "pa$word" },
+    ]);
+    expect(outcomes.map((o) => o.ok)).toEqual([false, true, true]);
+    expect(outcomes[0]!.error).toContain("expands $");
+  });
+
   it("redeploys with a forced rebuild by default, restarts on request, and reports failure", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const ok = fakeFetch(() => ({ status: 200, body: { message: "queued" } }), calls);
@@ -534,7 +605,7 @@ describe("coolify adapter", () => {
       expect(coolifyAdapter.validateName("1BAD", svc)).toMatch(/letters/);
     });
 
-    it("writes key and value only, and deletes by env uuid, on the service's routes", async () => {
+    it("writes literal values, and deletes by env uuid, on the service's routes", async () => {
       const calls: { url: string; init: RequestInit }[] = [];
       const fetchImpl = fakeFetch((url, init) => {
         if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
@@ -553,9 +624,9 @@ describe("coolify adapter", () => {
         "PATCH https://coolify.example.com/api/v1/services/svc123/envs",
         "POST https://coolify.example.com/api/v1/services/svc123/envs",
       ]);
-      // A service PATCH keeps every flag it is not sent: nothing to mirror.
-      expect(bodyOf(calls[1]!)).toEqual({ key: "EXISTING", value: "new" });
-      expect(bodyOf(calls[2]!)).toEqual({ key: "FRESH", value: "v" });
+      // Literal and multiline; a service PATCH keeps every other flag.
+      expect(bodyOf(calls[1]!)).toEqual({ key: "EXISTING", value: "new", is_literal: true, is_multiline: true });
+      expect(bodyOf(calls[2]!)).toEqual({ key: "FRESH", value: "v", is_literal: true, is_multiline: true });
 
       await coolifyAdapter.deleteNames(req, ["EXISTING"]);
       expect(calls.at(-1)).toMatchObject({ url: "https://coolify.example.com/api/v1/services/svc123/envs/e1", init: { method: "DELETE" } });

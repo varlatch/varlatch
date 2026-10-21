@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac } from "node:crypto";
-import { getAdapter, type NameOutcome, type SyncItem } from "@varlatch/sync";
+import { getAdapter, type NameOutcome, type NameUsage, type SyncItem, type UsageReport } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, decryptValue, syncFingerprintKey } from "../crypto/hierarchy.js";
@@ -386,9 +386,34 @@ async function reconcileUnderLease(
     });
   }
 
+  // Usage (ADR-0031 amendment 2026-10-21): how the destination itself uses
+  // the names this run may write or delete, read before the diff. A name
+  // the platform sets itself is neither written nor deleted; the rest are
+  // notes, which never fail the run.
+  const flags = [...rendered.flags];
+  const notes: string[] = [];
+  let usage: UsageReport | null = null;
+  if (adapter.inspectUsage) {
+    const names = [...new Set([...desired.keys(), ...ledger.keys()])];
+    usage = await adapter
+      .inspectUsage(await adapterRequest(ctx, org, target, live, opts), names)
+      .catch(() => ({ checked: false, reason: "the destination could not be read", names: new Map<string, NameUsage>() }));
+  }
+  const usageOf = (name: string): NameUsage => usage?.names.get(name) ?? {};
+  if (usage && !usage.checked) notes.push(`usage not checked: ${usage.reason ?? "unknown"}`);
+  for (const destName of [...desired.keys()]) {
+    if (usageOf(destName).owned) {
+      desired.delete(destName);
+      flags.push(`${destName}: the platform sets this name itself`);
+    } else {
+      notes.push(...usageNotes(destName, usageOf(destName)));
+    }
+  }
+
   // Verify-and-fix (§6): an adapter that can read values back repairs only
-  // actual drift instead of force-writing everything.
-  let remote: Map<string, string> | null = null;
+  // actual drift instead of force-writing everything. A value the platform
+  // withholds reads as null: it never matches, so it is rewritten.
+  let remote: Map<string, string | null> | null = null;
   if (force && adapter.supportsReadBack && adapter.readValues) {
     try {
       remote = await adapter.readValues(await adapterRequest(ctx, org, target, live, opts));
@@ -421,10 +446,14 @@ async function reconcileUnderLease(
   const deletes: string[] = [];
   for (const [destName, entry] of ledger) {
     if (desired.has(destName)) continue;
+    // The platform's own name is never Varlatch's to delete.
+    if (usageOf(destName).owned) continue;
     if (entry.state === "tombstone") {
       // Re-apply tombstoned deletions on repair or when a stale write may
-      // have resurrected the name (§3/§6).
-      if (force && (!remote || remote.has(destName))) deletes.push(destName);
+      // have resurrected the name (§3/§6) — except a name the platform
+      // re-creates itself from its configuration: deleting it again would
+      // fight the platform (and restart a service each time).
+      if (force && (!remote || remote.has(destName)) && !usageOf(destName).referenced) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
@@ -434,6 +463,11 @@ async function reconcileUnderLease(
   // A repair write whose content matches the ledger fingerprint is not a
   // change and triggers no redeploy (§5).
   const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
+  for (const w of changingWrites) {
+    if (usageOf(w.destName).generatedOnce) {
+      notes.push(`${w.destName}: the platform generated it once; a database may read it only on first start`);
+    }
+  }
 
   // Nothing left the process for an adoption, so no disclosure event and no
   // redeploy — only ownership bookkeeping. A fence here still aborts: the
@@ -446,8 +480,8 @@ async function reconcileUnderLease(
 
   if (writes.length === 0 && deletes.length === 0) {
     return {
-      ok: rendered.flags.length === 0,
-      result: rendered.flags.length > 0 ? flagSummary(rendered.flags) : "converged",
+      ok: flags.length === 0,
+      result: resultText(flags.length > 0 ? flagSummary(flags) : "converged", notes, ""),
     };
   }
 
@@ -505,6 +539,9 @@ async function reconcileUnderLease(
     }
     deleteOutcomes = await adapter.deleteNames(req, deletes);
     for (const o of deleteOutcomes) {
+      if (o.ok && usageOf(o.name).referenced) {
+        notes.push(`${o.name}: deleted; the platform keeps the name, which its configuration references`);
+      }
       await ledgerSet(
         ctx,
         target.id,
@@ -525,9 +562,9 @@ async function reconcileUnderLease(
   // Per-item failures from rendering (unresolved references, unstorable
   // names, pending re-affirmation) degrade the Target too.
   const result =
-    failed.length === 0 && rendered.flags.length === 0
+    failed.length === 0 && flags.length === 0
       ? "ok"
-      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...rendered.flags].join("; ")}`.slice(0, 500);
+      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`;
 
   await recordAuditEvent(ctx.db, {
     eventType: "sync.push_result",
@@ -566,9 +603,31 @@ async function reconcileUnderLease(
   }
 
   return {
-    ok: failed.length === 0 && rendered.flags.length === 0,
-    result: `${result}${redeployNote}`.slice(0, 500),
+    ok: failed.length === 0 && flags.length === 0,
+    result: resultText(result, notes, redeployNote),
   };
+}
+
+/** Notes for a name the run keeps managing: hints, never failures. */
+function usageNotes(name: string, usage: NameUsage): string[] {
+  const notes: string[] = [];
+  if (usage.shadowedIn?.length) notes.push(`${name}: the compose file sets it in ${usage.shadowedIn.join(", ")}, which wins`);
+  if (usage.notDeliveredTo?.length) notes.push(`${name}: no container uses it`);
+  if (usage.unknownIn?.length) notes.push(`${name}: not checked in ${usage.unknownIn.join(", ")} (a form Varlatch does not read)`);
+  return notes;
+}
+
+/**
+ * `last_result`: the outcome, then "; notes: …" (hints that never fail a
+ * run), then a redeploy failure, which the dashboard reads at the end. The
+ * whole stays within 500 characters, the redeploy note intact.
+ */
+function resultText(result: string, notes: string[], redeployNote: string): string {
+  const tail = redeployNote.slice(0, 200);
+  const room = 500 - tail.length;
+  let text = notes.length > 0 ? `${result}; notes: ${[...new Set(notes)].join("; ")}` : result;
+  if (text.length > room) text = `${text.slice(0, room - 1)}…`;
+  return `${text}${tail}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +670,7 @@ export async function renderEffectiveOutput(
   org: OrgRow,
   project: ProjectRow,
   env: EnvironmentRow,
-  target: Pick<SyncTargetRow, "mapping">,
+  target: Pick<SyncTargetRow, "mapping" | "destination">,
   platform: string,
   /** Commits the audit event for exactly these versions; decryption follows only if it succeeds. */
   beforeDecrypt: (versions: { name: string; versionId: string }[]) => Promise<void>,
@@ -627,7 +686,7 @@ export async function renderEffectiveOutput(
     const item = resolved.find((i) => i.name === name);
     if (!item) return; // not in effective output: convergence handles removal
     const destName = adapter.canonicalizeName(rename ?? name);
-    const problem = adapter.validateName(destName);
+    const problem = adapter.validateName(destName, target.destination);
     if (problem) {
       flags.push(`${name}: unstorable name`);
       return;

@@ -74,6 +74,11 @@ export interface AdapterRequest {
    * says nothing, which does not mean the credential never expires.
    */
   onCredentialExpiry?: (expiresAt: string) => void;
+  /**
+   * What `inspectUsage` reported for this run, when the caller ran it:
+   * lets a write refuse a value the destination would change.
+   */
+  usage?: UsageReport | null;
 }
 
 export interface PlatformAdapter {
@@ -164,6 +169,12 @@ export interface NameUsage {
   generatedOnce?: boolean;
   /** Containers whose configuration uses the name in a form outside the rules. */
   unknownIn?: string[];
+  /**
+   * The platform copies the stored value into the configuration it runs,
+   * where `$` is expanded (a Compose default, `${NAME:-x}`): a value with
+   * `$` would arrive changed.
+   */
+  copiedIntoCompose?: boolean;
 }
 
 export interface UsageReport {

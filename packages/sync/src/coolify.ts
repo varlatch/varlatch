@@ -113,12 +113,16 @@ function buildTimeOption(destination: Record<string, string>): boolean | undefin
   return undefined;
 }
 
-/** Flags for a new key: the option when set, otherwise Coolify's default. */
+/**
+ * Flags for a new key: literal (multiline too where the vocabulary has it),
+ * so the value reaches the container as stored; the build-time option when
+ * set, otherwise Coolify's default.
+ */
 function createFlags(style: FlagStyle, buildTime: boolean | undefined): Record<string, boolean> {
-  if (buildTime === undefined) return {};
-  return style === "current"
-    ? { is_buildtime: buildTime, is_runtime: true }
-    : { is_build_time: buildTime };
+  if (style === "current") {
+    return { is_literal: true, is_multiline: true, ...(buildTime === undefined ? {} : { is_buildtime: buildTime, is_runtime: true }) };
+  }
+  return { is_literal: true, ...(buildTime === undefined ? {} : { is_build_time: buildTime }) };
 }
 
 /**
@@ -131,8 +135,10 @@ function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<st
   const style = flagStyleOf(row);
   if (style === "current") {
     return {
-      is_literal: Boolean(row.is_literal),
-      is_multiline: Boolean(row.is_multiline),
+      // Literal and multiline: Coolify then quotes the value instead of
+      // expanding it (ADR-0031 amendment 2026-10-21, value fidelity).
+      is_literal: true,
+      is_multiline: true,
       is_shown_once: Boolean(row.is_shown_once),
       is_buildtime: buildTime ?? Boolean(row.is_buildtime),
       // A runtime-only request must stay reachable at runtime; otherwise
@@ -142,12 +148,12 @@ function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<st
   }
   if (style === "legacy") {
     return {
-      is_literal: Boolean(row.is_literal),
+      is_literal: true,
       is_build_time: buildTime ?? Boolean(row.is_build_time),
     };
   }
-  // Unknown vocabulary: send nothing we cannot name.
-  return {};
+  // Unknown vocabulary: only the flag every version names.
+  return { is_literal: true };
 }
 
 async function request(
@@ -233,13 +239,48 @@ async function listEnvs(req: AdapterRequest): Promise<CoolifyEnv[]> {
 
 /** What PHP's trim() removes, which Coolify applies to every value it stores and reads. */
 const PHP_TRIMMED = /^[ \t\n\r\0\x0B]|[ \t\n\r\0\x0B]$/;
+/** Coolify's shared-variable types, replaced inside `{{type.NAME}}` (and `vault` for a linked secret manager). */
+const SHARED_TYPES = new Set(["team", "project", "environment", "server", "vault"]);
 
-/** Why Coolify cannot hold this value exactly as given, or null when it can. */
-function unstorableValue(value: string): string | null {
+/**
+ * Why a value would not reach the destination's containers exactly as
+ * given, or null when it does. Varlatch writes every value literal and
+ * multiline, so Coolify puts it in single quotes, unescaped, in the `.env`
+ * Docker Compose reads; what that cannot carry is refused rather than
+ * delivered changed (ADR-0031 amendment 2026-10-21, value fidelity).
+ */
+function undeliverableValue(value: string, copiedIntoCompose: boolean): string | null {
   if (PHP_TRIMMED.test(value)) {
     return "Coolify removes leading and trailing whitespace from values, so it would store a different value";
   }
+  if (value.includes("'")) {
+    return "Coolify writes values in single quotes without escaping, so a value with a single quote breaks the .env it deploys";
+  }
+  if (/(?:^|[^\\])(?:\\\\)*\\$/.test(value)) {
+    return "Coolify writes values in single quotes, so a value ending in a backslash breaks the .env it deploys";
+  }
+  for (const [, inner] of value.matchAll(/\{\{(.*?)\}\}/g)) {
+    const type = /^([^.]*)\./.exec((inner ?? "").trim())?.[1];
+    if (type !== undefined && SHARED_TYPES.has(type)) {
+      return "Coolify replaces {{" + type + ".…}} with one of its shared variables, so it would deliver a different value";
+    }
+  }
+  if ((value.startsWith("{") || value.startsWith("[")) && isJson(value) && /[$\n]| #/.test(value)) {
+    return "Coolify writes JSON values unquoted, where Docker Compose changes $, \" #\" and line breaks";
+  }
+  if (copiedIntoCompose && value.includes("$")) {
+    return "The service's compose file copies this value where Docker Compose expands $, so it would arrive changed";
+  }
   return null;
+}
+
+function isJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Coolify's labels for a service's containers (its applications and databases), bounded. */
@@ -362,7 +403,7 @@ export const coolifyAdapter: PlatformAdapter = {
     const outcomes: NameOutcome[] = [];
     for (const item of items) {
       if (req.shouldAbort && (await req.shouldAbort())) break;
-      const problem = unstorableValue(item.value);
+      const problem = undeliverableValue(item.value, Boolean(req.usage?.names.get(item.name)?.copiedIntoCompose));
       if (problem) {
         // Nothing is sent: a value Coolify would change is not delivered.
         outcomes.push({ name: item.name, ok: false, error: problem });
@@ -371,9 +412,14 @@ export const coolifyAdapter: PlatformAdapter = {
       const row = existing.get(item.name);
       let res: Response;
       if (resource.kind === "service") {
-        // A service PATCH keeps every flag it is not sent; a create gets
-        // Coolify's defaults. Key and value are all there is to say.
-        res = await request(req, row ? "PATCH" : "POST", path, { key: item.name, value: item.value });
+        // Literal and multiline, as for an application; a service PATCH
+        // keeps every flag it is not sent.
+        res = await request(req, row ? "PATCH" : "POST", path, {
+          key: item.name,
+          value: item.value,
+          is_literal: true,
+          is_multiline: true,
+        });
       } else if (row) {
         res = await request(req, "PATCH", path, {
           key: item.name,
@@ -390,7 +436,7 @@ export const coolifyAdapter: PlatformAdapter = {
             ...createFlags(s, buildTime),
           });
         res = await create(style ?? "current");
-        if (res.status === 422 && buildTime !== undefined && style === undefined) {
+        if (res.status === 422 && style === undefined) {
           // Nothing was written (validation rejected the unknown field):
           // retry once in the legacy vocabulary and remember it.
           style = "legacy";
