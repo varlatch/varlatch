@@ -20,6 +20,9 @@ fixes.
   off by default. With Coolify's Read sensitive permission, Varlatch reads
   the service's compose file on every push and notes on the integration
   card where it overrides a pushed value; such notes never fail a push.
+  Without it, a service value containing `$` is not pushed, since Varlatch
+  cannot rule out that the compose file copies it where Docker Compose
+  expands `$`.
   See [Integrations](docs/reference/integrations.md#services).
 - **A removed name Coolify re-creates is deleted once.** When a service's
   compose file references a name, Coolify creates it again at its next
@@ -29,11 +32,13 @@ fixes.
 ### Changes for Coolify applications
 
 - **Values are written literal and multiline**, so Coolify quotes them
-  instead of expanding `$` or cutting them at ` #`. A value Coolify cannot
-  carry or would change (surrounding whitespace, a single quote, a
-  trailing backslash, `{{environment.…}}`, unquoted JSON with `$`) is no
-  longer pushed changed: the integration reports it, and the other values
-  still go. See [Values Coolify cannot carry](docs/reference/integrations.md#values-coolify-cannot-carry).
+  instead of expanding `$` or cutting them at ` #`. Existing variables are
+  written again once, on the next periodic repair, to get these settings.
+  A value Coolify cannot carry or would change (surrounding whitespace, a
+  single quote, a trailing backslash, `{{environment.…}}`, unquoted JSON
+  with `$`) is no longer pushed changed, nor accepted when Coolify already
+  holds it: the integration reports it and keeps what Coolify has, and the
+  other values still go. See [Values Coolify cannot carry](docs/reference/integrations.md#values-coolify-cannot-carry).
 - **A value Coolify withholds is unreadable, not empty.** Without Read
   sensitive, Coolify lists variables without their values. Varlatch read
   those as empty strings; repair now rewrites them without redeploying,

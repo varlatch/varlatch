@@ -236,9 +236,13 @@ stores nothing else from it.
 
 Varlatch writes every value to Coolify as literal and multiline, so
 Coolify puts it in single quotes in the `.env` it deploys instead of
-expanding `$` or cutting it at `#`. What that format cannot carry, or what
-Coolify would change on the way, is not pushed: the integration reports
-the name and the reason, and the other values still go.
+expanding `$` or cutting it at `#`. A variable Varlatch manages that is
+stored without those settings (one written before, or by hand) is written
+again on the next periodic repair, even when its value already matches.
+What that format cannot carry, or what Coolify would change on the way,
+is not pushed, even when Coolify already holds that value: the integration
+reports the name and the reason, keeps what Coolify has, and the other
+values still go.
 
 - leading or trailing whitespace, a trailing line break included (Coolify
   removes it);
@@ -248,9 +252,11 @@ the name and the reason, and the other values still go.
   `{{vault.…}}` (Coolify replaces them with its shared variables);
 - a JSON object or array containing `$`, ` #`, or a line break (Coolify
   writes JSON unquoted);
-- for a service, a `$` in a value that the compose file copies into a
-  container's settings (`${NAME:-default}`), where Docker Compose expands
-  it.
+- for a service, a `$`, unless Varlatch read the service's compose file
+  (with **Read sensitive**) and found that it does not copy the value into
+  a container's settings, where Docker Compose expands it: a default
+  (`${NAME:-default}`), another name's value (`OTHER: ${NAME}`), an empty
+  value, or a bare `- NAME` in a list.
 
 ## Convex
 
