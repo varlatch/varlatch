@@ -1149,7 +1149,9 @@ export async function updateTarget(
         `UPDATE sync_targets
          SET connection_id = $1, destination = $2, canonical_destination = $3, mapping = $4,
              remove_orphans = $5, redeploy = $6, needs_sync = true, next_attempt_at = NULL,
-             version = version + 1, updated_at = now()
+             version = version + 1, updated_at = now(),
+             -- Notes describe the old destination: they go with it.
+             last_notes = CASE WHEN $8 THEN NULL ELSE last_notes END
          WHERE id = $7 RETURNING ${TARGET_COLUMNS}`,
         [
           connection.id,
@@ -1159,6 +1161,7 @@ export async function updateTarget(
           patch.removeOrphans ?? current.remove_orphans,
           patch.redeploy ?? current.redeploy,
           current.id,
+          destinationChanged,
         ],
       );
     } catch (err) {

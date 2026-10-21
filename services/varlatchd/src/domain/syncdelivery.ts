@@ -205,6 +205,8 @@ export async function reconcileTarget(
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  // The notes of a completed inspection, kept for a run that throws later.
+  const inspected: { notes?: TargetNote[] } = {};
 
   try {
     // Connection and org facts also post-lease: a re-point that raced the
@@ -241,7 +243,7 @@ export async function reconcileTarget(
 
     let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
     try {
-      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts);
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected);
     } finally {
       // Whatever the outcome, even a throw (a refused public-key fetch), the
       // platform may have said when the credential expires; recorded only if
@@ -272,7 +274,7 @@ export async function reconcileTarget(
         fenced = false; // cannot confirm a successor: reschedule, guarded
       }
       if (!fenced) {
-        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation).catch(
+        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
           (e) => console.error("sync interruption bookkeeping failed:", e),
         );
       }
@@ -299,6 +301,7 @@ export async function reconcileTarget(
       err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 300) : "error",
       true,
       generation,
+      inspected.notes,
     ).catch((e) => console.error("sync failure bookkeeping failed:", e));
   } finally {
     await ctx.db
@@ -335,6 +338,7 @@ async function reconcileUnderLease(
   generation: number,
   force: boolean,
   opts: SyncRunOptions,
+  inspected: { notes?: TargetNote[] } = {},
 ): Promise<RunOutcome> {
   const adapter = getAdapter(live.platform);
   const org = {
@@ -412,10 +416,18 @@ async function reconcileUnderLease(
   }
   const usageOf = (name: string): NameUsage => usage?.names.get(name) ?? {};
   if (usage && !usage.checked) notes.push({ code: "usage-unchecked", reason: usage.reason ?? "unknown" });
-  for (const destName of [...desired.keys()]) {
-    if (usageOf(destName).owned) {
+  // Names held this run: neither written nor deleted. The platform's own,
+  // and values it would not deliver as given (checked here, before the
+  // diff, so a value already stored is held to the same rule).
+  const held = new Set<string>();
+  for (const [destName, want] of [...desired]) {
+    const problem = usageOf(destName).owned
+      ? "the platform sets this name itself"
+      : (adapter.valueProblem?.(target.destination, destName, want.value, usage) ?? null);
+    if (problem) {
       desired.delete(destName);
-      flags.push(`${destName}: the platform sets this name itself`);
+      held.add(destName);
+      flags.push(`${destName}: ${problem}`);
     } else {
       notes.push(...usageNotes(destName, usageOf(destName)));
     }
@@ -433,10 +445,20 @@ async function reconcileUnderLease(
   // Verify-and-fix (§6): an adapter that can read values back repairs only
   // actual drift instead of force-writing everything. A value the platform
   // withholds reads as null: it never matches, so it is rewritten.
+  // A name stored in another form than the adapter writes (a Coolify
+  // variable without the literal flags) is rewritten even when it matches.
   let remote: Map<string, string | null> | null = null;
-  if (force && adapter.supportsReadBack && adapter.readValues) {
+  let rewrite = new Set<string>();
+  if (force && adapter.supportsReadBack && (adapter.readRemote || adapter.readValues)) {
     try {
-      remote = await adapter.readValues(await adapterRequest(ctx, org, target, live, opts));
+      const request = await adapterRequest(ctx, org, target, live, opts);
+      if (adapter.readRemote) {
+        const state = await adapter.readRemote(request);
+        remote = state.values;
+        rewrite = state.rewrite;
+      } else {
+        remote = (await adapter.readValues!(request));
+      }
     } catch {
       remote = null; // fall back to force-writes
     }
@@ -454,7 +476,7 @@ async function reconcileUnderLease(
       entry && entry.state === "written" && entry.fingerprint === want.fingerprint;
     const needsWrite = force
       ? remote
-        ? remote.get(destName) !== want.value
+        ? remote.get(destName) !== want.value || rewrite.has(destName)
         : true
       : !converged || ambiguous.has(destName);
     if (needsWrite) writes.push({ destName, ...want });
@@ -465,7 +487,7 @@ async function reconcileUnderLease(
 
   const deletes: string[] = [];
   for (const [destName, entry] of ledger) {
-    if (desired.has(destName)) continue;
+    if (desired.has(destName) || held.has(destName)) continue;
     if (notOurs(destName)) continue;
     if (entry.state === "tombstone") {
       if (mayRecreate(destName)) notes.push({ code: "kept-by-platform", name: destName });
@@ -493,6 +515,7 @@ async function reconcileUnderLease(
   }
 
   const runNotes = usage !== null ? boundNotes(notes) : undefined;
+  if (runNotes !== undefined) inspected.notes = runNotes;
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,

@@ -36,25 +36,69 @@ export function coolifyGeneratesName(name: string): boolean {
 
 type EnvValue = string | number | boolean | null | object;
 
-/** A container's `environment:` merged with its `build.args`, as Coolify's convertToKeyValueCollection reads them. */
+/** One entry of a PHP array: a string key, or a list position (null). */
+type PhpEntry = { key: string | null; value: unknown };
+
+/** A YAML sequence or mapping as the PHP array Coolify's YAML parser makes of it. */
+function phpEntries(source: unknown): PhpEntry[] {
+  if (Array.isArray(source)) return source.map((value) => ({ key: null, value }));
+  if (isObject(source)) {
+    // PHP turns a decimal integer key into a list position.
+    return Object.entries(source).map(([key, value]) => ({ key: /^(0|-?[1-9][0-9]*)$/.test(key) ? null : key, value }));
+  }
+  return [];
+}
+
+/**
+ * A container's `environment:` merged with its `build.args`, exactly as
+ * Coolify's serviceParser reads them: Laravel's `merge` (string keys
+ * replace in place, list positions append), then
+ * convertToKeyValueCollection, which reads a pure list (`- NAME=value`,
+ * a bare `- NAME` as an empty value) differently from a collection with
+ * any string key (where a bare `- NAME` is the name without a value).
+ */
 function environmentOf(service: unknown): Map<string, EnvValue> {
   const env = new Map<string, EnvValue>();
   if (!isObject(service)) return env;
+  const merged: PhpEntry[] = [];
   const build = isObject(service.build) ? service.build.args : undefined;
-  for (const source of [service.environment, build]) {
-    if (Array.isArray(source)) {
-      for (const entry of source) {
-        if (typeof entry !== "string" || entry === "") continue;
-        const eq = entry.indexOf("=");
-        // `- NAME=value` sets a value; a bare `- NAME` is `NAME:` without one.
-        if (eq >= 0) env.set(entry.slice(0, eq), entry.slice(eq + 1));
-        else if (!env.has(entry)) env.set(entry, null);
-      }
-    } else if (isObject(source)) {
-      for (const [key, value] of Object.entries(source)) env.set(key, value as EnvValue);
+  for (const entry of [...phpEntries(service.environment), ...phpEntries(build)]) {
+    const at = entry.key === null ? -1 : merged.findIndex((m) => m.key === entry.key);
+    if (at >= 0) merged[at] = entry;
+    else merged.push(entry);
+  }
+  const associative = merged.some((m) => m.key !== null);
+  for (const { key, value } of merged) {
+    if (key !== null) {
+      env.set(key, value as EnvValue);
+      continue;
+    }
+    if (typeof value !== "string") continue;
+    const eq = value.indexOf("=");
+    if (!associative) {
+      // `NAME=value`, or a bare `NAME` as an empty value.
+      const name = eq >= 0 ? value.slice(0, eq) : value;
+      if (name !== "") env.set(name, eq >= 0 ? value.slice(eq + 1) : "");
+    } else if (eq >= 0) {
+      env.set(value.slice(0, eq), value.slice(eq + 1));
+    } else if (value !== "") {
+      env.set(value, env.has(value) ? (env.get(value) as EnvValue) : null);
     }
   }
   return env;
+}
+
+/** Every string a parsed YAML document holds, keys included: what its escapes decode to. */
+function scalarsOf(node: unknown, out: string[] = []): string[] {
+  if (typeof node === "string") out.push(node);
+  else if (Array.isArray(node)) for (const item of node) scalarsOf(item, out);
+  else if (isObject(node)) {
+    for (const [key, value] of Object.entries(node)) {
+      out.push(key);
+      scalarsOf(value, out);
+    }
+  }
+  return out;
 }
 
 /** Whether the generated compose file has the container load `.env` (Coolify ≥ v4.0.0-beta.443 adds it to every container). */
@@ -188,6 +232,9 @@ export function classifyComposeUsage(
   const containers = Object.keys(rawServices).sort();
   if (containers.length === 0) return unknown("the service's compose file defines no containers", names);
 
+  // References as the text has them, and as YAML decodes them (an escaped
+  // "\u0024NAME" is $NAME to Coolify): both only widen "referenced".
+  const decoded = scalarsOf(rawDoc).join("\n");
   const copied = new Set<string>();
   for (const container of containers) {
     for (const [key, value] of environmentOf(rawServices[container])) {
@@ -218,7 +265,7 @@ export function classifyComposeUsage(
     }
     // Another name bound to a Coolify-generated value makes that name owned,
     // not this one; this one is owned when its own entry is.
-    if (referencesName(raw, name)) usage.referenced = true;
+    if (referencesName(raw, name) || referencesName(decoded, name)) usage.referenced = true;
     if (coolifyGeneratesName(name)) usage.generatedOnce = true;
     if (copied.has(name)) usage.copiedIntoCompose = true;
     if (shadowed.length > 0) usage.shadowedIn = shadowed;

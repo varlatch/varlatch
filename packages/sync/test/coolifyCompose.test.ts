@@ -88,7 +88,7 @@ describe("compose usage", () => {
     expect(report.names.get("SERVICE_PASSWORD_POSTGRES")).toEqual({ referenced: true, generatedOnce: true });
   });
 
-  it("reads list entries and build arguments like Coolify does, and an unset entry as unknown", () => {
+  it("reads a pure list like Coolify does: a bare name is an empty value, which takes the stored one, copied in", () => {
     const raw = `services:
   app:
     build:
@@ -103,11 +103,54 @@ describe("compose usage", () => {
 `;
     const report = classify(raw, ["BUILD_FLAG", "BUILD_REF", "LITERAL", "BARE", "EMPTY"]);
     expect(report.names.get("BUILD_FLAG")).toEqual({ shadowedIn: ["app"] });
-    expect(report.names.get("BUILD_REF")).toEqual({ unknownIn: ["app"] });
+    // Environment and build arguments both lists: Coolify's merge is a list,
+    // where a bare name reads as an empty value (convertToKeyValueCollection).
+    expect(report.names.get("BUILD_REF")).toEqual({ copiedIntoCompose: true });
     expect(report.names.get("LITERAL")).toEqual({ shadowedIn: ["app"] });
-    expect(report.names.get("BARE")).toEqual({ unknownIn: ["app"] });
+    expect(report.names.get("BARE")).toEqual({ copiedIntoCompose: true });
     // An empty value takes the stored one, copied into the compose file.
     expect(report.names.get("EMPTY")).toEqual({ copiedIntoCompose: true });
+  });
+
+  it("reads a bare list name next to a mapping as a name without a value, which Varlatch does not claim to know", () => {
+    // A mapping environment with list build arguments: the merge has string
+    // keys, so Coolify keeps a bare name unset (null), as `NAME:` is.
+    const raw = `services:
+  app:
+    build:
+      args:
+        - BARE_ARG
+        - SET_ARG=x
+    environment:
+      MAPPED: value
+      UNSET:
+`;
+    const report = classify(raw, ["BARE_ARG", "SET_ARG", "MAPPED", "UNSET"]);
+    expect(report.names.get("BARE_ARG")).toEqual({ unknownIn: ["app"] });
+    expect(report.names.get("SET_ARG")).toEqual({ shadowedIn: ["app"] });
+    expect(report.names.get("MAPPED")).toEqual({ shadowedIn: ["app"] });
+    expect(report.names.get("UNSET")).toEqual({ unknownIn: ["app"] });
+  });
+
+  it("lets a build argument replace an environment entry of the same name, as Laravel's merge does", () => {
+    const raw = `services:
+  app:
+    build:
+      args:
+        SAME: \${SAME}
+    environment:
+      SAME: literal
+`;
+    expect(classify(raw, ["SAME"]).names.get("SAME")).toEqual({ referenced: true });
+  });
+
+  it("finds a reference YAML escapes, as Coolify reads it", () => {
+    const raw = 'services:\n  app:\n    environment:\n      ESCAPED: "\\u0024ESCAPED"\n      ALIASED: "\\u0024{OTHER_ESCAPED:-x}"\n';
+    const report = classify(raw, ["ESCAPED", "OTHER_ESCAPED"]);
+    // The raw text has no $: only the decoded scalar shows the reference.
+    expect(raw).not.toContain("$");
+    expect(report.names.get("ESCAPED")).toEqual({ referenced: true });
+    expect(report.names.get("OTHER_ESCAPED")).toEqual({ referenced: true, copiedIntoCompose: true });
   });
 
   it("says when a name reaches no container: no reference, and no container loads .env", () => {

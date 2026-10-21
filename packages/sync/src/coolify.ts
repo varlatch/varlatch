@@ -19,6 +19,7 @@ import {
   type AdapterRequest,
   type NameOutcome,
   type PlatformAdapter,
+  type RemoteState,
   type SyncItem,
   type UsageReport,
 } from "./types.js";
@@ -249,7 +250,7 @@ const SHARED_TYPES = new Set(["team", "project", "environment", "server", "vault
  * Docker Compose reads; what that cannot carry is refused rather than
  * delivered changed (ADR-0031 amendment 2026-10-21, value fidelity).
  */
-function undeliverableValue(value: string, copiedIntoCompose: boolean): string | null {
+function undeliverableValue(value: string, copied: CopyRisk): string | null {
   if (PHP_TRIMMED.test(value)) {
     return "Coolify removes leading and trailing whitespace from values, so it would store a different value";
   }
@@ -268,10 +269,42 @@ function undeliverableValue(value: string, copiedIntoCompose: boolean): string |
   if ((value.startsWith("{") || value.startsWith("[")) && isJson(value) && /[$\n]| #/.test(value)) {
     return "Coolify writes JSON values unquoted, where Docker Compose changes $, \" #\" and line breaks";
   }
-  if (copiedIntoCompose && value.includes("$")) {
+  if (value.includes("$") && copied === "copied") {
     return "The service's compose file copies this value where Docker Compose expands $, so it would arrive changed";
   }
+  if (value.includes("$") && copied === "unknown") {
+    return "Varlatch could not check whether the service's compose file copies this value where Docker Compose expands $ (reading it takes Coolify's read:sensitive permission), so a value with $ is not pushed";
+  }
   return null;
+}
+
+/**
+ * Whether a service's compose file may copy the stored value into the
+ * file Compose reads, where `$` is expanded: an application never does;
+ * a service is safe only when inspection read its compose file and found
+ * the name outside that path (ADR-0031 amendment 2026-10-21).
+ */
+type CopyRisk = "safe" | "copied" | "unknown";
+
+function copyRisk(destination: Record<string, string>, name: string, usage: UsageReport | null | undefined): CopyRisk {
+  if (!destination.serviceUuid) return "safe";
+  if (!usage?.checked) return "unknown";
+  const u = usage.names.get(name);
+  if (!u) return "unknown";
+  if (u.copiedIntoCompose) return "copied";
+  return u.unknownIn?.length ? "unknown" : "safe";
+}
+
+/**
+ * A row stored in another form than Varlatch writes a value: without
+ * is_literal, or without is_multiline where the row's vocabulary has it
+ * (a service's, and an application's since September 2025). A flag the
+ * row does not report is not judged.
+ */
+function storedOtherwise(row: CoolifyEnv, service: boolean): boolean {
+  if (row.is_literal === false) return true;
+  const multiline = service || flagStyleOf(row) === "current";
+  return multiline && row.is_multiline === false;
 }
 
 function isJson(value: string): boolean {
@@ -403,7 +436,7 @@ export const coolifyAdapter: PlatformAdapter = {
     const outcomes: NameOutcome[] = [];
     for (const item of items) {
       if (req.shouldAbort && (await req.shouldAbort())) break;
-      const problem = undeliverableValue(item.value, Boolean(req.usage?.names.get(item.name)?.copiedIntoCompose));
+      const problem = undeliverableValue(item.value, copyRisk(req.destination, item.name, req.usage));
       if (problem) {
         // Nothing is sent: a value Coolify would change is not delivered.
         outcomes.push({ name: item.name, ok: false, error: problem });
@@ -475,9 +508,15 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   async readValues(req: AdapterRequest): Promise<Map<string, string | null>> {
-    // A row without `value` is one Coolify withholds (no read:sensitive, or
-    // shown once): unreadable. A stored empty or null value is "".
-    return new Map((await listEnvs(req)).map((e) => [e.key, "value" in e ? (e.value ?? "") : null]));
+    return (await readRemoteState(req)).values;
+  },
+
+  async readRemote(req: AdapterRequest): Promise<RemoteState> {
+    return readRemoteState(req);
+  },
+
+  valueProblem(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null {
+    return undeliverableValue(value, copyRisk(destination, name, usage));
   },
 
   /**
@@ -652,6 +691,20 @@ export const coolifyAdapter: PlatformAdapter = {
     );
   },
 };
+
+/**
+ * The stored values, and the rows to rewrite whatever their value. A row
+ * without `value` is one Coolify withholds (no read:sensitive, or shown
+ * once): unreadable. A stored empty or null value is "".
+ */
+async function readRemoteState(req: AdapterRequest): Promise<RemoteState> {
+  const service = resourceOf(req.destination).kind === "service";
+  const rows = await listEnvs(req);
+  return {
+    values: new Map(rows.map((e) => [e.key, "value" in e ? (e.value ?? "") : null])),
+    rewrite: new Set(rows.filter((e) => storedOtherwise(e, service)).map((e) => e.key)),
+  };
+}
 
 /**
  * A service's variables, the push's first request: whether the token may

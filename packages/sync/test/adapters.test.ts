@@ -561,6 +561,48 @@ describe("coolify adapter", () => {
     expect(outcomes[0]!.error).toContain("expands $");
   });
 
+  it("refuses $ in any service value while the compose file's use of it is unknown", async () => {
+    const svc = { serviceUuid: "svc123" };
+    const unchecked = { checked: false, reason: "no read:sensitive", names: new Map([["A", {}]]) };
+    const checked = (u: Record<string, unknown>) => ({ checked: true, names: new Map([["A", u]]) });
+    const problem = (usage: Parameters<NonNullable<typeof coolifyAdapter.valueProblem>>[3], destination: Record<string, string> = svc) =>
+      coolifyAdapter.valueProblem!(destination, "A", "pa$word", usage);
+    expect(problem(null)).toMatch(/could not check whether the service's compose file copies this value/);
+    expect(problem(unchecked)).toMatch(/read:sensitive/);
+    expect(problem(checked({ unknownIn: ["web"] }))).toMatch(/could not check/);
+    expect(problem(checked({ copiedIntoCompose: true }))).toMatch(/copies this value/);
+    expect(problem(checked({}))).toBeNull();
+    expect(problem(checked({ shadowedIn: ["web"] }))).toBeNull();
+    // A name the report does not cover is unknown.
+    expect(coolifyAdapter.valueProblem!(svc, "B", "pa$word", checked({}))).toMatch(/could not check/);
+    // Without $ nothing depends on the compose file; an application never copies.
+    expect(coolifyAdapter.valueProblem!(svc, "A", "plain", null)).toBeNull();
+    expect(problem(null, { applicationUuid: "app123" })).toBeNull();
+
+    const fetchImpl = fakeFetch((url, init) => ((init.method ?? "GET") === "GET" ? { status: 200, body: [] } : { status: 201 }));
+    const outcomes = await coolifyAdapter.writeValues(baseReq(fetchImpl, svc), [{ name: "A", value: "pa$word" }]);
+    expect(outcomes).toEqual([{ name: "A", ok: false, error: expect.stringContaining("could not check") }]);
+  });
+
+  it("reads which stored rows lack the literal flags, so a matching value is still rewritten", async () => {
+    const rows = [
+      { uuid: "e1", key: "CURRENT_OK", value: "v", is_literal: true, is_multiline: true, is_buildtime: false, is_runtime: true },
+      { uuid: "e2", key: "CURRENT_NOT_MULTILINE", value: "v", is_literal: true, is_multiline: false, is_buildtime: false, is_runtime: true },
+      { uuid: "e3", key: "NOT_LITERAL", value: "$OTHER #x", is_literal: false, is_multiline: true, is_runtime: true },
+      // Legacy vocabulary has no multiline flag to set: only literal counts.
+      { uuid: "e4", key: "LEGACY_OK", value: "v", is_literal: true, is_multiline: false, is_build_time: false },
+      // Flags the row does not report are not judged.
+      { uuid: "e5", key: "NO_FLAGS", value: "v" },
+    ];
+    const app = await coolifyAdapter.readRemote!(baseReq(fakeFetch(() => ({ status: 200, body: rows }))));
+    expect([...app.rewrite].sort()).toEqual(["CURRENT_NOT_MULTILINE", "NOT_LITERAL"]);
+    expect(app.values.get("NOT_LITERAL")).toBe("$OTHER #x");
+    const service = await coolifyAdapter.readRemote!(
+      baseReq(fakeFetch(() => ({ status: 200, body: [{ uuid: "s1", key: "S", value: "v", is_literal: true, is_multiline: false }] })), { serviceUuid: "svc123" }),
+    );
+    expect([...service.rewrite]).toEqual(["S"]);
+  });
+
   it("redeploys with a forced rebuild by default, restarts on request, and reports failure", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const ok = fakeFetch(() => ({ status: 200, body: { message: "queued" } }), calls);

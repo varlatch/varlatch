@@ -81,7 +81,8 @@ async function del(path: string, token = adminToken) {
 
 /** A fake Coolify instance: env store keyed by application uuid. */
 function fakeCoolify() {
-  const store = new Map<string, { uuid: string; key: string; value: string }>();
+  type Row = { uuid: string; key: string; value: string } & Record<string, unknown>;
+  const store = new Map<string, Row>();
   const calls: { method: string; url: string; body?: unknown }[] = [];
   let nextUuid = 1;
   let restarts = 0; // deploy or restart actions, POST only (Coolify >= 4.3 rejects GET)
@@ -96,10 +97,11 @@ function fakeCoolify() {
     if (url.endsWith("/envs") && method === "GET") return json([...store.values()]);
     if (url.endsWith("/envs") && (method === "POST" || method === "PATCH")) {
       if (failWrites) return json({ message: "boom" }, 500);
-      const b = body as { key: string; value: string };
+      const b = body as { key: string; value: string } & Record<string, unknown>;
       const existing = [...store.values()].find((e) => e.key === b.key);
       const uuid = existing?.uuid ?? `env${nextUuid++}`;
-      store.set(uuid, { uuid, key: b.key, value: b.value });
+      // A PATCH keeps the flags it is not sent, as Coolify's does.
+      store.set(uuid, { ...(existing ?? {}), ...b, uuid, key: b.key, value: b.value });
       return json({ uuid }, method === "POST" ? 201 : 200);
     }
     const deleteMatch = url.match(/\/envs\/([^/]+)$/);
@@ -117,10 +119,11 @@ function fakeCoolify() {
     fetchImpl,
     calls,
     values: () => new Map([...store.values()].map((e) => [e.key, e.value])),
-    seed: (key: string, value: string) => {
+    seed: (key: string, value: string, flags: Record<string, boolean> = {}) => {
       const uuid = `seed${nextUuid++}`;
-      store.set(uuid, { uuid, key, value });
+      store.set(uuid, { uuid, key, value, ...flags });
     },
+    row: (key: string) => [...store.values()].find((e) => e.key === key),
     setFailWrites: (v: boolean) => {
       failWrites = v;
     },
@@ -1362,6 +1365,43 @@ describe("wildcard exclusion widening (ADR-0031 amendment)", () => {
   });
 });
 
+describe("Coolify value fidelity on repair (ADR-0031 amendment 2026-10-21)", () => {
+  async function appTarget(extra: Record<string, unknown> = {}) {
+    const connection = await (await createConnection()).json();
+    return (await createTarget(connection.id, extra)).json();
+  }
+
+  it("rewrites a matching value stored without the literal flags, then leaves it", async () => {
+    const coolify = fakeCoolify();
+    // An existing application row, written before values went literal.
+    coolify.seed("PORT", "8080", { is_literal: false, is_multiline: false, is_buildtime: false, is_runtime: true });
+    await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.row("PORT")).toMatchObject({ value: "8080", is_literal: true, is_multiline: true });
+    expect(coolify.calls.filter((c) => c.method === "PATCH").map((c) => (c.body as { key: string }).key)).toContain("PORT");
+
+    coolify.calls.length = 0;
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl, repairIntervalMs: 0 });
+    expect(coolify.calls.filter((c) => c.method === "PATCH" || c.method === "POST")).toHaveLength(0);
+  });
+
+  it("holds a value Coolify cannot carry even when the platform already has it, and never deletes it", async () => {
+    await put(`${ENV_PATH}/values/QUOTED`, { value: "it's" });
+    const coolify = fakeCoolify();
+    coolify.seed("QUOTED", "it's", { is_literal: true, is_multiline: true });
+    await appTarget({ removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("QUOTED: Coolify writes values in single quotes");
+    expect(row.failure_count).toBe(1);
+    // Not adopted as converged, not written, not removed as an orphan.
+    const ledger = await ctx.db.query("SELECT dest_name FROM sync_ledger WHERE dest_name = 'QUOTED'");
+    expect(ledger.rows).toEqual([]);
+    expect(coolify.calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(coolify.values().get("QUOTED")).toBe("it's");
+  });
+});
+
 describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
   /**
    * A fake Coolify service: the env store of fakeCoolify on the service's
@@ -1574,6 +1614,45 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     ]);
   });
 
+  it("holds a $ value while the token cannot read the compose file", async () => {
+    await put(`${ENV_PATH}/values/DOLLAR`, { value: "pa$word" });
+    const service = fakeService({ sensitive: false });
+    await serviceTarget();
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().has("DOLLAR")).toBe(false);
+    expect(service.values().get("PORT")).toBe("8080");
+    expect((await targetRowFromDb()).last_result).toContain("DOLLAR: Varlatch could not check whether the service's compose file copies this value");
+    // Once the compose file can be read and does not copy it, it goes.
+    service.state.sensitive = true;
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL");
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().get("DOLLAR")).toBe("pa$word");
+  });
+
+  it("keeps the notes of a completed inspection when the run fails later", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
+    await serviceTarget();
+    const failing = (async (input: unknown, init?: RequestInit) => {
+      if (String(input).endsWith("/envs")) return new Response(JSON.stringify({ message: "boom" }), { status: 500 });
+      return service.fetchImpl(input as string, init);
+    }) as typeof fetch;
+    await runSyncOnce(ctx, { fetchImpl: failing });
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(1);
+    expect(asJson(row.last_notes)).toEqual([{ code: "shadowed", name: "DATABASE_URL", containers: ["web"] }]);
+  });
+
+  it("drops the notes when the destination changes", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
+    const { target } = await serviceTarget();
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(asJson((await targetRowFromDb()).last_notes)).toHaveLength(1);
+    const moved = await patchReq(`${ENV_PATH}/sync-targets/${target.id}`, { expectedVersion: target.version, destination: { applicationUuid: "app9" } });
+    expect(moved.status).toBe(200);
+    expect((await moved.json()).lastNotes).toBeNull();
+    expect((await targetRowFromDb()).last_notes).toBeNull();
+  });
+
   it("refuses a value Coolify would change, and says why", async () => {
     await put(`${ENV_PATH}/values/QUOTED`, { value: "it's" });
     const service = fakeService();
@@ -1582,7 +1661,7 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect(service.values().has("QUOTED")).toBe(false);
     expect(service.values().get("PORT")).toBe("8080");
     const row = await targetRowFromDb();
-    expect(row.last_result).toContain("QUOTED (Coolify writes values in single quotes");
+    expect(row.last_result).toContain("QUOTED: Coolify writes values in single quotes");
     expect(JSON.stringify(row)).not.toContain("it's");
   });
 });

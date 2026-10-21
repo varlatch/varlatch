@@ -125,6 +125,20 @@ export interface PlatformAdapter {
    */
   readValues?(req: AdapterRequest): Promise<Map<string, string | null>>;
   /**
+   * readValues, plus the names stored in another form than writeValues
+   * stores a value (a Coolify variable without the literal flags): a
+   * matching value under one of them still needs a write. The engine's
+   * repair uses it where present; a check compares values only.
+   */
+  readRemote?(req: AdapterRequest): Promise<RemoteState>;
+  /**
+   * Why this value would not reach the destination as given, or null. The
+   * engine asks for every desired name before the diff, so a value already
+   * stored is held to the rule too; writeValues applies it again before
+   * sending. `usage` is what inspectUsage reported, when it ran.
+   */
+  valueProblem?(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null;
+  /**
    * Read-only: how the destination uses the given names, where the
    * platform lets a credential see that (a Coolify service's compose
    * files). `null` when the destination has no such notion (a Coolify
@@ -183,6 +197,12 @@ export interface UsageReport {
   reason?: string;
   /** Verdicts for the names asked about; a name with no hint maps to `{}`. */
   names: Map<string, NameUsage>;
+}
+
+export interface RemoteState {
+  values: Map<string, string | null>;
+  /** Names to write even when the value matches. */
+  rewrite: Set<string>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
