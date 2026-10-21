@@ -1466,6 +1466,21 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect(service.calls.some((c) => c.method === "DELETE")).toBe(false);
   });
 
+  it("never deletes a name Varlatch wrote once the compose file hands it to Coolify", async () => {
+    const service = fakeService();
+    await serviceTarget({ removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().get("PORT")).toBe("8080");
+    // The compose file now binds PORT to a Coolify value: Coolify owns it.
+    service.state.compose = "services:\n  web:\n    environment:\n      PORT: ${SERVICE_URL_WEB}\n";
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
+    // Neither written over nor removed as an orphan: Coolify's row now.
+    expect(service.calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(service.values().get("PORT")).toBe("8080");
+    expect((await targetRowFromDb()).last_result).toContain("PORT: the platform sets this name itself");
+  });
+
   it("stores usage notes, replaces them on every inspecting run, and keeps them null for applications", async () => {
     const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
     await serviceTarget();
