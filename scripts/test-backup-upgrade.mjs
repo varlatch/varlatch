@@ -62,6 +62,9 @@ let oldCompose=readFileSync(join(fixtures,'docker-compose.release.yml'),'utf8').
 // Test override is explicit: normal CI exercises the published digest; local
 // testing may use an exact-tag rebuild if GHCR read:packages is unavailable.
 oldCompose=oldCompose.replace(/image: ghcr\.io\/varlatch\/varlatchd[^\n]+/g,`image: ${legacyImage}`);
+// Convex moved its images from ghcr.io/get-convex to ghcr.io/convex (October 2026): the same digest, and the old
+// path refuses pulls. The fixture keeps what was shipped; the test pulls the same image from its new path.
+oldCompose=oldCompose.replace(/ghcr\.io\/get-convex\//g,'ghcr.io/convex/');
 writeFileSync(join(source,'docker-compose.yml'),oldCompose);
 cpSync(join(fixtures,'varlatch-release.json'),join(source,'varlatch-release.json'));
 try {

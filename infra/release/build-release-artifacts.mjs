@@ -110,7 +110,7 @@ if (/^\s+build:/m.test(release)) fail("A build: block survived the transform —
 
 if (postgresRef) release = release.replace(/image: postgres:\S+/, `image: ${postgresRef}`);
 
-const convexBackendMatch = release.match(/image: (ghcr\.io\/get-convex\/convex-backend\S+)/);
+const convexBackendMatch = release.match(/image: (ghcr\.io\/convex\/convex-backend\S+)/);
 if (!convexBackendMatch) fail("convex-backend image not found in canonical compose");
 
 release = release.replace(

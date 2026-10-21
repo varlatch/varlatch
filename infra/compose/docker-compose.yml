@@ -169,7 +169,7 @@ services:
   convex-backend:
     # Digest-pinned (ADR-0019 §26): this is the tested Convex backend for the
     # release set. Update deliberately alongside an e2e run, never `latest`.
-    image: ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
+    image: ghcr.io/convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98
     restart: unless-stopped
     volumes:
       # Module bundles and file storage live on disk even with POSTGRES_URL

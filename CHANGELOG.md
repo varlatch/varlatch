@@ -5,6 +5,27 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.17.4)
+
+### Self-hosting
+
+- **The Convex backend is pulled from its new registry path.** Convex
+  moved its images from `ghcr.io/get-convex/` to `ghcr.io/convex/`, and the
+  old path now refuses downloads, so a fresh 0.17.3 installation could not
+  start its Convex backend. The compose files now name
+  `ghcr.io/convex/convex-backend` with the same digest: the same image,
+  byte for byte. An existing installation keeps running on its local copy;
+  upgrading to this release lets it download the image again when it needs
+  to.
+
+### Dependencies
+
+- `@modelcontextprotocol/sdk` 1.32.1, `hono` 4.13.13, and `vite` 7.3.7,
+  for newly published advisories. None reaches Varlatch as it uses these
+  libraries: its MCP server speaks only over stdio, `varlatchd` does not
+  serve static files through `hono`, and the `vite` issues are in a
+  Windows-only development path.
+
 ## 0.17.3 (2026-10-13)
 
 ### Dashboard

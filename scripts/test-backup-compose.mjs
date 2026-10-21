@@ -54,7 +54,7 @@ for (const files of variants) {
 }
 // The deploy image copies Convex's key tool from the backend image: both must
 // be the same pinned backend (ADR-0035 D3).
-const pin = (text, what) => text.match(/ghcr\.io\/get-convex\/convex-backend@sha256:[0-9a-f]{64}/)?.[0] ?? assert.fail(`${what}: no pinned convex-backend`);
+const pin = (text, what) => text.match(/ghcr\.io\/convex\/convex-backend@sha256:[0-9a-f]{64}/)?.[0] ?? assert.fail(`${what}: no pinned convex-backend`);
 const read = rel => readFileSync(fileURLToPath(new URL(`../infra/compose/${rel}`, import.meta.url)), 'utf8');
 assert.equal(pin(read('convex-deploy.Dockerfile'), 'convex-deploy.Dockerfile'), pin(read('docker-compose.yml'), 'docker-compose.yml'), 'convex-deploy must take its key tool from the pinned convex-backend');
 console.log('PASS: canonical, Tailscale overlay, and Coolify/Tailscale deployment contracts; convex-backend pins agree');

@@ -78,8 +78,11 @@ function cli(bin, where, args) {
 const keyArgs = where => ['--bek-file', join(where, 'secrets/bek'), '--kek-file', join(where, 'secrets/root')];
 
 /** The prod shape: a Coolify Compose file + CI stubs, with images instead of builds. */
+// Convex moved its images from ghcr.io/get-convex to ghcr.io/convex (October 2026): the same digests, and the old
+// path refuses pulls. The published fixtures keep what was shipped; the test pulls the same image from its new path.
+const convexMoved = text => text.replace(/ghcr\.io\/get-convex\//g, 'ghcr.io/convex/');
 function prodShapeCompose(source, images, name) {
-  const doc = parseDocument(readFileSync(source, 'utf8'));
+  const doc = parseDocument(convexMoved(readFileSync(source, 'utf8')));
   mergeInto(doc.contents, parseDocument(`
 services:
   tailscale:
