@@ -80,6 +80,7 @@ import {
   getTarget,
   listConnections,
   listTargets,
+  canonicalDestinationOf,
   mappingWidens,
   normalizeMapping,
   replaceConnectionCredential,
@@ -3006,6 +3007,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     needsSync: t.needs_sync,
     lastAttemptAt: t.last_attempt_at ? iso(t.last_attempt_at) : null,
     lastResult: t.last_result ?? null,
+    lastNotes: t.last_notes ?? null,
     createdAt: iso(t.created_at),
     version: t.version,
     updatedAt: t.updated_at ? iso(t.updated_at) : null,
@@ -3429,8 +3431,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       );
       const connection = await getConnection(ctx, org.id, body.connectionId);
       const contract = await activeContractOf(ctx, project);
-      const mapping = normalizeMapping(connection.platform, body.mapping, (name) =>
-        sensitivityOf(contract, name),
+      const mapping = normalizeMapping(
+        connection.platform,
+        body.mapping,
+        (name) => sensitivityOf(contract, name),
+        undefined,
+        canonicalDestinationOf(connection.platform, body.destination),
       );
       const authz = await syncDisclosureGate(c, principal, org, project, env, mapping);
       const target = await createTarget(
@@ -3496,14 +3502,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       );
       const connection = await getConnection(ctx, org.id, body.connectionId ?? target.connection_id);
       const contract = await activeContractOf(ctx, project);
+      // Names are checked against the destination the Target will have: a
+      // new destination re-checks the mapping it keeps, too.
+      const destination = canonicalDestinationOf(connection.platform, body.destination ?? target.destination);
       const mapping = body.mapping
         ? normalizeMapping(
             connection.platform,
             body.mapping,
             (name) => sensitivityOf(contract, name),
             target.mapping,
+            destination,
           )
         : target.mapping;
+      if (!body.mapping && body.destination !== undefined && target.mapping.kind === "explicit") {
+        normalizeMapping(connection.platform, target.mapping, (name) => sensitivityOf(contract, name), target.mapping, destination);
+      }
       // Destination changes and Connection re-points are new disclosure
       // grants and re-run the full gate (§2); so does any widening. A pure
       // narrowing or operational toggle needs only config.sync.manage.

@@ -15,6 +15,7 @@ import { activeContractOf } from "./contracts.js";
 import { DomainError } from "./errors.js";
 import { envelope, resolveItems } from "./retrieval.js";
 import {
+  boundNotes,
   recordCredentialExpiry,
   describeDestination,
   matchesExclusion,
@@ -22,6 +23,7 @@ import {
   TARGET_COLUMNS,
   type SyncMapping,
   type SyncTargetRow,
+  type TargetNote,
 } from "./sync.js";
 
 /**
@@ -281,11 +283,14 @@ export async function reconcileTarget(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
              ${force ? ", last_repair_at = now()" : ""}
+             ${outcome.notes !== undefined ? ", last_notes = $4" : ""}
          WHERE id = $1 AND generation = $3`,
-        [target.id, outcome.result, generation],
+        outcome.notes !== undefined
+          ? [target.id, outcome.result, generation, JSON.stringify(outcome.notes)]
+          : [target.id, outcome.result, generation],
       );
     } else {
-      await recordFailure(ctx, target, outcome.result, true, generation);
+      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes);
     }
   } catch (err) {
     await recordFailure(
@@ -308,6 +313,12 @@ export async function reconcileTarget(
 interface RunOutcome {
   ok: boolean;
   result: string;
+  /**
+   * Usage notes, replacing the Target's (migration 31) when the run
+   * inspected the destination; undefined when it did not, which leaves
+   * them as they are.
+   */
+  notes?: TargetNote[];
 }
 
 /**
@@ -391,7 +402,7 @@ async function reconcileUnderLease(
   // the platform sets itself is neither written nor deleted; the rest are
   // notes, which never fail the run.
   const flags = [...rendered.flags];
-  const notes: string[] = [];
+  const notes: TargetNote[] = [];
   let usage: UsageReport | null = null;
   if (adapter.inspectUsage) {
     const names = [...new Set([...desired.keys(), ...ledger.keys()])];
@@ -400,7 +411,7 @@ async function reconcileUnderLease(
       .catch(() => ({ checked: false, reason: "the destination could not be read", names: new Map<string, NameUsage>() }));
   }
   const usageOf = (name: string): NameUsage => usage?.names.get(name) ?? {};
-  if (usage && !usage.checked) notes.push(`usage not checked: ${usage.reason ?? "unknown"}`);
+  if (usage && !usage.checked) notes.push({ code: "usage-unchecked", reason: usage.reason ?? "unknown" });
   for (const destName of [...desired.keys()]) {
     if (usageOf(destName).owned) {
       desired.delete(destName);
@@ -409,6 +420,15 @@ async function reconcileUnderLease(
       notes.push(...usageNotes(destName, usageOf(destName)));
     }
   }
+  // A name this destination refuses (the platform's own) or that the
+  // platform sets itself was never Varlatch's to delete.
+  const notOurs = (name: string) =>
+    usageOf(name).owned === true || adapter.validateName(name, target.destination) !== null;
+  // After a confirmed delete, a repair deletes again only when it knows the
+  // platform does not re-create the name: never for a name its
+  // configuration may reference, nor when usage could not be read (each
+  // repeat would also restart a service).
+  const mayRecreate = (name: string) => usageOf(name).referenced === true || (usage !== null && !usage.checked);
 
   // Verify-and-fix (§6): an adapter that can read values back repairs only
   // actual drift instead of force-writing everything. A value the platform
@@ -446,14 +466,13 @@ async function reconcileUnderLease(
   const deletes: string[] = [];
   for (const [destName, entry] of ledger) {
     if (desired.has(destName)) continue;
-    // The platform's own name is never Varlatch's to delete.
-    if (usageOf(destName).owned) continue;
+    if (notOurs(destName)) continue;
     if (entry.state === "tombstone") {
+      if (mayRecreate(destName)) notes.push({ code: "kept-by-platform", name: destName });
       // Re-apply tombstoned deletions on repair or when a stale write may
-      // have resurrected the name (§3/§6) — except a name the platform
-      // re-creates itself from its configuration: deleting it again would
-      // fight the platform (and restart a service each time).
-      if (force && (!remote || remote.has(destName)) && !usageOf(destName).referenced) deletes.push(destName);
+      // have resurrected the name (§3/§6), unless the platform may
+      // re-create it (above).
+      if (force && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
@@ -463,11 +482,6 @@ async function reconcileUnderLease(
   // A repair write whose content matches the ledger fingerprint is not a
   // change and triggers no redeploy (§5).
   const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
-  for (const w of changingWrites) {
-    if (usageOf(w.destName).generatedOnce) {
-      notes.push(`${w.destName}: the platform generated it once; a database may read it only on first start`);
-    }
-  }
 
   // Nothing left the process for an adoption, so no disclosure event and no
   // redeploy — only ownership bookkeeping. A fence here still aborts: the
@@ -478,10 +492,12 @@ async function reconcileUnderLease(
     }
   }
 
+  const runNotes = usage !== null ? boundNotes(notes) : undefined;
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,
-      result: resultText(flags.length > 0 ? flagSummary(flags) : "converged", notes, ""),
+      result: flags.length > 0 ? flagSummary(flags) : "converged",
+      ...(runNotes !== undefined ? { notes: runNotes } : {}),
     };
   }
 
@@ -502,7 +518,7 @@ async function reconcileUnderLease(
     },
   });
 
-  const req = await adapterRequest(ctx, org, target, live, opts, generation);
+  const req = { ...(await adapterRequest(ctx, org, target, live, opts, generation)), usage };
   let writeOutcomes: NameOutcome[] = [];
   if (writes.length > 0) {
     for (const w of writes) {
@@ -539,9 +555,7 @@ async function reconcileUnderLease(
     }
     deleteOutcomes = await adapter.deleteNames(req, deletes);
     for (const o of deleteOutcomes) {
-      if (o.ok && usageOf(o.name).referenced) {
-        notes.push(`${o.name}: deleted; the platform keeps the name, which its configuration references`);
-      }
+      if (o.ok && mayRecreate(o.name)) notes.push({ code: "kept-by-platform", name: o.name });
       await ledgerSet(
         ctx,
         target.id,
@@ -564,7 +578,7 @@ async function reconcileUnderLease(
   const result =
     failed.length === 0 && flags.length === 0
       ? "ok"
-      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`;
+      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`.slice(0, 500);
 
   await recordAuditEvent(ctx.db, {
     eventType: "sync.push_result",
@@ -602,32 +616,22 @@ async function reconcileUnderLease(
     });
   }
 
+  const notesAfter = usage !== null ? boundNotes(notes) : undefined;
   return {
     ok: failed.length === 0 && flags.length === 0,
-    result: resultText(result, notes, redeployNote),
+    result: `${result}${redeployNote}`.slice(0, 500),
+    ...(notesAfter !== undefined ? { notes: notesAfter } : {}),
   };
 }
 
 /** Notes for a name the run keeps managing: hints, never failures. */
-function usageNotes(name: string, usage: NameUsage): string[] {
-  const notes: string[] = [];
-  if (usage.shadowedIn?.length) notes.push(`${name}: the compose file sets it in ${usage.shadowedIn.join(", ")}, which wins`);
-  if (usage.notDeliveredTo?.length) notes.push(`${name}: no container uses it`);
-  if (usage.unknownIn?.length) notes.push(`${name}: not checked in ${usage.unknownIn.join(", ")} (a form Varlatch does not read)`);
+function usageNotes(name: string, usage: NameUsage): TargetNote[] {
+  const notes: TargetNote[] = [];
+  if (usage.shadowedIn?.length) notes.push({ code: "shadowed", name, containers: usage.shadowedIn });
+  if (usage.notDeliveredTo?.length) notes.push({ code: "not-delivered", name });
+  if (usage.unknownIn?.length) notes.push({ code: "unknown-form", name, containers: usage.unknownIn });
+  if (usage.generatedOnce) notes.push({ code: "generated-once", name });
   return notes;
-}
-
-/**
- * `last_result`: the outcome, then "; notes: …" (hints that never fail a
- * run), then a redeploy failure, which the dashboard reads at the end. The
- * whole stays within 500 characters, the redeploy note intact.
- */
-function resultText(result: string, notes: string[], redeployNote: string): string {
-  const tail = redeployNote.slice(0, 200);
-  const room = 500 - tail.length;
-  let text = notes.length > 0 ? `${result}; notes: ${[...new Set(notes)].join("; ")}` : result;
-  if (text.length > room) text = `${text.slice(0, room - 1)}…`;
-  return `${text}${tail}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -889,6 +893,7 @@ async function recordFailure(
   result: string,
   backoff: boolean,
   generation?: number,
+  notes?: TargetNote[],
 ): Promise<void> {
   const failures = target.failure_count + 1;
   const delayMs = Math.min(BASE_BACKOFF_MS * 2 ** target.failure_count, MAX_BACKOFF_MS);
@@ -896,17 +901,18 @@ async function recordFailure(
   // A failed run leaves pending work: needs_sync must come back on (lease
   // acquisition cleared it) or the backed-off retry would never qualify for
   // selection and the Target would wait for the next trigger or repair pass.
+  const params: unknown[] = [target.id, failures, result.slice(0, 500), delayMs, disable];
+  const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
+  const setNotes = notes !== undefined ? `, last_notes = $${params.push(JSON.stringify(notes))}` : "";
   const applied = await ctx.db.query(
     `UPDATE sync_targets
      SET failure_count = $2, last_result = $3, needs_sync = true,
          next_attempt_at = now() + ($4 * interval '1 millisecond'),
          state = CASE WHEN $5 THEN 'disabled' ELSE state END,
-         disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END
-     WHERE id = $1 AND revoked_at IS NULL${generation !== undefined ? " AND generation = $6" : ""}
+         disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END${setNotes}
+     WHERE id = $1 AND revoked_at IS NULL${guard}
      RETURNING id`,
-    generation !== undefined
-      ? [target.id, failures, result.slice(0, 500), delayMs, disable, generation]
-      : [target.id, failures, result.slice(0, 500), delayMs, disable],
+    params,
   );
   if (disable && applied.rows.length > 0) {
     // Auto-disable is a state the UI must surface; a human resumes (§5).
