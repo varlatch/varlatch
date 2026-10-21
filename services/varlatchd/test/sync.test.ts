@@ -1064,7 +1064,7 @@ describe("access check (ADR-0031 amendment 2026-10-09)", () => {
 describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
   const LIST = "/v1/organizations/acme/platform-connections/destinations";
 
-  /** A Coolify instance with two applications, recording who asked. */
+  /** A Coolify instance with two applications and a service, recording who asked. */
   function fakeInstance() {
     const calls: { method: string; url: string; authorization: string }[] = [];
     const fetchImpl = (async (input: unknown, init?: RequestInit) => {
@@ -1080,6 +1080,9 @@ describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
           ]),
           { status: 200 },
         );
+      }
+      if (url.endsWith("/api/v1/services")) {
+        return new Response(JSON.stringify([{ uuid: "svc123", name: "convex", docker_compose_raw: "KEY: sk_live_x" }]), { status: 200 });
       }
       return new Response("{}", { status: 404 });
     }) as typeof fetch;
@@ -1111,19 +1114,21 @@ describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
       check: expect.objectContaining({ status: "ok" }),
       items: [
         { destination: { applicationUuid: "api123" }, label: "api" },
+        { destination: { serviceUuid: "svc123" }, label: "convex", detail: "service" },
         { destination: { applicationUuid: "web123" }, label: "web", detail: "web.example.com" },
       ],
       truncated: false,
     });
-    expect(JSON.stringify(body)).not.toContain("hunter2");
+    expect(JSON.stringify(body)).not.toMatch(/hunter2|sk_live/);
     expect(instance.calls.map((c) => [c.method, c.url, c.authorization])).toEqual([
       ["GET", "https://coolify.example.com/api/v1/applications", "Bearer fresh-token"],
+      ["GET", "https://coolify.example.com/api/v1/services", "Bearer fresh-token"],
     ]);
     expect((await ctx.db.query("SELECT id FROM platform_connections")).rows).toHaveLength(0);
     const events = await listedEvents();
     expect(events).toHaveLength(1);
-    expect(events[0]!.metadata).toMatchObject({ platform: "coolify", credential: "supplied", status: "ok", count: 2, truncated: false });
-    expect(JSON.stringify(events)).not.toMatch(/fresh-token|web123|api123|"web"|"api"/);
+    expect(events[0]!.metadata).toMatchObject({ platform: "coolify", credential: "supplied", status: "ok", count: 3, truncated: false });
+    expect(JSON.stringify(events)).not.toMatch(/fresh-token|web123|api123|svc123|"web"|"api"|convex/);
   });
 
   it("lists with a connection's stored credential, and reports a rejected one as an outcome", async () => {
@@ -1131,7 +1136,7 @@ describe("destination listing (ADR-0031 amendment 2026-10-09)", () => {
     const listApp = buildApp(ctx, { syncFetch: instance.fetchImpl });
     const connection = await (await createConnection()).json();
     const stored = await (await list({ connectionId: connection.id }, listApp)).json();
-    expect(stored.items).toHaveLength(2);
+    expect(stored.items).toHaveLength(3);
     expect(instance.calls[0]!.authorization).toBe("Bearer coolify-token-123");
 
     const rejected = await list({ connectionId: connection.id, credential: "wrong" }, listApp);
@@ -1354,5 +1359,215 @@ describe("wildcard exclusion widening (ADR-0031 amendment)", () => {
   it("kind transitions gate like plain wildcard", () => {
     expect(mappingWidens(explicit, { kind: "wildcard", exclude: ["CONVEX_*"] })).toBe(true);
     expect(mappingWidens({ kind: "wildcard", exclude: ["CONVEX_*"] }, explicit)).toBe(false);
+  });
+});
+
+describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
+  /**
+   * A fake Coolify service: the env store of fakeCoolify on the service's
+   * routes, plus the service record, whose compose files the test sets. With
+   * `sensitive: false` the token reads neither values nor compose files, as
+   * a token without Coolify's read:sensitive.
+   */
+  function fakeService(opts: { compose?: string; containers?: string[]; sensitive?: boolean } = {}) {
+    const coolify = fakeCoolify();
+    const state = {
+      compose: opts.compose ?? "services:\n  web:\n    image: x\n",
+      sensitive: opts.sensitive ?? true,
+    };
+    const containers = opts.containers ?? ["web"];
+    const generated = () => `services:\n${containers.map((c) => `  ${c}:\n    env_file:\n      - .env\n`).join("")}`;
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/services/svc1") && (init?.method ?? "GET") === "GET") {
+        coolify.calls.push({ method: "GET", url });
+        return new Response(
+          JSON.stringify({
+            uuid: "svc1",
+            name: "convex",
+            compose_parsing_version: 5,
+            applications: containers.map((name) => ({ name })),
+            ...(state.sensitive ? { docker_compose_raw: state.compose, docker_compose: generated() } : {}),
+          }),
+          { status: 200 },
+        );
+      }
+      const res = await coolify.fetchImpl(input as string, init);
+      if (!state.sensitive && url.endsWith("/envs") && (init?.method ?? "GET") === "GET") {
+        const rows = (await res.json()) as Record<string, unknown>[];
+        return new Response(JSON.stringify(rows.map(({ value: _hidden, ...rest }) => rest)), { status: 200 });
+      }
+      return res;
+    }) as typeof fetch;
+    return { ...coolify, fetchImpl, state };
+  }
+
+  async function serviceTarget(extra: Record<string, unknown> = {}) {
+    const connection = await (await createConnection()).json();
+    const res = await createTarget(connection.id, { destination: { serviceUuid: "svc1" }, ...extra });
+    return { connection, res, target: res.status === 201 ? await res.json() : undefined };
+  }
+
+  it("claims a service apart from an application with the same uuid, and pushes to its routes", async () => {
+    const service = fakeService();
+    const { connection, res } = await serviceTarget();
+    expect(res.status).toBe(201);
+    const created = await ctx.db.query("SELECT metadata FROM audit_events WHERE event_type = 'sync.target_created'");
+    expect(JSON.stringify((created.rows[0] as { metadata: unknown }).metadata)).toContain("coolify:service:svc1");
+    // An application uuid "svc1" is another destination.
+    expect((await createTarget(connection.id, { destination: { applicationUuid: "svc1" } })).status).toBe(201);
+
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    const writes = service.calls.filter((c) => c.method === "POST" || c.method === "PATCH");
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes.some((c) => c.url.includes("/api/v1/services/svc1/envs"))).toBe(true);
+    expect(writes.filter((c) => c.url.includes("/services/")).every((c) => (c.body as Record<string, unknown>).is_literal === true)).toBe(true);
+  });
+
+  it("refuses names Coolify sets on a service, at creation and when a destination becomes a service", async () => {
+    const connection = await (await createConnection()).json();
+    const owned = { kind: "explicit", items: [{ name: "PORT", rename: "SERVICE_URL_WEB" }] };
+    const refused = await createTarget(connection.id, { destination: { serviceUuid: "svc1" }, mapping: owned });
+    expect(refused.status).toBe(422);
+    expect(JSON.stringify(await refused.json())).toContain("Coolify sets this name itself");
+
+    // The same mapping is fine on an application, but not once it points at a service.
+    const app = await (await createTarget(connection.id, { destination: { applicationUuid: "app1" }, mapping: owned })).json();
+    const moved = await patchReq(`${ENV_PATH}/sync-targets/${app.id}`, { expectedVersion: app.version, destination: { serviceUuid: "svc1" } });
+    expect(moved.status).toBe(422);
+  });
+
+  it("flags a wildcard name Coolify owns and neither writes nor deletes it", async () => {
+    await put(`${ENV_PATH}/values/COOLIFY_URL`, { value: "https://mine.example.com" });
+    const service = fakeService();
+    await serviceTarget({ removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().has("COOLIFY_URL")).toBe(false);
+    expect(service.values().get("PORT")).toBe("8080");
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("COOLIFY_URL: unstorable name");
+    expect(row.failure_count).toBe(1);
+  });
+
+  it("keeps a name the compose file binds to a Coolify value out of writes and deletes", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      PORT: ${SERVICE_URL_WEB}\n" });
+    service.seed("PORT", "${SERVICE_URL_WEB}");
+    await serviceTarget({ removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().get("PORT")).toBe("${SERVICE_URL_WEB}");
+    expect(service.values().get("DATABASE_URL")).toBe("postgres://dev-db/main");
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("PORT: the platform sets this name itself");
+
+    // Removing the item never deletes Coolify's own row.
+    await del(`${ENV_PATH}/values/PORT`);
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
+    expect(service.values().get("PORT")).toBe("${SERVICE_URL_WEB}");
+    expect(service.calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
+  it("stores usage notes, replaces them on every inspecting run, and keeps them null for applications", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
+    await serviceTarget();
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    let row = await targetRowFromDb();
+    expect(row.last_result).toBe("ok");
+    expect(asJson(row.last_notes)).toEqual([{ code: "shadowed", name: "DATABASE_URL", containers: ["web"] }]);
+    const listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0].lastNotes).toEqual([{ code: "shadowed", name: "DATABASE_URL", containers: ["web"] }]);
+
+    // The compose file now reads the stored value: the note clears.
+    service.state.compose = "services:\n  web:\n    environment:\n      DATABASE_URL: ${DATABASE_URL}\n";
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    row = await targetRowFromDb();
+    expect(asJson(row.last_notes)).toEqual([]);
+
+    // A token that cannot read the compose file: one note says so.
+    service.state.sensitive = false;
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    row = await targetRowFromDb();
+    expect(asJson<{ code: string; reason: string }[]>(row.last_notes)).toEqual([
+      { code: "usage-unchecked", reason: expect.stringContaining("read:sensitive") },
+    ]);
+
+    await ctx.db.query("DELETE FROM sync_ledger");
+    await ctx.db.query("DELETE FROM sync_targets");
+    const coolify = fakeCoolify();
+    const connection = await (await createConnection()).json();
+    await createTarget(connection.id);
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await targetRowFromDb()).last_notes).toBeNull();
+  });
+
+  it("deletes a re-created name once, then never fights Coolify for it (nor restarts for it)", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      PORT: ${PORT:-80}\n" });
+    await serviceTarget({ removeOrphans: true, redeploy: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.restarts()).toBe(1);
+
+    await del(`${ENV_PATH}/values/PORT`);
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().has("PORT")).toBe(false);
+    expect(service.restarts()).toBe(2);
+    expect(asJson(( await targetRowFromDb()).last_notes)).toEqual([{ code: "kept-by-platform", name: "PORT" }]);
+
+    // Coolify's next parse re-creates it with the compose default.
+    service.seed("PORT", "80");
+    for (let i = 0; i < 2; i++) {
+      await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
+    }
+    expect(service.values().get("PORT")).toBe("80");
+    expect(service.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+    expect(service.restarts()).toBe(2);
+  });
+
+  it("does not re-delete when usage cannot be read either", async () => {
+    const service = fakeService({ sensitive: false });
+    await serviceTarget({ removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    await del(`${ENV_PATH}/values/PORT`);
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().has("PORT")).toBe(false);
+    service.seed("PORT", "80");
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
+    expect(service.values().get("PORT")).toBe("80");
+    expect(service.calls.filter((c) => c.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("rewrites unreadable values on repair without restarting the service", async () => {
+    const service = fakeService({ sensitive: false });
+    await serviceTarget({ redeploy: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.restarts()).toBe(1);
+    service.calls.length = 0;
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
+    // The values could not be compared, so they were written again...
+    expect(service.calls.filter((c) => c.method === "PATCH").length).toBeGreaterThan(0);
+    // ...as the same content: no restart.
+    expect(service.restarts()).toBe(1);
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+  });
+
+  it("restarts the service, not a deploy, after a changing push", async () => {
+    const service = fakeService();
+    await serviceTarget({ redeploy: true });
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.calls.filter((c) => c.method === "POST" && !c.url.endsWith("/envs")).map((c) => c.url)).toEqual([
+      "https://coolify.example.com/api/v1/services/svc1/restart",
+    ]);
+  });
+
+  it("refuses a value Coolify would change, and says why", async () => {
+    await put(`${ENV_PATH}/values/QUOTED`, { value: "it's" });
+    const service = fakeService();
+    await serviceTarget();
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    expect(service.values().has("QUOTED")).toBe(false);
+    expect(service.values().get("PORT")).toBe("8080");
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("QUOTED (Coolify writes values in single quotes");
+    expect(JSON.stringify(row)).not.toContain("it's");
   });
 });
