@@ -155,6 +155,7 @@ describe("Integration card", () => {
     needsSync: false,
     lastAttemptAt: "2026-10-09T09:00:00Z",
     lastResult: "ok",
+    lastNotes: null,
     createdAt: "2026-10-01T09:00:00Z",
     version: 1,
     updatedAt: null,

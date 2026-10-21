@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
+import type { PlatformConnection, SyncTarget, SyncTargetNote } from "@varlatch/protocol";
 import { platformMeta } from "./platform-meta";
 
 /**
@@ -105,6 +105,7 @@ export function targetDestination(
     };
   }
   if (d.applicationUuid) return { primary: d.applicationUuid, qualifier: "application" };
+  if (d.serviceUuid) return { primary: d.serviceUuid, qualifier: "service" };
   // Convex: the connection's deployment is the destination.
   return { primary: connection ? hostOf(connection.baseIdentity) : "deployment" };
 }
@@ -138,7 +139,15 @@ export function mappingSummary(t: SyncTarget): { label: string; excluded?: strin
 /** Behaviour flags worth a word on the card. */
 export function targetOptions(t: SyncTarget): string[] {
   const out: string[] = [];
-  if (t.redeploy) out.push(t.destination.deployAction === "restart" ? "restarts after changes" : "redeploys after changes");
+  if (t.redeploy) {
+    out.push(
+      t.destination.serviceUuid
+        ? "restarts the service after changes"
+        : t.destination.deployAction === "restart"
+          ? "restarts after changes"
+          : "redeploys after changes",
+    );
+  }
   if (t.removeOrphans) out.push("removes names that leave");
   if (t.destination.buildTime === "true") out.push("build-time keys");
   if (t.destination.buildTime === "false") out.push("runtime-only keys");
@@ -180,4 +189,31 @@ export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
   }
   if (live.every((t) => !t.lastAttemptAt)) return { tone: "live", label: "Waiting for first push", credentialRejected: false };
   return { tone: "ok", label: "Healthy", credentialRejected: false };
+}
+
+/**
+ * A usage note in words (ADR-0031 amendment 2026-10-21): how the
+ * destination itself uses a pushed name. Notes never fail a push.
+ */
+export function noteText(note: SyncTargetNote): string {
+  const where = note.containers?.join(", ") ?? "";
+  switch (note.code) {
+    case "shadowed":
+      return `${note.name}: the compose file sets it in ${where}, which wins over the pushed value`;
+    case "not-delivered":
+      return `${note.name}: no container uses it`;
+    case "unknown-form":
+      return `${note.name}: used in ${where} in a form Varlatch does not read`;
+    case "generated-once":
+      return `${note.name}: Coolify generated it once; a database may read it only on first start, so change it with care`;
+    case "kept-by-platform":
+      return `${note.name}: removed; Coolify may keep or re-create the name, and Varlatch does not delete it again`;
+    case "usage-unchecked":
+      return `Usage not checked: ${note.reason ?? "unknown"}`;
+  }
+}
+
+/** Whether a note asks for a look (the rest are context). */
+export function noteWarns(note: SyncTargetNote): boolean {
+  return note.code === "shadowed" || note.code === "not-delivered" || note.code === "generated-once";
 }
