@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: Apache-2.0
+import { parse } from "yaml";
+import type { NameUsage, UsageReport } from "./types.js";
+
+/**
+ * How a Coolify service's compose file uses the names a Sync Target
+ * manages (ADR-0031 amendment 2026-10-21). Read from the compose file as
+ * written (how each name is used) and the one Coolify generated at its
+ * last parse (whether each container loads the service's `.env`), with the
+ * rules of Coolify's own service parser (v4.4.6 `serviceParser`) and
+ * Docker Compose's precedence (`environment:` wins over `env_file`).
+ *
+ * The verdicts are hints, and conservative: a form these rules do not
+ * cover reads as unknown, and nothing here infers what an image does with
+ * a value. The compose text never leaves this module: callers get names,
+ * container names and verdicts only.
+ */
+
+/** Larger compose files are not inspected (a bound on what a token can make us parse). */
+export const MAX_COMPOSE_BYTES = 512 * 1024;
+/** YAML aliases are expanded at most this often (a bound against alias bombs). */
+const MAX_ALIASES = 200;
+
+/** Written into `.env` or rewritten on every start by Coolify itself. */
+const OWNED_PREFIXES = ["SERVICE_FQDN_", "SERVICE_URL_", "SERVICE_NAME_", "COOLIFY_"];
+
+/** Names Coolify sets itself on a service: a Target may not manage them. */
+export function coolifyOwnsName(name: string): boolean {
+  return OWNED_PREFIXES.some((p) => name.startsWith(p));
+}
+
+/** Coolify's generated-once magic names (passwords, users, keys): created once and kept. */
+export function coolifyGeneratesName(name: string): boolean {
+  return name.startsWith("SERVICE_") && !coolifyOwnsName(name);
+}
+
+type EnvValue = string | number | boolean | null | object;
+
+/** A container's `environment:` merged with its `build.args`, as Coolify's convertToKeyValueCollection reads them. */
+function environmentOf(service: unknown): Map<string, EnvValue> {
+  const env = new Map<string, EnvValue>();
+  if (!isObject(service)) return env;
+  const build = isObject(service.build) ? service.build.args : undefined;
+  for (const source of [service.environment, build]) {
+    if (Array.isArray(source)) {
+      for (const entry of source) {
+        if (typeof entry !== "string" || entry === "") continue;
+        const eq = entry.indexOf("=");
+        // `- NAME=value` sets a value; a bare `- NAME` is `NAME:` without one.
+        if (eq >= 0) env.set(entry.slice(0, eq), entry.slice(eq + 1));
+        else if (!env.has(entry)) env.set(entry, null);
+      }
+    } else if (isObject(source)) {
+      for (const [key, value] of Object.entries(source)) env.set(key, value as EnvValue);
+    }
+  }
+  return env;
+}
+
+/** Whether the generated compose file has the container load `.env` (Coolify ≥ v4.0.0-beta.443 adds it to every container). */
+function loadsDotEnv(service: unknown): boolean {
+  if (!isObject(service)) return false;
+  const files = Array.isArray(service.env_file) ? service.env_file : [service.env_file];
+  return files.some((f) => {
+    const path = typeof f === "string" ? f : isObject(f) && typeof f.path === "string" ? f.path : undefined;
+    return path === ".env" || path === "./.env";
+  });
+}
+
+/** `$NAME` or `${NAME…}` anywhere in the text, `$$` escapes excluded. Over-approximates on purpose. */
+function referencesName(text: string, name: string): boolean {
+  return new RegExp(`(?<!\\$)\\$(?:\\{${name}(?=[}:?-])|${name}(?![A-Za-z0-9_]))`).test(text);
+}
+
+/**
+ * What Coolify's replaceVariables reads out of a `$…` value: the content of
+ * a leading `${…}`, or the rest after a bare `$`.
+ */
+function referenceContent(value: string): string {
+  if (value.startsWith("${")) {
+    let depth = 0;
+    for (let i = 1; i < value.length; i++) {
+      if (value[i] === "{") depth++;
+      else if (value[i] === "}" && --depth === 0) return value.slice(2, i);
+    }
+    return value.slice(2);
+  }
+  return value.slice(1);
+}
+
+/** `${NAME}`, `$NAME`, or `${NAME` with a default or required marker: the container's NAME is the stored NAME. */
+function isSelfReference(value: string, name: string): boolean {
+  if (value === `$${name}`) return true;
+  if (!value.startsWith("${")) return false;
+  const content = referenceContent(value);
+  // Something after the reference makes it an expression, not the name.
+  if (value !== `\${${content}}`) return false;
+  return content === name || (content.startsWith(name) && /^(:?-|:?\?)/.test(content.slice(name.length)));
+}
+
+type Verdict = "delivered" | "shadowed" | "owned" | "unknown";
+
+/** One container's reading of one name that its `environment:` (or build args) sets. */
+function verdictFor(name: string, value: EnvValue): Verdict {
+  // Set without a value: Coolify keeps it unset in the generated file and
+  // Compose resolves it from its own environment. Not a rule we can prove.
+  if (value === null) return "unknown";
+  if (typeof value === "number" || typeof value === "boolean") return "shadowed";
+  if (typeof value !== "string") return "unknown";
+  // An empty value takes the stored one (Coolify's override for "").
+  if (value === "") return "delivered";
+  if (value.startsWith("$")) {
+    // Coolify rewrites the name to this reference on every parse.
+    if (referenceContent(value).startsWith("SERVICE_")) return "owned";
+    if (isSelfReference(value, name)) return "delivered";
+    // Another variable (or an expression of one) decides the container's value.
+    return "shadowed";
+  }
+  // A literal, or a string that interpolates other names: the compose
+  // file, not the stored variable, decides the container's value.
+  return "shadowed";
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Parse bounded YAML; undefined when it is too large, malformed, or not a mapping. */
+function parseBounded(text: string): Record<string, unknown> | undefined {
+  if (Buffer.byteLength(text, "utf8") > MAX_COMPOSE_BYTES) return undefined;
+  try {
+    const doc = parse(text, { merge: true, maxAliasCount: MAX_ALIASES, prettyErrors: false, uniqueKeys: false }) as unknown;
+    return isObject(doc) ? doc : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const unknown = (reason: string, names: string[]): UsageReport => ({
+  checked: false,
+  reason,
+  names: new Map(names.map((n) => [n, {}])),
+});
+
+/**
+ * Classify each name. `raw` is the compose file as written, `generated` the
+ * one Coolify produced at its last parse; `parsingVersion` is the service's
+ * `compose_parsing_version` (Coolify's legacy parser below 3 follows other
+ * rules, so nothing is claimed for it).
+ */
+export function classifyComposeUsage(
+  raw: string | null | undefined,
+  generated: string | null | undefined,
+  parsingVersion: number | null | undefined,
+  names: string[],
+): UsageReport {
+  if (typeof parsingVersion !== "number" || parsingVersion < 3) {
+    return unknown("this service uses Coolify's older compose parser, whose rules Varlatch does not check", names);
+  }
+  if (typeof raw !== "string" || raw === "") return unknown("Coolify did not return the service's compose file", names);
+  if (typeof generated !== "string" || generated === "") {
+    return unknown("Coolify has not generated this service's compose file yet (it does at the first start)", names);
+  }
+  const rawDoc = parseBounded(raw);
+  const genDoc = parseBounded(generated);
+  if (!rawDoc || !genDoc) return unknown("the service's compose file is too large or could not be read", names);
+  const rawServices = isObject(rawDoc.services) ? rawDoc.services : {};
+  const genServices = isObject(genDoc.services) ? genDoc.services : {};
+  const containers = Object.keys(rawServices).sort();
+  if (containers.length === 0) return unknown("the service's compose file defines no containers", names);
+
+  const report: UsageReport = { checked: true, names: new Map() };
+  for (const name of names) {
+    const usage: NameUsage = {};
+    const shadowed: string[] = [];
+    const unknownIn: string[] = [];
+    let reaches = false;
+    for (const container of containers) {
+      const env = environmentOf(rawServices[container]);
+      if (env.has(name)) {
+        const verdict = verdictFor(name, env.get(name) as EnvValue);
+        if (verdict === "owned") usage.owned = true;
+        else if (verdict === "shadowed") shadowed.push(container);
+        else if (verdict === "unknown") unknownIn.push(container);
+        else reaches = true;
+      } else if (loadsDotEnv(genServices[container])) {
+        reaches = true;
+      } else if (referencesName(JSON.stringify(rawServices[container] ?? null), name)) {
+        // The container uses the stored value inside another of its settings.
+        reaches = true;
+      }
+    }
+    // Another name bound to a Coolify-generated value makes that name owned,
+    // not this one; this one is owned when its own entry is.
+    if (referencesName(raw, name)) usage.referenced = true;
+    if (coolifyGeneratesName(name)) usage.generatedOnce = true;
+    if (shadowed.length > 0) usage.shadowedIn = shadowed;
+    if (unknownIn.length > 0) usage.unknownIn = unknownIn;
+    if (!reaches && !usage.owned && shadowed.length === 0 && unknownIn.length === 0) usage.notDeliveredTo = containers;
+    report.names.set(name, usage);
+  }
+  return report;
+}

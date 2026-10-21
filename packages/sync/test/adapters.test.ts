@@ -455,6 +455,41 @@ describe("coolify adapter", () => {
     expect(values.get("B")).toBe("");
   });
 
+  it("reads a value Coolify withholds as unreadable, never as empty", async () => {
+    // Without read:sensitive (or for a "shown once" variable) Coolify 4.4
+    // lists the row without its value.
+    const fetchImpl = fakeFetch(() => ({
+      status: 200,
+      body: [{ uuid: "e1", key: "HIDDEN", is_literal: false }, { uuid: "e2", key: "EMPTY", value: "" }],
+    }));
+    const values = await coolifyAdapter.readValues!(baseReq(fetchImpl));
+    expect(values.has("HIDDEN")).toBe(true);
+    expect(values.get("HIDDEN")).toBeNull();
+    expect(values.get("EMPTY")).toBe("");
+  });
+
+  it("refuses a value Coolify would trim, and sends nothing for it", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = fakeFetch((url, init) => ((init.method ?? "GET") === "GET" ? { status: 200, body: [] } : { status: 201 }), calls);
+    const outcomes = await coolifyAdapter.writeValues(baseReq(fetchImpl), [
+      { name: "PEM", value: "-----BEGIN KEY-----\nabc\n-----END KEY-----\n" },
+      { name: "PADDED", value: " token " },
+      { name: "TAB", value: "\tx" },
+      { name: "INNER", value: "a b\nc" },
+      { name: "NBSP", value: " x" },
+    ]);
+    expect(outcomes.map((o) => [o.name, o.ok])).toEqual([
+      ["PEM", false],
+      ["PADDED", false],
+      ["TAB", false],
+      ["INNER", true],
+      // PHP's trim() leaves a non-breaking space alone, so it is stored as given.
+      ["NBSP", true],
+    ]);
+    expect(outcomes[0]!.error).toContain("whitespace");
+    expect(calls.filter((c) => c.init.method === "POST").map((c) => bodyOf(c).key)).toEqual(["INNER", "NBSP"]);
+  });
+
   it("redeploys with a forced rebuild by default, restarts on request, and reports failure", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const ok = fakeFetch(() => ({ status: 200, body: { message: "queued" } }), calls);
@@ -469,6 +504,116 @@ describe("coolify adapter", () => {
     // adapter must never silently downgrade to it.
     const gone = fakeFetch(() => ({ status: 405, body: { message: "POST required" } }));
     await expect(coolifyAdapter.triggerRedeploy!(baseReq(gone))).rejects.toThrow(/deploy failed \(405\)/);
+  });
+
+  describe("services", () => {
+    const svc = { serviceUuid: "svc123" };
+
+    it("takes a service uuid as a separate claim, with no application options", () => {
+      expect(coolifyAdapter.canonicalizeDestination({ serviceUuid: " svc123 " })).toEqual({
+        destination: { serviceUuid: "svc123" },
+        key: "service:svc123",
+      });
+      // Never equal to an application's claim on the same uuid.
+      expect(coolifyAdapter.canonicalizeDestination({ applicationUuid: "svc123" }).key).not.toBe("service:svc123");
+      expect(() => coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", applicationUuid: "app123" })).toThrow(/not both/);
+      expect(() => coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", buildTime: "true" })).toThrow(/buildTime/);
+      expect(() => coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", deployAction: "restart" })).toThrow(/deployAction/);
+      expect(() => coolifyAdapter.canonicalizeDestination({ serviceUuid: "../x" })).toThrow(/service UUID/);
+      // Empty options are absent options.
+      expect(coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", buildTime: "", deployAction: null }).key).toBe("service:svc123");
+    });
+
+    it("refuses the names Coolify sets on a service, and only on a service", () => {
+      for (const name of ["SERVICE_FQDN_APP", "SERVICE_URL_APP_3000", "SERVICE_NAME_DB", "COOLIFY_URL"]) {
+        expect(coolifyAdapter.validateName(name, svc)).toMatch(/Coolify sets this name itself/);
+        expect(coolifyAdapter.validateName(name, { applicationUuid: "app123" })).toBeNull();
+        expect(coolifyAdapter.validateName(name)).toBeNull();
+      }
+      expect(coolifyAdapter.validateName("SERVICE_PASSWORD_POSTGRES", svc)).toBeNull();
+      expect(coolifyAdapter.validateName("1BAD", svc)).toMatch(/letters/);
+    });
+
+    it("writes key and value only, and deletes by env uuid, on the service's routes", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const fetchImpl = fakeFetch((url, init) => {
+        if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
+          return { status: 200, body: [{ uuid: "e1", key: "EXISTING", value: "old", is_literal: true, is_multiline: false }] };
+        }
+        return { status: 201 };
+      }, calls);
+      const req = baseReq(fetchImpl, svc);
+      const outcomes = await coolifyAdapter.writeValues(req, [
+        { name: "EXISTING", value: "new" },
+        { name: "FRESH", value: "v" },
+      ]);
+      expect(outcomes.every((o) => o.ok)).toBe(true);
+      expect(calls.map((c) => `${c.init.method ?? "GET"} ${c.url}`)).toEqual([
+        "GET https://coolify.example.com/api/v1/services/svc123/envs",
+        "PATCH https://coolify.example.com/api/v1/services/svc123/envs",
+        "POST https://coolify.example.com/api/v1/services/svc123/envs",
+      ]);
+      // A service PATCH keeps every flag it is not sent: nothing to mirror.
+      expect(bodyOf(calls[1]!)).toEqual({ key: "EXISTING", value: "new" });
+      expect(bodyOf(calls[2]!)).toEqual({ key: "FRESH", value: "v" });
+
+      await coolifyAdapter.deleteNames(req, ["EXISTING"]);
+      expect(calls.at(-1)).toMatchObject({ url: "https://coolify.example.com/api/v1/services/svc123/envs/e1", init: { method: "DELETE" } });
+    });
+
+    it("restarts the whole service, the only redeploy Coolify accepts for a running one", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      await coolifyAdapter.triggerRedeploy!(baseReq(fakeFetch(() => ({ status: 200, body: { message: "queued" } }), calls), svc));
+      expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual(["POST https://coolify.example.com/api/v1/services/svc123/restart"]);
+      const refused = fakeFetch(() => ({ status: 400, body: { message: "Service is already running." } }));
+      await expect(coolifyAdapter.triggerRedeploy!(baseReq(refused, svc))).rejects.toThrow(/restart failed \(400\)/);
+    });
+
+    it("inspects the service's compose files and returns only verdicts", async () => {
+      const raw = "services:\n  backend:\n    environment:\n      API_KEY: sk_live_literal\n      DB_URL: ${DB_URL}\n";
+      const generated = "services:\n  backend:\n    env_file:\n      - .env\n    environment:\n      DB_URL: postgres://secret@db\n";
+      const calls: { url: string; init: RequestInit }[] = [];
+      const fetchImpl = fakeFetch(
+        () => ({
+          status: 200,
+          body: {
+            uuid: "svc123",
+            compose_parsing_version: 5,
+            docker_compose_raw: raw,
+            docker_compose: generated,
+            destination: { server: { settings: { sentinel_token: "server-secret" } } },
+          },
+        }),
+        calls,
+      );
+      const report = await coolifyAdapter.inspectUsage!(baseReq(fetchImpl, svc), ["API_KEY", "DB_URL", "OTHER"]);
+      expect(calls.map((c) => `${c.init.method} ${c.url}`)).toEqual(["GET https://coolify.example.com/api/v1/services/svc123"]);
+      expect(report?.checked).toBe(true);
+      expect(report?.names.get("API_KEY")).toEqual({ shadowedIn: ["backend"] });
+      expect(report?.names.get("DB_URL")).toEqual({ referenced: true });
+      expect(report?.names.get("OTHER")).toEqual({});
+      const text = JSON.stringify({ ...report, names: [...(report?.names ?? [])] });
+      for (const secret of ["sk_live", "postgres://", "server-secret"]) expect(text).not.toContain(secret);
+    });
+
+    it("says why usage was not checked, and never throws", async () => {
+      const hidden = fakeFetch(() => ({ status: 200, body: { uuid: "svc123", compose_parsing_version: 5, name: "convex" } }));
+      const noSensitive = await coolifyAdapter.inspectUsage!(baseReq(hidden, svc), ["A"]);
+      expect(noSensitive).toMatchObject({ checked: false });
+      expect(noSensitive?.reason).toContain("read:sensitive");
+      expect(noSensitive?.names.get("A")).toEqual({});
+
+      const notFound = await coolifyAdapter.inspectUsage!(baseReq(fakeFetch(() => ({ status: 404 })), svc), ["A"]);
+      expect(notFound).toMatchObject({ checked: false, reason: expect.stringContaining("404") });
+      const other = await coolifyAdapter.inspectUsage!(baseReq(fakeFetch(() => ({ status: 200, body: { uuid: "other" } })), svc), ["A"]);
+      expect(other?.checked).toBe(false);
+      const down = (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch;
+      expect((await coolifyAdapter.inspectUsage!(baseReq(down, svc), ["A"]))?.checked).toBe(false);
+      // An application has no compose notion here.
+      expect(await coolifyAdapter.inspectUsage!(baseReq(hidden), ["A"])).toBeNull();
+    });
   });
 });
 
@@ -915,6 +1060,59 @@ describe("access checks", () => {
       expect(result.message).toBe("coolify.example.com does not answer like a Coolify instance (HTTP 410). Check the address.");
     });
 
+    it("checks a service, then its variables (the push's first request), and names its containers", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const service = {
+        uuid: "svc123",
+        name: "convex",
+        applications: [{ name: "backend" }, { name: "dashboard" }],
+        databases: [{ name: "postgres" }],
+        docker_compose_raw: "API_KEY: sk_live_x",
+      };
+      const fetchImpl = fakeFetch((url) => {
+        if (url.endsWith("/version")) return { status: 200, body: "4.4.6" };
+        if (url.endsWith("/envs")) return { status: 200, body: [{ uuid: "e1", key: "A", value: "secret-value" }] };
+        return { status: 200, body: service };
+      }, calls);
+      const result = await coolifyAdapter.checkAccess(coolify(fetchImpl, { serviceUuid: "svc123" }));
+      expect(result).toMatchObject({ status: "ok", where: "destination" });
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+        ["GET", "https://coolify.example.com/api/v1/version"],
+        ["GET", "https://coolify.example.com/api/v1/services/svc123"],
+        ["GET", "https://coolify.example.com/api/v1/services/svc123/envs"],
+      ]);
+      expect(result.message).toContain("service convex");
+      expect(result.message).toContain("(backend, dashboard, postgres), and any added later");
+      expect(result.message).not.toContain("read:sensitive");
+      for (const secret of ["secret-value", "sk_live"]) expect(result.message).not.toContain(secret);
+
+      // Without read:sensitive the rows come without values: say what that costs.
+      const withheld = fakeFetch((url) => {
+        if (url.endsWith("/version")) return { status: 200, body: "4.4.6" };
+        if (url.endsWith("/envs")) return { status: 200, body: [{ uuid: "e1", key: "A" }] };
+        return { status: 200, body: { uuid: "svc123", name: "convex" } };
+      });
+      const limited = await coolifyAdapter.checkAccess(coolify(withheld, { serviceUuid: "svc123" }));
+      expect(limited.status).toBe("ok");
+      expect(limited.message).toContain("cannot read their values (Coolify's read:sensitive permission)");
+    });
+
+    it("tells a member's token, another team's service, and a sub-resource uuid apart", async () => {
+      const answer = (envs: { status: number; body?: unknown }, service: { status: number; body?: unknown } = { status: 200, body: { uuid: "svc123" } }) =>
+        fakeFetch((url) => (url.endsWith("/version") ? { status: 200, body: "4.4.6" } : url.endsWith("/envs") ? envs : service));
+      const member = await coolifyAdapter.checkAccess(coolify(answer({ status: 403, body: { message: "This action is unauthorized." } }), { serviceUuid: "svc123" }));
+      expect(member).toMatchObject({ status: "permission-missing", where: "destination" });
+      expect(member.message).toContain("only team admins and owners");
+      expect(member.message).not.toContain("unauthorized");
+      const missing = await coolifyAdapter.checkAccess(coolify(answer({ status: 200, body: [] }, { status: 404 }), { serviceUuid: "svc123" }));
+      expect(missing).toMatchObject({ status: "not-found", where: "destination" });
+      expect(missing.message).toContain("no service svc123");
+      // A service's application uuid finds no service.
+      const sub = await coolifyAdapter.checkAccess(coolify(answer({ status: 200, body: [] }, { status: 200, body: { uuid: "parent" } }), { serviceUuid: "svc123" }));
+      expect(sub).toMatchObject({ status: "failed", where: "destination" });
+      expect(sub.message).toContain("did not answer with service svc123");
+    });
+
     it("reads server errors and timeouts as unreachable", async () => {
       expect((await coolifyAdapter.checkAccess(coolify(fakeFetch(() => ({ status: 502 }))))).status).toBe("unreachable");
       const timeout = Object.assign(new Error("aborted"), { name: "TimeoutError" });
@@ -1067,24 +1265,56 @@ describe("destination listings", () => {
       const listing = await coolifyAdapter.listDestinations!(
         coolify(
           fakeFetch(
-            () => ({
+            (url) => ({
               status: 200,
-              body: [
-                { uuid: "web123", name: "web", fqdn: "https://web.example.com,https://www.example.com", manual_webhook_secret_github: "s3cret" },
-                { uuid: "api123", name: "api", fqdn: null },
-                { uuid: "../bad", name: "invalid uuid" },
-              ],
+              body: url.endsWith("/services")
+                ? []
+                : [
+                    { uuid: "web123", name: "web", fqdn: "https://web.example.com,https://www.example.com", manual_webhook_secret_github: "s3cret" },
+                    { uuid: "api123", name: "api", fqdn: null },
+                    { uuid: "../bad", name: "invalid uuid" },
+                  ],
             }),
             calls,
           ),
         ),
       );
-      expect(calls.map((c) => [c.init.method, c.url])).toEqual([["GET", "https://coolify.example.com/api/v1/applications"]]);
+      expect(calls.map((c) => [c.init.method, c.url])).toEqual([
+        ["GET", "https://coolify.example.com/api/v1/applications"],
+        ["GET", "https://coolify.example.com/api/v1/services"],
+      ]);
       expect(listing.items).toEqual([
         { destination: { applicationUuid: "api123" }, label: "api" },
         { destination: { applicationUuid: "web123" }, label: "web", detail: "web.example.com" },
       ]);
       expect(JSON.stringify(listing)).not.toContain("s3cret");
+    });
+
+    it("lists services next to applications, by name, without anything else they carry", async () => {
+      const listing = await coolifyAdapter.listDestinations!(
+        coolify(
+          fakeFetch((url) =>
+            url.endsWith("/applications")
+              ? { status: 200, body: [{ uuid: "web123", name: "web", fqdn: "https://web.example.com" }] }
+              : { status: 200, body: [{ uuid: "svc123", name: "convex", docker_compose_raw: "KEY: sk_live_x" }, { uuid: "bad/uuid", name: "x" }] },
+          ),
+        ),
+      );
+      expect(listing.items).toEqual([
+        { destination: { serviceUuid: "svc123" }, label: "convex", detail: "service" },
+        { destination: { applicationUuid: "web123" }, label: "web", detail: "web.example.com" },
+      ]);
+      expect(listing.check.message).toBe("The token's team has 1 applications and 1 services on coolify.example.com.");
+      expect(JSON.stringify(listing)).not.toContain("sk_live");
+    });
+
+    it("still lists the applications when only the services cannot be listed", async () => {
+      const listing = await coolifyAdapter.listDestinations!(
+        coolify(fakeFetch((url) => (url.endsWith("/applications") ? { status: 200, body: [{ uuid: "web123", name: "web" }] } : { status: 500 }))),
+      );
+      expect(listing.check.status).toBe("ok");
+      expect(listing.check.message).toContain("Its services could not be listed (HTTP 500)");
+      expect(listing.items).toEqual([{ destination: { applicationUuid: "web123" }, label: "web" }]);
     });
 
     it("fails like an access check, with no items", async () => {
