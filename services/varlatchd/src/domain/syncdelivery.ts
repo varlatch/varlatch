@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac } from "node:crypto";
-import { getAdapter, type NameOutcome, type SyncItem } from "@varlatch/sync";
+import { getAdapter, type NameOutcome, type NameUsage, type SyncItem, type UsageReport } from "@varlatch/sync";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, decryptValue, syncFingerprintKey } from "../crypto/hierarchy.js";
@@ -15,6 +15,7 @@ import { activeContractOf } from "./contracts.js";
 import { DomainError } from "./errors.js";
 import { envelope, resolveItems } from "./retrieval.js";
 import {
+  boundNotes,
   recordCredentialExpiry,
   describeDestination,
   matchesExclusion,
@@ -22,6 +23,7 @@ import {
   TARGET_COLUMNS,
   type SyncMapping,
   type SyncTargetRow,
+  type TargetNote,
 } from "./sync.js";
 
 /**
@@ -203,6 +205,8 @@ export async function reconcileTarget(
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  // The notes of a completed inspection, kept for a run that throws later.
+  const inspected: { notes?: TargetNote[] } = {};
 
   try {
     // Connection and org facts also post-lease: a re-point that raced the
@@ -239,7 +243,7 @@ export async function reconcileTarget(
 
     let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
     try {
-      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts);
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected);
     } finally {
       // Whatever the outcome, even a throw (a refused public-key fetch), the
       // platform may have said when the credential expires; recorded only if
@@ -270,7 +274,7 @@ export async function reconcileTarget(
         fenced = false; // cannot confirm a successor: reschedule, guarded
       }
       if (!fenced) {
-        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation).catch(
+        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
           (e) => console.error("sync interruption bookkeeping failed:", e),
         );
       }
@@ -281,11 +285,14 @@ export async function reconcileTarget(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
              ${force ? ", last_repair_at = now()" : ""}
+             ${outcome.notes !== undefined ? ", last_notes = $4" : ""}
          WHERE id = $1 AND generation = $3`,
-        [target.id, outcome.result, generation],
+        outcome.notes !== undefined
+          ? [target.id, outcome.result, generation, JSON.stringify(outcome.notes)]
+          : [target.id, outcome.result, generation],
       );
     } else {
-      await recordFailure(ctx, target, outcome.result, true, generation);
+      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes);
     }
   } catch (err) {
     await recordFailure(
@@ -294,6 +301,7 @@ export async function reconcileTarget(
       err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 300) : "error",
       true,
       generation,
+      inspected.notes,
     ).catch((e) => console.error("sync failure bookkeeping failed:", e));
   } finally {
     await ctx.db
@@ -308,6 +316,12 @@ export async function reconcileTarget(
 interface RunOutcome {
   ok: boolean;
   result: string;
+  /**
+   * Usage notes, replacing the Target's (migration 31) when the run
+   * inspected the destination; undefined when it did not, which leaves
+   * them as they are.
+   */
+  notes?: TargetNote[];
 }
 
 /**
@@ -324,6 +338,7 @@ async function reconcileUnderLease(
   generation: number,
   force: boolean,
   opts: SyncRunOptions,
+  inspected: { notes?: TargetNote[] } = {},
 ): Promise<RunOutcome> {
   const adapter = getAdapter(live.platform);
   const org = {
@@ -386,12 +401,67 @@ async function reconcileUnderLease(
     });
   }
 
+  // Usage (ADR-0031 amendment 2026-10-21): how the destination itself uses
+  // the names this run may write or delete, read before the diff. A name
+  // the platform sets itself is neither written nor deleted; the rest are
+  // notes, which never fail the run.
+  const flags = [...rendered.flags];
+  const notes: TargetNote[] = [];
+  let usage: UsageReport | null = null;
+  if (adapter.inspectUsage) {
+    const names = [...new Set([...desired.keys(), ...ledger.keys()])];
+    usage = await adapter
+      .inspectUsage(await adapterRequest(ctx, org, target, live, opts), names)
+      .catch(() => ({ checked: false, reason: "the destination could not be read", names: new Map<string, NameUsage>() }));
+  }
+  const usageOf = (name: string): NameUsage => usage?.names.get(name) ?? {};
+  if (usage && !usage.checked) notes.push({ code: "usage-unchecked", reason: usage.reason ?? "unknown" });
+  // Names held this run: neither written nor deleted. The platform's own,
+  // and values it would not deliver as given (checked here, before the
+  // diff, so a value already stored is held to the same rule).
+  const held = new Set<string>();
+  for (const [destName, want] of [...desired]) {
+    const problem = usageOf(destName).owned
+      ? "the platform sets this name itself"
+      : (adapter.valueProblem?.(target.destination, destName, want.value, usage) ?? null);
+    if (problem) {
+      desired.delete(destName);
+      held.add(destName);
+      flags.push(`${destName}: ${problem}`);
+    } else {
+      notes.push(...usageNotes(destName, usageOf(destName)));
+    }
+  }
+  // The inspection is complete: a run that throws from here on still
+  // replaces the Target's notes with these.
+  if (usage !== null) inspected.notes = boundNotes(notes);
+  // A name this destination refuses (the platform's own) or that the
+  // platform sets itself was never Varlatch's to delete.
+  const notOurs = (name: string) =>
+    usageOf(name).owned === true || adapter.validateName(name, target.destination) !== null;
+  // After a confirmed delete, a repair deletes again only when it knows the
+  // platform does not re-create the name: never for a name its
+  // configuration may reference, nor when usage could not be read (each
+  // repeat would also restart a service).
+  const mayRecreate = (name: string) => usageOf(name).referenced === true || (usage !== null && !usage.checked);
+
   // Verify-and-fix (§6): an adapter that can read values back repairs only
-  // actual drift instead of force-writing everything.
-  let remote: Map<string, string> | null = null;
-  if (force && adapter.supportsReadBack && adapter.readValues) {
+  // actual drift instead of force-writing everything. A value the platform
+  // withholds reads as null: it never matches, so it is rewritten.
+  // A name stored in another form than the adapter writes (a Coolify
+  // variable without the literal flags) is rewritten even when it matches.
+  let remote: Map<string, string | null> | null = null;
+  let rewrite = new Set<string>();
+  if (force && adapter.supportsReadBack && (adapter.readRemote || adapter.readValues)) {
     try {
-      remote = await adapter.readValues(await adapterRequest(ctx, org, target, live, opts));
+      const request = await adapterRequest(ctx, org, target, live, opts);
+      if (adapter.readRemote) {
+        const state = await adapter.readRemote(request);
+        remote = state.values;
+        rewrite = state.rewrite;
+      } else {
+        remote = (await adapter.readValues!(request));
+      }
     } catch {
       remote = null; // fall back to force-writes
     }
@@ -409,7 +479,7 @@ async function reconcileUnderLease(
       entry && entry.state === "written" && entry.fingerprint === want.fingerprint;
     const needsWrite = force
       ? remote
-        ? remote.get(destName) !== want.value
+        ? remote.get(destName) !== want.value || rewrite.has(destName)
         : true
       : !converged || ambiguous.has(destName);
     if (needsWrite) writes.push({ destName, ...want });
@@ -420,11 +490,14 @@ async function reconcileUnderLease(
 
   const deletes: string[] = [];
   for (const [destName, entry] of ledger) {
-    if (desired.has(destName)) continue;
+    if (desired.has(destName) || held.has(destName)) continue;
+    if (notOurs(destName)) continue;
     if (entry.state === "tombstone") {
+      if (mayRecreate(destName)) notes.push({ code: "kept-by-platform", name: destName });
       // Re-apply tombstoned deletions on repair or when a stale write may
-      // have resurrected the name (§3/§6).
-      if (force && (!remote || remote.has(destName))) deletes.push(destName);
+      // have resurrected the name (§3/§6), unless the platform may
+      // re-create it (above).
+      if (force && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
@@ -434,6 +507,10 @@ async function reconcileUnderLease(
   // A repair write whose content matches the ledger fingerprint is not a
   // change and triggers no redeploy (§5).
   const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
+
+  // Every note is known now (the ledger pass added the kept names).
+  const runNotes = usage !== null ? boundNotes(notes) : undefined;
+  if (runNotes !== undefined) inspected.notes = runNotes;
 
   // Nothing left the process for an adoption, so no disclosure event and no
   // redeploy — only ownership bookkeeping. A fence here still aborts: the
@@ -446,8 +523,9 @@ async function reconcileUnderLease(
 
   if (writes.length === 0 && deletes.length === 0) {
     return {
-      ok: rendered.flags.length === 0,
-      result: rendered.flags.length > 0 ? flagSummary(rendered.flags) : "converged",
+      ok: flags.length === 0,
+      result: flags.length > 0 ? flagSummary(flags) : "converged",
+      ...(runNotes !== undefined ? { notes: runNotes } : {}),
     };
   }
 
@@ -468,7 +546,7 @@ async function reconcileUnderLease(
     },
   });
 
-  const req = await adapterRequest(ctx, org, target, live, opts, generation);
+  const req = { ...(await adapterRequest(ctx, org, target, live, opts, generation)), usage };
   let writeOutcomes: NameOutcome[] = [];
   if (writes.length > 0) {
     for (const w of writes) {
@@ -505,6 +583,7 @@ async function reconcileUnderLease(
     }
     deleteOutcomes = await adapter.deleteNames(req, deletes);
     for (const o of deleteOutcomes) {
+      if (o.ok && mayRecreate(o.name)) notes.push({ code: "kept-by-platform", name: o.name });
       await ledgerSet(
         ctx,
         target.id,
@@ -525,9 +604,9 @@ async function reconcileUnderLease(
   // Per-item failures from rendering (unresolved references, unstorable
   // names, pending re-affirmation) degrade the Target too.
   const result =
-    failed.length === 0 && rendered.flags.length === 0
+    failed.length === 0 && flags.length === 0
       ? "ok"
-      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...rendered.flags].join("; ")}`.slice(0, 500);
+      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`.slice(0, 500);
 
   await recordAuditEvent(ctx.db, {
     eventType: "sync.push_result",
@@ -565,10 +644,22 @@ async function reconcileUnderLease(
     });
   }
 
+  const notesAfter = usage !== null ? boundNotes(notes) : undefined;
   return {
-    ok: failed.length === 0 && rendered.flags.length === 0,
+    ok: failed.length === 0 && flags.length === 0,
     result: `${result}${redeployNote}`.slice(0, 500),
+    ...(notesAfter !== undefined ? { notes: notesAfter } : {}),
   };
+}
+
+/** Notes for a name the run keeps managing: hints, never failures. */
+function usageNotes(name: string, usage: NameUsage): TargetNote[] {
+  const notes: TargetNote[] = [];
+  if (usage.shadowedIn?.length) notes.push({ code: "shadowed", name, containers: usage.shadowedIn });
+  if (usage.notDeliveredTo?.length) notes.push({ code: "not-delivered", name });
+  if (usage.unknownIn?.length) notes.push({ code: "unknown-form", name, containers: usage.unknownIn });
+  if (usage.generatedOnce) notes.push({ code: "generated-once", name });
+  return notes;
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +702,7 @@ export async function renderEffectiveOutput(
   org: OrgRow,
   project: ProjectRow,
   env: EnvironmentRow,
-  target: Pick<SyncTargetRow, "mapping">,
+  target: Pick<SyncTargetRow, "mapping" | "destination">,
   platform: string,
   /** Commits the audit event for exactly these versions; decryption follows only if it succeeds. */
   beforeDecrypt: (versions: { name: string; versionId: string }[]) => Promise<void>,
@@ -627,7 +718,7 @@ export async function renderEffectiveOutput(
     const item = resolved.find((i) => i.name === name);
     if (!item) return; // not in effective output: convergence handles removal
     const destName = adapter.canonicalizeName(rename ?? name);
-    const problem = adapter.validateName(destName);
+    const problem = adapter.validateName(destName, target.destination);
     if (problem) {
       flags.push(`${name}: unstorable name`);
       return;
@@ -830,6 +921,7 @@ async function recordFailure(
   result: string,
   backoff: boolean,
   generation?: number,
+  notes?: TargetNote[],
 ): Promise<void> {
   const failures = target.failure_count + 1;
   const delayMs = Math.min(BASE_BACKOFF_MS * 2 ** target.failure_count, MAX_BACKOFF_MS);
@@ -837,17 +929,18 @@ async function recordFailure(
   // A failed run leaves pending work: needs_sync must come back on (lease
   // acquisition cleared it) or the backed-off retry would never qualify for
   // selection and the Target would wait for the next trigger or repair pass.
+  const params: unknown[] = [target.id, failures, result.slice(0, 500), delayMs, disable];
+  const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
+  const setNotes = notes !== undefined ? `, last_notes = $${params.push(JSON.stringify(notes))}` : "";
   const applied = await ctx.db.query(
     `UPDATE sync_targets
      SET failure_count = $2, last_result = $3, needs_sync = true,
          next_attempt_at = now() + ($4 * interval '1 millisecond'),
          state = CASE WHEN $5 THEN 'disabled' ELSE state END,
-         disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END
-     WHERE id = $1 AND revoked_at IS NULL${generation !== undefined ? " AND generation = $6" : ""}
+         disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END${setNotes}
+     WHERE id = $1 AND revoked_at IS NULL${guard}
      RETURNING id`,
-    generation !== undefined
-      ? [target.id, failures, result.slice(0, 500), delayMs, disable, generation]
-      : [target.id, failures, result.slice(0, 500), delayMs, disable],
+    params,
   );
   if (disable && applied.rows.length > 0) {
     // Auto-disable is a state the UI must surface; a human resumes (§5).

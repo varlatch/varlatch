@@ -65,6 +65,11 @@ export function AddIntegrationDialog({
   const [repo, setRepo] = useState("");
   const [ghEnvironment, setGhEnvironment] = useState("");
   const [appUuid, setAppUuid] = useState("");
+  // A Coolify destination is an application or a service (ADR-0031
+  // amendment 2026-10-21): a Compose stack whose variables reach all of its
+  // containers.
+  const [coolifyKind, setCoolifyKind] = useState<"application" | "service">("application");
+  const [serviceUuid, setServiceUuid] = useState("");
   // Coolify per-target options (adapter-owned, never part of the identity).
   const [buildTime, setBuildTime] = useState<"" | "true" | "false">("");
   const [deployAction, setDeployAction] = useState<"deploy" | "restart">("deploy");
@@ -124,24 +129,30 @@ export function AddIntegrationDialog({
     effectivePlatform === "github-actions"
       ? { repo: repo.trim(), ...(ghEnvironment.trim() ? { environment: ghEnvironment.trim() } : {}) }
       : effectivePlatform === "coolify"
-        ? {
-            applicationUuid: appUuid.trim(),
-            ...(buildTime ? { buildTime } : {}),
-            ...(redeploy && deployAction === "restart" ? { deployAction } : {}),
-          }
+        ? coolifyKind === "service"
+          ? // A service takes no options: it always restarts, and has no build time.
+            { serviceUuid: serviceUuid.trim() }
+          : {
+              applicationUuid: appUuid.trim(),
+              ...(buildTime ? { buildTime } : {}),
+              ...(redeploy && deployAction === "restart" ? { deployAction } : {}),
+            }
         : // Convex: the connection's deployment is the destination.
           {};
 
   const repoError =
     repo.includes("/") ? "Enter the repository name only; the owner comes from the connection." : repo && !GITHUB_REPO.test(repo.trim()) ? "Letters, digits, dots, dashes and underscores only." : null;
   const appError = appUuid && !COOLIFY_UUID.test(appUuid.trim()) ? "That does not look like a Coolify application UUID." : null;
+  const serviceError = serviceUuid && !COOLIFY_UUID.test(serviceUuid.trim()) ? "That does not look like a Coolify service UUID." : null;
 
   const stepValid = [
     isNew ? Boolean(platform && baseIdentity.trim() && connectionName.trim() && credential) : Boolean(selected),
     effectivePlatform === "github-actions"
       ? Boolean(repo.trim()) && !repoError
       : effectivePlatform === "coolify"
-        ? Boolean(appUuid.trim()) && !appError
+        ? coolifyKind === "service"
+          ? Boolean(serviceUuid.trim()) && !serviceError
+          : Boolean(appUuid.trim()) && !appError
         : effectivePlatform !== null,
     mappingMode === "wildcard" || explicitItems.length > 0,
     true,
@@ -165,21 +176,32 @@ export function AddIntegrationDialog({
     setRepo("");
     setGhEnvironment("");
     setAppUuid("");
+    setServiceUuid("");
   };
   const chooseConnection = (id: string) => {
     if (id !== connectionId) clearDestination();
     setConnectionId(id);
   };
 
-  const pickedAppName = destinations.result?.items.find((o) => o.destination.applicationUuid === appUuid.trim())?.label;
+  const coolifyUuid = coolifyKind === "service" ? serviceUuid.trim() : appUuid.trim();
+  const coolifyField = coolifyKind === "service" ? "serviceUuid" : "applicationUuid";
+  const pickedAppName = destinations.result?.items.find((o) => o.destination[coolifyField] === coolifyUuid)?.label;
   const destLabel =
     effectivePlatform === "github-actions"
       ? `${owner ? `${owner}/` : ""}${repo.trim()}`
       : effectivePlatform === "coolify"
         ? pickedAppName
-          ? `${pickedAppName} (${appUuid.trim()})`
-          : appUuid.trim()
+          ? `${pickedAppName} (${coolifyUuid})`
+          : coolifyUuid
         : hostOf(owner);
+  // The picker offers the chosen kind only: one listing holds both.
+  const coolifyListing = {
+    ...destinations,
+    result: destinations.result && {
+      ...destinations.result,
+      items: destinations.result.items.filter((o) => Boolean(o.destination[coolifyField])),
+    },
+  };
 
   // Read-only, nothing saved: a new credential is checked as typed, an
   // existing connection with its stored one. The outcome is bound to these
@@ -455,6 +477,42 @@ export function AddIntegrationDialog({
                   />
                 )}
                 {effectivePlatform === "coolify" && (
+                  <Segmented
+                    aria-label="Coolify destination"
+                    value={coolifyKind}
+                    onChange={(kind) => {
+                      setCoolifyKind(kind);
+                      // A restart choice made for one kind does not carry over.
+                      setRedeploy(false);
+                    }}
+                    options={[
+                      { value: "application", label: "Application", "data-testid": "dest-kind-application" },
+                      { value: "service", label: "Service", "data-testid": "dest-kind-service" },
+                    ]}
+                  />
+                )}
+                {effectivePlatform === "coolify" && coolifyKind === "service" && (
+                  <>
+                    <Field label="Service UUID" error={serviceError} hint="Pick it below, or paste it from the service's URL in Coolify.">
+                      <Input
+                        data-testid="dest-service"
+                        mono
+                        className="w-full"
+                        placeholder="yk8g0g4k04os0kcwcwowg084"
+                        value={serviceUuid}
+                        invalid={Boolean(serviceError)}
+                        onChange={(e) => setServiceUuid(e.target.value)}
+                      />
+                    </Field>
+                    <Callout tone="neutral" data-testid="dest-service-scope">
+                      A service's variables reach all of its containers, its databases included, and any container added later.
+                      Coolify sets some names itself (<Mono>SERVICE_URL_*</Mono>, <Mono>SERVICE_FQDN_*</Mono>, <Mono>SERVICE_NAME_*</Mono>,{" "}
+                      <Mono>COOLIFY_*</Mono>): those cannot be pushed. With Coolify's read:sensitive permission, Varlatch also notes where the
+                      service's compose file overrides a value.
+                    </Callout>
+                  </>
+                )}
+                {effectivePlatform === "coolify" && coolifyKind === "application" && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <Field label="Application UUID" error={appError} hint="Pick it below, or paste it from the application's URL in Coolify.">
                       <Input
@@ -487,11 +545,11 @@ export function AddIntegrationDialog({
                 )}
                 {effectivePlatform === "coolify" && (
                   <DestinationPicker
-                    noun={{ one: "application", many: "applications" }}
-                    value={appUuid}
-                    valueOf={(o) => o.destination.applicationUuid ?? ""}
-                    listing={destinations}
-                    onPick={(o) => setAppUuid(o.destination.applicationUuid ?? "")}
+                    noun={coolifyKind === "service" ? { one: "service", many: "services" } : { one: "application", many: "applications" }}
+                    value={coolifyUuid}
+                    valueOf={(o) => o.destination[coolifyField] ?? ""}
+                    listing={coolifyListing}
+                    onPick={(o) => (coolifyKind === "service" ? setServiceUuid : setAppUuid)(o.destination[coolifyField] ?? "")}
                     onRetry={() => runListing()}
                   />
                 )}
@@ -504,14 +562,24 @@ export function AddIntegrationDialog({
                   <p className="text-[13px] text-muted">Convex functions pick up new values at once; there is no redeploy.</p>
                 ) : (
                   <div className="space-y-3">
-                    <Checkbox
-                      data-testid="redeploy"
-                      checked={redeploy}
-                      onChange={setRedeploy}
-                      label="Redeploy after changes"
-                      description="Where the platform supports it. A failed redeploy shows on the integration; the values still land."
-                    />
-                    {effectivePlatform === "coolify" && redeploy && (
+                    {effectivePlatform === "coolify" && coolifyKind === "service" ? (
+                      <Checkbox
+                        data-testid="redeploy"
+                        checked={redeploy}
+                        onChange={setRedeploy}
+                        label="Restart the service after changes"
+                        description="Restarts every container of the service, its databases included. Coolify queues the restart; a refused one shows on the integration, and the values still land."
+                      />
+                    ) : (
+                      <Checkbox
+                        data-testid="redeploy"
+                        checked={redeploy}
+                        onChange={setRedeploy}
+                        label="Redeploy after changes"
+                        description="Where the platform supports it. A failed redeploy shows on the integration; the values still land."
+                      />
+                    )}
+                    {effectivePlatform === "coolify" && coolifyKind === "application" && redeploy && (
                       <Select
                         data-testid="dest-deploy-action"
                         className="ml-6.5 w-80"
@@ -610,6 +678,9 @@ export function AddIntegrationDialog({
                     </>
                   )}
                   {mappingMode === "wildcard" ? ", and every item added later." : "."}
+                  {effectivePlatform === "coolify" && coolifyKind === "service" && (
+                    <> Each value reaches every container of the service, its databases included, and any container added later.</>
+                  )}
                 </p>
                 <AccessCheckNotice
                   pending={!access.settled}

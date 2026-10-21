@@ -17,7 +17,8 @@ varlatch sync check --platform convex --base https://happy-animal-123.convex.clo
 ```
 
 The options are those of `varlatch sync push`, without `--build-time`:
-`--platform`, `--base`, the destination (`--app <uuid>` for Coolify;
+`--platform`, `--base`, the destination (`--app <uuid>`, or
+`--service <uuid>` for a service, for Coolify;
 `--repo <name>` and `--gh-environment <name>` for GitHub Actions; nothing
 for Convex, whose `--base` is the deployment URL), `-e <env>`,
 `--server <url>`, `--token-env VAR` (the variable holding the platform's
@@ -38,6 +39,9 @@ unknown or misspelled option exits with status 64 and checks nothing.
   items, and the command says so; `extra-on-platform` is then not reported.
 - Coolify keeps a preview-deployment copy of every variable. Only the
   production rows are compared, as `sync push` writes only those.
+- For a Coolify service, the names Coolify sets itself (`SERVICE_FQDN_*`,
+  `SERVICE_URL_*`, `SERVICE_NAME_*`, `COOLIFY_*`) are `unreadable` with
+  `invalid-name`: a Sync Target never manages them.
 
 ## Statuses
 
@@ -47,7 +51,7 @@ unknown or misspelled option exits with status 64 and checks nothing.
 | `differs` | Both hold the key, with different values (whitespace counts) |
 | `missing-on-platform` | Stored in Varlatch, not on the platform |
 | `extra-on-platform` | On the platform, a Contract key Varlatch does not store |
-| `unreadable` | Not compared: the platform's values are write-only (`platform-write-only`, GitHub Actions secrets), this identity may not read the value in Varlatch (`withheld`), or the platform cannot store the name (`invalid-name`) |
+| `unreadable` | Not compared: the platform's values are write-only (`platform-write-only`, GitHub Actions secrets), the platform holds the key but withholds its value from this credential (`platform-withheld`: a Coolify token without Read sensitive, or a variable shown once), this identity may not read the value in Varlatch (`withheld`), or the platform cannot store the name or sets it itself (`invalid-name`) |
 | `absent` | Neither holds it; not drift |
 
 ## Exit status
@@ -66,8 +70,17 @@ unknown or misspelled option exits with status 64 and checks nothing.
 `--json` prints one document: `result` (`match`, `drift`, `incomplete`, or
 `unchecked`), the platform, base, destination, and environment, `keySet`
 (`contract`, `stored`, or `map`), `counts` per status, `keys` (each with
-`name`, `destination`, `status`, and for `unreadable` a `reason`), and
-`exitCode`. It never holds a value.
+`name`, `destination`, `status`, and for `unreadable` a `reason`),
+`usage`, and `exitCode`. It never holds a value.
+
+For a Coolify service whose compose file the token can read, `usage` lists
+how the compose file uses the compared names, as the integration card
+does: `owned` (Coolify sets the name itself), `shadowed` (a container's
+compose settings give it another value, which wins; with `containers`),
+`not-delivered` (no container uses it), `unknown-form` (a form Varlatch
+does not read), `generated-once` (a Coolify-generated password or user),
+or one `usage-unchecked` entry with a `reason`. The human form prints the
+same as `usage:` lines. Names and container names only.
 
 ## What it reads and discloses
 
@@ -78,9 +91,10 @@ unknown or misspelled option exits with status 64 and checks nothing.
    host pinned). If the platform cannot be read, the command stops here:
    nothing is disclosed. A failure is reported by its status or error class,
    never by the platform's response, which may quote values.
-3. Only the Secrets the platform also holds, by name, in one requested
-   disclosure. It needs `secret.reveal` and is audited like every
-   disclosure. A Secret that is missing on the platform is reported without
+3. Only the Secrets the platform also holds and lets the credential read,
+   by name, in one requested disclosure. It needs `secret.reveal` and is
+   audited like every disclosure. A Secret that is missing on the
+   platform, or whose value the platform withholds, is reported without
    its value being read.
 
 The values stay in the command's memory and are compared exactly; nothing

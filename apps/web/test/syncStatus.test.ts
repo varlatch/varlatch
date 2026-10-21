@@ -25,6 +25,7 @@ const target = (over: Partial<SyncTarget>): SyncTarget => ({
   needsSync: false,
   lastAttemptAt: "2026-10-02T09:00:00Z",
   lastResult: "ok",
+  lastNotes: null,
   createdAt: "2026-10-01T09:00:00Z",
   version: 1,
   updatedAt: null,

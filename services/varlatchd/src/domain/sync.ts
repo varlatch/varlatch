@@ -107,6 +107,8 @@ export interface SyncTargetRow {
   next_attempt_at: string | null;
   last_attempt_at: string | null;
   last_result: string | null;
+  /** Usage hints from the last run that inspected the destination (migration 31). */
+  last_notes: TargetNote[] | null;
   last_repair_at: string | null;
   created_at: string;
   revoked_at: string | null;
@@ -117,7 +119,7 @@ export interface SyncTargetRow {
 export const TARGET_COLUMNS = `id, organization_id, project_id, environment_id, connection_id,
   destination, canonical_destination, mapping, remove_orphans, redeploy, state,
   disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
-  last_result, last_repair_at, created_at, revoked_at, version, updated_at`;
+  last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at`;
 
 const CONNECTION_COLUMNS = `id, organization_id, platform, base_identity, name,
   created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at,
@@ -132,7 +134,61 @@ export function targetRow(raw: Record<string, unknown>): SyncTargetRow {
     ...(raw as unknown as SyncTargetRow),
     destination: parseJson<Record<string, string>>(raw.destination),
     mapping: parseJson<SyncMapping>(raw.mapping),
+    last_notes: raw.last_notes === null || raw.last_notes === undefined ? null : parseJson<TargetNote[]>(raw.last_notes),
   };
+}
+
+/**
+ * A hint about how the destination itself uses a managed name (ADR-0031,
+ * amendment 2026-10-21). Notes never fail a run; each inspecting run
+ * replaces them. Names are destination names; containers and reasons are
+ * bounded, the reason in Varlatch's words.
+ * - `shadowed`: the destination's configuration sets the name to another
+ *   value in these containers, which wins over the pushed one.
+ * - `not-delivered`: no container uses it by any route the rules know.
+ * - `unknown-form`: used in these containers in a form the rules do not read.
+ * - `generated-once`: the platform generated it once; a database may read
+ *   it only on first start, so changing it can break the link.
+ * - `kept-by-platform`: Varlatch removed it, and the platform may keep or
+ *   re-create the name from its configuration (Varlatch does not delete it
+ *   again).
+ * - `usage-unchecked`: the destination's usage could not be read (`reason`).
+ */
+export type TargetNoteCode =
+  | "shadowed"
+  | "not-delivered"
+  | "unknown-form"
+  | "generated-once"
+  | "kept-by-platform"
+  | "usage-unchecked";
+
+export interface TargetNote {
+  code: TargetNoteCode;
+  name?: string;
+  containers?: string[];
+  reason?: string;
+}
+
+/** At most this many notes are kept per Target. */
+export const MAX_TARGET_NOTES = 50;
+
+/** Bound notes before they are stored: count, container lists, text. */
+export function boundNotes(notes: TargetNote[]): TargetNote[] {
+  const seen = new Set<string>();
+  const out: TargetNote[] = [];
+  for (const note of notes) {
+    const key = `${note.code} ${note.name ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      code: note.code,
+      ...(note.name !== undefined ? { name: note.name.slice(0, 256) } : {}),
+      ...(note.containers?.length ? { containers: note.containers.slice(0, 20).map((c) => c.slice(0, 64)) } : {}),
+      ...(note.reason !== undefined ? { reason: note.reason.slice(0, 200) } : {}),
+    });
+    if (out.length === MAX_TARGET_NOTES) break;
+  }
+  return out;
 }
 
 /** Audit form of a destination: identifiers only, redacted like webhook URLs. */
@@ -160,7 +216,11 @@ export function requiredDisclosureActions(
   return [...actions];
 }
 
-/** Validate a raw mapping's shape and destination names against the adapter. */
+/**
+ * Validate a raw mapping's shape and destination names against the adapter
+ * and, when given, the canonical destination (a Coolify service refuses
+ * the names Coolify sets itself).
+ */
 export function normalizeMapping(
   platform: string,
   raw:
@@ -168,6 +228,7 @@ export function normalizeMapping(
     | { kind: "explicit"; items: { name: string; rename?: string | undefined }[] },
   sensitivityOfName: (name: string) => boolean,
   previous?: SyncMapping,
+  destination?: Record<string, string>,
 ): SyncMapping {
   if (raw.kind === "wildcard") {
     const exclude = [...new Set(raw.exclude ?? [])];
@@ -201,7 +262,7 @@ export function normalizeMapping(
     }
     seenSources.add(item.name);
     const destName = adapter.canonicalizeName(item.rename ?? item.name);
-    const problem = adapter.validateName(destName);
+    const problem = adapter.validateName(destName, destination);
     if (problem) {
       throw new DomainError("VALIDATION_FAILED", `${item.name}: ${problem}`);
     }
@@ -1088,7 +1149,9 @@ export async function updateTarget(
         `UPDATE sync_targets
          SET connection_id = $1, destination = $2, canonical_destination = $3, mapping = $4,
              remove_orphans = $5, redeploy = $6, needs_sync = true, next_attempt_at = NULL,
-             version = version + 1, updated_at = now()
+             version = version + 1, updated_at = now(),
+             -- Notes describe the old destination: they go with it.
+             last_notes = CASE WHEN $8 THEN NULL ELSE last_notes END
          WHERE id = $7 RETURNING ${TARGET_COLUMNS}`,
         [
           connection.id,
@@ -1098,6 +1161,7 @@ export async function updateTarget(
           patch.removeOrphans ?? current.remove_orphans,
           patch.redeploy ?? current.redeploy,
           current.id,
+          destinationChanged,
         ],
       );
     } catch (err) {
@@ -1329,6 +1393,16 @@ const appHasNoCredential = () =>
     "VALIDATION_FAILED",
     "A GitHub App Connection has no credential of its own to replace or supply: its tokens are issued from the App's key. Rotate the App's key instead.",
   );
+
+/**
+ * A raw destination in its canonical form, for name checks that depend on
+ * it; a destination the adapter refuses is a validation error, as at
+ * creation.
+ */
+export function canonicalDestinationOf(platform: string, raw: Record<string, unknown>): Record<string, string> {
+  const adapter = canonicalizeOrValidationError(() => getAdapter(platform));
+  return canonicalizeOrValidationError(() => adapter.canonicalizeDestination(raw)).destination;
+}
 
 function canonicalizeOrValidationError<T>(fn: () => T): T {
   try {

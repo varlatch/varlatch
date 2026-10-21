@@ -79,6 +79,7 @@ export type AccessCheck = components["schemas"]["AccessCheck"];
 export type DestinationOption = components["schemas"]["DestinationOption"];
 export type DestinationListing = components["schemas"]["DestinationListing"];
 export type SyncTarget = components["schemas"]["SyncTarget"];
+export type SyncTargetNote = components["schemas"]["SyncTargetNote"];
 export type SyncMapping = components["schemas"]["SyncMapping"];
 export type SyncMappingInput = components["schemas"]["SyncMappingInput"];
 export type SyncLedgerName = components["schemas"]["SyncLedgerName"];

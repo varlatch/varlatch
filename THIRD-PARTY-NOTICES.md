@@ -258,6 +258,7 @@ what the bundler includes.
 | ws | 8.21.0 | MIT | dashboard, convex-deploy |
 | xtend | 4.0.2 | MIT | varlatchd |
 | yallist | 5.0.0 | BlueOak-1.0.0 | CLI |
+| yaml | 2.9.1 | ISC | varlatchd, CLI |
 | zod | 3.25.76 | MIT | CLI |
 | zod | 4.1.5 | MIT | varlatchd, CLI |
 | zod | 4.5.4 | MIT | varlatchd, dashboard |
@@ -4998,6 +4999,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+````
+
+### yaml@2.9.1
+
+````text
+Copyright Eemeli Aro <eemeli@gmail.com>
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
 ````
 
 ### zod-to-json-schema@3.25.2

@@ -47,14 +47,14 @@ export const PLATFORM_META: Record<SyncPlatform, PlatformMeta> = {
   coolify: {
     label: "Coolify",
     shortLabel: "Coolify",
-    description: "Environment variables of an application on a Coolify instance.",
+    description: "Environment variables of an application or a service on a Coolify instance.",
     identityLabel: "Instance URL",
     identityPlaceholder: "https://coolify.example.com",
     identityNoun: "instance",
     credentialLabel: "API token",
     credentialPlaceholder: "Coolify API token",
     credentialHelp:
-      "Needs the read and write permissions, plus deploy to redeploy. A token reaches every application of its team; create one for Varlatch alone so you can revoke it on its own.",
+      "Needs the read and write permissions, plus deploy to redeploy, and read:sensitive to compare values (and, for a service, to read its compose file). A service's variables need a team admin's or owner's token. A token reaches every application and service of its team; create one for Varlatch alone so you can revoke it on its own.",
     guideAnchor: "coolify",
   },
   convex: {

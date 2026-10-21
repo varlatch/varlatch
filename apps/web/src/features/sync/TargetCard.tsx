@@ -27,7 +27,7 @@ import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { credentialExpiry, expiryText } from "./credentialExpiry";
 import { connectionLabel, platformMeta } from "./platform-meta";
-import { mappingSummary, targetDestination, targetOptions, targetStatus, type TargetStatus } from "./status";
+import { mappingSummary, noteText, noteWarns, targetDestination, targetOptions, targetStatus, type TargetStatus } from "./status";
 
 /** Square logo tile used on integration and connection cards. */
 export function PlatformTile({ platform, size = "md", className }: { platform: string; size?: "sm" | "md" | "lg"; className?: string }) {
@@ -127,6 +127,7 @@ export function TargetCard({
   const options = targetOptions(target);
   const platform = connection ? platformMeta(connection.platform) : undefined;
   const names = (detail.data?.names ?? []).filter((n) => n.state !== "tombstone" && !n.state.endsWith("delete"));
+  const notes = target.lastNotes ?? [];
 
   const act = useMutation({
     mutationFn: async (action: "push" | "pause" | "resume" | "revoke" | "reaffirm") => {
@@ -297,6 +298,24 @@ export function TargetCard({
           </Menu>
         </div>
       </div>
+      {notes.length > 0 && (
+        <ul
+          data-testid={`target-notes-${target.id}`}
+          aria-label="Usage notes"
+          className={cn("space-y-1 border-t border-bd text-[13px]", compact ? "px-4 py-2" : "px-5 py-2.5")}
+        >
+          {notes.map((note) => (
+            <li key={`${note.code} ${note.name ?? ""}`} className={cn("flex items-start gap-2", noteWarns(note) ? "text-fg/90" : "text-muted")}>
+              {noteWarns(note) ? (
+                <AlertTriangle size={13} className="mt-0.5 shrink-0 text-warn" aria-hidden="true" />
+              ) : (
+                <CircleDashed size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+              )}
+              <span className="min-w-0">{noteText(note)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}

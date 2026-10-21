@@ -74,6 +74,11 @@ export interface AdapterRequest {
    * says nothing, which does not mean the credential never expires.
    */
   onCredentialExpiry?: (expiresAt: string) => void;
+  /**
+   * What `inspectUsage` reported for this run, when the caller ran it:
+   * lets a write refuse a value the destination would change.
+   */
+  usage?: UsageReport | null;
 }
 
 export interface PlatformAdapter {
@@ -98,8 +103,13 @@ export interface PlatformAdapter {
     destination: Record<string, string>;
     key: string;
   };
-  /** Reject names the platform cannot store before anything is sent. */
-  validateName(name: string): string | null;
+  /**
+   * Reject names the platform cannot store before anything is sent. With a
+   * canonical destination, also names that destination's platform sets
+   * itself (a Coolify service's `SERVICE_URL_*`); without one, only the
+   * platform-wide rules apply.
+   */
+  validateName(name: string, destination?: Record<string, string>): string | null;
   /**
    * The destination-name form the platform stores (GitHub uppercases secret
    * names). The ledger is keyed by this canonical form so two mapped names
@@ -108,8 +118,35 @@ export interface PlatformAdapter {
   canonicalizeName(name: string): string;
   writeValues(req: AdapterRequest, items: SyncItem[]): Promise<NameOutcome[]>;
   deleteNames(req: AdapterRequest, names: string[]): Promise<NameOutcome[]>;
-  /** Read back current names/values where supported (supportsReadBack). */
-  readValues?(req: AdapterRequest): Promise<Map<string, string>>;
+  /**
+   * Read back current names/values where supported (supportsReadBack). A
+   * name the platform holds but whose value it withholds from this
+   * credential maps to `null`: present, unreadable, never an empty string.
+   */
+  readValues?(req: AdapterRequest): Promise<Map<string, string | null>>;
+  /**
+   * readValues, plus the names stored in another form than writeValues
+   * stores a value (a Coolify variable without the literal flags): a
+   * matching value under one of them still needs a write. The engine's
+   * repair uses it where present; a check compares values only.
+   */
+  readRemote?(req: AdapterRequest): Promise<RemoteState>;
+  /**
+   * Why this value would not reach the destination as given, or null. The
+   * engine asks for every desired name before the diff, so a value already
+   * stored is held to the rule too; writeValues applies it again before
+   * sending. `usage` is what inspectUsage reported, when it ran.
+   */
+  valueProblem?(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null;
+  /**
+   * Read-only: how the destination uses the given names, where the
+   * platform lets a credential see that (a Coolify service's compose
+   * files). `null` when the destination has no such notion (a Coolify
+   * application). Only names, container names and verdicts leave the
+   * adapter. Never throws for an unreadable answer: it reports
+   * `checked: false` with a reason instead.
+   */
+  inspectUsage?(req: AdapterRequest, names: string[]): Promise<UsageReport | null>;
   /** Best-effort redeploy trigger (supportsRedeploy). */
   triggerRedeploy?(req: AdapterRequest): Promise<void>;
   /**
@@ -126,6 +163,46 @@ export interface PlatformAdapter {
    * destination (Convex). Never throws.
    */
   listDestinations?(req: AdapterRequest): Promise<DestinationListing>;
+}
+
+/**
+ * How a destination uses one name (Coolify services, ADR-0031 amendment
+ * 2026-10-21). Every field is a hint read from the platform's own
+ * configuration, never a guarantee that a workload reads the value.
+ */
+export interface NameUsage {
+  /** The platform sets this name itself: writing it would be overwritten. */
+  owned?: boolean;
+  /** The configuration references it, so the platform re-creates it after a delete. */
+  referenced?: boolean;
+  /** Containers whose configuration sets the name to another value, which wins. */
+  shadowedIn?: string[];
+  /** Containers that receive the name by no route the rules know. */
+  notDeliveredTo?: string[];
+  /** The platform generated it once (a password, a user name): a database may read it only on first start. */
+  generatedOnce?: boolean;
+  /** Containers whose configuration uses the name in a form outside the rules. */
+  unknownIn?: string[];
+  /**
+   * The platform copies the stored value into the configuration it runs,
+   * where `$` is expanded (a Compose default, `${NAME:-x}`): a value with
+   * `$` would arrive changed.
+   */
+  copiedIntoCompose?: boolean;
+}
+
+export interface UsageReport {
+  /** False when usage could not be checked at all; `reason` says why, in Varlatch's words. */
+  checked: boolean;
+  reason?: string;
+  /** Verdicts for the names asked about; a name with no hint maps to `{}`. */
+  names: Map<string, NameUsage>;
+}
+
+export interface RemoteState {
+  values: Map<string, string | null>;
+  /** Names to write even when the value matches. */
+  rewrite: Set<string>;
 }
 
 export const DEFAULT_TIMEOUT_MS = 10_000;

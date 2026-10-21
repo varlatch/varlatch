@@ -19,8 +19,11 @@ import {
   type AdapterRequest,
   type NameOutcome,
   type PlatformAdapter,
+  type RemoteState,
   type SyncItem,
+  type UsageReport,
 } from "./types.js";
+import { classifyComposeUsage, coolifyOwnsName } from "./coolifyCompose.js";
 
 /**
  * Coolify adapter. Base identity is the instance origin — the admin's choice
@@ -30,9 +33,12 @@ import {
  * truthful scoping unit. Env values can be read back, so the repair pass may
  * verify-and-fix instead of force-writing.
  *
- * Destination record: `applicationUuid` is the identity (the exclusivity
- * key); the remaining fields are per-target options the engine passes
- * through untouched:
+ * Destination record: exactly one of `applicationUuid` (an application) or
+ * `serviceUuid` (a service: a Compose stack whose variables every container
+ * shares, ADR-0031 amendment 2026-10-21) is the identity (the exclusivity
+ * key: the bare uuid for an application, `service:<uuid>` for a service).
+ * The remaining fields are per-target options the engine passes through
+ * untouched, for applications only:
  * - `buildTime` ("true" | "false"): whether keys Varlatch manages are
  *   available at build time. Values baked into a build (VITE_*, NEXT_PUBLIC_*)
  *   are invisible to it otherwise. Absent = Coolify's own default for new
@@ -41,6 +47,8 @@ import {
  *   "deploy" (default) queues a forced rebuild, the only action that
  *   re-bakes build-time values; "restart" only recreates the container
  *   with the current runtime env — faster, and enough for runtime-only apps.
+ * A service always restarts (Coolify's `/start` refuses a running one), and
+ * its variables have no build-time flag.
  *
  * Coolify API compatibility — verified against the upstream source:
  * - GET /applications/{uuid}/envs returns production AND preview rows in one
@@ -52,8 +60,15 @@ import {
  *   omitted on every version, and unknown fields are rejected with 422. The
  *   adapter mirrors an existing row's flags back on PATCH and infers the
  *   flag style from the rows it listed (falling back on 422 for an empty app).
+ * - A service's variable PATCH keeps every flag it is not sent (beta.420
+ *   fills only what it gets; 4.4 sets only what is present), so a service
+ *   write sends the key and value alone.
+ * - A credential without `read:sensitive` lists variables without their
+ *   `value` (4.4 omits the key); so does a "shown once" variable. That is
+ *   an unreadable value, not an empty one.
  * - The start/restart actions accept POST on every version and, since
- *   v4.3, POST only (GET answers 405).
+ *   v4.3, POST only (GET answers 405). A service restart is queued: it
+ *   rewrites the service's `.env`, stops the whole stack and recreates it.
  */
 
 const TOKEN_REJECTED: AccessCheck = {
@@ -99,12 +114,16 @@ function buildTimeOption(destination: Record<string, string>): boolean | undefin
   return undefined;
 }
 
-/** Flags for a new key: the option when set, otherwise Coolify's default. */
+/**
+ * Flags for a new key: literal (multiline too where the vocabulary has it),
+ * so the value reaches the container as stored; the build-time option when
+ * set, otherwise Coolify's default.
+ */
 function createFlags(style: FlagStyle, buildTime: boolean | undefined): Record<string, boolean> {
-  if (buildTime === undefined) return {};
-  return style === "current"
-    ? { is_buildtime: buildTime, is_runtime: true }
-    : { is_build_time: buildTime };
+  if (style === "current") {
+    return { is_literal: true, is_multiline: true, ...(buildTime === undefined ? {} : { is_buildtime: buildTime, is_runtime: true }) };
+  }
+  return { is_literal: true, ...(buildTime === undefined ? {} : { is_build_time: buildTime }) };
 }
 
 /**
@@ -117,8 +136,10 @@ function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<st
   const style = flagStyleOf(row);
   if (style === "current") {
     return {
-      is_literal: Boolean(row.is_literal),
-      is_multiline: Boolean(row.is_multiline),
+      // Literal and multiline: Coolify then quotes the value instead of
+      // expanding it (ADR-0031 amendment 2026-10-21, value fidelity).
+      is_literal: true,
+      is_multiline: true,
       is_shown_once: Boolean(row.is_shown_once),
       is_buildtime: buildTime ?? Boolean(row.is_buildtime),
       // A runtime-only request must stay reachable at runtime; otherwise
@@ -128,12 +149,12 @@ function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<st
   }
   if (style === "legacy") {
     return {
-      is_literal: Boolean(row.is_literal),
+      is_literal: true,
       is_build_time: buildTime ?? Boolean(row.is_build_time),
     };
   }
-  // Unknown vocabulary: send nothing we cannot name.
-  return {};
+  // Unknown vocabulary: only the flag every version names.
+  return { is_literal: true };
 }
 
 async function request(
@@ -185,10 +206,26 @@ async function forbidden(res: Response, where: AccessCheckWhere): Promise<Access
   return { status: "permission-missing", where, httpStatus: 403, message: advice };
 }
 
-/** Production env rows only: the endpoint merges preview-deployment rows in. */
+
+/** Which resource a canonical destination names, and where its API lives. */
+interface Resource {
+  kind: "application" | "service";
+  uuid: string;
+  /** `/applications/{uuid}` or `/services/{uuid}`. */
+  path: string;
+}
+
+function resourceOf(destination: Record<string, string>): Resource {
+  if (destination.serviceUuid) {
+    return { kind: "service", uuid: destination.serviceUuid, path: `/services/${destination.serviceUuid}` };
+  }
+  const uuid = destination.applicationUuid as string;
+  return { kind: "application", uuid, path: `/applications/${uuid}` };
+}
+
+/** Production env rows only: the application endpoint merges preview-deployment rows in. */
 async function listEnvs(req: AdapterRequest): Promise<CoolifyEnv[]> {
-  const app = req.destination.applicationUuid as string;
-  const res = await request(req, "GET", `/applications/${app}/envs`);
+  const res = await request(req, "GET", `${resourceOf(req.destination).path}/envs`);
   if (!res.ok) {
     throw new AdapterError(
       `Coolify env list failed (${res.status})`,
@@ -200,6 +237,100 @@ async function listEnvs(req: AdapterRequest): Promise<CoolifyEnv[]> {
     ? (parsed as CoolifyEnv[]).filter((e) => e && typeof e === "object" && !e.is_preview)
     : [];
 }
+
+/** What PHP's trim() removes, which Coolify applies to every value it stores and reads. */
+const PHP_TRIMMED = /^[ \t\n\r\0\x0B]|[ \t\n\r\0\x0B]$/;
+/** Coolify's shared-variable types, replaced inside `{{type.NAME}}` (and `vault` for a linked secret manager). */
+const SHARED_TYPES = new Set(["team", "project", "environment", "server", "vault"]);
+
+/**
+ * Why a value would not reach the destination's containers exactly as
+ * given, or null when it does. Varlatch writes every value literal and
+ * multiline, so Coolify puts it in single quotes, unescaped, in the `.env`
+ * Docker Compose reads; what that cannot carry is refused rather than
+ * delivered changed (ADR-0031 amendment 2026-10-21, value fidelity).
+ */
+function undeliverableValue(value: string, copied: CopyRisk): string | null {
+  if (PHP_TRIMMED.test(value)) {
+    return "Coolify removes leading and trailing whitespace from values, so it would store a different value";
+  }
+  if (value.includes("'")) {
+    return "Coolify writes values in single quotes without escaping, so a value with a single quote breaks the .env it deploys";
+  }
+  if (/(?:^|[^\\])(?:\\\\)*\\$/.test(value)) {
+    return "Coolify writes values in single quotes, so a value ending in a backslash breaks the .env it deploys";
+  }
+  for (const [, inner] of value.matchAll(/\{\{(.*?)\}\}/g)) {
+    const type = /^([^.]*)\./.exec((inner ?? "").trim())?.[1];
+    if (type !== undefined && SHARED_TYPES.has(type)) {
+      return "Coolify replaces {{" + type + ".…}} with one of its shared variables, so it would deliver a different value";
+    }
+  }
+  if ((value.startsWith("{") || value.startsWith("[")) && isJson(value) && /[$\n]| #/.test(value)) {
+    return "Coolify writes JSON values unquoted, where Docker Compose changes $, \" #\" and line breaks";
+  }
+  if (value.includes("$") && copied === "copied") {
+    return "The service's compose file copies this value where Docker Compose expands $, so it would arrive changed";
+  }
+  if (value.includes("$") && copied === "unknown") {
+    return "Varlatch could not check whether the service's compose file copies this value where Docker Compose expands $ (reading it takes Coolify's read:sensitive permission), so a value with $ is not pushed";
+  }
+  return null;
+}
+
+/**
+ * Whether a service's compose file may copy the stored value into the
+ * file Compose reads, where `$` is expanded: an application never does;
+ * a service is safe only when inspection read its compose file and found
+ * the name outside that path (ADR-0031 amendment 2026-10-21).
+ */
+type CopyRisk = "safe" | "copied" | "unknown";
+
+function copyRisk(destination: Record<string, string>, name: string, usage: UsageReport | null | undefined): CopyRisk {
+  if (!destination.serviceUuid) return "safe";
+  if (!usage?.checked) return "unknown";
+  const u = usage.names.get(name);
+  if (!u) return "unknown";
+  if (u.copiedIntoCompose) return "copied";
+  return u.unknownIn?.length ? "unknown" : "safe";
+}
+
+/**
+ * A row stored in another form than Varlatch writes a value: without
+ * is_literal, or without is_multiline where the row's vocabulary has it
+ * (a service's, and an application's since September 2025). A flag the
+ * row does not report is not judged.
+ */
+function storedOtherwise(row: CoolifyEnv, service: boolean): boolean {
+  if (row.is_literal === false) return true;
+  const multiline = service || flagStyleOf(row) === "current";
+  return multiline && row.is_multiline === false;
+}
+
+function isJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Coolify's labels for a service's containers (its applications and databases), bounded. */
+function containerNames(service: Record<string, unknown>): string[] {
+  const names: string[] = [];
+  for (const list of [service.applications, service.databases]) {
+    if (!Array.isArray(list)) continue;
+    for (const item of list) {
+      const name = isRecord(item) ? shortText(item.name, 64) : undefined;
+      if (name) names.push(name);
+    }
+  }
+  return [...new Set(names)].sort().slice(0, 20);
+}
+
+const SERVICE_ENV_FORBIDDEN =
+  "Coolify lets only team admins and owners manage a service's variables. Create the token as one.";
 
 export const coolifyAdapter: PlatformAdapter = {
   platform: "coolify",
@@ -227,6 +358,28 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   canonicalizeDestination(raw: Record<string, unknown>) {
+    const given = (v: unknown) => v !== undefined && v !== null && v !== "";
+    const service = typeof raw.serviceUuid === "string" ? raw.serviceUuid.trim() : "";
+    if (given(raw.serviceUuid)) {
+      if (given(raw.applicationUuid)) {
+        throw new AdapterError("A Coolify destination is an application or a service, not both", false);
+      }
+      if (!UUID_PATTERN.test(service)) {
+        throw new AdapterError("Invalid Coolify service UUID", false);
+      }
+      // A service's variables have no build-time flag, and its only
+      // redeploy is a restart of the whole stack.
+      if (given(raw.buildTime)) {
+        throw new AdapterError("A Coolify service takes no buildTime option: its variables have no build-time flag", false);
+      }
+      if (given(raw.deployAction)) {
+        throw new AdapterError("A Coolify service takes no deployAction option: it always restarts", false);
+      }
+      // The prefix keeps a service's claim apart from any application's
+      // bare uuid (the pattern admits no colon).
+      return { destination: { serviceUuid: service }, key: `service:${service}` };
+    }
+
     const uuid = typeof raw.applicationUuid === "string" ? raw.applicationUuid.trim() : "";
     if (!UUID_PATTERN.test(uuid)) {
       throw new AdapterError("Invalid Coolify application UUID", false);
@@ -252,9 +405,12 @@ export const coolifyAdapter: PlatformAdapter = {
     return { destination, key: uuid };
   },
 
-  validateName(name: string): string | null {
+  validateName(name: string, destination?: Record<string, string>): string | null {
     if (!NAME_PATTERN.test(name)) {
       return "Coolify env keys allow only letters, digits, and _, not starting with a digit";
+    }
+    if (destination?.serviceUuid && coolifyOwnsName(name)) {
+      return "Coolify sets this name itself on a service (SERVICE_FQDN_*, SERVICE_URL_*, SERVICE_NAME_*, COOLIFY_*)";
     }
     return null;
   },
@@ -264,8 +420,8 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   async writeValues(req: AdapterRequest, items: SyncItem[]): Promise<NameOutcome[]> {
-    const app = req.destination.applicationUuid as string;
-    const path = `/applications/${app}/envs`;
+    const resource = resourceOf(req.destination);
+    const path = `${resource.path}/envs`;
     const rows = await listEnvs(req);
     const existing = new Map(rows.map((e) => [e.key, e]));
     const buildTime = buildTimeOption(req.destination);
@@ -280,9 +436,24 @@ export const coolifyAdapter: PlatformAdapter = {
     const outcomes: NameOutcome[] = [];
     for (const item of items) {
       if (req.shouldAbort && (await req.shouldAbort())) break;
+      const problem = undeliverableValue(item.value, copyRisk(req.destination, item.name, req.usage));
+      if (problem) {
+        // Nothing is sent: a value Coolify would change is not delivered.
+        outcomes.push({ name: item.name, ok: false, error: problem });
+        continue;
+      }
       const row = existing.get(item.name);
       let res: Response;
-      if (row) {
+      if (resource.kind === "service") {
+        // Literal and multiline, as for an application; a service PATCH
+        // keeps every flag it is not sent.
+        res = await request(req, row ? "PATCH" : "POST", path, {
+          key: item.name,
+          value: item.value,
+          is_literal: true,
+          is_multiline: true,
+        });
+      } else if (row) {
         res = await request(req, "PATCH", path, {
           key: item.name,
           value: item.value,
@@ -298,7 +469,7 @@ export const coolifyAdapter: PlatformAdapter = {
             ...createFlags(s, buildTime),
           });
         res = await create(style ?? "current");
-        if (res.status === 422 && buildTime !== undefined && style === undefined) {
+        if (res.status === 422 && style === undefined) {
           // Nothing was written (validation rejected the unknown field):
           // retry once in the legacy vocabulary and remember it.
           style = "legacy";
@@ -315,7 +486,7 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   async deleteNames(req: AdapterRequest, names: string[]): Promise<NameOutcome[]> {
-    const app = req.destination.applicationUuid as string;
+    const resource = resourceOf(req.destination);
     const byKey = new Map((await listEnvs(req)).map((e) => [e.key, e.uuid]));
     const outcomes: NameOutcome[] = [];
     for (const name of names) {
@@ -326,7 +497,7 @@ export const coolifyAdapter: PlatformAdapter = {
         outcomes.push({ name, ok: true });
         continue;
       }
-      const res = await request(req, "DELETE", `/applications/${app}/envs/${uuid}`);
+      const res = await request(req, "DELETE", `${resource.path}/envs/${uuid}`);
       outcomes.push(
         res.ok || res.status === 404
           ? { name, ok: true }
@@ -336,25 +507,31 @@ export const coolifyAdapter: PlatformAdapter = {
     return outcomes;
   },
 
-  async readValues(req: AdapterRequest): Promise<Map<string, string>> {
-    return new Map((await listEnvs(req)).map((e) => [e.key, e.value ?? ""]));
+  async readValues(req: AdapterRequest): Promise<Map<string, string | null>> {
+    return (await readRemoteState(req)).values;
+  },
+
+  async readRemote(req: AdapterRequest): Promise<RemoteState> {
+    return readRemoteState(req);
+  },
+
+  valueProblem(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null {
+    return undeliverableValue(value, copyRisk(destination, name, usage));
   },
 
   /**
-   * Deploy (forced rebuild, so build-time values are re-baked and no cached
-   * layer can serve a stale one) unless the target opted for a restart.
-   * Throws on a non-2xx so the caller can surface "pushed but not
-   * redeployed" instead of reporting a phantom success.
+   * An application deploys (forced rebuild, so build-time values are
+   * re-baked and no cached layer can serve a stale one) unless the target
+   * opted for a restart; a service restarts, which rewrites its `.env` and
+   * recreates every container. Both are queued by Coolify: success means
+   * requested. Throws on a non-2xx so the caller can surface "pushed but
+   * not redeployed" instead of reporting a phantom success.
    */
   async triggerRedeploy(req: AdapterRequest): Promise<void> {
     if (req.shouldAbort && (await req.shouldAbort())) return;
-    const app = req.destination.applicationUuid as string;
-    const restart = req.destination.deployAction === "restart";
-    const res = await request(
-      req,
-      "POST",
-      restart ? `/applications/${app}/restart` : `/applications/${app}/start?force=true`,
-    );
+    const resource = resourceOf(req.destination);
+    const restart = resource.kind === "service" || req.destination.deployAction === "restart";
+    const res = await request(req, "POST", restart ? `${resource.path}/restart` : `${resource.path}/start?force=true`);
     if (!res.ok) {
       throw new AdapterError(`Coolify ${restart ? "restart" : "deploy"} failed (${res.status})`);
     }
@@ -363,8 +540,10 @@ export const coolifyAdapter: PlatformAdapter = {
   /**
    * The instance first (/version needs the read permission, so a token, the
    * API switch and the IP allowlist are all exercised), then, for a
-   * destination, the application itself. Coolify tokens are team-scoped:
-   * another team's application is a 404 like a mistyped UUID.
+   * destination, the application or service itself. Coolify tokens are
+   * team-scoped: another team's resource is a 404 like a mistyped UUID. A
+   * service is also asked for its variables, the request every push
+   * starts with: Coolify lets only team admins and owners manage them.
    */
   async checkAccess(req: AdapterRequest): Promise<AccessCheck> {
     const host = new URL(req.baseIdentity).host;
@@ -380,26 +559,31 @@ export const coolifyAdapter: PlatformAdapter = {
       if (!version.ok || !VERSION_TEXT.test((await version.text()).trim())) {
         return foreign("Coolify", "instance", host, version.status);
       }
-      const app = req.destination.applicationUuid;
-      if (!app) return { status: "ok", where, message: "Coolify accepted the token." };
+      if (!req.destination.applicationUuid && !req.destination.serviceUuid) {
+        return { status: "ok", where, message: "Coolify accepted the token." };
+      }
 
       where = "destination";
-      const res = await request(req, "GET", `/applications/${app}`);
+      const resource = resourceOf(req.destination);
+      const res = await request(req, "GET", resource.path);
       if (res.ok) {
         const found = await jsonBody(res);
-        if (!isRecord(found) || found.uuid !== app) {
+        if (!isRecord(found) || found.uuid !== resource.uuid) {
           return {
             status: "failed",
             where,
             httpStatus: res.status,
-            message: `${host} did not answer with application ${app}. Check the instance URL and the UUID.`,
+            message: `${host} did not answer with ${resource.kind} ${resource.uuid}. Check the instance URL and the UUID.`,
           };
         }
-        return {
-          status: "ok",
-          where,
-          message: `The token can read application ${app}. The first push shows whether it may also write its variables.`,
-        };
+        if (resource.kind === "application") {
+          return {
+            status: "ok",
+            where,
+            message: `The token can read application ${resource.uuid}. The first push shows whether it may also write its variables.`,
+          };
+        }
+        return await checkServiceVariables(req, resource, found, host);
       }
       if (res.status === 401) return TOKEN_REJECTED;
       if (res.status === 403) return await forbidden(res, where);
@@ -408,7 +592,7 @@ export const coolifyAdapter: PlatformAdapter = {
           status: "not-found",
           where,
           httpStatus: 404,
-          message: `The token's team has no application ${app} on ${host}. Copy the UUID from the application's URL in Coolify.`,
+          message: `The token's team has no ${resource.kind} ${resource.uuid} on ${host}. Copy the UUID from the ${resource.kind}'s URL in Coolify.`,
         };
       }
       return unexpected("Coolify", res.status, where);
@@ -418,9 +602,11 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   /**
-   * The applications of the token's team, by name, with their first address.
-   * Coolify answers with whole application records; only the uuid, name and
-   * address leave the adapter, whatever else a broad token can read.
+   * The applications and services of the token's team, by name, an
+   * application with its first address. Coolify answers with whole
+   * records; only the uuid, name and address leave the adapter, whatever
+   * else a broad token can read. Services follow the applications: when
+   * only they cannot be listed, the applications still are.
    */
   async listDestinations(req: AdapterRequest): Promise<DestinationListing> {
     const host = new URL(req.baseIdentity).host;
@@ -444,9 +630,28 @@ export const coolifyAdapter: PlatformAdapter = {
           ...(address ? { detail: address } : {}),
         });
       }
+      const appCount = items.length;
+
+      let servicesNote = "";
+      const svcRes = await request(req, "GET", "/services");
+      const services = svcRes.ok ? await jsonBody(svcRes) : undefined;
+      if (Array.isArray(services)) {
+        for (const svc of services) {
+          if (!isRecord(svc) || typeof svc.uuid !== "string" || !UUID_PATTERN.test(svc.uuid)) continue;
+          // The list route returns no containers, so a service has no address here.
+          items.push({ destination: { serviceUuid: svc.uuid }, label: shortText(svc.name) ?? svc.uuid, detail: "service" });
+        }
+      } else {
+        servicesNote = ` Its services could not be listed (HTTP ${svcRes.status}).`;
+      }
+      const serviceCount = items.length - appCount;
       items.sort((a, b) => a.label.localeCompare(b.label));
       return {
-        check: { status: "ok", where, message: `The token's team has ${items.length} applications on ${host}.` },
+        check: {
+          status: "ok",
+          where,
+          message: `The token's team has ${appCount} applications${Array.isArray(services) ? ` and ${serviceCount} services` : ""} on ${host}.${servicesNote}`,
+        },
         items: items.slice(0, MAX_DESTINATIONS),
         truncated: items.length > MAX_DESTINATIONS,
       };
@@ -454,4 +659,97 @@ export const coolifyAdapter: PlatformAdapter = {
       return listingFailed(unreachable(host, err, where));
     }
   },
+
+  /**
+   * A service's compose files, read where the token may (Coolify's
+   * read:sensitive), classified inside this adapter: only names,
+   * container names and verdicts leave it. An application has no compose
+   * notion here (null). Never throws.
+   */
+  async inspectUsage(req: AdapterRequest, names: string[]): Promise<UsageReport | null> {
+    const resource = resourceOf(req.destination);
+    if (resource.kind !== "service") return null;
+    const unchecked = (reason: string): UsageReport => ({ checked: false, reason, names: new Map(names.map((n) => [n, {}])) });
+    let body: unknown;
+    try {
+      const res = await request(req, "GET", resource.path);
+      if (!res.ok) return unchecked(`Coolify did not return the service (HTTP ${res.status})`);
+      body = await jsonBody(res);
+    } catch {
+      return unchecked("Coolify could not be reached");
+    }
+    if (!isRecord(body) || body.uuid !== resource.uuid) return unchecked("Coolify did not answer with the service");
+    if (!("docker_compose_raw" in body)) {
+      return unchecked("Coolify did not return the service's compose file to this token (reading it takes its read:sensitive permission)");
+    }
+    const version = Number(body.compose_parsing_version);
+    return classifyComposeUsage(
+      typeof body.docker_compose_raw === "string" ? body.docker_compose_raw : null,
+      typeof body.docker_compose === "string" ? body.docker_compose : null,
+      Number.isFinite(version) ? version : null,
+      names,
+    );
+  },
 };
+
+/**
+ * The stored values, and the rows to rewrite whatever their value. A row
+ * without `value` is one Coolify withholds (no read:sensitive, or shown
+ * once): unreadable. A stored empty or null value is "".
+ */
+async function readRemoteState(req: AdapterRequest): Promise<RemoteState> {
+  const service = resourceOf(req.destination).kind === "service";
+  const rows = await listEnvs(req);
+  return {
+    values: new Map(rows.map((e) => [e.key, "value" in e ? (e.value ?? "") : null])),
+    rewrite: new Set(rows.filter((e) => storedOtherwise(e, service)).map((e) => e.key)),
+  };
+}
+
+/**
+ * A service's variables, the push's first request: whether the token may
+ * manage them, and whether it can read their values. Values are discarded.
+ */
+async function checkServiceVariables(
+  req: AdapterRequest,
+  resource: Resource,
+  service: Record<string, unknown>,
+  host: string,
+): Promise<AccessCheck> {
+  const where = "destination";
+  const res = await request(req, "GET", `${resource.path}/envs`);
+  if (res.status === 401) return TOKEN_REJECTED;
+  if (res.status === 403) {
+    const advice = await forbidden(res, where);
+    // Coolify's policy refusal carries no reason of its own.
+    return advice.message.startsWith("Coolify refused the token") ? { ...advice, message: SERVICE_ENV_FORBIDDEN } : advice;
+  }
+  if (res.status === 404) {
+    return { status: "not-found", where, httpStatus: 404, message: `The token's team has no service ${resource.uuid} on ${host}.` };
+  }
+  if (!res.ok) return unexpected("Coolify", res.status, where);
+  const rows = await jsonBody(res);
+  if (!Array.isArray(rows)) {
+    return { status: "failed", where, httpStatus: res.status, message: `${host} did not answer with the variables of service ${resource.uuid}.` };
+  }
+  const name = shortText(service.name) ?? resource.uuid;
+  const containers = containerNames(service);
+  const reach = containers.length > 0
+    ? `Every variable reaches all of its containers (${containers.join(", ")}), and any added later.`
+    : "Every variable reaches all of its containers, and any added later.";
+  // What Coolify returned, not why: a row listed without its value is
+  // withheld (no read:sensitive, or shown once), and an empty list says
+  // nothing either way.
+  const withheld = rows.filter((r) => isRecord(r) && !("value" in r)).length;
+  const unreadable =
+    withheld === 0
+      ? ""
+      : withheld === rows.length
+        ? " Coolify returned none of their values to this token (reading them takes its read:sensitive permission): repairs rewrite every value, and the compose file is likely unreadable too."
+        : ` Coolify withheld ${withheld} of ${rows.length} values from this token (shown once, or no read:sensitive): repairs rewrite those.`;
+  return {
+    status: "ok",
+    where,
+    message: `The token can manage the variables of service ${name}. ${reach}${unreadable} The first push shows whether it may also write them.`,
+  };
+}

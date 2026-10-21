@@ -1217,7 +1217,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** The destinations a credential can see on its base identity, for the dashboard's pickers (ADR-0031, amendment 2026-10-09): GitHub repositories in the owner, or the applications of a Coolify token's team. Read-only, under the access check's rules: a new credential (platform, baseIdentity, credential) or a Connection's stored one (connectionId), optionally replaced by a candidate. Seeing a destination is not permission to write it. Convex, whose base identity is the destination, has nothing to list (422). A listing that could not run still answers 200, with the reason in check. */
+        /** The destinations a credential can see on its base identity, for the dashboard's pickers (ADR-0031, amendment 2026-10-09): GitHub repositories in the owner, or the applications and services of a Coolify token's team. Read-only, under the access check's rules: a new credential (platform, baseIdentity, credential) or a Connection's stored one (connectionId), optionally replaced by a candidate. Seeing a destination is not permission to write it. Convex, whose base identity is the destination, has nothing to list (422). A listing that could not run still answers 200, with the reason in check. */
         post: operations["listPlatformDestinations"];
         delete?: never;
         options?: never;
@@ -2379,13 +2379,13 @@ export interface components {
             credentialExpiresAt?: string;
         };
         DestinationOption: {
-            /** @description The destination record, as a Sync Target takes it ({repo} or {applicationUuid}). */
+            /** @description The destination record, as a Sync Target takes it ({repo}, {applicationUuid} or {serviceUuid}). */
             destination: {
                 [key: string]: string;
             };
-            /** @description The repository or application name. */
+            /** @description The repository */
             label: string;
-            /** @description A second line: visibility, or the application's address. */
+            /** @description A second line: visibility, the application's address, or "service". */
             detail?: string;
         };
         DestinationListing: {
@@ -2442,11 +2442,23 @@ export interface components {
             /** Format: date-time */
             lastAttemptAt: string | null;
             lastResult: string | null;
+            /** @description Hints from the last run that inspected how the destination itself uses the managed names (ADR-0031, amendment 2026-10-21; Coolify services). They never fail a run, and each inspecting run replaces them. Null when no run inspected the destination. */
+            lastNotes: components["schemas"]["SyncTargetNote"][] | null;
             /** Format: date-time */
             createdAt: string;
             version: components["schemas"]["EntityVersion"];
             /** Format: date-time */
             updatedAt: string | null;
+        };
+        /** @description A hint about one managed name, or about the inspection. shadowed: the destination's configuration sets the name to another value in these containers, which wins. not-delivered: no container uses it. unknown-form: used in these containers in a form Varlatch does not read. generated-once: the platform generated it once; a database may read it only on first start. kept-by-platform: Varlatch removed it, and the platform may keep or re-create it; Varlatch does not delete it again. usage-unchecked: the usage could not be read (reason). */
+        SyncTargetNote: {
+            /** @enum {string} */
+            code: "shadowed" | "not-delivered" | "unknown-form" | "generated-once" | "kept-by-platform" | "usage-unchecked";
+            /** @description Destination name (renames applied) */
+            name?: string;
+            containers?: string[];
+            /** @description Why the usage could not be read, in Varlatch's words. */
+            reason?: string;
         };
         /** @description What the audit listing's credentials sidecar says about a credential its events name. Metadata only; never token material. */
         AuditCredential: {
@@ -5985,7 +5997,7 @@ export interface operations {
             content: {
                 "application/json": {
                     connectionId: string;
-                    /** @description Adapter-specific canonical destination. github-actions: repo [+ environment]. coolify: applicationUuid, plus per-target options that never enter the destination identity — buildTime ("true"|"false": mark the keys Varlatch manages as available at build time; absent keeps Coolify's default for new keys and each existing key's own flag) and deployAction ("deploy" (default): forced rebuild, the only action that re-bakes build-time values; "restart": recreate the container with the current runtime env only). convex: no fields — the Connection's deployment URL is the destination. */
+                    /** @description Adapter-specific canonical destination. github-actions: repo [+ environment]. coolify: exactly one of applicationUuid or serviceUuid (a service: a Compose stack whose variables reach all of its containers; it takes no options, refuses the names Coolify sets itself, and its redeploy restarts the whole stack). An application takes per-target options that never enter the destination identity — buildTime ("true"|"false": mark the keys Varlatch manages as available at build time; absent keeps Coolify's default for new keys and each existing key's own flag) and deployAction ("deploy" (default): forced rebuild, the only action that re-bakes build-time values; "restart": recreate the container with the current runtime env only). convex: no fields — the Connection's deployment URL is the destination. */
                     destination: {
                         [key: string]: unknown;
                     };
