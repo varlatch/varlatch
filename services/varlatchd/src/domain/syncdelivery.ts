@@ -432,6 +432,9 @@ async function reconcileUnderLease(
       notes.push(...usageNotes(destName, usageOf(destName)));
     }
   }
+  // The inspection is complete: a run that throws from here on still
+  // replaces the Target's notes with these.
+  if (usage !== null) inspected.notes = boundNotes(notes);
   // A name this destination refuses (the platform's own) or that the
   // platform sets itself was never Varlatch's to delete.
   const notOurs = (name: string) =>
@@ -505,6 +508,10 @@ async function reconcileUnderLease(
   // change and triggers no redeploy (§5).
   const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
 
+  // Every note is known now (the ledger pass added the kept names).
+  const runNotes = usage !== null ? boundNotes(notes) : undefined;
+  if (runNotes !== undefined) inspected.notes = runNotes;
+
   // Nothing left the process for an adoption, so no disclosure event and no
   // redeploy — only ownership bookkeeping. A fence here still aborts: the
   // lease is gone and any wire phase below belongs to the successor.
@@ -513,9 +520,6 @@ async function reconcileUnderLease(
       return LEASE_LOST;
     }
   }
-
-  const runNotes = usage !== null ? boundNotes(notes) : undefined;
-  if (runNotes !== undefined) inspected.notes = runNotes;
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,

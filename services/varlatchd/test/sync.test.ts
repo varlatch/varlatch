@@ -1659,6 +1659,30 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect(asJson(row.last_notes)).toEqual([{ code: "shadowed", name: "DATABASE_URL", containers: ["web"] }]);
   });
 
+  it("replaces stale notes when the run fails while adopting matching values", async () => {
+    const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
+    service.seed("DATABASE_URL", "postgres://dev-db/main", { is_literal: true, is_multiline: true });
+    service.seed("PORT", "8080", { is_literal: true, is_multiline: true });
+    await serviceTarget();
+    await ctx.db.query(`UPDATE sync_targets SET last_notes = '[{"code":"not-delivered","name":"STALE"}]'`);
+    // The first ledger write (an adoption: the remote already matches) fails once.
+    const query = ctx.db.query.bind(ctx.db);
+    let failed = false;
+    ctx.db.query = (async (sql: string, params?: unknown[]) => {
+      if (!failed && /INSERT INTO sync_ledger/.test(sql)) {
+        failed = true;
+        throw new Error("ledger write failed");
+      }
+      return query(sql, params);
+    }) as typeof ctx.db.query;
+    await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
+    ctx.db.query = query;
+    expect(failed).toBe(true);
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(1);
+    expect(asJson(row.last_notes)).toEqual([{ code: "shadowed", name: "DATABASE_URL", containers: ["web"] }]);
+  });
+
   it("drops the notes when the destination changes", async () => {
     const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
     const { target } = await serviceTarget();

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import nacl from "tweetnacl";
 import { convexAdapter } from "../src/convex.js";
 import { coolifyAdapter } from "../src/coolify.js";
+import { classifyComposeUsage } from "../src/coolifyCompose.js";
 import { githubActionsAdapter, parseTokenExpiration } from "../src/github.js";
 import { getAdapter, canonicalDestinationIdentity } from "../src/index.js";
 import { sealedBox, sealedBoxOpen } from "../src/sealedbox.js";
@@ -573,6 +574,14 @@ describe("coolify adapter", () => {
     expect(problem(checked({ copiedIntoCompose: true }))).toMatch(/copies this value/);
     expect(problem(checked({}))).toBeNull();
     expect(problem(checked({ shadowedIn: ["web"] }))).toBeNull();
+    // A container the classifier cannot read (a numeric mapping key) is unknown too.
+    const numeric = classifyComposeUsage(
+      'services:\n  app:\n    environment:\n      FOO: literal\n      "2": "FOO="\n',
+      "services:\n  app:\n    env_file: [.env]\n",
+      5,
+      ["FOO"],
+    );
+    expect(coolifyAdapter.valueProblem!(svc, "FOO", "a$HOME-b", numeric)).toMatch(/could not check/);
     // A name the report does not cover is unknown.
     expect(coolifyAdapter.valueProblem!(svc, "B", "pa$word", checked({}))).toMatch(/could not check/);
     // Without $ nothing depends on the compose file; an application never copies.

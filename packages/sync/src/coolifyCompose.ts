@@ -39,6 +39,14 @@ type EnvValue = string | number | boolean | null | object;
 /** One entry of a PHP array: a string key, or a list position (null). */
 type PhpEntry = { key: string | null; value: unknown };
 
+/**
+ * PHP's is_numeric: what Coolify's normalisation treats as a list position.
+ * A mapping with such a key is read in an order and a form JavaScript does
+ * not reproduce (it lists integer-like keys first), so Varlatch claims
+ * nothing about that container.
+ */
+const PHP_NUMERIC = /^[ \t\n\r\v\f]*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?[ \t\n\r\v\f]*$/;
+
 /** A YAML sequence or mapping as the PHP array Coolify's YAML parser makes of it. */
 function phpEntries(source: unknown): PhpEntry[] {
   if (Array.isArray(source)) return source.map((value) => ({ key: null, value }));
@@ -57,11 +65,13 @@ function phpEntries(source: unknown): PhpEntry[] {
  * a bare `- NAME` as an empty value) differently from a collection with
  * any string key (where a bare `- NAME` is the name without a value).
  */
-function environmentOf(service: unknown): Map<string, EnvValue> {
+function environmentOf(service: unknown): { env: Map<string, EnvValue>; opaque: boolean } {
   const env = new Map<string, EnvValue>();
-  if (!isObject(service)) return env;
+  if (!isObject(service)) return { env, opaque: false };
   const merged: PhpEntry[] = [];
   const build = isObject(service.build) ? service.build.args : undefined;
+  const numericKey = (source: unknown) => isObject(source) && Object.keys(source).some((k) => PHP_NUMERIC.test(k));
+  if (numericKey(service.environment) || numericKey(build)) return { env, opaque: true };
   for (const entry of [...phpEntries(service.environment), ...phpEntries(build)]) {
     const at = entry.key === null ? -1 : merged.findIndex((m) => m.key === entry.key);
     if (at >= 0) merged[at] = entry;
@@ -85,7 +95,7 @@ function environmentOf(service: unknown): Map<string, EnvValue> {
       env.set(value, env.has(value) ? (env.get(value) as EnvValue) : null);
     }
   }
-  return env;
+  return { env, opaque: false };
 }
 
 /** Every string a parsed YAML document holds, keys included: what its escapes decode to. */
@@ -237,7 +247,7 @@ export function classifyComposeUsage(
   const decoded = scalarsOf(rawDoc).join("\n");
   const copied = new Set<string>();
   for (const container of containers) {
-    for (const [key, value] of environmentOf(rawServices[container])) {
+    for (const [key, value] of environmentOf(rawServices[container]).env) {
       for (const n of copiedNames(key, value)) copied.add(n);
     }
   }
@@ -249,7 +259,11 @@ export function classifyComposeUsage(
     const unknownIn: string[] = [];
     let reaches = false;
     for (const container of containers) {
-      const env = environmentOf(rawServices[container]);
+      const { env, opaque } = environmentOf(rawServices[container]);
+      if (opaque) {
+        unknownIn.push(container);
+        continue;
+      }
       if (env.has(name)) {
         const verdict = verdictFor(name, env.get(name) as EnvValue);
         if (verdict === "owned") usage.owned = true;

@@ -144,6 +144,19 @@ describe("compose usage", () => {
     expect(classify(raw, ["SAME"]).names.get("SAME")).toEqual({ referenced: true });
   });
 
+  it("claims nothing for a container whose mapping has a key PHP reads as a number", () => {
+    // Coolify keeps the YAML order and normalises any is_numeric key as a
+    // list position, so `"2": "FOO="` last makes FOO empty and copied in;
+    // JavaScript would list "2" first. Varlatch does not guess.
+    for (const key of ['"2"', '"01"', '"1.5"', "3"]) {
+      const raw = `services:\n  app:\n    environment:\n      FOO: literal\n      ${key}: "FOO="\n  db:\n    environment:\n      FOO: \${FOO}\n`;
+      const report = classify(raw, ["FOO"]);
+      expect(report.names.get("FOO"), key).toEqual({ referenced: true, unknownIn: ["app"] });
+    }
+    const args = "services:\n  app:\n    build:\n      args:\n        '7': BAR=\n";
+    expect(classify(args, ["BAR"]).names.get("BAR")).toEqual({ unknownIn: ["app"] });
+  });
+
   it("finds a reference YAML escapes, as Coolify reads it", () => {
     const raw = 'services:\n  app:\n    environment:\n      ESCAPED: "\\u0024ESCAPED"\n      ALIASED: "\\u0024{OTHER_ESCAPED:-x}"\n';
     const report = classify(raw, ["ESCAPED", "OTHER_ESCAPED"]);
