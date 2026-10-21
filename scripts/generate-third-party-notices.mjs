@@ -42,10 +42,10 @@ function fail(message) {
 // files fails generation until someone records its license here.
 const IMAGE_LICENSES = {
   postgres: { name: "PostgreSQL", license: "PostgreSQL", source: "https://www.postgresql.org/about/licence/" },
-  "ghcr.io/get-convex/convex-backend": {
+  "ghcr.io/convex/convex-backend": {
     name: "Convex backend",
     license: "FSL-1.1-Apache-2.0",
-    source: "https://github.com/get-convex/convex-backend/blob/main/LICENSE.md",
+    source: "https://github.com/convex/convex-backend/blob/main/LICENSE.md",
   },
   caddy: { name: "Caddy", license: "Apache-2.0", source: "https://github.com/caddyserver/caddy/blob/master/LICENSE" },
   "tailscale/tailscale": { name: "Tailscale", license: "BSD-3-Clause", source: "https://github.com/tailscale/tailscale/blob/main/LICENSE" },

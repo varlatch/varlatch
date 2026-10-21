@@ -19,7 +19,7 @@ Convex client library and CLI (`convex` on npm) are Apache-2.0.
 | Component | Image | License |
 | --- | --- | --- |
 | Caddy | `caddy:2.10.2` | [Apache-2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE) |
-| Convex backend | `ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98` | [FSL-1.1-Apache-2.0](https://github.com/get-convex/convex-backend/blob/main/LICENSE.md) |
+| Convex backend | `ghcr.io/convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98` | [FSL-1.1-Apache-2.0](https://github.com/convex/convex-backend/blob/main/LICENSE.md) |
 | PostgreSQL | `postgres:17.6` | [PostgreSQL](https://www.postgresql.org/about/licence/) |
 | Tailscale | `tailscale/tailscale:v1.102.3` | [BSD-3-Clause](https://github.com/tailscale/tailscale/blob/main/LICENSE) |
 
@@ -84,7 +84,7 @@ what the bundler includes.
 | @hono/node-server | 1.19.17 | MIT | varlatchd, CLI |
 | @isaacs/fs-minipass | 4.0.1 | ISC | CLI |
 | @levischuck/tiny-cbor | 0.2.11 | MIT | varlatchd, dashboard |
-| @modelcontextprotocol/sdk | 1.31.0 | MIT | CLI |
+| @modelcontextprotocol/sdk | 1.32.1 | MIT | CLI |
 | @noble/ciphers | 2.4.0 | MIT | varlatchd, dashboard |
 | @noble/hashes | 2.4.0 | MIT | varlatchd, dashboard |
 | @opentelemetry/semantic-conventions | 1.43.0 | Apache-2.0 | varlatchd, dashboard |
@@ -164,7 +164,7 @@ what the bundler includes.
 | gopd | 1.2.0 | MIT | CLI |
 | has-symbols | 1.1.0 | MIT | CLI |
 | hasown | 2.0.4 | MIT | CLI |
-| hono | 4.13.8 | MIT | varlatchd, CLI |
+| hono | 4.13.13 | MIT | varlatchd, CLI |
 | http-errors | 2.0.1 | MIT | CLI |
 | iconv-lite | 0.7.3 | MIT | CLI |
 | ieee754 | 1.2.1 | BSD-3-Clause | varlatchd, CLI |
@@ -1412,7 +1412,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### @modelcontextprotocol/sdk@1.31.0
+### @modelcontextprotocol/sdk@1.32.1
 
 ````text
 MIT License
@@ -3272,7 +3272,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### hono@4.13.8
+### hono@4.13.13
 
 ````text
 MIT License

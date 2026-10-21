@@ -26,7 +26,7 @@ const healthy: ServiceState[] = [
   { Service: "postgres", State: "running", Health: "healthy", Image: "postgres:17.6" },
   { Service: "varlatchd", State: "running", Health: "healthy", Image: "ghcr.io/x/varlatchd@sha256:aaa" },
   { Service: "varlatch-web", State: "running", Health: "healthy", Image: "ghcr.io/x/varlatch-web@sha256:bbb" },
-  { Service: "convex-backend", State: "running", Health: "healthy", Image: "ghcr.io/get-convex/convex-backend@sha256:ccc" },
+  { Service: "convex-backend", State: "running", Health: "healthy", Image: "ghcr.io/convex/convex-backend@sha256:ccc" },
   { Service: "varlatch-migrate", State: "exited", ExitCode: 0, Image: "ghcr.io/x/varlatchd@sha256:aaa" },
 ];
 const facts = {
@@ -38,7 +38,7 @@ const manifest = {
   images: {
     varlatchd: { tag: "ghcr.io/x/varlatchd:0.9.0", digest: "ghcr.io/x/varlatchd@sha256:aaa" },
     "varlatch-web": { tag: null, digest: "ghcr.io/x/varlatch-web@sha256:bbb" },
-    "convex-backend": { tag: null, digest: "ghcr.io/get-convex/convex-backend@sha256:ccc" },
+    "convex-backend": { tag: null, digest: "ghcr.io/convex/convex-backend@sha256:ccc" },
     postgres: { tag: "docker.io/library/postgres:17.6", digest: null },
   },
 };

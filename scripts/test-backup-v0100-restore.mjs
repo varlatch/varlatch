@@ -63,7 +63,10 @@ for (const where of [source, target]) {
 // Source: the published 0.10.0 release compose, daemon image pinned.
 writeFileSync(join(source, 'docker-compose.yml'), readFileSync(join(fixtures, 'docker-compose.release.yml'), 'utf8')
   .replace('name: varlatch', `name: ${project}-0`)
-  .replace(/image: ghcr\.io\/varlatch\/varlatchd[^\n]+/g, `image: ${oldImage}`));
+  .replace(/image: ghcr\.io\/varlatch\/varlatchd[^\n]+/g, `image: ${oldImage}`)
+  // Convex moved its images from ghcr.io/get-convex to ghcr.io/convex (October 2026): the same digest, and the old
+  // path refuses pulls. The fixture keeps what was shipped; the test pulls the same image from its new path.
+  .replace(/ghcr\.io\/get-convex\//g, 'ghcr.io/convex/'));
 cpSync(join(fixtures, 'varlatch-release.json'), join(source, 'varlatch-release.json'));
 // Target: the candidate, built from this checkout.
 writeFileSync(join(target, 'docker-compose.yml'), readFileSync(join(root, 'infra/compose/docker-compose.yml'), 'utf8')

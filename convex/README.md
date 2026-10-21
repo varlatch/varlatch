@@ -14,7 +14,7 @@ docker run -d --name convex-dev -p 3210:3210 -p 3211:3211 \
   -e INSTANCE_NAME=varlatch-dev -e INSTANCE_SECRET=$(openssl rand -hex 32) \
   -e CONVEX_CLOUD_ORIGIN=http://127.0.0.1:3210 \
   -e CONVEX_SITE_ORIGIN=http://127.0.0.1:3211 \
-  -e DISABLE_BEACON=1 ghcr.io/get-convex/convex-backend:latest
+  -e DISABLE_BEACON=1 ghcr.io/convex/convex-backend:latest
 docker exec convex-dev ./generate_admin_key.sh
 
 # 2. Configure and deploy the functions:

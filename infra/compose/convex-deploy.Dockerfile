@@ -7,7 +7,7 @@
 # this digest identical to convex-backend in docker-compose.yml
 # (scripts/test-backup-compose.mjs checks it). The digest is a multi-platform
 # index, so each architecture's image gets that architecture's binary.
-FROM ghcr.io/get-convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98 AS convex-backend
+FROM ghcr.io/convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98 AS convex-backend
 
 FROM node:26-slim
 WORKDIR /app
