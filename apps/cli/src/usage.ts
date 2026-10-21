@@ -87,11 +87,12 @@ Usage:
                   from the active Contract; --check exits 1 when the file is stale)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
-                      | nothing for convex: --base is the deployment URL)
+                      | --service <uuid> | nothing for convex: --base is the deployment URL)
                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
                      # client-side push for installations without server egress (ADR-0031)
   varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin>
-                      (--repo <name> [--gh-environment <name>] | --app <uuid> | nothing for convex)
+                      (--repo <name> [--gh-environment <name>] | --app <uuid> | --service <uuid>
+                       | nothing for convex)
                       [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>] [--json]
                (does the platform hold the Environment's values? compared in memory, one status per key of
                 the Contract: match, differs, missing-on-platform, extra-on-platform, unreadable, absent;

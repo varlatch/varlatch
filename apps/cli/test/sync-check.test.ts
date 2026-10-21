@@ -53,6 +53,15 @@ describe("compareKeys", () => {
     ]);
   });
 
+  it("a value the platform withholds is not compared, whatever Varlatch holds", () => {
+    const keys = compareKeys(pairs("HIDDEN", "BOTH_HIDDEN"), new Map([["HIDDEN", "v"], ["BOTH_HIDDEN", null]]), new Map([["HIDDEN", null], ["BOTH_HIDDEN", null]]));
+    expect(keys.map((k) => [k.name, k.status, k.reason])).toEqual([
+      ["HIDDEN", "unreadable", "platform-withheld"],
+      ["BOTH_HIDDEN", "unreadable", "platform-withheld"],
+    ]);
+    expect(checkExitCode(keys)).toBe(2);
+  });
+
   it("compares a mapped item against its platform name", () => {
     const keys = compareKeys([{ name: "API_TOKEN", destination: "APP_API_TOKEN" }], new Map([["API_TOKEN", "t"]]), new Map([["APP_API_TOKEN", "t"], ["API_TOKEN", "other"]]));
     expect(keys).toEqual([{ name: "API_TOKEN", destination: "APP_API_TOKEN", status: "match" }]);
@@ -93,6 +102,7 @@ const ALL_VALUES = [...Object.values(V), ...Object.values(PLATFORM)];
 const COOLIFY_TOKEN = "coolify-token-canary-3e8b";
 const CONVEX_CREDENTIAL = "convex-credential-canary";
 const APP = "app-uuid-0001";
+const SERVICE = "svc-uuid-0001";
 
 const dir = mkdtempSync(join(tmpdir(), "varlatch-sync-check-"));
 const bundle = join(dir, "varlatch.cjs");
@@ -114,6 +124,11 @@ let contract: Record<string, unknown>[] | null;
 let denyDisclosure: boolean;
 let coolifyRows: Record<string, unknown>[];
 let coolifyMode: "ok" | "garbage" | "unauthorized";
+/** A Coolify service's variables and record; `withhold` drops values as a token without read:sensitive sees them. */
+let serviceRows: Record<string, unknown>[];
+let serviceCompose: string | null;
+/** Writes a `sync push` sent to the service's variables. */
+let serviceWrites: { method: string; body: Record<string, unknown> }[];
 let convexVars: { name: string; value: string }[];
 let requests: { url: string; body: unknown; seq: number }[];
 let platformRequests: { method: string; url: string; auth: string; seq: number }[];
@@ -157,6 +172,13 @@ function defaults(): void {
     // The platform's own, outside the Contract: never compared.
     { uuid: "e8", key: "COOLIFY_FQDN", value: PLATFORM.FQDN, is_preview: false },
   ];
+  serviceRows = [
+    { uuid: "s1", key: "API_TOKEN", value: V.API_TOKEN },
+    { uuid: "s2", key: "LOG_LEVEL", value: V.LOG_LEVEL },
+    { uuid: "s3", key: "SENTRY_AUTH_TOKEN" },
+  ];
+  serviceWrites = [];
+  serviceCompose = `services:\n  backend:\n    environment:\n      LOG_LEVEL: warn-canary\n      API_TOKEN: \${API_TOKEN}\n  dashboard:\n    image: x\n`;
   convexVars = [
     { name: "API_TOKEN", value: V.API_TOKEN },
     { name: "SENTRY_AUTH_TOKEN", value: PLATFORM.SENTRY_OLD },
@@ -221,7 +243,8 @@ function answerApi(req: http.IncomingMessage, res: http.ServerResponse): void {
 }
 
 function answerPlatform(req: http.IncomingMessage, res: http.ServerResponse): void {
-  req.resume();
+  let raw = "";
+  req.on("data", (d: Buffer) => (raw += d.toString()));
   req.on("end", () => {
     const url = req.url ?? "";
     const auth = req.headers.authorization ?? "";
@@ -238,6 +261,26 @@ function answerPlatform(req: http.IncomingMessage, res: http.ServerResponse): vo
         return res.end(`<html>${V.API_TOKEN} ${V.PIN} ${PLATFORM.SENTRY_OLD}</html>`);
       }
       return json(200, coolifyRows);
+    }
+    if (url === `/api/v1/services/${SERVICE}/envs` && (req.method === "POST" || req.method === "PATCH")) {
+      if (auth !== `Bearer ${COOLIFY_TOKEN}`) return json(401, { message: "Unauthenticated." });
+      serviceWrites.push({ method: req.method, body: JSON.parse(raw) as Record<string, unknown> });
+      return json(201, { uuid: "new" });
+    }
+    if (url === `/api/v1/services/${SERVICE}/envs` && req.method === "GET") {
+      if (auth !== `Bearer ${COOLIFY_TOKEN}`) return json(401, { message: "Unauthenticated." });
+      return json(200, serviceRows);
+    }
+    if (url === `/api/v1/services/${SERVICE}` && req.method === "GET") {
+      if (auth !== `Bearer ${COOLIFY_TOKEN}`) return json(401, { message: "Unauthenticated." });
+      return json(200, {
+        uuid: SERVICE,
+        name: "convex",
+        compose_parsing_version: 5,
+        ...(serviceCompose !== null
+          ? { docker_compose_raw: serviceCompose, docker_compose: "services:\n  backend:\n    env_file: [.env]\n  dashboard:\n    env_file: [.env]\n" }
+          : {}),
+      });
     }
     if (url === "/api/query" && req.method === "POST") {
       if (auth !== `Convex ${CONVEX_CREDENTIAL}`) return json(401, { code: "Unauthenticated" });
@@ -395,6 +438,62 @@ describe("sync check against Coolify", () => {
     expect(statuses(r)).toMatchObject({ STRAY_SECRET: "missing-on-platform", API_TOKEN: "match" });
     expect(statuses(r)).not.toHaveProperty("OLD_FLAG");
     expect(leaked(r)).toEqual([]);
+  });
+});
+
+describe("sync check against a Coolify service", () => {
+  const service = (...extra: string[]) => ["sync", "check", "--platform", "coolify", "--base", platformOrigin, "--service", SERVICE, "-e", "production", "--token-env", "COOLIFY_TOKEN", ...extra];
+
+  it("reads the service's variables, says how its compose file uses them, and never compares a withheld value", async () => {
+    const r = await cli(service("--json"));
+    const doc = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(doc).toMatchObject({ destination: { serviceUuid: SERVICE }, keySet: "contract" });
+    expect(statuses(r)).toMatchObject({
+      API_TOKEN: "match",
+      LOG_LEVEL: "match",
+      // Listed without a value: present, not comparable.
+      SENTRY_AUTH_TOKEN: "unreadable:platform-withheld",
+      DATABASE_URL: "missing-on-platform",
+    });
+    expect(doc.usage).toEqual([{ code: "shadowed", name: "LOG_LEVEL", containers: ["backend"] }]);
+    expect(platformRequests.map((q) => q.url)).toEqual([`/api/v1/services/${SERVICE}/envs`, `/api/v1/services/${SERVICE}`]);
+    // The withheld Secret is never disclosed: it could not be compared anyway.
+    expect(disclosures()).toEqual([{ items: ["API_TOKEN"] }]);
+    expect(r.stdout + r.stderr).not.toContain("warn-canary");
+    expect(leaked(r)).toEqual([]);
+
+    const human = await cli(service());
+    expect(human.stderr).toContain("varlatch: usage: LOG_LEVEL: the compose file sets it in backend, which wins over the stored value");
+    expect(human.stdout).toMatch(/not compared +SENTRY_AUTH_TOKEN \(the platform withholds its value from this token\)/);
+  });
+
+  it("says when the token cannot read the compose file", async () => {
+    serviceCompose = null;
+    const r = await cli(service("--json"));
+    expect((JSON.parse(r.stdout) as { usage: unknown }).usage).toEqual([
+      { code: "usage-unchecked", reason: "the token cannot read the service's compose file (Coolify's read:sensitive permission)" },
+    ]);
+  });
+
+  it("sync push writes literal values to the service, and skips a name its compose file binds to Coolify", async () => {
+    serviceCompose = `services:\n  backend:\n    environment:\n      PIN: \${SERVICE_PASSWORD_BACKEND}\n`;
+    const r = await cli(["sync", "push", "--platform", "coolify", "--base", platformOrigin, "--service", SERVICE, "-e", "production", "--token-env", "COOLIFY_TOKEN", "--map", "API_TOKEN", "--map", "LOG_LEVEL", "--map", "PIN"]);
+    expect(r.code, r.stderr).toBe(1);
+    expect(r.stderr).toContain("varlatch: skipped PIN: the platform sets this name itself");
+    expect(serviceWrites.map((w) => [w.method, w.body.key, w.body.is_literal, w.body.is_multiline])).toEqual([
+      ["PATCH", "API_TOKEN", true, true],
+      ["PATCH", "LOG_LEVEL", true, true],
+    ]);
+    expect(serviceWrites.map((w) => w.body.value)).toEqual([V.API_TOKEN, V.LOG_LEVEL]);
+    expect(r.stdout).toContain("2/2 value(s) pushed to coolify");
+    expect(r.stdout + r.stderr).not.toContain(V.PIN);
+  });
+
+  it("an application and a service at once is a usage error", async () => {
+    const r = await cli(service("--app", APP));
+    expect(r.code).toBe(64);
+    expect(r.stderr).toContain("an application or a service, not both");
+    expect(platformRequests).toEqual([]);
   });
 });
 

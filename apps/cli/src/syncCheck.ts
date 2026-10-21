@@ -3,7 +3,7 @@ import { CONFIG_ITEM_NAME_PATTERN, RESERVED_ITEM_NAMES, type ConfigurationContra
 import type { ResolvedContext } from "@varlatch/context";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
-import { AdapterError, getAdapter, type PlatformAdapter } from "@varlatch/sync";
+import { AdapterError, getAdapter, type PlatformAdapter, type UsageReport } from "@varlatch/sync";
 
 /**
  * `varlatch sync check` (ADR-0044): does a platform hold the values the
@@ -26,7 +26,7 @@ export const SYNC_CHECK_EXIT = { match: 0, drift: 1, unchecked: 2 } as const;
 export type CheckStatus = "match" | "differs" | "missing-on-platform" | "extra-on-platform" | "unreadable" | "absent";
 
 /** Why a key could not be compared. */
-export type UnreadableReason = "platform-write-only" | "withheld" | "invalid-name";
+export type UnreadableReason = "platform-write-only" | "withheld" | "platform-withheld" | "invalid-name";
 
 export interface CheckedKey {
   /** The item's name in Varlatch. */
@@ -49,11 +49,13 @@ export interface KeyPair {
  * The comparison, values in and statuses out. `varlatch` maps each stored
  * item to its value, or to null when this identity may not read it; an item
  * not in the map is not stored. `platform` is null when the platform's
- * values cannot be read back (GitHub Actions secrets are write-only). Values
- * are compared exactly, byte for byte: a value that differs only in
- * whitespace differs (whitespace in a credential matters).
+ * values cannot be read back (GitHub Actions secrets are write-only), and
+ * maps a name to null when the platform holds it but withholds its value
+ * (a Coolify token without read:sensitive). Values are compared exactly,
+ * byte for byte: a value that differs only in whitespace differs
+ * (whitespace in a credential matters).
  */
-export function compareKeys(pairs: KeyPair[], varlatch: ReadonlyMap<string, string | null>, platform: ReadonlyMap<string, string> | null): CheckedKey[] {
+export function compareKeys(pairs: KeyPair[], varlatch: ReadonlyMap<string, string | null>, platform: ReadonlyMap<string, string | null> | null): CheckedKey[] {
   return pairs.map(({ name, destination, invalid }) => {
     const key = (status: CheckStatus, reason?: UnreadableReason): CheckedKey => ({ name, destination, status, ...(reason ? { reason } : {}) });
     if (invalid) return key("unreadable", "invalid-name");
@@ -61,9 +63,11 @@ export function compareKeys(pairs: KeyPair[], varlatch: ReadonlyMap<string, stri
     const onPlatform = platform.has(destination);
     if (!varlatch.has(name)) return key(onPlatform ? "extra-on-platform" : "absent");
     if (!onPlatform) return key("missing-on-platform");
+    const remote = platform.get(destination);
+    if (remote === null || remote === undefined) return key("unreadable", "platform-withheld");
     const value = varlatch.get(name);
     if (value === null || value === undefined) return key("unreadable", "withheld");
-    return key(platform.get(destination) === value ? "match" : "differs");
+    return key(remote === value ? "match" : "differs");
   });
 }
 
@@ -86,10 +90,24 @@ export interface SyncCheckArgs {
   repo?: string | undefined;
   ghEnvironment?: string | undefined;
   app?: string | undefined;
+  /** Coolify: a service instead of an application. */
+  service?: string | undefined;
   tokenEnv: string;
   maps: string[];
   /** Without --map: skip these names (exact, or trailing-* prefix). */
   excludes: string[];
+}
+
+/**
+ * How the destination itself uses a compared name (a Coolify service's
+ * compose file, ADR-0031 amendment 2026-10-21): names, container names and
+ * a code only.
+ */
+export interface UsageNote {
+  code: "owned" | "shadowed" | "not-delivered" | "unknown-form" | "generated-once" | "usage-unchecked";
+  name?: string;
+  containers?: string[];
+  reason?: string;
 }
 
 export interface SyncCheckResult {
@@ -102,6 +120,8 @@ export interface SyncCheckResult {
   keys: CheckedKey[];
   /** Why the platform could not be read at all; never a value or a response body. */
   unchecked?: string;
+  /** How the destination uses the compared names, where it says (Coolify services). */
+  usage: UsageNote[];
   notices: string[];
   exitCode: number;
 }
@@ -125,7 +145,9 @@ function resolveTarget(input: SyncCheckArgs): { adapter: PlatformAdapter; base: 
       adapter.platform === "github-actions"
         ? { repo: input.repo, ...(input.ghEnvironment ? { environment: input.ghEnvironment } : {}) }
         : adapter.platform === "coolify"
-          ? { applicationUuid: input.app }
+          ? input.service !== undefined
+            ? { serviceUuid: input.service, ...(input.app !== undefined ? { applicationUuid: input.app } : {}) }
+            : { applicationUuid: input.app }
           : {};
     return { adapter, base, destination: adapter.canonicalizeDestination(raw).destination };
   } catch (err) {
@@ -154,11 +176,12 @@ function selectKeys(
   input: SyncCheckArgs,
   stored: ReadonlySet<string>,
   contract: string[] | null,
+  target: Record<string, string>,
 ): { pairs: KeyPair[]; keySet: SyncCheckResult["keySet"] } {
   const pairs: KeyPair[] = [];
   const pair = (name: string, dest: string) => {
     const destination = adapter.canonicalizeName(dest);
-    pairs.push({ name, destination, ...(adapter.validateName(destination) ? { invalid: true } : {}) });
+    pairs.push({ name, destination, ...(adapter.validateName(destination, target) ? { invalid: true } : {}) });
   };
   let keySet: SyncCheckResult["keySet"];
   if (input.maps.length > 0) {
@@ -198,6 +221,7 @@ function selectKeys(
 export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, input: SyncCheckArgs, io: CheckIO): Promise<SyncCheckResult> {
   const { adapter, base, destination } = resolveTarget(input);
   const notices: string[] = [];
+  const usage: UsageNote[] = [];
   const result = (keySet: SyncCheckResult["keySet"], keys: CheckedKey[], unchecked?: string): SyncCheckResult => ({
     platform: adapter.platform,
     base,
@@ -206,6 +230,7 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
     keySet,
     keys,
     ...(unchecked !== undefined ? { unchecked } : {}),
+    usage,
     notices,
     exitCode: unchecked !== undefined ? SYNC_CHECK_EXIT.unchecked : checkExitCode(keys),
   });
@@ -214,13 +239,13 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
   const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment, { includeValues: true });
   const items = new Map((effective.items ?? []).map((i) => [i.name, i]));
   const contract = await contractNames(api, ctx, effective, notices);
-  const { pairs, keySet } = selectKeys(adapter, input, new Set(items.keys()), contract);
+  const { pairs, keySet } = selectKeys(adapter, input, new Set(items.keys()), contract, destination);
   if (keySet === "stored" && !notices.some((n) => n.startsWith("cannot read the Contract"))) {
     notices.push("no active Contract: comparing the stored items, and extra-on-platform is not reported");
   }
 
   // The platform first: when it cannot be read, nothing is disclosed.
-  let platform: Map<string, string> | null = null;
+  let platform: Map<string, string | null> | null = null;
   if (!adapter.supportsReadBack || !adapter.readValues) {
     notices.push(`${adapter.platform} values cannot be read back (write-only): no key can be compared`);
   } else {
@@ -233,6 +258,13 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
       // else (a body that is not JSON, for one) may quote the response, so it
       // is never repeated.
       return result(keySet, [], err instanceof AdapterError ? err.message : `the platform's response could not be read (${err instanceof Error ? err.name : "error"})`);
+    }
+    if (adapter.inspectUsage) {
+      const report = await adapter.inspectUsage(
+        { baseIdentity: base, destination, credential, ...(io.fetchImpl ? { fetchImpl: io.fetchImpl } : {}) },
+        pairs.filter((p) => !p.invalid).map((p) => p.destination),
+      );
+      if (report) usage.push(...usageNotes(report));
     }
   }
 
@@ -247,8 +279,10 @@ export async function runSyncCheck(api: VarlatchClient, ctx: ResolvedContext, in
       continue;
     }
     varlatch.set(name, null);
-    // Only a Secret the platform also holds needs its value: presence decides the rest.
-    if (platform?.has(dest)) secrets.push(name);
+    // Only a Secret the platform also holds, and lets this token read, needs
+    // its value: presence decides the rest, and an unreadable one cannot be
+    // compared whatever Varlatch discloses.
+    if (typeof platform?.get(dest) === "string") secrets.push(name);
   }
   if (secrets.length > 0) {
     try {
@@ -274,13 +308,47 @@ const LABEL: Record<CheckStatus, string> = {
 const REASON: Record<UnreadableReason, string> = {
   "platform-write-only": "the platform's values are write-only",
   withheld: "this identity may not read its value in Varlatch",
-  "invalid-name": "the platform cannot store this name",
+  "platform-withheld": "the platform withholds its value from this token",
+  "invalid-name": "the platform cannot store this name, or sets it itself",
 };
+
+/** The usage report as notes, sorted by name. */
+function usageNotes(report: UsageReport): UsageNote[] {
+  if (!report.checked) return [{ code: "usage-unchecked", reason: report.reason ?? "unknown" }];
+  const notes: UsageNote[] = [];
+  for (const [name, u] of [...report.names].sort(([a], [b]) => a.localeCompare(b))) {
+    if (u.owned) notes.push({ code: "owned", name });
+    if (u.shadowedIn?.length) notes.push({ code: "shadowed", name, containers: u.shadowedIn });
+    if (u.notDeliveredTo?.length) notes.push({ code: "not-delivered", name });
+    if (u.unknownIn?.length) notes.push({ code: "unknown-form", name, containers: u.unknownIn });
+    if (u.generatedOnce) notes.push({ code: "generated-once", name });
+  }
+  return notes;
+}
+
+/** One line per usage note, for people. */
+export function describeUsage(note: UsageNote): string {
+  const where = note.containers?.join(", ") ?? "";
+  switch (note.code) {
+    case "owned":
+      return `${note.name}: the platform sets this name itself; a Sync Target will not write it`;
+    case "shadowed":
+      return `${note.name}: the compose file sets it in ${where}, which wins over the stored value`;
+    case "not-delivered":
+      return `${note.name}: no container uses it`;
+    case "unknown-form":
+      return `${note.name}: used in ${where} in a form Varlatch does not read`;
+    case "generated-once":
+      return `${note.name}: generated once by the platform; a database may read it only on first start`;
+    case "usage-unchecked":
+      return `usage not checked: ${note.reason ?? "unknown"}`;
+  }
+}
 
 /** The human form: one line per key, then the verdict. Names and statuses only. */
 export function formatSyncCheck(r: SyncCheckResult): { stdout: string[]; stderr: string[] } {
   const where = [r.platform, r.base, ...Object.values(r.destination)].join(" ");
-  const stderr = r.notices.map((n) => `varlatch: ${n}`);
+  const stderr = [...r.notices.map((n) => `varlatch: ${n}`), ...r.usage.map((u) => `varlatch: usage: ${describeUsage(u)}`)];
   if (r.unchecked !== undefined) {
     stderr.push(`varlatch: could not check ${where} against ${r.environment}: ${r.unchecked}`);
     return { stdout: [], stderr };
@@ -310,6 +378,7 @@ export function syncCheckDocument(r: SyncCheckResult): Record<string, unknown> {
     ...(r.unchecked !== undefined ? { unchecked: r.unchecked } : {}),
     counts,
     keys: r.keys,
+    usage: r.usage,
     notices: r.notices,
     exitCode: r.exitCode,
   };

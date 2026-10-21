@@ -19,6 +19,8 @@ export interface SyncPushArgs {
   repo?: string | undefined;
   ghEnvironment?: string | undefined;
   app?: string | undefined;
+  /** Coolify: a service instead of an application. */
+  service?: string | undefined;
   /** Coolify: mark managed keys available at build time ("true" | "false"). */
   buildTime?: string | undefined;
   tokenEnv: string;
@@ -58,7 +60,11 @@ export async function runSyncPush(
         raw = { repo: input.repo, ...(input.ghEnvironment ? { environment: input.ghEnvironment } : {}) };
         break;
       case "coolify":
-        raw = { applicationUuid: input.app, ...(input.buildTime ? { buildTime: input.buildTime } : {}) };
+        raw = {
+          ...(input.service !== undefined ? { serviceUuid: input.service } : {}),
+          ...(input.app !== undefined || input.service === undefined ? { applicationUuid: input.app } : {}),
+          ...(input.buildTime ? { buildTime: input.buildTime } : {}),
+        };
         break;
       case "convex":
         // The deployment URL (--base) is the destination.
@@ -116,7 +122,7 @@ export async function runSyncPush(
       return;
     }
     const destName = adapter.canonicalizeName(dest);
-    const invalid = adapter.validateName(destName);
+    const invalid = adapter.validateName(destName, destination);
     if (invalid) {
       problems.push(`${name}: ${invalid}`);
       return;
@@ -145,9 +151,27 @@ export async function runSyncPush(
     return 1;
   }
 
+  // A Coolify service says how its compose file uses each name: a name
+  // the platform sets itself is skipped, and the writes may refuse a value
+  // the compose file would change.
+  const usage = adapter.inspectUsage
+    ? await adapter.inspectUsage({ baseIdentity, destination, credential }, selected.map((i) => i.name))
+    : null;
+  if (usage && !usage.checked) console.error(`varlatch: usage not checked: ${usage.reason ?? "unknown"}`);
+  const writable = selected.filter((item) => {
+    if (!usage?.names.get(item.name)?.owned) return true;
+    problems.push(`${item.name}: the platform sets this name itself`);
+    console.error(`varlatch: skipped ${item.name}: the platform sets this name itself`);
+    return false;
+  });
+  if (writable.length === 0) {
+    console.error("varlatch: nothing to push");
+    return 1;
+  }
+
   const outcomes = await adapter.writeValues(
-    { baseIdentity, destination, credential },
-    selected,
+    { baseIdentity, destination, credential, usage },
+    writable,
   );
   let failed = 0;
   for (const outcome of outcomes) {

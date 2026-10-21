@@ -255,7 +255,7 @@ const RUN_OPTIONS: OptionSpec = {
 
 /** Every option `varlatch sync check` takes, and nothing else (ADR-0044; strict as ADR-0043 Decision 10). */
 const SYNC_CHECK_OPTIONS: OptionSpec = {
-  values: ["--platform", "--base", "--repo", "--gh-environment", "--app", "--token-env", "--environment", "--server"],
+  values: ["--platform", "--base", "--repo", "--gh-environment", "--app", "--service", "--token-env", "--environment", "--server"],
   lists: ["--map", "--exclude"],
   booleans: ["--json"],
   onceBooleans: true,
@@ -1710,7 +1710,7 @@ async function main(): Promise<void> {
           // error, never a check of something else.
           const usage =
             "Usage: varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin> " +
-            "(--repo <name> [--gh-environment <name>] | --app <uuid> | nothing for convex) [-e <env>] [--server <url>] " +
+            "(--repo <name> [--gh-environment <name>] | --app <uuid> | --service <uuid> | nothing for convex) [-e <env>] [--server <url>] " +
             "[--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [--json]";
           const opts = strictOptions("sync check", args.slice(1), SYNC_CHECK_OPTIONS, usage);
           const value = (name: string) => opts.values.get(name);
@@ -1726,6 +1726,7 @@ async function main(): Promise<void> {
               repo: value("--repo"),
               ghEnvironment: value("--gh-environment"),
               app: value("--app"),
+              service: value("--service"),
               tokenEnv: value("--token-env") ?? "VARLATCH_SYNC_TOKEN",
               maps: opts.lists.get("--map") ?? [],
               excludes: opts.lists.get("--exclude") ?? [],
@@ -1756,6 +1757,7 @@ async function main(): Promise<void> {
           repo: flag(args, "--repo"),
           ghEnvironment: flag(args, "--gh-environment"),
           app: flag(args, "--app"),
+          service: flag(args, "--service"),
           buildTime: flag(args, "--build-time"),
           tokenEnv: flag(args, "--token-env") ?? "VARLATCH_SYNC_TOKEN",
           maps: flags(args, "--map"),
