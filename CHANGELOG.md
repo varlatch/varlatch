@@ -50,8 +50,9 @@ fixes.
 - Every Sync Target has `lastNotes`: the notes of its last run that
   inspected the destination (`shadowed`, `not-delivered`, `unknown-form`,
   `generated-once`, `kept-by-platform`, `usage-unchecked`), `null` where
-  nothing was inspected. A Coolify destination takes `serviceUuid` instead
-  of `applicationUuid`, and destination listings include services.
+  nothing was inspected. A Coolify service destination takes `serviceUuid`
+  instead of `applicationUuid` (application destinations are unchanged),
+  and destination listings include services.
 
 ### Upgrading
 
@@ -73,13 +74,16 @@ describes.
 - Back up first: there is no way back to 0.17 but restoring an archive
   taken before the upgrade. 0.17 refuses a database with migration 31, and
   everything written after that archive is lost.
-- Coolify application integrations: the first periodic repair after the
-  upgrade (within six hours) writes every managed variable again, literal
-  and multiline. The next deployment of each application then receives its
-  values exactly as stored: a value that relied on Coolify expanding `$`
-  (`$OTHER`, `${OTHER}`) arrives as written. Afterwards, check the
-  integration cards: a value the new rules refuse is held, Coolify keeps
-  what it had, and the card names it until the value changes.
+- Coolify application integrations: for each active integration, the first
+  periodic repair after the upgrade (within six hours) writes every managed
+  variable again, literal and multiline. The next deployment of each
+  application then receives its values exactly as stored: a value that
+  relied on Coolify expanding `$` (`$OTHER`, `${OTHER}`) arrives as
+  written. Afterwards, check the integration cards: a value the new rules
+  refuse is held, Coolify keeps what it had, and the card names it. Each
+  attempt with a held value counts as a failed one, so after ten the
+  integration stops: correct the value, then **Resume** the integration
+  (correcting the value alone does not restart a stopped one).
 - 0.18.0 restores everything 0.17.4 restores, and archives from 0.17.4.
 
 ## 0.17.4 (2026-10-21)
