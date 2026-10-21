@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/protocol",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "private": true,
   "description": "The Varlatch public API contract: OpenAPI source of truth, stable error codes, generated types (ADR-0018)",
   "license": "Apache-2.0",

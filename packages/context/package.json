@@ -1,6 +1,6 @@
 {
   "name": "@varlatch/context",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "private": true,
   "description": "Deterministic Varlatch context resolution (server, organization, project, environment) shared by the CLI",
   "license": "Apache-2.0",
