@@ -1402,6 +1402,23 @@ describe("Coolify value fidelity on repair (ADR-0031 amendment 2026-10-21)", () 
   });
 });
 
+describe("Coolify value fidelity: a written name whose value becomes undeliverable", () => {
+  it("keeps the last delivered value instead of deleting the name as an orphan", async () => {
+    await put(`${ENV_PATH}/values/QUOTED`, { value: "fine" });
+    const coolify = fakeCoolify();
+    const connection = await (await createConnection()).json();
+    await createTarget(connection.id, { removeOrphans: true });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.values().get("QUOTED")).toBe("fine");
+
+    await put(`${ENV_PATH}/values/QUOTED`, { value: "it's" });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl, repairIntervalMs: 0 });
+    expect(coolify.calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(coolify.values().get("QUOTED")).toBe("fine");
+    expect((await targetRowFromDb()).last_result).toContain("QUOTED: Coolify writes values in single quotes");
+  });
+});
+
 describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
   /**
    * A fake Coolify service: the env store of fakeCoolify on the service's
