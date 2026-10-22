@@ -29,6 +29,7 @@ vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }))
 import { checkLines, lastFailure, releaseSummary, upgradeLines } from "../src/features/installation/releaseStatus";
 import { ReleaseReport } from "../src/features/installation/ReleaseTab";
 import { useInstallationRelease } from "../src/features/installation/releaseNotice";
+import { InstallationPage } from "../src/features/installation/InstallationPage";
 
 const NOW = Date.parse("2026-10-22T12:00:00Z");
 const DAY = 24 * 3600_000;
@@ -188,5 +189,43 @@ describe("who asks", () => {
     expect(one("probe")).toBe("nothing");
     await act(async () => root?.unmount());
     expect(await probe(true, [])).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Installation page's Release tab", () => {
+  async function page(backups: () => Promise<unknown>) {
+    const getInstallationRelease = vi.fn(async () => release());
+    fake.api = {
+      meta: async () => ({ apiMajor: 1, serverVersion: "0.18.1", capabilities: ["installation.release"] }),
+      getInstallationBackups: backups,
+      getInstallationRelease,
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await act(async () => {
+      root = create(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={["/installation/settings?tab=release"]}>
+            <InstallationPage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    });
+    for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+    return getInstallationRelease;
+  }
+
+  it("asks nothing while the admin-only backups read is pending", async () => {
+    expect(await page(() => new Promise(() => {}))).not.toHaveBeenCalled();
+    expect(all("release-status")).toHaveLength(0);
+  });
+
+  it("asks nothing when that read is refused, and says why", async () => {
+    expect(await page(async () => Promise.reject(new Error("Installation Admin required")))).not.toHaveBeenCalled();
+    expect(one("release-error")).toContain("Installation Admin authority is required");
+  });
+
+  it("asks once that read succeeded, and shows the release", async () => {
+    expect(await page(async () => ({ archives: [], warnings: [] }))).toHaveBeenCalledOnce();
+    expect(one("release-summary")).toContain("0.19.0 is available");
   });
 });

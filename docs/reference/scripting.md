@@ -65,6 +65,9 @@ These keep the meanings they always had:
   `--timeout` up to 600); 77 when it was denied, expired, or already
   collected; 69 when the server cannot be reached (the sign-in is kept). It
   never exits 0 before a credential is stored.
+- `varlatch upgrade` and `varlatch self-update`: 69 when GitHub cannot be
+  reached in 30 seconds or answers with a server error (5xx); 1 for any
+  other failed release lookup, such as a release that does not exist.
 - `varlatch request`: 0 when the destination answered, whatever the HTTP
   status (as curl), and the response was written whole; 1 when the Broker
   refused the request, or the response was cut off or could not be written;

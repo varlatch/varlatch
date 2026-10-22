@@ -2341,7 +2341,7 @@ async function main(): Promise<void> {
         // Replaces this CLI's own file with a release build; no login, and
         // nothing else on the host changes.
         const { runSelfUpdate, SelfUpdateError } = await import("./selfUpdate.js");
-        const { UpgradeError, DEFAULT_RELEASE_REPO } = await import("./upgrade.js");
+        const { UpgradeError, DEFAULT_RELEASE_REPO, lookupExit } = await import("./upgrade.js");
         try {
           await runSelfUpdate({
             version: positional(args, 0),
@@ -2353,7 +2353,7 @@ async function main(): Promise<void> {
             script: process.argv[1] ?? "",
           });
         } catch (err) {
-          if (err instanceof SelfUpdateError || err instanceof UpgradeError) fail(err.message);
+          if (err instanceof SelfUpdateError || err instanceof UpgradeError) fail(err.message, lookupExit(err));
           throw err;
         }
         return;
@@ -2361,7 +2361,7 @@ async function main(): Promise<void> {
       case "upgrade": {
         // Operator tooling (ADR-0019 §19c): upgrades the compose stack on
         // THIS host from the published release set. No API login involved.
-        const { runUpgrade, UpgradeError, DEFAULT_RELEASE_REPO } = await import("./upgrade.js");
+        const { runUpgrade, UpgradeError, DEFAULT_RELEASE_REPO, lookupExit } = await import("./upgrade.js");
         try {
           await runUpgrade({
             version: positional(args, 0),
@@ -2376,7 +2376,7 @@ async function main(): Promise<void> {
             ...(flag(args, "--release-dir") ? { releaseDir: flag(args, "--release-dir")! } : {}),
           });
         } catch (err) {
-          if (err instanceof UpgradeError) fail(err.message);
+          if (err instanceof UpgradeError) fail(err.message, lookupExit(err));
           throw err;
         }
         return;

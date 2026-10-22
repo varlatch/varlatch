@@ -1184,8 +1184,7 @@ export class VarlatchClient {
 
   /**
    * Installation Admin only: the host's last look for a newer release, as
-   * `varlatch upgrade --check` recorded it (capability installation.release,
-   * ADR-0049).
+   * `varlatch upgrade --check` recorded it (capability installation.release).
    */
   getInstallationRelease(): Promise<InstallationRelease> {
     return this.request("GET", "/v1/installation/release");

@@ -9,6 +9,7 @@ import { pipeline } from "node:stream/promises";
 import { dirname, join } from "node:path";
 import type { GateVerdict } from "./doctor.js";
 import { parseDotenv } from "./dotenv.js";
+import { EXIT } from "./exitCodes.js";
 import { createInterface } from "node:readline/promises";
 
 /**
@@ -103,6 +104,14 @@ export class ReleaseLookupError extends UpgradeError {
   }
 }
 
+/**
+ * The exit status for an upgrade or self-update failure: 69 when GitHub
+ * cannot be reached or is overloaded, as for the server itself; 1 otherwise.
+ */
+export function lookupExit(err: unknown): number {
+  return err instanceof ReleaseLookupError && err.reason === "unreachable" ? EXIT.unavailable : EXIT.failure;
+}
+
 /** How long a release lookup waits for GitHub (ADR-0049 Decision 1). */
 export const RELEASE_LOOKUP_TIMEOUT_MS = 30_000;
 
@@ -119,16 +128,20 @@ function githubHeaders(accept: string): Record<string, string> {
 export async function fetchRelease(repo: string, version: string | undefined, timeoutMs = RELEASE_LOOKUP_TIMEOUT_MS): Promise<GithubRelease> {
   const path = version ? `releases/tags/v${version.replace(/^v/, "")}` : "releases/latest";
   const url = `https://api.github.com/repos/${repo}/${path}`;
-  let res: Response;
-  try {
-    res = await fetch(url, { headers: githubHeaders("application/vnd.github+json"), signal: AbortSignal.timeout(timeoutMs) });
-  } catch (err) {
-    throw new ReleaseLookupError(
+  // The limit covers the whole answer, its body included.
+  const signal = AbortSignal.timeout(timeoutMs);
+  const unreachable = (err: unknown) =>
+    new ReleaseLookupError(
       err instanceof Error && err.name === "TimeoutError"
         ? `GitHub did not answer within ${timeoutMs / 1000} s (${url}).`
         : `Could not reach GitHub (${url}).`,
       "unreachable",
     );
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: githubHeaders("application/vnd.github+json"), signal });
+  } catch (err) {
+    throw unreachable(err);
   }
   if (res.status === 404) {
     throw new ReleaseLookupError(
@@ -142,11 +155,24 @@ export async function fetchRelease(repo: string, version: string | undefined, ti
     throw new ReleaseLookupError("GitHub's API rate limit is reached for this address. Try again later, or set GITHUB_TOKEN.", "rate-limited");
   }
   if (!res.ok) throw new ReleaseLookupError(`GitHub API ${res.status} for ${url}`, res.status >= 500 ? "unreachable" : "invalid-answer");
+  let text: string;
   try {
-    return (await res.json()) as GithubRelease;
-  } catch {
-    throw new ReleaseLookupError(`The answer from ${url} was not GitHub's release JSON.`, "invalid-answer");
+    text = await res.text();
+  } catch (err) {
+    throw unreachable(err);
   }
+  const notARelease = () => new ReleaseLookupError(`The answer from ${url} was not GitHub's release JSON.`, "invalid-answer");
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw notARelease();
+  }
+  const release = body as Partial<GithubRelease> | null;
+  if (!release || typeof release !== "object" || Array.isArray(release) || typeof release.tag_name !== "string" || !Array.isArray(release.assets)) {
+    throw notARelease();
+  }
+  return release as GithubRelease;
 }
 
 /**
@@ -154,7 +180,7 @@ export async function fetchRelease(repo: string, version: string | undefined, ti
  * name a release version, or the answer is not the one asked for.
  */
 export function discoveredRelease(release: GithubRelease): { version: string; publishedAt: string | null } {
-  const version = typeof release.tag_name === "string" ? release.tag_name.replace(/^v/, "") : "";
+  const version = release.tag_name.replace(/^v/, "");
   if (version.length > 100 || !RELEASE_VERSION.test(version)) {
     throw new ReleaseLookupError(`The latest release's tag ${JSON.stringify(release.tag_name)} does not name a release version.`, "invalid-answer");
   }

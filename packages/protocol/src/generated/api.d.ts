@@ -49,7 +49,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Installation Admin only, the host's last look for a newer release (ADR-0049)
+         * Installation Admin only, the host's last look for a newer release
          * @description What `varlatch upgrade --check` on the host last recorded, compared with this server's version at read time. Read-only: upgrading stays on the host. Requires capability `installation.release`.
          */
         get: operations["getInstallationRelease"];

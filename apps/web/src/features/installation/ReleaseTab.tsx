@@ -23,10 +23,17 @@ import {
  * newer release and how to upgrade on the host. Read-only by design: the
  * dashboard never upgrades Varlatch (ADR-0019).
  */
-export function ReleaseTab() {
-  const release = useInstallationRelease(true);
+export function ReleaseTab({ admin, checking }: { admin: boolean; checking: boolean }) {
+  const release = useInstallationRelease(admin);
   const now = useNow();
-  if (release.isLoading) return <Skeleton className="h-48" />;
+  if (checking || release.isLoading) return <Skeleton className="h-48" />;
+  if (!admin) {
+    return (
+      <Callout tone="danger" icon={<TriangleAlert size={17} />} title="Release status is unavailable" data-testid="release-error">
+        Installation Admin authority is required to see this installation's release status.
+      </Callout>
+    );
+  }
   if (release.isError || !release.data) {
     return (
       <Callout tone="danger" icon={<TriangleAlert size={17} />} title="Release status is unavailable" data-testid="release-error">

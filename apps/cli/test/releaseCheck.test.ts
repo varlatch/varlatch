@@ -126,6 +126,21 @@ describe("what a failed check records", () => {
   it("invalid-answer: not JSON", () => failsWith(() => new Response("<html>"), "invalid-answer", /not GitHub's release JSON/));
   it("invalid-answer: a tag that names no release version", () =>
     failsWith(() => Response.json(latest("nightly")), "invalid-answer", /does not name a release version/));
+  it("invalid-answer: JSON null", () => failsWith(() => new Response("null"), "invalid-answer", /not GitHub's release JSON/));
+  it("invalid-answer: JSON that is no release", async () => {
+    for (const body of ["[]", '"v0.19.0"', JSON.stringify({ tag_name: 19, assets: [] }), JSON.stringify({ tag_name: "v0.19.0" })]) {
+      recorded = [];
+      await failsWith(() => new Response(body), "invalid-answer", /not GitHub's release JSON/);
+    }
+  });
+
+  it("bounds the answer's body too: a body that stalls after the headers is unreachable", async () => {
+    vi.stubGlobal("fetch", async (_input: unknown, init?: RequestInit) =>
+      new Response(new ReadableStream({ start: (c) => init?.signal?.addEventListener("abort", () => c.error(init.signal!.reason)) })));
+    const lookup = fetchRelease("varlatch/varlatch", undefined, 20);
+    await expect(lookup).rejects.toThrow(/did not answer within 0\.02 s/);
+    await expect(lookup).rejects.toMatchObject({ reason: "unreachable" });
+  });
 
   it("bounds the request: an unanswered lookup is unreachable", async () => {
     vi.stubGlobal("fetch", (_input: unknown, init?: RequestInit) =>

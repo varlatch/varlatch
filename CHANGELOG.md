@@ -27,8 +27,11 @@ fixes.
 - **`varlatch doctor` reports `release.latest`**, advisory and outside the
   upgrade gate, from the same record.
 - **A release lookup gives up after 30 seconds.** `varlatch upgrade` and
-  `varlatch self-update` waited on GitHub without a limit, and name the
-  cause when GitHub is unreachable or its rate limit is reached.
+  `varlatch self-update` waited on GitHub without a limit. They now name
+  the cause when GitHub is unreachable or its rate limit is reached, and
+  exit 69 when GitHub cannot be reached or answers 502, 503 or another
+  server error, as for the Varlatch server; a server error exited 1
+  before.
 
 ### API
 

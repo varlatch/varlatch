@@ -38,7 +38,9 @@ export function InstallationPage() {
   const tab: TabKey = (TABS as readonly string[]).includes(raw ?? "") ? (raw as TabKey) : "backups";
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
   const [howTo, setHowTo] = useState<"create" | "restore" | null>(null);
-  const release = useInstallationRelease(true);
+  // Asked only once the admin-only backups read succeeded (ADR-0049).
+  const admin = Boolean(backups.data);
+  const release = useInstallationRelease(admin);
 
   if (tab === "backups" && backups.isLoading) return <FullPageLoading />;
   const header = (
@@ -86,7 +88,7 @@ export function InstallationPage() {
     return (
       <>
         {header}
-        <div role="tabpanel">{tab === "tailnet" ? <TailnetTab /> : <ReleaseTab />}</div>
+        <div role="tabpanel">{tab === "tailnet" ? <TailnetTab /> : <ReleaseTab admin={admin} checking={backups.isLoading} />}</div>
       </>
     );
   }
