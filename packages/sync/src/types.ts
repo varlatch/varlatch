@@ -139,6 +139,12 @@ export interface PlatformAdapter {
    */
   valueProblem?(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null;
   /**
+   * For a value valueProblem refused: the Target option that would make
+   * the destination accept it, or null when none would (ADR-0031
+   * amendment 2026-10-22). Only the hint, never the value, leaves the engine.
+   */
+  heldFix?(destination: Record<string, string>, name: string, value: string): "platform-expands" | null;
+  /**
    * Read-only: how the destination uses the given names, where the
    * platform lets a credential see that (a Coolify service's compose
    * files). `null` when the destination has no such notion (a Coolify

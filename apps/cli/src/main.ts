@@ -1759,6 +1759,7 @@ async function main(): Promise<void> {
           app: flag(args, "--app"),
           service: flag(args, "--service"),
           buildTime: flag(args, "--build-time"),
+          platformExpands: flags(args, "--platform-expands").flatMap((v) => v.split(",")),
           tokenEnv: flag(args, "--token-env") ?? "VARLATCH_SYNC_TOKEN",
           maps: flags(args, "--map"),
           excludes: flags(args, "--exclude"),

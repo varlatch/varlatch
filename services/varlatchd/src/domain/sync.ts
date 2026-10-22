@@ -140,9 +140,10 @@ export function targetRow(raw: Record<string, unknown>): SyncTargetRow {
 
 /**
  * A hint about how the destination itself uses a managed name (ADR-0031,
- * amendment 2026-10-21). Notes never fail a run; each inspecting run
- * replaces them. Names are destination names; containers and reasons are
- * bounded, the reason in Varlatch's words.
+ * amendment 2026-10-21), or a name the run held (amendment 2026-10-22).
+ * Notes never fail a run; each run that reaches the value check replaces
+ * them. Names are destination names; containers and reasons are bounded,
+ * the reason in Varlatch's words.
  * - `shadowed`: the destination's configuration sets the name to another
  *   value in these containers, which wins over the pushed one.
  * - `not-delivered`: no container uses it by any route the rules know.
@@ -153,6 +154,9 @@ export function targetRow(raw: Record<string, unknown>): SyncTargetRow {
  *   re-create the name from its configuration (Varlatch does not delete it
  *   again).
  * - `usage-unchecked`: the destination's usage could not be read (`reason`).
+ * - `held`: not written, adopted or deleted this run (`reason`), with the
+ *   Target option that would let it through (`fix`) when one would.
+ * - `held-more`: how many more held names did not fit (`count`).
  */
 export type TargetNoteCode =
   | "shadowed"
@@ -160,35 +164,50 @@ export type TargetNoteCode =
   | "unknown-form"
   | "generated-once"
   | "kept-by-platform"
-  | "usage-unchecked";
+  | "usage-unchecked"
+  | "held"
+  | "held-more";
 
 export interface TargetNote {
   code: TargetNoteCode;
   name?: string;
   containers?: string[];
   reason?: string;
+  fix?: "platform-expands";
+  count?: number;
 }
 
 /** At most this many notes are kept per Target. */
 export const MAX_TARGET_NOTES = 50;
 
-/** Bound notes before they are stored: count, container lists, text. */
+/**
+ * Bound notes before they are stored: count, container lists, text. Held
+ * names come first, as what the run did not deliver; when they do not all
+ * fit, the last place says how many more were held (`held-more`).
+ */
 export function boundNotes(notes: TargetNote[]): TargetNote[] {
   const seen = new Set<string>();
-  const out: TargetNote[] = [];
+  const unique: TargetNote[] = [];
   for (const note of notes) {
+    if (note.code === "held-more") continue;
     const key = `${note.code} ${note.name ?? ""}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({
+    unique.push({
       code: note.code,
       ...(note.name !== undefined ? { name: note.name.slice(0, 256) } : {}),
       ...(note.containers?.length ? { containers: note.containers.slice(0, 20).map((c) => c.slice(0, 64)) } : {}),
       ...(note.reason !== undefined ? { reason: note.reason.slice(0, 200) } : {}),
+      ...(note.fix !== undefined ? { fix: note.fix } : {}),
     });
-    if (out.length === MAX_TARGET_NOTES) break;
   }
-  return out;
+  const held = unique.filter((n) => n.code === "held");
+  const rest = unique.filter((n) => n.code !== "held");
+  if (held.length > MAX_TARGET_NOTES) {
+    const kept = held.slice(0, MAX_TARGET_NOTES - 1);
+    return [...kept, { code: "held-more", count: held.length - kept.length }];
+  }
+  return [...held, ...rest].slice(0, MAX_TARGET_NOTES);
 }
 
 /** Audit form of a destination: identifiers only, redacted like webhook URLs. */
@@ -1043,6 +1062,7 @@ export async function createTarget(
         destination: describeDestination(adapter.platform, key),
         mapping: mappingSummary(input.mapping),
         removeOrphans: input.removeOrphans,
+        ...expandsMetadata(destination),
       },
     });
     let res;
@@ -1197,6 +1217,7 @@ export async function updateTarget(
         connectionRepointed: connection.id !== target.connection_id,
         mapping: mappingSummary(mapping),
         widened: mappingWidens(current.mapping, mapping),
+        ...expandsMetadata(destination),
       },
     });
     return targetRow(res.rows[0] as Record<string, unknown>);
@@ -1333,6 +1354,14 @@ export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): P
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * The names a Target leaves for its platform to resolve, for the audit
+ * events: names only (ADR-0031 amendment 2026-10-22).
+ */
+function expandsMetadata(destination: Record<string, string>): { platformExpands?: string } {
+  return destination.platformExpands ? { platformExpands: destination.platformExpands } : {};
+}
 
 function mappingSummary(mapping: SyncMapping): string {
   if (mapping.kind === "wildcard") {

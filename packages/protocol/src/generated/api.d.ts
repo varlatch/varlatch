@@ -2442,7 +2442,7 @@ export interface components {
             /** Format: date-time */
             lastAttemptAt: string | null;
             lastResult: string | null;
-            /** @description Hints from the last run that inspected how the destination itself uses the managed names (ADR-0031, amendment 2026-10-21; Coolify services). They never fail a run, and each inspecting run replaces them. Null when no run inspected the destination. */
+            /** @description The names the last run held, first, then hints on how the destination itself uses the managed names (ADR-0031, amendments 2026-10-21 and 2026-10-22). They never fail a run, and each run that reaches the value check replaces them. Null when no run has since 0.18.1. */
             lastNotes: components["schemas"]["SyncTargetNote"][] | null;
             /** Format: date-time */
             createdAt: string;
@@ -2450,15 +2450,22 @@ export interface components {
             /** Format: date-time */
             updatedAt: string | null;
         };
-        /** @description A hint about one managed name, or about the inspection. shadowed: the destination's configuration sets the name to another value in these containers, which wins. not-delivered: no container uses it. unknown-form: used in these containers in a form Varlatch does not read. generated-once: the platform generated it once; a database may read it only on first start. kept-by-platform: Varlatch removed it, and the platform may keep or re-create it; Varlatch does not delete it again. usage-unchecked: the usage could not be read (reason). */
+        /** @description A hint about one managed name, or about the inspection. held: the run did not write, adopt or delete the name (reason), and it is no failure; fix names the Target option that would let it through. held-more: count more held names did not fit. shadowed: the destination's configuration sets the name to another value in these containers, which wins. not-delivered: no container uses it. unknown-form: used in these containers in a form Varlatch does not read. generated-once: the platform generated it once; a database may read it only on first start. kept-by-platform: Varlatch removed it, and the platform may keep or re-create it; Varlatch does not delete it again. usage-unchecked: the usage could not be read (reason). */
         SyncTargetNote: {
             /** @enum {string} */
-            code: "shadowed" | "not-delivered" | "unknown-form" | "generated-once" | "kept-by-platform" | "usage-unchecked";
+            code: "held" | "held-more" | "shadowed" | "not-delivered" | "unknown-form" | "generated-once" | "kept-by-platform" | "usage-unchecked";
             /** @description Destination name (renames applied) */
             name?: string;
             containers?: string[];
-            /** @description Why the usage could not be read, in Varlatch's words. */
+            /** @description Why the name was held, or why the usage could not be read, in Varlatch's words. */
             reason?: string;
+            /**
+             * @description held: listing the name in the destination's platformExpands would let it through.
+             * @enum {string}
+             */
+            fix?: "platform-expands";
+            /** @description held-more: how many held names did not fit. */
+            count?: number;
         };
         /** @description What the audit listing's credentials sidecar says about a credential its events name. Metadata only; never token material. */
         AuditCredential: {
@@ -5997,7 +6004,7 @@ export interface operations {
             content: {
                 "application/json": {
                     connectionId: string;
-                    /** @description Adapter-specific canonical destination. github-actions: repo [+ environment]. coolify: exactly one of applicationUuid or serviceUuid (a service: a Compose stack whose variables reach all of its containers; it takes no options, refuses the names Coolify sets itself, and its redeploy restarts the whole stack). An application takes per-target options that never enter the destination identity — buildTime ("true"|"false": mark the keys Varlatch manages as available at build time; absent keeps Coolify's default for new keys and each existing key's own flag) and deployAction ("deploy" (default): forced rebuild, the only action that re-bakes build-time values; "restart": recreate the container with the current runtime env only). convex: no fields — the Connection's deployment URL is the destination. */
+                    /** @description Adapter-specific canonical destination. github-actions: repo [+ environment]. coolify: exactly one of applicationUuid or serviceUuid (a service: a Compose stack whose variables reach all of its containers; it takes no options, refuses the names Coolify sets itself, and its redeploy restarts the whole stack). An application takes per-target options that never enter the destination identity — buildTime ("true"|"false": mark the keys Varlatch manages as available at build time; absent keeps Coolify's default for new keys and each existing key's own flag) and deployAction ("deploy" (default): forced rebuild, the only action that re-bakes build-time values; "restart": recreate the container with the current runtime env only), and platformExpands (a list, or a comma-separated string, of env keys whose values Coolify resolves as one of its own variables: stored neither literal nor multiline, so {{team.X}} and $VAR are Coolify's to interpret; every other name is stored literal; at most 100; ADR-0031 amendment 2026-10-22). convex: no fields — the Connection's deployment URL is the destination. */
                     destination: {
                         [key: string]: unknown;
                     };

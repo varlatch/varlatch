@@ -1392,8 +1392,11 @@ describe("Coolify value fidelity on repair (ADR-0031 amendment 2026-10-21)", () 
     await appTarget({ removeOrphans: true });
     await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     const row = await targetRowFromDb();
-    expect(row.last_result).toContain("QUOTED: Coolify writes values in single quotes");
-    expect(row.failure_count).toBe(1);
+    expect(row.last_result).toContain("held: QUOTED: Coolify writes values in single quotes");
+    // Held, not failed (ADR-0031 amendment 2026-10-22); listing the name
+    // would not help a quote, so no fix is offered.
+    expect(row.failure_count).toBe(0);
+    expect(asJson(row.last_notes)).toEqual([{ code: "held", name: "QUOTED", reason: expect.stringContaining("single quotes") }]);
     // Not adopted as converged, not written, not removed as an orphan.
     const ledger = await ctx.db.query("SELECT dest_name FROM sync_ledger WHERE dest_name = 'QUOTED'");
     expect(ledger.rows).toEqual([]);
@@ -1494,7 +1497,7 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect(moved.status).toBe(422);
   });
 
-  it("flags a wildcard name Coolify owns and neither writes nor deletes it", async () => {
+  it("holds a wildcard name Coolify owns and neither writes nor deletes it", async () => {
     await put(`${ENV_PATH}/values/COOLIFY_URL`, { value: "https://mine.example.com" });
     const service = fakeService();
     await serviceTarget({ removeOrphans: true });
@@ -1502,8 +1505,9 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect(service.values().has("COOLIFY_URL")).toBe(false);
     expect(service.values().get("PORT")).toBe("8080");
     const row = await targetRowFromDb();
-    expect(row.last_result).toContain("COOLIFY_URL: unstorable name");
-    expect(row.failure_count).toBe(1);
+    expect(row.last_result).toContain("held: COOLIFY_URL: Coolify sets this name itself");
+    expect(row.failure_count).toBe(0);
+    expect(asJson(row.last_notes)).toContainEqual({ code: "held", name: "COOLIFY_URL", reason: expect.stringContaining("sets this name itself") });
   });
 
   it("keeps a name the compose file binds to a Coolify value out of writes and deletes", async () => {
@@ -1538,7 +1542,7 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     expect((await targetRowFromDb()).last_result).toContain("PORT: the platform sets this name itself");
   });
 
-  it("stores usage notes, replaces them on every inspecting run, and keeps them null for applications", async () => {
+  it("stores usage notes, replaces them on every inspecting run, and clears an application's", async () => {
     const service = fakeService({ compose: "services:\n  web:\n    environment:\n      DATABASE_URL: postgres://fixed/db\n" });
     await serviceTarget();
     await runSyncOnce(ctx, { fetchImpl: service.fetchImpl });
@@ -1569,8 +1573,10 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     const coolify = fakeCoolify();
     const connection = await (await createConnection()).json();
     await createTarget(connection.id);
-    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     expect((await targetRowFromDb()).last_notes).toBeNull();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    // An application has no usage notes; a run that held nothing stores none.
+    expect(asJson((await targetRowFromDb()).last_notes)).toEqual([]);
   });
 
   it("deletes a re-created name once, then never fights Coolify for it (nor restarts for it)", async () => {
@@ -1704,5 +1710,190 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     const row = await targetRowFromDb();
     expect(row.last_result).toContain("QUOTED: Coolify writes values in single quotes");
     expect(JSON.stringify(row)).not.toContain("it's");
+  });
+});
+
+describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)", () => {
+  async function appTarget(extra: Record<string, unknown> = {}) {
+    const connection = await (await createConnection()).json();
+    const res = await createTarget(connection.id, extra);
+    expect(res.status).toBe(201);
+    return res.json();
+  }
+
+  it("holds a Coolify reference without spending the failure budget or scheduling a retry", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    coolify.seed("GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}", { is_literal: false, is_multiline: false, is_buildtime: true, is_runtime: true });
+    await appTarget({ removeOrphans: true });
+    for (let i = 0; i < 12; i++) {
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl, repairIntervalMs: 0 });
+    }
+    const row = await targetRowFromDb();
+    expect(row.state).toBe("active");
+    expect(row.failure_count).toBe(0);
+    expect(row.next_attempt_at).toBeNull();
+    expect(row.needs_sync).toBe(false);
+    expect(row.last_result).toMatch(/^(converged|ok); held: GITHUB_TOKEN: Coolify replaces \{\{team/);
+    expect(asJson(row.last_notes)).toEqual([
+      { code: "held", name: "GITHUB_TOKEN", reason: expect.stringContaining("shared variables"), fix: "platform-expands" },
+    ]);
+    // The operator's row is left exactly as it was: never written, never deleted.
+    expect(coolify.row("GITHUB_TOKEN")).toMatchObject({ value: "{{team.GITHUB_TOKEN}}", is_literal: false, is_multiline: false });
+    expect(coolify.calls.some((c) => c.method !== "GET" && JSON.stringify(c.body ?? "").includes("GITHUB_TOKEN"))).toBe(false);
+    expect(coolify.calls.some((c) => c.method === "DELETE")).toBe(false);
+    // Other values still flow.
+    expect(coolify.values().get("PORT")).toBe("8080");
+    const results = await ctx.db.query("SELECT metadata FROM audit_events WHERE event_type = 'sync.push_result'");
+    expect((results.rows as { metadata: unknown }[]).map((r) => asJson<{ held: number }>(r.metadata).held)).toContain(1);
+  });
+
+  it("without a run in between, a held-only run leaves a concurrent change's needs_sync set", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    // A change lands while the next run is under way (here: as it reads the platform).
+    const during = (async (input: unknown, init?: RequestInit) => {
+      if ((init?.method ?? "GET") === "GET") await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+      return coolify.fetchImpl(input as string, init);
+    }) as typeof fetch;
+    await runSyncOnce(ctx, { fetchImpl: during, repairIntervalMs: 0 });
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("held: GITHUB_TOKEN");
+    expect(row.needs_sync).toBe(true);
+  });
+
+  it("still fails a run that also failed a write, and lists what it held", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    coolify.setFailWrites(true);
+    await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(1);
+    expect(row.last_result).toMatch(/^degraded: .*HTTP 500.*; held: GITHUB_TOKEN: /);
+  });
+
+  it("lets Coolify resolve a listed name: adopts the operator's row, never rewrites it literal", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    await put(`${ENV_PATH}/values/VITE_BUILD_SHA`, { value: "$SOURCE_COMMIT" });
+    const coolify = fakeCoolify();
+    const operator = { is_literal: false, is_multiline: false, is_buildtime: true, is_runtime: true };
+    coolify.seed("GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}", operator);
+    coolify.seed("VITE_BUILD_SHA", "$SOURCE_COMMIT", operator);
+    coolify.seed("PORT", "8080", { is_literal: true, is_multiline: true, is_runtime: true });
+    coolify.seed("DATABASE_URL", "postgres://dev-db/main", { is_literal: true, is_multiline: true, is_runtime: true });
+    const target = await appTarget({ destination: { applicationUuid: "app1", platformExpands: ["VITE_BUILD_SHA", "GITHUB_TOKEN"] } });
+    expect(target.destination).toEqual({ applicationUuid: "app1", platformExpands: "GITHUB_TOKEN,VITE_BUILD_SHA" });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const row = await targetRowFromDb();
+    expect(row.last_result).toBe("converged");
+    expect(asJson(row.last_notes)).toEqual([]);
+    expect(coolify.calls.filter((c) => c.method !== "GET")).toEqual([]);
+    expect(coolify.row("VITE_BUILD_SHA")).toMatchObject({ value: "$SOURCE_COMMIT", ...operator });
+    const created = await ctx.db.query("SELECT metadata FROM audit_events WHERE event_type = 'sync.target_created'");
+    expect(asJson<{ platformExpands: string }>((created.rows[0] as { metadata: unknown }).metadata).platformExpands).toBe("GITHUB_TOKEN,VITE_BUILD_SHA");
+  });
+
+  it("without the listing, a repair stores a $ value literal; listing it later restores Coolify's form at the next repair", async () => {
+    await put(`${ENV_PATH}/values/VITE_BUILD_SHA`, { value: "$SOURCE_COMMIT" });
+    const coolify = fakeCoolify();
+    coolify.seed("VITE_BUILD_SHA", "$SOURCE_COMMIT", { is_literal: false, is_multiline: false, is_buildtime: true, is_runtime: true });
+    const target = await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    // Literal is the default: nothing is inferred from the $.
+    expect(coolify.row("VITE_BUILD_SHA")).toMatchObject({ is_literal: true, is_multiline: true });
+
+    const res = await patchReq(`${ENV_PATH}/sync-targets/${target.id}`, {
+      expectedVersion: target.version,
+      destination: { applicationUuid: "app1", platformExpands: "VITE_BUILD_SHA" },
+    });
+    expect(res.status).toBe(200);
+    // The option alone changes no fingerprint: the triggered run converges...
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.row("VITE_BUILD_SHA")).toMatchObject({ is_literal: true });
+    // ...and the next repair stores it as Coolify's own variable again.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl, repairIntervalMs: 0 });
+    expect(coolify.row("VITE_BUILD_SHA")).toMatchObject({ value: "$SOURCE_COMMIT", is_literal: false, is_multiline: false, is_buildtime: true, is_runtime: true });
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+    const updated = await ctx.db.query("SELECT metadata FROM audit_events WHERE event_type = 'sync.target_updated'");
+    expect(asJson<{ platformExpands: string }>((updated.rows[0] as { metadata: unknown }).metadata).platformExpands).toBe("VITE_BUILD_SHA");
+  });
+
+  it("refuses the option on a service, and an invalid list", async () => {
+    const connection = await (await createConnection()).json();
+    const svc = await createTarget(connection.id, { destination: { serviceUuid: "svc1", platformExpands: ["A"] } });
+    expect(svc.status).toBe(422);
+    const bad = await createTarget(connection.id, { destination: { applicationUuid: "app1", platformExpands: ["1A"] } });
+    expect(bad.status).toBe(422);
+  });
+
+  /** Make the next `times` queries matching `sql` fail, then answer normally. */
+  function failQuery(sql: string, times = 1) {
+    const query = ctx.db.query.bind(ctx.db);
+    let left = times;
+    ctx.db.query = (async (text: string, params?: unknown[]) => {
+      if (left > 0 && text.trim() === sql) {
+        left -= 1;
+        throw new Error("probe failed");
+      }
+      return query(text, params);
+    }) as typeof ctx.db.query;
+    return () => {
+      ctx.db.query = query as typeof ctx.db.query;
+    };
+  }
+
+  it("keeps the held notes when a run is interrupted mid-run without losing its lease", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    await appTarget();
+    // The send-time fence probe fails: the write is not sent, and the run ends
+    // as interrupted, at its own generation.
+    const restore = failQuery("SELECT generation FROM sync_targets WHERE id = $1");
+    try {
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    } finally {
+      restore();
+    }
+    const row = await targetRowFromDb();
+    expect(row.last_result).toBe("interrupted mid-run; retrying");
+    expect(row.failure_count).toBe(1);
+    expect(asJson(row.last_notes)).toEqual([
+      { code: "held", name: "GITHUB_TOKEN", reason: expect.stringContaining("shared variables"), fix: "platform-expands" },
+    ]);
+    expect(coolify.calls.filter((c) => c.method === "POST" || c.method === "PATCH")).toEqual([]);
+  });
+
+  it("leaves the notes when a run fails before the value check", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const held = asJson((await targetRowFromDb()).last_notes);
+    expect(held).toHaveLength(1);
+    // The next run throws before it renders anything.
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    const restore = failQuery("SELECT * FROM projects WHERE id = $1");
+    try {
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    } finally {
+      restore();
+    }
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("probe failed");
+    expect(asJson(row.last_notes)).toEqual(held);
+  });
+
+  it("bounds held notes first, with a count of the rest", async () => {
+    const { boundNotes } = await import("../src/domain/sync.js");
+    const held = Array.from({ length: 60 }, (_, i) => ({ code: "held" as const, name: `N${i}`, reason: "r" }));
+    const notes = boundNotes([{ code: "shadowed", name: "S", containers: ["web"] }, ...held]);
+    expect(notes).toHaveLength(50);
+    expect(notes.slice(0, 49).every((n) => n.code === "held")).toBe(true);
+    expect(notes[49]).toEqual({ code: "held-more", count: 11 });
+    const few = boundNotes([{ code: "shadowed", name: "S" }, { code: "held", name: "H", reason: "r", fix: "platform-expands" }]);
+    expect(few).toEqual([{ code: "held", name: "H", reason: "r", fix: "platform-expands" }, { code: "shadowed", name: "S" }]);
   });
 });

@@ -87,7 +87,8 @@ Usage:
                   from the active Contract; --check exits 1 when the file is stale)
   varlatch sync push --platform <github-actions|coolify|convex> --base <owner|https://origin>
                      (--repo <name> [--gh-environment <name>] | --app <uuid> [--build-time true|false]
-                      | --service <uuid> | nothing for convex: --base is the deployment URL)
+                      [--platform-expands NAME[,NAME…]] | --service <uuid> | nothing for convex: --base is the
+                      deployment URL)
                      [--token-env VAR] [--map NAME[=DEST]]... [--exclude NAME|PREFIX*]... [-e <env>]
                      # client-side push for installations without server egress (ADR-0031)
   varlatch sync check --platform <github-actions|coolify|convex> --base <owner|https://origin>

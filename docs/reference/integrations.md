@@ -174,6 +174,7 @@ periodic repair writes them again instead.
 | Application UUID | For an application: pick it from those of the token's team, or paste the last part of its address in Coolify (`…/application/<uuid>`). |
 | Service UUID | For a service: pick it, or paste the last part of its address in Coolify (`…/service/<uuid>`). |
 | Build time | For an application: whether the variables exist during the build. Values compiled into a build (`VITE_*`, `NEXT_PUBLIC_*`) need it, and then end up in image layers. |
+| Names Coolify resolves | Optional, for an application: names whose values point at Coolify itself, such as `{{team.GITHUB_TOKEN}}` or `$SOURCE_COMMIT`. See [Values Coolify resolves](#values-coolify-resolves). |
 
 Then, in Coolify:
 
@@ -249,7 +250,8 @@ values still go.
 - a single quote, or a trailing backslash (they break the single-quoted
   `.env`);
 - `{{team.…}}`, `{{project.…}}`, `{{environment.…}}`, `{{server.…}}`, or
-  `{{vault.…}}` (Coolify replaces them with its shared variables);
+  `{{vault.…}}` (Coolify replaces them with its shared variables; for an
+  application, list the name for Coolify to resolve, below);
 - a JSON object or array containing `$`, ` #`, or a line break (Coolify
   writes JSON unquoted);
 - for a service, a `$`, unless Varlatch read the service's compose file
@@ -257,6 +259,40 @@ values still go.
   a container's settings, where Docker Compose expands it: a default
   (`${NAME:-default}`), another name's value (`OTHER: ${NAME}`), an empty
   value, or a bare `- NAME` in a list.
+
+A name that is not pushed is no failure: the integration shows **Values
+held**, with each name, its reason and its fix, and keeps pushing the
+others. It does not stop, and does not retry on its own; a changed value,
+or the next periodic repair, checks it again.
+
+### Values Coolify resolves
+
+Some values are meant for Coolify to interpret: `{{team.GITHUB_TOKEN}}`
+points at a team shared variable, and `$SOURCE_COMMIT` at the commit
+Coolify builds. Varlatch cannot tell those from a password that happens to
+contain `$` or `{{`, so it never guesses. For an application, list the
+names under **Names Coolify resolves** (or **Let Coolify resolve it** on a
+held name): Varlatch then stores them the way Coolify stores a variable
+created in its own interface, neither literal nor multiline, and Coolify
+resolves them as it does its own. Every other value is still stored as
+text.
+
+What Varlatch promises for such a name is Coolify's own interpretation of
+the stored text, nothing about the value Coolify puts in its place. It
+still refuses what would change on the way besides that interpretation:
+
+- leading or trailing whitespace;
+- a line break (the value is written unquoted, where it ends the line);
+- a carriage return, a tab, a backslash, or a single or double quote
+  (Coolify escapes them);
+- ` #` (it starts a comment);
+- a JSON object or array (Coolify writes JSON as it is);
+- `{{vault.…}}` (a linked secret manager, which Varlatch does not cover).
+
+Varlatch's own references are expanded first, so to hand Coolify
+`${NAME}`, write `$${NAME}`. A variable already stored that way is left as
+it is; one stored as literal text is changed to Coolify's form at the next
+periodic repair (within six hours). Services do not take this option.
 
 ## Convex
 

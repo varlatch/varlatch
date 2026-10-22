@@ -119,11 +119,14 @@ function buildTimeOption(destination: Record<string, string>): boolean | undefin
  * so the value reaches the container as stored; the build-time option when
  * set, otherwise Coolify's default.
  */
-function createFlags(style: FlagStyle, buildTime: boolean | undefined): Record<string, boolean> {
+function createFlags(style: FlagStyle, buildTime: boolean | undefined, expands = false): Record<string, boolean> {
+  // A name Coolify resolves is stored as Coolify's own default: neither
+  // literal nor multiline (ADR-0031 amendment 2026-10-22).
+  const literal = !expands;
   if (style === "current") {
-    return { is_literal: true, is_multiline: true, ...(buildTime === undefined ? {} : { is_buildtime: buildTime, is_runtime: true }) };
+    return { is_literal: literal, is_multiline: literal, ...(buildTime === undefined ? {} : { is_buildtime: buildTime, is_runtime: true }) };
   }
-  return { is_literal: true, ...(buildTime === undefined ? {} : { is_build_time: buildTime }) };
+  return { is_literal: literal, ...(buildTime === undefined ? {} : { is_build_time: buildTime }) };
 }
 
 /**
@@ -132,14 +135,16 @@ function createFlags(style: FlagStyle, buildTime: boolean | undefined): Record<s
  * build-time option on top. Only fields the instance's PATCH accepts are
  * sent (legacy rejects is_multiline/is_shown_once with 422).
  */
-function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<string, boolean> {
+function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined, expands = false): Record<string, boolean> {
   const style = flagStyleOf(row);
+  const literal = !expands;
   if (style === "current") {
     return {
       // Literal and multiline: Coolify then quotes the value instead of
-      // expanding it (ADR-0031 amendment 2026-10-21, value fidelity).
-      is_literal: true,
-      is_multiline: true,
+      // expanding it (ADR-0031 amendment 2026-10-21, value fidelity);
+      // neither for a name Coolify resolves (amendment 2026-10-22).
+      is_literal: literal,
+      is_multiline: literal,
       is_shown_once: Boolean(row.is_shown_once),
       is_buildtime: buildTime ?? Boolean(row.is_buildtime),
       // A runtime-only request must stay reachable at runtime; otherwise
@@ -149,12 +154,26 @@ function updateFlags(row: CoolifyEnv, buildTime: boolean | undefined): Record<st
   }
   if (style === "legacy") {
     return {
-      is_literal: true,
+      is_literal: literal,
       is_build_time: buildTime ?? Boolean(row.is_build_time),
     };
   }
   // Unknown vocabulary: only the flag every version names.
-  return { is_literal: true };
+  return { is_literal: literal };
+}
+
+/** The most names one application may list for Coolify to resolve. */
+const MAX_PLATFORM_EXPANDS = 100;
+
+/**
+ * The names a Coolify application lists for Coolify to resolve
+ * (`platformExpands`, ADR-0031 amendment 2026-10-22): its value goes to
+ * Coolify as a variable created with Coolify's defaults, so
+ * `{{team.X}}` and `$VAR` are Coolify's to interpret. Every other name is
+ * stored literal.
+ */
+function expandedNames(destination: Record<string, string>): Set<string> {
+  return new Set((destination.platformExpands ?? "").split(",").filter(Boolean));
 }
 
 async function request(
@@ -250,7 +269,8 @@ const SHARED_TYPES = new Set(["team", "project", "environment", "server", "vault
  * Docker Compose reads; what that cannot carry is refused rather than
  * delivered changed (ADR-0031 amendment 2026-10-21, value fidelity).
  */
-function undeliverableValue(value: string, copied: CopyRisk): string | null {
+function undeliverableValue(value: string, copied: CopyRisk, expands = false): string | null {
+  if (expands) return unresolvableValue(value);
   if (PHP_TRIMMED.test(value)) {
     return "Coolify removes leading and trailing whitespace from values, so it would store a different value";
   }
@@ -279,6 +299,37 @@ function undeliverableValue(value: string, copied: CopyRisk): string | null {
 }
 
 /**
+ * Why a value listed for Coolify to resolve would arrive changed by more
+ * than Coolify's own `{{…}}` substitution and `$` expansion, or null. Such
+ * a value is stored without the literal flags, so Coolify escapes
+ * backslashes, quotes and control characters in it, and writes it unquoted
+ * (ADR-0031 amendment 2026-10-22).
+ */
+function unresolvableValue(value: string): string | null {
+  if (PHP_TRIMMED.test(value)) {
+    return "Coolify removes leading and trailing whitespace from values, so it would store a different value";
+  }
+  if (value.includes("\n")) {
+    return "A value Coolify resolves is written unquoted, where a line break ends it";
+  }
+  if (/[\r\t\0\\'"]/.test(value)) {
+    return "Coolify escapes carriage returns, tabs, NUL, backslashes and quotes in a value it resolves, so it would deliver a different value";
+  }
+  if (value.includes(" #")) {
+    return "A value Coolify resolves is written unquoted, where \" #\" starts a comment";
+  }
+  if ((value.startsWith("{") || value.startsWith("[")) && isJson(value)) {
+    return "Coolify writes JSON values as they are, so a JSON value cannot be one Coolify resolves";
+  }
+  for (const [, inner] of value.matchAll(/\{\{(.*?)\}\}/g)) {
+    if (/^([^.]*)\./.exec((inner ?? "").trim())?.[1] === "vault") {
+      return "Coolify resolves {{vault.…}} through a linked secret manager, which Varlatch does not cover";
+    }
+  }
+  return null;
+}
+
+/**
  * Whether a service's compose file may copy the stored value into the
  * file Compose reads, where `$` is expanded: an application never does;
  * a service is safe only when inspection read its compose file and found
@@ -301,9 +352,14 @@ function copyRisk(destination: Record<string, string>, name: string, usage: Usag
  * (a service's, and an application's since September 2025). A flag the
  * row does not report is not judged.
  */
-function storedOtherwise(row: CoolifyEnv, service: boolean): boolean {
-  if (row.is_literal === false) return true;
+function storedOtherwise(row: CoolifyEnv, service: boolean, expands = false): boolean {
   const multiline = service || flagStyleOf(row) === "current";
+  if (expands) {
+    // A name Coolify resolves: stored as Coolify's default, neither flag.
+    if (row.is_literal === true) return true;
+    return multiline && row.is_multiline === true;
+  }
+  if (row.is_literal === false) return true;
   return multiline && row.is_multiline === false;
 }
 
@@ -314,6 +370,28 @@ function isJson(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * `platformExpands` in canonical form: a comma-separated list, or an
+ * array, of env keys, deduplicated and sorted; undefined when none.
+ */
+function canonicalExpands(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(",") : null;
+  if (list === null || list.some((n) => typeof n !== "string")) {
+    throw new AdapterError("Coolify platformExpands must be a list of env keys", false);
+  }
+  const names = [...new Set((list as string[]).map((n) => n.trim()).filter(Boolean))].sort();
+  for (const name of names) {
+    if (!NAME_PATTERN.test(name)) {
+      throw new AdapterError(`Coolify platformExpands: "${shortText(name, 64) ?? "?"}" is not an env key (letters, digits and _, not starting with a digit)`, false);
+    }
+  }
+  if (names.length > MAX_PLATFORM_EXPANDS) {
+    throw new AdapterError(`Coolify platformExpands lists at most ${MAX_PLATFORM_EXPANDS} names`, false);
+  }
+  return names.length > 0 ? names.join(",") : undefined;
 }
 
 /** Coolify's labels for a service's containers (its applications and databases), bounded. */
@@ -375,6 +453,9 @@ export const coolifyAdapter: PlatformAdapter = {
       if (given(raw.deployAction)) {
         throw new AdapterError("A Coolify service takes no deployAction option: it always restarts", false);
       }
+      if (given(raw.platformExpands) && !(Array.isArray(raw.platformExpands) && raw.platformExpands.length === 0)) {
+        throw new AdapterError("A Coolify service takes no platformExpands option: only an application's values can be left for Coolify to resolve", false);
+      }
       // The prefix keeps a service's claim apart from any application's
       // bare uuid (the pattern admits no colon).
       return { destination: { serviceUuid: service }, key: `service:${service}` };
@@ -399,6 +480,9 @@ export const coolifyAdapter: PlatformAdapter = {
     else if (deployAction !== undefined && deployAction !== null && deployAction !== "") {
       throw new AdapterError('Coolify deployAction must be "deploy" or "restart"', false);
     }
+
+    const expands = canonicalExpands(raw.platformExpands);
+    if (expands) destination.platformExpands = expands;
 
     // Options never enter the identity: the same application is the same
     // destination whatever its flags (ADR-0031 §1).
@@ -433,10 +517,12 @@ export const coolifyAdapter: PlatformAdapter = {
       style = flagStyleOf(row);
       if (style) break;
     }
+    const expanded = expandedNames(req.destination);
     const outcomes: NameOutcome[] = [];
     for (const item of items) {
       if (req.shouldAbort && (await req.shouldAbort())) break;
-      const problem = undeliverableValue(item.value, copyRisk(req.destination, item.name, req.usage));
+      const expands = expanded.has(item.name);
+      const problem = undeliverableValue(item.value, copyRisk(req.destination, item.name, req.usage), expands);
       if (problem) {
         // Nothing is sent: a value Coolify would change is not delivered.
         outcomes.push({ name: item.name, ok: false, error: problem });
@@ -458,7 +544,7 @@ export const coolifyAdapter: PlatformAdapter = {
           key: item.name,
           value: item.value,
           is_preview: false,
-          ...updateFlags(row, buildTime),
+          ...updateFlags(row, buildTime, expands),
         });
       } else {
         const create = (s: FlagStyle) =>
@@ -466,7 +552,7 @@ export const coolifyAdapter: PlatformAdapter = {
             key: item.name,
             value: item.value,
             is_preview: false,
-            ...createFlags(s, buildTime),
+            ...createFlags(s, buildTime, expands),
           });
         res = await create(style ?? "current");
         if (res.status === 422 && style === undefined) {
@@ -516,7 +602,16 @@ export const coolifyAdapter: PlatformAdapter = {
   },
 
   valueProblem(destination: Record<string, string>, name: string, value: string, usage?: UsageReport | null): string | null {
-    return undeliverableValue(value, copyRisk(destination, name, usage));
+    return undeliverableValue(value, copyRisk(destination, name, usage), expandedNames(destination).has(name));
+  },
+
+  heldFix(destination: Record<string, string>, name: string, value: string): "platform-expands" | null {
+    // Listing the name helps only an application, and only a value the
+    // listed rule accepts (ADR-0031 amendment 2026-10-22).
+    const listed = expandedNames(destination);
+    // A full list takes no more names: listing this one would be refused.
+    if (!destination.applicationUuid || listed.has(name) || listed.size >= MAX_PLATFORM_EXPANDS) return null;
+    return unresolvableValue(value) === null ? "platform-expands" : null;
   },
 
   /**
@@ -699,10 +794,11 @@ export const coolifyAdapter: PlatformAdapter = {
  */
 async function readRemoteState(req: AdapterRequest): Promise<RemoteState> {
   const service = resourceOf(req.destination).kind === "service";
+  const expanded = expandedNames(req.destination);
   const rows = await listEnvs(req);
   return {
     values: new Map(rows.map((e) => [e.key, "value" in e ? (e.value ?? "") : null])),
-    rewrite: new Set(rows.filter((e) => storedOtherwise(e, service)).map((e) => e.key)),
+    rewrite: new Set(rows.filter((e) => storedOtherwise(e, service, expanded.has(e.key))).map((e) => e.key)),
   };
 }
 
