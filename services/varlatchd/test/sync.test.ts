@@ -1829,6 +1829,63 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     expect(bad.status).toBe(422);
   });
 
+  /** Make the next `times` queries matching `sql` fail, then answer normally. */
+  function failQuery(sql: string, times = 1) {
+    const query = ctx.db.query.bind(ctx.db);
+    let left = times;
+    ctx.db.query = (async (text: string, params?: unknown[]) => {
+      if (left > 0 && text.trim() === sql) {
+        left -= 1;
+        throw new Error("probe failed");
+      }
+      return query(text, params);
+    }) as typeof ctx.db.query;
+    return () => {
+      ctx.db.query = query as typeof ctx.db.query;
+    };
+  }
+
+  it("keeps the held notes when a run is interrupted mid-run without losing its lease", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    await appTarget();
+    // The send-time fence probe fails: the write is not sent, and the run ends
+    // as interrupted, at its own generation.
+    const restore = failQuery("SELECT generation FROM sync_targets WHERE id = $1");
+    try {
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    } finally {
+      restore();
+    }
+    const row = await targetRowFromDb();
+    expect(row.last_result).toBe("interrupted mid-run; retrying");
+    expect(row.failure_count).toBe(1);
+    expect(asJson(row.last_notes)).toEqual([
+      { code: "held", name: "GITHUB_TOKEN", reason: expect.stringContaining("shared variables"), fix: "platform-expands" },
+    ]);
+    expect(coolify.calls.filter((c) => c.method === "POST" || c.method === "PATCH")).toEqual([]);
+  });
+
+  it("leaves the notes when a run fails before the value check", async () => {
+    await put(`${ENV_PATH}/values/GITHUB_TOKEN`, { value: "{{team.GITHUB_TOKEN}}" });
+    const coolify = fakeCoolify();
+    await appTarget();
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    const held = asJson((await targetRowFromDb()).last_notes);
+    expect(held).toHaveLength(1);
+    // The next run throws before it renders anything.
+    await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+    const restore = failQuery("SELECT * FROM projects WHERE id = $1");
+    try {
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    } finally {
+      restore();
+    }
+    const row = await targetRowFromDb();
+    expect(row.last_result).toContain("probe failed");
+    expect(asJson(row.last_notes)).toEqual(held);
+  });
+
   it("bounds held notes first, with a count of the rest", async () => {
     const { boundNotes } = await import("../src/domain/sync.js");
     const held = Array.from({ length: 60 }, (_, i) => ({ code: "held" as const, name: `N${i}`, reason: "r" }));

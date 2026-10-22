@@ -608,7 +608,9 @@ export const coolifyAdapter: PlatformAdapter = {
   heldFix(destination: Record<string, string>, name: string, value: string): "platform-expands" | null {
     // Listing the name helps only an application, and only a value the
     // listed rule accepts (ADR-0031 amendment 2026-10-22).
-    if (!destination.applicationUuid || expandedNames(destination).has(name)) return null;
+    const listed = expandedNames(destination);
+    // A full list takes no more names: listing this one would be refused.
+    if (!destination.applicationUuid || listed.has(name) || listed.size >= MAX_PLATFORM_EXPANDS) return null;
     return unresolvableValue(value) === null ? "platform-expands" : null;
   },
 

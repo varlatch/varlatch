@@ -676,6 +676,11 @@ describe("coolify adapter", () => {
       expect(coolifyAdapter.heldFix!(app, "V", "{{vault.X}}")).toBeNull();
       expect(coolifyAdapter.heldFix!(listed, "GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}")).toBeNull();
       expect(coolifyAdapter.heldFix!({ serviceUuid: "svc123" }, "A", "pa$word")).toBeNull();
+      // Only while the list can take one more name.
+      const names = (n: number) => Array.from({ length: n }, (_, i) => `N${i}`).join(",");
+      expect(coolifyAdapter.heldFix!({ applicationUuid: "app123", platformExpands: names(99) }, "GITHUB_TOKEN", "{{team.X}}")).toBe("platform-expands");
+      expect(coolifyAdapter.heldFix!({ applicationUuid: "app123", platformExpands: names(100) }, "GITHUB_TOKEN", "{{team.X}}")).toBeNull();
+      expect(() => coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: `${names(99)},GITHUB_TOKEN` })).not.toThrow();
     });
 
     it("stores a listed name as Coolify's default variable, and every other name literal", async () => {
