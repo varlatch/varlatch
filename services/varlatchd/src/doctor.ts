@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
-import { activeGate, backupStatus, EMBEDDED_RELEASE } from "@varlatch/backup";
+import { activeGate, backupStatus, compareVersions, DEFAULT_RELEASE_REPO, EMBEDDED_RELEASE, readReleaseCheck, RELEASE_CHECK_MAX_AGE_MS, type ReleaseCheck } from "@varlatch/backup";
 import type { Querier } from "./db/migrate.js";
 import { schemaIsCurrent } from "./db/migrate.js";
 import { getInstallation, verifyLoadedKek } from "./domain/bootstrap.js";
@@ -195,6 +195,39 @@ export function checkBackups(dir: string, now = Date.now()): Check {
   };
 }
 
+/**
+ * Whether a newer release is known (ADR-0049), from what the host's
+ * `varlatch upgrade --check` recorded; this check contacts nobody. A known
+ * newer release fails it however old the check; "none newer" passes only
+ * while the check is recent. Advisory, never part of the upgrade gate.
+ */
+export function checkReleaseLatest(dir: string, running: string, now = Date.now()): Check {
+  const base = { id: "release.latest", title: "Newer release", class: "advisory" as const };
+  const remedy = "Run `varlatch upgrade --check --dir <dir>` on the host, and schedule it with the backup";
+  let check: ReleaseCheck | null;
+  try {
+    check = readReleaseCheck(dir);
+  } catch {
+    return { ...base, status: "unknown", detail: "the release check record is unreadable", remedy };
+  }
+  const success = check?.lastSuccess;
+  const failure = check?.lastAttempt.failed ? `; the last check failed (${check.lastAttempt.failed}) at ${check.lastAttempt.checkedAt}` : "";
+  if (!success) return { ...base, status: "unknown", detail: `no successful check recorded${failure}`, remedy };
+  const { version } = success.latest;
+  if (compareVersions(version, running) > 0) {
+    return {
+      ...base,
+      status: "fail",
+      detail: `${version} is available, ${running} is running (checked ${success.checkedAt}${failure})`,
+      remedy: success.releaseSet ? `varlatch upgrade --dir <dir>${success.repo === DEFAULT_RELEASE_REPO ? "" : ` --repo ${success.repo}`}` : "Upgrade as your deployment's upgrade instructions describe",
+    };
+  }
+  if (now - Date.parse(success.checkedAt) > RELEASE_CHECK_MAX_AGE_MS) {
+    return { ...base, status: "unknown", detail: `the last successful check is older than 14 days (${success.checkedAt})${failure}`, remedy };
+  }
+  return { ...base, status: "pass", detail: `no release newer than ${running} as of ${success.checkedAt}${failure}` };
+}
+
 async function latestEventOrder(db: Querier): Promise<string> {
   const res = await db.query("SELECT coalesce(max(event_order),0)::text AS position FROM audit_events");
   return (res.rows[0] as { position: string }).position;
@@ -361,6 +394,7 @@ export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoct
   checks.push(await checkMirror(input, gate !== null || gateUnreadable));
   checks.push(await checkFunctions(input, gate !== null || gateUnreadable));
   checks.push(checkBackups(input.stateDir));
+  checks.push(checkReleaseLatest(input.stateDir, SERVER_VERSION, (input.now ?? Date.now)()));
   checks.push(await checkCustody(input.db));
   checks.push(...checkTailnet(input));
 

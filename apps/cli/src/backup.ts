@@ -9,7 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import {
   BackupError, EMBEDDED_RELEASE, releaseSchema, manifestSchema, describeComponents, sealArchive, CURRENT_FORMAT,
-  openArchive, verifyManifest, parseKey, distinctKeys, type ArchiveFormat, type Bek, type Gate, type Manifest, type Release, type BackupStatus,
+  openArchive, verifyManifest, parseKey, distinctKeys, type ArchiveFormat, type Bek, type Gate, type Manifest, type Release, type BackupStatus, type ReleaseCheckInput,
 } from '@varlatch/backup';
 import { destinationsSchema, credentialsSchema, uploadArchive, downloadArchive } from '@varlatch/backup/s3';
 
@@ -129,6 +129,10 @@ async function control<T>(dir: string, command: string, input: unknown = {}, off
       ? ['exec', '-T', 'varlatchd', 'node', 'dist/control-entry.js', command]
       : ['exec', '-T', 'varlatchd', 'node', 'dist/cli.js', 'admin', 'backup-control', command];
   return JSON.parse(await compose(dir, args, { input: JSON.stringify(input), operatorJsonErrors: true })) as T;
+}
+/** Records a release check (ADR-0049) through the running daemon's control. */
+export async function recordReleaseCheckControl(dir: string, input: ReleaseCheckInput): Promise<void> {
+  await control(dir, 'release-check', { releaseCheck: input });
 }
 async function waitFor(test: () => Promise<boolean>, deadline: number): Promise<void> {
   while (Date.now() < deadline) { if (await test()) return; await new Promise(r => setTimeout(r, 200)); }

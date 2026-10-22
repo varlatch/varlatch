@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { backupStatus } from "@varlatch/backup";
+import { installationRelease } from "../domain/releaseNotice.js";
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
@@ -729,6 +730,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.get("/v1/installation/backups", (c) => {
     if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
     return c.json(ctx.maintenance ? backupStatus(ctx.maintenance.dir) : { archives: [], warnings: ["Backup supervisor is not configured"] });
+  });
+
+  // Installation Admins: the host's last look for a newer release, which
+  // `varlatch upgrade --check` records (ADR-0049). Read-only: the dashboard
+  // shows it and upgrading stays on the host (ADR-0019).
+  app.get("/v1/installation/release", (c) => {
+    if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
+    return c.json(installationRelease(ctx.maintenance?.dir ?? null, SERVER_VERSION));
   });
 
   // ---- Application Plane token exchange (ADR-0018 §6): a Secret Plane

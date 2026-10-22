@@ -85,6 +85,8 @@ export type SyncMappingInput = components["schemas"]["SyncMappingInput"];
 export type SyncLedgerName = components["schemas"]["SyncLedgerName"];
 
 export type InstallationBackups = components["schemas"]["InstallationBackups"];
+export type InstallationRelease = components["schemas"]["InstallationRelease"];
+export type ReleaseCheckFailure = components["schemas"]["ReleaseCheckFailure"];
 export type InstallationListeners = components["schemas"]["InstallationListeners"];
 export type TailnetListenerReport = components["schemas"]["TailnetListenerReport"];
 export type ObservedCheck = components["schemas"]["ObservedCheck"];

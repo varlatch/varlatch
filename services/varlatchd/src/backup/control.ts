@@ -2,7 +2,7 @@
 import { createServer, request } from 'node:http';
 import { chmodSync, existsSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { durableJson, Maintenance, EMBEDDED_RELEASE, backupStatus, saveStatus, statusSchema, type Gate } from '@varlatch/backup';
+import { durableJson, Maintenance, EMBEDDED_RELEASE, backupStatus, recordReleaseCheck, releaseCheckInputSchema, saveStatus, statusSchema, type Gate } from '@varlatch/backup';
 import type { AppCtx } from '../domain/ctx.js';
 import { getInstallation, verifyLoadedKek } from '../domain/bootstrap.js';
 import { archiveMetadata } from './metadata.js';
@@ -26,7 +26,7 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
     try {
       let body = '';
       for await (const chunk of req) { body += String(chunk); if (body.length > 64 * 1024) throw new Error('Control request too large'); }
-      const input = JSON.parse(body || '{}') as { command: string; id?: string; ttlMs?: number; status?: unknown; installationId?: string; manifestIdentity?: string };
+      const input = JSON.parse(body || '{}') as { command: string; id?: string; ttlMs?: number; status?: unknown; installationId?: string; manifestIdentity?: string; releaseCheck?: unknown };
       if (operation) throw new Error('Another control operation is running');
       operation = true;
       try {
@@ -112,6 +112,13 @@ export function startBackupControl(ctx: AppCtx, maintenance: Maintenance, mirror
           }
           case 'status': result = backupStatus(maintenance.dir); break;
           case 'record': saveStatus(maintenance.dir, statusSchema.parse(input.status)); result = { recorded: true }; break;
+          // The host's look for a newer release (ADR-0049): display state for
+          // Installation Admins, recorded as the host CLI found it.
+          case 'release-check': {
+            const parsed = releaseCheckInputSchema.safeParse(input.releaseCheck);
+            if (!parsed.success) throw new Error('Invalid release check');
+            recordReleaseCheck(maintenance.dir, parsed.data); result = { recorded: true }; break;
+          }
           default: throw new Error('Unknown backup control command');
         }
         res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result));

@@ -15,12 +15,19 @@ scheduler; the underlying commands are documented in
   installs with `sudo`. Other accounts get read-only views:
   - `/var/lib/varlatch-backup/status.json`: world-readable per-archive
     status and warnings, refreshed after every run;
-  - the `/v1/installation/backups` API (Installation Admins);
+  - the `/v1/installation/backups` and `/v1/installation/release` APIs
+    (Installation Admins);
   - optionally a list-only destination key to corroborate uploads, never a
     widening of the upload key.
 - **A run succeeds only if everything succeeded.** Capture, delivery, and local
   verification must all pass, or the unit fails: a local-only or unverified
   archive is a failure, never a quiet success.
+- **The release check comes last and never fails a run.** After a successful
+  backup, the run looks for a newer release (`varlatch upgrade --check`) and
+  records what it found for the dashboard's Installation → Release tab. It
+  is bounded (120 seconds) and advisory: a failed check is a line in the
+  journal, never a failed unit, and a failed backup stops the run before it.
+  Set `RELEASE_CHECK=off` in `config.env` on a host that cannot reach GitHub.
 - **Write-only delivery.** The host holds only an upload key. Downloading an
   archive for remote verification needs a read key, which is supplied per
   invocation and never stored here. Status warns when no
@@ -50,7 +57,7 @@ Configuration lives in `/etc/varlatch-backup/` (root:root 0700):
 
 | File | Content |
 | --- | --- |
-| `config.env` | `COMPOSE_DIR`, optional `COMPOSE_FILE`, `DESTINATION` (default `offsite`), `LOCAL_KEEP` (default 7), optional `CLI`, `STATUS_FILE`. Written by the installer. |
+| `config.env` | `COMPOSE_DIR`, optional `COMPOSE_FILE`, `DESTINATION` (default `offsite`), `LOCAL_KEEP` (default 7), optional `CLI`, `STATUS_FILE`, `RELEASE_CHECK` (`off` skips the release check). Written by the installer. |
 | `destinations.json` | The S3-compatible destination (`backup.md`, "S3-compatible destinations"). |
 | `bek` | The dedicated Backup Encryption Key. |
 | `root-kek` | A copy of the Root KEK. The host already holds it as varlatchd's mounted secret, so this adds no custody surface. |

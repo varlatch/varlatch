@@ -12,16 +12,23 @@ import { PageHeader, Tabs } from "../../components/PageHeader";
 import { FullPageLoading } from "../../shell/AuthScreens";
 import { archivePassed, backupHealth } from "./backupHealth";
 import { TailnetTab } from "./TailnetTab";
+import { ReleaseTab } from "./ReleaseTab";
+import { NewerReleaseDot, useInstallationRelease } from "./releaseNotice";
 
 /**
- * Installation settings, for Installation Admins: backups and Tailscale.
- * The operator changes both on the host (the API is read-only by design),
- * so the actions here explain the commands instead of running them. Tabs
- * live in `?tab=` so links can deep-link.
+ * Installation settings, for Installation Admins: backups, Tailscale, and
+ * releases. The operator changes all three on the host (the API is
+ * read-only by design), so the actions here explain the commands instead of
+ * running them. Tabs live in `?tab=` so links can deep-link.
  */
 
-const TABS = ["backups", "tailnet"] as const;
+const TABS = ["backups", "tailnet", "release"] as const;
 type TabKey = (typeof TABS)[number];
+const TAB_TEXT: Record<TabKey, { label: string; subtitle: string }> = {
+  backups: { label: "Backups", subtitle: "Encrypted archives of this whole installation." },
+  tailnet: { label: "Tailnet", subtitle: "Tailscale on this installation, as varlatchd checks it." },
+  release: { label: "Release", subtitle: "Whether a newer release exists, as the host last checked." },
+};
 
 export function InstallationPage() {
   const { api } = useSession();
@@ -31,13 +38,16 @@ export function InstallationPage() {
   const tab: TabKey = (TABS as readonly string[]).includes(raw ?? "") ? (raw as TabKey) : "backups";
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
   const [howTo, setHowTo] = useState<"create" | "restore" | null>(null);
+  // Asked only once the admin-only backups read succeeded (ADR-0049).
+  const admin = Boolean(backups.data);
+  const release = useInstallationRelease(admin);
 
   if (tab === "backups" && backups.isLoading) return <FullPageLoading />;
   const header = (
     <PageHeader
-      breadcrumbs={[{ label: "Installation" }, { label: tab === "backups" ? "Backups" : "Tailnet" }]}
+      breadcrumbs={[{ label: "Installation" }, { label: TAB_TEXT[tab].label }]}
       title="Installation"
-      subtitle={tab === "backups" ? "Encrypted archives of this whole installation." : "Tailscale on this installation, as varlatchd checks it."}
+      subtitle={TAB_TEXT[tab].subtitle}
       tabs={
         <Tabs
           aria-label="Installation sections"
@@ -46,6 +56,16 @@ export function InstallationPage() {
           items={[
             { key: "backups", label: "Backups", "data-testid": "installation-tab-backups" },
             { key: "tailnet", label: "Tailnet", "data-testid": "installation-tab-tailnet" },
+            {
+              key: "release",
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  Release
+                  {release.data?.newer && <NewerReleaseDot />}
+                </span>
+              ),
+              "data-testid": "installation-tab-release",
+            },
           ]}
         />
       }
@@ -64,13 +84,11 @@ export function InstallationPage() {
       }
     />
   );
-  if (tab === "tailnet") {
+  if (tab === "tailnet" || tab === "release") {
     return (
       <>
         {header}
-        <div role="tabpanel">
-          <TailnetTab />
-        </div>
+        <div role="tabpanel">{tab === "tailnet" ? <TailnetTab /> : <ReleaseTab admin={admin} checking={backups.isLoading} />}</div>
       </>
     );
   }

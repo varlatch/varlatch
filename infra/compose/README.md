@@ -256,6 +256,25 @@ custody, the Docker Compose version) are listed but never block.
 is older than the release, the upgrade leaves the release's CLI as
 `varlatch-cli-<version>.cjs` here: use it from then on.
 
+### Newer releases in the dashboard
+
+The dashboard never upgrades Varlatch, and neither varlatchd nor the browser
+looks for releases. `varlatch upgrade --check` on the host does: when it
+asks GitHub for the latest release (no version, no `--release-dir`), it also
+records what it found in this installation, and Installation Admins see it
+under **Installation settings → Release**, with the command to run here.
+
+```sh
+varlatch upgrade --check --dir /srv/varlatch
+```
+
+Run it on a schedule, after the nightly backup and as its own step, so that
+GitHub being unreachable never fails the backup. The reference timer in
+[`infra/host-backup`](../host-backup/README.md) does this. A check that
+finds no newer release is shown as current for 14 days; a newer release
+stays shown until this installation runs it, however old the check.
+`varlatch doctor` reports the same, as the advisory `release.latest`.
+
 Local customization must live in `.env` or a `docker-compose.override.yml`,
 because the upgrade replaces `docker-compose.yml` and the overlays wholesale
 and leaves both of those alone. Compose reads `docker-compose.override.yml`

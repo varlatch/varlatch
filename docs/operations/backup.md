@@ -239,7 +239,9 @@ second failure domain.
 
 Schedule these CLI commands using cron, systemd, or Coolify: `create`, then a
 local `verify --in <archive> --record` (keys already on the host; no extra
-downtime). Give separate read credentials only to the job that performs remote
+downtime). After them, as a separate step whose failure does not fail the
+job, `varlatch upgrade --check --dir <dir>` records whether a newer release
+exists, for the dashboard's Installation settings → Release. Give separate read credentials only to the job that performs remote
 verification, and run it at least every 30 days. The
 Installation settings page (`/installation/settings`) displays per-archive
 checks/delivery and warnings; only Installation Admins can read that endpoint.

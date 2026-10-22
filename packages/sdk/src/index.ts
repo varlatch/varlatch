@@ -3,6 +3,7 @@ import type {
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
+  InstallationRelease,
   InstallationListeners,
   TailnetDevice,
   TailnetEndpoint,
@@ -1179,6 +1180,14 @@ export class VarlatchClient {
 
   getInstallationBackups(): Promise<InstallationBackups> {
     return this.request("GET", "/v1/installation/backups");
+  }
+
+  /**
+   * Installation Admin only: the host's last look for a newer release, as
+   * `varlatch upgrade --check` recorded it (capability installation.release).
+   */
+  getInstallationRelease(): Promise<InstallationRelease> {
+    return this.request("GET", "/v1/installation/release");
   }
 
   /**

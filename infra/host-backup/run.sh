@@ -5,16 +5,17 @@
 # any failure fails the unit.
 set -euo pipefail
 
-CONF=/etc/varlatch-backup
+# Both locations are fixed on a host; the variables exist for the script's tests.
+CONF=${VARLATCH_BACKUP_CONF:-/etc/varlatch-backup}
 # config.env defines: COMPOSE_DIR (the running installation's Compose directory)
 # and optionally COMPOSE_FILE, CLI (path to the CLI), DESTINATION, LOCAL_KEEP,
-# STATUS_FILE.
+# STATUS_FILE, RELEASE_CHECK (off: skip the release check).
 # shellcheck source=/dev/null  # operator config, root-only on the host
 source "$CONF/config.env"
 # Non-default compose file name (e.g. a Tailscale variant): docker compose,
 # here and inside the CLI, honors this from the environment.
 [ -n "${COMPOSE_FILE:-}" ] && export COMPOSE_FILE
-FROM_IMAGE=/var/lib/varlatch-backup/from-image
+FROM_IMAGE=${VARLATCH_BACKUP_STATE:-/var/lib/varlatch-backup}/from-image
 install -d -m 700 "$FROM_IMAGE"
 # Copy a file out of the RUNNING varlatchd container. It is root-owned in the
 # digest-pinned image this job already drives as root: no added trust.
@@ -80,3 +81,12 @@ node "$CLI" admin backup status --dir "$COMPOSE_DIR" > "$STATUS_FILE.tmp"
 chmod 644 "$STATUS_FILE.tmp"
 mv "$STATUS_FILE.tmp" "$STATUS_FILE"
 echo "backup run complete; status published to $STATUS_FILE"
+
+# Advisory, after the backup has succeeded (ADR-0049): look for a newer
+# release and record it for the dashboard's Installation → Release tab. A
+# failed check is reported here and never fails the unit, and the backup's
+# failures above have already failed it. Bounded: GitHub may be unreachable.
+if [ "${RELEASE_CHECK:-on}" != off ]; then
+  timeout 120 node "$CLI" upgrade --check --dir "$COMPOSE_DIR" \
+    || echo "release check failed (advisory; the backup succeeded): exit $?"
+fi

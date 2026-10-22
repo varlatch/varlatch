@@ -5,6 +5,47 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.19.0)
+
+### Self-hosting
+
+- **The dashboard shows when a newer release exists.** Installation
+  settings has a **Release** tab, for Installation Admins: the version this
+  installation runs, the latest release the host last found and when, its
+  release notes, and the command to upgrade on the host (with `--repo` when
+  the check used another repository). A newer release puts a dot on
+  **Installation settings** in the organization menu and on **Version** in
+  Settings. The dashboard does not upgrade anything, and neither varlatchd
+  nor the browser contacts GitHub for it: `varlatch upgrade --check`, run
+  without a version or `--release-dir`, now records what it found through
+  the running varlatchd, and says whether it did. The reference backup
+  timer runs the check after each successful backup, as a step that never
+  fails the run (`RELEASE_CHECK=off` skips it). The tab says "No newer
+  release as of" a date, never "up to date", and stops vouching for that
+  after 14 days; a newer release stays shown until the installation runs
+  it. See [Newer releases in the dashboard](infra/compose/README.md#newer-releases-in-the-dashboard).
+- **`varlatch doctor` reports `release.latest`**, advisory and outside the
+  upgrade gate, from the same record.
+- **A release lookup gives up after 30 seconds.** `varlatch upgrade` and
+  `varlatch self-update` waited on GitHub without a limit. They now name
+  the cause when GitHub is unreachable or its rate limit is reached, and
+  exit 69 when GitHub cannot be reached or answers 502, 503 or another
+  server error, as for the Varlatch server; a server error exited 1
+  before.
+
+### API
+
+- `GET /v1/installation/release` (Installation Admins, capability
+  `installation.release`): the running version, the host's last successful
+  check and last attempt, and `newer`, compared with the running version
+  when asked.
+
+### Upgrading
+
+Database schema: unchanged, migration 31. To see the Release tab filled in
+before the next nightly backup, run `varlatch upgrade --check --dir
+/YOUR/COMPOSE/DIRECTORY` once on the host after upgrading.
+
 ## 0.18.1 (2026-10-22)
 
 ### Integrations
