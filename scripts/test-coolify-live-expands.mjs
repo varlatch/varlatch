@@ -86,8 +86,8 @@ function parseLog(logs) {
 const created = { team: null, server: null, project: null, environment: null };
 let projectUuid, appUuid, serverUuid;
 try {
-  const version = await api("GET", "/version");
-  console.log(`instance version: ${JSON.stringify(version.json)}`);
+  const version = await fetch(`${BASE}/api/v1/version`, { headers: { Authorization: `Bearer ${TOKEN}` }, redirect: "error" });
+  console.log(`instance version: ${(await version.text()).trim()}`);
   const servers = await api("GET", "/servers");
   const server = (servers.json ?? []).find((s) => s?.settings?.is_reachable !== false) ?? (servers.json ?? [])[0];
   if (!server) throw new Error(`no server visible to the token (HTTP ${servers.status})`);
@@ -132,7 +132,8 @@ try {
   console.log(`settings: build_pack=${shown.build_pack} use_build_secrets=${settings.use_build_secrets} include_source_commit_in_build=${settings.include_source_commit_in_build} inject_build_args_to_dockerfile=${settings.inject_build_args_to_dockerfile}`);
   check("source commit enabled for the build", settings.include_source_commit_in_build === true || settings.include_source_commit_in_build === 1);
 
-  const listed = Object.keys(REFS).map((k) => `EXP_${k}`);
+  // EXP_VAULT is listed too: listing never admits {{vault.…}}.
+  const listed = [...Object.keys(REFS).map((k) => `EXP_${k}`), "EXP_VAULT"];
   const dest = { applicationUuid: appUuid, buildTime: "true", platformExpands: listed.join(",") };
   const req = { baseIdentity: BASE, destination: A.canonicalizeDestination(dest).destination, credential: TOKEN };
 
@@ -142,7 +143,7 @@ try {
     check(`twin TWIN_${k} created with Coolify's defaults`, r.status === 201 || r.status === 200, `HTTP ${r.status}`);
   }
   const twinRows = (await api("GET", `/applications/${appUuid}/envs`)).json ?? [];
-  const twinFlags = twinRows.filter((r) => r.key?.startsWith("TWIN_")).map((r) => `${r.key}:literal=${r.is_literal},multiline=${r.is_multiline},buildtime=${r.is_buildtime},runtime=${r.is_runtime}`);
+  const twinFlags = twinRows.filter((r) => r.key?.startsWith("TWIN_") && !r.is_preview).map((r) => `${r.key}:literal=${r.is_literal},multiline=${r.is_multiline},buildtime=${r.is_buildtime},runtime=${r.is_runtime}`);
   console.log(`twin flags: ${twinFlags.join(" ")}`);
 
   // The adapter: listed names, then the literal controls.
