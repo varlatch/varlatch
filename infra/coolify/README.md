@@ -216,6 +216,12 @@ exercise explicit and audited rather than pretending to prevent it.
 
 ## Upgrades
 
+The dashboard's Installation settings → Release shows a newer release once
+`varlatch upgrade --check --dir <the resource's directory>` has run on the
+host, for example after the scheduled backup. Here it only looks:
+`varlatch upgrade` itself does not apply to a Coolify deployment, which
+upgrades as follows.
+
 Disable automatic deployments for this stateful installation. Follow the
 [installation backup runbook](../../docs/operations/backup.md): create an
 encrypted full-installation archive and verify it with the BEK and candidate

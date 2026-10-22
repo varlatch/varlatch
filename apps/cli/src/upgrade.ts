@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import { createBackup, verifyBackup } from "./backup.js";
-import { EMBEDDED_RELEASE, releaseSchema } from "@varlatch/backup";
+import { createBackup, recordReleaseCheckControl, verifyBackup } from "./backup.js";
+import { compareVersions, DEFAULT_RELEASE_REPO, EMBEDDED_RELEASE, RELEASE_REPO, RELEASE_VERSION, releaseSchema, type ReleaseCheckFailure, type ReleaseCheckInput } from "@varlatch/backup";
 import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -49,6 +49,8 @@ export interface UpgradeOptions {
   releaseDir?: string;
   /** The completion check (tests); defaults to the target release's `doctor --gate`. */
   gate?: (dir: string) => Promise<GateRun>;
+  /** Records a release check (tests); defaults to the running varlatchd's control. */
+  recordCheck?: (dir: string, input: ReleaseCheckInput) => Promise<void>;
 }
 
 export interface GateRun {
@@ -57,7 +59,7 @@ export interface GateRun {
   cli: string | null;
 }
 
-export const DEFAULT_RELEASE_REPO = "varlatch/varlatch";
+export { compareVersions, DEFAULT_RELEASE_REPO };
 
 const MANIFEST_FILE = "varlatch-release.json";
 const COMPOSE_FILE = "docker-compose.yml";
@@ -68,25 +70,6 @@ const RELEASE_COMPOSE_ASSET = "docker-compose.release.yml";
  * published leave them as they are.
  */
 export const OVERLAY_ASSETS = ["docker-compose.tailscale.yml", "docker-compose.tailnet-https.yml", "tailscale-serve.json", "docker-compose.caddy.yml", "Caddyfile"];
-
-/** Semver-ish compare: negative when a < b. Prereleases sort before their
-    release (0.7.0-rc1 < 0.7.0); prerelease-vs-prerelease compares lexically. */
-export function compareVersions(a: string, b: string): number {
-  const parse = (v: string): { nums: number[]; pre: string } => {
-    const [core = "", ...pre] = v.replace(/^v/, "").split("-");
-    return { nums: core.split(".").map((n) => Number(n) || 0), pre: pre.join("-") };
-  };
-  const pa = parse(a);
-  const pb = parse(b);
-  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i++) {
-    const d = (pa.nums[i] ?? 0) - (pb.nums[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  if (pa.pre === pb.pre) return 0;
-  if (pa.pre === "") return 1;
-  if (pb.pre === "") return -1;
-  return pa.pre < pb.pre ? -1 : 1;
-}
 
 export function parseManifest(text: string, source: string): ReleaseManifest {
   let parsed: unknown;
@@ -109,8 +92,19 @@ export interface GithubAsset {
 export interface GithubRelease {
   tag_name: string;
   html_url: string;
+  published_at?: string | null;
   assets: GithubAsset[];
 }
+
+/** A release lookup that failed, with the reason a release check records (ADR-0049). */
+export class ReleaseLookupError extends UpgradeError {
+  constructor(message: string, readonly reason: ReleaseCheckFailure) {
+    super(message);
+  }
+}
+
+/** How long a release lookup waits for GitHub (ADR-0049 Decision 1). */
+export const RELEASE_LOOKUP_TIMEOUT_MS = 30_000;
 
 function githubHeaders(accept: string): Record<string, string> {
   const token = process.env.GITHUB_TOKEN ?? process.env.GH_TOKEN;
@@ -122,19 +116,83 @@ function githubHeaders(accept: string): Record<string, string> {
   };
 }
 
-export async function fetchRelease(repo: string, version: string | undefined): Promise<GithubRelease> {
+export async function fetchRelease(repo: string, version: string | undefined, timeoutMs = RELEASE_LOOKUP_TIMEOUT_MS): Promise<GithubRelease> {
   const path = version ? `releases/tags/v${version.replace(/^v/, "")}` : "releases/latest";
   const url = `https://api.github.com/repos/${repo}/${path}`;
-  const res = await fetch(url, { headers: githubHeaders("application/vnd.github+json") });
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: githubHeaders("application/vnd.github+json"), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    throw new ReleaseLookupError(
+      err instanceof Error && err.name === "TimeoutError"
+        ? `GitHub did not answer within ${timeoutMs / 1000} s (${url}).`
+        : `Could not reach GitHub (${url}).`,
+      "unreachable",
+    );
+  }
   if (res.status === 404) {
-    throw new UpgradeError(
+    throw new ReleaseLookupError(
       version
         ? `No release v${version} in ${repo}.`
         : `No releases found in ${repo}. Private repository? Set GITHUB_TOKEN.`,
+      "not-found",
     );
   }
-  if (!res.ok) throw new UpgradeError(`GitHub API ${res.status} for ${url}`);
-  return (await res.json()) as GithubRelease;
+  if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) {
+    throw new ReleaseLookupError("GitHub's API rate limit is reached for this address. Try again later, or set GITHUB_TOKEN.", "rate-limited");
+  }
+  if (!res.ok) throw new ReleaseLookupError(`GitHub API ${res.status} for ${url}`, res.status >= 500 ? "unreachable" : "invalid-answer");
+  try {
+    return (await res.json()) as GithubRelease;
+  } catch {
+    throw new ReleaseLookupError(`The answer from ${url} was not GitHub's release JSON.`, "invalid-answer");
+  }
+}
+
+/**
+ * The latest release as a release check records it (ADR-0049): its tag must
+ * name a release version, or the answer is not the one asked for.
+ */
+export function discoveredRelease(release: GithubRelease): { version: string; publishedAt: string | null } {
+  const version = typeof release.tag_name === "string" ? release.tag_name.replace(/^v/, "") : "";
+  if (version.length > 100 || !RELEASE_VERSION.test(version)) {
+    throw new ReleaseLookupError(`The latest release's tag ${JSON.stringify(release.tag_name)} does not name a release version.`, "invalid-answer");
+  }
+  const published = typeof release.published_at === "string" ? Date.parse(release.published_at) : NaN;
+  return { version, publishedAt: Number.isNaN(published) ? null : new Date(published).toISOString() };
+}
+
+const COMPOSE_FILES = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"];
+
+/**
+ * Records a release check for the dashboard (ADR-0049) through the running
+ * varlatchd. Never changes the command's outcome: it says what it recorded,
+ * or why it recorded nothing.
+ */
+export async function recordReleaseCheck(
+  dir: string,
+  input: ReleaseCheckInput,
+  record: (dir: string, input: ReleaseCheckInput) => Promise<void> = recordReleaseCheckControl,
+): Promise<void> {
+  if (!RELEASE_REPO.test(input.repo)) {
+    console.log(`Not recorded for the dashboard: ${input.repo} is not a GitHub repository (owner/name).`);
+    return;
+  }
+  if (!COMPOSE_FILES.some((name) => existsSync(join(dir, name)))) {
+    console.log(`Not recorded for the dashboard: no Compose project in ${dir} (pass --dir).`);
+    return;
+  }
+  try {
+    await record(dir, input);
+    console.log("Recorded for the dashboard (Installation → Release).");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(
+      /Unknown backup control command/.test(message)
+        ? "Not recorded for the dashboard: this installation's varlatchd predates release checks."
+        : `Not recorded for the dashboard: varlatchd in ${dir} did not take it (${message}).`,
+    );
+  }
 }
 
 async function downloadAsset(release: GithubRelease, name: string): Promise<string> {
@@ -303,6 +361,24 @@ export function missingComposeVariables(compose: string, dir: string, env: NodeJ
   return [...required].filter((name) => !(env[name] || file.get(name)));
 }
 
+/**
+ * Fetches the target release. An unpinned `--check` records what it found
+ * (ADR-0049) as soon as GitHub has answered: whether the release then
+ * applies here (the same version, a newer prerelease running, a missing
+ * asset) is the command's business, not the record's.
+ */
+async function lookUpRelease(opts: UpgradeOptions, releaseSet: boolean): Promise<GithubRelease> {
+  const recorded = opts.checkOnly && !opts.version;
+  try {
+    const release = await fetchRelease(opts.repo, opts.version);
+    if (recorded) await recordReleaseCheck(opts.dir, { outcome: "found", repo: opts.repo, latest: discoveredRelease(release), releaseSet }, opts.recordCheck);
+    return release;
+  } catch (err) {
+    if (recorded && err instanceof ReleaseLookupError) await recordReleaseCheck(opts.dir, { outcome: "failed", repo: opts.repo, failed: err.reason }, opts.recordCheck);
+    throw err;
+  }
+}
+
 export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
   const composePath = join(opts.dir, COMPOSE_FILE);
   if (!opts.checkOnly && !existsSync(composePath)) {
@@ -319,7 +395,10 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
     : `Fetching ${opts.version ? `release v${opts.version}` : "latest release"} from ${opts.repo}...`);
   const release = opts.releaseDir
     ? { tag_name: opts.version ?? "local", html_url: opts.releaseDir, assets: [] }
-    : await fetchRelease(opts.repo, opts.version);
+    : await lookUpRelease(opts, existsSync(currentManifestPath));
+  if (opts.checkOnly && (opts.releaseDir || opts.version)) {
+    console.log("Not recorded for the dashboard: only a check for the latest published release is recorded.");
+  }
   const asset = (name: string) => opts.releaseDir ? Promise.resolve(readFileSync(join(opts.releaseDir, name), "utf8")) : downloadAsset(release, name);
   const optionalAsset = (name: string): Promise<string | null> =>
     opts.releaseDir

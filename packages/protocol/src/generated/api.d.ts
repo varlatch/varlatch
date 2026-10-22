@@ -41,6 +41,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/installation/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Installation Admin only, the host's last look for a newer release (ADR-0049)
+         * @description What `varlatch upgrade --check` on the host last recorded, compared with this server's version at read time. Read-only: upgrading stays on the host. Requires capability `installation.release`.
+         */
+        get: operations["getInstallationRelease"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/meta": {
         parameters: {
             query?: never;
@@ -1500,6 +1520,40 @@ export interface components {
             archives: components["schemas"]["BackupArchiveStatus"][];
             warnings: string[];
         };
+        /**
+         * @description Why the host's last check found no answer; never GitHub's own text.
+         * @enum {string}
+         */
+        ReleaseCheckFailure: "unreachable" | "rate-limited" | "not-found" | "invalid-answer";
+        InstallationRelease: {
+            /** @description This server's version. */
+            running: string;
+            /** @description Whether the last successful check found a release newer than `running`; null without one. A check's age does not expire true. */
+            newer: boolean | null;
+            /** @description The last successful check, or null. */
+            latest: null | {
+                version: string;
+                /** Format: date-time */
+                publishedAt: string | null;
+                /** @description The release's GitHub page, built by the server from repo and version. */
+                url: string;
+                /** @description The repository checked, owner/name. */
+                repo: string;
+                /** @description Whether the checked directory holds varlatch-release.json, so `varlatch upgrade` applies there. */
+                releaseSet: boolean;
+                /** Format: date-time */
+                checkedAt: string;
+            };
+            /** @description The last check, successful or not, or null. */
+            lastAttempt: null | {
+                /** Format: date-time */
+                checkedAt: string;
+                repo: string;
+                failed: null | components["schemas"]["ReleaseCheckFailure"];
+            };
+            /** @description True when a record exists on the host but cannot be read. */
+            unreadable: boolean;
+        };
         ApiError: {
             error: {
                 code: components["schemas"]["ErrorCode"];
@@ -2603,6 +2657,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstallationListeners"];
+                };
+            };
+            /** @description Installation Admin authority required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getInstallationRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The running version and the last recorded check, or nulls when none was recorded */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationRelease"];
                 };
             };
             /** @description Installation Admin authority required */

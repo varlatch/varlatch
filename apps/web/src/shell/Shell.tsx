@@ -32,6 +32,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { BrandMark } from "./BrandMark";
 import { TAILNET_ONLY_GUIDANCE, isTailnetDenial } from "../lib/tailnet";
+import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../features/installation/releaseNotice";
 
 const LAST_ORG_KEY = "varlatch:last-org";
 const SIDEBAR_KEY = "varlatch:sidebar";
@@ -231,6 +232,8 @@ function OrgSwitcher({ org, collapsed }: { org: string | undefined; collapsed: b
     queryFn: () => api.getInstallationBackups(),
     retry: false,
   });
+  // Asked only once the admin-only backups read succeeded (ADR-0049).
+  const newerRelease = useInstallationRelease(Boolean(installation.data)).data?.newer === true;
   const current = orgs.data?.items.find((o) => o.slug === org);
   const [creating, setCreating] = useState(false);
 
@@ -267,7 +270,8 @@ function OrgSwitcher({ org, collapsed }: { org: string | undefined; collapsed: b
                 {
                   label: "Installation settings",
                   icon: <Server size={15} />,
-                  onSelect: () => navigate("/installation/settings"),
+                  hint: newerRelease ? <NewerReleaseDot /> : undefined,
+                  onSelect: () => navigate(newerRelease ? RELEASE_TAB_PATH : "/installation/settings"),
                   "data-testid": "installation-settings-link",
                 },
               ]

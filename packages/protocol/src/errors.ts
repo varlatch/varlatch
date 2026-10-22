@@ -81,6 +81,7 @@ export const CAPABILITIES = [
   "environments.tailnet-required",
   "tailnet.browser-reads",
   "identity.whoami",
+  "installation.release",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

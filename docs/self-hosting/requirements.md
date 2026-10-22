@@ -144,8 +144,11 @@ The host connects out to:
   Varlatch's images and the Convex backend come from ghcr.io; PostgreSQL,
   Caddy, and Tailscale come from Docker Hub.
 - **GitHub,** when `varlatch upgrade` or `varlatch self-update` reads a
-  release. `varlatch upgrade --release-dir <dir>` reads one from a local
-  directory instead.
+  release, and when `varlatch upgrade --check` looks for a newer one (the
+  reference backup timer runs it after each backup). `varlatch upgrade
+  --release-dir <dir>` reads a release from a local directory instead.
+  varlatchd and the dashboard never contact GitHub to look for releases:
+  the dashboard shows what the host's check recorded.
 - **Let's Encrypt,** with the public ingress, to obtain and renew the
   certificate.
 - **Tailscale,** with the tailnet ingress or the Tailscale overlay, so the

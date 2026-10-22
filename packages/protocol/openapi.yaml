@@ -60,6 +60,24 @@ paths:
         "403":
           description: Installation Admin authority required
 
+  /installation/release:
+    get:
+      tags: [meta]
+      operationId: getInstallationRelease
+      summary: Installation Admin only, the host's last look for a newer release (ADR-0049)
+      description: >
+        What `varlatch upgrade --check` on the host last recorded, compared
+        with this server's version at read time. Read-only: upgrading stays
+        on the host. Requires capability `installation.release`.
+      responses:
+        "200":
+          description: The running version and the last recorded check, or nulls when none was recorded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallationRelease" }
+        "403":
+          description: Installation Admin authority required
+
   /meta:
     get:
       tags: [meta]
@@ -3397,6 +3415,57 @@ components:
         warnings:
           type: array
           items: { type: string }
+    ReleaseCheckFailure:
+      type: string
+      description: Why the host's last check found no answer; never GitHub's own text.
+      enum: [unreachable, rate-limited, not-found, invalid-answer]
+    InstallationRelease:
+      type: object
+      required: [running, newer, latest, lastAttempt, unreadable]
+      properties:
+        running:
+          type: string
+          description: This server's version.
+        newer:
+          type: [boolean, "null"]
+          description: >
+            Whether the last successful check found a release newer than
+            `running`; null without one. A check's age does not expire true.
+        latest:
+          description: The last successful check, or null.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [version, publishedAt, url, repo, releaseSet, checkedAt]
+              properties:
+                version: { type: string }
+                publishedAt: { type: [string, "null"], format: date-time }
+                url:
+                  type: string
+                  description: The release's GitHub page, built by the server from repo and version.
+                repo:
+                  type: string
+                  description: The repository checked, owner/name.
+                releaseSet:
+                  type: boolean
+                  description: Whether the checked directory holds varlatch-release.json, so `varlatch upgrade` applies there.
+                checkedAt: { type: string, format: date-time }
+        lastAttempt:
+          description: The last check, successful or not, or null.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [checkedAt, repo, failed]
+              properties:
+                checkedAt: { type: string, format: date-time }
+                repo: { type: string }
+                failed:
+                  oneOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/ReleaseCheckFailure"
+        unreadable:
+          type: boolean
+          description: True when a record exists on the host but cannot be read.
     ApiError:
       type: object
       required: [error]

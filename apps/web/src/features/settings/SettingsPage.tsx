@@ -15,6 +15,7 @@ import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability, useMeta, useOrgName } from "../projects/hooks";
 import { backupHealth } from "../installation/backupHealth";
+import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../installation/releaseNotice";
 
 /** Organization settings and facts about this installation. */
 
@@ -80,7 +81,7 @@ export function SettingsPage() {
         </nav>
         <div className="min-w-0 space-y-6">
           <OrganizationCard org={org} name={orgQuery.data?.name} slug={orgQuery.data?.slug} id={orgQuery.data?.id} />
-          <ServerCard />
+          <ServerCard admin={Boolean(backups.data)} />
           {backups.data && <BackupsSummary data={backups.data} />}
           <AppearanceCard />
         </div>
@@ -158,14 +159,25 @@ function OrganizationCard({ org, name, slug, id }: { org: string; name: string |
   );
 }
 
-function ServerCard() {
+function ServerCard({ admin }: { admin: boolean }) {
   const meta = useMeta();
+  // Installation Admins only (ADR-0049): members cannot act on it.
+  const release = useInstallationRelease(admin);
+  const latest = release.data?.newer ? release.data.latest : null;
   const [showCaps, setShowCaps] = useState(false);
   const caps = meta.data?.capabilities ?? [];
   return (
     <SectionCard id="settings-server" title="Server" description="Facts this installation reports. Nothing here is editable from the dashboard." className="scroll-mt-6" data-testid="settings-server">
       <Row label="Version">
-        <Mono className="rounded-md border border-bd bg-inset px-2 py-1">{meta.data?.serverVersion ?? "…"}</Mono>
+        <span className="inline-flex flex-wrap items-center gap-3">
+          <Mono className="rounded-md border border-bd bg-inset px-2 py-1">{meta.data?.serverVersion ?? "…"}</Mono>
+          {latest && (
+            <Link to={RELEASE_TAB_PATH} className="inline-flex items-center gap-1.5 text-[13px] text-fg hover:text-accent" data-testid="settings-newer-release">
+              <NewerReleaseDot />
+              {latest.version} is available
+            </Link>
+          )}
+        </span>
       </Row>
       <Row label="Source code" hint="Server and dashboard: AGPL-3.0-or-later. CLI and SDKs: Apache-2.0.">
         <a

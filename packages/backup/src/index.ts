@@ -3,3 +3,4 @@ export * from './manifest.js';
 export * from './archive.js';
 export * from './maintenance.js';
 export * from './status.js';
+export * from './releaseCheck.js';
