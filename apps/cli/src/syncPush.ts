@@ -23,6 +23,8 @@ export interface SyncPushArgs {
   service?: string | undefined;
   /** Coolify: mark managed keys available at build time ("true" | "false"). */
   buildTime?: string | undefined;
+  /** Coolify application: names Coolify resolves itself (ADR-0031 amendment 2026-10-22). */
+  platformExpands?: string[] | undefined;
   tokenEnv: string;
   maps: string[];
   /** Without --map: skip these names (exact, or trailing-* prefix). */
@@ -64,6 +66,7 @@ export async function runSyncPush(
           ...(input.service !== undefined ? { serviceUuid: input.service } : {}),
           ...(input.app !== undefined || input.service === undefined ? { applicationUuid: input.app } : {}),
           ...(input.buildTime ? { buildTime: input.buildTime } : {}),
+          ...(input.platformExpands?.length ? { platformExpands: input.platformExpands.join(",") } : {}),
         };
         break;
       case "convex":

@@ -317,9 +317,9 @@ interface RunOutcome {
   ok: boolean;
   result: string;
   /**
-   * Usage notes, replacing the Target's (migration 31) when the run
-   * inspected the destination; undefined when it did not, which leaves
-   * them as they are.
+   * Held names and usage notes, replacing the Target's (migration 31) when
+   * the run reached the value check; undefined when it did not, which
+   * leaves them as they are.
    */
   notes?: TargetNote[];
 }
@@ -406,6 +406,11 @@ async function reconcileUnderLease(
   // the platform sets itself is neither written nor deleted; the rest are
   // notes, which never fail the run.
   const flags = [...rendered.flags];
+  // Held names, with why (ADR-0031 amendment 2026-10-22): summarized in
+  // the result and listed as notes, never a failure, so they spend no
+  // failure budget.
+  const heldReasons = rendered.held.map((h) => `${h.name}: ${h.reason}`);
+  const heldNotes: TargetNote[] = rendered.held.map((h) => ({ code: "held", name: h.name, reason: h.reason }));
   const notes: TargetNote[] = [];
   let usage: UsageReport | null = null;
   if (adapter.inspectUsage) {
@@ -427,14 +432,16 @@ async function reconcileUnderLease(
     if (problem) {
       desired.delete(destName);
       held.add(destName);
-      flags.push(`${destName}: ${problem}`);
+      heldReasons.push(`${destName}: ${problem}`);
+      const fix = usageOf(destName).owned ? null : (adapter.heldFix?.(target.destination, destName, want.value) ?? null);
+      heldNotes.push({ code: "held", name: destName, reason: problem, ...(fix ? { fix } : {}) });
     } else {
       notes.push(...usageNotes(destName, usageOf(destName)));
     }
   }
-  // The inspection is complete: a run that throws from here on still
-  // replaces the Target's notes with these.
-  if (usage !== null) inspected.notes = boundNotes(notes);
+  // The value check is complete: a run that throws from here on still
+  // replaces the Target's notes with these, held names first.
+  inspected.notes = boundNotes([...heldNotes, ...notes]);
   // A name this destination refuses (the platform's own) or that the
   // platform sets itself was never Varlatch's to delete.
   const notOurs = (name: string) =>
@@ -509,8 +516,8 @@ async function reconcileUnderLease(
   const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
 
   // Every note is known now (the ledger pass added the kept names).
-  const runNotes = usage !== null ? boundNotes(notes) : undefined;
-  if (runNotes !== undefined) inspected.notes = runNotes;
+  const runNotes = boundNotes([...heldNotes, ...notes]);
+  inspected.notes = runNotes;
 
   // Nothing left the process for an adoption, so no disclosure event and no
   // redeploy — only ownership bookkeeping. A fence here still aborts: the
@@ -524,8 +531,8 @@ async function reconcileUnderLease(
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,
-      result: flags.length > 0 ? flagSummary(flags) : "converged",
-      ...(runNotes !== undefined ? { notes: runNotes } : {}),
+      result: withHeld(flags.length > 0 ? flagSummary(flags) : "converged", heldReasons),
+      notes: runNotes,
     };
   }
 
@@ -603,10 +610,12 @@ async function reconcileUnderLease(
   ];
   // Per-item failures from rendering (unresolved references, unstorable
   // names, pending re-affirmation) degrade the Target too.
-  const result =
+  const result = withHeld(
     failed.length === 0 && flags.length === 0
       ? "ok"
-      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`.slice(0, 500);
+      : `degraded: ${[...failed.map((f) => `${f.name} (${f.error ?? "failed"})`), ...flags].join("; ")}`,
+    heldReasons,
+  );
 
   await recordAuditEvent(ctx.db, {
     eventType: "sync.push_result",
@@ -618,6 +627,7 @@ async function reconcileUnderLease(
       written: writeOutcomes.filter((o) => o.ok).length,
       deleted: deleteOutcomes.filter((o) => o.ok).length,
       failed: failed.length,
+      held: heldReasons.length,
       generation,
       result: failed.length === 0 ? "ok" : "degraded",
     },
@@ -644,11 +654,10 @@ async function reconcileUnderLease(
     });
   }
 
-  const notesAfter = usage !== null ? boundNotes(notes) : undefined;
   return {
     ok: failed.length === 0 && flags.length === 0,
     result: `${result}${redeployNote}`.slice(0, 500),
-    ...(notesAfter !== undefined ? { notes: notesAfter } : {}),
+    notes: boundNotes([...heldNotes, ...notes]),
   };
 }
 
@@ -706,10 +715,11 @@ export async function renderEffectiveOutput(
   platform: string,
   /** Commits the audit event for exactly these versions; decryption follows only if it succeeds. */
   beforeDecrypt: (versions: { name: string; versionId: string }[]) => Promise<void>,
-): Promise<{ items: RenderedItem[]; flags: string[] }> {
+): Promise<{ items: RenderedItem[]; flags: string[]; held: { name: string; reason: string }[] }> {
   const adapter = getAdapter(platform);
   const resolved = await resolveItems(ctx, org, env, await activeContractOf(ctx, project), new Date());
   const flags: string[] = [];
+  const held: { name: string; reason: string }[] = [];
 
   const mapping: SyncMapping = target.mapping;
   const selected: { name: string; destName: string; sensitive: boolean; valueRowId: string; versionId: string }[] = [];
@@ -718,9 +728,16 @@ export async function renderEffectiveOutput(
     const item = resolved.find((i) => i.name === name);
     if (!item) return; // not in effective output: convergence handles removal
     const destName = adapter.canonicalizeName(rename ?? name);
-    const problem = adapter.validateName(destName, target.destination);
-    if (problem) {
+    if (adapter.validateName(destName) !== null) {
       flags.push(`${name}: unstorable name`);
+      return;
+    }
+    // A name this destination's platform sets itself (a Coolify service's
+    // SERVICE_URL_*): held, not a failure, as a wildcard cannot exclude
+    // every future one (ADR-0031 amendment 2026-10-22).
+    const owned = adapter.validateName(destName, target.destination);
+    if (owned) {
+      held.push({ name: destName, reason: owned });
       return;
     }
     if (seenDest.has(destName)) {
@@ -781,7 +798,7 @@ export async function renderEffectiveOutput(
       flags.push(`${item.name}: ${error.message}`);
     }
   }
-  return { items, flags };
+  return { items, flags, held };
 }
 
 // ---------------------------------------------------------------------------
@@ -957,6 +974,16 @@ async function recordFailure(
 
 function flagSummary(flags: string[]): string {
   return `flagged: ${flags.join("; ")}`.slice(0, 500);
+}
+
+/**
+ * A run's result with the names it held appended, bounded. Held names are
+ * no failure (ADR-0031 amendment 2026-10-22): a run whose only problems
+ * they are succeeds, so they never spend the failure budget or schedule a
+ * retry, and the result says what was held and why.
+ */
+function withHeld(result: string, held: string[]): string {
+  return (held.length > 0 ? `${result}; held: ${held.join("; ")}` : result).slice(0, 500);
 }
 
 /** Periodic delivery, modeled on the webhook loop: best-effort, never throws. */

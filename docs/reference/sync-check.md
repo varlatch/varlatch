@@ -16,7 +16,7 @@ varlatch sync check --platform coolify --base https://coolify.example.com --app 
 varlatch sync check --platform convex --base https://happy-animal-123.convex.cloud -e production --token-env CONVEX_DEPLOY_KEY --json
 ```
 
-The options are those of `varlatch sync push`, without `--build-time`:
+The options are those of `varlatch sync push`, without `--build-time` or `--platform-expands`:
 `--platform`, `--base`, the destination (`--app <uuid>`, or
 `--service <uuid>` for a service, for Coolify;
 `--repo <name>` and `--gh-environment <name>` for GitHub Actions; nothing

@@ -176,7 +176,24 @@ export function TargetCard({
     if (ok) act.mutate("revoke");
   };
 
-  const busy = act.isPending;
+  // A held value that Coolify can resolve itself: list the name in the
+  // destination's options (ADR-0031 amendment 2026-10-22), keeping the rest.
+  const resolve = useMutation({
+    mutationFn: async (name: string) => {
+      const listed = (target.destination.platformExpands ?? "").split(",").filter(Boolean);
+      return api.updateSyncTarget(org, project, envName, target.id, {
+        expectedVersion: target.version,
+        destination: { ...target.destination, platformExpands: [...new Set([...listed, name])].join(",") },
+      });
+    },
+    onSuccess: (_r, name) => {
+      onChanged();
+      toast.success("Coolify resolves it now", { description: `${name} is stored as a Coolify variable from the next repair on.` });
+    },
+    onError: (err) => toast.error("That did not work", { description: err instanceof Error ? err.message : String(err) }),
+  });
+
+  const busy = act.isPending || resolve.isPending;
   const fixButton =
     status.fix === "replace-credential" ? (
       <Link
@@ -301,7 +318,7 @@ export function TargetCard({
       {notes.length > 0 && (
         <ul
           data-testid={`target-notes-${target.id}`}
-          aria-label="Usage notes"
+          aria-label="Notes"
           className={cn("space-y-1 border-t border-bd text-[13px]", compact ? "px-4 py-2" : "px-5 py-2.5")}
         >
           {notes.map((note) => (
@@ -311,7 +328,21 @@ export function TargetCard({
               ) : (
                 <CircleDashed size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
               )}
-              <span className="min-w-0">{noteText(note)}</span>
+              <span className="min-w-0">
+                {noteText(note)}
+                {note.code === "held" && note.fix === "platform-expands" && note.name && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-1 align-baseline"
+                    data-testid={`resolve-${target.id}-${note.name}`}
+                    disabled={busy}
+                    onClick={() => resolve.mutate(note.name!)}
+                  >
+                    Let Coolify resolve it
+                  </Button>
+                )}
+              </span>
             </li>
           ))}
         </ul>

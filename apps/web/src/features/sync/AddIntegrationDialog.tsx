@@ -28,6 +28,7 @@ import { PlatformTile } from "./TargetCard";
 const STEPS = ["Connection", "Destination", "Items", "Review"] as const;
 const GITHUB_REPO = /^[A-Za-z0-9._-]{1,100}$/;
 const COOLIFY_UUID = /^[A-Za-z0-9][A-Za-z0-9-]{2,63}$/;
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 type Item = { name: string; sensitive: boolean };
 
@@ -73,6 +74,9 @@ export function AddIntegrationDialog({
   // Coolify per-target options (adapter-owned, never part of the identity).
   const [buildTime, setBuildTime] = useState<"" | "true" | "false">("");
   const [deployAction, setDeployAction] = useState<"deploy" | "restart">("deploy");
+  // Names Coolify resolves itself ({{team.X}}, $VAR), stored as its own
+  // variables instead of literal text (ADR-0031 amendment 2026-10-22).
+  const [expandsText, setExpandsText] = useState("");
   const [redeploy, setRedeploy] = useState(false);
   const [mappingMode, setMappingMode] = useState<"wildcard" | "explicit">("wildcard");
   const [excludeText, setExcludeText] = useState("");
@@ -125,6 +129,13 @@ export function AddIntegrationDialog({
       : items.filter((i) => picked[i.name]?.on);
   const secrets = pushed.filter((i) => i.sensitive).length;
 
+  const expandsList = [...new Set(expandsText.split(/[\s,]+/).filter(Boolean))];
+  const expandsError = expandsList.find((n) => !ENV_KEY.test(n))
+    ? "Env keys only: letters, digits and _, not starting with a digit, separated by commas."
+    : expandsList.length > 100
+      ? "At most 100 names."
+      : null;
+
   const destination =
     effectivePlatform === "github-actions"
       ? { repo: repo.trim(), ...(ghEnvironment.trim() ? { environment: ghEnvironment.trim() } : {}) }
@@ -136,6 +147,7 @@ export function AddIntegrationDialog({
               applicationUuid: appUuid.trim(),
               ...(buildTime ? { buildTime } : {}),
               ...(redeploy && deployAction === "restart" ? { deployAction } : {}),
+              ...(expandsList.length > 0 ? { platformExpands: expandsList } : {}),
             }
         : // Convex: the connection's deployment is the destination.
           {};
@@ -152,7 +164,7 @@ export function AddIntegrationDialog({
       : effectivePlatform === "coolify"
         ? coolifyKind === "service"
           ? Boolean(serviceUuid.trim()) && !serviceError
-          : Boolean(appUuid.trim()) && !appError
+          : Boolean(appUuid.trim()) && !appError && !expandsError
         : effectivePlatform !== null,
     mappingMode === "wildcard" || explicitItems.length > 0,
     true,
@@ -541,6 +553,22 @@ export function AddIntegrationDialog({
                         ]}
                       />
                     </Field>
+                    <Field
+                      className="sm:col-span-2"
+                      label="Names Coolify resolves"
+                      error={expandsError}
+                      hint="Optional. For values that point at Coolify itself, such as {{team.GITHUB_TOKEN}} or $SOURCE_COMMIT: Coolify resolves them, as it does its own variables. Every other value is stored as text."
+                    >
+                      <Input
+                        data-testid="dest-platform-expands"
+                        mono
+                        className="w-full"
+                        placeholder="GITHUB_TOKEN, VITE_BUILD_SHA"
+                        value={expandsText}
+                        invalid={Boolean(expandsError)}
+                        onChange={(e) => setExpandsText(e.target.value)}
+                      />
+                    </Field>
                   </div>
                 )}
                 {effectivePlatform === "coolify" && (
@@ -680,6 +708,19 @@ export function AddIntegrationDialog({
                   {mappingMode === "wildcard" ? ", and every item added later." : "."}
                   {effectivePlatform === "coolify" && coolifyKind === "service" && (
                     <> Each value reaches every container of the service, its databases included, and any container added later.</>
+                  )}
+                  {effectivePlatform === "coolify" && coolifyKind === "application" && expandsList.length > 0 && (
+                    <>
+                      {" "}
+                      Coolify resolves{" "}
+                      {expandsList.map((n, i) => (
+                        <span key={n}>
+                          {i > 0 && ", "}
+                          <Mono>{n}</Mono>
+                        </span>
+                      ))}{" "}
+                      itself; every other value is stored as text.
+                    </>
                   )}
                 </p>
                 <AccessCheckNotice

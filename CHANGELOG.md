@@ -5,6 +5,38 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.18.1)
+
+### Integrations
+
+- **Values Coolify resolves.** An application integration can list names
+  whose values Coolify is to interpret, such as `{{team.GITHUB_TOKEN}}`
+  (a team shared variable) or `$SOURCE_COMMIT`: **Names Coolify
+  resolves** on the Destination step, **Let Coolify resolve it** on a held
+  name, `platformExpands` in the API's destination, or
+  `--platform-expands NAME` for `varlatch sync push`. Varlatch stores those
+  as Coolify stores its own variables (neither literal nor multiline);
+  every other value is still stored as text, and Varlatch never infers the
+  choice from `$` or `{{`. In 0.18.0, such a value was refused, or (for
+  `$`) rewritten as literal text at the next repair.
+  See [Integrations](docs/reference/integrations.md#values-coolify-resolves).
+- **A value that is not pushed no longer stops an integration.** In
+  0.18.0 a value Coolify cannot carry counted as a failed push, and after
+  ten the integration stopped, with every value. Now the push succeeds for
+  the others, the card shows **Values held** with each name, its reason
+  and its fix, and nothing retries until the value changes or the next
+  periodic repair. A name Coolify sets itself on a service is held the
+  same way instead of failing a wildcard integration. The details are in
+  the integration's `lastNotes` (`held`, with `fix`), for applications
+  too.
+
+### Upgrading
+
+- No migration (the database stays at migration 31).
+- An integration that 0.18.0 stopped because of such a value: resume it
+  after upgrading, and list the name for Coolify to resolve if that was
+  the intent.
+
 ## 0.18.0 (2026-10-21)
 
 ### Integrations

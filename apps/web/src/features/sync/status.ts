@@ -42,6 +42,36 @@ export function cleanError(text: string | null | undefined): string | undefined 
 }
 
 /**
+ * The names a run held, with why: varlatchd appends "; held: NAME: reason;
+ * …" to a run's result and counts no failure for them (ADR-0031
+ * amendment 2026-10-22). Undefined when nothing was held.
+ */
+export function heldText(result: string | null | undefined): string | undefined {
+  const at = (result ?? "").indexOf("; held: ");
+  if (at < 0) return undefined;
+  return (result ?? "").slice(at + "; held: ".length).replace(/; redeploy failed \(.*$/s, "").trim() || undefined;
+}
+
+/**
+ * What a Target holds, from its notes (each held name, and a count of the
+ * rest), or else from its last result: undefined when it holds nothing.
+ */
+export function heldSummary(t: SyncTarget): { detail: string; error: string } | undefined {
+  const notes = t.lastNotes ?? [];
+  const named = notes.filter((n) => n.code === "held" && n.name);
+  const more = notes.reduce((sum, n) => sum + (n.code === "held-more" ? (n.count ?? 0) : 0), 0);
+  const count = named.length + more;
+  if (count > 0) {
+    return {
+      detail: `${count} name${count === 1 ? "" : "s"} not pushed`,
+      error: named.map((n) => n.name).join(", ") + (more > 0 ? ` and ${more} more` : ""),
+    };
+  }
+  const text = heldText(t.lastResult);
+  return text ? { detail: "some names not pushed", error: text } : undefined;
+}
+
+/**
  * The platform's error when a push landed but its redeploy did not:
  * varlatchd records "ok; redeploy failed (<error>)" without counting a
  * failure, because the values were stored.
@@ -85,6 +115,12 @@ export function targetStatus(t: SyncTarget): TargetStatus {
   const redeploy = redeployError(t.lastResult);
   if (redeploy) {
     return { tone: "warn", label: "Redeploy failed", detail: "values pushed", error: redeploy, at: t.lastAttemptAt };
+  }
+  // Held names fail nothing: the rest was pushed, and they wait for a
+  // changed value (or, on a Coolify application, for Coolify to resolve them).
+  const held = heldSummary(t);
+  if (held) {
+    return { tone: "warn", label: "Values held", detail: held.detail, error: held.error, at: t.lastAttemptAt };
   }
   if (!t.lastAttemptAt) return { tone: "live", label: "Waiting for first push", at: null };
   if (t.needsSync) return { tone: "live", label: "Syncing", at: t.lastAttemptAt };
@@ -151,6 +187,7 @@ export function targetOptions(t: SyncTarget): string[] {
   if (t.removeOrphans) out.push("removes names that leave");
   if (t.destination.buildTime === "true") out.push("build-time keys");
   if (t.destination.buildTime === "false") out.push("runtime-only keys");
+  if (t.destination.platformExpands) out.push(`Coolify resolves ${t.destination.platformExpands.split(",").join(", ")}`);
   return out;
 }
 
@@ -187,6 +224,15 @@ export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
       at: redeploys[0]!.lastAttemptAt,
     };
   }
+  const holding = live.filter((t) => heldSummary(t));
+  if (holding.length > 0) {
+    return {
+      tone: "warn",
+      label: `${holding.length} target${holding.length === 1 ? "" : "s"} holding values`,
+      credentialRejected: false,
+      at: holding[0]!.lastAttemptAt,
+    };
+  }
   if (live.every((t) => !t.lastAttemptAt)) return { tone: "live", label: "Waiting for first push", credentialRejected: false };
   return { tone: "ok", label: "Healthy", credentialRejected: false };
 }
@@ -198,6 +244,10 @@ export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
 export function noteText(note: SyncTargetNote): string {
   const where = note.containers?.join(", ") ?? "";
   switch (note.code) {
+    case "held":
+      return `${note.name}: not pushed. ${note.reason ?? ""}`.trim();
+    case "held-more":
+      return `${note.count ?? 0} more name${note.count === 1 ? "" : "s"} not pushed`;
     case "shadowed":
       return `${note.name}: the compose file sets it in ${where}, which wins over the pushed value`;
     case "not-delivered":
@@ -215,5 +265,5 @@ export function noteText(note: SyncTargetNote): string {
 
 /** Whether a note asks for a look (the rest are context). */
 export function noteWarns(note: SyncTargetNote): boolean {
-  return note.code === "shadowed" || note.code === "not-delivered" || note.code === "generated-once";
+  return note.code === "held" || note.code === "held-more" || note.code === "shadowed" || note.code === "not-delivered" || note.code === "generated-once";
 }

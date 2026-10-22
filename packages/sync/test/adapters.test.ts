@@ -612,6 +612,145 @@ describe("coolify adapter", () => {
     expect([...service.rewrite]).toEqual(["S"]);
   });
 
+  describe("names Coolify resolves (platformExpands, ADR-0031 amendment 2026-10-22)", () => {
+    const listed = { applicationUuid: "app123", platformExpands: "GITHUB_TOKEN,VITE_BUILD_SHA" };
+
+    it("canonicalizes the list as an option, never part of the identity", () => {
+      expect(coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: ["VITE_BUILD_SHA", " GITHUB_TOKEN", "VITE_BUILD_SHA"] })).toEqual({
+        destination: listed,
+        key: "app123",
+      });
+      expect(coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: "VITE_BUILD_SHA,GITHUB_TOKEN" }).destination).toEqual(listed);
+      // Empty is absent.
+      for (const none of ["", [], " , ", null]) {
+        expect(coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: none }).destination).toEqual({ applicationUuid: "app123" });
+      }
+      expect(() => coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: ["1BAD"] })).toThrow(/not an env key/);
+      expect(() => coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: [7] })).toThrow(/list of env keys/);
+      expect(() => coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: { a: 1 } })).toThrow(/list of env keys/);
+      const many = Array.from({ length: 101 }, (_, i) => `N${i}`);
+      expect(() => coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: many })).toThrow(/at most 100/);
+      expect(coolifyAdapter.canonicalizeDestination({ applicationUuid: "app123", platformExpands: many.slice(0, 100) }).destination.platformExpands?.split(",")).toHaveLength(100);
+      // A service takes none.
+      expect(() => coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", platformExpands: "A" })).toThrow(/platformExpands/);
+      expect(coolifyAdapter.canonicalizeDestination({ serviceUuid: "svc123", platformExpands: [] }).destination).toEqual({ serviceUuid: "svc123" });
+    });
+
+    it("lets Coolify resolve a listed name's references, and still refuses them for any other name", () => {
+      expect(coolifyAdapter.valueProblem!(listed, "GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}")).toBeNull();
+      expect(coolifyAdapter.valueProblem!(listed, "VITE_BUILD_SHA", "$SOURCE_COMMIT")).toBeNull();
+      expect(coolifyAdapter.valueProblem!(listed, "VITE_BUILD_SHA", "sha-${SOURCE_COMMIT}-{{project.X}}")).toBeNull();
+      expect(coolifyAdapter.valueProblem!(listed, "OTHER", "{{team.GITHUB_TOKEN}}")).toMatch(/shared variables/);
+      expect(coolifyAdapter.valueProblem!({ applicationUuid: "app123" }, "GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}")).toMatch(/shared variables/);
+      // Only the expansion may change a listed value on the way.
+      const refused: [string, RegExp][] = [
+        [" {{team.X}}", /whitespace/],
+        ["{{team.X}}\n", /whitespace/],
+        ["a\nb", /line break/],
+        ["a\rb", /escapes carriage returns/],
+        ["a\tb", /escapes carriage returns/],
+        ["a\0b", /escapes carriage returns/],
+        ["a\\b", /backslashes and quotes/],
+        ["it's", /backslashes and quotes/],
+        ['say "x"', /backslashes and quotes/],
+        ["$X #note", /comment/],
+        ["[1,2]", /JSON/],
+        // A linked secret manager's reference is not admitted by listing.
+        ["{{vault.GITHUB_TOKEN}}", /secret manager/],
+        ["x-{{ vault.K }}", /secret manager/],
+      ];
+      for (const [value, reason] of refused) {
+        expect(coolifyAdapter.valueProblem!(listed, "GITHUB_TOKEN", value), JSON.stringify(value)).toMatch(reason);
+      }
+      // Characters the literal rule allows are fine for a listed name too,
+      // and so is a {{…}} Coolify does not substitute.
+      expect(coolifyAdapter.valueProblem!(listed, "GITHUB_TOKEN", "a#b {x}")).toBeNull();
+      expect(coolifyAdapter.valueProblem!(listed, "GITHUB_TOKEN", "{{other.X}}")).toBeNull();
+    });
+
+    it("names the option that would let a held value through, only where it would", () => {
+      const app = { applicationUuid: "app123" };
+      expect(coolifyAdapter.heldFix!(app, "GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}")).toBe("platform-expands");
+      // Listing would not help: the listed rule refuses it too, it is listed already, or a service.
+      expect(coolifyAdapter.heldFix!(app, "Q", "it's")).toBeNull();
+      expect(coolifyAdapter.heldFix!(app, "V", "{{vault.X}}")).toBeNull();
+      expect(coolifyAdapter.heldFix!(listed, "GITHUB_TOKEN", "{{team.GITHUB_TOKEN}}")).toBeNull();
+      expect(coolifyAdapter.heldFix!({ serviceUuid: "svc123" }, "A", "pa$word")).toBeNull();
+    });
+
+    it("stores a listed name as Coolify's default variable, and every other name literal", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const fetchImpl = fakeFetch((url, init) => {
+        if (url.endsWith("/envs") && (init.method ?? "GET") === "GET") {
+          return {
+            status: 200,
+            body: [
+              { uuid: "e1", key: "GITHUB_TOKEN", value: "{{team.GITHUB_TOKEN}}", is_preview: false, is_literal: true, is_multiline: true, is_shown_once: false, is_buildtime: true, is_runtime: true },
+              { uuid: "e2", key: "PLAIN", value: "old", is_preview: false, is_literal: false, is_multiline: false, is_shown_once: false, is_buildtime: false, is_runtime: true },
+            ],
+          };
+        }
+        return { status: 201 };
+      }, calls);
+      const outcomes = await coolifyAdapter.writeValues(baseReq(fetchImpl, listed), [
+        { name: "GITHUB_TOKEN", value: "{{team.GITHUB_TOKEN}}" },
+        { name: "PLAIN", value: "new" },
+        { name: "VITE_BUILD_SHA", value: "$SOURCE_COMMIT" },
+      ]);
+      expect(outcomes.every((o) => o.ok)).toBe(true);
+      expect(bodyOf(calls[1]!)).toEqual({
+        key: "GITHUB_TOKEN",
+        value: "{{team.GITHUB_TOKEN}}",
+        is_preview: false,
+        is_literal: false,
+        is_multiline: false,
+        is_shown_once: false,
+        is_buildtime: true,
+        is_runtime: true,
+      });
+      expect(bodyOf(calls[2]!)).toMatchObject({ key: "PLAIN", is_literal: true, is_multiline: true });
+      expect(bodyOf(calls[3]!)).toEqual({ key: "VITE_BUILD_SHA", value: "$SOURCE_COMMIT", is_preview: false, is_literal: false, is_multiline: false });
+
+      // The legacy vocabulary has only the literal flag.
+      const legacyCalls: { url: string; init: RequestInit }[] = [];
+      const legacy = fakeFetch((url, init) =>
+        url.endsWith("/envs") && (init.method ?? "GET") === "GET"
+          ? { status: 200, body: [{ uuid: "e1", key: "GITHUB_TOKEN", value: "x", is_preview: false, is_literal: true, is_build_time: true }] }
+          : { status: 201 },
+      legacyCalls);
+      await coolifyAdapter.writeValues(baseReq(legacy, listed), [{ name: "GITHUB_TOKEN", value: "{{team.GITHUB_TOKEN}}" }]);
+      expect(bodyOf(legacyCalls[1]!)).toEqual({ key: "GITHUB_TOKEN", value: "{{team.GITHUB_TOKEN}}", is_preview: false, is_literal: false, is_build_time: true });
+    });
+
+    it("refuses a listed value the rule refuses, and sends nothing for it", async () => {
+      const calls: { url: string; init: RequestInit }[] = [];
+      const fetchImpl = fakeFetch((url, init) => ((init.method ?? "GET") === "GET" ? { status: 200, body: [] } : { status: 201 }), calls);
+      const outcomes = await coolifyAdapter.writeValues(baseReq(fetchImpl, listed), [{ name: "GITHUB_TOKEN", value: "it's" }]);
+      expect(outcomes).toEqual([{ name: "GITHUB_TOKEN", ok: false, error: expect.stringContaining("escapes") }]);
+      expect(calls.filter((c) => c.init.method === "POST" || c.init.method === "PATCH")).toHaveLength(0);
+    });
+
+    it("expects a listed name stored as Coolify's default, so it rewrites a literal or multiline row", async () => {
+      const rows = [
+        // As the operator created it: matches, nothing to rewrite.
+        { uuid: "e1", key: "GITHUB_TOKEN", value: "{{team.GITHUB_TOKEN}}", is_literal: false, is_multiline: false, is_buildtime: true, is_runtime: true },
+        { uuid: "e2", key: "VITE_BUILD_SHA", value: "$SOURCE_COMMIT", is_literal: true, is_multiline: true, is_buildtime: true, is_runtime: true },
+        { uuid: "e3", key: "UNLISTED", value: "v", is_literal: false, is_multiline: false, is_runtime: true },
+      ];
+      const remote = await coolifyAdapter.readRemote!(baseReq(fakeFetch(() => ({ status: 200, body: rows })), listed));
+      expect([...remote.rewrite].sort()).toEqual(["UNLISTED", "VITE_BUILD_SHA"]);
+      expect(remote.values.get("GITHUB_TOKEN")).toBe("{{team.GITHUB_TOKEN}}");
+      const multiline = await coolifyAdapter.readRemote!(
+        baseReq(fakeFetch(() => ({ status: 200, body: [{ uuid: "e1", key: "GITHUB_TOKEN", value: "x", is_literal: false, is_multiline: true, is_runtime: true }] })), listed),
+      );
+      expect([...multiline.rewrite]).toEqual(["GITHUB_TOKEN"]);
+      const legacy = await coolifyAdapter.readRemote!(
+        baseReq(fakeFetch(() => ({ status: 200, body: [{ uuid: "e1", key: "GITHUB_TOKEN", value: "x", is_literal: false, is_build_time: true }] })), listed),
+      );
+      expect([...legacy.rewrite]).toEqual([]);
+    });
+  });
+
   it("redeploys with a forced rebuild by default, restarts on request, and reports failure", async () => {
     const calls: { url: string; init: RequestInit }[] = [];
     const ok = fakeFetch(() => ({ status: 200, body: { message: "queued" } }), calls);
