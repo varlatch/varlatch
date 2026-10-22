@@ -134,8 +134,13 @@ interface Run {
   done: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
+// Started with core dumps off, which the command inherits: SIGQUIT's default
+// action dumps core, and where a core handler such as systemd-coredump stores
+// it, the command only ends once the core is written, seconds later. `exec`
+// keeps the CLI's PID, so signals sent to `cli` still reach `varlatch run`.
 function start(flags: string[], command = child): Run {
-  const cli = spawn(process.execPath, [bundle, "run", ...flags, "--", process.execPath, command], {
+  const argv = [bundle, "run", ...flags, "--", process.execPath, command];
+  const cli = spawn("/bin/sh", ["-c", 'ulimit -c 0 && exec "$0" "$@"', process.execPath, ...argv], {
     cwd: repo,
     env: { PATH: process.env.PATH, HOME: dir, VARLATCH_CONFIG_DIR: join(dir, "config"), VARLATCH_TOKEN: "vlt_test" },
     stdio: ["ignore", "pipe", "pipe"],
