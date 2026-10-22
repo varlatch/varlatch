@@ -368,13 +368,13 @@ export function missingComposeVariables(compose: string, dir: string, env: NodeJ
  * asset) is the command's business, not the record's.
  */
 async function lookUpRelease(opts: UpgradeOptions, releaseSet: boolean): Promise<GithubRelease> {
-  const recorded = opts.checkOnly && !opts.version;
+  const records = opts.checkOnly && !opts.version;
   try {
     const release = await fetchRelease(opts.repo, opts.version);
-    if (recorded) await recordReleaseCheck(opts.dir, { outcome: "found", repo: opts.repo, latest: discoveredRelease(release), releaseSet }, opts.recordCheck);
+    if (records) await recordReleaseCheck(opts.dir, { outcome: "found", repo: opts.repo, latest: discoveredRelease(release), releaseSet }, opts.recordCheck);
     return release;
   } catch (err) {
-    if (recorded && err instanceof ReleaseLookupError) await recordReleaseCheck(opts.dir, { outcome: "failed", repo: opts.repo, failed: err.reason }, opts.recordCheck);
+    if (records && err instanceof ReleaseLookupError) await recordReleaseCheck(opts.dir, { outcome: "failed", repo: opts.repo, failed: err.reason }, opts.recordCheck);
     throw err;
   }
 }
