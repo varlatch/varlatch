@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.18.1)
+## 0.18.1 (2026-10-22)
 
 ### Integrations
 
@@ -32,10 +32,25 @@ fixes.
 
 ### Upgrading
 
-- No migration (the database stays at migration 31).
-- An integration that 0.18.0 stopped because of such a value: resume it
-  after upgrading, and list the name for Coolify to resolve if that was
-  the intent.
+Database schema: unchanged, migration 31. Check `SHA256SUMS` and its
+signature as [Verifying a release](docs/operations/verify-release.md)
+describes.
+
+- From 0.18.0: download `varlatch-cli-0.18.1.cjs` from the `v0.18.1`
+  release, check it against `SHA256SUMS`, and run
+  `node varlatch-cli-0.18.1.cjs upgrade 0.18.1 --dir /YOUR/COMPOSE/DIRECTORY
+  --bek-file /YOUR/BEK --kek-file /YOUR/ROOT-KEK`. Then replace the host
+  CLI with `varlatch-cli-0.18.1.cjs`, or run `varlatch self-update`. An
+  integration that 0.18.0 stopped because of a value it would not push:
+  **Resume** it, and for a Coolify reference, list the name for Coolify to
+  resolve first.
+- From 0.17.4 or older: follow the 0.18.0 notes below with the 0.18.1 CLI
+  and version. The upgrade applies migration 31, and there is no way back
+  to 0.17 but restoring an archive taken before it. Before the first
+  periodic repair writes your Coolify application variables again (within
+  six hours), list the names whose values are meant for Coolify to resolve
+  (`{{team.…}}`, `$SOURCE_COMMIT`): otherwise a `{{…}}` value is held and
+  a `$` value is stored as literal text.
 
 ## 0.18.0 (2026-10-21)
 
