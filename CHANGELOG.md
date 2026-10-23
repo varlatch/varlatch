@@ -40,6 +40,13 @@ fixes.
   check and last attempt, and `newer`, compared with the running version
   when asked.
 
+### Fixes
+
+- Dependency update for a published advisory: `ip-address` 10.7.4
+  (GHSA-rxp7-6hxx-x8q5, quadratic-time matching of an IPv6 zone
+  identifier), through the MCP server's dependencies and bundled in the
+  CLI.
+
 ### Upgrading
 
 Database schema: unchanged, migration 31. To see the Release tab filled in

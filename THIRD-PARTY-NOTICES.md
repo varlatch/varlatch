@@ -169,7 +169,7 @@ what the bundler includes.
 | iconv-lite | 0.7.3 | MIT | CLI |
 | ieee754 | 1.2.1 | BSD-3-Clause | varlatchd, CLI |
 | inherits | 2.0.4 | ISC | varlatchd, CLI |
-| ip-address | 10.7.2 | MIT | CLI |
+| ip-address | 10.7.4 | MIT | CLI |
 | ipaddr.js | 1.9.1 | MIT | CLI |
 | is-promise | 4.0.0 | MIT | CLI |
 | isexe | 2.0.0 | ISC | CLI |
@@ -3387,7 +3387,7 @@ OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
 PERFORMANCE OF THIS SOFTWARE.
 ````
 
-### ip-address@10.7.2
+### ip-address@10.7.4
 
 ````text
 Copyright (C) 2011 by Beau Gunderson
