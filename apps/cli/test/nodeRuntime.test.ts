@@ -28,9 +28,20 @@ describe("nodeRuntimeWarning", () => {
     );
   });
 
-  it.each(["22.23.4", "22.24.0", "24.22.1", "24.23.0", "26.12.1", "26.13.0", "v26.12.1", "26.12.1-pre"])("Node.js %s has the fixes", (version) => {
+  it.each(["22.23.4", "22.24.0", "24.22.1", "24.23.0", "26.12.1", "26.13.0", "v26.12.1"])("Node.js %s has the fixes", (version) => {
     expect(nodeRuntimeWarning(version, {})).toBeNull();
   });
+
+  // A nightly of the next line can predate the fixes, so the newer-line exemption does not apply.
+  it.each(["26.12.1-rc.1", "26.12.1-pre", "22.23.4-pre", "v26.13.0-rc.1", "27.0.0-nightly20260716608112affa", "28.0.0-pre"])(
+    "Node.js %s is a prerelease, whose fixes cannot be checked",
+    (version) => {
+      expect(nodeRuntimeWarning(version, {})).toBe(
+        `varlatch: Node.js ${version} is a prerelease, so whether it has the security fixes cannot be checked; ` +
+          "use a release of Node.js 22, 24 or 26 (at least 22.23.4, 24.22.1 or 26.12.1). VARLATCH_NODE_CHECK=off hides this warning.",
+      );
+    },
+  );
 
   it.each(["16.20.2", "18.20.8", "20.19.5", "21.7.3", "23.11.1", "25.9.0"])("Node.js %s is on a line without security fixes", (version) => {
     expect(nodeRuntimeWarning(version, {})).toBe(
@@ -52,6 +63,7 @@ describe("nodeRuntimeWarning", () => {
   it("is hidden only by VARLATCH_NODE_CHECK=off", () => {
     expect(NODE_CHECK_ENV).toBe("VARLATCH_NODE_CHECK");
     expect(nodeRuntimeWarning("26.12.0", { VARLATCH_NODE_CHECK: "off" })).toBeNull();
+    expect(nodeRuntimeWarning("27.0.0-nightly20260716608112affa", { VARLATCH_NODE_CHECK: "off" })).toBeNull();
     for (const value of ["", "0", "false", "on", "OFF"]) {
       expect(nodeRuntimeWarning("26.12.0", { VARLATCH_NODE_CHECK: value })).not.toBeNull();
     }

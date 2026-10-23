@@ -31,8 +31,9 @@ Already invited to an installation? Get the CLI, then go to
 ## Get the CLI
 
 The CLI is one file, `varlatch-cli-<version>.cjs`, attached to every
-release. It needs only Node.js: [Node.js version](#nodejs-version). Use the version your
-installation runs: the CLI and the installation are released together.
+release. It needs only Node.js: [Node.js version](#nodejs-version). Use
+the version your installation runs: the CLI and the installation are
+released together.
 
 ```sh
 V=0.18.1  # the release your installation runs
@@ -75,10 +76,13 @@ These are the Node.js security releases of 21 October 2026, which fixed,
 among others, a flaw in decompressing Brotli data received over the network
 (CVE-2026-111497).
 
-On an older release, or on a line that no longer receives security fixes
-(such as 20, 23 or 25), the CLI prints one warning on stderr each time it
-runs, and otherwise works as before: its output and exit status do not
-change. Update Node.js to clear it. If your Node.js carries those fixes
+On an older release, on a line that no longer receives security fixes
+(such as 20, 23 or 25), or on a prerelease (a nightly or release candidate,
+whose fixes its version cannot show), every command first prints one
+warning on stderr, and otherwise works as before: its output and exit
+status do not change. Only `varlatch agents hook`, which a coding agent's
+guardrail calls on every tool call, stays quiet. Update Node.js to clear
+the warning. If your Node.js carries those fixes
 under an older version number, as a distribution's backport can, set
 `VARLATCH_NODE_CHECK=off` to hide the warning.
 

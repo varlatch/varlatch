@@ -38,12 +38,12 @@ fixes.
 - **The CLI warns when its Node.js lacks security fixes.** On a Node.js
   release older than 22.23.4, 24.22.1 or 26.12.1 in its line (the security
   releases of 21 October 2026, which fixed CVE-2026-111497 in Brotli
-  decompression, among others), or on a line that no longer receives
-  security fixes, such as 20, 23 or 25, every command first prints one line
-  on stderr. Its output and exit status do not change, and
-  `varlatch agents hook` stays quiet. Update Node.js, or set
-  `VARLATCH_NODE_CHECK=off` when your Node.js carries the fixes under an
-  older version number. See
+  decompression, among others), on a line that no longer receives security
+  fixes, such as 20, 23 or 25, or on a prerelease, whose fixes its version
+  cannot show, every command first prints one line on stderr. Its output
+  and exit status do not change, and `varlatch agents hook` stays quiet.
+  Update Node.js, or set `VARLATCH_NODE_CHECK=off` when your Node.js
+  carries the fixes under an older version number. See
   [Node.js version](docs/getting-started.md#nodejs-version).
 
 ### API

@@ -3,9 +3,10 @@
 /**
  * The Node.js release the CLI runs on. Each maintained release line maps to
  * its oldest release with the security fixes the CLI needs. A release below
- * that, or one of an unlisted line older than the newest listed one (an
- * end-of-life line), gets one warning on stderr; stdout and the exit status
- * are unchanged. The CLI still runs: a refusal would stop pipelines whose
+ * that, one of an unlisted line older than the newest listed one (an
+ * end-of-life line), or a prerelease of any line (a nightly or release
+ * candidate, whose fixes the version cannot show) gets one warning on
+ * stderr; stdout and the exit status are unchanged. The CLI still runs: a refusal would stop pipelines whose
  * runner image lags a Node.js security release by a few days.
  *
  * Raised with each Node.js security release that fixes something the CLI
@@ -24,9 +25,10 @@ export const NODE_CHECK_ENV = "VARLATCH_NODE_CHECK";
 
 type Version = [number, number, number];
 
-function parseVersion(version: string): Version | null {
-  const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version);
-  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+/** The release numbers, and whether anything follows them (`-rc.1`, `-nightly…`, `-pre`). */
+function parseVersion(version: string): { release: Version; prerelease: boolean } | null {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)(.*)$/.exec(version);
+  return m ? { release: [Number(m[1]), Number(m[2]), Number(m[3])], prerelease: m[4] !== "" } : null;
 }
 
 function isBelow(a: Version, b: Version): boolean {
@@ -40,26 +42,29 @@ function orList(items: string[]): string {
 
 /**
  * The warning for running on Node.js `version` (as in process.versions.node),
- * or null: the release has its line's fixes, its line is newer than every
- * listed one (its first release came after them), the version cannot be
- * read, or the check is off.
+ * or null: the release has its line's fixes, it is a release of a line newer
+ * than every listed one (its first release came after them), the version
+ * cannot be read, or the check is off. A prerelease is judged before the
+ * newer-line exemption: a nightly of the next line can predate the fixes.
  */
 export function nodeRuntimeWarning(version: string, env: NodeJS.ProcessEnv): string | null {
   if (env[NODE_CHECK_ENV] === "off") return null;
-  const running = parseVersion(version);
-  if (running === null) return null;
+  const parsed = parseVersion(version);
+  if (parsed === null) return null;
+  const running = parsed.release;
   const lines = Object.keys(NODE_SECURITY_FLOOR)
     .map(Number)
     .sort((a, b) => a - b);
-  if (running[0] > lines[lines.length - 1]!) return null;
   const hide = `${NODE_CHECK_ENV}=off hides this warning.`;
+  const supported = `Node.js ${orList(lines.map(String))} (at least ${orList(lines.map((line) => NODE_SECURITY_FLOOR[line]!))})`;
+  if (parsed.prerelease) {
+    return `varlatch: Node.js ${version} is a prerelease, so whether it has the security fixes cannot be checked; use a release of ${supported}. ${hide}`;
+  }
+  if (running[0] > lines[lines.length - 1]!) return null;
   const floor = NODE_SECURITY_FLOOR[running[0]];
   if (floor !== undefined) {
-    if (!isBelow(running, parseVersion(floor)!)) return null;
+    if (!isBelow(running, parseVersion(floor)!.release)) return null;
     return `varlatch: Node.js ${version} is missing security fixes; update it to ${floor} or later. ${hide}`;
   }
-  return (
-    `varlatch: Node.js ${version} no longer receives security fixes; use Node.js ${orList(lines.map(String))} ` +
-    `(at least ${orList(lines.map((line) => NODE_SECURITY_FLOOR[line]!))}). ${hide}`
-  );
+  return `varlatch: Node.js ${version} no longer receives security fixes; use ${supported}. ${hide}`;
 }
