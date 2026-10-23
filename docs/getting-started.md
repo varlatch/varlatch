@@ -23,15 +23,17 @@ Already invited to an installation? Get the CLI, then go to
   proxy. [Run an installation](#run-an-installation) explains the choice, and
   [Host requirements](self-hosting/requirements.md) lists memory, disk,
   and ports.
-- **For each person:** Node.js 22 or newer for the CLI, and a browser that
+- **For each person:** Node.js 22, 24 or 26 with its current security
+  fixes for the CLI ([Node.js version](#nodejs-version)), and a browser that
   supports passkeys. Varlatch has no passwords: you sign in with a passkey
   kept on your device, in a password manager, or on a security key.
 
 ## Get the CLI
 
 The CLI is one file, `varlatch-cli-<version>.cjs`, attached to every
-release. It needs only Node.js 22 or newer. Use the version your
-installation runs: the CLI and the installation are released together.
+release. It needs only Node.js: [Node.js version](#nodejs-version). Use
+the version your installation runs: the CLI and the installation are
+released together.
 
 ```sh
 V=0.18.1  # the release your installation runs
@@ -66,9 +68,28 @@ Then put it on your `PATH` as `varlatch`:
 file against `SHA256SUMS`, and the signature when the release is signed and
 cosign is installed.
 
+### Node.js version
+
+The CLI runs on Node.js 22, 24 or 26, from a release with that line's
+security fixes: at least 22.23.4 on 22, 24.22.1 on 24, or 26.12.1 on 26.
+These are the Node.js security releases of 21 October 2026, which fixed,
+among others, a flaw in decompressing Brotli data received over the network
+(CVE-2026-111497).
+
+On an older release, on a line that no longer receives security fixes
+(such as 20, 23 or 25), or on a prerelease (a nightly or release candidate,
+whose fixes its version cannot show), every command first prints one
+warning on stderr, and otherwise works as before: its output and exit
+status do not change. Only `varlatch agents hook`, which a coding agent's
+guardrail calls on every tool call, stays quiet. Update Node.js to clear
+the warning. If your Node.js carries those fixes
+under an older version number, as a distribution's backport can, set
+`VARLATCH_NODE_CHECK=off` to hide the warning.
+
 ### On Windows
 
-Install Node.js 22 or newer, for example with winget:
+Install a current Node.js LTS release ([Node.js version](#nodejs-version)),
+for example with winget:
 
 ```powershell
 winget install OpenJS.NodeJS.LTS

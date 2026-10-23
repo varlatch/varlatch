@@ -151,7 +151,7 @@ setup, access, backups, and upgrades.
 ### Use the CLI
 
 The CLI is one file attached to every release, `varlatch-cli-<version>.cjs`,
-and needs Node.js 22 or newer:
+and needs Node.js 22, 24 or 26 with its current security fixes:
 [Get the CLI](docs/getting-started.md#get-the-cli).
 
 ```sh

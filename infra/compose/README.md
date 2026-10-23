@@ -213,11 +213,11 @@ Each GitHub release attaches the deployment unit: `varlatch-release.json`
 (digest manifest), `docker-compose.release.yml` (this file with every
 `build:` replaced by a digest-pinned image), and
 `varlatch-compose-<version>.tar.gz` (first-install bundle), plus
-`varlatch-cli-<version>.cjs` (the single-file operator CLI, Node 22+) and
-`SHA256SUMS`. Digests are the canonical runtime pin; tags are for humans.
-From 0.10.0 on, images are published for linux/amd64 and linux/arm64 with
-provenance and SBOM attestations, and releases after 0.15.0 sign
-`SHA256SUMS` and the images:
+`varlatch-cli-<version>.cjs` (the single-file operator CLI, on Node.js 22,
+24 or 26 with current security fixes) and `SHA256SUMS`. Digests are the
+canonical runtime pin; tags are for humans. From 0.10.0 on, images are
+published for linux/amd64 and linux/arm64 with provenance and SBOM
+attestations, and releases after 0.15.0 sign `SHA256SUMS` and the images:
 [Verifying a release](../../docs/operations/verify-release.md).
 
 The canonical path is the CLI, run on the host in this directory. Install it

@@ -68,8 +68,8 @@ custody separate from each other and from the destination account.
 
 ## Install
 
-Prerequisites: systemd, Docker with the compose plugin, Node.js 22+, and a
-running installation.
+Prerequisites: systemd, Docker with the compose plugin, Node.js 22, 24 or
+26 with its current security fixes, and a running installation.
 
 ```sh
 sudo ./install.sh <compose-dir> [<compose-file-name>]
