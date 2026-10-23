@@ -10,7 +10,7 @@ walks you through the installation itself, and
 |---|---|
 | Operating system | Linux, on amd64 or arm64 |
 | Containers | Docker with the Docker Compose plugin (`docker compose`), Compose 2.24 or newer |
-| On the host | Node.js 22 or newer, for the operator CLI |
+| On the host | Node.js 22, 24 or 26 with its current security fixes, for the operator CLI |
 | Memory | 2 GiB |
 | Processor | 2 CPU cores |
 | Disk | 20 GB free for Docker's data and the installation's directory |
@@ -41,8 +41,11 @@ limits do not hold under emulation on a small host.
   for every ingress. `varlatch setup` stops before it changes anything when
   Compose is older, and `varlatch doctor` reports the version. Releases are
   tested with Docker 29 and Compose 5.
-- **Node.js 22 or newer.** The operator CLI is a single file that needs
-  only Node.js: [Get the CLI](../getting-started.md#get-the-cli).
+- **Node.js 22, 24 or 26, with its current security fixes.** The operator
+  CLI is a single file that needs only Node.js:
+  [Get the CLI](../getting-started.md#get-the-cli). On a Node.js release
+  without those fixes it prints a warning:
+  [Node.js version](../getting-started.md#nodejs-version).
 - **systemd,** only if you use the reference backup timer in
   [`infra/host-backup`](../../infra/host-backup/README.md).
 

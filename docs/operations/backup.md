@@ -8,7 +8,9 @@ are operator files, never Organization Platform Connections.
 ## Install the operator CLI
 
 Each release attaches `varlatch-cli-<version>.cjs`, a single-file build of
-the CLI that needs only Node.js 22 or newer: no checkout, pnpm, or build.
+the CLI that needs only Node.js, at a release with its line's security
+fixes ([Node.js version](../getting-started.md#nodejs-version)): no
+checkout, pnpm, or build.
 Install it root-owned on the Compose host:
 
 ```sh

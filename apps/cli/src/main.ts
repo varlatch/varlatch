@@ -27,6 +27,7 @@ import { RUN_CONTEXT, buildEnv, omitProblem, runChild, withheldItems } from "./i
 import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
 import { cliUserAgent, setAssistedUserAgent } from "./userAgent.js";
+import { nodeRuntimeWarning } from "./nodeRuntime.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
 import { STRICT_EXIT } from "./strictRun.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
@@ -724,6 +725,13 @@ async function main(): Promise<void> {
   // Every request then says so in its User-Agent, which the audit records.
   setAssistedUserAgent(assisted.on);
   everyFailureIsOne = command === "scan";
+  // A Node.js release without its line's security fixes gets one line on
+  // stderr, before any other output. The guardrail hook answers its agent on
+  // every tool call, so it stays quiet.
+  if (!(command === "agents" && args[0] === "hook")) {
+    const warning = nodeRuntimeWarning(process.versions.node, process.env);
+    if (warning !== null) process.stderr.write(`${warning}\n`);
+  }
   // Help (ADR-0043 Decision 10): on stdout, status 0. Only the CLI's own
   // arguments count: a --help after `--` belongs to the command run starts.
   if (command === "--help" || command === "-h" || command === "help") {
