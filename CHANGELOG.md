@@ -60,6 +60,12 @@ fixes.
 
 ### Fixes
 
+- Dependency security updates: Better Auth and its passkey plugin 1.7.7,
+  Zod 4.6.7, MCP SDK 1.32.2, and patched transitive body-parser, fast-uri,
+  and qs versions. The documentation build also uses patched Zod and
+  Undici versions. Both dependency audits now run in local `pnpm verify`,
+  with the same moderate-severity threshold as CI.
+
 - Dependency update for a published advisory: `ip-address` 10.7.4
   (GHSA-rxp7-6hxx-x8q5, quadratic-time matching of an IPv6 zone
   identifier), through the MCP server's dependencies and bundled in the

@@ -51,6 +51,9 @@ echo "Base: $base"
 step "Install (frozen lockfile)"
 pnpm install --frozen-lockfile --prefer-offline
 
+step "Dependency audit (same threshold as CI)"
+pnpm audit --audit-level moderate
+
 step "Protocol types are generated and committed"
 pnpm --filter @varlatch/protocol generate
 git diff --exit-code packages/protocol/src/generated
@@ -76,7 +79,7 @@ pnpm typecheck
 
 # Its own pnpm workspace, so `pnpm build` above leaves it out.
 step "Documentation site builds, and its links resolve"
-(cd apps/docs && pnpm install --frozen-lockfile --prefer-offline && pnpm test && pnpm build)
+(cd apps/docs && pnpm install --frozen-lockfile --prefer-offline && pnpm audit --audit-level moderate && pnpm test && pnpm build)
 
 # CI scans every ref, so a credential-shaped fixture on any pushed branch
 # fails everyone's CI; scan this branch's commits before they are pushed.
