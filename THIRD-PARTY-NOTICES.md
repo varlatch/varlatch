@@ -19,7 +19,7 @@ Convex client library and CLI (`convex` on npm) are Apache-2.0.
 | Component | Image | License |
 | --- | --- | --- |
 | Caddy | `caddy:2.10.2` | [Apache-2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE) |
-| Convex backend | `ghcr.io/convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98` | [FSL-1.1-Apache-2.0](https://github.com/convex/convex-backend/blob/main/LICENSE.md) |
+| Convex backend | `ghcr.io/convex/convex-backend@sha256:b441769e35f861e6e07f1e7ff7a476e56765fa948d61c1f5356685788d78c47d` | [FSL-1.1-Apache-2.0](https://github.com/convex/convex-backend/blob/main/LICENSE.md) |
 | PostgreSQL | `postgres:17.6` | [PostgreSQL](https://www.postgresql.org/about/licence/) |
 | Tailscale | `tailscale/tailscale:v1.102.3` | [BSD-3-Clause](https://github.com/tailscale/tailscale/blob/main/LICENSE) |
 
@@ -65,17 +65,17 @@ what the bundler includes.
 | @aws-sdk/types | 3.974.5 | Apache-2.0 | varlatchd, CLI |
 | @aws-sdk/xml-builder | 3.972.40 | Apache-2.0 | varlatchd, CLI |
 | @aws/lambda-invoke-store | 0.3.0 | Apache-2.0 | varlatchd, CLI |
-| @better-auth/core | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/drizzle-adapter | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/kysely-adapter | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/memory-adapter | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/mongo-adapter | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/passkey | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/prisma-adapter | 1.7.3 | MIT | varlatchd, dashboard |
-| @better-auth/telemetry | 1.7.3 | MIT | varlatchd, dashboard |
+| @better-auth/core | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/drizzle-adapter | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/kysely-adapter | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/memory-adapter | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/mongo-adapter | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/passkey | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/prisma-adapter | 1.7.7 | MIT | varlatchd, dashboard |
+| @better-auth/telemetry | 1.7.7 | MIT | varlatchd, dashboard |
 | @better-auth/utils | 0.4.2 | MIT | varlatchd, dashboard |
 | @better-auth/utils | 0.5.0 | MIT | varlatchd, dashboard |
-| @better-fetch/fetch | 1.3.1 | MIT | varlatchd, dashboard |
+| @better-fetch/fetch | 1.3.2 | MIT | varlatchd, dashboard |
 | @esbuild/linux-arm64 | 0.27.0 | MIT | convex-deploy |
 | @esbuild/linux-x64 | 0.27.0 | MIT | convex-deploy |
 | @fontsource-variable/inter | 5.3.0 | OFL-1.1 | dashboard |
@@ -84,7 +84,7 @@ what the bundler includes.
 | @hono/node-server | 1.19.17 | MIT | varlatchd, CLI |
 | @isaacs/fs-minipass | 4.0.1 | ISC | CLI |
 | @levischuck/tiny-cbor | 0.2.11 | MIT | varlatchd, dashboard |
-| @modelcontextprotocol/sdk | 1.32.1 | MIT | CLI |
+| @modelcontextprotocol/sdk | 1.32.2 | MIT | CLI |
 | @noble/ciphers | 2.4.0 | MIT | varlatchd, dashboard |
 | @noble/hashes | 2.4.0 | MIT | varlatchd, dashboard |
 | @opentelemetry/semantic-conventions | 1.43.0 | Apache-2.0 | varlatchd, dashboard |
@@ -117,10 +117,10 @@ what the bundler includes.
 | ajv-formats | 3.0.1 | MIT | CLI |
 | asn1js | 3.0.10 | BSD-3-Clause | varlatchd, dashboard |
 | base64-js | 1.5.1 | MIT | varlatchd, CLI |
-| better-auth | 1.7.3 | MIT | varlatchd, dashboard |
+| better-auth | 1.7.7 | MIT | varlatchd, dashboard |
 | better-call | 1.4.0 | MIT | varlatchd, dashboard |
 | blakejs | 1.2.1 | MIT | varlatchd, CLI |
-| body-parser | 2.3.0 | MIT | CLI |
+| body-parser | 2.4.0 | MIT | CLI |
 | bowser | 2.14.1 | MIT | varlatchd, CLI |
 | buffer | 5.6.0 | MIT | varlatchd, CLI |
 | bytes | 3.1.2 | MIT | CLI |
@@ -154,7 +154,7 @@ what the bundler includes.
 | express | 5.2.1 | MIT | CLI |
 | express-rate-limit | 8.7.0 | MIT | CLI |
 | fast-deep-equal | 3.1.3 | MIT | CLI |
-| fast-uri | 3.1.8 | BSD-3-Clause | CLI |
+| fast-uri | 3.1.9 | BSD-3-Clause | CLI |
 | finalhandler | 2.1.1 | MIT | CLI |
 | forwarded | 0.2.0 | MIT | CLI |
 | fresh | 2.0.0 | MIT | CLI |
@@ -212,7 +212,7 @@ what the bundler includes.
 | proxy-addr | 2.0.8 | MIT | CLI |
 | pvtsutils | 1.3.6 | MIT | varlatchd, dashboard |
 | pvutils | 1.2.0 | MIT | varlatchd, dashboard |
-| qs | 6.16.0 | BSD-3-Clause | CLI |
+| qs | 6.17.0 | BSD-3-Clause | CLI |
 | range-parser | 1.3.0 | MIT | CLI |
 | raw-body | 3.0.2 | MIT | CLI |
 | react | 19.1.1 | MIT | dashboard |
@@ -259,9 +259,7 @@ what the bundler includes.
 | xtend | 4.0.2 | MIT | varlatchd |
 | yallist | 5.0.0 | BlueOak-1.0.0 | CLI |
 | yaml | 2.9.1 | ISC | varlatchd, CLI |
-| zod | 3.25.76 | MIT | CLI |
-| zod | 4.1.5 | MIT | varlatchd, CLI |
-| zod | 4.5.4 | MIT | varlatchd, dashboard |
+| zod | 4.6.7 | MIT | varlatchd, CLI, dashboard |
 | zod-to-json-schema | 3.25.2 | ISC | CLI |
 
 ## License texts
@@ -1068,7 +1066,7 @@ Apache License
       of your accepting any such warranty or additional liability.
 ````
 
-### @better-auth/core@1.7.3, @better-auth/drizzle-adapter@1.7.3, @better-auth/kysely-adapter@1.7.3, @better-auth/memory-adapter@1.7.3, @better-auth/mongo-adapter@1.7.3, @better-auth/passkey@1.7.3, @better-auth/prisma-adapter@1.7.3, @better-auth/telemetry@1.7.3, better-auth@1.7.3
+### @better-auth/core@1.7.7, @better-auth/drizzle-adapter@1.7.7, @better-auth/kysely-adapter@1.7.7, @better-auth/memory-adapter@1.7.7, @better-auth/mongo-adapter@1.7.7, @better-auth/passkey@1.7.7, @better-auth/prisma-adapter@1.7.7, @better-auth/telemetry@1.7.7, better-auth@1.7.7
 
 ````text
 The MIT License (MIT)
@@ -1093,7 +1091,7 @@ ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ````
 
-### @better-fetch/fetch@1.3.1
+### @better-fetch/fetch@1.3.2
 
 ````text
 MIT License
@@ -1413,7 +1411,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### @modelcontextprotocol/sdk@1.32.1
+### @modelcontextprotocol/sdk@1.32.2
 
 ````text
 MIT License
@@ -2042,7 +2040,7 @@ Copyright (c) 2022 Blakejs contributors
  THE SOFTWARE.
 ````
 
-### body-parser@2.3.0, type-is@2.1.0
+### body-parser@2.4.0, type-is@2.1.0
 
 ````text
 (The MIT License)
@@ -3029,7 +3027,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### fast-uri@3.1.8
+### fast-uri@3.1.9
 
 ````text
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
@@ -4195,7 +4193,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### qs@6.16.0
+### qs@6.17.0
 
 ````text
 BSD 3-Clause License
@@ -5039,7 +5037,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ````
 
-### zod@3.25.76, zod@4.1.5, zod@4.5.4
+### zod@4.6.7
 
 ````text
 MIT License

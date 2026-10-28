@@ -5,9 +5,14 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.19.0)
+## 0.19.0 (2026-10-28)
 
 ### Self-hosting
+
+- Update the pinned Convex backend to the official October 28 build
+  (`cccbade43d6ca1e6023d085011d4b88887fc3224`), which includes Node.js
+  24.22.1 and the CVE-2026-111497 Brotli decoder fix. The deployment job
+  uses the same backend image for its key tool.
 
 - **The dashboard shows when a newer release exists.** Installation
   settings has a **Release** tab, for Installation Admins: the version this
@@ -54,6 +59,12 @@ fixes.
   when asked.
 
 ### Fixes
+
+- Dependency security updates: Better Auth and its passkey plugin 1.7.7,
+  Zod 4.6.7, MCP SDK 1.32.2, and patched transitive body-parser, fast-uri,
+  and qs versions. The documentation build also uses patched Zod and
+  Undici versions. Both dependency audits now run in local `pnpm verify`,
+  with the same moderate-severity threshold as CI.
 
 - Dependency update for a published advisory: `ip-address` 10.7.4
   (GHSA-rxp7-6hxx-x8q5, quadratic-time matching of an IPv6 zone
