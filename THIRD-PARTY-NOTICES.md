@@ -19,7 +19,7 @@ Convex client library and CLI (`convex` on npm) are Apache-2.0.
 | Component | Image | License |
 | --- | --- | --- |
 | Caddy | `caddy:2.10.2` | [Apache-2.0](https://github.com/caddyserver/caddy/blob/master/LICENSE) |
-| Convex backend | `ghcr.io/convex/convex-backend@sha256:1f2044e3eac463ac78973b136c0baf72d4ada602611d853d6f99f280e29e0a98` | [FSL-1.1-Apache-2.0](https://github.com/convex/convex-backend/blob/main/LICENSE.md) |
+| Convex backend | `ghcr.io/convex/convex-backend@sha256:b441769e35f861e6e07f1e7ff7a476e56765fa948d61c1f5356685788d78c47d` | [FSL-1.1-Apache-2.0](https://github.com/convex/convex-backend/blob/main/LICENSE.md) |
 | PostgreSQL | `postgres:17.6` | [PostgreSQL](https://www.postgresql.org/about/licence/) |
 | Tailscale | `tailscale/tailscale:v1.102.3` | [BSD-3-Clause](https://github.com/tailscale/tailscale/blob/main/LICENSE) |
 
