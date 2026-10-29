@@ -26,7 +26,7 @@ export default defineConfig({
       components: { SocialIcons: "./src/components/SocialIcons.astro" },
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
       sidebar: [
-        { label: "Start here", items: ["getting-started", "concepts"] },
+        { label: "Start here", items: ["getting-started", "set-up-with-an-agent", "concepts"] },
         {
           label: "Self-hosting",
           items: [
