@@ -27,12 +27,15 @@ shell, and you can read every step before your agent runs it.
   created your passkey ([Join a project](getting-started.md#join-a-project)).
 - **Node.js** 22, 24 or 26, at least 22.23.4, 24.22.1 or 26.12.1
   ([Node.js version](getting-started.md#nodejs-version)).
+- **[cosign](https://docs.sigstore.dev/cosign/system_config/installation/)**,
+  to check that the CLI was published by Varlatch's release workflow
+  ([Verifying a release](operations/verify-release.md)).
 
 ## What you do, and what your agent does
 
 | Step | Your agent | You |
 |---|---|---|
-| Install the CLI | downloads the release your installation runs and checks it | |
+| Install the CLI | downloads the release your installation runs and checks its signature | |
 | Sign in | starts the sign-in and gives you an address and a code | approve it with your passkey |
 | Connect the repository | runs `varlatch init` | choose the organization and project |
 | Move `.env` files in | shows the names it found, without values, then imports | say which items are not secret, and approve each value Varlatch already has |
@@ -78,16 +81,23 @@ never run `varlatch init` there. Install the CLI (step 2), sign in
 
 If `varlatch --version` already prints the installation's version, skip
 this step. Check `node --version` against the versions under
-[Before you start](#before-you-start); if Node.js is missing or older, stop
-and tell the human: installing Node.js is theirs to decide.
+[Before you start](#before-you-start), and check that `cosign version`
+works. If Node.js or cosign is missing, or Node.js is older, stop and tell
+the human: installing them is theirs to decide.
 
-On Linux and macOS, install the CLI of that version in `~/.local/bin`, and
-check it against `SHA256SUMS` first:
+On Linux and macOS, check the release's signature, then the CLI against
+`SHA256SUMS`, and only then install it in `~/.local/bin`:
 
 ```sh
 V=0.19.0  # serverVersion from step 1
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
-curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
+REPO=varlatch/varlatch
+IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
+ISSUER=https://token.actions.githubusercontent.com
+for f in varlatch-cli-$V.cjs SHA256SUMS SHA256SUMS.sigstore.json; do
+  curl -fLO "https://github.com/$REPO/releases/download/v$V/$f"
+done
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
 sha256sum --ignore-missing -c SHA256SUMS
 mkdir -p ~/.local/bin
 install -m 755 varlatch-cli-$V.cjs ~/.local/bin/varlatch
@@ -96,11 +106,13 @@ varlatch --version
 
 On macOS, check the file with
 `grep " varlatch-cli-$V.cjs\$" SHA256SUMS | shasum -a 256 -c -` instead
-of `sha256sum`. If the check fails, stop and tell the human: do not install
-the file. If `cosign` is installed, also check the signature of
-`SHA256SUMS` first, as [Verifying a release](operations/verify-release.md)
-describes. On Windows, follow [On Windows](getting-started.md#on-windows).
-If `~/.local/bin` is not on the `PATH`, tell the human.
+of `sha256sum`. If the signature or the checksum check fails, or the
+release has no `SHA256SUMS.sigstore.json`, stop and tell the human: do not
+install the file. Releases 0.15.0 and earlier are not signed: for those,
+stop and point the human to
+[Verifying a release](operations/verify-release.md). On Windows, follow
+[On Windows](getting-started.md#on-windows), with the signature check
+first. If `~/.local/bin` is not on the `PATH`, tell the human.
 
 ### 3. Sign in
 
@@ -157,9 +169,16 @@ Create other environments, such as `production`, only when the human asks
 
 ### 5. Move `.env` files in
 
-For each `.env` file in the repository, find out which environment it
-belongs to: ask the human when the name does not make it clear (`.env` is
-usually `development`). Look first:
+List the repository's `.env` files by name only (`ls -a`, never their
+contents). Leave out templates and examples, such as `.env.example`,
+`.env.sample`, and `.env.template`, and the `.env.schema` file: they are
+not configuration, and an import would store their placeholders and delete
+them. Ask the human about any file whose role is unclear. Then agree with
+the human which environment each file belongs to (`.env` is usually
+`development`, `.env.production` is `production`); create a missing
+environment only when they ask (step 4).
+
+For each file, look first:
 
 ```sh
 varlatch --assisted import .env -e development --dry-run --json
@@ -174,32 +193,54 @@ the file once every value is stored. Then:
 
 ```sh
 varlatch --assisted import .env -e development --contract --plain PORT --delete-source --json
-varlatch --assisted contract activate <revision>
 ```
 
 `--plain` names only items the human confirmed; `--replace <NAME>` only
-items they approved. Activate the revision the import printed
-(`contract.revision.id`). A failed import names the items it stored and
-those it did not, never values: fix the cause and run it again.
-
-### 6. Check the environment
+items they approved. If the import's JSON output has a Contract revision
+(`contract.revision.id` is not null), activate it:
 
 ```sh
-varlatch --assisted validate --json
+varlatch --assisted contract activate <revision>
 ```
 
+A file whose items the Contract already has creates no revision: there is
+nothing to activate. A failed import names the items it stored and those it
+did not, never values: fix the cause and run it again.
+
+### 6. Check each environment
+
+See which environment and server the repository uses:
+
+```sh
+varlatch --assisted context --json
+```
+
+Check every environment you imported into, and the one `context` shows,
+each by name, and keep any `--server` the human gave you:
+
+```sh
+varlatch --assisted validate -e development --json
+```
+
+Exit 0 means the environment satisfies the Contract. Exit 1 means it does
+not: the JSON lists items that are missing, and items whose values are
+invalid for their type. Exit 2 means not every item could be checked: it
+lists unresolved references and items not evaluated. Report every problem
+to the human by name.
+
 For each missing value, give the human this command for their own terminal,
-where a hidden prompt asks for the value:
+with the same environment, where a hidden prompt asks for the value:
 
 ```text
 varlatch values set <NAME> -e development
 ```
 
 Never run that command yourself. When the human asks for a new random value
-(a session key, say), generate it instead:
+(a session key, say), generate it instead, in that same environment:
 `varlatch --assisted values set <NAME> -e development --generate hex:32`.
-Start the application only when the human asks:
-`varlatch --assisted run -- <command>`.
+When the human says they entered the values, validate again. Start the
+application only when the human asks:
+`varlatch --assisted run -e development -- <command>`.
 
 ### 7. Finish
 
@@ -207,7 +248,8 @@ Tell the human:
 
 - the installation, organization, project, and environments you used;
 - the items you imported, by name, and which ones are not secret;
-- the items still missing, with the command for each;
+- each environment's validation result, and the items still missing or
+  invalid, with the command for each;
 - the files you wrote: `varlatch.toml`, `.agents/skills/varlatch/`,
   `.claude/skills/varlatch/`, and the block in `AGENTS.md`. They should be
   committed, so everyone on the repository uses the same project. Commit
