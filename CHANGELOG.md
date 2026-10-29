@@ -5,7 +5,17 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.19.1)
+## 0.19.1 (2026-10-29)
+
+### Documentation
+
+- **Set up with a coding agent**
+  ([docs/set-up-with-an-agent.md](docs/set-up-with-an-agent.md)): a page
+  to hand to your coding agent. It installs the CLI of the release your
+  installation runs, after checking its signature and checksum, starts the
+  sign-in for you to approve with your passkey, connects the repository,
+  moves `.env` files in after showing you their names, and checks each
+  environment. Setting up the server stays with you.
 
 ### Fixes
 
@@ -16,6 +26,11 @@ fixes.
   server's dependencies move to the fixed release. The Node.js adapter's
   2.x API is unchanged, and it needs Node.js 20 or later, which Varlatch
   already requires.
+
+### Upgrading
+
+Database schema: unchanged, migration 31. From 0.18.1, read the 0.19.0
+notes below as well.
 
 ## 0.19.0 (2026-10-28)
 
