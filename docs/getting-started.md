@@ -15,6 +15,9 @@ from nothing to `varlatch run`:
 Already invited to an installation? Get the CLI, then go to
 [Join a project](#join-a-project).
 
+Using a coding agent? It can do most of this for you, from installing the
+CLI to moving your `.env` files in: [Set up with a coding agent](set-up-with-an-agent.md).
+
 ## What you need
 
 - **For the installation:** a Linux host, amd64 or arm64, with Docker and
