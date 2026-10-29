@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.19.1)
+
+### Fixes
+
+- Dependency update for a published advisory: `@hono/node-server` 2.1.5
+  (GHSA-rmxm-3fg6-px4f: `serveStatic` decoded the request path twice, so
+  middleware on a static prefix could be skipped). Varlatch never uses
+  `serveStatic`, so no installation was exposed; varlatchd and the MCP
+  server's dependencies move to the fixed release. The Node.js adapter's
+  2.x API is unchanged, and it needs Node.js 20 or later, which Varlatch
+  already requires.
+
 ## 0.19.0 (2026-10-28)
 
 ### Self-hosting
