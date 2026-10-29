@@ -79,7 +79,7 @@ never run `varlatch init` there. Install the CLI (step 2), sign in
 
 ### 2. Install the CLI
 
-If `varlatch --version` already prints the installation's version, skip
+If `varlatch --assisted --version` already prints the installation's version, skip
 this step. Check `node --version` against the versions under
 [Before you start](#before-you-start), and check that `cosign version`
 works. If Node.js or cosign is missing, or Node.js is older, stop and tell
@@ -108,7 +108,7 @@ curl -fLO "$BASE/varlatch-cli-$V.cjs" &&
   fi &&
   mkdir -p ~/.local/bin &&
   install -m 755 "varlatch-cli-$V.cjs" ~/.local/bin/varlatch &&
-  varlatch --version
+  varlatch --assisted --version
 ```
 
 `sha256sum` is on Linux; macOS uses `shasum`. If the block stops, or the
