@@ -86,29 +86,34 @@ works. If Node.js or cosign is missing, or Node.js is older, stop and tell
 the human: installing them is theirs to decide.
 
 On Linux and macOS, check the release's signature, then the CLI against
-`SHA256SUMS`, and only then install it in `~/.local/bin`:
+`SHA256SUMS`, and only then install it in `~/.local/bin`. Run the block as
+it is: each step runs only when the one before it succeeded (`&&`), so a
+failed download or check never reaches `install`.
 
 ```sh
 V=0.19.0  # serverVersion from step 1
 REPO=varlatch/varlatch
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
-for f in varlatch-cli-$V.cjs SHA256SUMS SHA256SUMS.sigstore.json; do
-  curl -fLO "https://github.com/$REPO/releases/download/v$V/$f"
-done
-cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER"
-sha256sum --ignore-missing -c SHA256SUMS
-mkdir -p ~/.local/bin
-install -m 755 varlatch-cli-$V.cjs ~/.local/bin/varlatch
-varlatch --version
+BASE="https://github.com/$REPO/releases/download/v$V"
+curl -fLO "$BASE/varlatch-cli-$V.cjs" &&
+  curl -fLO "$BASE/SHA256SUMS" &&
+  curl -fLO "$BASE/SHA256SUMS.sigstore.json" &&
+  cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+    --certificate-identity "$IDENTITY" --certificate-oidc-issuer "$ISSUER" &&
+  if command -v sha256sum >/dev/null; then
+    sha256sum --ignore-missing -c SHA256SUMS
+  else
+    grep " varlatch-cli-$V.cjs\$" SHA256SUMS | shasum -a 256 -c -
+  fi &&
+  mkdir -p ~/.local/bin &&
+  install -m 755 "varlatch-cli-$V.cjs" ~/.local/bin/varlatch &&
+  varlatch --version
 ```
 
-On macOS, check the file with
-`grep " varlatch-cli-$V.cjs\$" SHA256SUMS | shasum -a 256 -c -` instead
-of `sha256sum`. If the signature or the checksum check fails, or the
-release has no `SHA256SUMS.sigstore.json`, stop and tell the human: do not
-install the file. Releases 0.15.0 and earlier are not signed: for those,
+`sha256sum` is on Linux; macOS uses `shasum`. If the block stops, or the
+release has no `SHA256SUMS.sigstore.json`, tell the human what failed: do
+not install the file another way. Releases 0.15.0 and earlier are not signed: for those,
 stop and point the human to
 [Verifying a release](operations/verify-release.md). On Windows, follow
 [On Windows](getting-started.md#on-windows), with the signature check
@@ -223,10 +228,9 @@ varlatch --assisted validate -e development --json
 ```
 
 Exit 0 means the environment satisfies the Contract. Exit 1 means it does
-not: the JSON lists items that are missing, and items whose values are
-invalid for their type. Exit 2 means not every item could be checked: it
-lists unresolved references and items not evaluated. Report every problem
-to the human by name.
+not, and exit 2 means not every item could be checked. Either way, read all
+four lists in the JSON, `missing`, `invalid`, `unresolved`, and
+`notEvaluated`, and report every entry to the human by name.
 
 For each missing value, give the human this command for their own terminal,
 with the same environment, where a hidden prompt asks for the value:
