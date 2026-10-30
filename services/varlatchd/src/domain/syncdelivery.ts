@@ -86,6 +86,8 @@ interface LedgerRow {
   fingerprint: string | null;
   state: string;
   generation: string | number;
+  /** When a confirmed write, deletion or read-back last proved the name (migration 32). */
+  repaired_at: Date | string | null;
 }
 
 export interface SyncRunOptions {
@@ -93,6 +95,8 @@ export interface SyncRunOptions {
   repairIntervalMs?: number | undefined;
   /** Which adapters this Installation allows (VARLATCH_SYNC_ADAPTERS). */
   allowedAdapters?: string[] | undefined;
+  /** A run's budget in seconds; tests shorten it (default RUN_BUDGET_SECONDS). */
+  runBudgetSeconds?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,14 +223,18 @@ export async function reconcileTarget(
      ), run AS (
        INSERT INTO sync_runs (target_id, generation, deadline)
        SELECT id, generation, now() + ($3 * interval '1 second') FROM lease
+       RETURNING deadline
      )
-     SELECT * FROM lease`,
-    [targetId, LEASE_TTL_SECONDS, RUN_BUDGET_SECONDS],
+     SELECT lease.*, run.deadline AS run_deadline FROM lease, run`,
+    [targetId, LEASE_TTL_SECONDS, opts.runBudgetSeconds ?? RUN_BUDGET_SECONDS],
   );
   const leaseRow = lease.rows[0] as Record<string, unknown> | undefined;
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  // Kept in memory: the row may be cleaned by another process's tick before
+  // this run classifies how it ended.
+  const runDeadline = leaseRow.run_deadline as Date | string;
   // The notes of a completed inspection, kept for a run that throws later.
   const inspected: { notes?: TargetNote[] } = {};
 
@@ -263,9 +271,24 @@ export async function reconcileTarget(
       Date.now() - new Date(target.last_repair_at).getTime() >=
         (opts.repairIntervalMs ?? REPAIR_INTERVAL_MS);
 
+    // A forced run works within a repair cycle (ADR-0050 Decision 4): opened
+    // by the first forced run, it lets later runs skip names already
+    // repaired since it opened, so a repair larger than one run's budget
+    // completes over several runs instead of starting over each time.
+    let cycleStart: Date | null = null;
+    if (force) {
+      const cycle = await ctx.db.query(
+        `UPDATE sync_targets SET repair_cycle_started_at = COALESCE(repair_cycle_started_at, now())
+         WHERE id = $1 AND generation = $2 RETURNING repair_cycle_started_at`,
+        [target.id, generation],
+      );
+      const started = (cycle.rows[0] as { repair_cycle_started_at: Date | string } | undefined)?.repair_cycle_started_at;
+      cycleStart = started ? new Date(started) : null;
+    }
+
     let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
     try {
-      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected);
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected, cycleStart);
     } finally {
       // Whatever the outcome, even a throw (a refused public-key fetch), the
       // platform may have said when the credential expires; recorded only if
@@ -287,11 +310,14 @@ export async function reconcileTarget(
       let fenced = true;
       let outOfBudget = false;
       try {
+        // The deadline from the run's row while it exists, else the one this
+        // run was given: another process's tick may have removed the row.
         const res = await ctx.db.query(
-          `SELECT t.generation, (r.deadline IS NOT NULL AND r.deadline <= now()) AS expired
-           FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2
-           WHERE t.id = $1`,
-          [target.id, generation],
+          `SELECT t.generation,
+                  COALESCE((SELECT r.deadline FROM sync_runs r WHERE r.target_id = t.id AND r.generation = $3), $2::timestamptz) <= now()
+                    AS expired
+           FROM sync_targets t WHERE t.id = $1`,
+          [target.id, runDeadline, generation],
         );
         const row = res.rows[0] as { generation: string | number; expired: boolean } | undefined;
         fenced = row !== undefined && Number(row.generation) !== generation;
@@ -319,7 +345,7 @@ export async function reconcileTarget(
       await ctx.db.query(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
-             ${force ? ", last_repair_at = now()" : ""}
+             ${force ? ", last_repair_at = COALESCE(repair_cycle_started_at, now()), repair_cycle_started_at = NULL" : ""}
              ${outcome.notes !== undefined ? ", last_notes = $4" : ""}
          WHERE id = $1 AND generation = $3`,
         outcome.notes !== undefined
@@ -379,6 +405,7 @@ async function reconcileUnderLease(
   force: boolean,
   opts: SyncRunOptions,
   inspected: { notes?: TargetNote[] } = {},
+  cycleStart: Date | null = null,
 ): Promise<RunOutcome> {
   const adapter = getAdapter(live.platform);
   const org = {
@@ -419,7 +446,7 @@ async function reconcileUnderLease(
 
   // Ledger read; invalidate names a lapsed run had begun writing (§4).
   const ledgerRes = await ctx.db.query(
-    "SELECT dest_name, fingerprint, state, generation FROM sync_ledger WHERE target_id = $1",
+    "SELECT dest_name, fingerprint, state, generation, repaired_at FROM sync_ledger WHERE target_id = $1",
     [target.id],
   );
   const ledger = new Map(
@@ -430,6 +457,12 @@ async function reconcileUnderLease(
       .filter((r) => r.state.startsWith("intent-") && Number(r.generation) < generation)
       .map((r) => r.dest_name),
   );
+  // Repaired since the open cycle began: a forced run leaves these alone
+  // unless ordinary reconciliation needs them (ADR-0050 Decision 4).
+  const credited = (name: string): boolean => {
+    const at = ledger.get(name)?.repaired_at;
+    return cycleStart !== null && at !== null && at !== undefined && new Date(at) >= cycleStart && !ambiguous.has(name);
+  };
 
   const fpKey = syncFingerprintKey(orgKekOf(ctx, org), target.id);
   const desired = new Map<string, { value: string; fingerprint: string; versionId: string }>();
@@ -520,11 +553,16 @@ async function reconcileUnderLease(
   // crashed run (intent never confirmed) or an out-of-band write would
   // leave the name unowned and later removal would miss it.
   const adoptions: { destName: string; fingerprint: string }[] = [];
+  // Names a read-back proved current: they earn repair credit without a write.
+  const verified: string[] = [];
   for (const [destName, want] of desired) {
     const entry = ledger.get(destName);
     const converged =
       entry && entry.state === "written" && entry.fingerprint === want.fingerprint;
-    const needsWrite = force
+    // Ordinary work first: a credited name is skipped only when nothing
+    // changed for it since its repair.
+    const repaired = force && converged && credited(destName);
+    const needsWrite = force && !repaired
       ? remote
         ? remote.get(destName) !== want.value || rewrite.has(destName)
         : true
@@ -532,6 +570,8 @@ async function reconcileUnderLease(
     if (needsWrite) writes.push({ destName, ...want });
     else if (force && remote && !converged) {
       adoptions.push({ destName, fingerprint: want.fingerprint });
+    } else if (force && remote && !repaired) {
+      verified.push(destName);
     }
   }
 
@@ -544,7 +584,7 @@ async function reconcileUnderLease(
       // Re-apply tombstoned deletions on repair or when a stale write may
       // have resurrected the name (§3/§6), unless the platform may
       // re-create it (above).
-      if (force && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
+      if (force && !credited(destName) && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
@@ -567,6 +607,7 @@ async function reconcileUnderLease(
       return LEASE_LOST;
     }
   }
+  if (verified.length > 0 && !(await creditVerified(ctx, target.id, generation, verified))) return LEASE_LOST;
 
   if (writes.length === 0 && deletes.length === 0) {
     return {
@@ -989,11 +1030,28 @@ export async function ledgerSet(
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await db.query(
-      `INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error)
-       VALUES ($1, $2, $4, $5, $3, $6)
+      // A confirmed write or deletion earns repair credit; an intent or a
+      // failure clears it (ADR-0050 Decision 4).
+      `INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error, repaired_at)
+       VALUES ($1, $2, $4, $5, $3, $6, CASE WHEN $5 IN ('written', 'tombstone') THEN now() END)
        ON CONFLICT (target_id, dest_name) DO UPDATE
-         SET fingerprint = $4, state = $5, generation = $3, last_error = $6, updated_at = now()`,
+         SET fingerprint = $4, state = $5, generation = $3, last_error = $6, updated_at = now(),
+             repaired_at = CASE WHEN $5 IN ('written', 'tombstone') THEN now() END`,
       [targetId, destName, generation, fp, state, lastError],
+    );
+    return true;
+  });
+}
+
+/** Repair credit for names a read-back proved current, under the same generation guard as ledgerSet. */
+async function creditVerified(ctx: AppCtx, targetId: string, generation: number, names: string[]): Promise<boolean> {
+  return withTx(ctx.db, async (db) => {
+    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
+    const current = res.rows[0] as { generation: string | number } | undefined;
+    if (!current || Number(current.generation) !== generation) return false;
+    await db.query(
+      "UPDATE sync_ledger SET repaired_at = now() WHERE target_id = $1 AND dest_name = ANY($2) AND state = 'written'",
+      [targetId, names],
     );
     return true;
   });

@@ -558,7 +558,7 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
     );
     await db.query(
       `UPDATE sync_targets
-       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL,
+       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
            version = version + 1, updated_at = now()
        WHERE id = ANY($1::text[])`,
       [targets.map((t) => t.id)],
@@ -728,7 +728,7 @@ export async function revokeConnection(
     // They keep their destination claims: paused, not gone.
     const disabled = await db.query(
       `UPDATE sync_targets
-       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL,
+       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
            version = version + 1, updated_at = now()
        WHERE connection_id = $1 AND revoked_at IS NULL RETURNING id`,
       [connectionId],
@@ -1201,7 +1201,7 @@ export async function updateTarget(
       // late remote writes to the abandoned destination are exactly the
       // abandoned-copy case the destination-change review discloses.
       await db.query(
-        "UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL WHERE id = $1",
+        "UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL WHERE id = $1",
         [current.id],
       );
     }
@@ -1251,7 +1251,7 @@ export async function setTargetState(
       // fences a run in progress (ADR-0050 Decision 1).
       res = await db.query(
         `UPDATE sync_targets
-         SET revoked_at = now(), generation = generation + 1, lease_expires_at = NULL,
+         SET revoked_at = now(), generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
              version = version + 1, updated_at = now()
          WHERE id = $1 RETURNING ${TARGET_COLUMNS}`,
         [targetId],
@@ -1268,7 +1268,7 @@ export async function setTargetState(
       // check and records nothing more (ADR-0050 Decisions 1 and 2).
       res = await db.query(
         `UPDATE sync_targets
-         SET state = 'paused', generation = generation + 1, lease_expires_at = NULL,
+         SET state = 'paused', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
              version = version + 1, updated_at = now()
          WHERE id = $1 RETURNING ${TARGET_COLUMNS}`,
         [targetId],

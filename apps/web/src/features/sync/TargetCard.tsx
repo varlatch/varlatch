@@ -155,7 +155,10 @@ export function TargetCard({
       onChanged();
       if (action === "pause" && pauseWaits) {
         const paused = result as SyncTarget | undefined;
-        if (paused?.drained === false) {
+        if (paused && paused.state !== "paused") {
+          // Resumed (or stopped) by someone else while the pause waited.
+          toast.info("No longer paused", { description: `${dest.primary}: the integration changed while the pause waited.` });
+        } else if (paused?.drained === false) {
           toast.info("Pausing", { description: `A push to ${dest.primary} is still finishing; this card shows when it has stopped.` });
         } else {
           // Requests a run had already sent may still land on the platform.

@@ -9,6 +9,7 @@ import { EmptyState, Skeleton, TierDot } from "../../components/ui";
 import { connectionsKey } from "../sync/keys";
 import { TargetCard } from "../sync/TargetCard";
 import { keys, useProjectContext } from "./hooks";
+import { refetchWhileRunning } from "../sync/status";
 
 /**
  * Project Integrations: every sync target of the project, grouped by
@@ -20,7 +21,11 @@ export function ProjectIntegrations() {
   const { api } = useSession();
   const qc = useQueryClient();
   useOrgRealtime(org, ["sync"], [keys.orgSyncTargets(org), connectionsKey(org)]);
-  const targets = useQuery({ queryKey: keys.orgSyncTargets(org), queryFn: () => api.listOrgSyncTargets(org) });
+  const targets = useQuery({
+    queryKey: keys.orgSyncTargets(org),
+    queryFn: () => api.listOrgSyncTargets(org),
+    refetchInterval: (query) => refetchWhileRunning(query.state.data),
+  });
   const connections = useQuery({ queryKey: connectionsKey(org), queryFn: () => api.listPlatformConnections(org) });
   const byConnection = new Map((connections.data?.items ?? []).map((c) => [c.id, c]));
   const mine = (targets.data?.items ?? []).filter((t) => t.projectId === project.id);

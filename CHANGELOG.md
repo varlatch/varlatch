@@ -20,7 +20,10 @@ fixes.
 - **The dashboard shows when a push is running, and when a pause has
   taken hold.** Every push now has a deadline (240 seconds) after which it
   starts no further request; a push that reaches it stops and continues on
-  the next pass, without counting as a failure. An integration reads
+  the next pass, without counting as a failure. A repair larger than one
+  push's budget (for example a large first sync to GitHub, which cannot
+  read values back) now resumes where it stopped instead of starting over,
+  and a value changed meanwhile is still pushed. An integration reads
   "Pushing" while a push can still send, and "Pausing" after a pause until
   the push in progress can start no other request. The pause button waits
   for that (up to 30 seconds). Revoking a Connection or removing a GitHub
@@ -65,7 +68,8 @@ fixes.
 ### Upgrading
 
 Database schema: migration 32 adds `sync_runs`, one row per push in
-progress.
+progress, and the repair-cycle columns `sync_targets.repair_cycle_started_at`
+and `sync_ledger.repaired_at`.
 
 ## 0.19.1 (2026-10-29)
 

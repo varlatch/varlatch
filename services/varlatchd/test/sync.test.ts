@@ -845,6 +845,89 @@ describe("convergence", () => {
     expect(coolify.values().get("PORT")).toBe("8080");
   });
 
+  it("a run whose expired row was already cleaned up still yields, not fails", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        if (writesSent === 1) {
+          // The budget runs out, and another process's tick removes the row
+          // before this run classifies how it ended.
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          await ctx.db.query("DELETE FROM sync_runs WHERE deadline <= now()");
+        }
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl, runBudgetSeconds: 0.3 });
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(0);
+    expect(row.needs_sync).toBe(true);
+    expect(row.next_attempt_at).toBeNull();
+  });
+
+  it("a forced repair larger than one budget completes over several runs (ADR-0050 repair cycles)", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget(); // first sync is forced: no repair yet
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    const written: string[] = [];
+    let cutAfterFirst = true;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        written.push(String((JSON.parse(String(init?.body)) as { key: string }).key));
+        if (cutAfterFirst) {
+          cutAfterFirst = false;
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(written).toHaveLength(1);
+    let row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).not.toBeNull();
+    expect(row.last_repair_at).toBeNull();
+    expect(row.failure_count).toBe(0);
+
+    // The continuation writes only what the first run did not, and closes the cycle.
+    await runSyncOnce(ctx, { fetchImpl });
+    expect(written).toHaveLength(2);
+    expect(new Set(written).size).toBe(2);
+    row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
+    expect(row.last_result).toBe("ok");
+  });
+
+  it("a value changed during an open repair cycle is still pushed by the next run", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let cut = true;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (cut && String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        cut = false;
+        await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    // Both names change while the cycle is open; the credited one too.
+    await put(`${ENV_PATH}/values/PORT`, { value: "9090" });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.values().get("PORT")).toBe("9090");
+    expect((await targetRowFromDb()).repair_cycle_started_at).toBeNull();
+  });
+
   it("counts a run as live until its deadline, and the sync loop removes expired rows", async () => {
     await activeTarget();
     const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;

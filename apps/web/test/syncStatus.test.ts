@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
 import {
+  refetchWhileRunning,
   connectionHealth,
   isCredentialError,
   mappingSummary,
@@ -86,6 +87,12 @@ describe("targetStatus", () => {
     expect(targetStatus(target({ state: "paused", drained: true }))).toMatchObject({ label: "Paused", fix: "resume" });
     // An older server says nothing about runs: paused reads as paused.
     expect(targetStatus(target({ state: "paused" }))).toMatchObject({ label: "Paused" });
+  });
+
+  it("keeps refreshing a list while one of its Targets can still send", () => {
+    expect(refetchWhileRunning({ items: [target({ drained: true }), target({ drained: false })] })).toBe(2000);
+    expect(refetchWhileRunning({ items: [target({ drained: true }), target({})] })).toBe(false);
+    expect(refetchWhileRunning(undefined)).toBe(false);
   });
 
   it("asks for re-affirmation when a mapped item became a secret", () => {
