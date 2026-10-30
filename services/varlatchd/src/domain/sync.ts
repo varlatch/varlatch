@@ -1245,15 +1245,29 @@ export async function setTargetState(
     let res;
     if (transition === "revoke") {
       // Revocation is the only thing (besides a destination change) that
-      // releases a destination claim for a new Target.
+      // releases a destination claim for a new Target. Like a pause, it
+      // fences a run in progress (ADR-0050 Decision 1).
       res = await db.query(
-        `UPDATE sync_targets SET revoked_at = now(), version = version + 1, updated_at = now()
+        `UPDATE sync_targets
+         SET revoked_at = now(), generation = generation + 1, lease_expires_at = NULL,
+             version = version + 1, updated_at = now()
          WHERE id = $1 RETURNING ${TARGET_COLUMNS}`,
         [targetId],
       );
     } else if (transition === "pause") {
+      // A disabled Target is already stopped; pausing it would let a resume
+      // skip the re-point a revoked Connection requires (ADR-0050 Decision 7).
+      if (current.state === "disabled") {
+        throw new DomainError("VALIDATION_FAILED", "This Target is already stopped (disabled); resume or re-point it instead of pausing");
+      }
+      // Pausing a paused Target changes nothing: no second fence, no event.
+      if (current.state === "paused") return current;
+      // The fence: a run holding the old generation passes no further send
+      // check and records nothing more (ADR-0050 Decisions 1 and 2).
       res = await db.query(
-        `UPDATE sync_targets SET state = 'paused', version = version + 1, updated_at = now()
+        `UPDATE sync_targets
+         SET state = 'paused', generation = generation + 1, lease_expires_at = NULL,
+             version = version + 1, updated_at = now()
          WHERE id = $1 RETURNING ${TARGET_COLUMNS}`,
         [targetId],
       );
