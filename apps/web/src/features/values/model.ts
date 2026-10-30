@@ -111,42 +111,20 @@ export function buildChanges(drafts: Map<string, Draft>, reviewed: Map<string, S
 
 /**
  * The `.env` paste format accepted as draft input: KEY=value lines, comments
- * and blank lines ignored, one level of matching quotes stripped. A
- * single-quoted value may span lines, as the export writes one. Anything
+ * and blank lines ignored, one level of matching quotes stripped. Anything
  * else makes the whole paste ambiguous: no silent partial import.
  */
 export function parseDotenv(text: string): { name: string; value: string }[] | null {
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith("#"));
   const parsed: { name: string; value: string }[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = (lines[i] as string).trimStart();
-    if (!line.trim() || line.startsWith("#")) continue;
-    const match = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/s.exec(line);
+  for (const line of lines) {
+    const match = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/.exec(line.trim());
     if (!match) return null;
     let value = match[2] as string;
-    if (value.startsWith("'") && !value.includes("'", 1)) {
-      // The lines up to the closing quote, kept exactly.
-      const parts = [value.slice(1)];
-      for (;;) {
-        if (++i >= lines.length) return null;
-        const next = lines[i] as string;
-        const close = next.indexOf("'");
-        if (close === -1) {
-          parts.push(next);
-          continue;
-        }
-        if (next.slice(close + 1).trim()) return null;
-        parts.push(next.slice(0, close));
-        break;
-      }
-      value = parts.join("\n");
-    } else {
-      value = value.trimEnd();
-      if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-        const quote = value[0];
-        value = value.slice(1, -1);
-        if (quote === '"') value = value.replace(/\\(n|"|\\)/g, (_, c: string) => (c === "n" ? "\n" : c));
-      }
+    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+      const quote = value[0];
+      value = value.slice(1, -1);
+      if (quote === '"') value = value.replace(/\\(n|"|\\)/g, (_, c: string) => (c === "n" ? "\n" : c));
     }
     parsed.push({ name: match[1] as string, value });
   }
@@ -155,18 +133,21 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
 
 /**
  * One `.env` line that every common loader reads back as exactly this value
- * and never expands or runs: shells (`set -a; . ./.env`), dotenv with or
- * without dotenv-expand, python-dotenv and Docker Compose. The value goes
- * unquoted when only inert characters are in it, in single quotes otherwise
- * (line breaks included). Some values have no such form: dotenv-expand and
- * python-dotenv expand `$` even in single quotes (recent dotenv-expand also
- * runs `$(…)`), python-dotenv and Compose read backslash escapes there, and
- * loaders disagree on carriage returns and other control characters. For
- * those it returns null, and the value is not written (ADR-0038).
+ * and never expands or runs: shells (sh, bash and zsh with `set -a; .
+ * ./.env`), dotenv (any version) with or without dotenv-expand,
+ * python-dotenv and Docker Compose. The value goes unquoted when only inert
+ * characters are in it (no `=`, which zsh expands at the start or after a
+ * `:`), in single quotes otherwise. Some values have no such form:
+ * dotenv-expand and python-dotenv expand `$` even in single quotes (recent
+ * dotenv-expand also runs `$(…)`), python-dotenv and Compose read backslash
+ * escapes there, dotenv before 15 ends a value at a line break and reads the
+ * next line as a new variable, and loaders disagree on carriage returns and
+ * other control characters. For those it returns null, and the value is not
+ * written (ADR-0038).
  */
 export function dotenvLine(name: string, value: string): string | null {
-  if (/^[A-Za-z0-9_./:@,+%=?-]*$/.test(value)) return `${name}=${value}`;
-  if (/[$'\x00-\x08\x0b-\x1f\x7f\u0085\u2028\u2029]|\\\\|\\$/.test(value)) return null;
+  if (/^[A-Za-z0-9_./:@,+%?-]*$/.test(value)) return `${name}=${value}`;
+  if (/[$'\x00-\x08\x0a-\x1f\x7f\u0085\u2028\u2029]|\\\\|\\$/.test(value)) return null;
   return `${name}='${value}'`;
 }
 

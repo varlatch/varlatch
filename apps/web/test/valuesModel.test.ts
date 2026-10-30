@@ -118,25 +118,20 @@ describe(".env", () => {
   it("refuses ambiguous input as a whole", () => {
     expect(parseDotenv("A=1\nnot a line")).toBeNull();
     expect(parseDotenv("lower=1")).toBeNull();
-    expect(parseDotenv("A='never closed\nB=2")).toBeNull();
-    expect(parseDotenv("A='two\nlines' trailing")).toBeNull();
-  });
-  it("reads a single-quoted value across lines, exactly", () => {
-    expect(parseDotenv("A='one \n\n  # two\nB=3'\nC=4")).toEqual([
-      { name: "A", value: "one \n\n  # two\nB=3" },
-      { name: "C", value: "4" },
-    ]);
   });
 
-  // Every value written loads back exactly in shells, dotenv, dotenv-expand,
-  // python-dotenv and Docker Compose; values without such a form are not written.
+  // Every value written loads back exactly in shells, dotenv (any version),
+  // dotenv-expand, python-dotenv and Docker Compose; values without such a
+  // form are not written.
   const writable = [
     "8080",
     "https://x.example/a?b=c",
     "https://x.example/a?b=c&d=e",
+    "a:b@c,d+e%f?g",
     "two words",
     "`id`",
     'say "hi"',
+    '{"k":"-----BEGIN\\nabc\\n-----END"}',
     "C:\\path\\to",
     "a\\nb",
     "a\\ b",
@@ -145,12 +140,10 @@ describe(".env", () => {
     " padded ",
     "tab\there",
     "héllo ✓",
-    "-----BEGIN X-----\nabc\n-----END X-----",
-    '{"k":"-----BEGIN\\nabc\\n-----END"}',
-    "\nlead",
-    "trail\n",
-    "a\n\nb",
-    "OTHER=1\nB=2",
+    "a=b",
+    "abc==",
+    "=sh",
+    "foo:=sh",
     "",
   ];
   const unwritable = [
@@ -161,6 +154,8 @@ describe(".env", () => {
     "it's",
     "ends\\",
     "\\\\server\\share",
+    "line1\nline2",
+    "trailing\n",
     "a\rb",
     "esc\u001bx",
     "nul\u0000x",
@@ -169,9 +164,11 @@ describe(".env", () => {
 
   it("quotes only when needed and round-trips", () => {
     expect(dotenvLine("PORT", "8080")).toBe("PORT=8080");
-    expect(dotenvLine("URL", "https://x.example/a?b=c")).toBe("URL=https://x.example/a?b=c");
+    expect(dotenvLine("URL", "https://x.example/a/b")).toBe("URL=https://x.example/a/b");
     expect(dotenvLine("URL", "https://x.example/a?b=c&d=e")).toBe("URL='https://x.example/a?b=c&d=e'");
-    expect(dotenvLine("KEY", "a\nb")).toBe("KEY='a\nb'");
+    // zsh expands an unquoted `=` at the start of a value or after a `:`.
+    expect(dotenvLine("CMD", "=sh")).toBe("CMD='=sh'");
+    expect(dotenvLine("CMD", "foo:=sh")).toBe("CMD='foo:=sh'");
     for (const value of writable) {
       expect(parseDotenv(dotenvLine("MSG", value) as string)).toEqual([{ name: "MSG", value }]);
     }

@@ -15,13 +15,15 @@ fixes.
   loading the file with a shell or a variable-expanding loader could expand
   `$NAME` or run part of a value. No single `.env` form is read the same
   way by every common loader: dotenv-expand and python-dotenv expand `$`
-  even inside single quotes, and dotenv-expand 1000 also runs `$(…)`.
-  Values are now unquoted or single-quoted (line breaks included). With
-  that format, shells, dotenv, dotenv-expand, python-dotenv and Docker
-  Compose all read every written value exactly. A value containing `$`, a
-  single quote, a backslash pair, a trailing backslash or a control
+  even inside single quotes, dotenv-expand 1000 also runs `$(…)`, and
+  dotenv before 15 reads a line break inside a value as the start of a new
+  variable. Values are now unquoted or single-quoted. In that form, shells
+  (sh, bash, zsh), dotenv, dotenv-expand, python-dotenv and Docker Compose
+  read every written value exactly. A value containing `$`, a single quote,
+  a line break, a backslash pair, a trailing backslash or a control
   character is left out of the file, with a comment in its place. The
-  dialog names these values before and after the download. Pasting a
+  dialog names these values: plain values before the download, and secrets
+  after it, since their values are only known once disclosed. Pasting a
   downloaded file into the dashboard, or `varlatch import`, reads the same
   values back.
 

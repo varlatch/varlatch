@@ -94,7 +94,7 @@ export function ImportDialog({
 }
 
 const NOT_WRITTEN_REASON =
-  "Their values contain characters ($, a single quote, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
+  "Their values contain characters ($, a single quote, a line break, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv, older dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
 
 export function ExportDialog({
   org,
@@ -215,7 +215,8 @@ export function ExportDialog({
         {includeSecrets && !notWritten && (
           <Callout tone="warn" icon={<ShieldAlert size={15} />} title="This is an audited disclosure">
             The secret values are revealed to this browser and written into the file. The disclosure is recorded in the
-            audit log; deleting the file does not undo it.
+            audit log; deleting the file does not undo it. A secret that no .env line carries safely is still revealed,
+            but left out of the file; the dialog names it after the download.
           </Callout>
         )}
         {shownError && <p className="text-deny">{shownError}</p>}
