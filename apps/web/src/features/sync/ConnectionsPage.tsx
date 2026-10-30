@@ -20,7 +20,7 @@ import { CredentialHint } from "./CredentialHint";
 import { GitHubAppPanel } from "./GitHubApp";
 import { credentialExpiry, expiryText, expiryTone } from "./credentialExpiry";
 import { platformMeta } from "./platform-meta";
-import { connectionHealth, targetDestination } from "./status";
+import { connectionHealth, refetchWhileRunning, targetDestination } from "./status";
 import { PlatformTile } from "./TargetCard";
 import { useOrgEnvironments, type EnvironmentRef } from "./useOrgEnvironments";
 
@@ -40,7 +40,11 @@ export function ConnectionsPage() {
   const syncEnabled = (meta.data?.capabilities ?? []).includes("sync.targets");
   const adapters = (meta.data?.syncAdapters ?? []) as SyncPlatform[];
   const connections = useQuery({ queryKey: connectionsKey(org), queryFn: () => api.listPlatformConnections(org) });
-  const targets = useQuery({ queryKey: keys.orgSyncTargets(org), queryFn: () => api.listOrgSyncTargets(org) });
+  const targets = useQuery({
+    queryKey: keys.orgSyncTargets(org),
+    queryFn: () => api.listOrgSyncTargets(org),
+    refetchInterval: (query) => refetchWhileRunning(query.state.data),
+  });
   const envs = useOrgEnvironments(org);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: connectionsKey(org) });

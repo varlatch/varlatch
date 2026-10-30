@@ -8,7 +8,7 @@ import {
   ensureInstallation,
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
-import { ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
+import { SEND_CHECK_SQL, ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
 import { mappingWidens, recordCredentialExpiry } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -799,6 +799,181 @@ describe("convergence", () => {
     expect((await targetRowFromDb()).state).toBe("disabled");
   });
 
+  it("registers each run with a deadline and removes it when the run ends (ADR-0050)", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let live = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const rows = await ctx.db.query("SELECT 1 FROM sync_runs WHERE target_id = $1 AND deadline > now()", [id]);
+      live = Math.max(live, rows.rows.length);
+      return coolify.fetchImpl(url as string, init);
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(live).toBe(1);
+    expect((await ctx.db.query("SELECT 1 FROM sync_runs")).rows).toHaveLength(0);
+    const listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0]).toMatchObject({ drained: true, runStartedAt: null });
+  });
+
+  it("a run past its deadline sends no further request and yields without counting a failure", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget(); // two items -> two writes
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        // The budget runs out between the two writes (database clock).
+        if (writesSent === 1) await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(writesSent).toBe(1);
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(0);
+    expect(row.needs_sync).toBe(true);
+    expect(row.state).toBe("active");
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.push_result'")).rows).toHaveLength(0);
+
+    // The follow-up run finishes the work.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+    expect(coolify.values().get("PORT")).toBe("8080");
+  });
+
+  it("a run whose expired row was already cleaned up still yields, not fails", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        if (writesSent === 1) {
+          // The budget runs out, and another process's tick removes the row
+          // before this run classifies how it ended.
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          await ctx.db.query("DELETE FROM sync_runs WHERE deadline <= now()");
+        }
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl, runBudgetSeconds: 0.3 });
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(0);
+    expect(row.needs_sync).toBe(true);
+    expect(row.next_attempt_at).toBeNull();
+  });
+
+  it("a forced repair larger than one budget completes over several runs (ADR-0050 repair cycles)", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget(); // first sync is forced: no repair yet
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    const written: string[] = [];
+    let cutAfterFirst = true;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        written.push(String((JSON.parse(String(init?.body)) as { key: string }).key));
+        if (cutAfterFirst) {
+          cutAfterFirst = false;
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(written).toHaveLength(1);
+    let row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).not.toBeNull();
+    expect(row.last_repair_at).toBeNull();
+    expect(row.failure_count).toBe(0);
+
+    // The continuation writes only what the first run did not, and closes the cycle.
+    await runSyncOnce(ctx, { fetchImpl });
+    expect(written).toHaveLength(2);
+    expect(new Set(written).size).toBe(2);
+    row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
+    expect(row.last_result).toBe("ok");
+  });
+
+  it("a value changed during an open repair cycle is still pushed by the next run", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let cut = true;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (cut && String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        cut = false;
+        await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    // Both names change while the cycle is open; the credited one too.
+    await put(`${ENV_PATH}/values/PORT`, { value: "9090" });
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect(coolify.values().get("PORT")).toBe("9090");
+    expect((await targetRowFromDb()).repair_cycle_started_at).toBeNull();
+  });
+
+  it("counts a run as live until its deadline, and the sync loop removes expired rows", async () => {
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    await ctx.db.query(
+      "INSERT INTO sync_runs (target_id, generation, deadline) VALUES ($1, 999, now() + interval '1 hour')",
+      [id],
+    );
+    let listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0].drained).toBe(false);
+    expect(listed.items[0].runStartedAt).not.toBeNull();
+    // A process that died mid-run: its row stops counting at its deadline.
+    await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+    listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0]).toMatchObject({ drained: true, runStartedAt: null });
+    await runSyncOnce(ctx, { fetchImpl: fakeCoolify().fetchImpl });
+    expect((await ctx.db.query("SELECT 1 FROM sync_runs")).rows).toHaveLength(0);
+  });
+
+  it("pause?wait=true answers once the Target is drained", async () => {
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    await ctx.db.query(
+      "INSERT INTO sync_runs (target_id, generation, deadline) VALUES ($1, 999, now() + interval '700 milliseconds')",
+      [id],
+    );
+    const started = Date.now();
+    const res = await post(`${ENV_PATH}/sync-targets/${id}/pause?wait=true`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ state: "paused", drained: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    // Asked again, with nothing running: at once, and still paused.
+    const again = await post(`${ENV_PATH}/sync-targets/${id}/pause?wait=true`, {});
+    expect(await again.json()).toMatchObject({ state: "paused", drained: true });
+  });
+
+  it("revoking a Connection fences the runs of the Targets it disables", async () => {
+    await activeTarget();
+    const target = (await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0];
+    const before = Number((await targetRowFromDb()).generation);
+    expect((await del(`/v1/organizations/acme/platform-connections/${target.connectionId}`)).status).toBe(204);
+    const row = await targetRowFromDb();
+    expect(row.state).toBe("disabled");
+    expect(Number(row.generation)).toBe(before + 1);
+    expect(row.lease_expires_at).toBeNull();
+  });
+
   it("redeploy fires only on pushes that changed ledger content", async () => {
     const coolify = fakeCoolify();
     await activeTarget({ redeploy: true });
@@ -872,7 +1047,7 @@ describe("convergence", () => {
       ...ctx,
       db: {
         query: (text: string, params?: unknown[]) =>
-          flaky && text === "SELECT generation FROM sync_targets WHERE id = $1"
+          flaky && text === SEND_CHECK_SQL
             ? Promise.reject(new Error("db hiccup"))
             : ctx.db.query(text, params),
       },
@@ -1937,7 +2112,7 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     await appTarget();
     // The send-time fence probe fails: the write is not sent, and the run ends
     // as interrupted, at its own generation.
-    const restore = failQuery("SELECT generation FROM sync_targets WHERE id = $1");
+    const restore = failQuery(SEND_CHECK_SQL);
     try {
       await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     } finally {
@@ -1981,5 +2156,92 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     expect(notes[49]).toEqual({ code: "held-more", count: 11 });
     const few = boundNotes([{ code: "shadowed", name: "S" }, { code: "held", name: "H", reason: "r", fix: "platform-expands" }]);
     expect(few).toEqual([{ code: "held", name: "H", reason: "r", fix: "platform-expands" }, { code: "shadowed", name: "S" }]);
+  });
+});
+
+describe("repair cycles (ADR-0050 Decision 4)", () => {
+  /** GitHub Actions: no read-back, so a forced repair writes and deletes everything. */
+  function fakeGitHub() {
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const sent: { method: string; name: string }[] = [];
+    let cutOn: string | null = null;
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/users/acme")) return json({ login: "acme", type: "Organization" });
+      if (url.endsWith("/public-key")) return json({ key_id: "k1", key });
+      if (method === "PUT" || method === "DELETE") {
+        sent.push({ method, name: decodeURIComponent(url.split("/").pop() ?? "") });
+        if (cutOn === method) {
+          // The run's budget runs out right after this request.
+          cutOn = null;
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+        return new Response(null, { status: 204 });
+      }
+      return json({ message: "Not Found" }, 404);
+    }) as typeof fetch;
+    return { fetchImpl, sent, cutAfterNext: (method: "PUT" | "DELETE") => (cutOn = method) };
+  }
+  const githubTarget = async () => {
+    const connection = await (await createConnection({ platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_x" })).json();
+    expect((await createTarget(connection.id, { destination: { repo: "api" } })).status).toBe(201);
+    return ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+  };
+
+  it("a forced first sync to GitHub larger than one budget finishes over several runs, writing each name once", async () => {
+    const github = fakeGitHub();
+    const id = await githubTarget();
+    github.cutAfterNext("PUT");
+    await reconcileTarget(ctx, id, { fetchImpl: github.fetchImpl });
+    expect(github.sent).toHaveLength(1);
+    expect((await targetRowFromDb()).repair_cycle_started_at).not.toBeNull();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const puts = github.sent.filter((s) => s.method === "PUT").map((s) => s.name);
+    expect(puts.sort()).toEqual(["DATABASE_URL", "PORT"]);
+    const row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
+    expect(row.failure_count).toBe(0);
+  });
+
+  it("re-deleting many tombstones also resumes instead of starting over", async () => {
+    const github = fakeGitHub();
+    const id = await githubTarget();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl }); // first sync, cycle closed
+    // Three names Varlatch deleted earlier, and a repair due.
+    for (const name of ["OLD_A", "OLD_B", "OLD_C"]) {
+      await ctx.db.query(
+        "INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation) VALUES ($1, $2, NULL, 'tombstone', 0)",
+        [id, name],
+      );
+    }
+    await ctx.db.query("UPDATE sync_targets SET last_repair_at = NULL, needs_sync = true");
+    github.sent.length = 0;
+    // The forced run rewrites both values, deletes one tombstone, and runs out.
+    github.cutAfterNext("DELETE");
+    await reconcileTarget(ctx, id, { fetchImpl: github.fetchImpl });
+    expect(github.sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+    const cut = github.sent.length;
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const after = github.sent.slice(cut);
+    // The continuation neither rewrites the values nor repeats the deletion.
+    expect(after.filter((s) => s.method === "PUT")).toEqual([]);
+    const deletes = github.sent.filter((s) => s.method === "DELETE").map((s) => s.name);
+    expect(deletes.sort()).toEqual(["OLD_A", "OLD_B", "OLD_C"]);
+    expect((await targetRowFromDb()).repair_cycle_started_at).toBeNull();
+  });
+
+  it("a rendering flag does not keep a finished cycle open", async () => {
+    const github = fakeGitHub();
+    await put(`${ENV_PATH}/values/BROKEN`, { value: "${DOES_NOT_EXIST}" });
+    await githubTarget();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const row = await targetRowFromDb();
+    expect(row.last_result).toMatch(/flagged|degraded/);
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
   });
 });

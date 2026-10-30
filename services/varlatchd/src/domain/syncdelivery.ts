@@ -37,6 +37,15 @@ import {
  */
 
 const LEASE_TTL_SECONDS = 300; // far above the 10s per-request timeout (§4)
+/**
+ * A run's budget, under the lease TTL: after it the run's send check
+ * refuses (ADR-0050 Decision 3), on the database clock, so no run outlives
+ * its lease and a Target can be shown drained.
+ */
+const RUN_BUDGET_SECONDS = 240;
+/** The send check's one query: the Target's generation, and whether the run is within its deadline. Exported for tests. */
+export const SEND_CHECK_SQL =
+  "SELECT t.generation, (r.deadline > now()) AS within FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2 WHERE t.id = $1";
 const BASE_BACKOFF_MS = 30_000;
 const MAX_BACKOFF_MS = 3_600_000;
 const FAILURE_BUDGET = 10;
@@ -77,6 +86,8 @@ interface LedgerRow {
   fingerprint: string | null;
   state: string;
   generation: string | number;
+  /** When a confirmed write, deletion or read-back last proved the name (migration 32). */
+  repaired_at: Date | string | null;
 }
 
 export interface SyncRunOptions {
@@ -84,6 +95,8 @@ export interface SyncRunOptions {
   repairIntervalMs?: number | undefined;
   /** Which adapters this Installation allows (VARLATCH_SYNC_ADAPTERS). */
   allowedAdapters?: string[] | undefined;
+  /** A run's budget in seconds; tests shorten it (default RUN_BUDGET_SECONDS). */
+  runBudgetSeconds?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +163,11 @@ export async function runSyncOnce(ctx: AppCtx, opts: SyncRunOptions = {}): Promi
   } catch (err) {
     console.error("sync trigger scan failed:", err);
   }
+  // Rows of runs past their deadline: their send check refuses anyway, so
+  // they no longer count; this only keeps the table small (ADR-0050).
+  await ctx.db.query("DELETE FROM sync_runs WHERE deadline <= now()").catch((err: unknown) =>
+    console.error("sync run cleanup failed:", err),
+  );
   const repairIntervalMs = opts.repairIntervalMs ?? REPAIR_INTERVAL_MS;
   // The batch selects CANDIDATE ids only. Every configuration fact is read
   // at (or after) lease acquisition: acting on a batch snapshot would let a
@@ -192,19 +210,31 @@ export async function reconcileTarget(
   // Lease: at most one valid reconciliation per Target (§4). The RETURNING
   // row is THE configuration snapshot this run may act on — atomically the
   // same row version the acquired generation belongs to.
+  // The run is registered with its deadline in the same statement, so no
+  // run ever holds a lease without a row (ADR-0050 Decision 5).
   const lease = await ctx.db.query(
-    `UPDATE sync_targets
-     SET generation = generation + 1, lease_expires_at = now() + ($2 * interval '1 second'),
-         needs_sync = false, last_attempt_at = now()
-     WHERE id = $1 AND revoked_at IS NULL AND state = 'active'
-       AND (lease_expires_at IS NULL OR lease_expires_at < now())
-     RETURNING ${TARGET_COLUMNS}, generation`,
-    [targetId, LEASE_TTL_SECONDS],
+    `WITH lease AS (
+       UPDATE sync_targets
+       SET generation = generation + 1, lease_expires_at = now() + ($2 * interval '1 second'),
+           needs_sync = false, last_attempt_at = now()
+       WHERE id = $1 AND revoked_at IS NULL AND state = 'active'
+         AND (lease_expires_at IS NULL OR lease_expires_at < now())
+       RETURNING ${TARGET_COLUMNS}, generation
+     ), run AS (
+       INSERT INTO sync_runs (target_id, generation, deadline)
+       SELECT id, generation, now() + ($3 * interval '1 second') FROM lease
+       RETURNING deadline
+     )
+     SELECT lease.*, run.deadline AS run_deadline FROM lease, run`,
+    [targetId, LEASE_TTL_SECONDS, opts.runBudgetSeconds ?? RUN_BUDGET_SECONDS],
   );
   const leaseRow = lease.rows[0] as Record<string, unknown> | undefined;
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  // Kept in memory: the row may be cleaned by another process's tick before
+  // this run classifies how it ended.
+  const runDeadline = leaseRow.run_deadline as Date | string;
   // The notes of a completed inspection, kept for a run that throws later.
   const inspected: { notes?: TargetNote[] } = {};
 
@@ -241,9 +271,24 @@ export async function reconcileTarget(
       Date.now() - new Date(target.last_repair_at).getTime() >=
         (opts.repairIntervalMs ?? REPAIR_INTERVAL_MS);
 
+    // A forced run works within a repair cycle (ADR-0050 Decision 4): opened
+    // by the first forced run, it lets later runs skip names already
+    // repaired since it opened, so a repair larger than one run's budget
+    // completes over several runs instead of starting over each time.
+    let cycleStart: Date | null = null;
+    if (force) {
+      const cycle = await ctx.db.query(
+        `UPDATE sync_targets SET repair_cycle_started_at = COALESCE(repair_cycle_started_at, now())
+         WHERE id = $1 AND generation = $2 RETURNING repair_cycle_started_at`,
+        [target.id, generation],
+      );
+      const started = (cycle.rows[0] as { repair_cycle_started_at: Date | string } | undefined)?.repair_cycle_started_at;
+      cycleStart = started ? new Date(started) : null;
+    }
+
     let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
     try {
-      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected);
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected, cycleStart);
     } finally {
       // Whatever the outcome, even a throw (a refused public-key fetch), the
       // platform may have said when the credential expires; recorded only if
@@ -263,15 +308,31 @@ export async function reconcileTarget(
       // so backoff-and-retry owns it. The guard keeps this safe against a
       // successor appearing between the check and the update.
       let fenced = true;
+      let outOfBudget = false;
       try {
+        // The deadline from the run's row while it exists, else the one this
+        // run was given: another process's tick may have removed the row.
         const res = await ctx.db.query(
-          "SELECT generation FROM sync_targets WHERE id = $1",
-          [target.id],
+          `SELECT t.generation,
+                  COALESCE((SELECT r.deadline FROM sync_runs r WHERE r.target_id = t.id AND r.generation = $3), $2::timestamptz) <= now()
+                    AS expired
+           FROM sync_targets t WHERE t.id = $1`,
+          [target.id, runDeadline, generation],
         );
-        const row = res.rows[0] as { generation: string | number } | undefined;
+        const row = res.rows[0] as { generation: string | number; expired: boolean } | undefined;
         fenced = row !== undefined && Number(row.generation) !== generation;
+        outOfBudget = row !== undefined && !fenced && row.expired === true;
       } catch {
         fenced = false; // cannot confirm a successor: reschedule, guarded
+      }
+      if (outOfBudget) {
+        // The run used up its budget: a yield, not a failure (ADR-0050
+        // Decision 4). What it confirmed stays confirmed; the Target is
+        // picked up again on the next tick.
+        await ctx.db
+          .query("UPDATE sync_targets SET needs_sync = true WHERE id = $1 AND generation = $2", [target.id, generation])
+          .catch((e) => console.error("sync yield bookkeeping failed:", e));
+        return;
       }
       if (!fenced) {
         await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
@@ -280,11 +341,20 @@ export async function reconcileTarget(
       }
       return;
     }
+    // The repair cycle closes when its eligible work is done, independent of
+    // the Target's health: a flag such as an unresolved reference must not
+    // keep a cycle open (and its credited names unverified) for good.
+    if (force && outcome.cycleComplete) {
+      await ctx.db.query(
+        `UPDATE sync_targets SET last_repair_at = COALESCE(repair_cycle_started_at, now()), repair_cycle_started_at = NULL
+         WHERE id = $1 AND generation = $2`,
+        [target.id, generation],
+      );
+    }
     if (outcome.ok) {
       await ctx.db.query(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
-             ${force ? ", last_repair_at = now()" : ""}
              ${outcome.notes !== undefined ? ", last_notes = $4" : ""}
          WHERE id = $1 AND generation = $3`,
         outcome.notes !== undefined
@@ -310,6 +380,11 @@ export async function reconcileTarget(
         [target.id, generation],
       )
       .catch(() => {});
+    // The run's own row, whether or not it was fenced: it describes the
+    // run, not the lease.
+    await ctx.db
+      .query("DELETE FROM sync_runs WHERE target_id = $1 AND generation = $2", [target.id, generation])
+      .catch(() => {});
   }
 }
 
@@ -322,6 +397,12 @@ interface RunOutcome {
    * leaves them as they are.
    */
   notes?: TargetNote[];
+  /**
+   * A forced run handled all its eligible repair work without a failed
+   * write or deletion: the repair cycle can close, whatever rendering flags
+   * say about the Target's health (ADR-0050 Decision 4).
+   */
+  cycleComplete?: boolean;
 }
 
 /**
@@ -339,6 +420,7 @@ async function reconcileUnderLease(
   force: boolean,
   opts: SyncRunOptions,
   inspected: { notes?: TargetNote[] } = {},
+  cycleStart: Date | null = null,
 ): Promise<RunOutcome> {
   const adapter = getAdapter(live.platform);
   const org = {
@@ -379,7 +461,7 @@ async function reconcileUnderLease(
 
   // Ledger read; invalidate names a lapsed run had begun writing (§4).
   const ledgerRes = await ctx.db.query(
-    "SELECT dest_name, fingerprint, state, generation FROM sync_ledger WHERE target_id = $1",
+    "SELECT dest_name, fingerprint, state, generation, repaired_at FROM sync_ledger WHERE target_id = $1",
     [target.id],
   );
   const ledger = new Map(
@@ -390,6 +472,12 @@ async function reconcileUnderLease(
       .filter((r) => r.state.startsWith("intent-") && Number(r.generation) < generation)
       .map((r) => r.dest_name),
   );
+  // Repaired since the open cycle began: a forced run leaves these alone
+  // unless ordinary reconciliation needs them (ADR-0050 Decision 4).
+  const credited = (name: string): boolean => {
+    const at = ledger.get(name)?.repaired_at;
+    return cycleStart !== null && at !== null && at !== undefined && new Date(at) >= cycleStart && !ambiguous.has(name);
+  };
 
   const fpKey = syncFingerprintKey(orgKekOf(ctx, org), target.id);
   const desired = new Map<string, { value: string; fingerprint: string; versionId: string }>();
@@ -480,11 +568,16 @@ async function reconcileUnderLease(
   // crashed run (intent never confirmed) or an out-of-band write would
   // leave the name unowned and later removal would miss it.
   const adoptions: { destName: string; fingerprint: string }[] = [];
+  // Names a read-back proved current: they earn repair credit without a write.
+  const verified: string[] = [];
   for (const [destName, want] of desired) {
     const entry = ledger.get(destName);
     const converged =
       entry && entry.state === "written" && entry.fingerprint === want.fingerprint;
-    const needsWrite = force
+    // Ordinary work first: a credited name is skipped only when nothing
+    // changed for it since its repair.
+    const repaired = force && converged && credited(destName);
+    const needsWrite = force && !repaired
       ? remote
         ? remote.get(destName) !== want.value || rewrite.has(destName)
         : true
@@ -492,6 +585,8 @@ async function reconcileUnderLease(
     if (needsWrite) writes.push({ destName, ...want });
     else if (force && remote && !converged) {
       adoptions.push({ destName, fingerprint: want.fingerprint });
+    } else if (force && remote && !repaired) {
+      verified.push(destName);
     }
   }
 
@@ -504,8 +599,17 @@ async function reconcileUnderLease(
       // Re-apply tombstoned deletions on repair or when a stale write may
       // have resurrected the name (§3/§6), unless the platform may
       // re-create it (above).
-      if (force && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
+      if (force && !credited(destName) && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
+      // Read back as absent: verified, so it earns credit without a delete.
+      else if (force && remote && !remote.has(destName) && !credited(destName) && !mayRecreate(destName)) {
+        verified.push(destName);
+      }
+    } else if (entry.state === "intent-delete" || entry.state === "failed-delete") {
+      // A deletion an earlier run decided on and did not finish (cut off
+      // by a fence or its deadline, or refused): carried on, so it
+      // completes even when the Target does not remove orphans.
+      deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
     }
@@ -527,12 +631,14 @@ async function reconcileUnderLease(
       return LEASE_LOST;
     }
   }
+  if (verified.length > 0 && !(await creditVerified(ctx, target.id, generation, verified))) return LEASE_LOST;
 
   if (writes.length === 0 && deletes.length === 0) {
     return {
       ok: flags.length === 0,
       result: withHeld(flags.length > 0 ? flagSummary(flags) : "converged", heldReasons),
       notes: runNotes,
+      cycleComplete: force,
     };
   }
 
@@ -663,6 +769,7 @@ async function reconcileUnderLease(
     ok: failed.length === 0 && flags.length === 0,
     result: `${result}${redeployNote}`.slice(0, 500),
     notes: boundNotes([...heldNotes, ...notes]),
+    cycleComplete: force && failed.length === 0,
   };
 }
 
@@ -843,14 +950,14 @@ async function adapterRequest(
     // confirmed fence from a probe failure and reschedules the latter.
     ...(generation !== undefined
       ? {
+          // The send check: the generation still holds the Target, and the
+          // run's deadline has not passed, both on the database clock in one
+          // query (ADR-0050 Decisions 1 and 3).
           shouldAbort: async (): Promise<boolean> => {
             try {
-              const res = await ctx.db.query(
-                "SELECT generation FROM sync_targets WHERE id = $1",
-                [target.id],
-              );
-              const row = res.rows[0] as { generation: string | number } | undefined;
-              return !row || Number(row.generation) !== generation;
+              const res = await ctx.db.query(SEND_CHECK_SQL, [target.id, generation]);
+              const row = res.rows[0] as { generation: string | number; within: boolean | null } | undefined;
+              return !row || Number(row.generation) !== generation || row.within !== true;
             } catch {
               return true;
             }
@@ -949,11 +1056,28 @@ export async function ledgerSet(
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await db.query(
-      `INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error)
-       VALUES ($1, $2, $4, $5, $3, $6)
+      // A confirmed write or deletion earns repair credit; an intent or a
+      // failure clears it (ADR-0050 Decision 4).
+      `INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation, last_error, repaired_at)
+       VALUES ($1, $2, $4, $5, $3, $6, CASE WHEN $5 IN ('written', 'tombstone') THEN now() END)
        ON CONFLICT (target_id, dest_name) DO UPDATE
-         SET fingerprint = $4, state = $5, generation = $3, last_error = $6, updated_at = now()`,
+         SET fingerprint = $4, state = $5, generation = $3, last_error = $6, updated_at = now(),
+             repaired_at = CASE WHEN $5 IN ('written', 'tombstone') THEN now() END`,
       [targetId, destName, generation, fp, state, lastError],
+    );
+    return true;
+  });
+}
+
+/** Repair credit for names a read-back proved current (written and present, or deleted and absent), under the same generation guard as ledgerSet. */
+async function creditVerified(ctx: AppCtx, targetId: string, generation: number, names: string[]): Promise<boolean> {
+  return withTx(ctx.db, async (db) => {
+    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
+    const current = res.rows[0] as { generation: string | number } | undefined;
+    if (!current || Number(current.generation) !== generation) return false;
+    await db.query(
+      "UPDATE sync_ledger SET repaired_at = now() WHERE target_id = $1 AND dest_name = ANY($2) AND state IN ('written', 'tombstone')",
+      [targetId, names],
     );
     return true;
   });
@@ -1014,6 +1138,25 @@ function withHeld(result: string, held: string[]): string {
 }
 
 /** Periodic delivery, modeled on the webhook loop: best-effort, never throws. */
+/**
+ * For each Target, the start of its oldest run that can still send
+ * (ADR-0050 Decision 5); a Target missing from the map is drained.
+ */
+export async function liveRunStarts(ctx: AppCtx, targetIds: string[]): Promise<Map<string, Date>> {
+  if (targetIds.length === 0) return new Map();
+  const res = await ctx.db.query(
+    `SELECT target_id, min(started_at) AS started_at FROM sync_runs
+     WHERE target_id = ANY($1) AND deadline > now() GROUP BY target_id`,
+    [targetIds],
+  );
+  return new Map(
+    res.rows.map((r) => {
+      const row = r as { target_id: string; started_at: Date | string };
+      return [row.target_id, new Date(row.started_at)];
+    }),
+  );
+}
+
 export function startSyncLoop(
   ctx: AppCtx,
   opts: SyncRunOptions & { intervalMs?: number } = {},

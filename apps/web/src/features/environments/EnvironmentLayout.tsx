@@ -25,6 +25,7 @@ import { usePlatformConnections } from "../values/queries";
 import { TailnetOnlyBadge } from "../values/TailnetOnly";
 import { isTailnetOnly } from "../../lib/tailnet";
 import { targetLabel } from "../sync/syncStatus";
+import { refetchWhileRunning } from "../sync/status";
 
 /**
  * One environment: header (breadcrumbs, tier, kind, item health, actions)
@@ -52,6 +53,7 @@ export function EnvironmentLayout() {
     queryKey: keys.syncTargets(org, slug, envName),
     queryFn: () => api.listSyncTargets(org, slug, envName),
     retry: false,
+    refetchInterval: (query) => refetchWhileRunning(query.state.data),
   });
   const connections = usePlatformConnections(org);
   // Metadata only: item count and what is missing, for the header.

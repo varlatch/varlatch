@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
 import {
+  refetchWhileRunning,
   connectionHealth,
   isCredentialError,
   mappingSummary,
@@ -77,6 +78,21 @@ describe("targetStatus", () => {
       label: "Stopped",
       fix: "reconnect",
     });
+  });
+
+  it("shows a run that can still send: Pushing, and Pausing after a pause (ADR-0050)", () => {
+    const started = "2026-10-30T10:00:00.000Z";
+    expect(targetStatus(target({ drained: false, runStartedAt: started }))).toMatchObject({ label: "Pushing", at: started });
+    expect(targetStatus(target({ state: "paused", drained: false }))).toMatchObject({ label: "Pausing", detail: "a push is finishing" });
+    expect(targetStatus(target({ state: "paused", drained: true }))).toMatchObject({ label: "Paused", fix: "resume" });
+    // An older server says nothing about runs: paused reads as paused.
+    expect(targetStatus(target({ state: "paused" }))).toMatchObject({ label: "Paused" });
+  });
+
+  it("keeps refreshing a list while one of its Targets can still send", () => {
+    expect(refetchWhileRunning({ items: [target({ drained: true }), target({ drained: false })] })).toBe(2000);
+    expect(refetchWhileRunning({ items: [target({ drained: true }), target({})] })).toBe(false);
+    expect(refetchWhileRunning(undefined)).toBe(false);
   });
 
   it("asks for re-affirmation when a mapped item became a secret", () => {

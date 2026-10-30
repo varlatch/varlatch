@@ -25,6 +25,7 @@ import { Button, Menu, Mono, Spinner, cn } from "../../components/ui";
 import { PlatformLogo } from "../../components/brand-logos";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
+import { useCapability } from "../projects/hooks";
 import { credentialExpiry, expiryText } from "./credentialExpiry";
 import { connectionLabel, platformMeta } from "./platform-meta";
 import { mappingSummary, noteText, noteWarns, targetDestination, targetOptions, targetStatus, type TargetStatus } from "./status";
@@ -112,6 +113,8 @@ export function TargetCard({
   const { api } = useSession();
   const confirm = useConfirm();
   const toast = useToast();
+  // A server that can wait for a run in progress to stop sending (ADR-0050).
+  const pauseWaits = useCapability("sync.pause-wait");
   const [open, setOpen] = useState(false);
   const detail = useQuery({
     queryKey: ["sync-target", org, project, envName, target.id, target.version, target.lastAttemptAt],
@@ -132,7 +135,7 @@ export function TargetCard({
   const act = useMutation({
     mutationFn: async (action: "push" | "pause" | "resume" | "revoke" | "reaffirm") => {
       if (action === "push") return api.pushSyncTarget(org, project, envName, target.id);
-      if (action === "pause") return api.pauseSyncTarget(org, project, envName, target.id);
+      if (action === "pause") return api.pauseSyncTarget(org, project, envName, target.id, { wait: pauseWaits });
       if (action === "resume") return api.resumeSyncTarget(org, project, envName, target.id);
       if (action === "reaffirm") {
         // Re-affirming resubmits the mapping as someone allowed to reveal
@@ -148,8 +151,20 @@ export function TargetCard({
       }
       return api.revokeSyncTarget(org, project, envName, target.id);
     },
-    onSuccess: (_r, action) => {
+    onSuccess: (result, action) => {
       onChanged();
+      if (action === "pause" && pauseWaits) {
+        const paused = result as SyncTarget | undefined;
+        if (paused && paused.state !== "paused") {
+          // Resumed (or stopped) by someone else while the pause waited.
+          toast.info("No longer paused", { description: `${dest.primary}: the integration changed while the pause waited.` });
+        } else if (paused?.drained === false) {
+          toast.info("Pausing", { description: `A push to ${dest.primary} is still finishing; this card shows when it has stopped.` });
+        } else {
+          // Requests a run had already sent may still land on the platform.
+          toast.success("Paused", { description: `Varlatch starts no more requests to ${dest.primary}.` });
+        }
+      }
       if (action === "push") toast.success("Sync scheduled", { description: `${dest.primary} will be updated in a moment.` });
       if (action === "revoke") toast.success("Integration revoked", { description: "Values already pushed stay at the destination." });
       if (action === "reaffirm") toast.success("Mapping re-affirmed");

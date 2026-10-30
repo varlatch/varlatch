@@ -1127,15 +1127,20 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * Pauses a Target. With `wait` (capability `sync.pause-wait`), the answer
+   * comes once the Target is drained, or after 30 s with `drained: false`.
+   */
   pauseSyncTarget(
     org: string,
     project: string,
     environment: string,
     targetId: string,
+    opts: { wait?: boolean } = {},
   ): Promise<SyncTarget> {
     return this.request(
       "POST",
-      `${this.envPath(org, project, environment)}/sync-targets/${encodeURIComponent(targetId)}/pause`,
+      `${this.envPath(org, project, environment)}/sync-targets/${encodeURIComponent(targetId)}/pause${opts.wait ? "?wait=true" : ""}`,
     );
   }
 

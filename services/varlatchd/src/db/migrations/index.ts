@@ -31,6 +31,7 @@ import { sql as credentialExpiry } from "./0028_credential_expiry.js";
 import { sql as githubApps } from "./0029_github_apps.js";
 import { sql as githubAppRegistrations } from "./0030_github_app_registrations.js";
 import { sql as syncTargetNotes } from "./0031_sync_target_notes.js";
+import { sql as syncRuns } from "./0032_sync_runs.js";
 
 export interface Migration {
   id: number;
@@ -71,4 +72,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 29, name: "github_apps", sql: githubApps },
   { id: 30, name: "github_app_registrations", sql: githubAppRegistrations },
   { id: 31, name: "sync_target_notes", sql: syncTargetNotes },
+  { id: 32, name: "sync_runs", sql: syncRuns },
 ];
