@@ -104,6 +104,11 @@ describe("the generated module", () => {
     expect(schema).toContain('"defaultValue":"info"');
   });
 
+  it("never carries a rotation hint: it is operational guidance, not code documentation (ADR-0053)", () => {
+    const items = ITEMS.map((i) => (i.name === "API_KEY" ? { ...i, rotationHint: "ROTATE-HINT-CANARY-7: change it at the provider." } : i));
+    expect(gen(items)).not.toContain("ROTATE-HINT-CANARY-7");
+  });
+
   it("marks Secrets @sensitive and leaves them out of PublicConfig", () => {
     const text = gen();
     const members = Object.fromEntries(configMembers(text).map((m) => [m.name, m]));

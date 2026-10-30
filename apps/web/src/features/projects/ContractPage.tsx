@@ -178,6 +178,11 @@ function ContractTable({ items }: { items: ContractItem[] }) {
                     <Highlight text={i.name} needle={filter} />
                   </p>
                   {i.description && <p className="mt-0.5 text-[13px] text-muted">{i.description}</p>}
+                  {i.rotationHint && (
+                    <p className="mt-0.5 text-xs text-muted" data-testid={`contract-rotation-hint-${i.name}`}>
+                      How to rotate: {i.rotationHint}
+                    </p>
+                  )}
                   {i.type === "enum" && (i.enumValues ?? []).length > 0 && (
                     <p className="mt-1.5 flex flex-wrap gap-1">
                       {i.enumValues!.map((v) => (

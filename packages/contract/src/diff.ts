@@ -34,6 +34,7 @@ function cosmeticFingerprint(item: ContractItem): string {
     enumValues: item.enumValues,
     example: item.example,
     rotationGraceSeconds: item.rotationGraceSeconds,
+    rotationHint: item.rotationHint,
   });
 }
 

@@ -236,3 +236,54 @@ RATIO=0.5
     expect(() => parseEnvSchema("# @type=int\nX=1\n")).toThrow(EnvSchemaParseError);
   });
 });
+
+describe("rotation decorators (ADR-0053)", () => {
+  const schema = (decorators: string) => `${decorators}\nADMIN_KEY=\n`;
+
+  it("reads a hint and a grace window, and keeps later comment lines as the description", () => {
+    const draft = parseEnvSchema(
+      schema('# @rotationGrace=86400\n# @rotationHint="Change the instance secret, restart, then set the new key here."\n# The admin key of the backend'),
+    );
+    expect(draft.items[0]).toMatchObject({
+      rotationGraceSeconds: 86400,
+      rotationHint: "Change the instance secret, restart, then set the new key here.",
+      description: "The admin key of the backend",
+    });
+    const contract = resolveDraft(draft, ENVIRONMENTS);
+    expect(contract.items[0]).toMatchObject({ rotationGraceSeconds: 86400, rotationHint: "Change the instance secret, restart, then set the new key here." });
+  });
+
+  it("refuses a repeated decorator", () => {
+    expect(() => parseEnvSchema(schema("# @rotationHint=one\n# @rotationHint=two"))).toThrow(/@rotationHint appears twice/);
+    expect(() => parseEnvSchema(schema("# @rotationGrace=60\n# @rotationGrace=120"))).toThrow(/@rotationGrace appears twice/);
+  });
+
+  it("refuses a grace window outside 1 to 2592000 whole seconds", () => {
+    for (const bad of ["0", "2592001", "1.5", "-1", "1e3", "soon", ""]) {
+      expect(() => parseEnvSchema(schema(`# @rotationGrace=${bad}`)), bad).toThrow(EnvSchemaParseError);
+    }
+    expect(parseEnvSchema(schema("# @rotationGrace=2592000")).items[0]?.rotationGraceSeconds).toBe(2592000);
+  });
+
+  it("refuses an empty hint, and a hint with a tab or a control character", () => {
+    expect(() => parseEnvSchema(schema("# @rotationHint="))).toThrow(/cannot be empty/);
+    expect(() => parseEnvSchema(schema("# @rotationHint"))).toThrow(/needs a value/);
+    expect(() => parseEnvSchema(schema("# @rotationHint(rotate it)"))).toThrow(/needs a value/);
+    expect(() => parseEnvSchema(schema('# @rotationHint=""'))).toThrow(/cannot be empty/);
+    expect(() => parseEnvSchema(schema("# @rotationHint=one\ttwo"))).toThrow(/one paragraph/);
+    expect(() => parseEnvSchema(schema("# @rotationHint=one\u202etwo"))).toThrow(/one paragraph/);
+  });
+
+  it("refuses a forbidden character at either end too, instead of trimming it away", () => {
+    // A carriage return inside the line (not a CRLF line ending) is refused.
+    for (const bad of ["\tone", "one\t", "one\r ", "one\rtwo", "one\u2028", "\u2029one", '"one\t"', "one\u0085"]) {
+      // Refused either as a hint or, when the character breaks the decorator itself, as a malformed line.
+      expect(() => parseEnvSchema(schema(`# @rotationHint=${bad}`)), JSON.stringify(bad)).toThrow(EnvSchemaParseError);
+    }
+    // Ordinary spaces around the value, and one pair of quotes, are not part of it.
+    expect(parseEnvSchema(schema("# @rotationHint=  Rotate it.  ")).items[0]?.rotationHint).toBe("Rotate it.");
+    expect(parseEnvSchema(schema("# @rotationHint=' Rotate it. '")).items[0]?.rotationHint).toBe(" Rotate it. ");
+    // A file with CRLF line endings is read as lines; the CR ends the line.
+    expect(parseEnvSchema("# @rotationHint=Rotate it.\r\nADMIN_KEY=\r\n").items[0]?.rotationHint).toBe("Rotate it.");
+  });
+});

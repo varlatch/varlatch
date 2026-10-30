@@ -22,6 +22,11 @@ describe("the generated Python module", () => {
     expect(header).toContain(`# Generator:                  varlatch ${GENERATOR}`);
   });
 
+  it("never carries a rotation hint (ADR-0053)", () => {
+    const items = ITEMS.map((i) => (i.name === "API_KEY" ? { ...i, rotationHint: "ROTATE-HINT-CANARY-7: change it at the provider." } : i));
+    expect(gen(items)).not.toContain("ROTATE-HINT-CANARY-7");
+  });
+
   it("is deterministic, whatever order the items were pushed in", () => {
     expect(gen()).toBe(gen());
     expect(gen([...ITEMS].reverse())).toBe(gen());
