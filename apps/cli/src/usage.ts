@@ -126,6 +126,8 @@ Usage:
   varlatch invite <name> [--role member|admin]
   varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member>
                                                        # people in the organization; former members are listed too
+  varlatch member exposure <member> [--json]           # what a current or former member received, and what is still
+                                                       # served; read-only, never a value (--json: NDJSON)
   varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements [--json]|remove <id>>
   varlatch audit <list [--json]|export>
   varlatch org <list [--json]|create <slug> [name]> [--server <url>]

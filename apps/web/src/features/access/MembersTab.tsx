@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Mail, MoreHorizontal, RefreshCw, UserPlus } from "lucide-react";
 import type { Grant } from "@varlatch/protocol";
+import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { displayEmail } from "../../lib/identity";
 import { timeAgo, timeUntil, useNow } from "../../lib/time";
@@ -32,6 +33,7 @@ import { useIdentities } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
 import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
+import { ExposureDialog, canReadAudit } from "./ExposureDialog";
 
 /**
  * People: every human in the organization and the invite flow. Enrollment is
@@ -48,11 +50,22 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   const orgInfo = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   const { names, nameOf, roleName } = useAccessNames(org);
   const lifecycle = useCapability("members.lifecycle");
+  // Exposure reports follow audit.read, not the admin role (ADR-0052 Decision 6).
+  const auditAccess = useQuery({
+    queryKey: ["audit-access", org],
+    queryFn: () => canReadAudit(api, org),
+    enabled: lifecycle,
+    staleTime: 60_000,
+  });
+  const reports = lifecycle && auditAccess.data === true;
+  // Reading reports needs audit.read; listing people here needs identity.read.
+  const peopleDenied = identities.error instanceof VarlatchApiError && identities.error.status === 403;
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
   const [removing, setRemoving] = useState<MemberRef | null>(null);
   const [demoting, setDemoting] = useState<MemberRef | null>(null);
+  const [exposing, setExposing] = useState<MemberRef | null>(null);
   const now = useNow();
 
   const humans = (identities.data?.items ?? []).filter((i) => i.kind === "human");
@@ -90,6 +103,9 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
     if (myRole === "admin" && p.orgRole === "admin") {
       items.push({ label: "Make member…", "data-testid": `demote-${p.id}`, onSelect: () => setDemoting(ref) });
     }
+    if (reports) {
+      items.push({ label: "What they received…", "data-testid": `exposure-${p.id}`, onSelect: () => setExposing(ref) });
+    }
     if (p.id === me) {
       items.push({ label: "Leave organization…", danger: true, separatorBefore: true, "data-testid": "leave-organization", onSelect: () => setRemoving(ref) });
     } else if (myRole === "admin") {
@@ -123,6 +139,27 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
           Invite
         </Button>
       </div>
+
+      {auditAccess.isError && (
+        <Callout
+          tone="warn"
+          data-testid="audit-access-error"
+          title="Could not check whether you may read exposure reports"
+          actions={
+            <Button size="sm" variant="secondary" onClick={() => void auditAccess.refetch()}>
+              Try again
+            </Button>
+          }
+        >
+          {errorMessage(auditAccess.error)}
+        </Callout>
+      )}
+      {reports && peopleDenied && (
+        <Callout tone="info" data-testid="reports-from-audit" title="You may read what people received">
+          Listing people needs more access than reading their reports: open a report from an event in the audit log about that
+          person.
+        </Callout>
+      )}
 
       <SectionCard title="Members" data-testid="people-section" bodyClassName={table.wrap}>
         {people.length === 0 ? (
@@ -216,6 +253,11 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
                     Left {timeAgo(p.removedAt as string, now)}. They reach nothing here; history keeps their name.
                   </span>
                 </span>
+                {reports && (
+                  <Button size="sm" variant="secondary" data-testid={`exposure-${p.id}`} onClick={() => setExposing({ id: p.id, name: p.name })}>
+                    What they received
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -230,6 +272,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
         names={names}
         onClose={() => setRemoving(null)}
       />
+      <ExposureDialog org={org} person={exposing} names={names} onClose={() => setExposing(null)} />
       <DemoteDialog
         org={org}
         person={demoting}

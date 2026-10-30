@@ -24,6 +24,10 @@ const ORG = "/v1/organizations/acme";
 let server: http.Server;
 let origin = "";
 let capabilities: string[] = [];
+/** When set, the identity listing is refused, as for a caller without identity.read. */
+let denyIdentities = false;
+/** When set, the project listing is refused, as for a caller without project.read. */
+let denyProjects = false;
 let requests: { method: string; url: string; body: unknown }[] = [];
 
 const IDENTITIES = [
@@ -47,6 +51,55 @@ const REVIEW = {
   personalEnvironments: [{ id: "env_2", name: "development/bob", projectId: "prj_1" }],
 };
 
+const EXPOSURE = {
+  member: { identityId: "idn_old", name: "Old", role: null, removedAt: "2026-10-01T10:00:00.000Z" },
+  coverage: { complete: false, from: "2026-01-01T00:00:00.000Z", to: "2026-10-30T00:00:00.000Z" },
+  received: [
+    {
+      itemName: "TOKEN",
+      versionId: "ver_1",
+      owningEnvironmentId: "env_1",
+      projectId: "prj_1",
+      state: "served",
+      servedAs: "current",
+      retiringUntil: null,
+      notServedBecause: null,
+      served: true,
+      confirmation: null,
+      rotationHint: "Issue a new token in the provider console.",
+      receipts: [
+        { environmentId: "env_1", way: "revealed", firstAt: "2026-09-01T10:00:00.000Z", lastAt: "2026-09-02T10:00:00.000Z" },
+        { environmentId: "env_2", way: "delivered", firstAt: "2026-09-03T10:00:00.000Z", lastAt: "2026-09-03T10:00:00.000Z" },
+      ],
+    },
+    {
+      itemName: "OLD_KEY",
+      versionId: "ver_2",
+      owningEnvironmentId: "env_1",
+      projectId: "prj_1",
+      state: "not-served",
+      servedAs: null,
+      retiringUntil: null,
+      notServedBecause: "replaced",
+      served: false,
+      confirmation: null,
+      rotationHint: null,
+      receipts: [{ environmentId: "env_1", way: "export", firstAt: "2026-08-01T10:00:00.000Z", lastAt: "2026-08-01T10:00:00.000Z" }],
+    },
+  ],
+  authorityAtRemoval: {
+    removalId: "mrm_1",
+    removedAt: "2026-10-01T10:00:00.000Z",
+    role: "member",
+    left: false,
+    environments: [
+      { environmentId: "env_1", actions: [{ action: "secret.reveal", sources: [] }, { action: "config.metadata.read", sources: [] }], conditionalOn: ["req_1"] },
+    ],
+    requirements: [{ requirementId: "req_1", requirementVersion: 1, target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"] } }],
+  },
+  indirect: { syncTargets: [], connections: [], webhooks: [{ id: "whk_1", host: "sink.example", revoked: false }], oidcBindings: [], credentials: [], personalEnvironments: [] },
+};
+
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   let raw = "";
   req.on("data", (d: Buffer) => (raw += d.toString()));
@@ -59,7 +112,23 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.end(JSON.stringify(payload));
     };
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.20.0", capabilities });
-    if (url === `${ORG}/identities`) return json(200, { items: IDENTITIES, nextCursor: null });
+    if (url === `${ORG}/identities`) {
+      if (denyIdentities) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_d" } });
+      return json(200, { items: IDENTITIES, nextCursor: null });
+    }
+    if (url === `${ORG}/projects`) {
+      if (denyProjects) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_p" } });
+      return json(200, { items: [{ id: "prj_1", slug: "api", name: "API" }], nextCursor: null });
+    }
+    if (url === `${ORG}/projects/api/environments`) {
+      return json(200, { items: [{ id: "env_1", name: "production" }, { id: "env_2", name: "development/bob" }], nextCursor: null });
+    }
+    const exposed = /^\/v1\/organizations\/acme\/members\/([a-z_0-9]+)\/exposure$/.exec(url)?.[1];
+    if (exposed && req.method === "GET") {
+      // As the server: a machine, or someone never a member, is not found.
+      if (exposed === "idn_svc") return json(404, { error: { code: "RESOURCE_NOT_FOUND", message: "Member not found", requestId: "req_n" } });
+      return json(200, { ...EXPOSURE, member: { ...EXPOSURE.member, identityId: exposed } });
+    }
     const member = /^\/v1\/organizations\/acme\/members\/([a-z_0-9]+)$/.exec(url)?.[1];
     if (member && req.method === "DELETE") {
       return json(200, {
@@ -106,6 +175,8 @@ afterAll(async () => {
 beforeEach(() => {
   requests = [];
   capabilities = ["members.lifecycle"];
+  denyIdentities = false;
+  denyProjects = false;
 });
 
 interface Result {
@@ -241,6 +312,68 @@ describe("varlatch member leave", () => {
     const wrong = await cli(["member", "leave", "--confirm", "other"]);
     expect(wrong.code).toBe(EXIT.usage);
     expect(requests).toEqual([]);
+  });
+});
+
+describe("varlatch member exposure", () => {
+  it("reads a former member's report by name, with environment names and every kind of fact apart", async () => {
+    const r = await cli(["member", "exposure", "Old"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(requests.find((q) => q.url.endsWith("/exposure"))?.url).toBe(`${ORG}/members/idn_old/exposure`);
+    expect(r.stdout).toContain("Exposure report for Old (former member, removed 2026-10-01T10:00:00.000Z).");
+    expect(r.stdout).toContain("events from 2026-01-01T00:00:00.000Z to 2026-10-30T00:00:00.000Z are not covered yet");
+    expect(r.stdout).toContain("TOKEN  ver_1  in api / production: still served (current)");
+    expect(r.stdout).toContain("delivered to a process through api / development/bob, 2026-09-03T10:00:00.000Z");
+    expect(r.stdout).toContain("to rotate: Issue a new token in the provider console.");
+    expect(r.stdout).toContain("OLD_KEY  ver_2  in api / production: no longer served (replaced)");
+    expect(r.stdout).toContain("No longer served is not safe");
+    expect(r.stdout).toContain("api / production: secret.reveal, config.metadata.read (reading values conditional on Tailnet Requirement req_1)");
+    expect(r.stdout).toContain("req_1: on the production tier, a device in example.ts.net with tags tag:prod");
+    expect(r.stdout).toContain("whk_1  sink.example");
+    expect(changes()).toEqual([]);
+  });
+
+  it("writes NDJSON with --json: the member and coverage first, one record per line", async () => {
+    const r = await cli(["member", "exposure", "idn_old", "--json"]);
+    expect(r.code, r.stderr).toBe(0);
+    const records = r.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    expect(records[0]).toMatchObject({ kind: "member", organization: "acme", identityId: "idn_old", coverage: { complete: false } });
+    expect(records[0].version).toEqual(expect.any(Number));
+    expect(records.map((x) => x.kind)).toEqual(["member", "received", "received", "authority", "requirement", "indirect"]);
+    expect(records[1]).toMatchObject({ itemName: "TOKEN", versionId: "ver_1", state: "served" });
+  });
+
+  it("reads an ID with audit.read alone: only a name needs the identity listing", async () => {
+    denyIdentities = true;
+    const byId = await cli(["member", "exposure", "idn_old", "--json"]);
+    expect(byId.code, byId.stderr).toBe(0);
+    expect(requests.some((q) => q.url.endsWith("/identities"))).toBe(false);
+    const byName = await cli(["member", "exposure", "Old"]);
+    expect(byName.code).not.toBe(0);
+  });
+
+  it("prints the report with environment IDs when the caller may not list projects", async () => {
+    denyIdentities = true;
+    denyProjects = true;
+    const r = await cli(["member", "exposure", "idn_old"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("TOKEN  ver_1  in env_1: still served (current)");
+    expect(r.stdout).toContain("delivered to a process through env_2");
+  });
+
+  it("is read-only: no --confirm, no machines, and a server without the report is refused", async () => {
+    expect((await cli(["member", "exposure", "Bob", "--confirm", "Bob"])).code).toBe(EXIT.usage);
+    // An ID goes to the server, which refuses a machine; a name never matches one.
+    const machine = await cli(["member", "exposure", "idn_svc"]);
+    expect(machine.code).not.toBe(0);
+    expect(machine.stderr).toContain("Member not found");
+    const named = await cli(["member", "exposure", "deployer"]);
+    expect(named.stderr).toContain("deployer is not a current or former member");
+    capabilities = [];
+    const old = await cli(["member", "exposure", "Old"]);
+    expect(old.code).toBe(EXIT.failure);
+    expect(old.stderr).toContain("needs Varlatch 0.20.0 or later");
+    expect(changes()).toEqual([]);
   });
 });
 

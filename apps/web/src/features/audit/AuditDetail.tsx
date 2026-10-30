@@ -7,6 +7,7 @@ import { IconButton, Mono, cn } from "../../components/ui";
 import { dayLabel } from "../../lib/time";
 import { ACTION_LABELS, authorizationSummary, describeEvent, listedItems, placeOf, type Described, type NameResolver } from "./describe";
 import { ActorMark, DecisionBadge, EventIconGlyph, SentenceText, clock, type Actor, type AuditEvent } from "./parts";
+import { ExposureButton } from "../access/ExposureDialog";
 
 /**
  * One event, readable: who, through which credential and client, what,
@@ -51,6 +52,15 @@ export function AuditDetail({
     project && env ? `/o/${org}/p/${project}/e/${encodeURIComponent(env.name)}${item ? `?item=${encodeURIComponent(item)}` : ""}` : undefined;
   const actorLabel =
     actor.kind === "system" ? "Varlatch (automatic)" : actor.kind === "human" || actor.kind === "unknown" ? actor.name : `${actor.name} (${actor.kind})`;
+  // The person an event is about, for their exposure report (ADR-0052): the
+  // subject of a membership change, else the person who acted. The server
+  // refuses anyone who is not a current or former member.
+  const subjectId = event.eventType.startsWith("membership.") && typeof r.identityId === "string" ? r.identityId : null;
+  const reportFor = subjectId
+    ? { id: subjectId, name: subjectId === event.actorIdentityId ? actor.name : "this person" }
+    : event.actorIdentityId && (actor.kind === "human" || actor.kind === "unknown")
+      ? { id: event.actorIdentityId, name: actor.name }
+      : null;
 
   const rows: [string, React.ReactNode][] = [
     [
@@ -185,6 +195,7 @@ export function AuditDetail({
             <Filter size={13} className="text-muted" /> Only this actor
           </button>
         )}
+        {reportFor && <ExposureButton org={org} person={reportFor} />}
         {envLink && (
           <Link
             to={envLink}

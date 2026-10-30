@@ -50,7 +50,7 @@ import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContra
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
-import { MEMBERS_CAPABILITY, MemberError, removalLines, resolveMember, shellWord } from "./members.js";
+import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -2214,15 +2214,18 @@ async function main(): Promise<void> {
         // removal and leaving name their target again with --confirm.
         const sub = args[0];
         const usage =
-          "Usage: varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member> [--server <url>]";
+          "Usage: varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member|exposure <member> [--json]> [--server <url>]";
         const parsed = strictOptions(
           `member ${sub ?? ""}`.trim(),
           args,
-          { values: ["--server", "--confirm"], booleans: ["--json"], positionals: sub === "role" ? 3 : sub === "remove" ? 2 : 1 },
+          { values: ["--server", "--confirm"], booleans: ["--json"], positionals: sub === "role" ? 3 : sub === "remove" || sub === "exposure" ? 2 : 1 },
           usage,
         );
-        if (sub !== "list" && sub !== "remove" && sub !== "leave" && sub !== "role") usageError(usage);
-        if (parsed.booleans.has("--json") && sub !== "list") usageError(`varlatch member ${sub}: --json is for member list.\n${usage}`);
+        if (sub !== "list" && sub !== "remove" && sub !== "leave" && sub !== "role" && sub !== "exposure") usageError(usage);
+        if (parsed.booleans.has("--json") && sub !== "list" && sub !== "exposure") {
+          usageError(`varlatch member ${sub}: --json is for member list and member exposure.\n${usage}`);
+        }
+        if (sub === "exposure" && parsed.values.has("--confirm")) usageError(`varlatch member exposure: the report is read-only and needs no --confirm.\n${usage}`);
         // The organization comes from the repository; no Environment is involved.
         const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
         if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
@@ -2249,6 +2252,59 @@ async function main(): Promise<void> {
             console.log(`${p.id}  ${p.name}  (${state}, last seen ${p.lastSeenAt ?? "never"})`);
           }
           if (people.length === 0) console.log("(none)");
+          return;
+        }
+        if (sub === "exposure") {
+          // Read-only (ADR-0052 Decision 8): names, versions and states, never a value.
+          const target = parsed.positionals[1] ?? usageError(usage);
+          const meta = await api.meta();
+          if (!meta.capabilities.includes(MEMBERS_CAPABILITY)) {
+            fail(`This server (${meta.serverVersion ?? "an older release"}) has no exposure report; that needs Varlatch 0.20.0 or later.`);
+          }
+          // An identity ID (or "me") goes to the report as it is: the server
+          // checks it, and reading the report needs only audit.read. Only a
+          // name is resolved, through the identity listing (identity.read).
+          let id = target;
+          if (target !== "me" && !IDENTITY_ID.test(target)) {
+            try {
+              id = resolvePerson((await api.listIdentities(ctx.organization)).items, target).id;
+            } catch (err) {
+              if (err instanceof MemberError) fail(err.message);
+              throw err;
+            }
+          }
+          const report = await api.memberExposure(ctx.organization, id);
+          if (parsed.booleans.has("--json")) {
+            // NDJSON: one record per line, the member and coverage first.
+            const line = (doc: Record<string, unknown>) => console.log(JSON.stringify(doc));
+            line({ version: STATUS_SCHEMA_VERSION, kind: "member", organization: ctx.organization, ...report.member, coverage: report.coverage });
+            for (const v of report.received) line({ kind: "received", ...v });
+            const authority = report.authorityAtRemoval;
+            if (authority) {
+              for (const e of authority.environments) {
+                line({ kind: "authority", removalId: authority.removalId, removedAt: authority.removedAt, ...e });
+              }
+              for (const r of authority.requirements) line({ kind: "requirement", removalId: authority.removalId, ...r });
+            }
+            line({ kind: "indirect", ...report.indirect });
+            return;
+          }
+          // Environment names for the IDs the report holds, when the caller
+          // may list them; otherwise, or for a deleted one, the ID stays.
+          const names = new Map<string, string>();
+          try {
+            for (const project of (await api.listProjects(ctx.organization)).items) {
+              try {
+                for (const env of (await api.listEnvironments(ctx.organization, project.slug)).items) names.set(env.id, `${project.slug} / ${env.name}`);
+              } catch (err) {
+                if (!(err instanceof VarlatchApiError)) throw err;
+              }
+            }
+          } catch (err) {
+            if (!(err instanceof VarlatchApiError)) throw err;
+          }
+          const envName = (envId: string | null) => (envId ? (names.get(envId) ?? envId) : "an unknown environment");
+          for (const text of exposureLines(report, envName)) console.log(text);
           return;
         }
         const target = sub === "leave" ? ctx.organization : (parsed.positionals[1] ?? usageError(usage));
