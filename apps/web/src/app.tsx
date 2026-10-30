@@ -89,14 +89,16 @@ function OrgIndexRedirect() {
 }
 
 function ConvexWithSession({ children }: { children: React.ReactNode }) {
-  const { identityId, mintConvexToken } = useSession();
+  const { identityId, mintConvexToken, accessEpoch } = useSession();
+  // A new function on an access change makes Convex mint a token again, so
+  // its claims follow the person's organizations (ADR-0052 Decision 9).
   const auth = useMemo(
     () => ({
       isLoading: false,
       isAuthenticated: identityId !== null,
-      fetchAccessToken: async () => mintConvexToken(),
+      fetchAccessToken: async () => (void accessEpoch, mintConvexToken()),
     }),
-    [identityId, mintConvexToken],
+    [identityId, mintConvexToken, accessEpoch],
   );
   return (
     <ConvexProviderWithAuth client={convex} useAuth={() => auth}>

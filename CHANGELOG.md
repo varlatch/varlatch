@@ -93,9 +93,25 @@ fixes.
   and under which Tailnet Requirements.
 - The identity listing keeps former members, without a role, and says when
   they left.
+- **In the dashboard,** Access, then Members: an admin's menu for each
+  person has Make admin, Make member, and Remove from organization, and
+  your own row has Leave organization. The remove and leave dialog lists
+  what to review before anything changes; the Make member dialog lists the
+  Grants the person keeps, directly or through groups and teams, so you can
+  revoke what should go. Former members are listed apart. A person who is
+  removed while signed in loses the organization in their open dashboard
+  at once: its cached data and revealed values are dropped and its pages
+  closed.
 
 ### CLI
 
+- `varlatch member list [--json]` lists the people in the organization,
+  former members included. `varlatch member remove <member> --confirm
+  <member>` removes someone and prints what to review, `varlatch member
+  leave --confirm <organization>` leaves, and `varlatch member role <member>
+  admin|member` changes a role. A member is named by identity ID or by
+  name. Removing and leaving always need `--confirm`; in assisted mode the
+  refusal gives the human's command, as for `values delete`.
 - **`varlatch values list` shows rotations in progress.** With `--json`,
   each item has `rotating`: `true` while a dual-phase rotation keeps its
   previous value working. Without `--json`, the list is unchanged, and

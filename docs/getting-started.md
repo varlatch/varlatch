@@ -303,6 +303,23 @@ names of production items. An **admin** can do everything in the
 organization. For anything else, such as a member who deploys to
 production, add a grant in the dashboard under Access.
 
+When someone leaves the team, an admin removes them from the dashboard
+(Access, then Members, then the person's menu), or with the CLI:
+
+```sh
+varlatch member remove "Ada Lovelace" --confirm "Ada Lovelace"
+varlatch member role "Grace Hopper" member     # admin to member, or back with admin
+varlatch member leave --confirm acme           # leave an organization yourself
+```
+
+From their next request they reach nothing in the organization: the
+Grants given to them directly are revoked, and they leave every group and
+team. Their sign-in itself is not affected. What they set up, such as
+integrations, Connections, webhooks and machine credentials they were
+shown, keeps working: removal lists it for you to review. Rotate the
+Secrets they could read, starting with the ones in production. The last
+admin of an organization cannot be removed or leave.
+
 ## Join a project
 
 When you have been invited:
