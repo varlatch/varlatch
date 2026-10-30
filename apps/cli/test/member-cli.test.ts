@@ -26,6 +26,8 @@ let origin = "";
 let capabilities: string[] = [];
 /** When set, the identity listing is refused, as for a caller without identity.read. */
 let denyIdentities = false;
+/** When set, the project listing is refused, as for a caller without project.read. */
+let denyProjects = false;
 let requests: { method: string; url: string; body: unknown }[] = [];
 
 const IDENTITIES = [
@@ -114,7 +116,10 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       if (denyIdentities) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_d" } });
       return json(200, { items: IDENTITIES, nextCursor: null });
     }
-    if (url === `${ORG}/projects`) return json(200, { items: [{ id: "prj_1", slug: "api", name: "API" }], nextCursor: null });
+    if (url === `${ORG}/projects`) {
+      if (denyProjects) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_p" } });
+      return json(200, { items: [{ id: "prj_1", slug: "api", name: "API" }], nextCursor: null });
+    }
     if (url === `${ORG}/projects/api/environments`) {
       return json(200, { items: [{ id: "env_1", name: "production" }, { id: "env_2", name: "development/bob" }], nextCursor: null });
     }
@@ -171,6 +176,7 @@ beforeEach(() => {
   requests = [];
   capabilities = ["members.lifecycle"];
   denyIdentities = false;
+  denyProjects = false;
 });
 
 interface Result {
@@ -344,6 +350,15 @@ describe("varlatch member exposure", () => {
     expect(requests.some((q) => q.url.endsWith("/identities"))).toBe(false);
     const byName = await cli(["member", "exposure", "Old"]);
     expect(byName.code).not.toBe(0);
+  });
+
+  it("prints the report with environment IDs when the caller may not list projects", async () => {
+    denyIdentities = true;
+    denyProjects = true;
+    const r = await cli(["member", "exposure", "idn_old"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain("TOKEN  ver_1  in env_1: still served (current)");
+    expect(r.stdout).toContain("delivered to a process through env_2");
   });
 
   it("is read-only: no --confirm, no machines, and a server without the report is refused", async () => {

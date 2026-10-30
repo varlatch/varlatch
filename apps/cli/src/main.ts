@@ -2289,10 +2289,19 @@ async function main(): Promise<void> {
             line({ kind: "indirect", ...report.indirect });
             return;
           }
-          // Environment names for the IDs the report holds; an unknown one stays an ID.
+          // Environment names for the IDs the report holds, when the caller
+          // may list them; otherwise, or for a deleted one, the ID stays.
           const names = new Map<string, string>();
-          for (const project of (await api.listProjects(ctx.organization)).items) {
-            for (const env of (await api.listEnvironments(ctx.organization, project.slug)).items) names.set(env.id, `${project.slug} / ${env.name}`);
+          try {
+            for (const project of (await api.listProjects(ctx.organization)).items) {
+              try {
+                for (const env of (await api.listEnvironments(ctx.organization, project.slug)).items) names.set(env.id, `${project.slug} / ${env.name}`);
+              } catch (err) {
+                if (!(err instanceof VarlatchApiError)) throw err;
+              }
+            }
+          } catch (err) {
+            if (!(err instanceof VarlatchApiError)) throw err;
           }
           const envName = (envId: string | null) => (envId ? (names.get(envId) ?? envId) : "an unknown environment");
           for (const text of exposureLines(report, envName)) console.log(text);

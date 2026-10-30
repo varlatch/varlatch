@@ -58,6 +58,12 @@ export function requirementWords(r: Requirement, envLabel: (id: string) => strin
   return `a device in ${selector.tailnet ?? "a tailnet"}${by.length ? ` with ${by.join(" or ")}` : ""} (Requirement on ${on}, as defined at removal)`;
 }
 
+/** When a version was first received, through any environment and in any way. */
+export function firstReceived(v: Received): string {
+  const first = v.receipts.map((r) => r.firstAt).sort()[0];
+  return first ? new Date(first).toLocaleString() : "at an unknown time";
+}
+
 /** The open items: versions not yet confirmed revoked at their provider. */
 export function openItems(report: ExposureReport): Received[] {
   return report.received.filter((v) => !v.confirmation);
@@ -98,7 +104,8 @@ export function ExposureDialog({
   const envLabel = (id: string | null) => {
     const env = id ? names.environment(id) : undefined;
     const project = env ? names.project(env.projectId) : undefined;
-    return env && project ? `${project.slug} / ${env.name}` : "an environment";
+    // A deleted environment is no longer listed: its ID keeps it apart from others.
+    return env && project ? `${project.slug} / ${env.name}` : (id ?? "an unknown environment");
   };
   const data = report.data;
   const open = data ? openItems(data) : [];
@@ -167,7 +174,7 @@ export function ExposureDialog({
                             onClick={async () => {
                               const ok = await confirm({
                                 title: `Confirm ${v.itemName} version ${v.versionId} was revoked at its provider?`,
-                                description: `This version, first received ${new Date(v.receipts[0]?.firstAt ?? "").toLocaleString()}, in ${envLabel(v.owningEnvironmentId)}. Confirm only after this credential stopped working at its provider. Changing the value in Varlatch does not revoke the old one there.`,
+                                description: `This version, first received ${firstReceived(v)}, in ${envLabel(v.owningEnvironmentId)}. Confirm only after this credential stopped working at its provider. Changing the value in Varlatch does not revoke the old one there.`,
                                 confirmLabel: "It was revoked",
                               });
                               if (ok) confirmRevocation.mutate(v.versionId);

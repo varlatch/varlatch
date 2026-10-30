@@ -36,7 +36,7 @@ vi.mock("../src/components/Dialog", () => ({
   },
 }));
 
-import { ExposureDialog, openItems, versionState } from "../src/features/access/ExposureDialog";
+import { ExposureDialog, firstReceived, openItems, versionState } from "../src/features/access/ExposureDialog";
 import type { Names } from "../src/features/access/model";
 
 const names: Names = {
@@ -141,6 +141,16 @@ describe("version states", () => {
     expect(versionState(version({ servedAs: "retiring", retiringUntil: "2026-11-01T00:00:00.000Z" })).detail).toContain("Retiring");
     expect(openItems(REPORT).map((v) => v.versionId)).toEqual(["ver_1", "ver_2"]);
   });
+
+  it("date a version by its earliest receipt, whatever the order of its environments", () => {
+    const v = version({
+      receipts: [
+        { environmentId: "env_1", way: "revealed", firstAt: "2026-09-05T10:00:00.000Z", lastAt: "2026-09-06T10:00:00.000Z" },
+        { environmentId: "env_2", way: "delivered", firstAt: "2026-09-01T10:00:00.000Z", lastAt: "2026-09-01T10:00:00.000Z" },
+      ],
+    });
+    expect(firstReceived(v)).toBe(new Date("2026-09-01T10:00:00.000Z").toLocaleString());
+  });
 });
 
 describe("the exposure dialog", () => {
@@ -179,6 +189,16 @@ describe("the exposure dialog", () => {
     await act(async () => byTestId("revoke-credential-crd_1").props.onClick());
     await settle();
     expect(fake.api.revokeIdentityCredential).toHaveBeenCalledWith("acme", "idn_svc", "crd_1");
+  });
+
+  it("keeps a deleted environment apart by its ID", async () => {
+    fake.api.memberExposure = vi.fn(async () => ({
+      ...REPORT,
+      received: [version({ owningEnvironmentId: "env_gone", receipts: [{ environmentId: "env_gone", way: "revealed", firstAt: "2026-09-01T10:00:00.000Z", lastAt: "2026-09-01T10:00:00.000Z" }] })],
+    }));
+    await mount();
+    expect(text(row("ver_1"))).toContain("in env_gone");
+    expect(inRow("ver_1", "rotate-link")).toHaveLength(0);
   });
 
   it("shows a refusal, such as a missing audit.read", async () => {
