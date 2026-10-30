@@ -557,7 +557,9 @@ export const coolifyAdapter: PlatformAdapter = {
         res = await create(style ?? "current");
         if (res.status === 422 && style === undefined) {
           // Nothing was written (validation rejected the unknown field):
-          // retry once in the legacy vocabulary and remember it.
+          // retry once in the legacy vocabulary and remember it. The retry
+          // is a second mutating request, so it passes the fence check too.
+          if (req.shouldAbort && (await req.shouldAbort())) break;
           style = "legacy";
           res = await create(style);
         } else if (res.ok && style === undefined) {

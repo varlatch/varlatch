@@ -713,6 +713,92 @@ describe("convergence", () => {
     expect(coolify.values().get("PORT")).toBe("8080");
   });
 
+  it("a pause mid-batch stops the remaining writes, records no result, and leaves the Target paused (ADR-0050)", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget(); // two items -> two writes in the first batch
+    const target = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    const id = target.items[0].id as string;
+
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        if (writesSent === 1) expect((await post(`${ENV_PATH}/sync-targets/${id}/pause`, {})).status).toBe(200);
+      }
+      return res;
+    }) as typeof fetch;
+
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(writesSent).toBe(1);
+    const events = await ctx.db.query(
+      "SELECT event_type FROM audit_events WHERE event_type LIKE 'sync.%' ORDER BY event_order",
+    );
+    const types = events.rows.map((r) => (r as { event_type: string }).event_type);
+    // Nothing the fenced run did is recorded after the pause.
+    expect(types.slice(types.indexOf("sync.target_paused"))).toEqual(["sync.target_paused"]);
+    const row = await targetRowFromDb();
+    expect(row.state).toBe("paused");
+    expect(row.failure_count).toBe(0);
+  });
+
+  it("a pause during the final write suppresses the result event and the redeploy", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget({ redeploy: true, mapping: { kind: "explicit", items: [{ name: "PORT" }] } });
+    const target = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    const id = target.items[0].id as string;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        expect((await post(`${ENV_PATH}/sync-targets/${id}/pause`, {})).status).toBe(200);
+      }
+      return res;
+    }) as typeof fetch;
+
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(coolify.restarts()).toBe(0);
+    const results = await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.push_result'");
+    expect(results.rows).toHaveLength(0);
+  });
+
+  it("revoking a Target fences a run in progress", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const target = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    const id = target.items[0].id as string;
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        if (writesSent === 1) expect((await del(`${ENV_PATH}/sync-targets/${id}`)).status).toBe(204);
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(writesSent).toBe(1);
+  });
+
+  it("pausing a paused Target changes nothing, and a disabled Target cannot be paused", async () => {
+    await activeTarget();
+    const target = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    const id = target.items[0].id as string;
+    expect((await post(`${ENV_PATH}/sync-targets/${id}/pause`, {})).status).toBe(200);
+    const fenced = (await targetRowFromDb()).generation;
+    expect((await post(`${ENV_PATH}/sync-targets/${id}/pause`, {})).status).toBe(200);
+    expect((await targetRowFromDb()).generation).toBe(fenced);
+    const pauses = await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.target_paused'");
+    expect(pauses.rows).toHaveLength(1);
+
+    await ctx.db.query("UPDATE sync_targets SET state = 'disabled', disabled_reason = 'connection-revoked'");
+    const refused = await post(`${ENV_PATH}/sync-targets/${id}/pause`, {});
+    expect(refused.status).toBe(422);
+    expect((await targetRowFromDb()).state).toBe("disabled");
+  });
+
   it("redeploy fires only on pushes that changed ledger content", async () => {
     const coolify = fakeCoolify();
     await activeTarget({ redeploy: true });

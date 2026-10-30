@@ -538,7 +538,8 @@ async function reconcileUnderLease(
 
   // Audit precedes disclosure (§7): if this commit fails, the push does not
   // happen. Names and versions only; destination redacted like webhook URLs.
-  await recordAuditEvent(ctx.db, {
+  // A run fenced by now records nothing and sends nothing (ADR-0050).
+  const attempted = await recordGuardedEvent(ctx, target.id, generation, {
     eventType: "sync.push_attempted",
     decision: "info",
     organizationId: target.organization_id,
@@ -552,6 +553,7 @@ async function reconcileUnderLease(
       forced: force,
     },
   });
+  if (!attempted) return LEASE_LOST;
 
   const req = { ...(await adapterRequest(ctx, org, target, live, opts, generation)), usage };
   let writeOutcomes: NameOutcome[] = [];
@@ -617,7 +619,7 @@ async function reconcileUnderLease(
     heldReasons,
   );
 
-  await recordAuditEvent(ctx.db, {
+  const recorded = await recordGuardedEvent(ctx, target.id, generation, {
     eventType: "sync.push_result",
     decision: "info",
     organizationId: target.organization_id,
@@ -632,6 +634,9 @@ async function reconcileUnderLease(
       result: failed.length === 0 ? "ok" : "degraded",
     },
   });
+  // Fenced after its last request: the result belongs to nobody now, and
+  // no redeploy may follow (ADR-0050 Decision 2).
+  if (!recorded) return LEASE_LOST;
 
   // Best-effort redeploy, only when ledger content actually changed (§5).
   // Best-effort means a failure never degrades the Target (the values did
@@ -905,6 +910,28 @@ async function credentialOf(
  * confirmation-phase callers ignore it (the wire already happened and the
  * successor's ambiguity handling owns those names). Exported for tests.
  */
+/**
+ * Records a delivery audit event only while `generation` still holds the
+ * Target (ADR-0050 Decision 2). The check and the insert share one
+ * transaction with the Target row locked as `ledgerSet` locks it, so a
+ * pause or revoke that fenced the run leaves no event behind it; a check
+ * followed by an unlocked insert would race. Returns false when fenced.
+ */
+async function recordGuardedEvent(
+  ctx: AppCtx,
+  targetId: string,
+  generation: number,
+  event: Parameters<typeof recordAuditEvent>[1],
+): Promise<boolean> {
+  return withTx(ctx.db, async (db) => {
+    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
+    const current = res.rows[0] as { generation: string | number } | undefined;
+    if (!current || Number(current.generation) !== generation) return false;
+    await recordAuditEvent(db, event);
+    return true;
+  });
+}
+
 export async function ledgerSet(
   ctx: AppCtx,
   targetId: string,

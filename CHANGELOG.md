@@ -7,6 +7,17 @@ fixes.
 
 ## Unreleased (0.20.0)
 
+### Integrations
+
+- **Pausing or revoking an integration stops a push that is already
+  running.** Until now a pause only stopped new pushes: a push in progress
+  kept writing, deleting and redeploying, and the audit log showed it after
+  "Integration paused". Now the push sends no further requests and records
+  nothing more once the pause or revocation commits. A request it had
+  already sent can still reach the platform. Pausing a paused integration
+  changes nothing, and pausing a disabled one is refused: resume or
+  re-point it instead.
+
 ### CLI
 
 - **`varlatch values list` shows rotations in progress.** With `--json`,
