@@ -137,7 +137,8 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
  * ./.env`), dotenv (any version) with or without dotenv-expand,
  * python-dotenv and Docker Compose. The value goes unquoted when only inert
  * characters are in it (no `=`, which zsh expands at the start or after a
- * `:`), in single quotes otherwise. Some values have no such form:
+ * `:`, and no `?`, which zsh globs with GLOB_ASSIGN), in single quotes
+ * otherwise. Some values have no such form:
  * dotenv-expand and python-dotenv expand `$` even in single quotes (recent
  * dotenv-expand also runs `$(…)`), python-dotenv and Compose read backslash
  * escapes there, dotenv before 15 ends a value at a line break and reads the
@@ -146,7 +147,7 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
  * written (ADR-0038).
  */
 export function dotenvLine(name: string, value: string): string | null {
-  if (/^[A-Za-z0-9_./:@,+%?-]*$/.test(value)) return `${name}=${value}`;
+  if (/^[A-Za-z0-9_./:@,+%-]*$/.test(value)) return `${name}=${value}`;
   if (/[$'\x00-\x08\x0a-\x1f\x7f\u0085\u2028\u2029]|\\\\|\\$/.test(value)) return null;
   return `${name}='${value}'`;
 }

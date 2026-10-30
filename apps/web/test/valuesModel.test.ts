@@ -127,7 +127,8 @@ describe(".env", () => {
     "8080",
     "https://x.example/a?b=c",
     "https://x.example/a?b=c&d=e",
-    "a:b@c,d+e%f?g",
+    "a:b@c,d+e%f",
+    "foo?",
     "two words",
     "`id`",
     'say "hi"',
@@ -169,6 +170,8 @@ describe(".env", () => {
     // zsh expands an unquoted `=` at the start of a value or after a `:`.
     expect(dotenvLine("CMD", "=sh")).toBe("CMD='=sh'");
     expect(dotenvLine("CMD", "foo:=sh")).toBe("CMD='foo:=sh'");
+    // zsh with GLOB_ASSIGN globs an unquoted `?`.
+    expect(dotenvLine("GLOB", "foo?")).toBe("GLOB='foo?'");
     for (const value of writable) {
       expect(parseDotenv(dotenvLine("MSG", value) as string)).toEqual([{ name: "MSG", value }]);
     }
