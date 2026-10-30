@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Environment, SyncTarget } from "@varlatch/protocol";
 import {
@@ -118,8 +122,45 @@ describe(".env", () => {
   it("quotes only when needed and round-trips", () => {
     expect(dotenvLine("PORT", "8080")).toBe("PORT=8080");
     expect(dotenvLine("URL", "https://x.example/a?b=c")).toBe("URL=https://x.example/a?b=c");
-    for (const value of ['say "hi"\nback\\slash', "a\\nb", "two words"]) {
+    expect(dotenvLine("URL", "https://x.example/a?b=c&d=e")).toBe("URL='https://x.example/a?b=c&d=e'");
+    expect(dotenvLine("MSG", "pa$$word")).toBe("MSG='pa$$word'");
+    expect(dotenvLine("MSG", "it's $HOME")).toBe('MSG="it\'s \\$HOME"');
+    for (const value of [
+      'say "hi"\nback\\slash',
+      "a\\nb",
+      "two words",
+      "$(id) `id` ${HOME}",
+      "it's $(id)\r\nnext `id`",
+      "\\$HOME",
+    ]) {
       expect(parseDotenv(dotenvLine("MSG", value))).toEqual([{ name: "MSG", value }]);
+    }
+  });
+  it("never executes or expands a value when a shell loads the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dotenv-line-"));
+    try {
+      const values = [
+        "$(touch ran1)",
+        "`touch ran2`",
+        "${HOME}",
+        "a&touch ran3",
+        "a;touch ran4",
+        "it's $(touch ran5) `touch ran6` ${HOME}",
+        "x > ran7",
+        "#not a comment",
+        "\\$HOME",
+      ];
+      for (const value of values) {
+        writeFileSync(join(dir, ".env"), `${dotenvLine("MSG", value)}\n`);
+        const out = execFileSync("sh", ["-c", 'set -a; . ./.env; printf %s "$MSG"'], { cwd: dir, encoding: "utf8" });
+        expect(out).toBe(value);
+      }
+      // Shells keep an escaped line break as `\n`; what matters is that nothing runs.
+      writeFileSync(join(dir, ".env"), `${dotenvLine("MSG", "one\n$(touch ran8) `touch ran9`")}\n`);
+      execFileSync("sh", ["-c", "set -a; . ./.env"], { cwd: dir });
+      expect(readdirSync(dir)).toEqual([".env"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

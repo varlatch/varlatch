@@ -5,6 +5,20 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.20.0)
+
+### Fixes
+
+- **The dashboard's `.env` download keeps every value literal.** It put
+  values with special characters in double quotes without escaping `$` or
+  backticks, so loading the file with a shell or a variable-expanding
+  dotenv tool could expand `$NAME`, or run `$(…)`, inside a value. A value
+  with `&` was not quoted at all, so sourcing the file in a shell could run
+  what followed it. Values now go in single quotes, or, when they
+  hold a single quote or a line break, in double quotes with `\`, `"`, `$`,
+  backticks and line breaks escaped. Pasting such a file back in reads the
+  same values.
+
 ## 0.19.1 (2026-10-29)
 
 ### Documentation

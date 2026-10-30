@@ -124,17 +124,24 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
     if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
       const quote = value[0];
       value = value.slice(1, -1);
-      if (quote === '"') value = value.replace(/\\(n|"|\\)/g, (_, c: string) => (c === "n" ? "\n" : c));
+      if (quote === '"') value = value.replace(/\\([nr"\\$`])/g, (_, c: string) => (c === "n" ? "\n" : c === "r" ? "\r" : c));
     }
     parsed.push({ name: match[1] as string, value });
   }
   return parsed;
 }
 
-/** One `.env` line; quotes only when the value needs them. */
+/**
+ * One `.env` line; quotes only when the value needs them. Single quotes keep
+ * a value literal for shells, dotenv and Compose alike. A value holding a
+ * single quote or a line break goes in double quotes with `\`, `"`, `$`,
+ * backtick and line breaks escaped. Either way `$(cmd)` or `${NAME}` never
+ * executes or expands when the file is loaded again (ADR-0038).
+ */
 export function dotenvLine(name: string, value: string): string {
-  if (/^[A-Za-z0-9_./:@,+%=?&-]*$/.test(value)) return `${name}=${value}`;
-  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
+  if (/^[A-Za-z0-9_./:@,+%=?-]*$/.test(value)) return `${name}=${value}`;
+  if (!/['\r\n]/.test(value)) return `${name}='${value}'`;
+  const escaped = value.replace(/[\\"$`]/g, (c) => `\\${c}`).replace(/\n/g, "\\n").replace(/\r/g, "\\r");
   return `${name}="${escaped}"`;
 }
 
