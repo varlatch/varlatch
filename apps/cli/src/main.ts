@@ -1590,12 +1590,20 @@ async function main(): Promise<void> {
             // Names and classification only: this command never fetches values.
             printJson({
               environment: ctx.environment,
-              items: (effective.items ?? []).map((i) => ({ name: i.name, sensitive: i.sensitive, source: i.source })),
+              items: (effective.items ?? []).map((i) => ({ name: i.name, sensitive: i.sensitive, source: i.source, rotating: i.rotating === true })),
             });
             return;
           }
           for (const i of effective.items ?? []) {
             console.log(`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
+          }
+          // The human format stays as it is; an active rotation is a note on stderr.
+          for (const i of effective.items ?? []) {
+            if (i.rotating) {
+              console.error(
+                `${i.name} is rotating: its previous value still works until the rotation completes (varlatch values rotate-complete ${i.name}).`,
+              );
+            }
           }
           return;
         }

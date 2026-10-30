@@ -20,7 +20,7 @@ human formats do not change either: scripts that parse them keep working.
 | `varlatch whoami --json` | `server`, and the caller as the server answers: `identity` (id, name, kind, email), `organization` (null for a person), `credential` (id, name, kind, expiresAt; never the token), `listener`, and on the tailnet listener `tailnet` (the device) |
 | `varlatch context --json` | the resolved context |
 | `varlatch env list --json` | `environments`: name, tier, kind, selected |
-| `varlatch values list --json` | `environment`, `items`: name, sensitive, source (never a value) |
+| `varlatch values list --json` | `environment`, `items`: name, sensitive, source, rotating (never a value) |
 | `varlatch validate --json` | `environment`, `result` (`valid`, `invalid`, `incomplete`), `complete`, `missing`, `invalid`, `unresolved`, `notEvaluated`, `exitCode` |
 | `varlatch import <file> --json` | `file`, `dryRun`, `target`, `offline`, `items` (name, type, sensitive, inContract, line), `references`, `contract` (newItems, revision), `stored`, `deleted` (never a value) |
 | `varlatch contract push --json` | `revision`: id, contentHash, active, semanticsVersion |

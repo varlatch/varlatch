@@ -114,7 +114,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       return json(200, {
         environmentId: "env_1",
         items: [
-          { name: "API_TOKEN", sensitive: true, source: "self", value: null },
+          { name: "API_TOKEN", sensitive: true, source: "self", value: null, rotating: true },
           { name: "PORT", sensitive: false, source: "self", value: "8080" },
         ],
       });
@@ -332,17 +332,25 @@ describe("--json documents", () => {
     return JSON.parse(r.stdout) as Record<string, unknown>;
   };
 
-  it("values list: names and classification, never a value", async () => {
+  it("values list: names, classification and rotation, never a value", async () => {
     const d = await doc(["values", "list"]);
     expect(d).toEqual({
       version: 1,
       environment: "development",
       items: [
-        { name: "API_TOKEN", sensitive: true, source: "self" },
-        { name: "PORT", sensitive: false, source: "self" },
+        { name: "API_TOKEN", sensitive: true, source: "self", rotating: true },
+        { name: "PORT", sensitive: false, source: "self", rotating: false },
       ],
     });
     expect(requests.some((r) => r.url.includes("include=values") || r.url.endsWith("/disclosures"))).toBe(false);
+  });
+
+  it("values list keeps its human format and notes a rotation on stderr", async () => {
+    const r = await cli(["values", "list"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toBe("API_TOKEN  (secret, self)\nPORT  (plain, self)\n");
+    expect(r.stderr).toMatch(/API_TOKEN is rotating: .*varlatch values rotate-complete API_TOKEN/);
+    expect(r.stderr).not.toMatch(/PORT is rotating/);
   });
 
   it("org, project, identity, and credential lists", async () => {

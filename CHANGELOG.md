@@ -5,6 +5,16 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.20.0)
+
+### CLI
+
+- **`varlatch values list` shows rotations in progress.** With `--json`,
+  each item has `rotating`: `true` while a dual-phase rotation keeps its
+  previous value working. Without `--json`, the list is unchanged, and
+  stderr names each item that is rotating, with the command that completes
+  it. The command still never fetches a value.
+
 ## 0.19.1 (2026-10-29)
 
 ### Documentation
