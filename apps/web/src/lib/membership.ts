@@ -35,8 +35,9 @@ export function mentionsOrganization(queryKey: QueryKey, org: Pick<OrgSummary, "
 }
 
 /**
- * Re-read the organization list, then cancel and drop every query of an
- * organization no longer in it. Returns the organizations lost.
+ * Re-read the organization list (a new request, never one already in
+ * flight), then cancel and drop every query of an organization no longer
+ * in it. Returns the organizations lost.
  */
 export async function dropLostOrganizations(
   qc: QueryClient,
@@ -44,7 +45,11 @@ export async function dropLostOrganizations(
   current?: string,
 ): Promise<OrgSummary[]> {
   const before = qc.getQueryData<{ items: OrgSummary[] }>(["orgs"])?.items ?? [];
-  const after = await qc.fetchQuery({ queryKey: ["orgs"], queryFn: listOrganizations, staleTime: 0 });
+  // A read already in flight may have started before the change: cancel it
+  // and read again, never join it.
+  await qc.cancelQueries({ queryKey: ["orgs"], exact: true });
+  const after = await listOrganizations();
+  qc.setQueryData(["orgs"], after);
   const lost = lostOrganizations(before, after.items);
   // The page's own organization counts as lost when the list no longer has
   // it, even if the list was never loaded before.

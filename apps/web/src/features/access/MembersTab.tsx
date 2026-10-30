@@ -234,7 +234,8 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
         org={org}
         person={demoting}
         self={demoting?.id === me}
-        grants={grants.data?.items ?? []}
+        grants={grants.data?.items}
+        grantsError={grants.error}
         names={names}
         nameOf={nameOf}
         roleName={roleName}

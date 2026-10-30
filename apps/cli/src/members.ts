@@ -15,14 +15,24 @@ export class MemberError extends Error {
   override name = "MemberError";
 }
 
+/** Whether an identity is a live member: a person with a role here, not removed. */
+function isMember(i: OrgIdentity): boolean {
+  return i.kind === "human" && Boolean(i.orgRole) && !i.removedAt;
+}
+
 /**
  * The live member `arg` names: an identity ID, or the exact name of exactly
- * one live member. A former member or a machine is not a member.
+ * one live member. An ID is matched against every identity first, so the ID
+ * of a former member or a machine is refused, never read as someone's name.
  */
 export function resolveMember(identities: OrgIdentity[], arg: string): OrgIdentity {
-  const members = identities.filter((i) => i.kind === "human" && i.orgRole && !i.removedAt);
-  const byId = members.find((i) => i.id === arg);
-  if (byId) return byId;
+  const byId = identities.find((i) => i.id === arg);
+  if (byId) {
+    if (isMember(byId)) return byId;
+    const what = byId.kind !== "human" ? `a ${byId.kind} identity` : byId.removedAt ? "a former member" : "not a member";
+    throw new MemberError(`${arg} (${byId.name}) is ${what}, not a member of this organization. Nothing was changed.`);
+  }
+  const members = identities.filter(isMember);
   const named = members.filter((i) => i.name === arg);
   if (named.length === 1) return named[0]!;
   if (named.length > 1) {
@@ -31,6 +41,11 @@ export function resolveMember(identities: OrgIdentity[], arg: string): OrgIdenti
     );
   }
   throw new MemberError(`${arg} is not a member of this organization (varlatch member list shows who is). Nothing was changed.`);
+}
+
+/** `word` as one shell word, quoted only when it needs to be, for a command a human copies. */
+export function shellWord(word: string): string {
+  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
 }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

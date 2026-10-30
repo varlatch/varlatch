@@ -15,13 +15,14 @@ import type { Grant, MemberReview } from "@varlatch/protocol";
 const fake = vi.hoisted(() => ({
   api: {} as Record<string, (...args: never[]) => unknown>,
   navigate: vi.fn(),
+  accessChanged: vi.fn(),
   toasts: [] as string[],
 }));
 vi.hoisted(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", { setInterval: globalThis.setInterval.bind(globalThis), clearInterval: globalThis.clearInterval.bind(globalThis) });
 });
-vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api }) }));
+vi.mock("../src/lib/session", () => ({ useSession: () => ({ api: fake.api, accessChanged: fake.accessChanged }) }));
 vi.mock("../src/lib/realtime", () => ({ useMeSignal: () => {} }));
 vi.mock("../src/shell/Shell", () => ({ errorMessage: (err: unknown) => (err instanceof Error ? err.message : String(err)) }));
 vi.mock("../src/components/Toast", () => ({
@@ -90,6 +91,7 @@ const text = (node: ReactTestInstance | string): string =>
 beforeEach(() => {
   fake.api = {};
   fake.navigate.mockReset();
+  fake.accessChanged.mockReset();
   fake.toasts = [];
 });
 afterEach(async () => {
@@ -120,6 +122,24 @@ describe("losing an organization", () => {
     expect(qc.getQueryData(["grants", "acme"])).toBeUndefined();
     expect(qc.getQueryData(["values", "acme", "api", "production"])).toBeUndefined();
     expect(qc.getQueryData(["grants", "other"])).toEqual({ items: [] });
+    expect(qc.getQueryData(["orgs"])).toEqual({ items: [other] });
+  });
+
+  it("never joins a read of the list already in flight: it may predate the removal", async () => {
+    const qc = new QueryClient();
+    qc.setQueryData(["orgs"], { items: [acme, other] });
+    let answerOld!: (v: { items: (typeof acme)[] }) => void;
+    const inFlight = qc.fetchQuery({
+      queryKey: ["orgs"],
+      queryFn: () => new Promise<{ items: (typeof acme)[] }>((resolve) => (answerOld = resolve)),
+      staleTime: 0,
+    });
+    const fresh = vi.fn(async () => ({ items: [other] }));
+    const lost = await dropLostOrganizations(qc, fresh);
+    answerOld({ items: [acme, other] });
+    await inFlight.catch(() => undefined);
+    expect(fresh).toHaveBeenCalledTimes(1);
+    expect(lost).toEqual([acme]);
     expect(qc.getQueryData(["orgs"])).toEqual({ items: [other] });
   });
 
@@ -180,6 +200,8 @@ describe("the remove dialog", () => {
     expect(fake.api.removeMember).toHaveBeenCalledWith("acme", "me");
     expect(client.getQueryData(["grants", "acme"])).toBeUndefined();
     expect(fake.navigate).toHaveBeenCalledWith("/", { replace: true });
+    // Revealed values and the realtime token do not wait for the signal.
+    expect(fake.accessChanged).toHaveBeenCalledTimes(1);
     expect(fake.toasts).toEqual(["You left Acme"]);
     expect(reviewCount(REVIEW)).toBe(3);
   });
@@ -207,6 +229,7 @@ describe("the demote dialog", () => {
         person={{ id: "idn_bob", name: "Bob" }}
         self={false}
         grants={grants}
+        grantsError={null}
         names={names}
         nameOf={(id) => (id === "grp_in" ? "ops" : String(id))}
         roleName={() => null}
@@ -225,8 +248,31 @@ describe("the demote dialog", () => {
   it("says when only the member defaults remain", async () => {
     fake.api = { listGroupMembers: vi.fn(async () => ({ items: [] })) };
     await mount(
-      <DemoteDialog org="acme" person={{ id: "idn_me", name: "Me" }} self grants={[]} names={names} nameOf={String} roleName={() => null} onClose={() => {}} />,
+      <DemoteDialog org="acme" person={{ id: "idn_me", name: "Me" }} self grants={[]} grantsError={null} names={names} nameOf={String} roleName={() => null} onClose={() => {}} />,
     );
     expect(text(byTestId("demote-no-grants"))).toBe("No other Grants: after this, you have the member defaults only.");
+    expect(byTestId("confirm-demote").props.disabled).toBe(false);
+  });
+
+  it("never reads a failed or missing lookup as no other Grants, and waits for a complete list", async () => {
+    fake.api = {
+      listGroupMembers: vi.fn(async () => {
+        throw new Error("group lookup failed");
+      }),
+    };
+    const props = { org: "acme", person: { id: "idn_bob", name: "Bob" }, self: false, names, nameOf: String, roleName: () => null, onClose: () => {} };
+    await mount(<DemoteDialog {...props} grants={[grant("grt_g", { subjectGroupId: "grp_x" })]} grantsError={null} />);
+    expect(text(byTestId("demote-lookup-failed"))).toContain("group lookup failed");
+    expect(all("demote-no-grants")).toHaveLength(0);
+    expect(byTestId("confirm-demote").props.disabled).toBe(true);
+    await act(async () => root.unmount());
+    // The organization's Grants not read yet, or not readable.
+    await mount(<DemoteDialog {...props} grants={undefined} grantsError={null} />);
+    expect(all("demote-no-grants")).toHaveLength(0);
+    expect(byTestId("confirm-demote").props.disabled).toBe(true);
+    await act(async () => root.unmount());
+    await mount(<DemoteDialog {...props} grants={undefined} grantsError={new Error("grants unavailable")} />);
+    expect(text(byTestId("demote-lookup-failed"))).toContain("grants unavailable");
+    expect(byTestId("confirm-demote").props.disabled).toBe(true);
   });
 });

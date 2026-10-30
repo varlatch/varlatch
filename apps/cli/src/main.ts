@@ -50,7 +50,7 @@ import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContra
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
-import { MEMBERS_CAPABILITY, MemberError, removalLines, resolveMember } from "./members.js";
+import { MEMBERS_CAPABILITY, MemberError, removalLines, resolveMember, shellWord } from "./members.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -2227,7 +2227,7 @@ async function main(): Promise<void> {
         const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
         if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
         const ctx = resolveContext(opts);
-        const serverOption = parsed.values.has("--server") || process.env.VARLATCH_SERVER ? ` --server ${ctx.server}` : "";
+        const serverOption = parsed.values.has("--server") || process.env.VARLATCH_SERVER ? ` --server ${shellWord(ctx.server)}` : "";
         const api = client(ctx);
         if (sub === "list") {
           const people = (await api.listIdentities(ctx.organization)).items.filter((i) => i.kind === "human");
@@ -2265,7 +2265,11 @@ async function main(): Promise<void> {
         } else if (confirm === undefined) {
           // Removing someone, or leaving, is the human's decision: the target
           // is named again with --confirm, checked before any request.
-          const command = sub === "leave" ? `varlatch member leave --confirm ${target}${serverOption}` : `varlatch member remove ${target} --confirm ${target}${serverOption}`;
+          const quoted = shellWord(target);
+          const command =
+            sub === "leave"
+              ? `varlatch member leave --confirm ${quoted}${serverOption}`
+              : `varlatch member remove ${quoted} --confirm ${quoted}${serverOption}`;
           const what = sub === "leave" ? `Leaving ${target} ends your access to it` : `Removing ${target} ends their access to ${ctx.organization}`;
           if (assisted.on) {
             fail(

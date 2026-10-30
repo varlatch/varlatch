@@ -150,7 +150,7 @@ export function RemoveMemberDialog({
   names: Names;
   onClose: () => void;
 }) {
-  const { api } = useSession();
+  const { api, accessChanged } = useSession();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -166,7 +166,10 @@ export function RemoveMemberDialog({
     onSuccess: async () => {
       onClose();
       if (self) {
-        // This organization's data goes now, before the signal arrives.
+        // This organization's data and revealed values go now, and the
+        // realtime token is minted again, whether or not the signal arrives
+        // while a page that watches for it is still open.
+        accessChanged();
         await dropLostOrganizations(qc, () => api.listOrganizations(), org);
         navigate("/", { replace: true });
         toast.success(`You left ${orgName}`);
@@ -250,6 +253,7 @@ export function DemoteDialog({
   person,
   self,
   grants,
+  grantsError,
   names,
   nameOf,
   roleName,
@@ -258,7 +262,9 @@ export function DemoteDialog({
   org: string;
   person: MemberRef | null;
   self: boolean;
-  grants: Grant[];
+  /** The organization's Grants; undefined until they are read. */
+  grants: Grant[] | undefined;
+  grantsError: unknown;
   names: Names;
   nameOf: (id: string | null | undefined) => string;
   roleName: (id: string | null | undefined) => string | null;
@@ -268,7 +274,7 @@ export function DemoteDialog({
   const qc = useQueryClient();
   const toast = useToast();
   // Grants to groups and teams count when the person is in them.
-  const groupIds = [...new Set(grants.map((g) => g.subjectGroupId).filter((id): id is string => Boolean(id)))];
+  const groupIds = [...new Set((grants ?? []).map((g) => g.subjectGroupId).filter((id): id is string => Boolean(id)))];
   const memberships = useQueries({
     queries: groupIds.map((id) => ({
       queryKey: ["group-members", org, id],
@@ -277,7 +283,11 @@ export function DemoteDialog({
     })),
   });
   const inGroups = new Set(groupIds.filter((_, i) => memberships[i]?.data?.items.some((m) => m.identityId === person?.id)));
-  const staying = grants.filter((g) => g.subjectIdentityId === person?.id || (g.subjectGroupId && inGroups.has(g.subjectGroupId)));
+  const staying = (grants ?? []).filter((g) => g.subjectIdentityId === person?.id || (g.subjectGroupId && inGroups.has(g.subjectGroupId)));
+  // The list is complete only when every Grant and every group lookup was
+  // read: a failed lookup must never read as "no other Grants".
+  const failed = grantsError ?? memberships.find((m) => m.error)?.error ?? null;
+  const complete = grants !== undefined && !failed && memberships.every((m) => m.isSuccess);
   const demote = useMutation({
     mutationFn: () => api.changeMemberRole(org, person?.id ?? "", "member"),
     onSuccess: () => {
@@ -286,7 +296,7 @@ export function DemoteDialog({
       void qc.invalidateQueries({ queryKey: ["identities", org] });
     },
   });
-  const loading = memberships.some((m) => m.isLoading);
+  const loading = !complete && !failed;
   return (
     <Dialog
       open={person !== null}
@@ -303,7 +313,7 @@ export function DemoteDialog({
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" data-testid="confirm-demote" loading={demote.isPending} onClick={() => demote.mutate()}>
+          <Button variant="primary" data-testid="confirm-demote" loading={demote.isPending} disabled={!complete} onClick={() => demote.mutate()}>
             Make member
           </Button>
         </>
@@ -311,12 +321,17 @@ export function DemoteDialog({
     >
       <div className="space-y-2">
         {loading && <p className="text-[13px] text-muted">Looking up their Grants…</p>}
-        {!loading && staying.length === 0 && (
+        {failed !== null && (
+          <p className="text-[13px] text-deny" data-testid="demote-lookup-failed">
+            Could not list the Grants {self ? "you" : "they"} keep: {errorMessage(failed)}. Try again before changing the role.
+          </p>
+        )}
+        {complete && staying.length === 0 && (
           <p className="text-[13px] text-muted" data-testid="demote-no-grants">
             No other Grants: after this, {self ? "you have" : "they have"} the member defaults only.
           </p>
         )}
-        {!loading && staying.length > 0 && (
+        {complete && staying.length > 0 && (
           <>
             <p className="text-[13px]">Still granted after this change (revoke what should go on the Grants tab):</p>
             <ul className="space-y-1" data-testid="demote-staying">

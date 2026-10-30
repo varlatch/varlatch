@@ -33,6 +33,9 @@ const IDENTITIES = [
   { id: "idn_dup1", name: "Sam", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
   { id: "idn_dup2", name: "Sam", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
   { id: "idn_svc", name: "deployer", kind: "service", disabled: false, orgRole: null, lastSeenAt: null },
+  // A live member whose name is another identity's ID: that ID still names the other identity.
+  { id: "idn_tricky", name: "idn_old", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
+  { id: "idn_ada2", name: "Ada Lovelace", kind: "human", disabled: false, orgRole: "member", removedAt: null, lastSeenAt: null },
 ];
 
 const REVIEW = {
@@ -177,6 +180,27 @@ describe("varlatch member remove", () => {
     const ambiguous = await cli(["member", "remove", "Sam", "--confirm", "Sam"]);
     expect(ambiguous.stderr).toContain("Several members are named Sam; name one by its identity ID: idn_dup1, idn_dup2");
     expect(changes()).toEqual([]);
+  });
+
+  it("reads an ID as that identity first: a former member's or a machine's ID never falls back to a name", async () => {
+    const former = await cli(["member", "remove", "idn_old", "--confirm", "idn_old"]);
+    expect(former.code).toBe(EXIT.failure);
+    expect(former.stderr).toContain("idn_old (Old) is a former member, not a member of this organization");
+    const machine = await cli(["member", "role", "idn_svc", "admin"]);
+    expect(machine.code).toBe(EXIT.failure);
+    expect(machine.stderr).toContain("idn_svc (deployer) is a service identity");
+    expect(changes()).toEqual([]);
+  });
+
+  it("quotes the human's command so it can be pasted as it is", async () => {
+    const r = await cli(["member", "remove", "Ada Lovelace"], { VARLATCH_ASSISTED: "1" });
+    expect(r.code).toBe(EXIT.config);
+    expect(r.stderr).toContain("  varlatch member remove 'Ada Lovelace' --confirm 'Ada Lovelace'\nNothing was changed.");
+    const odd = await cli(["member", "remove", "it's $(x)"]);
+    expect(odd.stderr).toContain(`varlatch member remove 'it'\\''s $(x)' --confirm 'it'\\''s $(x)'`);
+    const named = await cli(["member", "remove", "Ada Lovelace", "--confirm", "Ada Lovelace"]);
+    expect(named.code, named.stderr).toBe(0);
+    expect(changes()).toEqual([{ method: "DELETE", url: `${ORG}/members/idn_ada2`, body: undefined }]);
   });
 
   it("refuses on a server without the capability, changing nothing", async () => {
