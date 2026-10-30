@@ -427,6 +427,31 @@ Varlatch lets a coding agent use a credential without being able to read it.
   placeholders instead of Secrets.
 - [The MCP server](reference/mcp.md), for MCP hosts without a shell.
 
+## Delete a project or an organization
+
+Deleting a project erases every value of its environments at once, with no
+undo. Deleting an organization is a request: it freezes the organization
+at once, and runs after a waiting period (7 days unless you choose 1 to 30)
+and, when the organization has more than one admin, another admin's
+approval. Any admin can cancel it until then. Both are in the dashboard (a
+project's menu; Settings, then Delete organization), or:
+
+```sh
+varlatch project delete api --confirm api
+varlatch org delete acme --confirm acme --after 14
+varlatch org deletion acme                     # the open request, with its ID
+varlatch org delete acme --approve <request-id>   # another admin
+varlatch org delete acme --cancel <request-id>
+```
+
+Deletion erases data from the live database only. Backups taken before it
+keep the data until their retention removes them, values pushed to
+platforms stay there, and copies people revealed or downloaded stay where
+they are: rotate those at their provider. A GitHub App stays installed on
+GitHub until you uninstall or delete it there. After an organization is
+deleted, the people who could read its audit log export it with
+`varlatch audit export --deleted-org <organization-id>`.
+
 ## Where to go next
 
 - [`CONTEXT.md`](../CONTEXT.md): the vocabulary, from planes and identities to

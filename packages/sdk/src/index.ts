@@ -1492,8 +1492,17 @@ export class VarlatchClient {
     const params = new URLSearchParams();
     setAuditFilters(params, opts);
     const query = params.size ? `?${params}` : "";
+    return this.ndjson(`/v1/organizations/${encodeURIComponent(org)}/audit-events/export${query}`);
+  }
+
+  /** A deleted Organization's audit log as NDJSON, oldest first, for its readers. */
+  exportDeletedOrganizationAuditEventsNdjson(organizationId: string): Promise<string> {
+    return this.ndjson(`/v1/deleted-organizations/${encodeURIComponent(organizationId)}/audit-events/export`);
+  }
+
+  private async ndjson(path: string): Promise<string> {
     const res = await this.fetchImpl(
-      `${this.server}/v1/organizations/${encodeURIComponent(org)}/audit-events/export${query}`,
+      `${this.server}${path}`,
       {
         headers: {
           ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),

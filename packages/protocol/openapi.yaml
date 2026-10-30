@@ -1708,6 +1708,24 @@ paths:
                   nextCursor: { type: [string, "null"] }
         default: { $ref: "#/components/responses/Error" }
 
+  /deleted-organizations/{organization}/audit-events/export:
+    get:
+      tags: [audit]
+      operationId: exportDeletedOrganizationAuditEvents
+      summary: >
+        Stream a deleted Organization's audit log as NDJSON, oldest first,
+        for the same readers as the listing (ADR-0051 Decision 8). Anyone
+        else gets RESOURCE_NOT_FOUND.
+      parameters:
+        - { name: organization, in: path, required: true, schema: { type: string }, description: The deleted Organization's ID }
+      responses:
+        "200":
+          description: One versioned AuditEvent JSON document per line
+          content:
+            application/x-ndjson:
+              schema: { $ref: "#/components/schemas/AuditEvent" }
+        default: { $ref: "#/components/responses/Error" }
+
   /installation/deleted-organizations:
     get:
       tags: [meta]

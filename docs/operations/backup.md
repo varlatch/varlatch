@@ -191,6 +191,19 @@ Checks passed does not mean the dumps have loaded or every secret decrypts.
 A restore additionally loads the data, verifies the restored canary, and
 republishes Mirrors. Automated disposable `backup drill` remains post-MVP.
 
+### Deleted Projects and Organizations
+
+Deleting a Project or an Organization erases its values from the live
+database, not from archives. An archive taken before the deletion completed
+holds the data until your retention removes it, and restoring that archive
+restores the whole installation, deleted data included. With the hosted
+backup, object lock keeps each archive for its whole term. When data must
+be gone from backups too, keep that in mind before you restore, and let the
+retention of every destination run its course.
+
+PostgreSQL itself may keep old row versions and its write-ahead log for a
+while after a deletion, and so do replicas and volume snapshots you keep.
+
 ## S3-compatible destinations
 
 New to S3? Start with the [Backblaze B2 setup guide](backup-b2.md).

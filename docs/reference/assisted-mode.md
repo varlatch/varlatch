@@ -12,6 +12,9 @@ of that output by accident-proofing the commands an agent uses:
 - `values delete` deletes only an item named again with `--confirm`.
 - `member remove` and `member leave` act only on a person or organization
   named again with `--confirm`.
+- `project delete` and `org delete` act only on a Project or Organization
+  named again with `--confirm`, and so does approving an Organization's
+  deletion.
 - `login` with no sign-in method starts a device sign-in that the human
   approves in a browser, instead of waiting for a browser on this machine.
 
@@ -238,6 +241,38 @@ varlatch --assisted member leave --confirm <organization>
   admin role in the organization. A coding agent adds it only after the
   human approved removing that person, or leaving that organization.
 - `member list` and `member role` need no `--confirm`.
+
+## `project delete` and `org delete`
+
+```
+varlatch --assisted project delete <slug> --confirm <slug>
+varlatch --assisted org delete <slug> --confirm <slug> [--after <days>]
+varlatch --assisted org delete <slug> --approve <request-id> --confirm <slug>
+varlatch --assisted org delete <slug> --cancel <request-id>
+```
+
+- **Deleting a Project and scheduling an Organization's deletion always
+  need `--confirm`** with the exact slug, in every mode. In assisted mode,
+  without it, the command refuses with status 78 and gives the human's
+  command for their own terminal; outside assisted mode it is status 64.
+  Either way nothing is sent and nothing changes.
+- **Approving an Organization's deletion needs `--confirm` in assisted
+  mode**, because the approval lets the deletion run. Outside assisted
+  mode, the request ID names what is approved.
+- **Cancelling needs no `--confirm`**: a cancel undoes a scheduled
+  deletion, and `--confirm` with `--cancel` is status 64.
+- **`--confirm` must name the same slug**; another one is status 64.
+  Approval for one never covers another.
+- **It records the decision's intent.** It is not proof that a human
+  approved, nor a permission: deleting a Project needs `project.manage`,
+  and an Organization's deletion the built-in admin role. A coding agent
+  adds it only after the human approved deleting that Project or
+  Organization.
+- **The command line is checked strictly**, in every mode, before any
+  request: `--after`, `--approve` and `--cancel` cannot be combined, and
+  `--after` takes 1 to 30 days.
+- `org deletion` shows the open request and needs no `--confirm`. The MCP
+  server has no tool for either deletion.
 
 ## Signing in
 

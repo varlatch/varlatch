@@ -1226,15 +1226,27 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // The audit-access tombstone (ADR-0016 §6, ADR-0051 Decision 8): a deleted
   // Organization's audit log, for the readers fixed at its deletion while
   // their identity stays enabled. Nothing else bypasses the live checks.
-  app.get("/v1/deleted-organizations/:organization/audit-events", async (c) => {
+  // A deleted Organization's audit log, for the readers fixed at its
+  // deletion (ADR-0051 Decision 8); anyone else learns nothing.
+  const requireTombstoneReader = async (c: Context, organizationId: string) => {
     const principal = c.get("principal");
-    const organizationId = routeParam(c, "organization");
     const reader = await ctx.db.query(
       `SELECT 1 FROM audit_tombstone_readers r JOIN organizations o ON o.id = r.organization_id
        WHERE r.organization_id = $1 AND r.identity_id = $2 AND r.removed_at IS NULL AND o.deleted_at IS NOT NULL`,
       [organizationId, principal.identity.id],
     );
     if (!reader.rows[0] || principal.identity.disabled) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+  };
+
+  app.get("/v1/deleted-organizations/:organization/audit-events/export", async (c) => {
+    const organizationId = routeParam(c, "organization");
+    await requireTombstoneReader(c, organizationId);
+    return auditExport(organizationId, null);
+  });
+
+  app.get("/v1/deleted-organizations/:organization/audit-events", async (c) => {
+    const organizationId = routeParam(c, "organization");
+    await requireTombstoneReader(c, organizationId);
     const limit = Math.max(1, Math.min(Math.floor(Number(c.req.query("limit") ?? 100)) || 100, 500));
     const cursor = c.req.query("cursor");
     const decoded = cursor ? decodeCursor(cursor) : null;
@@ -3971,22 +3983,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
   });
 
-  app.get("/v1/organizations/:org/audit-events/export", async (c) => {
-    const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
-    await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
-    // Validated before the stream starts, so a bad filter is an ordinary error response.
-    const filters = parseAuditFilters((name) => c.req.queries(name));
-    const highWater = await ctx.db.query("SELECT COALESCE(max(event_order), 0)::text AS value FROM audit_events WHERE organization_id = $1", [org.id]);
+  // NDJSON in audit order, up to the high-water mark when the export starts.
+  const auditExport = async (organizationId: string, filters: ReturnType<typeof parseAuditFilters> | null) => {
+    const highWater = await ctx.db.query("SELECT COALESCE(max(event_order), 0)::text AS value FROM audit_events WHERE organization_id = $1", [organizationId]);
     const upper = (highWater.rows[0] as { value: string }).value;
     let cursor = "0";
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async pull(controller) {
-        const params: unknown[] = [org.id, cursor, upper];
+        const params: unknown[] = [organizationId, cursor, upper];
         const where = [
           "organization_id = $1 AND event_order > $2::bigint AND event_order <= $3::bigint",
-          ...auditFilterConditions(filters, params),
+          ...(filters ? auditFilterConditions(filters, params) : []),
         ];
         const batch = await ctx.db.query(
           `SELECT *, event_order::text AS position FROM audit_events WHERE ${where.join(" AND ")} ORDER BY event_order LIMIT 250`,
@@ -3999,6 +4007,15 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       },
     });
     return new Response(stream, { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
+  };
+
+  app.get("/v1/organizations/:org/audit-events/export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
+    // Validated before the stream starts, so a bad filter is an ordinary error response.
+    const filters = parseAuditFilters((name) => c.req.queries(name));
+    return auditExport(org.id, filters);
   });
 
   return app;

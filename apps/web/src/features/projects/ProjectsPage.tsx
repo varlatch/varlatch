@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Check, MoreHorizontal, Pencil, Plus, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, Check, MoreHorizontal, Pencil, Plus, Trash2, TriangleAlert } from "lucide-react";
 import type { Project, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
@@ -19,6 +19,7 @@ import { useProjectSummary, useSeen } from "./projectSummary";
 import { useAuditFilters, useIdentityNames, useProjectLastChange } from "./lastChange";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { NewEnvironmentDialog } from "./NewEnvironmentDialog";
+import { useDeleteProject } from "./deleteProject";
 import { Onboarding, useOnboarding } from "./Onboarding";
 
 /**
@@ -278,6 +279,8 @@ function ProjectRow({
   const summary = useProjectSummary(org, project, seen);
   const last = useProjectLastChange(org, project, seen);
   const [addingEnv, setAddingEnv] = useState(false);
+  const canDelete = useCapability("projects.delete");
+  const deleteProject = useDeleteProject(org);
   const prompt = usePrompt();
   const toast = useToast();
   const { api } = useSession();
@@ -401,6 +404,17 @@ function ProjectRow({
                     icon: <Pencil size={14} />,
                     "data-testid": "menu-rename-project",
                     onSelect: () => void promptRename(),
+                  },
+                ]
+              : []),
+            ...(canDelete
+              ? [
+                  {
+                    label: "Delete project…",
+                    icon: <Trash2 size={14} />,
+                    danger: true,
+                    "data-testid": "menu-delete-project",
+                    onSelect: () => void deleteProject(project),
                   },
                 ]
               : []),
