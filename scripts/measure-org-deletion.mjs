@@ -26,7 +26,8 @@
 // Percentiles are the sorted sample at index floor(p × n), the maximum for
 // p = 100. Lock waits are sampled from pg_stat_activity every 20 ms during
 // finalization: a wait shorter than that can go unseen.
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { issueCredential } from '../services/varlatchd/dist/auth/credentials.js';
@@ -46,7 +47,9 @@ const PROJECTS = 20, ENVIRONMENTS = 5, VERSIONS = 5, PEOPLE = 25, MACHINES = 10,
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** A deadline that does not keep the process alive. */
 const deadline = ms => new Promise(r => setTimeout(r, ms).unref());
-const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const execFileAsync = promisify(execFile);
+/** Docker, asynchronous and bounded, so deadlines and signals stay responsive. */
+const docker = async (args, timeout = 30_000) => (await execFileAsync('docker', args, { encoding: 'utf8', timeout })).stdout.trim();
 
 /** Containers this process started and has not removed yet. */
 const running = new Set();
@@ -67,20 +70,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
   });
 }
 
-/** Starts the container; the caller removes it, whatever happens after this. */
-function startPostgres() {
-  const name = `varlatch-measure-deletion-${randomBytes(3).toString('hex')}`;
+/**
+ * Starts the container under a name registered first, so the caller (and a
+ * signal) removes it even when `docker run` fails after starting it. Then
+ * waits until it accepts connections, every check bounded in time.
+ */
+async function startPostgres(name) {
   running.add(name);
-  docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', 'postgres:17.6']);
-  return name;
-}
-
-/** Waits until the container accepts connections, every check bounded in time. */
-async function readyPostgres(name) {
+  // Bounded generously: the first run may download the image.
+  await docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', 'postgres:17.6'], 600_000);
   for (let i = 0; i < 120; i++) {
     try {
-      execFileSync('docker', ['exec', name, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1', '-t', '2'], { stdio: 'ignore', timeout: 5000 });
-      const port = docker(['port', name, '5432']).split(':').pop();
+      await execFileAsync('docker', ['exec', name, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1', '-t', '2'], { timeout: 5000 });
+      const port = (await docker(['port', name, '5432'])).split(':').pop();
       return `postgres://postgres@127.0.0.1:${port}/postgres`;
     } catch {
       await sleep(500);
@@ -97,7 +99,7 @@ function percentiles(latencies) {
 
 async function measure(versions) {
   const items = Math.max(1, Math.round(versions / (PROJECTS * ENVIRONMENTS * VERSIONS)));
-  const name = startPostgres();
+  const name = `varlatch-measure-deletion-${randomBytes(3).toString('hex')}`;
   let db = null;
   // The probe and the lock sampler run beside the measurement: their
   // failures are kept and rethrown, and both are stopped and settled
@@ -108,7 +110,7 @@ async function measure(versions) {
     // The whole measurement has a deadline: stalled anywhere, it fails,
     // and finally removes the container, which ends the stalled work.
     const work = (async () => {
-      db = createPgQuerier(await readyPostgres(name));
+      db = createPgQuerier(await startPostgres(name));
       const connection = await db.connect();
       try {
         await runMigrations(connection);
