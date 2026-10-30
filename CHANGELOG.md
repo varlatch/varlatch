@@ -29,6 +29,24 @@ fixes.
   for that (up to 30 seconds). Revoking a Connection or removing a GitHub
   App now also stops a push in progress.
 
+### Contracts
+
+- **Rotation hints.** A Contract item can say how its credential is
+  rotated, in a sentence or two: `rotationHint` in a JSON Contract, or
+  `@rotationHint=...` in `.env.schema`. The dashboard shows it in the
+  rotate dialog, the item panel and the Contract page, and the
+  Contract editor of a project managed in the dashboard can edit it,
+  along with the default rotation grace window. `varlatch values
+  rotate` prints it on stderr before it asks for the new value, and again
+  after. It never appears in generated types. A hint is one paragraph of
+  1 to 1024 characters: tabs, line breaks, control characters and
+  bidirectional formatting characters are refused rather than removed.
+  Every Member can read the Contract, so a hint must never contain a
+  secret.
+- **`@rotationGrace=<seconds>` in `.env.schema`** sets an item's default
+  rotation grace window, which until now only a JSON Contract could set.
+  Each rotation decorator may appear once per item.
+
 ### CLI
 
 - **`varlatch values list` shows rotations in progress.** With `--json`,
@@ -70,6 +88,11 @@ fixes.
 Database schema: migration 32 adds `sync_runs`, one row per push in
 progress, and the repair-cycle columns `sync_targets.repair_cycle_started_at`
 and `sync_ledger.repaired_at`.
+
+An item with a rotation hint needs this release on both sides: older
+servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it
+in `varlatch types`. Upgrade the server and every CLI that generates types
+before adding a hint.
 
 ## 0.19.1 (2026-10-29)
 

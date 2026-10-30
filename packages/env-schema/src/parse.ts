@@ -12,6 +12,8 @@
  *                     @type=string|number|integer|boolean|url|email|enum(a,b,...)
  *                     (integer needs Contract Semantics version 3)
  *                     @example=... / @example="..."
+ *                     @rotationGrace=<seconds>   1 to 2592000, once per item
+ *                     @rotationHint=... / @rotationHint="..."   one line, once per item
  *   Items:            NAME=            (no default)
  *                     NAME=literal     (defaultValue)
  *                     NAME=fn(...)     (dynamic resolver; no defaultValue)
@@ -23,7 +25,7 @@
  * never discarded, never approximated.
  */
 
-import { TIERS, type Tier } from "@varlatch/contract";
+import { TIERS, rotationHintProblem, type Tier } from "@varlatch/contract";
 
 export type DraftRequired =
   | { kind: "always" }
@@ -41,6 +43,8 @@ export interface DraftItem {
   defaultValue?: string;
   description?: string;
   example?: string;
+  rotationGraceSeconds?: number;
+  rotationHint?: string;
 }
 
 export interface ContractDraft {
@@ -137,7 +141,7 @@ export function parseEnvSchema(source: string): ContractDraft {
   const items: DraftItem[] = [];
   const environmentNames = new Set<string>();
 
-  let pendingDecorators: { name: string; value: string | undefined; line: number }[] = [];
+  let pendingDecorators: { name: string; value: string | undefined; line: number; raw?: string }[] = [];
   let pendingDescription: string[] = [];
   let sawItem = false;
 
@@ -162,7 +166,7 @@ export function parseEnvSchema(source: string): ContractDraft {
         if (!sawItem && (name === "defaultSensitive" || name === "defaultRequired")) {
           applyRootDecorator(defaults, { name, value, line: lineNo });
         } else {
-          pendingDecorators.push({ name, value, line: lineNo });
+          pendingDecorators.push({ name, value, line: lineNo, raw });
         }
       } else if (comment.startsWith("@")) {
         throw new EnvSchemaParseError(lineNo, `Malformed decorator: ${comment.slice(0, 60)}`);
@@ -194,7 +198,7 @@ export function parseEnvSchema(source: string): ContractDraft {
 
 function applyRootDecorator(
   defaults: ContractDraft["defaults"],
-  d: { name: string; value: string | undefined; line: number },
+  d: { name: string; value: string | undefined; line: number; raw?: string },
 ): void {
   if (d.name === "defaultSensitive") {
     if (d.value !== "true" && d.value !== "false") {
@@ -214,7 +218,7 @@ function applyRootDecorator(
 function buildItem(
   name: string,
   value: string,
-  decorators: { name: string; value: string | undefined; line: number }[],
+  decorators: { name: string; value: string | undefined; line: number; raw?: string }[],
   description: string[],
   environmentNames: Set<string>,
 ): DraftItem {
@@ -280,6 +284,42 @@ function buildItem(
       case "example":
         item.example = stripQuotes(d.value ?? "");
         break;
+      case "rotationGrace": {
+        // One physical line each, and never twice (ADR-0053).
+        if (item.rotationGraceSeconds !== undefined) {
+          throw new EnvSchemaParseError(d.line, "@rotationGrace appears twice for this item");
+        }
+        const v = stripQuotes(d.value ?? "");
+        const seconds = /^[0-9]+$/.test(v) ? Number(v) : Number.NaN;
+        if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 2_592_000) {
+          throw new EnvSchemaParseError(d.line, "@rotationGrace takes whole seconds from 1 to 2592000 (30 days)");
+        }
+        item.rotationGraceSeconds = seconds;
+        break;
+      }
+      case "rotationHint": {
+        if (item.rotationHint !== undefined) {
+          throw new EnvSchemaParseError(d.line, "@rotationHint appears twice for this item");
+        }
+        // Validated on the line as written: trimming would quietly remove a
+        // tab, a carriage return or a line separator at either end, and the
+        // hint refuses those rather than cleaning them (ADR-0053). Only
+        // ordinary spaces around the value, and one pair of quotes, go.
+        const raw = d.raw ?? "";
+        const at = raw.indexOf("@rotationHint=");
+        if (d.value === undefined || at < 0) {
+          throw new EnvSchemaParseError(d.line, "@rotationHint needs a value: @rotationHint=How to rotate it");
+        }
+        const payload = raw.slice(at + "@rotationHint=".length).replace(/^ +| +$/g, "");
+        const hint =
+          payload.length >= 2 && (payload[0] === '"' || payload[0] === "'") && payload.at(-1) === payload[0]
+            ? payload.slice(1, -1)
+            : payload;
+        const problem = rotationHintProblem(hint);
+        if (problem) throw new EnvSchemaParseError(d.line, `@rotationHint: ${problem}`);
+        item.rotationHint = hint;
+        break;
+      }
       case "docs":
       case "icon":
       case "tag":

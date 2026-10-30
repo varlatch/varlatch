@@ -7,6 +7,7 @@ import {
   ITEM_TYPE_SINCE_SEMANTICS,
   TIERS,
   isReservedItemName,
+  rotationHintProblem,
   type ConfigurationContract,
   type ContractItem,
 } from "./types.js";
@@ -46,6 +47,13 @@ const contractItemSchema = z.strictObject({
   description: z.string().max(4096).optional(),
   example: z.string().max(4096).optional(),
   rotationGraceSeconds: z.number().int().min(1).max(2_592_000).optional(),
+  rotationHint: z
+    .string()
+    .superRefine((hint, ctx) => {
+      const problem = rotationHintProblem(hint);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .optional(),
 });
 
 const contractSchema = z.strictObject({
@@ -163,6 +171,7 @@ export function normalizeContract(input: unknown, options: NormalizeOptions = {}
       if (item.rotationGraceSeconds !== undefined) {
         normalized.rotationGraceSeconds = item.rotationGraceSeconds;
       }
+      if (item.rotationHint !== undefined) normalized.rotationHint = item.rotationHint;
       return normalized;
     })
     .sort((a, b) => codePointCompare(a.name, b.name));
