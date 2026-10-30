@@ -1106,29 +1106,6 @@ export async function createTarget(
       connection.base_identity,
       key,
     );
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "target",
-      resourceId: id,
-      changes: ["created"],
-    });
-    await recordAuditEvent(db, {
-      eventType: "sync.target_created",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { targetId: id, environmentId, connectionId: connection.id },
-      authz,
-      metadata: {
-        platform: adapter.platform,
-        destination: describeDestination(adapter.platform, key),
-        mapping: mappingSummary(input.mapping),
-        removeOrphans: input.removeOrphans,
-        ...expandsMetadata(destination),
-      },
-    });
     let res;
     try {
       res = await db.query(
@@ -1153,6 +1130,33 @@ export async function createTarget(
     } catch (err) {
       throw destinationClaimError(err);
     }
+    // The index and the audit event come after the claim: an audit insert
+    // holds the audit counter until commit, and a claim may wait for a
+    // Project deletion releasing the same destination, which itself takes
+    // the counter last (ADR-0051 Decision 6). Claim first, audit last.
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: id,
+      changes: ["created"],
+    });
+    await recordAuditEvent(db, {
+      eventType: "sync.target_created",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { targetId: id, environmentId, connectionId: connection.id },
+      authz,
+      metadata: {
+        platform: adapter.platform,
+        destination: describeDestination(adapter.platform, key),
+        mapping: mappingSummary(input.mapping),
+        removeOrphans: input.removeOrphans,
+        ...expandsMetadata(destination),
+      },
+    });
     return targetRow(res.rows[0] as Record<string, unknown>);
   });
 }

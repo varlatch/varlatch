@@ -227,6 +227,30 @@ describe.skipIf(!url)("project deletion on real PostgreSQL", () => {
     expect([scanned, deleted.status], JSON.stringify(deleted.body)).toEqual(["ok", 200]);
   });
 
+  it("a destination released by a deletion can be claimed by another Project at the same time: no deadlock", async () => {
+    const connection = (
+      await call("POST", "/v1/organizations/test/platform-connections", {
+        platform: "coolify",
+        baseIdentity: "https://coolify.example.com",
+        name: "c",
+        credential: "token-c-0001",
+      })
+    ).body as { id: string };
+    const target = { connectionId: connection.id, destination: { applicationUuid: "shared-app" }, mapping: { kind: "wildcard" } };
+    expect((await call("POST", `${DEV}/sync-targets`, target)).status).toBe(201);
+    await call("POST", "/v1/organizations/test/projects", { slug: "web", name: "Web", contractAuthority: "git" });
+    await call("POST", "/v1/organizations/test/projects/web/environments", { name: "development", tier: "development" });
+    // The deletion has released the claim (uncommitted) and is about to take the audit counter.
+    const paused = pauseAt(/^\s*INSERT INTO audit_events/);
+    const deleting = call("DELETE", P);
+    await paused.arrived;
+    const claiming = call("POST", "/v1/organizations/test/projects/web/environments/development/sync-targets", target);
+    await waiting(1);
+    paused.release();
+    const [deleted, claimed] = await Promise.all([deleting, claiming]);
+    expect([deleted.status, claimed.status], JSON.stringify([deleted.body, claimed.body])).toEqual([200, 201]);
+  });
+
   it("two Contract activations and a rename of one Project never deadlock", async () => {
     const revisions = await Promise.all(
       [1, 2].map(async (n) =>
