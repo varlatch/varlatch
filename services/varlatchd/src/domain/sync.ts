@@ -759,15 +759,13 @@ export async function replaceConnectionCredential(
       await db.query("UPDATE sync_targets SET failure_count = 0 WHERE id = ANY($1)", [rejected.map((t) => t.id)]);
     }
     // A replacement is a Target mutation class trigger (ADR-0031 §6):
-    // enqueue directly, never via the audit cursor. It also fences every run
-    // still using the old credential (ADR-0050 Decision 1): a run's failure
-    // or success bookkeeping and ledger writes need its generation, so a
-    // late 401 from the old credential can neither restore the failures
-    // just reset nor stop a Target just resumed. The run's own sync_runs row
-    // ends as the run does.
+    // enqueue directly, never via the audit cursor. A run still using the
+    // old credential is not fenced: what it writes lands, and its ledger
+    // and redeploy accounting must stand. Only its failures are not
+    // counted, since the bumped version says its credential was replaced
+    // (recordFailure in syncdelivery.ts).
     await db.query(
-      `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL, generation = generation + 1, lease_expires_at = NULL
-       WHERE connection_id = $1 AND revoked_at IS NULL`,
+      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE connection_id = $1 AND revoked_at IS NULL",
       [connectionId],
     );
     await recordIntegrationChange(db, {

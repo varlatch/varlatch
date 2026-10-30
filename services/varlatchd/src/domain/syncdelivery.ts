@@ -242,6 +242,8 @@ export async function reconcileTarget(
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  /** The Connection version this run read its credential at, once read. */
+  let credentialVersion: number | undefined;
   // Kept in memory: the row may be cleaned by another process's tick before
   // this run classifies how it ended.
   const runDeadline = leaseRow.run_deadline as Date | string;
@@ -264,6 +266,7 @@ export async function reconcileTarget(
       [target.connection_id, target.organization_id],
     );
     const live = connRes.rows[0] as LiveConnection | undefined;
+    if (live) credentialVersion = Number(live.connection_version);
     if (!live || live.connection_revoked_at) {
       // Revocation disables referencing Targets in the same transaction;
       // reaching here is a narrow race — surface it, never push.
@@ -345,7 +348,7 @@ export async function reconcileTarget(
         return;
       }
       if (!fenced) {
-        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
+        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes, credentialVersion).catch(
           (e) => console.error("sync interruption bookkeeping failed:", e),
         );
       }
@@ -372,7 +375,7 @@ export async function reconcileTarget(
           : [target.id, outcome.result, generation],
       );
     } else {
-      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes);
+      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes, credentialVersion);
     }
   } catch (err) {
     await recordFailure(
@@ -382,6 +385,7 @@ export async function reconcileTarget(
       true,
       generation,
       inspected.notes,
+      credentialVersion,
     ).catch((e) => console.error("sync failure bookkeeping failed:", e));
   } finally {
     await ctx.db
@@ -1223,6 +1227,7 @@ async function recordFailure(
   backoff: boolean,
   generation?: number,
   notes?: TargetNote[],
+  credentialVersion?: number,
 ): Promise<void> {
   const failures = target.failure_count + 1;
   const delayMs = Math.min(BASE_BACKOFF_MS * 2 ** target.failure_count, MAX_BACKOFF_MS);
@@ -1231,7 +1236,13 @@ async function recordFailure(
   // acquisition cleared it) or the backed-off retry would never qualify for
   // selection and the Target would wait for the next trigger or repair pass.
   const params: unknown[] = [target.id, failures, result.slice(0, 500), delayMs, disable];
-  const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
+  let guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
+  // A failure with a credential replaced since the run read it is the old
+  // credential's, not this Target's (#57): the replacement reset the count
+  // and resumed what the old credential stopped, so it is not counted.
+  if (credentialVersion !== undefined) {
+    guard += ` AND NOT EXISTS (SELECT 1 FROM platform_connections c WHERE c.id = $${params.push(target.connection_id)} AND c.version <> $${params.push(credentialVersion)})`;
+  }
   const setNotes = notes !== undefined ? `, last_notes = $${params.push(JSON.stringify(notes))}` : "";
   const applied = await ctx.db.query(
     `UPDATE sync_targets
