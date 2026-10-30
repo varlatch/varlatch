@@ -615,9 +615,9 @@ async function reconcileUnderLease(
     }
   }
 
-  // A repair write whose content matches the ledger fingerprint is not a
-  // change and triggers no redeploy (§5).
-  const changingWrites = writes.filter((w) => ledger.get(w.destName)?.fingerprint !== w.fingerprint);
+  // Whether confirmed changes owe a redeploy: only on a Target that asks for
+  // one, through an adapter that can (never Convex or GitHub Actions).
+  const redeploys = target.redeploy && adapter.supportsRedeploy === true && adapter.triggerRedeploy !== undefined;
 
   // Every note is known now (the ledger pass added the kept names).
   const runNotes = boundNotes([...heldNotes, ...notes]);
@@ -634,9 +634,14 @@ async function reconcileUnderLease(
   if (verified.length > 0 && !(await creditVerified(ctx, target.id, generation, verified))) return LEASE_LOST;
 
   if (writes.length === 0 && deletes.length === 0) {
+    // Nothing to write, but an earlier run may still owe a redeploy.
+    const owedNote = redeploys
+      ? await payRedeploy(ctx, adapter, target, generation, await adapterRequest(ctx, org, target, live, opts, generation))
+      : "";
+    if (owedNote === LEASE_LOST) return LEASE_LOST;
     return {
       ok: flags.length === 0,
-      result: withHeld(flags.length > 0 ? flagSummary(flags) : "converged", heldReasons),
+      result: `${withHeld(flags.length > 0 ? flagSummary(flags) : "converged", heldReasons)}${owedNote}`.slice(0, 500),
       notes: runNotes,
       cycleComplete: force,
     };
@@ -681,6 +686,11 @@ async function reconcileUnderLease(
         o.ok ? "written" : "failed-write",
         w?.fingerprint ?? null,
         o.ok ? null : (o.error ?? "failed"),
+        // Only a write of what the ledger already confirmed is no change and
+        // owes no redeploy (ADR-0031 §5). An intent or a failed write also
+        // carries the fingerprint, but nothing confirmed it landed: a retry
+        // of a change still owes its redeploy.
+        o.ok && redeploys && !(ledger.get(o.name)?.state === "written" && ledger.get(o.name)?.fingerprint === w?.fingerprint),
       );
     }
     // Fewer outcomes than items means shouldAbort cut the batch short:
@@ -707,6 +717,7 @@ async function reconcileUnderLease(
         o.ok ? "tombstone" : "failed-delete",
         null,
         o.ok ? null : (o.error ?? "failed"),
+        o.ok && redeploys,
       );
     }
     if (deleteOutcomes.length < deletes.length) return LEASE_LOST;
@@ -744,26 +755,9 @@ async function reconcileUnderLease(
   // no redeploy may follow (ADR-0050 Decision 2).
   if (!recorded) return LEASE_LOST;
 
-  // Best-effort redeploy, only when ledger content actually changed (§5).
-  // Best-effort means a failure never degrades the Target (the values did
-  // land) — but it must show in last_result, or "pushed but the running
-  // app never picked it up" is invisible to the operator.
-  let redeployNote = "";
-  if (
-    target.redeploy &&
-    adapter.supportsRedeploy &&
-    adapter.triggerRedeploy &&
-    (changingWrites.some((w) => writeOutcomes.some((o) => o.ok && o.name === w.destName)) ||
-      deleteOutcomes.some((o) => o.ok))
-  ) {
-    // A fence during the batch's FINAL write returns a full outcome count,
-    // so truncation cannot detect it — probe once more before redeploying a
-    // platform this run may no longer speak for.
-    if (req.shouldAbort && (await req.shouldAbort())) return LEASE_LOST;
-    await adapter.triggerRedeploy(req).catch((err: unknown) => {
-      redeployNote = `; redeploy failed (${err instanceof Error ? err.message : "error"})`;
-    });
-  }
+  // The owed redeploy, this run's and any earlier one's (ADR-0050 Decision 4).
+  const redeployNote = await payRedeploy(ctx, adapter, target, generation, req);
+  if (redeployNote === LEASE_LOST) return LEASE_LOST;
 
   return {
     ok: failed.length === 0 && flags.length === 0,
@@ -1047,6 +1041,8 @@ export async function ledgerSet(
   state: string,
   fp: string | null,
   lastError: string | null,
+  /** A confirmed change that owes a redeploy: recorded in the same transaction (ADR-0050 Decision 4). */
+  oweRedeploy = false,
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
     const res = await db.query(
@@ -1065,8 +1061,51 @@ export async function ledgerSet(
              repaired_at = CASE WHEN $5 IN ('written', 'tombstone') THEN now() END`,
       [targetId, destName, generation, fp, state, lastError],
     );
+    // Only while the Target still wants redeploys: turning them off settles
+    // the debt and fences the run, under the same row lock.
+    if (oweRedeploy) await db.query("UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1 WHERE id = $1 AND redeploy", [targetId]);
     return true;
   });
+}
+
+/**
+ * Pays an owed redeploy (ADR-0050 Decision 4): reads the debt under this
+ * run's generation, asks the adapter, and settles only the revision it read,
+ * only when the platform accepted the request. An abort (the fence or the
+ * deadline) sends nothing and leaves the debt for the next run; a refusal
+ * leaves it too, and shows in the result. Delivery is at least once: a
+ * crash after an accepted redeploy and before settling sends another.
+ */
+async function payRedeploy(
+  ctx: AppCtx,
+  adapter: ReturnType<typeof getAdapter>,
+  target: SyncTargetRow,
+  generation: number,
+  req: Parameters<NonNullable<ReturnType<typeof getAdapter>["triggerRedeploy"]>>[0],
+): Promise<string | typeof LEASE_LOST> {
+  if (!target.redeploy || !adapter.supportsRedeploy || !adapter.triggerRedeploy) return "";
+  // The current setting, not the one the run started with.
+  const res = await ctx.db.query(
+    "SELECT redeploy, redeploy_owed, redeploy_paid FROM sync_targets WHERE id = $1 AND generation = $2",
+    [target.id, generation],
+  );
+  const row = res.rows[0] as { redeploy: boolean; redeploy_owed: string | number; redeploy_paid: string | number } | undefined;
+  if (!row) return LEASE_LOST; // fenced: the successor pays
+  if (!row.redeploy) return "";
+  const owed = Number(row.redeploy_owed);
+  if (owed <= Number(row.redeploy_paid)) return "";
+  let outcome: "sent" | "aborted";
+  try {
+    outcome = await adapter.triggerRedeploy(req);
+  } catch (err) {
+    return `; redeploy failed (${err instanceof Error ? err.message : "error"})`;
+  }
+  if (outcome === "aborted") return LEASE_LOST;
+  await ctx.db.query(
+    "UPDATE sync_targets SET redeploy_paid = GREATEST(redeploy_paid, $3) WHERE id = $1 AND generation = $2",
+    [target.id, generation, owed],
+  );
+  return "";
 }
 
 /** Repair credit for names a read-back proved current (written and present, or deleted and absent), under the same generation guard as ledgerSet. */

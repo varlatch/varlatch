@@ -28,6 +28,15 @@ fixes.
   the push in progress can start no other request. The pause button waits
   for that (up to 30 seconds). Revoking a Connection or removing a GitHub
   App now also stops a push in progress.
+- **A redeploy that is owed is no longer lost.** When a push changes values
+  on a Coolify destination with redeploy turned on, the redeploy is
+  recorded as owed with those changes, and any later push sends it, even
+  one with nothing to write, until Coolify accepts it. A push cut off
+  after its writes, or a redeploy Coolify refused, is therefore tried
+  again instead of leaving the running application on old values. After
+  a crash at the wrong moment the application may be redeployed twice.
+  Changing the destination or turning redeploy off cancels an owed
+  redeploy.
 
 ### Contracts
 
@@ -108,7 +117,8 @@ fixes.
 
 Database schema: migration 32 adds `sync_runs`, one row per push in
 progress, and the repair-cycle columns `sync_targets.repair_cycle_started_at`
-and `sync_ledger.repaired_at`.
+and `sync_ledger.repaired_at`; migration 33 adds `sync_targets.redeploy_owed`
+and `redeploy_paid`.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

@@ -974,6 +974,187 @@ describe("convergence", () => {
     expect(row.lease_expires_at).toBeNull();
   });
 
+  describe("owed redeploys (ADR-0050 Decision 4)", () => {
+    const debt = async () => {
+      const row = await targetRowFromDb();
+      return { owed: Number(row.redeploy_owed), paid: Number(row.redeploy_paid) };
+    };
+    const cutAfterWrite = (coolify: ReturnType<typeof fakeCoolify>, which: number) => {
+      let writes = 0;
+      return (async (url: unknown, init?: RequestInit) => {
+        const res = await coolify.fetchImpl(url as string, init);
+        const method = init?.method ?? "GET";
+        if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+          writes += 1;
+          if (writes === which) await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+        return res;
+      }) as typeof fetch;
+    };
+
+    it("a run cut off after a changing write still gets its redeploy, from the next run", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      await reconcileTarget(ctx, id, { fetchImpl: cutAfterWrite(coolify, 1) });
+      expect(coolify.restarts()).toBe(0);
+      expect((await debt()).owed).toBeGreaterThan((await debt()).paid);
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+      const after = await debt();
+      expect(after.paid).toBe(after.owed);
+    });
+
+    it("a redeploy aborted by the deadline sends nothing and stays owed", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      // Both writes land, then the budget runs out before the redeploy.
+      await reconcileTarget(ctx, id, { fetchImpl: cutAfterWrite(coolify, 2) });
+      expect(coolify.restarts()).toBe(0);
+      expect((await targetRowFromDb()).failure_count).toBe(0);
+      // A later run with nothing to write pays it.
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+      await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+    });
+
+    it("a refused redeploy stays owed and is tried again", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      let refuse = true;
+      const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+        if (refuse && String(url).endsWith("/start?force=true")) return new Response("{}", { status: 403 });
+        return coolify.fetchImpl(url as string, init);
+      }) as typeof fetch;
+      await runSyncOnce(ctx, { fetchImpl });
+      expect((await targetRowFromDb()).last_result).toMatch(/redeploy failed/);
+      expect((await debt()).owed).toBeGreaterThan((await debt()).paid);
+      refuse = false;
+      await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+      await runSyncOnce(ctx, { fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+      const after = await debt();
+      expect(after.paid).toBe(after.owed);
+    });
+
+    it("a destination change or turning redeploy off settles the debt without paying it", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const target = (await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0];
+      await reconcileTarget(ctx, target.id, { fetchImpl: cutAfterWrite(coolify, 1) });
+      expect((await debt()).owed).toBeGreaterThan((await debt()).paid);
+      const off = await patchReq(`${ENV_PATH}/sync-targets/${target.id}`, { expectedVersion: target.version, redeploy: false });
+      expect(off.status).toBe(200);
+      const settled = await debt();
+      expect(settled.paid).toBe(settled.owed);
+    });
+
+    it("a change that failed once still owes its redeploy when the retry lands", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true, mapping: { kind: "explicit", items: [{ name: "PORT" }] } });
+      let fail = true;
+      const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (fail && String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+          return new Response("{}", { status: 500 });
+        }
+        return coolify.fetchImpl(url as string, init);
+      }) as typeof fetch;
+      await runSyncOnce(ctx, { fetchImpl });
+      expect(coolify.restarts()).toBe(0);
+      fail = false;
+      await ctx.db.query("UPDATE sync_targets SET next_attempt_at = NULL");
+      await runSyncOnce(ctx, { fetchImpl });
+      expect(coolify.values().get("PORT")).toBe("8080");
+      expect(coolify.restarts()).toBe(1);
+    });
+
+    it("a run cut off before its first write leaves the change owing its redeploy", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      // The budget runs out while the run reads the destination, before any write.
+      let cut = true;
+      const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+        if (cut && (init?.method ?? "GET") === "GET") {
+          cut = false;
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+        return coolify.fetchImpl(url as string, init);
+      }) as typeof fetch;
+      await reconcileTarget(ctx, id, { fetchImpl });
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.values().get("PORT")).toBe("8080");
+      expect(coolify.restarts()).toBe(1);
+    });
+
+    it("turning redeploy off during a push fences it: no new debt, no redeploy", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const target = (await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0];
+      let toggled = false;
+      const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+        const res = await coolify.fetchImpl(url as string, init);
+        const method = init?.method ?? "GET";
+        if (!toggled && String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+          toggled = true;
+          const off = await patchReq(`${ENV_PATH}/sync-targets/${target.id}`, { expectedVersion: target.version, redeploy: false });
+          expect(off.status).toBe(200);
+        }
+        return res;
+      }) as typeof fetch;
+      await reconcileTarget(ctx, target.id, { fetchImpl });
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(0);
+      const after = await debt();
+      expect(after.paid).toBe(after.owed);
+    });
+
+    it("a payment settles only the debt it read; a newer one stays owed", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      let bumped = false;
+      const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+        if (!bumped && String(url).endsWith("/start?force=true")) {
+          bumped = true;
+          // Another change is confirmed while the redeploy is on its way.
+          await ctx.db.query("UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1");
+        }
+        return coolify.fetchImpl(url as string, init);
+      }) as typeof fetch;
+      await runSyncOnce(ctx, { fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+      expect((await debt()).owed).toBe((await debt()).paid + 1);
+      await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
+      await runSyncOnce(ctx, { fetchImpl });
+      expect(coolify.restarts()).toBe(2);
+      const after = await debt();
+      expect(after.paid).toBe(after.owed);
+    });
+
+    it("an owed redeploy survives a pause and is paid after the resume", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      await reconcileTarget(ctx, id, { fetchImpl: cutAfterWrite(coolify, 2) });
+      expect((await debt()).owed).toBeGreaterThan((await debt()).paid);
+      expect((await post(`${ENV_PATH}/sync-targets/${id}/pause`, {})).status).toBe(200);
+      expect((await post(`${ENV_PATH}/sync-targets/${id}/resume`, {})).status).toBe(200);
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+    });
+
+    it("owes nothing when the Target does not redeploy", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: false });
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(await debt()).toEqual({ owed: 0, paid: 0 });
+    });
+  });
+
   it("redeploy fires only on pushes that changed ledger content", async () => {
     const coolify = fakeCoolify();
     await activeTarget({ redeploy: true });
@@ -2205,6 +2386,8 @@ describe("repair cycles (ADR-0050 Decision 4)", () => {
     expect(row.repair_cycle_started_at).toBeNull();
     expect(row.last_repair_at).not.toBeNull();
     expect(row.failure_count).toBe(0);
+    // GitHub Actions cannot redeploy: nothing is ever owed.
+    expect(Number(row.redeploy_owed)).toBe(0);
   });
 
   it("re-deleting many tombstones also resumes instead of starting over", async () => {
