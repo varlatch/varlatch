@@ -1224,6 +1224,65 @@ describe("convergence", () => {
       expect((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].lastDrift).toBeNull();
     });
 
+    it("a repair that fails to put drift back reports it as failed, and the drift stays named", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      coolify.setFailWrites(true);
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      const result = (await syncEvents()).filter((e) => e.event_type === "sync.push_result").at(-1)!;
+      expect(meta(result.metadata)).toMatchObject({ driftRepaired: 0, driftFailed: 1 });
+      expect(coolify.values().get("PORT")).toBe("1111");
+      expect((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].lastDrift).toMatchObject({ names: ["PORT"] });
+    });
+
+    it("a value stored in another form is drift only when the value itself differs", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      // Same value, flags lost on the platform: a rewrite, not drift.
+      Object.assign(coolify.row("PORT") as object, { is_literal: false, is_multiline: false });
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect((await syncEvents()).some((e) => e.event_type === "sync.drift_detected")).toBe(false);
+      // Flags lost and the value changed: drift.
+      Object.assign(coolify.row("PORT") as object, { is_literal: false, is_multiline: false, value: "1111" });
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      const drift = (await syncEvents()).find((e) => e.event_type === "sync.drift_detected");
+      expect(meta(drift!.metadata)).toMatchObject({ changed: "PORT", count: 1 });
+    });
+
+    it("a yielded repair does not report the names it already put back again", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      (coolify.row("DATABASE_URL") as { value: string }).value = "postgres://elsewhere";
+      await repairDue();
+      // The run reports both, puts one back, and runs out of budget.
+      let writes = 0;
+      const cut = (async (url: unknown, init?: RequestInit) => {
+        const res = await coolify.fetchImpl(url as string, init);
+        const method = init?.method ?? "GET";
+        if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH") && ++writes === 1) {
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+        return res;
+      }) as typeof fetch;
+      await reconcileTarget(ctx, id, { fetchImpl: cut });
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      const reports = (await syncEvents()).filter((e) => e.event_type === "sync.drift_detected").map((e) => meta(e.metadata));
+      expect(reports[0]).toMatchObject({ count: 2 });
+      // The continuation reports only the name still to put back.
+      expect(reports.slice(1).every((r) => r.count === 1)).toBe(true);
+      expect(coolify.values().get("PORT")).toBe("8080");
+      expect(coolify.values().get("DATABASE_URL")).toBe("postgres://dev-db/main");
+    });
+
     it("putting drift back owes a redeploy", async () => {
       const coolify = fakeCoolify();
       await activeTarget({ redeploy: true });
@@ -1923,6 +1982,8 @@ describe("Coolify value fidelity on repair (ADR-0031 amendment 2026-10-21)", () 
     coolify.calls.length = 0;
     await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl, repairIntervalMs: 0 });
     expect(coolify.calls.filter((c) => c.method === "PATCH" || c.method === "POST")).toHaveLength(0);
+    // A form-only rewrite is not drift (ADR-0050 Decision 8).
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.drift_detected'")).rows).toHaveLength(0);
   });
 
   it("holds a value Coolify cannot carry even when the platform already has it, and never deletes it", async () => {
@@ -2163,9 +2224,10 @@ describe("Coolify services (ADR-0031 amendment 2026-10-21)", () => {
     await runSyncOnce(ctx, { fetchImpl: service.fetchImpl, repairIntervalMs: 0 });
     // The values could not be compared, so they were written again...
     expect(service.calls.filter((c) => c.method === "PATCH").length).toBeGreaterThan(0);
-    // ...as the same content: no restart.
+    // ...as the same content: no restart, and no drift.
     expect(service.restarts()).toBe(1);
     expect((await targetRowFromDb()).last_result).toBe("ok");
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.drift_detected'")).rows).toHaveLength(0);
   });
 
   it("restarts the service, not a deploy, after a changing push", async () => {

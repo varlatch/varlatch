@@ -1081,6 +1081,25 @@ describe("convex adapter", () => {
       format: "json",
     });
   });
+  it("reads a value Convex does not return as a string as unknown, never as empty (ADR-0050)", async () => {
+    const calls: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = fakeFetch(() => ({
+      status: 200,
+      body: {
+        status: "success",
+        value: [
+          { name: "FLAG", value: true },
+          { name: "COUNT", value: 3 },
+          { name: "EMPTY", value: "" },
+        ],
+      },
+    }), calls);
+    const values = await convexAdapter.readValues!(baseReq(fetchImpl));
+    expect(values.get("FLAG")).toBeNull();
+    expect(values.get("COUNT")).toBeNull();
+    expect(values.get("EMPTY")).toBe("");
+  });
+
 
   it("maps auth failures to non-retryable errors carrying only the status", async () => {
     for (const status of [401, 403, 404]) {
