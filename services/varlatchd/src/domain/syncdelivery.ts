@@ -105,6 +105,26 @@ export interface SyncRunOptions {
 // delivery); Target mutations never travel through here — their transactions
 // set needs_sync directly.
 
+/**
+ * Audit events that never change what a Target would push: reads, Secret
+ * validation verdicts, a Capability's lifecycle, denials and exposure
+ * attestations. They still advance the cursor; they mark no Target. A
+ * denied action of any type changed nothing either. test/sync-triggers.test.ts
+ * classifies every event type varlatchd records, so a new one is decided
+ * on purpose.
+ */
+export const NON_TRIGGERING_EVENTS: ReadonlySet<string> = new Set([
+  "value.disclosed",
+  "secret.disclosed",
+  "secret.validated",
+  "capability.issued",
+  "capability.exercised",
+  "capability.revoked",
+  "capability.denied",
+  "authorization.denied",
+  "exposure.revocation_confirmed",
+]);
+
 export async function scanSyncTriggers(ctx: AppCtx): Promise<void> {
   await ctx.db.query(
     `INSERT INTO sync_cursor (singleton, occurred_at, event_id)
@@ -114,17 +134,18 @@ export async function scanSyncTriggers(ctx: AppCtx): Promise<void> {
     await ctx.db.query("SELECT cursor_order FROM sync_cursor WHERE singleton")
   ).rows[0] as { cursor_order: string };
   const events = await ctx.db.query(
-    `SELECT id, occurred_at, event_order::text, event_type, resource FROM audit_events
+    `SELECT id, occurred_at, event_order::text, event_type, decision, resource FROM audit_events
      WHERE event_order > $1 AND event_type NOT LIKE 'sync.%'
      ORDER BY event_order LIMIT $2`,
     [cursor.cursor_order, SCAN_BATCH],
   );
-  const rows = events.rows as { id: string; occurred_at: string; event_order: string; event_type: string; resource: unknown }[];
+  const rows = events.rows as { id: string; occurred_at: string; event_order: string; event_type: string; decision: string; resource: unknown }[];
   if (rows.length === 0) return;
 
   const environmentIds = new Set<string>();
   const projectIds = new Set<string>();
   for (const row of rows) {
+    if (row.decision === "deny" || NON_TRIGGERING_EVENTS.has(row.event_type)) continue;
     const resource = (
       typeof row.resource === "string" ? JSON.parse(row.resource) : row.resource
     ) as Record<string, string | null> | null;
