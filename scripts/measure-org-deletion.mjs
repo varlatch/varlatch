@@ -42,6 +42,8 @@ const paceMs = Number(env('MEASURE_PACE_MS', '250'));
 const baselineS = Number(env('MEASURE_BASELINE_S', '10'));
 const PROJECTS = 20, ENVIRONMENTS = 5, VERSIONS = 5, PEOPLE = 25, MACHINES = 10, TARGETS = 10;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+/** A deadline that does not keep the process alive. */
+const deadline = ms => new Promise(r => setTimeout(r, ms).unref());
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 /** Starts the container; the caller removes it, whatever happens after this. */
@@ -217,12 +219,17 @@ async function measure(versions) {
       lockWaits,
     };
   } finally {
+    // Every step is bounded, so the container is always removed: a request
+    // stalled in the probe or the pool cannot hold it. Removing it breaks
+    // any connection still open.
     background.stop = true;
-    await Promise.allSettled(background.tasks);
-    await db?.end().catch(() => {});
+    await Promise.race([Promise.allSettled(background.tasks), deadline(10_000)]);
+    await Promise.race([db?.end().catch(() => {}), deadline(5_000)]);
     try {
-      docker(['rm', '-f', name]);
-    } catch {}
+      execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore', timeout: 30_000 });
+    } catch {
+      console.error(`could not remove the container ${name}; remove it with: docker rm -f ${name}`);
+    }
   }
 }
 
