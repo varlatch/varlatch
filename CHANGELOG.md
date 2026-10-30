@@ -68,6 +68,32 @@ fixes.
   rotation grace window, which until now only a JSON Contract could set.
   Each rotation decorator may appear once per item.
 
+### Members
+
+- **An Organization Admin can remove a person, and a member can leave.**
+  Until now nothing removed a membership, so an admin could not take
+  someone's access away. Removal ends the membership and, in the same
+  step, revokes the person's direct Grants, removes them from every group
+  and team, and revokes the invitations they issued that are still
+  pending. Access now needs a live membership: a Grant or group link that
+  still names a removed person gives them nothing, and they can be given
+  none. Their sign-in and credentials keep working, but from their next
+  request they reach nothing in the Organization. Removing someone needs
+  the built-in admin role; a Grant such as `organization.manage` is not
+  enough. The last admin cannot be removed, leave, or be made a member.
+- **An admin can make a member an admin, and back.** Making an admin a
+  member removes the built-in admin role only: Grants given to them
+  directly or through groups stay.
+- **Removal lists what to review.** It changes nothing that belongs to the
+  Organization, and says what the person set up that may keep working
+  without them: integrations and Connections they created or changed,
+  webhooks, OIDC bindings, machine credentials whose token they were shown
+  (with each one's state) and their personal environments. Removal also
+  records, for a later report, what the person could reach at that moment
+  and under which Tailnet Requirements.
+- The identity listing keeps former members, without a role, and says when
+  they left.
+
 ### CLI
 
 - **`varlatch values list` shows rotations in progress.** With `--json`,
@@ -128,12 +154,28 @@ fixes.
   once the Target is drained, or after 30 seconds with `drained: false`;
   the pause takes effect either way. Capability `sync.pause-wait`.
 
+- `DELETE /v1/organizations/{org}/members/{member}` removes a member, or
+  leaves with `me`; `PATCH` with `{ "role": "admin" | "member" }` changes a
+  role; `GET …/members/{member}/review` lists what to review before a
+  removal. Capability `members.lifecycle`. The audit events are
+  `membership.removed` and `membership.role_changed`. When concurrent
+  changes keep getting in its way, a removal or role change gives up with
+  `STATE_CHANGED` and `details.retryable: true`, having changed nothing.
+- Identities in an Organization's listing have `removedAt`, and `orgRole`
+  is null for a former member.
+- A Grant for a person who is not a live member of the Organization, or for
+  a machine of another Organization, is refused with `RESOURCE_NOT_FOUND`.
+
 ### Upgrading
 
 Database schema: migration 32 adds `sync_runs`, one row per push in
 progress, and the repair-cycle columns `sync_targets.repair_cycle_started_at`
 and `sync_ledger.repaired_at`; migration 33 adds `sync_targets.redeploy_owed`
-and `redeploy_paid`; migration 34 adds the `last_drift_*` columns.
+and `redeploy_paid`; migration 34 adds the `last_drift_*` columns; migration
+35 adds `org_memberships.removed_at` and `version`,
+`credentials.issued_by` (filled in for existing credentials from their
+issuance audit events), the removal snapshot tables and
+`member_integrations`.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

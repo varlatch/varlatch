@@ -71,6 +71,7 @@ import {
 } from "../domain/identities.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
+import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import {
   createAppConnection,
   createConnection,
@@ -126,7 +127,7 @@ import {
   revokeCapability,
 } from "../domain/capabilities.js";
 import { newId } from "../db/ids.js";
-import { withTx } from "../db/tx.js";
+import { SerializationRetriesExhausted, withTx } from "../db/tx.js";
 import { captureState, inSnapshot } from "../domain/retrieval.js";
 import { STATE_CATEGORIES, manifestOf, type CallerView } from "../domain/manifest.js";
 import { strictRetrieval } from "../domain/strict.js";
@@ -178,6 +179,7 @@ import {
   listTeamProjects,
   removeGroupMember,
   removeTeamProject,
+  requireGrantSubject,
   updateGroup,
   updateRole,
 } from "../domain/policy.js";
@@ -565,6 +567,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       return c.json(
         errorBody(err.code, err.message, reqId, err.details),
         STATUS_BY_CODE[err.code] as 400,
+      );
+    }
+    if (err instanceof SerializationRetriesExhausted) {
+      // Concurrent changes kept invalidating the transaction; it changed
+      // nothing, and running it again normally succeeds (ADR-0052).
+      return c.json(
+        errorBody("STATE_CHANGED", "The Organization changed while this ran, so nothing was changed. Try again.", reqId, { retryable: true }),
+        STATUS_BY_CODE.STATE_CHANGED as 409,
       );
     }
     // Never leak internals.
@@ -1996,7 +2006,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // Operational signal (ADR-0034 §5): most recent successful
         // authentication by any of the identity's credentials, ~60s granular.
         lastSeenAt: i.last_seen_at ? iso(i.last_seen_at) : null,
-        orgRole: i.org_role ?? null,
+        // A former member has no role here, and says when they left (ADR-0052).
+        orgRole: i.removed_at ? null : (i.org_role ?? null),
+        removedAt: i.removed_at ? iso(i.removed_at) : null,
         // Better Auth profile data for humans; machines are always null.
         email: i.email ?? null,
         image: i.image ?? null,
@@ -2298,6 +2310,78 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     );
   });
 
+  // ---- Members (ADR-0052, capability members.lifecycle). Removal, leaving
+  // and role changes check the actor's live built-in admin membership (or,
+  // for leaving, their own) inside their serializable transaction; this
+  // first check only hides the Organization from people who cannot see it.
+  const memberParam = (c: Context<{ Variables: Vars }>, principal: Principal) => {
+    const id = routeParam(c, "member");
+    return id === "me" ? principal.identity.id : id;
+  };
+  // The admin check runs inside the transaction, which a refusal rolls
+  // back; the refusal is audited after it, like any other denial.
+  const auditMemberDenial = async <T>(
+    c: Context<{ Variables: Vars }>,
+    principal: Principal,
+    organizationId: string,
+    identityId: string,
+    run: () => Promise<T>,
+  ): Promise<T> => {
+    try {
+      return await run();
+    } catch (err) {
+      if (err instanceof DomainError && err.code === "PERMISSION_DENIED") {
+        await recordAuditEvent(ctx.db, {
+          eventType: "authorization.denied",
+          decision: "deny",
+          actorIdentityId: principal.identity.id,
+          credentialId: principal.credentialId,
+          organizationId,
+          action: "identity.manage",
+          resource: { identityId },
+          authz: { denial: "no-grant", requirements: [] },
+          metadata: { operation: `${c.req.method} members`, reason: "not-admin" },
+          requestId: c.get("requestId"),
+        });
+      }
+      throw err;
+    }
+  };
+
+  app.get("/v1/organizations/:org/members/:member/review", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const member = memberParam(c, principal);
+    const review = await auditMemberDenial(c, principal, org.id, member, () =>
+      previewMemberReview(ctx, org.id, member, principal.identity),
+    );
+    return c.json(review);
+  });
+
+  app.delete("/v1/organizations/:org/members/:member", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const member = memberParam(c, principal);
+    const removed = await auditMemberDenial(c, principal, org.id, member, () =>
+      removeMember(ctx, org.id, member, principal.identity),
+    );
+    return c.json(removed);
+  });
+
+  app.patch("/v1/organizations/:org/members/:member", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ role: z.enum(["admin", "member"]) }).strict(), await c.req.json());
+    const member = memberParam(c, principal);
+    const changed = await auditMemberDenial(c, principal, org.id, member, () =>
+      changeMemberRole(ctx, org.id, member, body.role, principal.identity),
+    );
+    return c.json(changed);
+  });
+
   // ---- Invitations (ADR-0006: links an admin hands out, never emails).
   app.post("/v1/organizations/:org/invitations", async (c) => {
     const principal = c.get("principal");
@@ -2413,6 +2497,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const id = newId("grant");
     await withTx(ctx.db, async (db) => {
+      if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
@@ -2493,6 +2578,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
+        // Membership before the Grant, the order a removal locks them in,
+        // so replacing a Grant of someone being removed cannot deadlock.
+        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         const existing = await db.query(
           "SELECT id, revoked_at FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE",
           [grantId, org.id],

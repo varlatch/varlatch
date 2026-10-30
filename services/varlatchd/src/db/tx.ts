@@ -41,6 +41,67 @@ export async function withTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): P
   }
 }
 
+/** PostgreSQL's serialization_failure and deadlock_detected: safe to retry whole. */
+export function isSerializationFailure(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "40001" || code === "40P01";
+}
+
+/** Thrown when every attempt of a serializable transaction failed to serialize. */
+export class SerializationRetriesExhausted extends Error {
+  constructor(readonly attempts: number) {
+    super(`Transaction could not be serialized after ${attempts} attempts`);
+  }
+}
+
+export const SERIALIZABLE_ATTEMPTS = 5;
+
+/**
+ * A SERIALIZABLE transaction that owns its connection (ADR-0052 Decision 2):
+ * it never joins another transaction, so it refuses to start inside one
+ * instead of silently weakening its isolation as a nested withTx would.
+ * A serialization failure, at any statement or at COMMIT, runs `fn` again
+ * from the start on a new snapshot, at most `attempts` times with jittered
+ * backoff; then it throws SerializationRetriesExhausted and nothing has
+ * changed. `fn` must therefore have no effect outside the database: send
+ * signals and the like only after this returns.
+ */
+export async function withSerializableTx<T>(
+  db: Querier,
+  fn: (db: Querier) => Promise<T>,
+  opts: { attempts?: number; backoffMs?: number } = {},
+): Promise<T> {
+  if (inTx.has(db)) throw new Error("A serializable transaction cannot start inside another transaction");
+  if (isPool(db)) {
+    const client = await db.connect();
+    try {
+      return await withSerializableTx(client, fn, opts);
+    } finally {
+      client.release();
+    }
+  }
+  const attempts = opts.attempts ?? SERIALIZABLE_ATTEMPTS;
+  const backoffMs = opts.backoffMs ?? 20;
+  for (let attempt = 1; ; attempt++) {
+    await db.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    inTx.add(db);
+    try {
+      const result = await fn(db);
+      await db.query("COMMIT");
+      return result;
+    } catch (err) {
+      // After a failed COMMIT the transaction is already over; ROLLBACK
+      // then only warns, and must not hide the original error.
+      await db.query("ROLLBACK").catch(() => undefined);
+      if (!isSerializationFailure(err)) throw err;
+      if (attempt >= attempts) throw new SerializationRetriesExhausted(attempts);
+    } finally {
+      inTx.delete(db);
+    }
+    await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt * (0.5 + Math.random())));
+  }
+}
+
 /**
  * A read-only REPEATABLE READ transaction: every read in `fn` sees one
  * snapshot, taken by its first statement, and any write fails. `now` is the

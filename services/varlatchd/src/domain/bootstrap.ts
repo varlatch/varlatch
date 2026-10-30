@@ -8,6 +8,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { pinLiveMembership } from "./orgs.js";
 
 /**
  * Installation lifecycle, bootstrap, and break-glass (ADR-0010/0019/0020).
@@ -232,6 +233,16 @@ export async function issueInviteGrant(
   actorIdentityId: string,
 ): Promise<{ id: string; token: string; expiresAt: string }> {
   return withTx(ctx.db, async (db) => {
+    // A person issues invitations through a live membership, pinned so a
+    // concurrent removal revokes this invitation with their others
+    // (ADR-0052 Decision 2). A machine has no membership to pin.
+    const issuer = await db.query("SELECT kind FROM identities WHERE id = $1", [actorIdentityId]);
+    if (
+      (issuer.rows[0] as { kind: string } | undefined)?.kind === "human" &&
+      !(await pinLiveMembership(db, input.organizationId, actorIdentityId))
+    ) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+    }
     const id = newId("setupGrant");
     const token = generateToken("cli").replace("vlt_cli_", "vlt_invite_");
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();

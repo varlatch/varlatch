@@ -65,7 +65,8 @@ export interface Principal {
  *  - team-scoped Grants expanded to one project-scoped record per owned
  *    Project, so grantApplies never sees a raw team scope.
  * Everything is additive; an identity in no Group with no Roles behaves
- * exactly as before.
+ * exactly as before. A person without a live membership has no Grants at
+ * all, whatever rows still name them (ADR-0052 Decision 1).
  */
 export async function loadGrants(
   ctx: AppCtx,
@@ -79,6 +80,14 @@ export async function loadGrants(
      FROM grants g
      LEFT JOIN roles r ON r.id = g.role_id
      WHERE g.organization_id = $1 AND g.revoked_at IS NULL
+       -- A person's Grants count only through a live membership; a machine's
+       -- are unchanged (ADR-0052 Decision 1).
+       AND EXISTS (
+         SELECT 1 FROM identities s WHERE s.id = $2 AND (s.kind <> 'human' OR EXISTS (
+           SELECT 1 FROM org_memberships m
+           WHERE m.organization_id = $1 AND m.identity_id = $2 AND m.removed_at IS NULL
+         ))
+       )
        AND (
          g.subject_identity_id = $2
          OR g.subject_group_id IN (

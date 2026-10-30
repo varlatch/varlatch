@@ -180,6 +180,9 @@ const READ_ONLY_EVENTS = new Set([
   "capability.denied",
 ]);
 
+/** Events that change a person's access to an Organization; resource.identityId names them. */
+const MEMBERSHIP_EVENTS = new Set(["membership.removed", "membership.role_changed"]);
+
 /** The domain an event changes ("grant", "project", …), or null for reads and decisions. */
 export function changedDomain(eventType: string): string | null {
   return READ_ONLY_EVENTS.has(eventType) ? null : (eventType.split(".")[0] as string);
@@ -255,6 +258,19 @@ export async function syncNewMirrorEvents(
           resourceId: environmentId,
         }, fetchImpl);
         pushed++;
+      }
+    }
+    if (MEMBERSHIP_EVENTS.has(ev.event_type as string)) {
+      // The affected person, not only the actor, learns at once that their
+      // access here changed (ADR-0052 Decision 9): their dashboard refreshes
+      // its Organization list and token and drops this Organization's data.
+      const subject = (resource as { identityId?: string } | null)?.identityId;
+      if (subject) {
+        const signal = identitySignals.get(subject) ?? { domains: new Set<string>(), lastEventId: "", occurredAt: "" };
+        signal.domains.add("membership");
+        signal.lastEventId = ev.id as string;
+        signal.occurredAt = ev.occurred_at as string;
+        identitySignals.set(subject, signal);
       }
     }
     const signal = signals.get(orgId) ?? {

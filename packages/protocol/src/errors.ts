@@ -84,6 +84,7 @@ export const CAPABILITIES = [
   "installation.release",
   "disclosure.purpose.export",
   "sync.pause-wait",
+  "members.lifecycle",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

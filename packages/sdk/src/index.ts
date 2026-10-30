@@ -17,6 +17,8 @@ import type {
   DeviceSignInStarted,
   GrantReplacement,
   IssuedCliCredential,
+  MemberRemoval,
+  MemberReview,
   OwnCredential,
   Requirement,
   IssuedAgentCredential,
@@ -149,7 +151,10 @@ export interface OrgIdentity {
   name: string;
   kind: "human" | "service" | "workload" | "ci" | "broker" | "agent";
   disabled: boolean;
+  /** A live member's built-in role; null for machines and former members. */
   orgRole: "admin" | "member" | null;
+  /** When a former member was removed or left (capability members.lifecycle); null otherwise. */
+  removedAt?: string | null;
   /**
    * Most recent successful authentication by any of the identity's
    * credentials, ~60s granularity (ADR-0034). Null when never seen.
@@ -186,7 +191,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, MemberRemoval, MemberReview, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -601,6 +606,39 @@ export class VarlatchClient {
     return this.request(
       "DELETE",
       `/v1/organizations/${encodeURIComponent(org)}/invitations/${encodeURIComponent(invitationId)}`,
+    );
+  }
+
+  /**
+   * Remove a person from the Organization, or leave it with "me" (capability
+   * members.lifecycle, ADR-0052). Returns what to review: removal changes
+   * nothing that belongs to the Organization.
+   */
+  removeMember(org: string, member: string): Promise<MemberRemoval> {
+    return this.request(
+      "DELETE",
+      `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}`,
+    );
+  }
+
+  /** Admin or member (capability members.lifecycle); the last admin cannot be demoted. */
+  changeMemberRole(
+    org: string,
+    member: string,
+    role: "admin" | "member",
+  ): Promise<{ identityId: string; role: "admin" | "member"; previousRole: "admin" | "member" }> {
+    return this.request(
+      "PATCH",
+      `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}`,
+      { role },
+    );
+  }
+
+  /** What a live member set up that may keep working without them (capability members.lifecycle). */
+  reviewMember(org: string, member: string): Promise<MemberReview> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}/review`,
     );
   }
 

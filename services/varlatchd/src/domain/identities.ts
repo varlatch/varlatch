@@ -267,15 +267,18 @@ export async function listOrgIdentities(
   (IdentityRow & {
     last_seen_at: string | null;
     org_role: string | null;
+    removed_at: string | null;
     email: string | null;
     image: string | null;
   })[]
 > {
   // Humans enrolled through Better Auth carry an email and optional avatar
   // image via auth_user_links; machines (and unlinked humans) yield nulls.
+  // Former members stay listed, with removed_at, so history keeps their
+  // names (ADR-0052 Decision 1).
   const res = await ctx.db.query(
     `SELECT i.id, i.kind, i.name, i.disabled, i.installation_admin, i.organization_id,
-            i.last_seen_at, m.role AS org_role, u."email" AS email, u."image" AS image
+            i.last_seen_at, m.role AS org_role, m.removed_at, u."email" AS email, u."image" AS image
      FROM identities i
      LEFT JOIN org_memberships m
        ON m.identity_id = i.id AND m.organization_id = $1
@@ -288,6 +291,7 @@ export async function listOrgIdentities(
   return res.rows as (IdentityRow & {
     last_seen_at: string | null;
     org_role: string | null;
+    removed_at: string | null;
     email: string | null;
     image: string | null;
   })[];

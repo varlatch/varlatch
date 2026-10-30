@@ -1531,6 +1531,99 @@ paths:
         "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/members/{member}:
+    delete:
+      tags: [identities]
+      operationId: removeMember
+      summary: >
+        Remove a person from the Organization, or leave it when {member} is
+        the caller or "me" (capability members.lifecycle, ADR-0052).
+        Removing someone else needs a live built-in admin membership; an
+        explicit Grant such as organization.manage does not substitute.
+        Leaving needs only a live membership. The last admin can neither be
+        removed nor leave (VALIDATION_FAILED, details.reason last-admin).
+      description: >
+        One serializable transaction records what the person could reach
+        (per environment, the value actions their role and Grants granted,
+        and the Tailnet Requirements those were conditional on), ends the
+        membership, revokes their direct Grants, removes them from every
+        group and team, and revokes the pending invitations they issued; the
+        audit event membership.removed records the counts. Their sign-in and
+        credentials are untouched: from the next request they reach nothing
+        in this Organization. Nothing that belongs to the Organization
+        changes; the response lists what to review. When concurrent changes
+        keep invalidating the transaction it gives up with STATE_CHANGED
+        (details.retryable true) having changed nothing; try again.
+        Existence-hiding: a caller who cannot see the Organization gets
+        RESOURCE_NOT_FOUND. Someone who is not a live member is
+        RESOURCE_NOT_FOUND too.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberRemoval" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [identities]
+      operationId: changeMemberRole
+      summary: >
+        Make a member an admin, or an admin a member (capability
+        members.lifecycle, ADR-0052 Decision 3). Needs a live built-in admin
+        membership; the last admin cannot be demoted, themselves included.
+        Demotion removes the built-in admin bundle only: explicit and group
+        Grants stay. The same role again changes and records nothing; a
+        change is audited as membership.role_changed.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: { type: string, enum: [admin, member] }
+      responses:
+        "200":
+          description: The member's role
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [identityId, role, previousRole]
+                properties:
+                  identityId: { type: string }
+                  role: { type: string, enum: [admin, member] }
+                  previousRole: { type: string, enum: [admin, member] }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/members/{member}/review:
+    get:
+      tags: [identities]
+      operationId: reviewMember
+      summary: >
+        What a live member created or changed that may keep working without
+        them (capability members.lifecycle, ADR-0052 Decision 4): the list a
+        removal returns, before it happens. For a live built-in admin about
+        any live member, and for a member about themselves.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+      responses:
+        "200":
+          description: The review list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MemberReview" }
+        default: { $ref: "#/components/responses/Error" }
+
   /me:
     get:
       tags: [identities]
@@ -4057,6 +4150,112 @@ components:
         image:
           type: [string, "null"]
           description: Avatar image (data or https URL) for human identities; null for machines.
+        orgRole:
+          type: [string, "null"]
+          enum: [admin, member, null]
+          description: >
+            In an Organization's identity listing, a live member's built-in
+            role; null for machines and former members.
+        removedAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            In an Organization's identity listing, when a former member was
+            removed or left (capability members.lifecycle); null otherwise.
+
+    MemberReview:
+      type: object
+      description: >
+        What a person created or changed in the Organization that may keep
+        working without them (ADR-0052 Decision 4). Names, IDs and states
+        only. Removal changes none of it. It ends this identity's authority,
+        not a credential, token or platform account held outside Varlatch.
+      required: [syncTargets, connections, webhooks, oidcBindings, credentials, personalEnvironments]
+      properties:
+        syncTargets:
+          type: array
+          items:
+            type: object
+            required: [id, projectId, environmentId, platform, state, changes]
+            properties:
+              id: { type: string }
+              projectId: { type: string }
+              environmentId: { type: string }
+              platform: { type: string }
+              state: { type: string, enum: [active, paused, disabled, revoked] }
+              changes:
+                type: array
+                items: { type: string, enum: [created, repointed, destination_changed] }
+        connections:
+          type: array
+          items:
+            type: object
+            required: [id, name, platform, credentialKind, revoked, changes]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              platform: { type: string }
+              credentialKind: { type: string, enum: [token, github-app] }
+              revoked: { type: boolean }
+              changes:
+                type: array
+                items: { type: string, enum: [created, credential_replaced] }
+        webhooks:
+          type: array
+          description: Each signing secret was shown to its creator once.
+          items:
+            type: object
+            required: [id, host, revoked]
+            properties:
+              id: { type: string }
+              host: { type: string, description: The URL's host only }
+              revoked: { type: boolean }
+        oidcBindings:
+          type: array
+          items:
+            type: object
+            required: [id, identityId, identityName, issuer, revoked]
+            properties:
+              id: { type: string }
+              identityId: { type: string }
+              identityName: { type: string }
+              issuer: { type: string }
+              revoked: { type: boolean }
+        credentials:
+          type: array
+          description: Credentials of this Organization's machine identities whose token was shown to the person at issuance.
+          items:
+            type: object
+            required: [id, name, identityId, identityName, state]
+            properties:
+              id: { type: string }
+              name: { type: [string, "null"] }
+              identityId: { type: string }
+              identityName: { type: string }
+              state: { type: string, enum: [valid, expired, exhausted, revoked, retired] }
+        personalEnvironments:
+          type: array
+          items:
+            type: object
+            required: [id, name, projectId]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              projectId: { type: string }
+
+    MemberRemoval:
+      type: object
+      required: [removalId, identityId, role, left, removedAt, grantsRevoked, groupsLeft, invitationsRevoked, review]
+      properties:
+        removalId: { type: string }
+        identityId: { type: string }
+        role: { type: string, enum: [admin, member], description: Their role when removed }
+        left: { type: boolean, description: True when the person removed themselves }
+        removedAt: { type: string, format: date-time }
+        grantsRevoked: { type: integer }
+        groupsLeft: { type: integer, description: Groups and teams }
+        invitationsRevoked: { type: integer }
+        review: { $ref: "#/components/schemas/MemberReview" }
 
     Profile:
       type: object

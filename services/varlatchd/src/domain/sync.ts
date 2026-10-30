@@ -15,6 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
 import {
@@ -366,6 +367,13 @@ export async function createConnection(
       resource: { connectionId: id },
       metadata: { platform: adapter.platform, baseIdentity, name: input.name },
     });
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: id,
+      changes: ["created"],
+    });
     const res = await db.query(
       `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -436,6 +444,13 @@ export async function createAppConnection(
         githubAppId: app.id,
         installationId: input.installationId,
       },
+    });
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: id,
+      changes: ["created"],
     });
     const res = await db.query(
       `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
@@ -708,6 +723,13 @@ export async function replaceConnectionCredential(
       // Each re-authorized Target's write-time gate, as it decided.
       authz: { reauthorizedTargets: provenance },
       metadata: { reauthorizedTargets: rows.map((t) => t.id).join(",") || null },
+    });
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: connectionId,
+      changes: ["credential_replaced"],
     });
     // A replacement is a Target mutation class trigger (ADR-0031 §6):
     // enqueue directly, never via the audit cursor.
@@ -1078,6 +1100,13 @@ export async function createTarget(
         ...expandsMetadata(destination),
       },
     });
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: id,
+      changes: ["created"],
+    });
     let res;
     try {
       res = await db.query(
@@ -1246,6 +1275,16 @@ export async function updateTarget(
         widened: mappingWidens(current.mapping, mapping),
         ...expandsMetadata(destination),
       },
+    });
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: current.id,
+      changes: [
+        ...(connection.id !== target.connection_id ? (["repointed"] as const) : []),
+        ...(destinationChanged ? (["destination_changed"] as const) : []),
+      ],
     });
     return targetRow(res.rows[0] as Record<string, unknown>);
   });
