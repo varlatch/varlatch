@@ -480,12 +480,22 @@ const concurrent = await asHuman("PATCH", `/organizations/acme/requirements/${pi
 });
 check("concurrent change through the API", concurrent.status === 200, `status ${concurrent.status}`);
 // Either the live update arrives first (the form shows the conflict), or
-// the save is refused with VERSION_CONFLICT.
+// the save is refused with VERSION_CONFLICT. The live update can also land
+// between these steps: it closes the review, and the button being clicked
+// goes away with it. A click that fails only because the conflict took its
+// place is that outcome, not a failure.
 const reviewButton = `[data-testid="review-requirement-${pinned.json.id}"]`;
+const conflictShown = async () => (await page.locator('[data-testid="requirement-conflict"]').count()) > 0;
+const clickUnlessConflict = (selector) =>
+  page.click(selector, { timeout: 5000 }).catch(async (err) => {
+    if (!(await conflictShown())) throw err;
+  });
 await page.waitForTimeout(1500);
-if (!(await page.isDisabled(reviewButton))) {
-  await page.click(reviewButton);
-  if (await page.locator('[data-testid="requirement-review"]').count()) await page.click(`[data-testid="save-requirement-${pinned.json.id}"]`);
+if (!(await conflictShown()) && !(await page.isDisabled(reviewButton))) {
+  await clickUnlessConflict(reviewButton);
+  if (!(await conflictShown()) && (await page.locator('[data-testid="requirement-review"]').count())) {
+    await clickUnlessConflict(`[data-testid="save-requirement-${pinned.json.id}"]`);
+  }
 }
 await page.waitForSelector('[data-testid="requirement-conflict"]', { timeout: 10000 });
 check("the review and its confirmation are gone", (await page.locator('[data-testid="requirement-review"]').count()) === 0);
