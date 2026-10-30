@@ -17,7 +17,14 @@ import { dotenvLine, type ServerItem } from "./model";
  * this tab is connected, never through the dashboard's origin (ADR-0046);
  * a change of connection counts as a change of protection.
  */
-export function useExport(org: string, project: string, env: Environment | null) {
+export function useExport(
+  org: string,
+  project: string,
+  env: Environment | null,
+  /** Record the reads as "read for export" (capability disclosure.purpose.export, ADR-0053). */
+  opts: { exportPurpose?: boolean } = {},
+) {
+  const purpose = opts.exportPurpose ? ({ purpose: "export" } as const) : {};
   const { api: ordinary } = useSession();
   const { connection, client: tailnetClient } = useTailnetConnection();
   const [items, setItems] = useState<ServerItem[] | null>(null);
@@ -41,7 +48,7 @@ export function useExport(org: string, project: string, env: Environment | null)
     setError(null);
     if (!env || !api) return;
     api
-      .effectiveConfiguration(org, project, env.name, { includeValues: true })
+      .effectiveConfiguration(org, project, env.name, { includeValues: true, ...purpose })
       .then((r) => {
         if (generation.current !== mine) return;
         setItems(r.items ?? []);
@@ -64,7 +71,7 @@ export function useExport(org: string, project: string, env: Environment | null)
     const mine = generation.current;
     let disclosed = new Map<string, string>();
     if (includeSecrets && secrets.length > 0) {
-      const result = await api.discloseSecrets(org, project, env.name, { items: secrets.map((s) => s.name) });
+      const result = await api.discloseSecrets(org, project, env.name, { items: secrets.map((s) => s.name), ...purpose });
       disclosed = new Map(result.items.map((i) => [i.name, i.value]));
     }
     if (generation.current !== mine) throw tailnetNow.current ? new TailnetOnlyError() : new DisclosureDiscardedError();

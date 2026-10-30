@@ -448,9 +448,14 @@ export class VarlatchClient {
     org: string,
     project: string,
     environment: string,
-    opts: { includeValues?: boolean } = {},
+    /** `purpose` (capability `disclosure.purpose.export`) is recorded with the values read. */
+    opts: { includeValues?: boolean; purpose?: DisclosurePurpose } = {},
   ): Promise<EffectiveConfiguration> {
-    const query = opts.includeValues ? "?include=values" : "";
+    const params = [
+      ...(opts.includeValues ? ["include=values"] : []),
+      ...(opts.purpose ? [`purpose=${encodeURIComponent(opts.purpose)}`] : []),
+    ];
+    const query = params.length > 0 ? `?${params.join("&")}` : "";
     return this.request(
       "GET",
       `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/effective-configuration${query}`,

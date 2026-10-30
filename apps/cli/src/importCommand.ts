@@ -348,6 +348,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
       if (stored.length > 0) io.err(`varlatch import: stored: ${stored.join(", ")}`);
       io.err(`varlatch import: not stored: ${row.entry.name} (${reason})`);
       if (skipped.length > 0) io.err(`varlatch import: not attempted: ${skipped.join(", ")}`);
+      if (stored.length > 0) copyNotice(io, opts.file, secretsAmong(stored), false);
       // A retry in assisted mode finds the values stored above as existing, and may find them changed since
       // (rotated) or the file edited: replacing each needs the human's approval again, never this run's word.
       const again = opts.assisted
@@ -359,6 +360,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     }
   }
   io.out(`Stored ${stored.length} value(s) in ${where}.`);
+  const storedSecrets = secretsAmong(stored);
 
   if (opts.deleteSource) {
     let current: Buffer | null = null;
@@ -369,12 +371,41 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     }
     if (!current || digest(current) !== digest(bytes)) {
       io.err(`varlatch import: ${opts.file} changed or disappeared while importing; it was not deleted`);
+      copyNotice(io, opts.file, storedSecrets, false);
       emit({ ...contractDoc(pushed), stored, deleted: false });
       return 1;
     }
     unlinkSync(opts.file);
     io.out(`Deleted ${opts.file}.`);
+    copyNotice(io, opts.file, storedSecrets, true);
+  } else {
+    copyNotice(io, opts.file, storedSecrets, false);
   }
   emit({ ...contractDoc(pushed), stored, deleted: opts.deleteSource });
   return 0;
+
+  /** The stored names that are Secrets (or of unknown sensitivity, which counts as one). */
+  function secretsAmong(names: string[]): string[] {
+    const sensitive = new Set(rows.filter((r) => r.sensitive !== false).map((r) => r.entry.name));
+    return names.filter((n) => sensitive.has(n));
+  }
+}
+
+/**
+ * What remains outside Varlatch after an import stored values (ADR-0053):
+ * the file, unless it was deleted, and wherever else it was copied. On
+ * stderr, after the values were stored, never on a dry run. When Secrets
+ * were stored, a short checklist follows.
+ */
+function copyNotice(io: ImportIo, file: string, secrets: string[], deleted: boolean): void {
+  io.err(
+    deleted
+      ? `varlatch import: other copies of these values may still exist (CI settings, teammates, chat, backups); deleting ${file} revokes nothing.`
+      : `varlatch import: ${file} still holds copies of these values. Rotating or deleting a value in Varlatch does not change the file; delete it once you no longer need it.`,
+  );
+  if (secrets.length === 0) return;
+  io.err("varlatch import: before relying on Varlatch for these secrets:");
+  if (!deleted) io.err(`  1. delete ${file};`);
+  io.err(`  ${deleted ? 1 : 2}. check where else it was copied (CI settings, teammates, chat);`);
+  io.err(`  ${deleted ? 2 : 3}. rotate any secret whose copies you cannot account for: ${secrets.join(", ")}.`);
 }

@@ -13,6 +13,8 @@ const discloseSecrets = vi.fn();
 const api = { effectiveConfiguration, discloseSecrets };
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api }) }));
 vi.mock("../src/shell/Shell", () => ({ errorMessage: (err: unknown) => String(err) }));
+// A server that accepts the export purpose (ADR-0053).
+vi.mock("../src/features/projects/hooks", () => ({ useCapability: (c: string) => c === "disclosure.purpose.export" }));
 // Rendered only while open.
 vi.mock("../src/components/Dialog", () => ({
   Dialog: ({ open, title, children, footer, "data-testid": id }: Record<string, React.ReactNode> & { open: boolean; "data-testid"?: string }) =>
@@ -81,6 +83,7 @@ describe("export of values no .env line carries safely", () => {
   it("names plain values before the download, leaves them out, and stays open to say so", async () => {
     effectiveConfiguration.mockResolvedValue(config([plain("API_URL", "https://api"), plain("GREETING", "it's $HOME")]));
     await open();
+    expect(text(one("export-copy-notice"))).toContain("copy outside Varlatch");
     expect(text(one("export-unwritable"))).toContain("GREETING");
     const file = await download();
     expect(file).toContain("API_URL=https://api");
@@ -108,6 +111,9 @@ describe("export of values no .env line carries safely", () => {
     const file = await download();
     expect(file).toContain("API_KEY=synthetic-key");
     expect(file).toContain("# TOKEN: not written");
+    // Both reads say they were made for an export.
+    expect(effectiveConfiguration).toHaveBeenCalledWith("acme", "api", "development", { includeValues: true, purpose: "export" });
+    expect(discloseSecrets.mock.calls[0]?.[3]).toMatchObject({ purpose: "export" });
     expect(file).not.toContain("$(id)");
     expect(text(one("export-not-written"))).toContain("TOKEN");
     expect(onClose).not.toHaveBeenCalled();

@@ -1380,6 +1380,26 @@ describe("varlatch import", () => {
     noValues(r);
   });
 
+  it("says the file still holds copies once values are stored, with a checklist for secrets (ADR-0053)", async () => {
+    const file = envFile();
+    const r = await cli(["import", file]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain(`${file} still holds copies of these values`);
+    expect(r.stderr).toMatch(/1\. delete .*;\n  2\. check where else it was copied .*;\n  3\. rotate any secret whose copies you cannot account for: API_TOKEN/);
+    noValues(r);
+    // A dry run stores nothing and says nothing about copies.
+    const dry = await cli(["import", file, "--dry-run"]);
+    expect(dry.stderr).not.toContain("still holds copies");
+  });
+
+  it("after --delete-source, says other copies may still exist", async () => {
+    const file = envFile();
+    const r = await cli(["import", file, "--delete-source"]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain(`other copies of these values may still exist (CI settings, teammates, chat, backups); deleting ${file} revokes nothing`);
+    expect(r.stderr).not.toContain("1. delete");
+  });
+
   it("--contract adds new items as Secrets unless --plain, keeps existing definitions, and pushes before storing", async () => {
     const r = await cli(["import", envFile(), "--contract", "--plain", "DEBUG"]);
     expect(r.code).toBe(0);

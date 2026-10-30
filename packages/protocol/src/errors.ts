@@ -82,6 +82,7 @@ export const CAPABILITIES = [
   "tailnet.browser-reads",
   "identity.whoami",
   "installation.release",
+  "disclosure.purpose.export",
   "sync.pause-wait",
 ] as const;
 

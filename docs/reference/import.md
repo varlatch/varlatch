@@ -39,6 +39,13 @@ Dry run: nothing was stored.
   sensitive: change that in the Contract.
 - **`--delete-source`** deletes the file once every value was stored, and
   only if the file did not change while importing.
+
+After values were stored, the import says on stderr what remains outside
+Varlatch: the file, unless it was deleted, and any other copies of it.
+Rotating or deleting a value in Varlatch does not change those copies. When
+Secrets were stored, a short checklist follows: delete the file, check
+where else it was copied, and rotate any secret whose copies you cannot
+account for. A dry run says nothing about copies.
 - **`--replace <NAME>`** (repeatable) approves replacing the value the target
   environment already has for that item. The plan marks such names
   ("already has a value"; `existing` in the JSON): a leftover file may be an
