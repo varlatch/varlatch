@@ -4,6 +4,7 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { encryptGitHubAppKey } from "../src/crypto/hierarchy.js";
 import type { AppCtx } from "../src/domain/ctx.js";
+import { recordAuditEvents } from "../src/audit/events.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { importGitHubApp } from "../src/domain/githubapps.js";
 import { finalizeDeletion, runDueDeletions } from "../src/domain/orgdeletion.js";
@@ -346,5 +347,52 @@ describe("finalization", () => {
     expect(await runDueDeletions(ctx)).toEqual([]);
     await makeDue();
     expect((await runDueDeletions(ctx)).map((o) => o.deletionId)).toEqual([scheduled.id]);
+  });
+});
+
+describe("the audit log export", () => {
+  const filler = (n: number, tag: string) =>
+    Array.from({ length: n }, (_, i) => ({ eventType: "test.filler", decision: "info" as const, actorIdentityId: adminId, organizationId: orgId, metadata: { tag, i } }));
+
+  /**
+   * Reads the stream's first chunk, appends events, then reads the rest:
+   * every event is there once, oldest first, and nothing recorded after
+   * the export started.
+   */
+  async function exportWhileAppending(path: string, token: string) {
+    const res = await app.request(path, { headers: { Authorization: `Bearer ${token}` } });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    const first = await reader.read();
+    text += decoder.decode(first.value, { stream: true });
+    await recordAuditEvents(ctx.db, filler(300, "late"));
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      text += decoder.decode(next.value, { stream: true });
+    }
+    return text.trim().split("\n").map((line) => JSON.parse(line) as { eventId: string; eventType: string; metadata: { tag?: string } | null });
+  }
+
+  it("streams every event in batches, oldest first, up to the moment it started; the deleted Organization's export too", async () => {
+    await recordAuditEvents(ctx.db, filler(600, "early"));
+    const live = await exportWhileAppending(`${ORG}/audit-events/export`, admin);
+    const ordered = (await ctx.db.query("SELECT id FROM audit_events WHERE organization_id = $1 ORDER BY event_order", [orgId])).rows.map((r) => r.id as string);
+    // The 600 fillers need three batches of 250; the late ones are not in it.
+    expect(live.filter((e) => e.metadata?.tag === "early")).toHaveLength(600);
+    expect(live.some((e) => e.metadata?.tag === "late")).toBe(false);
+    expect(live.map((e) => e.eventId)).toEqual(ordered.slice(0, live.length));
+    expect(new Set(live.map((e) => e.eventId)).size).toBe(live.length);
+
+    await call("POST", `${ORG}/deletion`, {});
+    await makeDue();
+    expect(await runDueDeletions(ctx)).toHaveLength(1);
+    const before = (await ctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE organization_id = $1", [orgId])).rows[0]!.n as number;
+    const tombstone = await exportWhileAppending(`/v1/deleted-organizations/${orgId}/audit-events/export`, admin);
+    expect(tombstone).toHaveLength(before);
+    expect(tombstone[tombstone.length - 1]!.eventType).toBe("organization.deleted");
+    expect(tombstone.filter((e) => e.metadata?.tag === "late")).toHaveLength(300);
   });
 });
