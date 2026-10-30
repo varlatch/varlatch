@@ -11,6 +11,7 @@ import { errorMessage } from "../../shell/Shell";
 import { plural } from "./model";
 import { SecretMask } from "./bits";
 import { useExport } from "./useExport";
+export { PASTE_SAVED_CHECKLIST, savedPastedValue } from "./model";
 import { useMeta } from "../projects/hooks";
 
 /**
@@ -97,13 +98,6 @@ export function ImportDialog({
     </Dialog>
   );
 }
-
-/**
- * The checklist after pasted drafts were saved (ADR-0053): the source of the
- * paste is a copy Varlatch cannot see or remove.
- */
-export const PASTE_SAVED_CHECKLIST =
-  "Values you pasted are now in Varlatch, and their source still exists: delete the file you pasted from, check where else it was copied (CI settings, teammates, chat), and rotate any secret whose copies you cannot account for.";
 
 const NOT_WRITTEN_REASON =
   "Their values contain characters ($, a single quote, a line break, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv, older dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
