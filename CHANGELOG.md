@@ -116,8 +116,8 @@ fixes.
   needs `audit.read`. The audit history recorded before this release is
   indexed in the background after the upgrade; until it is done, the
   report names the period it does not cover yet. In the dashboard, anyone
-  who may read the audit log opens it from a person's menu or from Former
-  members, as a checklist: Rotate for each version still served, Revoked at provider to
+  who may read the audit log opens it from a person's menu, from Former
+  members, or from an audit event about the person, as a checklist: Rotate for each version still served, Revoked at provider to
   record the confirmation, and Revoke for a machine credential that still
   works.
 

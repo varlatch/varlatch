@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ExposureReport } from "@varlatch/protocol";
@@ -9,7 +10,9 @@ import { Dialog, useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { envPath } from "../values/model";
+import { useCapability } from "../projects/hooks";
 import { ReviewList, reviewCount, type MemberRef } from "./MemberDialogs";
+import { useAccessNames } from "./useAccessNames";
 import type { Names } from "./model";
 
 /**
@@ -131,7 +134,7 @@ export function ExposureDialog({
       onClose={onClose}
       size="lg"
       data-testid="exposure-dialog"
-      title={`What ${person?.name ?? ""} received`}
+      title={`What ${data?.member.name ?? person?.name ?? ""} received`}
       description="From the audit log and the record taken at removal. It never shows a value."
       footer={
         <Button variant="secondary" onClick={onClose}>
@@ -299,5 +302,30 @@ export function ExposureDialog({
         )}
       </div>
     </Dialog>
+  );
+}
+
+/**
+ * Opens a person's exposure report from anywhere that names them, such as
+ * an audit event: reading it needs only audit.read, which the audit log
+ * already does, not the identity listing the Members tab needs.
+ */
+export function ExposureButton({ org, person }: { org: string; person: MemberRef }) {
+  const lifecycle = useCapability("members.lifecycle");
+  const { names } = useAccessNames(org);
+  const [open, setOpen] = useState(false);
+  if (!lifecycle) return null;
+  return (
+    <>
+      <button
+        type="button"
+        data-testid="audit-exposure"
+        onClick={() => setOpen(true)}
+        className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-md border border-bd bg-raised px-3 text-sm text-fg hover:border-bd-strong hover:bg-hover"
+      >
+        What {person.name} received
+      </button>
+      <ExposureDialog org={org} person={open ? person : null} names={names} onClose={() => setOpen(false)} />
+    </>
   );
 }

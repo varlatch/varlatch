@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleCheck, Mail, MoreHorizontal, RefreshCw, UserPlus } from "lucide-react";
 import type { Grant } from "@varlatch/protocol";
+import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { displayEmail } from "../../lib/identity";
 import { timeAgo, timeUntil, useNow } from "../../lib/time";
@@ -57,6 +58,8 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
     staleTime: 60_000,
   });
   const reports = lifecycle && auditAccess.data === true;
+  // Reading reports needs audit.read; listing people here needs identity.read.
+  const peopleDenied = identities.error instanceof VarlatchApiError && identities.error.status === 403;
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
@@ -136,6 +139,27 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
           Invite
         </Button>
       </div>
+
+      {auditAccess.isError && (
+        <Callout
+          tone="warn"
+          data-testid="audit-access-error"
+          title="Could not check whether you may read exposure reports"
+          actions={
+            <Button size="sm" variant="secondary" onClick={() => void auditAccess.refetch()}>
+              Try again
+            </Button>
+          }
+        >
+          {errorMessage(auditAccess.error)}
+        </Callout>
+      )}
+      {reports && peopleDenied && (
+        <Callout tone="info" data-testid="reports-from-audit" title="You may read what people received">
+          Listing people needs more access than reading their reports: open a report from an event in the audit log about that
+          person.
+        </Callout>
+      )}
 
       <SectionCard title="Members" data-testid="people-section" bodyClassName={table.wrap}>
         {people.length === 0 ? (
