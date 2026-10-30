@@ -271,4 +271,17 @@ describe("rotation decorators (ADR-0053)", () => {
     expect(() => parseEnvSchema(schema("# @rotationHint=one\ttwo"))).toThrow(/one paragraph/);
     expect(() => parseEnvSchema(schema("# @rotationHint=one\u202etwo"))).toThrow(/one paragraph/);
   });
+
+  it("refuses a forbidden character at either end too, instead of trimming it away", () => {
+    // A carriage return inside the line (not a CRLF line ending) is refused.
+    for (const bad of ["\tone", "one\t", "one\r ", "one\rtwo", "one\u2028", "\u2029one", '"one\t"', "one\u0085"]) {
+      // Refused either as a hint or, when the character breaks the decorator itself, as a malformed line.
+      expect(() => parseEnvSchema(schema(`# @rotationHint=${bad}`)), JSON.stringify(bad)).toThrow(EnvSchemaParseError);
+    }
+    // Ordinary spaces around the value, and one pair of quotes, are not part of it.
+    expect(parseEnvSchema(schema("# @rotationHint=  Rotate it.  ")).items[0]?.rotationHint).toBe("Rotate it.");
+    expect(parseEnvSchema(schema("# @rotationHint=' Rotate it. '")).items[0]?.rotationHint).toBe(" Rotate it. ");
+    // A file with CRLF line endings is read as lines; the CR ends the line.
+    expect(parseEnvSchema("# @rotationHint=Rotate it.\r\nADMIN_KEY=\r\n").items[0]?.rotationHint).toBe("Rotate it.");
+  });
 });

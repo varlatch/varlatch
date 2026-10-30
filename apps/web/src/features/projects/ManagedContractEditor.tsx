@@ -13,6 +13,7 @@ import {
   ITEM_NAME,
   changeCount,
   diffItems,
+  graceHours,
   draftItems,
   requiredFromKey,
   requiredKey,
@@ -573,6 +574,23 @@ function EditorRow({
           value={item.description ?? ""}
           onChange={(e) => onChange({ description: e.target.value })}
         />
+        <span className="mt-1 flex items-center gap-1.5">
+          <input
+            className="h-7 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-2.5 text-xs text-muted placeholder:text-subtle transition-colors hover:border-bd focus:border-accent focus:bg-inset focus:text-fg focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+            placeholder="How to rotate it (optional, never a secret)"
+            aria-label={`Rotation hint of ${item.name}`}
+            data-testid={`row-rotation-hint-${item.name}`}
+            disabled={removed}
+            value={item.rotationHint ?? ""}
+            onChange={(e) => onChange({ rotationHint: e.target.value })}
+          />
+          <GraceInput
+            name={item.name}
+            seconds={item.rotationGraceSeconds}
+            disabled={removed}
+            onChange={(rotationGraceSeconds) => onChange({ rotationGraceSeconds })}
+          />
+        </span>
       </td>
       <td className="py-2 pr-3">
         <Menu
@@ -595,6 +613,51 @@ function EditorRow({
         </Menu>
       </td>
     </tr>
+  );
+}
+
+/**
+ * The default rotation grace window, typed in hours. The text is kept as
+ * typed, so "0." on the way to "0.5" survives; seconds are reported when it
+ * parses, and an empty field means no default.
+ */
+function GraceInput({
+  name,
+  seconds,
+  disabled,
+  onChange,
+}: {
+  name: string;
+  seconds: number | undefined;
+  disabled: boolean;
+  onChange: (seconds: number | undefined) => void;
+}) {
+  const [text, setText] = useState(seconds !== undefined ? graceHours(seconds) : "");
+  useEffect(() => {
+    // Follow outside changes (undo, restore), not our own echo.
+    setText((current) => {
+      const parsed = current === "" ? undefined : Math.round(Number(current) * 3600);
+      return parsed === seconds ? current : seconds !== undefined ? graceHours(seconds) : "";
+    });
+  }, [seconds]);
+  return (
+    <input
+      inputMode="decimal"
+      className="h-7 w-20 rounded-md border border-transparent bg-transparent px-2 text-xs text-muted placeholder:text-subtle transition-colors hover:border-bd focus:border-accent focus:bg-inset focus:text-fg focus:outline-none focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+      placeholder="grace h"
+      title="Default rotation grace window, in hours"
+      aria-label={`Rotation grace of ${name}, in hours`}
+      data-testid={`row-rotation-grace-${name}`}
+      disabled={disabled}
+      value={text}
+      onChange={(e) => {
+        const next = e.target.value;
+        setText(next);
+        if (next.trim() === "") onChange(undefined);
+        else if (/^\d+(\.\d*)?$|^\.\d+$/.test(next.trim())) onChange(Math.round(Number(next) * 3600));
+        else onChange(Number.NaN);
+      }}
+    />
   );
 }
 
@@ -623,6 +686,8 @@ function changeText(c: Change): React.ReactNode {
       return <>default: {arrow(c.from, c.to)}</>;
     case "description":
       return <>description: {arrow(c.from, c.to)}</>;
+    case "rotation":
+      return <>rotation: {arrow(c.from, c.to)}</>;
     default:
       return <>other details changed</>;
   }

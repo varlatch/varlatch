@@ -12,7 +12,9 @@ fixes.
 - **Rotation hints.** A Contract item can say how its credential is
   rotated, in a sentence or two: `rotationHint` in a JSON Contract, or
   `@rotationHint=...` in `.env.schema`. The dashboard shows it in the
-  rotate dialog, the item panel and the Contract page. `varlatch values
+  rotate dialog, the item panel and the Contract page, and the
+  Contract editor of a project managed in the dashboard can edit it,
+  along with the default rotation grace window. `varlatch values
   rotate` prints it on stderr before it asks for the new value, and again
   after. It never appears in generated types. A hint is one paragraph of
   1 to 1024 characters: tabs, line breaks, control characters and

@@ -54,8 +54,12 @@ export function rowState(row: DraftRow): RowState {
 
 /** The item as it would be pushed: empty optional fields dropped. */
 export function cleanItem(item: ContractItem): ContractItem {
-  const { enumValues, defaultValue, description, ...rest } = item;
+  const { enumValues, defaultValue, description, rotationHint, rotationGraceSeconds, ...rest } = item;
   const out: ContractItem = { ...rest };
+  // A hint is kept exactly as typed (rowProblem refuses what the server
+  // would refuse); only an empty field means "no hint".
+  if (rotationHint !== undefined && rotationHint !== "") out.rotationHint = rotationHint;
+  if (rotationGraceSeconds !== undefined && Number.isFinite(rotationGraceSeconds)) out.rotationGraceSeconds = rotationGraceSeconds;
   if (item.type === "enum") {
     const values = [...new Set((enumValues ?? []).map((v) => v.trim()).filter(Boolean))].sort();
     out.enumValues = values;
@@ -101,7 +105,7 @@ export function requiredFromKey(key: string, current: Requiredness): Requirednes
 
 // ---- diff
 
-export type ChangeKind = "added" | "removed" | "secret" | "required" | "type" | "enum" | "default" | "description" | "other";
+export type ChangeKind = "added" | "removed" | "secret" | "required" | "type" | "enum" | "default" | "description" | "rotation" | "other";
 
 export type Change = {
   name: string;
@@ -112,7 +116,7 @@ export type Change = {
   securityRelevant: boolean;
 };
 
-const ORDER: ChangeKind[] = ["removed", "added", "secret", "required", "type", "enum", "default", "description", "other"];
+const ORDER: ChangeKind[] = ["removed", "added", "secret", "required", "type", "enum", "default", "description", "rotation", "other"];
 
 /** Semantic diff, security-relevant changes first, then by item name. */
 export function diffItems(before: ContractItem[], after: ContractItem[]): Change[] {
@@ -151,8 +155,11 @@ export function diffItems(before: ContractItem[], after: ContractItem[]): Change
     if ((prev.description ?? "") !== (next.description ?? "")) {
       out.push({ name, kind: "description", from: prev.description, to: next.description, securityRelevant: false });
     }
-    const { name: _n, required: _r, sensitive: _s, type: _t, enumValues: _e, defaultValue: _d, description: _ds, ...restA } = prev;
-    const { name: _n2, required: _r2, sensitive: _s2, type: _t2, enumValues: _e2, defaultValue: _d2, description: _ds2, ...restB } = next;
+    if ((prev.rotationHint ?? "") !== (next.rotationHint ?? "") || prev.rotationGraceSeconds !== next.rotationGraceSeconds) {
+      out.push({ name, kind: "rotation", from: rotationLabel(prev), to: rotationLabel(next), securityRelevant: false });
+    }
+    const { name: _n, required: _r, sensitive: _s, type: _t, enumValues: _e, defaultValue: _d, description: _ds, rotationHint: _h, rotationGraceSeconds: _g, ...restA } = prev;
+    const { name: _n2, required: _r2, sensitive: _s2, type: _t2, enumValues: _e2, defaultValue: _d2, description: _ds2, rotationHint: _h2, rotationGraceSeconds: _g2, ...restB } = next;
     if (stable(restA) !== stable(restB)) out.push({ name, kind: "other", securityRelevant: false });
   }
   return out.sort(
@@ -163,7 +170,38 @@ export function diffItems(before: ContractItem[], after: ContractItem[]): Change
   );
 }
 
+/** A rotation hint and grace window, as the diff shows them. */
+function rotationLabel(item: ContractItem): string | undefined {
+  const parts = [
+    ...(item.rotationGraceSeconds !== undefined ? [`grace ${graceHours(item.rotationGraceSeconds)} h`] : []),
+    ...(item.rotationHint ? [item.rotationHint] : []),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+/** Seconds as hours for the editor, exact to the second. */
+export function graceHours(seconds: number): string {
+  return String(Math.round((seconds / 3600) * 10_000) / 10_000);
+}
+
 // ---- validation
+
+/** At most 1024 code points (ADR-0053); kept in step with @varlatch/contract, and the server decides. */
+const ROTATION_HINT_MAX = 1024;
+const ROTATION_HINT_FORBIDDEN = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/;
+
+export function rotationProblem(item: ContractItem): string | null {
+  const hint = item.rotationHint;
+  if (hint !== undefined && hint !== "") {
+    if ([...hint].length > ROTATION_HINT_MAX) return `A rotation hint holds at most ${ROTATION_HINT_MAX} characters`;
+    if (ROTATION_HINT_FORBIDDEN.test(hint)) return "A rotation hint is one line, without tabs or control characters";
+  }
+  const grace = item.rotationGraceSeconds;
+  if (grace !== undefined && (!Number.isInteger(grace) || grace < 1 || grace > 2_592_000)) {
+    return "The rotation grace must be between 1 second and 30 days";
+  }
+  return null;
+}
 
 /** An inline problem with a row, or null. `names` counts every live row's name. */
 export function rowProblem(item: ContractItem, names: Map<string, number>): string | null {
@@ -175,7 +213,7 @@ export function rowProblem(item: ContractItem, names: Map<string, number>): stri
     if (values.length === 0) return "List the allowed values";
     if (item.defaultValue && !values.includes(item.defaultValue)) return "The default must be one of the allowed values";
   }
-  return defaultProblem(item.type, item.defaultValue);
+  return defaultProblem(item.type, item.defaultValue) ?? rotationProblem(item);
 }
 
 export function defaultProblem(type: string, value: string | undefined): string | null {
