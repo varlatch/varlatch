@@ -31,9 +31,10 @@ export function AccessPage() {
   const { api } = useSession();
   useOrgRealtime(
     org,
-    ["identity", "invitation", "oidc_binding", "grant", "capability", "requirement", "credential", "role", "group", "team"],
+    ["identity", "invitation", "oidc_binding", "grant", "capability", "requirement", "credential", "role", "group", "team", "membership"],
     [
       ["identities", org],
+      ["group-members", org],
       ["oidc-bindings", org],
       ["grants", org],
       ["capabilities", org],
@@ -46,7 +47,7 @@ export function AccessPage() {
   );
   const identities = useIdentities(org);
   const grants = useQuery({ queryKey: ["grants", org], queryFn: () => api.listGrants(org) });
-  const people = identities.data?.items.filter((i) => i.kind === "human" && !i.disabled).length;
+  const people = identities.data?.items.filter((i) => i.kind === "human" && !i.disabled && !i.removedAt).length;
   const machines = identities.data?.items.filter((i) => i.kind !== "human" && !i.disabled).length;
 
   const select = (key: string) =>

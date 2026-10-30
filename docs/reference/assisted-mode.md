@@ -10,6 +10,8 @@ of that output by accident-proofing the commands an agent uses:
 - `values set` and `values rotate` never take a Secret's value from the
   command line, and never prompt.
 - `values delete` deletes only an item named again with `--confirm`.
+- `member remove` and `member leave` act only on a person or organization
+  named again with `--confirm`.
 - `login` with no sign-in method starts a device sign-in that the human
   approves in a browser, instead of waiting for a browser on this machine.
 
@@ -216,6 +218,26 @@ varlatch --assisted values delete <ITEM> [-e <environment>] --confirm <ITEM>
   mode a deletion needs no `--confirm`, as before.
 - The MCP server's `varlatch_delete_value` tool has the same rule: see
   [MCP](mcp.md).
+
+## `member remove` and `member leave`
+
+```
+varlatch --assisted member remove <member> --confirm <member>
+varlatch --assisted member leave --confirm <organization>
+```
+
+- **Removing a person or leaving an organization always needs `--confirm`**,
+  naming the person (as given) or the organization again, in every mode.
+  In assisted mode, without it, the command refuses with status 78 and
+  gives the human's command for their own terminal; outside assisted mode
+  it is status 64. Either way nothing is sent and nothing changes.
+- **`--confirm` must name the same person or organization**; another name
+  is status 64. Approval for one never covers another.
+- **It records the decision's intent.** It is not proof that a human
+  approved, nor a permission: removing someone still needs the built-in
+  admin role in the organization. A coding agent adds it only after the
+  human approved removing that person, or leaving that organization.
+- `member list` and `member role` need no `--confirm`.
 
 ## Signing in
 

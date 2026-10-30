@@ -21,6 +21,7 @@ import {
   Users,
 } from "lucide-react";
 import { useSession } from "../lib/session";
+import { useMembershipWatcher } from "../lib/membership";
 import { displayEmail } from "../lib/identity";
 import { applyTheme, initialTheme, type Theme } from "../lib/theme";
 import { modKey, useHotkeys } from "../lib/hotkeys";
@@ -78,6 +79,7 @@ function useNarrow(): boolean {
 }
 
 export function Shell() {
+  useMembershipWatcher();
   const org = useCurrentOrg();
   const { org: orgParam } = useParams();
   const navigate = useNavigate();

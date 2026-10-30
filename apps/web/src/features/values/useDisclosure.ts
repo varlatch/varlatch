@@ -38,7 +38,7 @@ export function useDisclosure(
   restricted: ReadonlySet<string> = NONE,
   { protectedEnvs = NONE, onTailnetOnly }: { protectedEnvs?: ReadonlySet<string>; onTailnetOnly?: (env: string) => void } = {},
 ) {
-  const { api, authEpoch } = useSession();
+  const { api, authEpoch, accessEpoch } = useSession();
   const { client: tailnetClient } = useTailnetConnection();
   const routes = useRef({ protectedEnvs, tailnetClient, onTailnetOnly });
   routes.current = { protectedEnvs, tailnetClient, onTailnetOnly };
@@ -75,7 +75,7 @@ export function useDisclosure(
     });
   }, []);
 
-  useEffect(() => maskAll(), [authEpoch, org, project, maskAll]);
+  useEffect(() => maskAll(), [authEpoch, accessEpoch, org, project, maskAll]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
   const restrictedKey = [...restricted].sort().join("\u0000");
   useEffect(() => {

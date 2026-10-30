@@ -50,6 +50,7 @@ import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContra
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
+import { MEMBERS_CAPABILITY, MemberError, removalLines, resolveMember, shellWord } from "./members.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -2205,6 +2206,113 @@ async function main(): Promise<void> {
           return;
         }
         usageError("Usage: varlatch identity <list|rename|retire|reactivate>");
+        return;
+      }
+
+      case "member": {
+        // ADR-0052: people in the organization, with former members marked;
+        // removal and leaving name their target again with --confirm.
+        const sub = args[0];
+        const usage =
+          "Usage: varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member> [--server <url>]";
+        const parsed = strictOptions(
+          `member ${sub ?? ""}`.trim(),
+          args,
+          { values: ["--server", "--confirm"], booleans: ["--json"], positionals: sub === "role" ? 3 : sub === "remove" ? 2 : 1 },
+          usage,
+        );
+        if (sub !== "list" && sub !== "remove" && sub !== "leave" && sub !== "role") usageError(usage);
+        if (parsed.booleans.has("--json") && sub !== "list") usageError(`varlatch member ${sub}: --json is for member list.\n${usage}`);
+        // The organization comes from the repository; no Environment is involved.
+        const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+        if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
+        const ctx = resolveContext(opts);
+        const serverOption = parsed.values.has("--server") || process.env.VARLATCH_SERVER ? ` --server ${shellWord(ctx.server)}` : "";
+        const api = client(ctx);
+        if (sub === "list") {
+          const people = (await api.listIdentities(ctx.organization)).items.filter((i) => i.kind === "human");
+          if (parsed.booleans.has("--json")) {
+            printJson({
+              organization: ctx.organization,
+              members: people.map((p) => ({
+                id: p.id,
+                name: p.name,
+                role: p.removedAt ? null : (p.orgRole ?? null),
+                removedAt: p.removedAt ?? null,
+                lastSeenAt: p.lastSeenAt ?? null,
+              })),
+            });
+            return;
+          }
+          for (const p of people) {
+            const state = p.removedAt ? `former member, left ${p.removedAt}` : (p.orgRole ?? "no role");
+            console.log(`${p.id}  ${p.name}  (${state}, last seen ${p.lastSeenAt ?? "never"})`);
+          }
+          if (people.length === 0) console.log("(none)");
+          return;
+        }
+        const target = sub === "leave" ? ctx.organization : (parsed.positionals[1] ?? usageError(usage));
+        const confirm = parsed.values.get("--confirm");
+        if (sub === "role") {
+          if (confirm !== undefined) usageError(`varlatch member role: a role change needs no --confirm.\n${usage}`);
+          const role = parsed.positionals[2];
+          if (role !== "admin" && role !== "member") usageError(usage);
+        } else if (confirm !== undefined && confirm !== target) {
+          usageError(
+            `varlatch member ${sub}: --confirm names ${confirm}, but this command ${sub === "leave" ? "leaves" : "removes"} ${target}; ` +
+              `approval for one never covers another.\n${usage}`,
+          );
+        } else if (confirm === undefined) {
+          // Removing someone, or leaving, is the human's decision: the target
+          // is named again with --confirm, checked before any request.
+          const quoted = shellWord(target);
+          const command =
+            sub === "leave"
+              ? `varlatch member leave --confirm ${quoted}${serverOption}`
+              : `varlatch member remove ${quoted} --confirm ${quoted}${serverOption}`;
+          const what = sub === "leave" ? `Leaving ${target} ends your access to it` : `Removing ${target} ends their access to ${ctx.organization}`;
+          if (assisted.on) {
+            fail(
+              `varlatch member ${sub}: ${what}; that is the human's decision. With their approval, add --confirm ${target}. ` +
+                `Or the human runs, in their own terminal:\n  ${command}\nNothing was changed.`,
+              EXIT.config,
+            );
+          }
+          usageError(`${what}. Name ${sub === "leave" ? "the organization" : "them"} again to confirm:\n  ${command}\nNothing was changed.`);
+        }
+        const meta = await api.meta();
+        if (!meta.capabilities.includes(MEMBERS_CAPABILITY)) {
+          fail(`This server (${meta.serverVersion ?? "an older release"}) cannot remove members or change their role; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
+        }
+        if (sub === "leave") {
+          const removal = await api.removeMember(ctx.organization, "me");
+          for (const line of removalLines(removal, "you", ctx.organization)) console.log(line);
+          return;
+        }
+        let member;
+        try {
+          member = resolveMember((await api.listIdentities(ctx.organization)).items, target);
+        } catch (err) {
+          if (err instanceof MemberError) fail(err.message);
+          throw err;
+        }
+        if (sub === "remove") {
+          const removal = await api.removeMember(ctx.organization, member.id);
+          for (const line of removalLines(removal, member.name, ctx.organization)) console.log(line);
+          return;
+        }
+        const role = parsed.positionals[2] as "admin" | "member";
+        const changed = await api.changeMemberRole(ctx.organization, member.id, role);
+        if (changed.previousRole === changed.role) {
+          console.log(`${member.name} is already ${role === "admin" ? "an admin" : "a member"} of ${ctx.organization}. Nothing was changed.`);
+        } else if (role === "admin") {
+          console.log(`${member.name} is now an admin of ${ctx.organization}.`);
+        } else {
+          console.log(
+            `${member.name} is now a member of ${ctx.organization}. Grants given to them directly or through groups stay; ` +
+              `review them in the dashboard's Access page.`,
+          );
+        }
         return;
       }
 
