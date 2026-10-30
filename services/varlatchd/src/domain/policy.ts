@@ -2,9 +2,11 @@
 import { recordAuditEvent } from "../audit/events.js";
 import type { Action } from "../authz/evaluate.js";
 import { newId } from "../db/ids.js";
+import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { pinLiveMembership } from "./orgs.js";
 
 /**
  * Roles, Groups, and Teams (ADR-0028): the reusable authorization constructs.
@@ -301,6 +303,23 @@ export async function deleteGroup(
   });
 }
 
+/**
+ * A Grant's subject identity must be able to act in the Organization
+ * (ADR-0052 Decision 1): a machine of this Organization, or a person with a
+ * live membership, pinned for the rest of the caller's transaction so a
+ * concurrent removal cannot miss the Grant.
+ */
+export async function requireGrantSubject(db: Querier, organizationId: string, identityId: string): Promise<void> {
+  const res = await db.query("SELECT kind, organization_id FROM identities WHERE id = $1", [identityId]);
+  const row = res.rows[0] as { kind: string; organization_id: string | null } | undefined;
+  const ok =
+    row !== undefined &&
+    (row.kind === "human"
+      ? (await pinLiveMembership(db, organizationId, identityId)) !== null
+      : row.organization_id === organizationId);
+  if (!ok) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+}
+
 /** Verify the group exists in the org (and, when required, is a Team). */
 async function requireGroup(
   ctx: AppCtx,
@@ -329,13 +348,15 @@ export async function addGroupMember(
   const group = await requireGroup(ctx, organizationId, groupId);
   await withTx(ctx.db, async (db) => {
     const member = await db.query(
-      `SELECT id FROM identities WHERE id = $1 AND NOT disabled AND (
-         organization_id = $2 OR (kind = 'human' AND EXISTS (
-           SELECT 1 FROM org_memberships WHERE identity_id = $1 AND organization_id = $2
-         )))`,
+      "SELECT kind FROM identities WHERE id = $1 AND NOT disabled AND (organization_id = $2 OR kind = 'human')",
       [identityId, organizationId],
     );
-    if (!member.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+    const kind = (member.rows[0] as { kind: string } | undefined)?.kind;
+    // A person joins only through a live membership, which this pins
+    // against a concurrent removal (ADR-0052 Decision 1).
+    if (!kind || (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId)))) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+    }
     await db.query(
       "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
       [groupId, identityId],

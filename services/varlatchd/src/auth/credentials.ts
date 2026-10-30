@@ -77,8 +77,8 @@ export async function issueCredential(
   const credentialId = newId("credential");
   return withTx(db, async (tx) => {
     await tx.query(
-      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id, issued_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         credentialId,
         input.identityId,
@@ -89,6 +89,9 @@ export async function issueCredential(
         input.maxUses ?? null,
         input.client ?? null,
         input.authSessionId ?? null,
+        // Who was shown the token: the credential.issued event's actor
+        // (ADR-0052 Decision 4 lists a removed member's).
+        input.actorIdentityId ?? input.identityId,
       ],
     );
     await recordAuditEvent(tx, {

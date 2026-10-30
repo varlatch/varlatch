@@ -83,6 +83,7 @@ export const CAPABILITIES = [
   "identity.whoami",
   "installation.release",
   "sync.pause-wait",
+  "members.lifecycle",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

@@ -684,6 +684,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/members/{member}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a person from the Organization, or leave it when {member} is the caller or "me" (capability members.lifecycle, ADR-0052). Removing someone else needs a live built-in admin membership; an explicit Grant such as organization.manage does not substitute. Leaving needs only a live membership. The last admin can neither be removed nor leave (VALIDATION_FAILED, details.reason last-admin).
+         * @description One serializable transaction records what the person could reach (per environment, the value actions their role and Grants granted, and the Tailnet Requirements those were conditional on), ends the membership, revokes their direct Grants, removes them from every group and team, and revokes the pending invitations they issued; the audit event membership.removed records the counts. Their sign-in and credentials are untouched: from the next request they reach nothing in this Organization. Nothing that belongs to the Organization changes; the response lists what to review. When concurrent changes keep invalidating the transaction it gives up with STATE_CHANGED (details.retryable true) having changed nothing; try again. Existence-hiding: a caller who cannot see the Organization gets RESOURCE_NOT_FOUND. Someone who is not a live member is RESOURCE_NOT_FOUND too.
+         */
+        delete: operations["removeMember"];
+        options?: never;
+        head?: never;
+        /** Make a member an admin, or an admin a member (capability members.lifecycle, ADR-0052 Decision 3). Needs a live built-in admin membership; the last admin cannot be demoted, themselves included. Demotion removes the built-in admin bundle only: explicit and group Grants stay. The same role again changes and records nothing; a change is audited as membership.role_changed. */
+        patch: operations["changeMemberRole"];
+        trace?: never;
+    };
+    "/organizations/{org}/members/{member}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a live member created or changed that may keep working without them (capability members.lifecycle, ADR-0052 Decision 4): the list a removal returns, before it happens. For a live built-in admin about any live member, and for a member about themselves. */
+        get: operations["reviewMember"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -1885,6 +1923,83 @@ export interface components {
             email?: string | null;
             /** @description Avatar image (data or https URL) for human identities; null for machines. */
             image?: string | null;
+            /**
+             * @description In an Organization's identity listing, a live member's built-in role; null for machines and former members.
+             * @enum {string|null}
+             */
+            orgRole?: "admin" | "member" | null;
+            /**
+             * Format: date-time
+             * @description In an Organization's identity listing, when a former member was removed or left (capability members.lifecycle); null otherwise.
+             */
+            removedAt?: string | null;
+        };
+        /** @description What a person created or changed in the Organization that may keep working without them (ADR-0052 Decision 4). Names, IDs and states only. Removal changes none of it. It ends this identity's authority, not a credential, token or platform account held outside Varlatch. */
+        MemberReview: {
+            syncTargets: {
+                id: string;
+                projectId: string;
+                environmentId: string;
+                platform: string;
+                /** @enum {string} */
+                state: "active" | "paused" | "disabled" | "revoked";
+                changes: ("created" | "repointed" | "destination_changed")[];
+            }[];
+            connections: {
+                id: string;
+                name: string;
+                platform: string;
+                /** @enum {string} */
+                credentialKind: "token" | "github-app";
+                revoked: boolean;
+                changes: ("created" | "credential_replaced")[];
+            }[];
+            /** @description Each signing secret was shown to its creator once. */
+            webhooks: {
+                id: string;
+                /** @description The URL's host only */
+                host: string;
+                revoked: boolean;
+            }[];
+            oidcBindings: {
+                id: string;
+                identityId: string;
+                identityName: string;
+                issuer: string;
+                revoked: boolean;
+            }[];
+            /** @description Credentials of this Organization's machine identities whose token was shown to the person at issuance. */
+            credentials: {
+                id: string;
+                name: string | null;
+                identityId: string;
+                identityName: string;
+                /** @enum {string} */
+                state: "valid" | "expired" | "exhausted" | "revoked" | "retired";
+            }[];
+            personalEnvironments: {
+                id: string;
+                name: string;
+                projectId: string;
+            }[];
+        };
+        MemberRemoval: {
+            removalId: string;
+            identityId: string;
+            /**
+             * @description Their role when removed
+             * @enum {string}
+             */
+            role: "admin" | "member";
+            /** @description True when the person removed themselves */
+            left: boolean;
+            /** Format: date-time */
+            removedAt: string;
+            grantsRevoked: number;
+            /** @description Groups and teams */
+            groupsLeft: number;
+            invitationsRevoked: number;
+            review: components["schemas"]["MemberReview"];
         };
         Profile: {
             identityId: string;
@@ -4257,6 +4372,97 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description An identity ID */
+                member: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberRemoval"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    changeMemberRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description An identity ID */
+                member: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    role: "admin" | "member";
+                };
+            };
+        };
+        responses: {
+            /** @description The member's role */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        identityId: string;
+                        /** @enum {string} */
+                        role: "admin" | "member";
+                        /** @enum {string} */
+                        previousRole: "admin" | "member";
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    reviewMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description An identity ID */
+                member: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The review list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemberReview"];
+                };
             };
             default: components["responses"]["Error"];
         };

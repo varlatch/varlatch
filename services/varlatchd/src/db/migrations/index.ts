@@ -34,6 +34,7 @@ import { sql as syncTargetNotes } from "./0031_sync_target_notes.js";
 import { sql as syncRuns } from "./0032_sync_runs.js";
 import { sql as redeployDebt } from "./0033_redeploy_debt.js";
 import { sql as syncDrift } from "./0034_sync_drift.js";
+import { sql as memberRemoval } from "./0035_member_removal.js";
 
 export interface Migration {
   id: number;
@@ -77,4 +78,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 32, name: "sync_runs", sql: syncRuns },
   { id: 33, name: "redeploy_debt", sql: redeployDebt },
   { id: 34, name: "sync_drift", sql: syncDrift },
+  { id: 35, name: "member_removal", sql: memberRemoval },
 ];

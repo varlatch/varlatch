@@ -3,6 +3,7 @@ import { recordAuditEvent } from "../audit/events.js";
 import { createWrappedOrgKek, unwrapOrgKek } from "../crypto/hierarchy.js";
 import type { Envelope } from "../crypto/aead.js";
 import { newId } from "../db/ids.js";
+import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
@@ -110,19 +111,48 @@ export async function getOrganization(
   return row;
 }
 
+/**
+ * The built-in role of a live membership (ADR-0052 Decision 1). A removed
+ * membership has none, so a removed admin loses the admin bundle.
+ */
 export async function getOrgRole(
   ctx: AppCtx,
   organizationId: string,
   identityId: string,
 ): Promise<OrgRole | null> {
   const res = await ctx.db.query(
-    "SELECT role FROM org_memberships WHERE organization_id = $1 AND identity_id = $2",
+    "SELECT role FROM org_memberships WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL",
     [organizationId, identityId],
   );
   const row = res.rows[0] as { role: OrgRole } | undefined;
   return row?.role ?? null;
 }
 
+/**
+ * Pins a person's live membership for the rest of the caller's transaction
+ * and returns its role, or null when there is none (ADR-0052 Decision 2).
+ * Writes that give a person something removal must clean up (a Grant, a
+ * group link, an invitation they issue) call this first. Bumping the row's
+ * version makes them conflict with a concurrent removal, which updates the
+ * same row: a removal that committed first leaves no live row here, and one
+ * still running fails to serialize and retries on a state that includes
+ * this write. Merely reading or locking the row would not: a serializable
+ * removal's snapshot can predate a committed write it never conflicted with.
+ */
+export async function pinLiveMembership(
+  db: Querier,
+  organizationId: string,
+  identityId: string,
+): Promise<OrgRole | null> {
+  const res = await db.query(
+    `UPDATE org_memberships SET version = version + 1
+     WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL RETURNING role`,
+    [organizationId, identityId],
+  );
+  return (res.rows[0] as { role: OrgRole } | undefined)?.role ?? null;
+}
+
+/** The Organizations a person is a live member of (ADR-0052 Decision 1). */
 export async function listOrganizationsFor(
   ctx: AppCtx,
   identityId: string,
@@ -130,7 +160,7 @@ export async function listOrganizationsFor(
   const res = await ctx.db.query(
     `SELECT o.* FROM organizations o
      JOIN org_memberships m ON m.organization_id = o.id
-     WHERE m.identity_id = $1 AND o.deleted_at IS NULL
+     WHERE m.identity_id = $1 AND m.removed_at IS NULL AND o.deleted_at IS NULL
      ORDER BY o.created_at, o.id`,
     [identityId],
   );

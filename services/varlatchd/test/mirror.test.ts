@@ -167,6 +167,29 @@ describe("incremental mirror publishing", () => {
     });
     expect(identity[0]!.data.lastEventId).toBeTruthy();
   });
+
+  it("signals the removed or re-roled person, not only the Organization (ADR-0052 Decision 9)", async () => {
+    const org = await (await post("/v1/organizations", { name: "Acme", slug: "acme" })).json();
+    const cursor = await latestEventCursor(ctx);
+    for (const eventType of ["membership.removed", "membership.role_changed"]) {
+      await recordAuditEvent(ctx.db, {
+        eventType,
+        decision: "info",
+        actorIdentityId: "idn_admin",
+        organizationId: org.id,
+        resource: { identityId: `idn_${eventType.split(".")[1]}` },
+      });
+    }
+    const upserts: Upsert[] = [];
+    await syncNewMirrorEvents(ctx, config, cursor, fakeConvex(upserts));
+    expect(upserts.filter((u) => u.kind === "changeSignal")).toEqual([
+      expect.objectContaining({ resourceId: org.id, data: expect.objectContaining({ domains: ["membership"] }) }),
+    ]);
+    expect(upserts.filter((u) => u.kind === "identitySignal").map((u) => [u.resourceId, u.organizationId, u.data.domains])).toEqual([
+      ["idn_removed", null, ["membership"]],
+      ["idn_role_changed", null, ["membership"]],
+    ]);
+  });
 });
 
 describe("retired Mirror kinds (ADR-0036)", () => {
