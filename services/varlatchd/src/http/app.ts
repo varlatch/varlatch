@@ -2573,6 +2573,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
+        // Membership before the Grant, the order a removal locks them in,
+        // so replacing a Grant of someone being removed cannot deadlock.
+        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         const existing = await db.query(
           "SELECT id, revoked_at FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE",
           [grantId, org.id],
@@ -2582,7 +2585,6 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         if (row.revoked_at) {
           throw new DomainError("VERSION_CONFLICT", "Grant is already revoked or replaced");
         }
-        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         await db.query("UPDATE grants SET revoked_at = now() WHERE id = $1", [grantId]);
         await db.query(
           `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)

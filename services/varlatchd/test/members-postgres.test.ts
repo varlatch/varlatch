@@ -173,6 +173,54 @@ describe.skipIf(!url)("member removal on real PostgreSQL", () => {
     expect((await creating).status).toBe(404);
   });
 
+  it("replacing a Grant locks the membership before the Grant, as removal does: no deadlock", async () => {
+    const bob = await addHuman("Bob", "member");
+    const original = (await call("POST", `${ORG}/grants`, { subjectIdentityId: bob.id, scope: { kind: "organization" }, actions: ["audit.read"] })).body.id as string;
+    const paused = pauseAt(/^SELECT kind, organization_id FROM identities/);
+    const replacing = call("POST", `${ORG}/grants/${original}/replace`, {
+      subjectIdentityId: bob.id,
+      scope: { kind: "organization" },
+      actions: ["policy.read"],
+    });
+    await paused.arrived;
+    // Paused before pinning the membership, the replacement holds no lock on the Grant yet.
+    const probe = await db.connect();
+    try {
+      await probe.query("BEGIN");
+      await probe.query("SELECT id FROM grants WHERE id = $1 FOR UPDATE NOWAIT", [original]);
+      await probe.query("ROLLBACK");
+    } finally {
+      probe.release();
+    }
+    // So a removal runs through, revoking the original.
+    const removed = await call("DELETE", `${ORG}/members/${bob.id}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body.grantsRevoked).toBe(1);
+    paused.release();
+    // Then the replacement finds no live membership.
+    expect((await replacing).status).toBe(404);
+    expect((await db.query("SELECT id FROM grants WHERE subject_identity_id = $1 AND revoked_at IS NULL", [bob.id])).rows).toEqual([]);
+  });
+
+  it("a Grant replaced between a removal's snapshot and its write is revoked by the retry", async () => {
+    const bob = await addHuman("Bob", "member");
+    const original = (await call("POST", `${ORG}/grants`, { subjectIdentityId: bob.id, scope: { kind: "organization" }, actions: ["audit.read"] })).body.id as string;
+    const paused = pauseAt(/^UPDATE org_memberships SET removed_at/);
+    const removal = call("DELETE", `${ORG}/members/${bob.id}`);
+    await paused.arrived;
+    const replaced = await call("POST", `${ORG}/grants/${original}/replace`, {
+      subjectIdentityId: bob.id,
+      scope: { kind: "organization" },
+      actions: ["policy.read"],
+    });
+    expect([200, 201]).toContain(replaced.status);
+    paused.release();
+    const removed = await removal;
+    expect(removed.status).toBe(200);
+    expect(removed.body.grantsRevoked).toBe(1);
+    expect((await db.query("SELECT id FROM grants WHERE subject_identity_id = $1 AND revoked_at IS NULL", [bob.id])).rows).toEqual([]);
+  });
+
   it("a group link added after a removal's snapshot makes the removal retry and remove it", async () => {
     const bob = await addHuman("Bob", "member");
     const group = (await call("POST", `${ORG}/groups`, { name: "ops" })).body.id as string;
