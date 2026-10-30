@@ -7,7 +7,7 @@ import {
   type DestinationListing,
   type PlatformAdapter,
 } from "@varlatch/sync";
-import { recordAuditEvent, recordAuditEvents } from "../audit/events.js";
+import { recordAuditEvent, recordAuditEvents, type AuditEventInput } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, encryptGitHubAppKey, encryptPlatformCredential } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
@@ -791,9 +791,9 @@ export async function replaceConnectionCredential(
           resumedTargets: resumed.map((t) => t.id).join(",") || null,
         },
       },
-      ...resumed.map((t) => ({
+      ...resumed.map((t): AuditEventInput => ({
         eventType: "sync.target_resumed",
-        decision: "info" as const,
+        decision: "info",
         actorIdentityId,
         organizationId: org.id,
         action: "config.sync.manage",
