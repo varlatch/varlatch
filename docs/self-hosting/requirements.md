@@ -303,10 +303,12 @@ revokes everything the organization holds. Measured 2026-10-30 with
 - The deleted organization: 20 projects of 5 environments, every item with
   5 versions, 25 people, 10 machine identities, 10 integrations and 2
   webhooks.
-- Meanwhile, one client wrote a value in another organization every
-  250 ms, each write audited.
+- Meanwhile, one client wrote a value in another organization, each write
+  audited, pausing 250 ms after each one.
+- Lock waits were sampled from PostgreSQL every 20 ms during the deletion;
+  a shorter wait can go unseen.
 
-| Value versions | Database | Deletion | Other writes p50 / p95 / max, before | … during the deletion | Failed writes | Lock waits |
+| Value versions | Database | Deletion | Other writes p50 / p95 / max, before | … during the deletion | Failed writes | Lock waits sampled |
 |---|---|---|---|---|---|---|
 | 100,000 | 73 MB | 2.2 s | 15 / 16 / 17 ms | 16 / 28 / 28 ms | 0 | 0 |
 | 1,000,000 | 636 MB | 34.1 s | 13 / 14 / 17 ms | 27 / 108 / 1,508 ms | 0 | 0 |
@@ -319,10 +321,13 @@ What this means:
   supported; a larger one is deleted too, but its one transaction takes
   longer and writes more to PostgreSQL's write-ahead log.
 - **Other organizations keep working.** No write in another organization
-  failed or waited on a lock: the deletion takes the shared audit order
-  only at its end. They wait on the disk instead, while the erasure fills
-  the write-ahead log and a checkpoint flushes it, so a few writes took
-  longer. The slowest of three runs at a million took 0.8 to 3.8 seconds.
+  failed, and no lock wait was seen in sampling: the deletion records its
+  audit events, which take the installation-wide audit order, only at its
+  end. A diagnostic run that sampled every wait saw the other writes wait
+  on the disk instead, on write-ahead log flushes while the erasure fills
+  the log, and while a checkpoint writes out changed pages. So a few writes
+  took longer: the slowest in each of three runs at a million took 0.8 to
+  3.8 seconds.
 - **Plan for the write-ahead log**: the erasure rewrites every version, and
   PostgreSQL logs each change. Replicas, and backups that keep write-ahead
   log segments, hold that log for a while.

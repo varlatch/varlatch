@@ -284,9 +284,9 @@ fixes.
 
 - The host requirements state how long deleting an organization takes,
   measured at 100,000 and 1,000,000 value versions on a 2-CPU database, and
-  what it does to other organizations meanwhile: nothing waits on a lock,
-  some writes wait on the disk. `scripts/measure-org-deletion.mjs` measures
-  your own hardware.
+  what it does to other organizations meanwhile: no write failed and no
+  lock wait was seen in sampling; some writes waited on the disk.
+  `scripts/measure-org-deletion.mjs` measures your own hardware.
 
 ### Upgrading
 

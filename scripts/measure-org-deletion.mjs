@@ -14,13 +14,17 @@
 //   MEASURE_VERSIONS     value versions in the deleted Organization, per run  [100000,1000000]
 //   MEASURE_PG_CPUS      postgres CPU limit                                   [2]
 //   MEASURE_PG_MEMORY    postgres memory limit                                [4g]
-//   MEASURE_PACE_MS      pause between the probe's writes (one client)       [250]
+//   MEASURE_PACE_MS      pause after each of the probe's writes (one client) [250]
 //   MEASURE_BASELINE_S   probe duration before the deletion                   [10]
 //
 // The deleted Organization: 20 projects of 5 environments, every item with 5
 // versions, 25 people (one admin) with 3 Grants each, 10 machine identities,
 // 10 integrations and 2 webhooks. Its values are copies of one real
 // encrypted value; finalization never decrypts them.
+//
+// Percentiles are the sorted sample at index floor(p × n), the maximum for
+// p = 100. Lock waits are sampled from pg_stat_activity every 20 ms during
+// finalization: a wait shorter than that can go unseen.
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -40,18 +44,21 @@ const PROJECTS = 20, ENVIRONMENTS = 5, VERSIONS = 5, PEOPLE = 25, MACHINES = 10,
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-async function postgres() {
+/** Starts the container; the caller removes it, whatever happens after this. */
+function startPostgres() {
   const name = `varlatch-measure-deletion-${randomBytes(3).toString('hex')}`;
   docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', 'postgres:17.6']);
-  const port = docker(['port', name, '5432']).split(':').pop();
-  const url = `postgres://postgres@127.0.0.1:${port}/postgres`;
+  return name;
+}
+
+/** Waits until the container accepts connections, every check bounded in time. */
+async function readyPostgres(name) {
   for (let i = 0; i < 120; i++) {
-    const db = createPgQuerier(url);
     try {
-      await db.query('SELECT 1');
-      return { name, db };
+      execFileSync('docker', ['exec', name, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1', '-t', '2'], { stdio: 'ignore', timeout: 5000 });
+      const port = docker(['port', name, '5432']).split(':').pop();
+      return `postgres://postgres@127.0.0.1:${port}/postgres`;
     } catch {
-      await db.end();
       await sleep(500);
     }
   }
@@ -66,8 +73,15 @@ function percentiles(latencies) {
 
 async function measure(versions) {
   const items = Math.max(1, Math.round(versions / (PROJECTS * ENVIRONMENTS * VERSIONS)));
-  const { name, db } = await postgres();
+  const name = startPostgres();
+  let db = null;
+  // The probe and the lock sampler run beside the measurement: their
+  // failures are kept and rethrown, and both are stopped and settled
+  // before the pool closes and the container goes.
+  const background = { stop: false, failures: [], tasks: [] };
+  const beside = (task) => background.tasks.push(task().catch((err) => background.failures.push(err)));
   try {
+    db = createPgQuerier(await readyPostgres(name));
     const connection = await db.connect();
     try {
       await runMigrations(connection);
@@ -147,9 +161,9 @@ async function measure(versions) {
     await db.query('VACUUM ANALYZE');
 
     // Probe: one client, one audited write at a time, paced.
-    const probe = { stop: false, samples: [], errors: 0 };
-    const probing = (async () => {
-      while (!probe.stop) {
+    const probe = { samples: [], errors: 0 };
+    beside(async () => {
+      while (!background.stop) {
         const started = performance.now();
         const res = await app.request(PROBE, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'x-measure-client': 'probe' }, body: JSON.stringify({ value: randomBytes(24).toString('base64url') }) });
         await res.arrayBuffer();
@@ -158,7 +172,7 @@ async function measure(versions) {
         probe.samples.push({ started, ended, ms: ended - started });
         await sleep(paceMs);
       }
-    })();
+    });
     await sleep(baselineS * 1000);
     const baselineEnd = performance.now();
 
@@ -171,21 +185,21 @@ async function measure(versions) {
     // the probe may wait on disk, but should never wait on a lock.
     let lockWaits = 0;
     let sampling = true;
-    const sampler = (async () => {
-      while (sampling) {
+    beside(async () => {
+      while (sampling && !background.stop) {
         lockWaits += (await db.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock'")).rows[0].n;
         await sleep(20);
       }
-    })();
+    });
     const finalizeStart = performance.now();
     const outcome = await finalizeDeletion(ctx, scheduled.id, big.id);
     const finalizeEnd = performance.now();
     sampling = false;
-    await sampler;
     if (!outcome) throw new Error('finalization did not run');
     await sleep(2000);
-    probe.stop = true;
-    await probing;
+    background.stop = true;
+    await Promise.all(background.tasks);
+    if (background.failures.length > 0) throw background.failures[0];
 
     const baseline = probe.samples.filter(s => s.ended <= baselineEnd).map(s => s.ms);
     const during = probe.samples.filter(s => s.ended >= finalizeStart && s.started <= finalizeEnd).map(s => s.ms);
@@ -203,7 +217,9 @@ async function measure(versions) {
       lockWaits,
     };
   } finally {
-    await db.end().catch(() => {});
+    background.stop = true;
+    await Promise.allSettled(background.tasks);
+    await db?.end().catch(() => {});
     try {
       docker(['rm', '-f', name]);
     } catch {}
@@ -215,8 +231,8 @@ for (const size of sizes) {
   console.error(`measuring ${size} value versions…`);
   rows.push(await measure(size));
 }
-console.log(`PostgreSQL limited to ${pgCpus} CPUs / ${pgMemory}; one probe client writing every ${paceMs} ms in another Organization.\n`);
-console.log('| Value versions | Database | Scheduling | Finalization | Probe p50 / p95 / max, baseline | … during finalization (writes) | Failed probe writes | Lock waits seen |');
+console.log(`PostgreSQL limited to ${pgCpus} CPUs / ${pgMemory}; one probe client in another Organization, pausing ${paceMs} ms after each write.\n`);
+console.log('| Value versions | Database | Scheduling | Finalization | Probe p50 / p95 / max, baseline | … during finalization (writes) | Failed probe writes | Lock waits sampled |');
 console.log('|---|---|---|---|---|---|---|---|');
 for (const r of rows) {
   console.log(`| ${r.versions.toLocaleString('en-US')} | ${r.dbSize} | ${(r.scheduleMs / 1000).toFixed(1)} s | ${(r.finalizeMs / 1000).toFixed(1)} s | ${r.baseline} | ${r.during} (${r.duringCount}) | ${r.errors} | ${r.lockWaits} |`);
