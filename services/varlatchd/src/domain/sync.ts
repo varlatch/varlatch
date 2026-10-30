@@ -558,7 +558,8 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
     );
     await db.query(
       `UPDATE sync_targets
-       SET state = 'disabled', disabled_reason = 'connection-revoked', version = version + 1, updated_at = now()
+       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL,
+           version = version + 1, updated_at = now()
        WHERE id = ANY($1::text[])`,
       [targets.map((t) => t.id)],
     );
@@ -727,7 +728,8 @@ export async function revokeConnection(
     // They keep their destination claims: paused, not gone.
     const disabled = await db.query(
       `UPDATE sync_targets
-       SET state = 'disabled', disabled_reason = 'connection-revoked', version = version + 1, updated_at = now()
+       SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL,
+           version = version + 1, updated_at = now()
        WHERE connection_id = $1 AND revoked_at IS NULL RETURNING id`,
       [connectionId],
     );

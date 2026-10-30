@@ -99,6 +99,7 @@ import {
   type SyncMapping,
   type SyncTargetRow,
 } from "../domain/sync.js";
+import { liveRunStarts } from "../domain/syncdelivery.js";
 import {
   GITHUB_WEB,
   completeRegistration,
@@ -264,6 +265,9 @@ export interface BuildAppOptions {
 }
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+/** How long `pause?wait=true` waits for a Target to drain, and how often it looks (ADR-0050 Decision 6). */
+const PAUSE_WAIT_MS = 30_000;
+const PAUSE_WAIT_POLL_MS = 250;
 
 /**
  * The base URL device sign-in runs on, or null when it must not run: the
@@ -3000,7 +3004,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     installationId: r.github_installation_id === null ? null : Number(r.github_installation_id),
   });
 
-  const serializeTarget = (t: SyncTargetRow) => ({
+  /**
+   * A Target as the API shows it. `drained` and `runStartedAt` come from its
+   * live runs (ADR-0050 Decision 5): pass the map from `liveRunStarts`; a
+   * Target missing from it is drained.
+   */
+  const serializeTarget = (t: SyncTargetRow, runs: Map<string, Date>) => ({
     id: t.id,
     organizationId: t.organization_id,
     projectId: t.project_id,
@@ -3017,10 +3026,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     lastAttemptAt: t.last_attempt_at ? iso(t.last_attempt_at) : null,
     lastResult: t.last_result ?? null,
     lastNotes: t.last_notes ?? null,
+    drained: !runs.has(t.id),
+    runStartedAt: runs.has(t.id) ? iso(runs.get(t.id) as Date) : null,
     createdAt: iso(t.created_at),
     version: t.version,
     updatedAt: t.updated_at ? iso(t.updated_at) : null,
   });
+  /** Targets with their live runs, in one query for the whole list. */
+  const serializeTargets = async (rows: SyncTargetRow[]) => {
+    const runs = await liveRunStarts(ctx, rows.map((t) => t.id));
+    return rows.map((t) => serializeTarget(t, runs));
+  };
+  const serializeOneTarget = async (t: SyncTargetRow) => (await serializeTargets([t]))[0];
 
   const mappingSchema = z.discriminatedUnion("kind", [
     z.object({
@@ -3191,7 +3208,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // an actor managing only development Targets learns here that this
     // Connection also feeds production.
     const targets = await listTargets(ctx, { organizationId: org.id, connectionId: connection.id });
-    return c.json({ ...serializeConnection(connection), targets: targets.map(serializeTarget) });
+    return c.json({ ...serializeConnection(connection), targets: await serializeTargets(targets) });
   });
 
   // A change that re-authorizes Sync Targets at once (a credential
@@ -3402,7 +3419,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const items = await listTargets(ctx, { organizationId: org.id });
-    return c.json({ items: items.map(serializeTarget), nextCursor: null });
+    return c.json({ items: await serializeTargets(items), nextCursor: null });
   });
 
   const targetEnvScope = async (c: Context) => {
@@ -3419,7 +3436,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     async (c) => {
       const { org, env } = await targetEnvScope(c);
       const items = await listTargets(ctx, { organizationId: org.id, environmentId: env.id });
-      return c.json({ items: items.map(serializeTarget), nextCursor: null });
+      return c.json({ items: await serializeTargets(items), nextCursor: null });
     },
   );
 
@@ -3463,7 +3480,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         authz,
         principal.identity.id,
       );
-      return c.json(serializeTarget(target), 201);
+      return c.json(await serializeOneTarget(target), 201);
     },
   );
 
@@ -3482,7 +3499,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const { target } = await targetScope(c);
       const names = await targetLedger(ctx, target.id);
       return c.json({
-        ...serializeTarget(target),
+        ...(await serializeOneTarget(target)),
         names: names.map((n) => ({
           name: n.dest_name,
           state: n.state,
@@ -3551,7 +3568,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         authz,
         principal.identity.id,
       );
-      return c.json(serializeTarget(updated));
+      return c.json(await serializeOneTarget(updated));
     },
   );
 
@@ -3569,8 +3586,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause",
     async (c) => {
       const { org, target, principal } = await targetScope(c);
-      const updated = await setTargetState(ctx, org, target.id, "pause", principal.identity.id);
-      return c.json(serializeTarget(updated as SyncTargetRow));
+      await setTargetState(ctx, org, target.id, "pause", principal.identity.id);
+      // ?wait=true holds the answer until no run of the Target can start
+      // another request, for at most 30 s (ADR-0050 Decision 6). It polls
+      // the database, so it covers runs in any process, and stops when the
+      // client goes away. Either way the pause has taken effect.
+      if (c.req.query("wait") === "true") {
+        const until = Date.now() + PAUSE_WAIT_MS;
+        const signal = c.req.raw.signal;
+        while (Date.now() < until && !signal.aborted && (await liveRunStarts(ctx, [target.id])).has(target.id)) {
+          await new Promise((resolve) => setTimeout(resolve, PAUSE_WAIT_POLL_MS));
+        }
+      }
+      // Read again: the Target may have been resumed (shown as such) or
+      // revoked (not found) while the request waited.
+      return c.json(await serializeOneTarget(await getTarget(ctx, org.id, target.id)));
     },
   );
 
@@ -3580,7 +3610,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       assertSyncEnabled();
       const { org, target, principal } = await targetScope(c);
       const updated = await setTargetState(ctx, org, target.id, "resume", principal.identity.id);
-      return c.json(serializeTarget(updated as SyncTargetRow));
+      return c.json(await serializeOneTarget(updated as SyncTargetRow));
     },
   );
 

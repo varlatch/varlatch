@@ -83,7 +83,13 @@ export function redeployError(result: string | null | undefined): string | undef
 
 export function targetStatus(t: SyncTarget): TargetStatus {
   const reaffirm = (t.lastResult ?? "").includes("re-affirmation required");
-  if (t.state === "paused") return { tone: "muted", label: "Paused", at: t.updatedAt ?? t.createdAt, fix: "resume" };
+  if (t.state === "paused") {
+    // A run that was going when the pause landed may still send its one
+    // request; until it can start no other, the pause is still taking hold
+    // (ADR-0050). Older servers do not say, and read as paused.
+    if (t.drained === false) return { tone: "live", label: "Pausing", detail: "a push is finishing", at: t.updatedAt ?? t.createdAt };
+    return { tone: "muted", label: "Paused", at: t.updatedAt ?? t.createdAt, fix: "resume" };
+  }
   if (t.state === "disabled") {
     if (t.disabledReason === "connection-revoked") {
       return { tone: "error", label: "Stopped", detail: "connection revoked", fix: "reconnect", at: t.updatedAt };
@@ -122,6 +128,7 @@ export function targetStatus(t: SyncTarget): TargetStatus {
   if (held) {
     return { tone: "warn", label: "Values held", detail: held.detail, error: held.error, at: t.lastAttemptAt };
   }
+  if (t.drained === false) return { tone: "live", label: "Pushing", at: t.runStartedAt ?? t.lastAttemptAt };
   if (!t.lastAttemptAt) return { tone: "live", label: "Waiting for first push", at: null };
   if (t.needsSync) return { tone: "live", label: "Syncing", at: t.lastAttemptAt };
   return { tone: "ok", label: "In sync", at: t.lastAttemptAt };

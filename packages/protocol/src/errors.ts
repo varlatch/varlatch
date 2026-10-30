@@ -82,6 +82,7 @@ export const CAPABILITIES = [
   "tailnet.browser-reads",
   "identity.whoami",
   "installation.release",
+  "sync.pause-wait",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

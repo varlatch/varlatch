@@ -37,6 +37,15 @@ import {
  */
 
 const LEASE_TTL_SECONDS = 300; // far above the 10s per-request timeout (§4)
+/**
+ * A run's budget, under the lease TTL: after it the run's send check
+ * refuses (ADR-0050 Decision 3), on the database clock, so no run outlives
+ * its lease and a Target can be shown drained.
+ */
+const RUN_BUDGET_SECONDS = 240;
+/** The send check's one query: the Target's generation, and whether the run is within its deadline. Exported for tests. */
+export const SEND_CHECK_SQL =
+  "SELECT t.generation, (r.deadline > now()) AS within FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2 WHERE t.id = $1";
 const BASE_BACKOFF_MS = 30_000;
 const MAX_BACKOFF_MS = 3_600_000;
 const FAILURE_BUDGET = 10;
@@ -150,6 +159,11 @@ export async function runSyncOnce(ctx: AppCtx, opts: SyncRunOptions = {}): Promi
   } catch (err) {
     console.error("sync trigger scan failed:", err);
   }
+  // Rows of runs past their deadline: their send check refuses anyway, so
+  // they no longer count; this only keeps the table small (ADR-0050).
+  await ctx.db.query("DELETE FROM sync_runs WHERE deadline <= now()").catch((err: unknown) =>
+    console.error("sync run cleanup failed:", err),
+  );
   const repairIntervalMs = opts.repairIntervalMs ?? REPAIR_INTERVAL_MS;
   // The batch selects CANDIDATE ids only. Every configuration fact is read
   // at (or after) lease acquisition: acting on a batch snapshot would let a
@@ -192,14 +206,22 @@ export async function reconcileTarget(
   // Lease: at most one valid reconciliation per Target (§4). The RETURNING
   // row is THE configuration snapshot this run may act on — atomically the
   // same row version the acquired generation belongs to.
+  // The run is registered with its deadline in the same statement, so no
+  // run ever holds a lease without a row (ADR-0050 Decision 5).
   const lease = await ctx.db.query(
-    `UPDATE sync_targets
-     SET generation = generation + 1, lease_expires_at = now() + ($2 * interval '1 second'),
-         needs_sync = false, last_attempt_at = now()
-     WHERE id = $1 AND revoked_at IS NULL AND state = 'active'
-       AND (lease_expires_at IS NULL OR lease_expires_at < now())
-     RETURNING ${TARGET_COLUMNS}, generation`,
-    [targetId, LEASE_TTL_SECONDS],
+    `WITH lease AS (
+       UPDATE sync_targets
+       SET generation = generation + 1, lease_expires_at = now() + ($2 * interval '1 second'),
+           needs_sync = false, last_attempt_at = now()
+       WHERE id = $1 AND revoked_at IS NULL AND state = 'active'
+         AND (lease_expires_at IS NULL OR lease_expires_at < now())
+       RETURNING ${TARGET_COLUMNS}, generation
+     ), run AS (
+       INSERT INTO sync_runs (target_id, generation, deadline)
+       SELECT id, generation, now() + ($3 * interval '1 second') FROM lease
+     )
+     SELECT * FROM lease`,
+    [targetId, LEASE_TTL_SECONDS, RUN_BUDGET_SECONDS],
   );
   const leaseRow = lease.rows[0] as Record<string, unknown> | undefined;
   if (!leaseRow) return; // another run holds the lease, or state changed
@@ -263,15 +285,28 @@ export async function reconcileTarget(
       // so backoff-and-retry owns it. The guard keeps this safe against a
       // successor appearing between the check and the update.
       let fenced = true;
+      let outOfBudget = false;
       try {
         const res = await ctx.db.query(
-          "SELECT generation FROM sync_targets WHERE id = $1",
-          [target.id],
+          `SELECT t.generation, (r.deadline IS NOT NULL AND r.deadline <= now()) AS expired
+           FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2
+           WHERE t.id = $1`,
+          [target.id, generation],
         );
-        const row = res.rows[0] as { generation: string | number } | undefined;
+        const row = res.rows[0] as { generation: string | number; expired: boolean } | undefined;
         fenced = row !== undefined && Number(row.generation) !== generation;
+        outOfBudget = row !== undefined && !fenced && row.expired === true;
       } catch {
         fenced = false; // cannot confirm a successor: reschedule, guarded
+      }
+      if (outOfBudget) {
+        // The run used up its budget: a yield, not a failure (ADR-0050
+        // Decision 4). What it confirmed stays confirmed; the Target is
+        // picked up again on the next tick.
+        await ctx.db
+          .query("UPDATE sync_targets SET needs_sync = true WHERE id = $1 AND generation = $2", [target.id, generation])
+          .catch((e) => console.error("sync yield bookkeeping failed:", e));
+        return;
       }
       if (!fenced) {
         await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
@@ -309,6 +344,11 @@ export async function reconcileTarget(
         "UPDATE sync_targets SET lease_expires_at = NULL WHERE id = $1 AND generation = $2",
         [target.id, generation],
       )
+      .catch(() => {});
+    // The run's own row, whether or not it was fenced: it describes the
+    // run, not the lease.
+    await ctx.db
+      .query("DELETE FROM sync_runs WHERE target_id = $1 AND generation = $2", [target.id, generation])
       .catch(() => {});
   }
 }
@@ -843,14 +883,14 @@ async function adapterRequest(
     // confirmed fence from a probe failure and reschedules the latter.
     ...(generation !== undefined
       ? {
+          // The send check: the generation still holds the Target, and the
+          // run's deadline has not passed, both on the database clock in one
+          // query (ADR-0050 Decisions 1 and 3).
           shouldAbort: async (): Promise<boolean> => {
             try {
-              const res = await ctx.db.query(
-                "SELECT generation FROM sync_targets WHERE id = $1",
-                [target.id],
-              );
-              const row = res.rows[0] as { generation: string | number } | undefined;
-              return !row || Number(row.generation) !== generation;
+              const res = await ctx.db.query(SEND_CHECK_SQL, [target.id, generation]);
+              const row = res.rows[0] as { generation: string | number; within: boolean | null } | undefined;
+              return !row || Number(row.generation) !== generation || row.within !== true;
             } catch {
               return true;
             }
@@ -1014,6 +1054,25 @@ function withHeld(result: string, held: string[]): string {
 }
 
 /** Periodic delivery, modeled on the webhook loop: best-effort, never throws. */
+/**
+ * For each Target, the start of its oldest run that can still send
+ * (ADR-0050 Decision 5); a Target missing from the map is drained.
+ */
+export async function liveRunStarts(ctx: AppCtx, targetIds: string[]): Promise<Map<string, Date>> {
+  if (targetIds.length === 0) return new Map();
+  const res = await ctx.db.query(
+    `SELECT target_id, min(started_at) AS started_at FROM sync_runs
+     WHERE target_id = ANY($1) AND deadline > now() GROUP BY target_id`,
+    [targetIds],
+  );
+  return new Map(
+    res.rows.map((r) => {
+      const row = r as { target_id: string; started_at: Date | string };
+      return [row.target_id, new Date(row.started_at)];
+    }),
+  );
+}
+
 export function startSyncLoop(
   ctx: AppCtx,
   opts: SyncRunOptions & { intervalMs?: number } = {},

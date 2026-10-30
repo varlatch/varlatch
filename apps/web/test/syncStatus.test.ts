@@ -79,6 +79,15 @@ describe("targetStatus", () => {
     });
   });
 
+  it("shows a run that can still send: Pushing, and Pausing after a pause (ADR-0050)", () => {
+    const started = "2026-10-30T10:00:00.000Z";
+    expect(targetStatus(target({ drained: false, runStartedAt: started }))).toMatchObject({ label: "Pushing", at: started });
+    expect(targetStatus(target({ state: "paused", drained: false }))).toMatchObject({ label: "Pausing", detail: "a push is finishing" });
+    expect(targetStatus(target({ state: "paused", drained: true }))).toMatchObject({ label: "Paused", fix: "resume" });
+    // An older server says nothing about runs: paused reads as paused.
+    expect(targetStatus(target({ state: "paused" }))).toMatchObject({ label: "Paused" });
+  });
+
   it("asks for re-affirmation when a mapped item became a secret", () => {
     expect(targetStatus(target({ lastResult: "degraded: re-affirmation required for API_KEY" })).fix).toBe("reaffirm");
   });

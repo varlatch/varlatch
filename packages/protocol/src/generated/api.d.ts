@@ -1463,7 +1463,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Pause delivery; the Target keeps its destination claim */
+        /**
+         * Pause delivery; the Target keeps its destination claim
+         * @description Pausing stops a run in progress: it starts no further request and records nothing more (ADR-0050). Pausing a paused Target changes nothing; a disabled Target cannot be paused (VALIDATION_FAILED). With wait=true (capability `sync.pause-wait`) the answer waits until the Target is drained, for at most 30 seconds; `drained` says whether it is, and the pause has taken effect either way.
+         */
         post: operations["pauseSyncTarget"];
         delete?: never;
         options?: never;
@@ -2498,6 +2501,13 @@ export interface components {
             lastResult: string | null;
             /** @description The names the last run held, first, then hints on how the destination itself uses the managed names (ADR-0031, amendments 2026-10-21 and 2026-10-22). They never fail a run, and each run that reaches the value check replaces them. Null when no run has since 0.18.1. */
             lastNotes: components["schemas"]["SyncTargetNote"][] | null;
+            /** @description True when no run of this Target can start another request to the destination (ADR-0050): every run has ended or passed its deadline. A request a run had already sent may still reach the platform. Requires capability `sync.pause-wait`; absent from older servers. */
+            drained?: boolean;
+            /**
+             * Format: date-time
+             * @description When the oldest run that can still send started; null when drained.
+             */
+            runStartedAt?: string | null;
             /** Format: date-time */
             createdAt: string;
             version: components["schemas"]["EntityVersion"];
@@ -6243,7 +6253,9 @@ export interface operations {
     };
     pauseSyncTarget: {
         parameters: {
-            query?: never;
+            query?: {
+                wait?: "true" | "false";
+            };
             header?: never;
             path: {
                 /** @description Organization slug or ID */

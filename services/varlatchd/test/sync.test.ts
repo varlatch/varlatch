@@ -8,7 +8,7 @@ import {
   ensureInstallation,
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
-import { ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
+import { SEND_CHECK_SQL, ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
 import { mappingWidens, recordCredentialExpiry } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -799,6 +799,98 @@ describe("convergence", () => {
     expect((await targetRowFromDb()).state).toBe("disabled");
   });
 
+  it("registers each run with a deadline and removes it when the run ends (ADR-0050)", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let live = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const rows = await ctx.db.query("SELECT 1 FROM sync_runs WHERE target_id = $1 AND deadline > now()", [id]);
+      live = Math.max(live, rows.rows.length);
+      return coolify.fetchImpl(url as string, init);
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(live).toBe(1);
+    expect((await ctx.db.query("SELECT 1 FROM sync_runs")).rows).toHaveLength(0);
+    const listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0]).toMatchObject({ drained: true, runStartedAt: null });
+  });
+
+  it("a run past its deadline sends no further request and yields without counting a failure", async () => {
+    const coolify = fakeCoolify();
+    await activeTarget(); // two items -> two writes
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    let writesSent = 0;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        writesSent += 1;
+        // The budget runs out between the two writes (database clock).
+        if (writesSent === 1) await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(writesSent).toBe(1);
+    const row = await targetRowFromDb();
+    expect(row.failure_count).toBe(0);
+    expect(row.needs_sync).toBe(true);
+    expect(row.state).toBe("active");
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.push_result'")).rows).toHaveLength(0);
+
+    // The follow-up run finishes the work.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+    expect(coolify.values().get("PORT")).toBe("8080");
+  });
+
+  it("counts a run as live until its deadline, and the sync loop removes expired rows", async () => {
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    await ctx.db.query(
+      "INSERT INTO sync_runs (target_id, generation, deadline) VALUES ($1, 999, now() + interval '1 hour')",
+      [id],
+    );
+    let listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0].drained).toBe(false);
+    expect(listed.items[0].runStartedAt).not.toBeNull();
+    // A process that died mid-run: its row stops counting at its deadline.
+    await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+    listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    expect(listed.items[0]).toMatchObject({ drained: true, runStartedAt: null });
+    await runSyncOnce(ctx, { fetchImpl: fakeCoolify().fetchImpl });
+    expect((await ctx.db.query("SELECT 1 FROM sync_runs")).rows).toHaveLength(0);
+  });
+
+  it("pause?wait=true answers once the Target is drained", async () => {
+    await activeTarget();
+    const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+    await ctx.db.query(
+      "INSERT INTO sync_runs (target_id, generation, deadline) VALUES ($1, 999, now() + interval '700 milliseconds')",
+      [id],
+    );
+    const started = Date.now();
+    const res = await post(`${ENV_PATH}/sync-targets/${id}/pause?wait=true`, {});
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ state: "paused", drained: true });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(400);
+    // Asked again, with nothing running: at once, and still paused.
+    const again = await post(`${ENV_PATH}/sync-targets/${id}/pause?wait=true`, {});
+    expect(await again.json()).toMatchObject({ state: "paused", drained: true });
+  });
+
+  it("revoking a Connection fences the runs of the Targets it disables", async () => {
+    await activeTarget();
+    const target = (await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0];
+    const before = Number((await targetRowFromDb()).generation);
+    expect((await del(`/v1/organizations/acme/platform-connections/${target.connectionId}`)).status).toBe(204);
+    const row = await targetRowFromDb();
+    expect(row.state).toBe("disabled");
+    expect(Number(row.generation)).toBe(before + 1);
+    expect(row.lease_expires_at).toBeNull();
+  });
+
   it("redeploy fires only on pushes that changed ledger content", async () => {
     const coolify = fakeCoolify();
     await activeTarget({ redeploy: true });
@@ -872,7 +964,7 @@ describe("convergence", () => {
       ...ctx,
       db: {
         query: (text: string, params?: unknown[]) =>
-          flaky && text === "SELECT generation FROM sync_targets WHERE id = $1"
+          flaky && text === SEND_CHECK_SQL
             ? Promise.reject(new Error("db hiccup"))
             : ctx.db.query(text, params),
       },
@@ -1937,7 +2029,7 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     await appTarget();
     // The send-time fence probe fails: the write is not sent, and the run ends
     // as interrupted, at its own generation.
-    const restore = failQuery("SELECT generation FROM sync_targets WHERE id = $1");
+    const restore = failQuery(SEND_CHECK_SQL);
     try {
       await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     } finally {
