@@ -6,6 +6,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
 import { latestEventCursor, syncNewMirrorEvents, type MirrorConfig } from "../src/mirror/publisher.js";
+import { deliverWebhooksOnce } from "../src/domain/webhooks.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
@@ -162,6 +163,35 @@ describe("deleting a Project", () => {
     const bob = (await issueCredential(ctx.db, { identityId: bobId, kind: "cli" })).token;
     expect((await call("DELETE", P, undefined, bob)).status).toBe(403);
     expect((await versionsOf(projectId)).every((v) => !v.erased)).toBe(true);
+  });
+
+  it("does not deliver a deleted Project's events by webhook, and moves past them", async () => {
+    const all = (await call("POST", `${ORG}/webhooks`, { url: "https://sink.example/all" })).body;
+    const valuesOnly = (await call("POST", `${ORG}/webhooks`, { url: "https://sink.example/values", eventTypes: ["value.written"] })).body;
+    // A backlog: the deleted Project's events and another Project's.
+    expect((await call("PUT", `${DEV}/values/PORT`, { value: "9090" })).status).toBe(200);
+    expect((await call("POST", `${ORG}/projects`, { name: "Web", slug: "web", contractAuthority: "git" })).status).toBe(201);
+    expect((await call("DELETE", P)).status).toBe(200);
+    const sent: { url: string; events: { eventType: string; resource: Record<string, unknown> | null }[] }[] = [];
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      sent.push({ url: String(url), events: (JSON.parse(String(init?.body)) as { events: never[] }).events });
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    await deliverWebhooksOnce(ctx, fetchImpl);
+    const delivered = sent.flatMap((s) => s.events);
+    expect(delivered.some((e) => e.eventType === "project.created")).toBe(true);
+    expect(delivered.some((e) => e.eventType === "project.deleted" || e.eventType === "value.written")).toBe(false);
+    // Nothing to send for the values-only hook: no request, and its cursor moved on all the same.
+    expect(sent.filter((s) => s.url.endsWith("/values"))).toEqual([]);
+    const position = (await ctx.db.query("SELECT value::text AS v FROM audit_position")).rows[0]!.v;
+    const cursors = (await ctx.db.query("SELECT id, cursor_order::text AS c FROM webhooks WHERE id = ANY($1)", [[all.id, valuesOnly.id]])).rows as { id: string; c: string }[];
+    const valuesCursor = Number(cursors.find((c) => c.id === valuesOnly.id)!.c);
+    expect(valuesCursor).toBeGreaterThan(0);
+    // A second pass sends nothing again.
+    sent.length = 0;
+    await deliverWebhooksOnce(ctx, fetchImpl);
+    expect(sent).toEqual([]);
+    expect(Number(position)).toBeGreaterThanOrEqual(valuesCursor);
   });
 
   it("removes the Project's and its environments' published metadata", async () => {

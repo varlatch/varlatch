@@ -142,6 +142,53 @@ describe.skipIf(!url)("project deletion on real PostgreSQL", () => {
     expect(await intact()).toBe(0);
   });
 
+  it("a deletion and a credential replacement lock the same Targets in one order: no deadlock", async () => {
+    const connection = (
+      await call("POST", "/v1/organizations/test/platform-connections", {
+        platform: "coolify",
+        baseIdentity: "https://coolify.example.com",
+        name: "c",
+        credential: "token-c-0001",
+      })
+    ).body;
+    const created = [];
+    for (const app of ["app1", "app2"]) {
+      const t = await call("POST", `${DEV}/sync-targets`, { connectionId: connection.id, destination: { applicationUuid: app }, mapping: { kind: "wildcard" } });
+      expect(t.status, JSON.stringify(t.body)).toBe(201);
+      created.push(t.body.id as string);
+    }
+    // Creation order the reverse of ID order, as random IDs often are.
+    const [low, high] = [...created].sort();
+    await db.query("UPDATE sync_targets SET created_at = now() - interval '1 hour' WHERE id = $1", [high]);
+    await db.query("UPDATE sync_targets SET created_at = now() WHERE id = $1", [low]);
+
+    // Hold the higher Target, so each transaction queues on its locks in turn.
+    const holder = await db.connect();
+    await holder.query("BEGIN");
+    await holder.query("SELECT id FROM sync_targets WHERE id = $1 FOR UPDATE", [high]);
+    const waiting = async (n: number) => {
+      for (let i = 0; i < 100; i++) {
+        const res = await db.query(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        );
+        if ((res.rows[0] as { n: number }).n >= n) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error("not waiting");
+    };
+    const replacing = call("POST", `/v1/organizations/test/platform-connections/${connection.id}/credential`, {
+      credential: "token-c-0002",
+      expectedVersion: connection.version,
+    });
+    await waiting(1);
+    const deleting = call("DELETE", P);
+    await waiting(2);
+    await holder.query("ROLLBACK");
+    holder.release();
+    const [replaced, deleted] = await Promise.all([replacing, deleting]);
+    expect([replaced.status, deleted.status], JSON.stringify([replaced.body, deleted.body])).toEqual([200, 200]);
+  });
+
   it("two Contract activations and a rename of one Project never deadlock", async () => {
     const revisions = await Promise.all(
       [1, 2].map(async (n) =>

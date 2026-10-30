@@ -706,10 +706,12 @@ export async function replaceConnectionCredential(
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
     }
+    // Targets in ascending ID order, as every other transaction locks them
+    // (ADR-0051 Decision 1): Project deletion takes the same rows.
     const targets = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE connection_id = $1 AND revoked_at IS NULL
-       ORDER BY created_at, id FOR UPDATE`,
+       ORDER BY id FOR UPDATE`,
       [connectionId],
     );
     const rows = (targets.rows as Record<string, unknown>[]).map(targetRow);
