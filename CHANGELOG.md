@@ -13,7 +13,8 @@ fixes.
   each item has `rotating`: `true` while a dual-phase rotation keeps its
   previous value working. Without `--json`, the list is unchanged, and
   stderr names each item that is rotating, with the command that completes
-  it. The command still never fetches a value.
+  it in the environment where the rotation lives (the parent, for an
+  inherited item). The command still never fetches a value.
 
 ## 0.19.1 (2026-10-29)
 
