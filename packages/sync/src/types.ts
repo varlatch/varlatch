@@ -153,8 +153,13 @@ export interface PlatformAdapter {
    * `checked: false` with a reason instead.
    */
   inspectUsage?(req: AdapterRequest, names: string[]): Promise<UsageReport | null>;
-  /** Best-effort redeploy trigger (supportsRedeploy). */
-  triggerRedeploy?(req: AdapterRequest): Promise<void>;
+  /**
+   * Redeploy trigger (supportsRedeploy). "sent" means the platform accepted
+   * the request; "aborted" means the run's send check refused it, so
+   * nothing was sent. A refusal by the platform throws. Only "sent" settles
+   * an owed redeploy (ADR-0050 Decision 4).
+   */
+  triggerRedeploy?(req: AdapterRequest): Promise<"sent" | "aborted">;
   /**
    * Read-only access check: does the credential reach the base identity,
    * and, when `req.destination` names one, that destination? Sends the

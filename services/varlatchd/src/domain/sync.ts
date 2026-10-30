@@ -114,12 +114,16 @@ export interface SyncTargetRow {
   revoked_at: string | null;
   version: number;
   updated_at: string | null;
+  /** Owed while redeploy_owed > redeploy_paid (migration 33, ADR-0050 Decision 4). bigint: a string from the driver. */
+  redeploy_owed: string | number;
+  redeploy_paid: string | number;
 }
 
 export const TARGET_COLUMNS = `id, organization_id, project_id, environment_id, connection_id,
   destination, canonical_destination, mapping, remove_orphans, redeploy, state,
   disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
-  last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at`;
+  last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at,
+  redeploy_owed, redeploy_paid`;
 
 const CONNECTION_COLUMNS = `id, organization_id, platform, base_identity, name,
   created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at,
@@ -1173,7 +1177,10 @@ export async function updateTarget(
              remove_orphans = $5, redeploy = $6, needs_sync = true, next_attempt_at = NULL,
              version = version + 1, updated_at = now(),
              -- Notes describe the old destination: they go with it.
-             last_notes = CASE WHEN $8 THEN NULL ELSE last_notes END
+             last_notes = CASE WHEN $8 THEN NULL ELSE last_notes END,
+             -- An owed redeploy was for the old destination, or is no longer
+             -- wanted: settled without paying it (ADR-0050 Decision 4).
+             redeploy_paid = CASE WHEN $8 OR NOT $6 THEN redeploy_owed ELSE redeploy_paid END
          WHERE id = $7 RETURNING ${TARGET_COLUMNS}`,
         [
           connection.id,
