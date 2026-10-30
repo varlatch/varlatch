@@ -341,11 +341,20 @@ export async function reconcileTarget(
       }
       return;
     }
+    // The repair cycle closes when its eligible work is done, independent of
+    // the Target's health: a flag such as an unresolved reference must not
+    // keep a cycle open (and its credited names unverified) for good.
+    if (force && outcome.cycleComplete) {
+      await ctx.db.query(
+        `UPDATE sync_targets SET last_repair_at = COALESCE(repair_cycle_started_at, now()), repair_cycle_started_at = NULL
+         WHERE id = $1 AND generation = $2`,
+        [target.id, generation],
+      );
+    }
     if (outcome.ok) {
       await ctx.db.query(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
-             ${force ? ", last_repair_at = COALESCE(repair_cycle_started_at, now()), repair_cycle_started_at = NULL" : ""}
              ${outcome.notes !== undefined ? ", last_notes = $4" : ""}
          WHERE id = $1 AND generation = $3`,
         outcome.notes !== undefined
@@ -388,6 +397,12 @@ interface RunOutcome {
    * leaves them as they are.
    */
   notes?: TargetNote[];
+  /**
+   * A forced run handled all its eligible repair work without a failed
+   * write or deletion: the repair cycle can close, whatever rendering flags
+   * say about the Target's health (ADR-0050 Decision 4).
+   */
+  cycleComplete?: boolean;
 }
 
 /**
@@ -586,6 +601,15 @@ async function reconcileUnderLease(
       // re-create it (above).
       if (force && !credited(destName) && (!remote || remote.has(destName)) && !mayRecreate(destName)) deletes.push(destName);
       else if (ambiguous.has(destName)) deletes.push(destName);
+      // Read back as absent: verified, so it earns credit without a delete.
+      else if (force && remote && !remote.has(destName) && !credited(destName) && !mayRecreate(destName)) {
+        verified.push(destName);
+      }
+    } else if (entry.state === "intent-delete" || entry.state === "failed-delete") {
+      // A deletion an earlier run decided on and did not finish (cut off
+      // by a fence or its deadline, or refused): carried on, so it
+      // completes even when the Target does not remove orphans.
+      deletes.push(destName);
     } else if (target.remove_orphans) {
       deletes.push(destName);
     }
@@ -614,6 +638,7 @@ async function reconcileUnderLease(
       ok: flags.length === 0,
       result: withHeld(flags.length > 0 ? flagSummary(flags) : "converged", heldReasons),
       notes: runNotes,
+      cycleComplete: force,
     };
   }
 
@@ -744,6 +769,7 @@ async function reconcileUnderLease(
     ok: failed.length === 0 && flags.length === 0,
     result: `${result}${redeployNote}`.slice(0, 500),
     notes: boundNotes([...heldNotes, ...notes]),
+    cycleComplete: force && failed.length === 0,
   };
 }
 
@@ -1043,14 +1069,14 @@ export async function ledgerSet(
   });
 }
 
-/** Repair credit for names a read-back proved current, under the same generation guard as ledgerSet. */
+/** Repair credit for names a read-back proved current (written and present, or deleted and absent), under the same generation guard as ledgerSet. */
 async function creditVerified(ctx: AppCtx, targetId: string, generation: number, names: string[]): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
     const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await db.query(
-      "UPDATE sync_ledger SET repaired_at = now() WHERE target_id = $1 AND dest_name = ANY($2) AND state = 'written'",
+      "UPDATE sync_ledger SET repaired_at = now() WHERE target_id = $1 AND dest_name = ANY($2) AND state IN ('written', 'tombstone')",
       [targetId, names],
     );
     return true;

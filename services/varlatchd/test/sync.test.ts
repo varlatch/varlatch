@@ -2158,3 +2158,90 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     expect(few).toEqual([{ code: "held", name: "H", reason: "r", fix: "platform-expands" }, { code: "shadowed", name: "S" }]);
   });
 });
+
+describe("repair cycles (ADR-0050 Decision 4)", () => {
+  /** GitHub Actions: no read-back, so a forced repair writes and deletes everything. */
+  function fakeGitHub() {
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const sent: { method: string; name: string }[] = [];
+    let cutOn: string | null = null;
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/users/acme")) return json({ login: "acme", type: "Organization" });
+      if (url.endsWith("/public-key")) return json({ key_id: "k1", key });
+      if (method === "PUT" || method === "DELETE") {
+        sent.push({ method, name: decodeURIComponent(url.split("/").pop() ?? "") });
+        if (cutOn === method) {
+          // The run's budget runs out right after this request.
+          cutOn = null;
+          await ctx.db.query("UPDATE sync_runs SET deadline = now() - interval '1 second'");
+        }
+        return new Response(null, { status: 204 });
+      }
+      return json({ message: "Not Found" }, 404);
+    }) as typeof fetch;
+    return { fetchImpl, sent, cutAfterNext: (method: "PUT" | "DELETE") => (cutOn = method) };
+  }
+  const githubTarget = async () => {
+    const connection = await (await createConnection({ platform: "github-actions", baseIdentity: "acme", name: "GitHub", credential: "ghp_x" })).json();
+    expect((await createTarget(connection.id, { destination: { repo: "api" } })).status).toBe(201);
+    return ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+  };
+
+  it("a forced first sync to GitHub larger than one budget finishes over several runs, writing each name once", async () => {
+    const github = fakeGitHub();
+    const id = await githubTarget();
+    github.cutAfterNext("PUT");
+    await reconcileTarget(ctx, id, { fetchImpl: github.fetchImpl });
+    expect(github.sent).toHaveLength(1);
+    expect((await targetRowFromDb()).repair_cycle_started_at).not.toBeNull();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const puts = github.sent.filter((s) => s.method === "PUT").map((s) => s.name);
+    expect(puts.sort()).toEqual(["DATABASE_URL", "PORT"]);
+    const row = await targetRowFromDb();
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
+    expect(row.failure_count).toBe(0);
+  });
+
+  it("re-deleting many tombstones also resumes instead of starting over", async () => {
+    const github = fakeGitHub();
+    const id = await githubTarget();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl }); // first sync, cycle closed
+    // Three names Varlatch deleted earlier, and a repair due.
+    for (const name of ["OLD_A", "OLD_B", "OLD_C"]) {
+      await ctx.db.query(
+        "INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation) VALUES ($1, $2, NULL, 'tombstone', 0)",
+        [id, name],
+      );
+    }
+    await ctx.db.query("UPDATE sync_targets SET last_repair_at = NULL, needs_sync = true");
+    github.sent.length = 0;
+    // The forced run rewrites both values, deletes one tombstone, and runs out.
+    github.cutAfterNext("DELETE");
+    await reconcileTarget(ctx, id, { fetchImpl: github.fetchImpl });
+    expect(github.sent.filter((s) => s.method === "DELETE")).toHaveLength(1);
+    const cut = github.sent.length;
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const after = github.sent.slice(cut);
+    // The continuation neither rewrites the values nor repeats the deletion.
+    expect(after.filter((s) => s.method === "PUT")).toEqual([]);
+    const deletes = github.sent.filter((s) => s.method === "DELETE").map((s) => s.name);
+    expect(deletes.sort()).toEqual(["OLD_A", "OLD_B", "OLD_C"]);
+    expect((await targetRowFromDb()).repair_cycle_started_at).toBeNull();
+  });
+
+  it("a rendering flag does not keep a finished cycle open", async () => {
+    const github = fakeGitHub();
+    await put(`${ENV_PATH}/values/BROKEN`, { value: "${DOES_NOT_EXIST}" });
+    await githubTarget();
+    await runSyncOnce(ctx, { fetchImpl: github.fetchImpl });
+    const row = await targetRowFromDb();
+    expect(row.last_result).toMatch(/flagged|degraded/);
+    expect(row.repair_cycle_started_at).toBeNull();
+    expect(row.last_repair_at).not.toBeNull();
+  });
+});
