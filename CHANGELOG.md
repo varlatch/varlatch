@@ -82,7 +82,8 @@ fixes.
   always says that the file is a copy outside Varlatch: rotating or deleting
   a value in Varlatch does not change it, and anyone with the file can use
   a credential in it until it is rotated at its provider. The paste import
-  says the pasted text still exists where it came from. `varlatch import`
+  says the pasted text still exists where it came from, and once the
+  pasted drafts are saved a short checklist follows. `varlatch import`
   says, after it stored values, that the file still holds copies (or, after
   `--delete-source`, that other copies may exist), with a checklist when
   Secrets were stored.

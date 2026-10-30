@@ -39,7 +39,7 @@ import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
 import { useReviewSave } from "../values/useReviewSave";
 import { ReviewDialog } from "../values/ReviewDialog";
 import { RotateDialog } from "../values/RotateDialog";
-import { ImportDialog } from "../values/TransferDialogs";
+import { ImportDialog, PASTE_SAVED_CHECKLIST } from "../values/TransferDialogs";
 import { AddItemForm } from "../values/AddItemForm";
 import { DisclosureNotice, DraftMarker, RefHint, RotatingMarker, SaveBar, SecretMask, TypeBadge } from "../values/bits";
 import { ValueEditor, type CommitHow } from "../values/ValueEditor";
@@ -125,6 +125,8 @@ export function EditorPage() {
   const [rotateItem, setRotateItem] = useState<string | null>(null);
   const [deadlines, setDeadlines] = useState<Map<string, string>>(() => new Map());
   const [importRows, setImportRows] = useState<{ name: string; value: string }[] | null>(null);
+  // Whether unsaved drafts came from a paste, for the checklist after saving.
+  const pastedRef = useRef(false);
   const [busy, setBusy] = useState<{ reveal?: boolean; finish?: boolean }>({});
   const listRef = useRef<HTMLDivElement>(null);
   const pendingFocus = useRef<string | null>(null);
@@ -180,7 +182,14 @@ export function EditorPage() {
     serverOf,
     sensitiveOf: (_env, item) => isSensitive(serverByName?.get(item), contract.byName.get(item)),
     targetsOf: (_env, items) => targetsFor(items),
-    onSaved: () => disclosure.maskEnv(envName),
+    onSaved: () => {
+      disclosure.maskEnv(envName);
+      // Pasted drafts were saved: their source is a copy (ADR-0053).
+      if (pastedRef.current) {
+        pastedRef.current = false;
+        toast.info("Pasted values saved", { description: PASTE_SAVED_CHECKLIST });
+      }
+    },
   });
   useUnsavedGuard(drafts.count > 0, `You have ${plural(drafts.count, "unsaved change")} in ${envName}.`);
 
@@ -573,6 +582,7 @@ export function EditorPage() {
         onClose={() => setImportRows(null)}
         onImport={() => {
           for (const { name, value } of importRows ?? []) drafts.setDraft(envName, name, { op: "set", value });
+          pastedRef.current = true;
           setImportRows(null);
         }}
       />

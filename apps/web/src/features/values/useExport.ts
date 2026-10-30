@@ -21,9 +21,13 @@ export function useExport(
   org: string,
   project: string,
   env: Environment | null,
-  /** Record the reads as "read for export" (capability disclosure.purpose.export, ADR-0053). */
-  opts: { exportPurpose?: boolean } = {},
+  /**
+   * Record the reads as "read for export" (capability disclosure.purpose.export,
+   * ADR-0053). Nothing is read until `ready`: the capability must be known first.
+   */
+  opts: { exportPurpose?: boolean; ready?: boolean } = {},
 ) {
+  const ready = opts.ready ?? true;
   const purpose = opts.exportPurpose ? ({ purpose: "export" } as const) : {};
   const { api: ordinary } = useSession();
   const { connection, client: tailnetClient } = useTailnetConnection();
@@ -46,7 +50,7 @@ export function useExport(
     setWithheld(new Set());
     setIncludeSecrets(false);
     setError(null);
-    if (!env || !api) return;
+    if (!env || !api || !ready) return;
     api
       .effectiveConfiguration(org, project, env.name, { includeValues: true, ...purpose })
       .then((r) => {
@@ -58,7 +62,7 @@ export function useExport(
     // The key carries the environment's identity and protection; a refetched
     // object with neither changed keeps what was loaded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, org, project, key]);
+  }, [api, org, project, key, ready, opts.exportPurpose]);
 
   const secrets = (items ?? []).filter((i) => i.sensitive);
   const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);

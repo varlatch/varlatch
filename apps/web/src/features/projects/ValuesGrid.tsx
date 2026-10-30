@@ -40,7 +40,7 @@ import { useDrafts, useUnsavedGuard } from "../values/useDrafts";
 import { useReviewSave } from "../values/useReviewSave";
 import { ReviewDialog } from "../values/ReviewDialog";
 import { RotateDialog } from "../values/RotateDialog";
-import { ExportDialog, ImportDialog } from "../values/TransferDialogs";
+import { ExportDialog, ImportDialog, PASTE_SAVED_CHECKLIST } from "../values/TransferDialogs";
 import { AddItemForm } from "../values/AddItemForm";
 import { DisclosureNotice, SaveBar, TypeBadge } from "../values/bits";
 import { TailnetConnectPrompt, TailnetOnlyBadge } from "../values/TailnetOnly";
@@ -104,6 +104,8 @@ export function ValuesGrid() {
   const [active, setActive] = useState<Pos | null>(null);
   const [editing, setEditing] = useState<Pos | null>(null);
   const [importRows, setImportRows] = useState<{ rows: { name: string; value: string }[]; env: string } | null>(null);
+  // Environments with unsaved drafts that came from a paste, for the checklist after saving.
+  const pastedEnvs = useRef(new Set<string>());
   // By id: the dialog follows the environment as it is now, protection included.
   const [exportEnvId, setExportEnvId] = useState<string | null>(null);
   const exportEnv = exportEnvId ? (environments.find((e) => e.id === exportEnvId) ?? null) : null;
@@ -207,7 +209,13 @@ export function ValuesGrid() {
       (targetsByEnv.get(env.id) ?? [])
         .filter((t) => t.state === "active" && items.some((i) => targetCoversItem(t, i)))
         .map((t) => targetLabel(t, connections.data?.items)),
-    onSaved: (envs) => envs.forEach(disclosure.maskEnv),
+    onSaved: (envs) => {
+      envs.forEach(disclosure.maskEnv);
+      // Pasted drafts were saved in one of these: their source is a copy (ADR-0053).
+      if (envs.some((e) => pastedEnvs.current.delete(e))) {
+        toast.info("Pasted values saved", { description: PASTE_SAVED_CHECKLIST });
+      }
+    },
   });
 
   useUnsavedGuard(drafts.count > 0, `You have ${plural(drafts.count, "unsaved change")} in ${slug}.`);
@@ -625,6 +633,7 @@ export function ValuesGrid() {
         onClose={() => setImportRows(null)}
         onImport={(env) => {
           for (const { name, value } of importRows?.rows ?? []) drafts.setDraft(env, name, { op: "set", value });
+          pastedEnvs.current.add(env);
           toast.success(`Imported ${plural(importRows?.rows.length ?? 0, "item")} as drafts`, {
             description: `Review and save them to write ${env}.`,
           });

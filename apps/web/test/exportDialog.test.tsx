@@ -13,8 +13,15 @@ const discloseSecrets = vi.fn();
 const api = { effectiveConfiguration, discloseSecrets };
 vi.mock("../src/lib/session", () => ({ useSession: () => ({ api }) }));
 vi.mock("../src/shell/Shell", () => ({ errorMessage: (err: unknown) => String(err) }));
-// A server that accepts the export purpose (ADR-0053).
-vi.mock("../src/features/projects/hooks", () => ({ useCapability: (c: string) => c === "disclosure.purpose.export" }));
+// The server's metadata: by default loaded, with the export purpose (ADR-0053).
+const metaState = vi.hoisted(() => ({
+  current: { data: { capabilities: ["disclosure.purpose.export"] }, isSuccess: true, isError: false } as {
+    data?: { capabilities: string[] };
+    isSuccess: boolean;
+    isError: boolean;
+  },
+}));
+vi.mock("../src/features/projects/hooks", () => ({ useMeta: () => metaState.current }));
 // Rendered only while open.
 vi.mock("../src/components/Dialog", () => ({
   Dialog: ({ open, title, children, footer, "data-testid": id }: Record<string, React.ReactNode> & { open: boolean; "data-testid"?: string }) =>
@@ -63,6 +70,7 @@ async function download() {
 }
 
 beforeEach(() => {
+  metaState.current = { data: { capabilities: ["disclosure.purpose.export"] }, isSuccess: true, isError: false };
   effectiveConfiguration.mockReset();
   discloseSecrets.mockReset();
   blobs.length = 0;
@@ -77,6 +85,35 @@ afterEach(async () => {
   if (root) await act(async () => root!.unmount());
   root = undefined;
   vi.restoreAllMocks();
+});
+
+describe("export reads made for the file (ADR-0053)", () => {
+  it("waits for the server's capabilities, then reads with the export purpose", async () => {
+    metaState.current = { isSuccess: false, isError: false };
+    effectiveConfiguration.mockResolvedValue(config([plain("API_URL", "https://api")]));
+    await open();
+    expect(effectiveConfiguration).not.toHaveBeenCalled();
+    metaState.current = { data: { capabilities: ["disclosure.purpose.export"] }, isSuccess: true, isError: false };
+    await act(async () => root!.update(<ExportDialog org="acme" project="api" env={env} onClose={onClose} />));
+    expect(effectiveConfiguration).toHaveBeenCalledTimes(1);
+    expect(effectiveConfiguration).toHaveBeenCalledWith("acme", "api", "development", { includeValues: true, purpose: "export" });
+  });
+
+  it("reads without a purpose from a server that does not accept it", async () => {
+    metaState.current = { data: { capabilities: [] }, isSuccess: true, isError: false };
+    effectiveConfiguration.mockResolvedValue(config([plain("API_URL", "https://api")]));
+    await open();
+    expect(effectiveConfiguration).toHaveBeenCalledWith("acme", "api", "development", { includeValues: true });
+  });
+
+  it("keeps the copy notice when the dialog stays open after leaving values out", async () => {
+    metaState.current = { data: { capabilities: ["disclosure.purpose.export"] }, isSuccess: true, isError: false };
+    effectiveConfiguration.mockResolvedValue(config([plain("GREETING", "it's $HOME")]));
+    await open();
+    await download();
+    expect(all("export-not-written")).toHaveLength(1);
+    expect(all("export-copy-notice")).toHaveLength(1);
+  });
 });
 
 describe("export of values no .env line carries safely", () => {

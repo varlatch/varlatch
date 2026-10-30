@@ -49,6 +49,8 @@ let requests: { method: string; url: string; auth: string; body: unknown; userAg
 let denyEffective = false;
 let noActiveContract = false;
 let failPut: Set<string>;
+/** Runs while the fake server stores a value: lets a test change the source file mid-import. */
+let onPut: (() => void) | null = null;
 
 const CONTRACT = [
   contractItem("API_TOKEN", { sensitive: true, rotationHint: "Issue a new token at the provider, then revoke the old one." }),
@@ -138,6 +140,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     const put = /^\/v1\/organizations\/acme\/projects\/web\/environments\/[a-z]+\/values\/([A-Z0-9_]+)$/.exec(url);
     if (put && req.method === "PUT") {
       if (failPut.has(put[1]!)) return json(500, { error: { code: "INTERNAL", message: "injected", requestId: "req_x" } });
+      onPut?.();
       // Stored, as the server would: a later request sees it (a new item is a Secret, as outside a Contract).
       if (url.startsWith(`${ENV_PATH}/`)) {
         const before = stored.find((i) => i.name === put[1]);
@@ -187,6 +190,7 @@ beforeEach(() => {
   stored = defaultItems();
   requests = [];
   failPut = new Set();
+  onPut = null;
   denyEffective = false;
   noActiveContract = false;
 });
@@ -1449,7 +1453,24 @@ describe("varlatch import", () => {
     expect(r.stderr).toMatch(/not stored: PORT \(INTERNAL\)/);
     expect(r.stderr).toMatch(/not attempted: DEBUG, NEW_SECRET/);
     expect(r.stderr).toMatch(/2 of 5 value\(s\) stored\. .* was not deleted\./);
+    // Values were stored, so the copies are named, with the stored secrets.
+    expect(r.stderr).toContain(`${file} still holds copies of these values`);
+    expect(r.stderr).toMatch(/rotate any secret whose copies you cannot account for: API_TOKEN, DATABASE_URL\./);
     noValues(r);
+  });
+
+  it("--delete-source on a file that changed while importing keeps it and names the copies", async () => {
+    const file = envFile();
+    onPut = () => {
+      onPut = null;
+      writeFileSync(file, "API_TOKEN=edited-meanwhile-value-77\n");
+    };
+    const r = await cli(["import", file, "--delete-source"]);
+    expect(r.code).toBe(1);
+    expect(existsSync(file)).toBe(true);
+    expect(r.stderr).toMatch(/changed or disappeared while importing; it was not deleted/);
+    expect(r.stderr).toContain(`${file} still holds copies of these values`);
+    expect(r.stdout + r.stderr).not.toContain("edited-meanwhile-value-77");
   });
 
   describe("a file that is not valid UTF-8", () => {

@@ -11,7 +11,7 @@ import { errorMessage } from "../../shell/Shell";
 import { plural } from "./model";
 import { SecretMask } from "./bits";
 import { useExport } from "./useExport";
-import { useCapability } from "../projects/hooks";
+import { useMeta } from "../projects/hooks";
 
 /**
  * `.env` in and out. Import fills drafts (never writes); export downloads
@@ -72,9 +72,8 @@ export function ImportDialog({
           </Field>
         )}
         <Callout tone="info" data-testid="import-copies" title="The text you pasted still exists">
-          Importing does not remove it from where it came from: the file, the clipboard, a chat. After you save these
-          drafts, delete that file, check where else it was copied (CI settings, teammates), and rotate any secret whose
-          copies you cannot account for.
+          Importing does not remove it from where it came from: the file, the clipboard, a chat. Nothing is saved yet;
+          once you save these drafts, a short checklist follows.
         </Callout>
         <ul className="max-h-80 divide-y divide-bd overflow-y-auto rounded-lg border border-bd">
           {(rows ?? []).map((r) => (
@@ -99,8 +98,27 @@ export function ImportDialog({
   );
 }
 
+/**
+ * The checklist after pasted drafts were saved (ADR-0053): the source of the
+ * paste is a copy Varlatch cannot see or remove.
+ */
+export const PASTE_SAVED_CHECKLIST =
+  "Values you pasted are now in Varlatch, and their source still exists: delete the file you pasted from, check where else it was copied (CI settings, teammates, chat), and rotate any secret whose copies you cannot account for.";
+
 const NOT_WRITTEN_REASON =
   "Their values contain characters ($, a single quote, a line break, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv, older dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
+
+/**
+ * The export reads once the server's capabilities are known, so a server
+ * that accepts the export purpose always gets it (ADR-0053); a server whose
+ * metadata cannot be read is treated as an older one.
+ */
+function exportOptions(meta: { data?: { capabilities?: string[] } | undefined; isSuccess: boolean; isError: boolean }) {
+  return {
+    ready: meta.isSuccess || meta.isError,
+    exportPurpose: (meta.data?.capabilities ?? []).includes("disclosure.purpose.export"),
+  };
+}
 
 export function ExportDialog({
   org,
@@ -116,7 +134,7 @@ export function ExportDialog({
   // `env` is the environment as it is now (the grid resolves it from current
   // data), so a Requirement added while the dialog is open takes effect here.
   const { items, withheld, secrets, plain, unwritable, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } =
-    useExport(org, project, env, { exportPurpose: useCapability("disclosure.purpose.export") });
+    useExport(org, project, env, exportOptions(useMeta()));
   const { connection, connect } = useTailnetConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -197,7 +215,7 @@ export function ExportDialog({
             Not written: <span className="font-mono">{notWritten.join(", ")}</span>. {NOT_WRITTEN_REASON}
           </Callout>
         )}
-        {items && !notWritten && (
+        {items && (
           <Callout tone="info" data-testid="export-copy-notice" title="The file is a copy outside Varlatch">
             Rotating or deleting a value in Varlatch does not change it. Anyone with the file can use a credential in it
             until that credential is rotated at its provider.
