@@ -16,6 +16,7 @@
 //   MEASURE_PG_MEMORY    postgres memory limit                                [4g]
 //   MEASURE_PACE_MS      pause after each of the probe's writes (one client) [250]
 //   MEASURE_BASELINE_S   probe duration before the deletion                   [10]
+//   MEASURE_TIMEOUT_S    longest one size may take, seeding included         [3600]
 //
 // The deleted Organization: 20 projects of 5 environments, every item with 5
 // versions, 25 people (one admin) with 3 Grants each, 10 machine identities,
@@ -40,15 +41,36 @@ const sizes = env('MEASURE_VERSIONS', '100000,1000000').split(',').map(Number);
 const pgCpus = env('MEASURE_PG_CPUS', '2'), pgMemory = env('MEASURE_PG_MEMORY', '4g');
 const paceMs = Number(env('MEASURE_PACE_MS', '250'));
 const baselineS = Number(env('MEASURE_BASELINE_S', '10'));
+const timeoutS = Number(env('MEASURE_TIMEOUT_S', '3600'));
 const PROJECTS = 20, ENVIRONMENTS = 5, VERSIONS = 5, PEOPLE = 25, MACHINES = 10, TARGETS = 10;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 /** A deadline that does not keep the process alive. */
 const deadline = ms => new Promise(r => setTimeout(r, ms).unref());
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
+/** Containers this process started and has not removed yet. */
+const running = new Set();
+const removeContainer = (name) => {
+  try {
+    execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore', timeout: 30_000 });
+    running.delete(name);
+  } catch {
+    console.error(`could not remove the container ${name}; remove it with: docker rm -f ${name}`);
+  }
+};
+// Interrupted (Ctrl-C), the container would outlive the script: --rm only
+// removes a stopped container.
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.once(signal, () => {
+    for (const name of running) removeContainer(name);
+    process.exit(130);
+  });
+}
+
 /** Starts the container; the caller removes it, whatever happens after this. */
 function startPostgres() {
   const name = `varlatch-measure-deletion-${randomBytes(3).toString('hex')}`;
+  running.add(name);
   docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', 'postgres:17.6']);
   return name;
 }
@@ -83,141 +105,155 @@ async function measure(versions) {
   const background = { stop: false, failures: [], tasks: [] };
   const beside = (task) => background.tasks.push(task().catch((err) => background.failures.push(err)));
   try {
-    db = createPgQuerier(await readyPostgres(name));
-    const connection = await db.connect();
-    try {
-      await runMigrations(connection);
-    } finally {
-      connection.release();
-    }
-    const ctx = { db, rootKek: randomBytes(32) };
-    await ensureInstallation(ctx);
-    const adminId = (await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, {})).identityId;
-    const token = (await issueCredential(db, { identityId: adminId, kind: 'cli' })).token;
-    // Seeding and the probe count as separate clients for the per-client
-    // request limit (600 a minute), as two machines would.
-    const app = buildApp(ctx, { clientAddress: c => c.req.header('x-measure-client') ?? 'seed' });
-    const call = async (method, path, body) => {
-      const res = await app.request(path, {
-        method,
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    // The whole measurement has a deadline: stalled anywhere, it fails,
+    // and finally removes the container, which ends the stalled work.
+    const work = (async () => {
+      db = createPgQuerier(await readyPostgres(name));
+      const connection = await db.connect();
+      try {
+        await runMigrations(connection);
+      } finally {
+        connection.release();
+      }
+      const ctx = { db, rootKek: randomBytes(32) };
+      await ensureInstallation(ctx);
+      const adminId = (await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, {})).identityId;
+      const token = (await issueCredential(db, { identityId: adminId, kind: 'cli' })).token;
+      // Seeding and the probe count as separate clients for the per-client
+      // request limit (600 a minute), as two machines would.
+      const app = buildApp(ctx, { clientAddress: c => c.req.header('x-measure-client') ?? 'seed' });
+      const call = async (method, path, body) => {
+        const res = await app.request(path, {
+          method,
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        });
+        const json = await res.json().catch(() => null);
+        if (res.status >= 300) throw new Error(`${method} ${path}: ${res.status} ${JSON.stringify(json)}`);
+        return json;
+      };
+      const contract = { schemaVersion: 1, items: [{ name: 'TOKEN', required: { kind: 'never' }, sensitive: true, type: 'string' }] };
+      const project = async (org, slug) => {
+        await call('POST', `/v1/organizations/${org}/projects`, { slug, name: slug, contractAuthority: 'managed' });
+        const revision = await call('POST', `/v1/organizations/${org}/projects/${slug}/contract/revisions`, { contract });
+        await call('POST', `/v1/organizations/${org}/projects/${slug}/contract/revisions/${revision.id}/activate`, {});
+      };
+
+      // The probe's Organization: one environment, one item, written again and again.
+      await call('POST', '/v1/organizations', { slug: 'other', name: 'Other' });
+      await project('other', 'api');
+      await call('POST', '/v1/organizations/other/projects/api/environments', { name: 'development', tier: 'development' });
+      const PROBE = '/v1/organizations/other/projects/api/environments/development/values/TOKEN';
+
+      // The deleted Organization.
+      const big = await call('POST', '/v1/organizations', { slug: 'big', name: 'Big' });
+      const environmentIds = [];
+      for (let p = 0; p < PROJECTS; p++) {
+        await project('big', `p${p}`);
+        for (let e = 0; e < ENVIRONMENTS; e++) {
+          environmentIds.push((await call('POST', `/v1/organizations/big/projects/p${p}/environments`, { name: `env${e}`, tier: e === 0 ? 'production' : 'development' })).id);
+        }
+      }
+      await call('PUT', '/v1/organizations/big/projects/p0/environments/env0/values/TOKEN', { value: randomBytes(24).toString('base64url') });
+      const template = (await db.query('SELECT payload, wrapped_dek FROM value_versions ORDER BY created_at LIMIT 1')).rows[0];
+      await db.query(
+        `INSERT INTO env_values (id, environment_id, item_name)
+         SELECT 'val_m' || e.n || '_' || g, e.id, 'ITEM_' || g
+         FROM unnest($1::text[]) WITH ORDINALITY AS e(id, n), generate_series(1, $2) g`,
+        [environmentIds, items],
+      );
+      await db.query(
+        `INSERT INTO value_versions (id, value_id, payload, wrapped_dek, created_by)
+         SELECT v.id || '_' || n, v.id, $1, $2, $3 FROM env_values v, generate_series(1, $4) n WHERE v.id LIKE 'val_m%'`,
+        [JSON.stringify(template.payload), JSON.stringify(template.wrapped_dek), adminId, VERSIONS],
+      );
+      await db.query(`UPDATE env_values SET current_version_id = id || '_' || $1 WHERE id LIKE 'val_m%'`, [VERSIONS]);
+      const projects = (await call('GET', '/v1/organizations/big/projects')).items;
+      for (let i = 0; i < PEOPLE - 1; i++) {
+        const invite = await issueInviteGrant(ctx, { organizationId: big.id, role: 'member', name: `Person ${i}` }, adminId);
+        const person = (await consumeSetupGrant(ctx, invite.token, {})).identityId;
+        for (let g = 0; g < 3; g++) {
+          const scope = { kind: 'project', projectId: projects[(i + g) % projects.length].id };
+          await call('POST', '/v1/organizations/big/grants', { subjectIdentityId: person, scope, actions: ['environment.read', 'secret.reveal'] });
+        }
+      }
+      for (let m = 0; m < MACHINES; m++) await call('POST', '/v1/organizations/big/identities', { name: `machine-${m}`, kind: 'service' });
+      const connectionId = (await call('POST', '/v1/organizations/big/platform-connections', { platform: 'coolify', baseIdentity: 'https://coolify.example.com', name: 'c', credential: 'token-c' })).id;
+      for (let t = 0; t < TARGETS; t++) {
+        await call('POST', `/v1/organizations/big/projects/p${t}/environments/env1/sync-targets`, { connectionId, destination: { applicationUuid: `app${t}` }, mapping: { kind: 'wildcard' } });
+      }
+      for (let w = 0; w < 2; w++) await call('POST', '/v1/organizations/big/webhooks', { url: `https://sink.example/hooks/${w}` });
+      const dbSize = (await db.query('SELECT pg_size_pretty(pg_database_size(current_database())) AS size')).rows[0].size;
+      const seeded = (await db.query("SELECT count(*)::int AS n FROM value_versions v JOIN env_values e ON e.id = v.value_id JOIN environments n ON n.id = e.environment_id JOIN projects p ON p.id = n.project_id WHERE p.organization_id = $1", [big.id])).rows[0].n;
+      await db.query('VACUUM ANALYZE');
+
+      // Probe: one client, one audited write at a time, paced.
+      const probe = { samples: [], errors: 0 };
+      beside(async () => {
+        while (!background.stop) {
+          const started = performance.now();
+          const res = await app.request(PROBE, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'x-measure-client': 'probe' }, body: JSON.stringify({ value: randomBytes(24).toString('base64url') }) });
+          await res.arrayBuffer();
+          const ended = performance.now();
+          if (res.status !== 200) probe.errors += 1;
+          probe.samples.push({ started, ended, ms: ended - started });
+          await sleep(paceMs);
+        }
       });
-      const json = await res.json().catch(() => null);
-      if (res.status >= 300) throw new Error(`${method} ${path}: ${res.status} ${JSON.stringify(json)}`);
-      return json;
-    };
-    const contract = { schemaVersion: 1, items: [{ name: 'TOKEN', required: { kind: 'never' }, sensitive: true, type: 'string' }] };
-    const project = async (org, slug) => {
-      await call('POST', `/v1/organizations/${org}/projects`, { slug, name: slug, contractAuthority: 'managed' });
-      const revision = await call('POST', `/v1/organizations/${org}/projects/${slug}/contract/revisions`, { contract });
-      await call('POST', `/v1/organizations/${org}/projects/${slug}/contract/revisions/${revision.id}/activate`, {});
-    };
+      await sleep(baselineS * 1000);
+      const baselineEnd = performance.now();
 
-    // The probe's Organization: one environment, one item, written again and again.
-    await call('POST', '/v1/organizations', { slug: 'other', name: 'Other' });
-    await project('other', 'api');
-    await call('POST', '/v1/organizations/other/projects/api/environments', { name: 'development', tier: 'development' });
-    const PROBE = '/v1/organizations/other/projects/api/environments/development/values/TOKEN';
+      const scheduleStart = performance.now();
+      const scheduled = await call('POST', '/v1/organizations/big/deletion', {});
+      const scheduleMs = performance.now() - scheduleStart;
+      await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute' WHERE id = $1", [scheduled.id]);
+      await sleep(1000);
+      // Lock waits of any session while finalization runs, sampled every 20 ms:
+      // the probe may wait on disk, but should never wait on a lock.
+      let lockWaits = 0;
+      let sampling = true;
+      beside(async () => {
+        while (sampling && !background.stop) {
+          lockWaits += (await db.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock'")).rows[0].n;
+          await sleep(20);
+        }
+      });
+      const finalizeStart = performance.now();
+      const outcome = await finalizeDeletion(ctx, scheduled.id, big.id);
+      const finalizeEnd = performance.now();
+      sampling = false;
+      if (!outcome) throw new Error('finalization did not run');
+      await sleep(2000);
+      background.stop = true;
+      // Bounded too: a write or sample still stalled means the measurement is
+      // incomplete, and finally removes the container.
+      const settled = await Promise.race([Promise.all(background.tasks).then(() => true), deadline(10_000).then(() => false)]);
+      if (!settled) throw new Error('the probe or the lock sampler did not stop within 10 seconds');
+      if (background.failures.length > 0) throw background.failures[0];
 
-    // The deleted Organization.
-    const big = await call('POST', '/v1/organizations', { slug: 'big', name: 'Big' });
-    const environmentIds = [];
-    for (let p = 0; p < PROJECTS; p++) {
-      await project('big', `p${p}`);
-      for (let e = 0; e < ENVIRONMENTS; e++) {
-        environmentIds.push((await call('POST', `/v1/organizations/big/projects/p${p}/environments`, { name: `env${e}`, tier: e === 0 ? 'production' : 'development' })).id);
-      }
-    }
-    await call('PUT', '/v1/organizations/big/projects/p0/environments/env0/values/TOKEN', { value: randomBytes(24).toString('base64url') });
-    const template = (await db.query('SELECT payload, wrapped_dek FROM value_versions ORDER BY created_at LIMIT 1')).rows[0];
-    await db.query(
-      `INSERT INTO env_values (id, environment_id, item_name)
-       SELECT 'val_m' || e.n || '_' || g, e.id, 'ITEM_' || g
-       FROM unnest($1::text[]) WITH ORDINALITY AS e(id, n), generate_series(1, $2) g`,
-      [environmentIds, items],
-    );
-    await db.query(
-      `INSERT INTO value_versions (id, value_id, payload, wrapped_dek, created_by)
-       SELECT v.id || '_' || n, v.id, $1, $2, $3 FROM env_values v, generate_series(1, $4) n WHERE v.id LIKE 'val_m%'`,
-      [JSON.stringify(template.payload), JSON.stringify(template.wrapped_dek), adminId, VERSIONS],
-    );
-    await db.query(`UPDATE env_values SET current_version_id = id || '_' || $1 WHERE id LIKE 'val_m%'`, [VERSIONS]);
-    const projects = (await call('GET', '/v1/organizations/big/projects')).items;
-    for (let i = 0; i < PEOPLE - 1; i++) {
-      const invite = await issueInviteGrant(ctx, { organizationId: big.id, role: 'member', name: `Person ${i}` }, adminId);
-      const person = (await consumeSetupGrant(ctx, invite.token, {})).identityId;
-      for (let g = 0; g < 3; g++) {
-        const scope = { kind: 'project', projectId: projects[(i + g) % projects.length].id };
-        await call('POST', '/v1/organizations/big/grants', { subjectIdentityId: person, scope, actions: ['environment.read', 'secret.reveal'] });
-      }
-    }
-    for (let m = 0; m < MACHINES; m++) await call('POST', '/v1/organizations/big/identities', { name: `machine-${m}`, kind: 'service' });
-    const connectionId = (await call('POST', '/v1/organizations/big/platform-connections', { platform: 'coolify', baseIdentity: 'https://coolify.example.com', name: 'c', credential: 'token-c' })).id;
-    for (let t = 0; t < TARGETS; t++) {
-      await call('POST', `/v1/organizations/big/projects/p${t}/environments/env1/sync-targets`, { connectionId, destination: { applicationUuid: `app${t}` }, mapping: { kind: 'wildcard' } });
-    }
-    for (let w = 0; w < 2; w++) await call('POST', '/v1/organizations/big/webhooks', { url: `https://sink.example/hooks/${w}` });
-    const dbSize = (await db.query('SELECT pg_size_pretty(pg_database_size(current_database())) AS size')).rows[0].size;
-    const seeded = (await db.query("SELECT count(*)::int AS n FROM value_versions v JOIN env_values e ON e.id = v.value_id JOIN environments n ON n.id = e.environment_id JOIN projects p ON p.id = n.project_id WHERE p.organization_id = $1", [big.id])).rows[0].n;
-    await db.query('VACUUM ANALYZE');
-
-    // Probe: one client, one audited write at a time, paced.
-    const probe = { samples: [], errors: 0 };
-    beside(async () => {
-      while (!background.stop) {
-        const started = performance.now();
-        const res = await app.request(PROBE, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'x-measure-client': 'probe' }, body: JSON.stringify({ value: randomBytes(24).toString('base64url') }) });
-        await res.arrayBuffer();
-        const ended = performance.now();
-        if (res.status !== 200) probe.errors += 1;
-        probe.samples.push({ started, ended, ms: ended - started });
-        await sleep(paceMs);
-      }
-    });
-    await sleep(baselineS * 1000);
-    const baselineEnd = performance.now();
-
-    const scheduleStart = performance.now();
-    const scheduled = await call('POST', '/v1/organizations/big/deletion', {});
-    const scheduleMs = performance.now() - scheduleStart;
-    await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute' WHERE id = $1", [scheduled.id]);
-    await sleep(1000);
-    // Lock waits of any session while finalization runs, sampled every 20 ms:
-    // the probe may wait on disk, but should never wait on a lock.
-    let lockWaits = 0;
-    let sampling = true;
-    beside(async () => {
-      while (sampling && !background.stop) {
-        lockWaits += (await db.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock'")).rows[0].n;
-        await sleep(20);
-      }
-    });
-    const finalizeStart = performance.now();
-    const outcome = await finalizeDeletion(ctx, scheduled.id, big.id);
-    const finalizeEnd = performance.now();
-    sampling = false;
-    if (!outcome) throw new Error('finalization did not run');
-    await sleep(2000);
-    background.stop = true;
-    await Promise.all(background.tasks);
-    if (background.failures.length > 0) throw background.failures[0];
-
-    const baseline = probe.samples.filter(s => s.ended <= baselineEnd).map(s => s.ms);
-    const during = probe.samples.filter(s => s.ended >= finalizeStart && s.started <= finalizeEnd).map(s => s.ms);
-    const erased = (await db.query('SELECT count(*)::int AS n FROM value_versions WHERE erased_at IS NOT NULL')).rows[0].n;
-    if (erased !== seeded) throw new Error(`erased ${erased} of ${seeded} versions`);
-    return {
-      versions: seeded,
-      dbSize,
-      scheduleMs,
-      finalizeMs: finalizeEnd - finalizeStart,
-      baseline: percentiles(baseline),
-      during: percentiles(during),
-      duringCount: during.length,
-      errors: probe.errors,
-      lockWaits,
-    };
+      const baseline = probe.samples.filter(s => s.ended <= baselineEnd).map(s => s.ms);
+      const during = probe.samples.filter(s => s.ended >= finalizeStart && s.started <= finalizeEnd).map(s => s.ms);
+      const erased = (await db.query('SELECT count(*)::int AS n FROM value_versions WHERE erased_at IS NOT NULL')).rows[0].n;
+      if (erased !== seeded) throw new Error(`erased ${erased} of ${seeded} versions`);
+      return {
+        versions: seeded,
+        dbSize,
+        scheduleMs,
+        finalizeMs: finalizeEnd - finalizeStart,
+        baseline: percentiles(baseline),
+        during: percentiles(during),
+        duringCount: during.length,
+        errors: probe.errors,
+        lockWaits,
+      };
+    })();
+    work.catch(() => {});
+    return await Promise.race([
+      work,
+      deadline(timeoutS * 1000).then(() => {
+        throw new Error(`no result within ${timeoutS} seconds`);
+      }),
+    ]);
   } finally {
     // Every step is bounded, so the container is always removed: a request
     // stalled in the probe or the pool cannot hold it. Removing it breaks
@@ -225,11 +261,7 @@ async function measure(versions) {
     background.stop = true;
     await Promise.race([Promise.allSettled(background.tasks), deadline(10_000)]);
     await Promise.race([db?.end().catch(() => {}), deadline(5_000)]);
-    try {
-      execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore', timeout: 30_000 });
-    } catch {
-      console.error(`could not remove the container ${name}; remove it with: docker rm -f ${name}`);
-    }
+    removeContainer(name);
   }
 }
 
