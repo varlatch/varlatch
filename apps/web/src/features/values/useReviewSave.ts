@@ -5,7 +5,7 @@ import type { Environment } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { useToast } from "../../components/Toast";
-import { buildChanges, draftKind, listNames, plural, storedText, type ServerItem } from "./model";
+import { buildChanges, draftKind, listNames, plural, storedText, type Draft, type ServerItem } from "./model";
 import type { useDrafts } from "./useDrafts";
 import type { ReviewGroup, ReviewRow } from "./ReviewDialog";
 
@@ -35,7 +35,8 @@ export function useReviewSave({
   sensitiveOf: (env: string, item: string) => boolean;
   /** Labels of the integrations that will push these items. */
   targetsOf: (env: Environment, items: string[]) => string[];
-  onSaved?: ((envs: string[]) => void) | undefined;
+  /** The environments saved, with the drafts each one saved (for paste provenance, ADR-0053). */
+  onSaved?: ((envs: string[], savedDrafts: Map<string, Map<string, Draft>>) => void) | undefined;
 }) {
   const { api } = useSession();
   const qc = useQueryClient();
@@ -92,6 +93,7 @@ export function useReviewSave({
     setConflicts(new Set());
     const order = environments.filter((e) => drafts.ref.current.get(e.name)?.size);
     const saved: { env: string; count: number }[] = [];
+    const savedDrafts = new Map<string, Map<string, Draft>>();
     let failure: string | null = null;
     let failedAt = -1;
     for (const [index, env] of order.entries()) {
@@ -103,6 +105,7 @@ export function useReviewSave({
           idempotencyKey: crypto.randomUUID(),
         });
         saved.push({ env: env.name, count: forEnv.size });
+        savedDrafts.set(env.name, new Map(forEnv));
         drafts.clearEnv(env.name);
       } catch (err) {
         failedAt = index;
@@ -122,7 +125,7 @@ export function useReviewSave({
     await invalidate();
     setSaving(false);
     setSnapshot(null);
-    if (saved.length > 0) onSaved?.(saved.map((s) => s.env));
+    if (saved.length > 0) onSaved?.(saved.map((s) => s.env), savedDrafts);
     const total = saved.reduce((n, s) => n + s.count, 0);
     const savedText = saved.map((s) => `${s.env} (${plural(s.count, "change")})`);
     if (failure) {

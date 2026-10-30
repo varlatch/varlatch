@@ -1737,10 +1737,10 @@ export interface components {
             callerView?: components["schemas"]["CallerView"];
         };
         /**
-         * @description Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). Any other value is refused with VALIDATION_FAILED.
+         * @description Why the caller asks for a disclosure, recorded as `purpose` in the disclosure's `secret.disclosed` audit event and in any reference-expansion `value.disclosed` events it causes. `scan`: a local secret scan (`varlatch scan`). `export`: read for an env file (capability `disclosure.purpose.export`, ADR-0053); it proves neither that a file was saved nor which values went into it. Any other value is refused with VALIDATION_FAILED.
          * @enum {string}
          */
-        DisclosurePurpose: "scan";
+        DisclosurePurpose: "scan" | "export";
         /** @description SHA-256 over the canonical JSON encoding of the state manifest: a digest of identifiers, never of values. Equal digests mean the same captured state, whoever retrieved it. */
         StateDigest: string;
         /** @description What the retrieval's database snapshot captured, independent of the caller: identifiers and names only, never plaintext or anything derived from it. Versions are immutable, so the listed versions also determine every reference and what it resolves to. */
@@ -3332,6 +3332,8 @@ export interface operations {
         parameters: {
             query?: {
                 include?: "metadata" | "values";
+                /** @description Why values are read, recorded as `purpose` in the `value.disclosed` audit event. `export`: read for an env file (capability `disclosure.purpose.export`). Any other value is refused with VALIDATION_FAILED. */
+                purpose?: components["schemas"]["DisclosurePurpose"];
             };
             header?: never;
             path: {

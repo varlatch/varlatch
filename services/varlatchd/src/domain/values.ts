@@ -393,6 +393,8 @@ export async function effectiveConfiguration(
     listener?: "ordinary" | "tailnet";
     /** What config.value.read was allowed by, for the audit event (auditAuthz). */
     authz?: Record<string, unknown> | undefined;
+    /** A declared purpose, recorded in value.disclosed (ADR-0053). */
+    purpose?: DisclosurePurpose | undefined;
   },
 ): Promise<{ items: EffectiveItem[]; unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env, items } = state;
@@ -427,6 +429,7 @@ export async function effectiveConfiguration(
         metadata: {
           items: disclosed.map((i) => `${i.name}@${i.versionId}`).join(","),
           withheld: items.length - disclosed.length,
+          ...(opts.purpose ? { purpose: opts.purpose } : {}),
         },
       },
     ],
@@ -870,7 +873,12 @@ export async function applyChangeSet(
  * Why a caller asks for a disclosure, recorded in its audit events
  * (ADR-0038 Decision 14). An allowlist: anything else is refused.
  */
-export const DISCLOSURE_PURPOSES = ["scan"] as const;
+/**
+ * Purposes a client may declare for a disclosure, recorded in its audit
+ * event (ADR-0038 Decision 14). "export": read for an env file (ADR-0053);
+ * it proves neither that a file was saved nor which values went into it.
+ */
+export const DISCLOSURE_PURPOSES = ["scan", "export"] as const;
 export type DisclosurePurpose = (typeof DISCLOSURE_PURPOSES)[number];
 
 export interface DisclosureRequest {

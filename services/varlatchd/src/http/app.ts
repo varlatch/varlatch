@@ -1584,6 +1584,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     async (c) => {
       const principal = c.get("principal");
       const includeValues = c.req.query("include") === "values";
+      // A declared purpose for the values read, as on the disclosure route
+      // (ADR-0053: "export" for an env file); only a known one is accepted.
+      const purposeParam = c.req.query("purpose");
+      const purpose = purposeParam === undefined ? undefined : parseBody(z.enum(DISCLOSURE_PURPOSES), purposeParam);
       const phase = await inSnapshot(ctx, async (sctx, now) => {
         const scope = await envScope(sctx, c);
         const resource = envResource(scope.org, scope.project, scope.env);
@@ -1607,6 +1611,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
         authz: allowedAuthz(plain),
+        purpose,
       });
       // Non-sensitive values withheld from this caller; Secrets are never on this path.
       const withheld: CallerView["withheld"] =

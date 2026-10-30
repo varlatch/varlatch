@@ -199,4 +199,22 @@ describe("the disclosure purpose", () => {
     expect(text).not.toContain("hunter2-hunter2");
     expect(await events("secret.disclosed")).toEqual([]);
   });
+
+  it("records a read made for an export, on both paths, and refuses an unknown purpose (ADR-0053)", async () => {
+    // Plain values, read with ?purpose=export.
+    const read = await client.effectiveConfiguration("acme", "api", "production", { includeValues: true, purpose: "export" });
+    expect(read.items.find((i) => i.name === "DB_HOST")?.value).toBe("db.internal");
+    expect((await events("value.disclosed")).at(-1)).toMatchObject({ purpose: "export" });
+    // Secrets, disclosed with purpose export.
+    await client.discloseSecrets("acme", "api", "production", { items: ["DB_PASS"], purpose: "export" });
+    expect((await events("secret.disclosed")).at(-1)).toMatchObject({ purpose: "export" });
+    // Without include=values nothing is read, so nothing is recorded.
+    const before = (await events("value.disclosed")).length;
+    expect((await call("GET", `${E}/effective-configuration?purpose=export`)).status).toBe(200);
+    expect(await events("value.disclosed")).toHaveLength(before);
+    // An unknown purpose is refused before anything is read.
+    const refused = await call("GET", `${E}/effective-configuration?include=values&purpose=download`);
+    expect(refused.status).toBe(422);
+    expect(await events("value.disclosed")).toHaveLength(before);
+  });
 });

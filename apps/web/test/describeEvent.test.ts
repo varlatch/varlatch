@@ -70,6 +70,15 @@ describe("describeEvent", () => {
     expect(segmentsText(d.segments)).toBe("was denied secret.use on api / production");
   });
 
+  it("calls a read made for an env file a read for export, never a download (ADR-0053)", () => {
+    const secret = describeEvent(event({ eventType: "secret.disclosed", metadata: { mode: "requested", items: "API_KEY@v1", purpose: "export" } }), names);
+    expect(secret.title).toBe("Secrets read for export");
+    expect(segmentsText(secret.segments)).toMatch(/^read .* for export$/);
+    const plain = describeEvent(event({ eventType: "value.disclosed", metadata: { items: "PORT@v1", withheld: 0, purpose: "export" } }), names);
+    expect(plain.title).toBe("Values read for export");
+    expect(segmentsText(plain.segments)).not.toMatch(/download/);
+  });
+
   it("says what drift a repair found, by kind and name, never who changed it (ADR-0050)", () => {
     const d = describeEvent(
       event({

@@ -241,18 +241,27 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       const mode = str(m.mode);
       const verb = mode === "reference-expansion" ? "read referenced " : "read ";
       const withheld = typeof m.withheld === "number" && m.withheld > 0 ? [`, ${m.withheld} withheld`] : [];
+      // "export": read for an env file, which proves no file was saved (ADR-0053).
+      const forExport = str(m.purpose) === "export" ? [" for export"] : [];
       return {
         icon: "file",
-        title: "Values read",
-        segments: [verb, ...itemsPhrase(items, "value"), ...inPlace(r, names), ...withheld],
+        title: forExport.length > 0 ? "Values read for export" : "Values read",
+        segments: [verb, ...itemsPhrase(items, "value"), ...inPlace(r, names), ...forExport, ...withheld],
       };
     }
-    case "secret.disclosed":
+    case "secret.disclosed": {
+      const forExport = str(m.purpose) === "export";
       return {
         icon: "eye",
-        title: "Secrets revealed",
-        segments: [str(m.mode) === "strict-retrieval" ? "received " : "revealed ", ...itemsPhrase(items, "secret"), ...inPlace(r, names)],
+        title: forExport ? "Secrets read for export" : "Secrets revealed",
+        segments: [
+          str(m.mode) === "strict-retrieval" ? "received " : forExport ? "read " : "revealed ",
+          ...itemsPhrase(items, "secret"),
+          ...inPlace(r, names),
+          ...(forExport ? [" for export"] : []),
+        ],
       };
+    }
     case "secret.validated":
     case "value.validated":
       return {
