@@ -1458,13 +1458,17 @@ export async function targetLedger(ctx: AppCtx, targetId: string): Promise<Ledge
 
 /** Direct enqueue for "push now" — a Target mutation class trigger. */
 export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): Promise<void> {
-  await refuseIfFrozen(ctx.db, org.id);
-  const res = await ctx.db.query(
-    `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
-     WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
-    [targetId, org.id],
-  );
-  if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+  // The Organization lock and the freeze check in the same transaction as
+  // the update (ADR-0051): a request that waited behind a scheduling sees it.
+  await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id });
+    const res = await db.query(
+      `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
+       WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
+      [targetId, org.id],
+    );
+    if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+  });
 }
 
 // ---------------------------------------------------------------------------

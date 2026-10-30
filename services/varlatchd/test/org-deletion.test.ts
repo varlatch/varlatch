@@ -7,6 +7,8 @@ import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInvite
 import { finalizeDeletion, runDueDeletions } from "../src/domain/orgdeletion.js";
 import { getOrganization, orgKekOf } from "../src/domain/orgs.js";
 import { buildApp } from "../src/http/app.js";
+import { deliverWebhooksOnce } from "../src/domain/webhooks.js";
+import { latestEventCursor, syncNewMirrorEvents } from "../src/mirror/publisher.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
@@ -162,6 +164,52 @@ describe("cancelling", () => {
   });
 });
 
+describe("while frozen", () => {
+  it("keeps a suspended machine's credentials: revoking one is refused, and a cancel restores it whole", async () => {
+    const svc = (await call("POST", `${ORG}/identities`, { name: "deployer", kind: "service" })).body;
+    const credentialId = (await ctx.db.query("SELECT id FROM credentials WHERE identity_id = $1", [svc.id])).rows[0]!.id as string;
+    const scheduled = (await call("POST", `${ORG}/deletion`, {})).body;
+    const refused = await call("DELETE", `${ORG}/identities/${svc.id}/credentials/${credentialId}`);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe("ORGANIZATION_DELETING");
+    await call("POST", `${ORG}/deletion/${scheduled.id}/cancel`);
+    await call("POST", `${ORG}/grants`, { subjectIdentityId: svc.id, scope: { kind: "organization" }, actions: ["environment.read"] });
+    expect((await call("GET", DEV, undefined, svc.credential)).status).toBe(200);
+  });
+
+  it("delivers nothing by webhook once a deletion is scheduled during the pass, nor the deletion's own events", async () => {
+    await call("POST", `${ORG}/webhooks`, { url: "https://sink.example/hooks" });
+    expect((await call("PUT", `${DEV}/values/TOKEN`, { value: "token-value-0005" })).status).toBe(200);
+    const sent: { eventType: string }[][] = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      sent.push((JSON.parse(String(init?.body)) as { events: { eventType: string }[] }).events);
+      return new Response("ok", { status: 200 });
+    }) as typeof fetch;
+    // The deletion is scheduled after the pass found the webhook, before it reads events.
+    let scheduledId = "";
+    let raced = false;
+    const racing = {
+      ...ctx.db,
+      query: async (text: string, params?: unknown[]) => {
+        if (!raced && /SELECT \* FROM audit_events WHERE/.test(text)) {
+          raced = true;
+          scheduledId = (await call("POST", `${ORG}/deletion`, {})).body.id;
+        }
+        return ctx.db.query(text, params);
+      },
+    } as typeof ctx.db;
+    await deliverWebhooksOnce({ ...ctx, db: racing }, fetchImpl);
+    expect(raced).toBe(true);
+    expect(sent).toEqual([]);
+    // After a cancel the backlog goes out, without the deletion's lifecycle events.
+    await call("POST", `${ORG}/deletion/${scheduledId}/cancel`);
+    await deliverWebhooksOnce(ctx, fetchImpl);
+    const delivered = sent.flat().map((e) => e.eventType);
+    expect(delivered).toContain("value.written");
+    expect(delivered.filter((t) => t.startsWith("organization.deletion"))).toEqual([]);
+  });
+});
+
 describe("finalization", () => {
   it("runs only when due and approved, and while the approver is still an admin", async () => {
     const second = await person("Second", "admin");
@@ -226,6 +274,17 @@ describe("finalization", () => {
     expect((await call("DELETE", `/v1/installation/deleted-organizations/${orgId}/readers/${auditor.id}`, undefined, plain.token)).status).toBe(403);
     // A second run finds nothing to do.
     expect(await runDueDeletions(ctx)).toEqual([]);
+    // Later events naming the deleted Organization publish no change signal for it.
+    const cursor = await latestEventCursor(ctx);
+    expect((await call("DELETE", `/v1/installation/deleted-organizations/${orgId}/readers/${adminId}`)).status).toBe(204);
+    const upserts: { kind: string; resourceId: string }[] = [];
+    const fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { path: string; args: { kind: string; resourceId: string } };
+      if (body.path === "mirror:upsert") upserts.push(body.args);
+      return new Response(JSON.stringify({ status: "success" }), { status: 200 });
+    }) as typeof fetch;
+    await syncNewMirrorEvents(ctx, { convexUrl: "https://convex.test", issuer: "http://localhost" }, cursor, fetchImpl);
+    expect(upserts.filter((u) => u.kind === "changeSignal" && u.resourceId === orgId)).toEqual([]);
   });
 
   it("rolls back whole on a failure: the Organization stays frozen and nothing is erased", async () => {

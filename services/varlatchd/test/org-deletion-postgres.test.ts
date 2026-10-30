@@ -135,6 +135,25 @@ describe.skipIf(!url)("organization deletion on real PostgreSQL", () => {
     expect((await db.query("SELECT 1 FROM identities WHERE name = 'Late'")).rows).toEqual([]);
   });
 
+  it("a push request that waited behind a scheduling is refused, and changes nothing", async () => {
+    const connection = (
+      await call("POST", `${ORG}/platform-connections`, { platform: "coolify", baseIdentity: "https://coolify.example.com", name: "c", credential: "token-c" })
+    ).body;
+    const target = (await call("POST", `${DEV}/sync-targets`, { connectionId: connection.id, destination: { applicationUuid: "app1" }, mapping: { kind: "wildcard" } })).body;
+    await db.query("UPDATE sync_targets SET needs_sync = false WHERE id = $1", [target.id]);
+    const paused = pauseAt(/^\s*INSERT INTO audit_events/);
+    const scheduling = call("POST", `${ORG}/deletion`, {});
+    await paused.arrived;
+    const pushing = call("POST", `${DEV}/sync-targets/${target.id}/push`);
+    expect(await settled(pushing, 500)).toBe(false);
+    paused.release();
+    expect((await scheduling).status).toBe(201);
+    const pushed = await pushing;
+    expect(pushed.status).toBe(409);
+    expect(pushed.body.error.code).toBe("ORGANIZATION_DELETING");
+    expect((await db.query("SELECT needs_sync FROM sync_targets WHERE id = $1", [target.id])).rows[0]).toEqual({ needs_sync: false });
+  });
+
   it("two workers never run one deletion twice", async () => {
     const scheduled = (await call("POST", `${ORG}/deletion`, {})).body;
     await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute'");

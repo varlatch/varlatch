@@ -329,7 +329,18 @@ export async function syncNewMirrorEvents(
     signal.occurredAt = ev.occurred_at as string;
     signals.set(orgId, signal);
   }
+  // A deleted Organization publishes no change signal any more, whatever
+  // audit events still name it (a tombstone reader's removal, say); the
+  // identity signals of the people it affected still go (ADR-0051 Decision 9).
+  const deletedOrgs = signals.size
+    ? new Set(
+        ((await ctx.db.query("SELECT id FROM organizations WHERE id = ANY($1) AND deleted_at IS NOT NULL", [[...signals.keys()]])).rows as {
+          id: string;
+        }[]).map((r) => r.id),
+      )
+    : new Set<string>();
   for (const [orgId, signal] of signals) {
+    if (deletedOrgs.has(orgId)) continue;
     await push("changeSignal", orgId, orgId, {
       lastEventId: signal.lastEventId,
       occurredAt: signal.occurredAt,

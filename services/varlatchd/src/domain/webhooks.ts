@@ -266,7 +266,9 @@ async function deliverOne(
   const last = batch[batch.length - 1] as { occurred_at: string; id: string; event_order: string };
   // Events of a deleted Project are not delivered (ADR-0051 Decision 3),
   // its deletion included; the cursor still moves past them.
-  const rows = await withoutDeletedProjects(ctx, batch);
+  // The deletion lifecycle's events are not delivered: they are in the audit
+  // log, and in the tombstone export afterwards (ADR-0051 Decision 9).
+  const rows = (await withoutDeletedProjects(ctx, batch)).filter((r) => !DELETION_EVENTS.has(r.event_type as string));
   if (rows.length === 0) {
     await ctx.db.query("UPDATE webhooks SET cursor_order = GREATEST(cursor_order, $2), cursor_event_id = $3 WHERE id = $1", [
       webhookId,
@@ -276,14 +278,27 @@ async function deliverOne(
     return;
   }
 
+  // Eligibility again, right before sending (ADR-0051 Decision 9): a
+  // deletion scheduled or completed since the pass started suspends or
+  // removes the webhook, and the KEK is read afresh (gone once destroyed).
+  // A request already sent before that may still arrive.
+  const current = (
+    await ctx.db.query(
+      `SELECT o.wrapped_org_kek FROM webhooks w JOIN organizations o ON o.id = w.organization_id
+       WHERE w.id = $1 AND w.revoked_at IS NULL AND w.suspended_by_deletion IS NULL AND o.deleted_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM organization_deletions d
+                         WHERE d.organization_id = o.id AND d.cancelled_at IS NULL AND d.completed_at IS NULL)`,
+      [webhookId],
+    )
+  ).rows[0] as { wrapped_org_kek: unknown } | undefined;
+  if (!current) return;
   const envelope =
     typeof raw.secret_envelope === "string"
       ? (JSON.parse(raw.secret_envelope) as Envelope)
       : (raw.secret_envelope as Envelope);
-  // orgKekOf only needs the org id and its wrapped KEK (joined above).
   const orgForKek = {
     id: organizationId,
-    wrapped_org_kek: raw.wrapped_org_kek,
+    wrapped_org_kek: current.wrapped_org_kek,
   } as OrgRow;
   const secret = decryptWebhookSecret(
     orgKekOf(ctx, orgForKek),
@@ -334,6 +349,14 @@ async function deliverOne(
     );
   }
 }
+
+const DELETION_EVENTS = new Set([
+  "organization.deletion_scheduled",
+  "organization.deletion_approved",
+  "organization.deletion_cancelled",
+  "organization.deleted",
+  "audit_tombstone.reader_removed",
+]);
 
 /** The events of `rows` that name no deleted Project, directly or through one of its environments. */
 async function withoutDeletedProjects(ctx: AppCtx, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {

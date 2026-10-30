@@ -2278,8 +2278,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         [c.req.param("credential"), agent.id],
       );
       if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
-      await revokeCredential(ctx.db, c.req.param("credential"), principal.identity.id, {
-        organizationId: org.id,
+      // The writer protocol (ADR-0051): a live Organization that is not
+      // being deleted; a suspended machine keeps its credentials.
+      await withTx(ctx.db, async (db) => {
+        await lockLiveScope(db, { organizationId: org.id });
+        await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
       });
       return c.body(null, 204);
     }
@@ -2294,8 +2297,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       [c.req.param("credential"), identity.id],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
-    await revokeCredential(ctx.db, c.req.param("credential"), principal.identity.id, {
-      organizationId: org.id,
+    // The writer protocol (ADR-0051): refused while the Organization is
+    // being deleted, so a cancel restores the machine with its credentials.
+    await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
+      await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
     });
     return c.body(null, 204);
   });
