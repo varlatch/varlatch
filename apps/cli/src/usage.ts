@@ -130,8 +130,18 @@ Usage:
                                                        # served; read-only, never a value (--json: NDJSON)
   varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements [--json]|remove <id>>
   varlatch audit <list [--json]|export>
+  varlatch audit export --deleted-org <organization-id> [--server <url>]
+                                                       # a deleted organization's audit log, for its readers
   varlatch org <list [--json]|create <slug> [name]> [--server <url>]
+  varlatch org delete <slug> --confirm <slug> [--after <days>] [--server <url>]
+                                                       # schedules the deletion (1-30 days, default 7) and
+                                                       # freezes the organization until then
+  varlatch org delete <slug> --approve <request-id> | --cancel <request-id> [--server <url>]
+  varlatch org deletion <slug> [--json] [--server <url>]
+                                                       # the open deletion request, if any
   varlatch project <create <slug> --org <org> --server <url> [--managed]|list [--json]|rename <slug> <new-name>>
+  varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]
+                                                       # at once: erases every value of the project
   varlatch env-create <name> --tier <tier> | --parent <env> [--kind personal|preview]
   varlatch env-delete <name> [--confirm <name>]        # --confirm required for production-tier roots
   varlatch identity <list [--json]|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>

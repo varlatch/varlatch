@@ -289,6 +289,15 @@ describe("finalization", () => {
     expect(exported.status).toBe(200);
     expect(exported.body.items.some((e: { eventType: string }) => e.eventType === "organization.deleted")).toBe(true);
     expect((await call("GET", `/v1/deleted-organizations/${orgId}/audit-events`, undefined, plain.token)).status).toBe(404);
+    // The export streams the same log, oldest first, to the same readers.
+    const ndjson = async (token: string) => app.request(`/v1/deleted-organizations/${orgId}/audit-events/export`, { headers: { Authorization: `Bearer ${token}` } });
+    const stream = await ndjson(auditor.token);
+    expect(stream.headers.get("Content-Type")).toBe("application/x-ndjson");
+    const lines = (await stream.text()).trim().split("\n").map((l) => JSON.parse(l) as { eventType: string });
+    expect(lines.length).toBe(exported.body.items.length);
+    expect(lines[0]!.eventType).toBe("organization.created");
+    expect(lines[lines.length - 1]!.eventType).toBe("organization.deleted");
+    expect((await ndjson(plain.token)).status).toBe(404);
     // An Installation Admin sees the tombstone and its readers, and can remove one.
     const listed = await call("GET", "/v1/installation/deleted-organizations");
     expect(listed.body.items).toEqual([

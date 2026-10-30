@@ -109,6 +109,13 @@ fixes.
   events. Not reached by the deletion: PostgreSQL's old row versions and
   write-ahead log for a while, backups taken before, values pushed to
   platforms, and copies people made.
+- **The dashboard deletes Projects and Organizations.** A Project's menu
+  has Delete project, confirmed by typing its slug. Settings has a Delete
+  organization section: an admin chooses the waiting period and types the
+  slug; while the request is open it shows who scheduled it, when it may
+  run and whether it waits for approval, with Approve for another admin and
+  Cancel for any admin. Every page of a frozen Organization shows a banner
+  saying from when it may be deleted.
 
 ### Members
 
@@ -181,6 +188,16 @@ fixes.
   stderr names each item that is rotating, with the command that completes
   it in the environment where the rotation lives (the parent, for an
   inherited item). The command still never fetches a value.
+- `varlatch project delete <slug> --confirm <slug>` deletes a Project and
+  says what it erased and what deletion does not reach. `varlatch org
+  delete <slug> --confirm <slug> [--after <days>]` schedules an
+  Organization's deletion; `--approve <request-id>` and `--cancel
+  <request-id>` approve or cancel it, and `varlatch org deletion <slug>
+  [--json]` shows the open request. Both deletions need `--confirm` with
+  the exact slug, checked before any request; in assisted mode the refusal
+  gives the human's command, and approving needs `--confirm` too. After the
+  deletion, `varlatch audit export --deleted-org <organization-id>` exports
+  the deleted Organization's audit log for its readers.
 
 ### Fixes
 
@@ -246,7 +263,8 @@ fixes.
   frozen Organization is refused with `ORGANIZATION_DELETING`, and a
   deleted Organization's key with `ORGANIZATION_DELETED`. Readers export a
   deleted Organization's audit log from
-  `GET /v1/deleted-organizations/{organization}/audit-events`; Installation
+  `GET /v1/deleted-organizations/{organization}/audit-events`, or as NDJSON,
+  oldest first, from `…/audit-events/export`; Installation
   Admins list deleted Organizations and remove readers under
   `/v1/installation/deleted-organizations`.
 - `DELETE /v1/organizations/{org}/projects/{project}` deletes a Project

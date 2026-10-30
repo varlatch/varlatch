@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useState } from "react";
 import { Outlet, useNavigate, useParams } from "react-router-dom";
-import { Ellipsis, GitBranch, Layers, Pencil, Type } from "lucide-react";
+import { Ellipsis, GitBranch, Layers, Pencil, Trash2, Type } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
@@ -13,6 +13,7 @@ import { PageHeader, Tabs } from "../../components/PageHeader";
 import { FullPageLoading } from "../../shell/AuthScreens";
 import { errorMessage } from "../../shell/Shell";
 import { NewEnvironmentDialog } from "./NewEnvironmentDialog";
+import { useDeleteProject } from "./deleteProject";
 import {
   keys,
   sortEnvironments,
@@ -42,6 +43,8 @@ export function ProjectLayout() {
   const { api } = useSession();
   const targets = useQuery({ queryKey: keys.orgSyncTargets(org), queryFn: () => api.listOrgSyncTargets(org), retry: false });
   const canRename = useCapability("projects.rename");
+  const canDelete = useCapability("projects.delete");
+  const deleteProject = useDeleteProject(org);
   const prompt = usePrompt();
   const toast = useToast();
   const qc = useQueryClient();
@@ -89,6 +92,17 @@ export function ProjectLayout() {
     },
     ...(canRename
       ? [{ label: "Rename…", icon: <Type size={14} />, onSelect: () => void rename(), "data-testid": "header-rename-project" }]
+      : []),
+    ...(canDelete
+      ? [
+          {
+            label: "Delete project…",
+            icon: <Trash2 size={14} />,
+            danger: true,
+            onSelect: () => void deleteProject(project, () => navigate(`/o/${org}/projects`)),
+            "data-testid": "header-delete-project",
+          },
+        ]
       : []),
   ];
 

@@ -50,6 +50,17 @@ import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContra
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
+import {
+  DeletionUsageError,
+  ORGANIZATION_DELETION_CAPABILITY,
+  PROJECT_DELETION_CAPABILITY,
+  cancelledLines,
+  deletionLimits,
+  deletionStateLines,
+  orgDeleteMode,
+  projectDeletionLines,
+  tombstoneExportLine,
+} from "./deletion.js";
 import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
 import {
   WAIT_DEFAULT_SECONDS,
@@ -660,6 +671,166 @@ function credentialLimit(option: string, value: string | undefined, max: number)
  * `varlatch credential issue` (credentialIssue.ts): the token goes only to
  * the --out file; what is printed, as text or JSON, names the credential.
  */
+/**
+ * The server and Organization for a command that may name its Organization
+ * itself: the options first, then the repository's configuration, which is
+ * read only when one of them is missing. `lenient` is for a refusal, which
+ * must still be said when the configuration cannot be read.
+ */
+function organizationTarget(
+  parsed: ParsedOptions,
+  organization: string | undefined,
+  lenient = false,
+): { server: string | undefined; organization: string | undefined; serverOption: string } {
+  const given = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
+  let repo: ResolvedContext | null = null;
+  if ((!given || !organization) && findRepoRoot(process.cwd())) {
+    try {
+      repo = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(given ? { server: given } : {}) });
+    } catch (err) {
+      if (!lenient) throw err;
+    }
+  }
+  return { server: given ?? repo?.server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(given)}` : "" };
+}
+
+/** organizationTarget, both parts required: a missing one is a wrong command line. */
+function requiredTarget(parsed: ParsedOptions, organization: string | undefined): { server: string; organization: string } {
+  const target = organizationTarget(parsed, organization);
+  return {
+    server: target.server ?? usageError("Provide --server <url>, or run inside a configured repository"),
+    organization: target.organization ?? usageError("Provide --org <slug>, or run inside a configured repository"),
+  };
+}
+
+const PROJECT_DELETE_USAGE = "Usage: varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]";
+
+/** ADR-0051: a Project is deleted at once, its values erased; the slug is named again with --confirm. */
+async function projectDelete(args: string[], assisted: AssistedMode): Promise<void> {
+  const parsed = strictOptions("project delete", args, { values: ["--org", "--server", "--confirm"], positionals: 2 }, PROJECT_DELETE_USAGE);
+  const slug = parsed.positionals[1] ?? usageError(PROJECT_DELETE_USAGE);
+  const confirm = parsed.values.get("--confirm");
+  if (confirm !== undefined && confirm !== slug) {
+    usageError(`varlatch project delete: --confirm names ${confirm}, but this command deletes ${slug}; approval for one Project never covers another.\n${PROJECT_DELETE_USAGE}`);
+  }
+  if (confirm === undefined) {
+    const known = organizationTarget(parsed, parsed.values.get("--org"), true);
+    const quoted = shellWord(slug);
+    const command = `varlatch project delete ${quoted} --confirm ${quoted} --org ${known.organization ? shellWord(known.organization) : "<org>"}${known.serverOption}`;
+    const what = `Deleting ${slug} erases every value of its environments${known.organization ? ` from ${known.organization}` : ""} at once; there is no undo`;
+    if (assisted.on) {
+      fail(
+        `varlatch project delete: ${what}. That is the human's decision. With their approval, add --confirm ${slug}. ` +
+          `Or the human runs, in their own terminal:\n  ${command}\nNothing was deleted.`,
+        EXIT.config,
+      );
+    }
+    usageError(`${what}. Name it again to confirm:\n  ${command}\nNothing was deleted.`);
+  }
+  const target = requiredTarget(parsed, parsed.values.get("--org"));
+  const api = client(target);
+  const meta = await api.meta();
+  if (!meta.capabilities.includes(PROJECT_DELETION_CAPABILITY)) {
+    fail(`This server (${meta.serverVersion ?? "an older release"}) cannot delete projects; that needs Varlatch 0.20.0 or later. Nothing was deleted.`);
+  }
+  const deleted = await api.deleteProject(target.organization, slug);
+  for (const line of projectDeletionLines(deleted, target.organization)) console.log(line);
+}
+
+const ORG_DELETE_USAGE =
+  "Usage: varlatch org delete <slug> (--confirm <slug> [--after <days>] | --approve <request-id> | --cancel <request-id>) [--server <url>]\n" +
+  "       varlatch org deletion <slug> [--json] [--server <url>]";
+
+/**
+ * ADR-0051: deleting an Organization is a request. Scheduling freezes it
+ * and names it again with --confirm; another admin approves when there were
+ * several; any admin cancels until it runs.
+ */
+async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted: AssistedMode): Promise<void> {
+  const parsed = strictOptions(
+    `org ${sub}`,
+    args,
+    sub === "deletion"
+      ? { values: ["--server"], booleans: ["--json"], positionals: 2 }
+      : { values: ["--server", "--confirm", "--after", "--approve", "--cancel"], positionals: 2 },
+    ORG_DELETE_USAGE,
+  );
+  const slug = parsed.positionals[1] ?? usageError(ORG_DELETE_USAGE);
+  let mode: ReturnType<typeof orgDeleteMode> | null = null;
+  if (sub === "delete") {
+    try {
+      mode = orgDeleteMode(slug, parsed.values);
+    } catch (err) {
+      if (err instanceof DeletionUsageError) usageError(`varlatch org delete: ${err.message}.\n${ORG_DELETE_USAGE}`);
+      throw err;
+    }
+  }
+  // The slug is always given; the configuration is read only for a missing server.
+  const known = organizationTarget(parsed, slug, true);
+  const quoted = shellWord(slug);
+  if (mode?.mode === "schedule" && !parsed.values.has("--confirm")) {
+    const after = mode.afterDays ? ` --after ${mode.afterDays}` : "";
+    const command = `varlatch org delete ${quoted} --confirm ${quoted}${after}${known.serverOption}`;
+    const what =
+      `Deleting ${slug} freezes it now and, after the waiting period, ends every membership, retires its machines ` +
+      `and destroys its key: its values become unreadable, and there is no undo`;
+    if (assisted.on) {
+      fail(
+        `varlatch org delete: ${what}. That is the human's decision. With their approval, add --confirm ${slug}. ` +
+          `Or the human runs, in their own terminal:\n  ${command}\nNothing was changed.`,
+        EXIT.config,
+      );
+    }
+    usageError(`${what}. Name it again to confirm:\n  ${command}\nNothing was changed.`);
+  }
+  if (mode?.mode === "approve" && assisted.on && !mode.confirmed) {
+    fail(
+      `varlatch org delete: approving the deletion of ${slug} lets it run; that is the human's decision. ` +
+        `With their approval, add --confirm ${slug}. Or the human runs, in their own terminal:\n` +
+        `  varlatch org delete ${quoted} --approve ${shellWord(mode.deletionId)}${known.serverOption}\nNothing was changed.`,
+      EXIT.config,
+    );
+  }
+  const api = client(requiredTarget(parsed, slug));
+  const meta = await api.meta();
+  if (!meta.capabilities.includes(ORGANIZATION_DELETION_CAPABILITY)) {
+    fail(`This server (${meta.serverVersion ?? "an older release"}) cannot delete organizations; that needs Varlatch 0.20.0 or later. Nothing was changed.`);
+  }
+  if (mode === null) {
+    const open = await api.organizationDeletion(slug);
+    if (parsed.booleans.has("--json")) {
+      printJson({ organization: slug, deletion: open });
+      return;
+    }
+    if (!open) {
+      console.log(`No deletion of ${slug} is scheduled.`);
+      return;
+    }
+    for (const line of deletionStateLines(open, slug)) console.log(line);
+    return;
+  }
+  if (mode.mode === "cancel") {
+    const cancelled = await api.cancelOrganizationDeletion(slug, mode.deletionId);
+    for (const line of cancelledLines(cancelled, slug)) console.log(line);
+    return;
+  }
+  if (mode.mode === "approve") {
+    const approved = await api.approveOrganizationDeletion(slug, mode.deletionId);
+    for (const line of deletionStateLines(approved, slug)) console.log(line);
+    return;
+  }
+  const organizationId = (await api.getOrganization(slug)).id;
+  const scheduled = await api.scheduleOrganizationDeletion(slug, mode.afterDays === undefined ? {} : { afterDays: mode.afterDays });
+  console.log(`Deletion of ${slug} scheduled.`);
+  for (const line of deletionStateLines(scheduled, slug)) console.log(line);
+  console.log(
+    "Machine identities and webhooks are suspended and Sync Targets paused; pending invitations were revoked. " +
+      "When it runs, every membership ends, machines are retired, values are erased and the organization's key is destroyed.",
+  );
+  console.log(tombstoneExportLine(organizationId));
+  for (const line of deletionLimits("organization")) console.log(line);
+}
+
 async function credentialIssue(args: string[], assisted: AssistedMode): Promise<void> {
   const parsed = strictOptions("credential issue", args, CREDENTIAL_ISSUE_OPTIONS, CREDENTIAL_ISSUE_USAGE);
   const identityId = parsed.positionals[0] ?? usageError(CREDENTIAL_ISSUE_USAGE);
@@ -2012,6 +2183,18 @@ async function main(): Promise<void> {
 
       case "audit": {
         const sub = args[0];
+        if (sub === "export" && args.includes("--deleted-org")) {
+          // ADR-0051 Decision 8: a deleted Organization's log, for its readers;
+          // no repository or live Organization is involved.
+          const usage = "Usage: varlatch audit export --deleted-org <organization-id> [--server <url>]";
+          const parsed = strictOptions("audit export", args, { values: ["--deleted-org", "--server"], positionals: 1 }, usage);
+          const organizationId = parsed.values.get("--deleted-org") ?? usageError(usage);
+          const server =
+            parsed.values.get("--server") ?? process.env.VARLATCH_SERVER ??
+            (findRepoRoot(process.cwd()) ? resolveContext({ cwd: process.cwd(), environment: "(unused)" }).server : usageError(`Provide --server <url>\n${usage}`));
+          process.stdout.write(await client({ server }).exportDeletedOrganizationAuditEventsNdjson(organizationId));
+          return;
+        }
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
@@ -2037,7 +2220,11 @@ async function main(): Promise<void> {
 
       case "org": {
         const sub = args[0];
-        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create>");
+        if (sub === "delete" || sub === "deletion") {
+          await orgDeletion(sub, args, assisted);
+          return;
+        }
+        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create|delete|deletion>");
         if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
         const server =
           flag(args, "--server") ?? process.env.VARLATCH_SERVER ??
@@ -2062,12 +2249,16 @@ async function main(): Promise<void> {
           console.log(`Organization ${org.slug} created (${org.id}). You are its admin.`);
           return;
         }
-        usageError("Usage: varlatch org <list|create>");
+        usageError("Usage: varlatch org <list|create|delete|deletion>");
         return;
       }
 
       case "project": {
         const sub = args[0];
+        if (sub === "delete") {
+          await projectDelete(args, assisted);
+          return;
+        }
         if (sub === "create") {
           const slug = args[1] ?? usageError("Usage: varlatch project create <slug> [name] [--managed]");
           const server = flag(args, "--server") ?? process.env.VARLATCH_SERVER ?? usageError("Provide --server");
@@ -2107,7 +2298,7 @@ async function main(): Promise<void> {
           console.log(`Project ${renamed.slug} renamed to ${renamed.name}. Its slug, grants and contracts are unaffected; the rename is audited.`);
           return;
         }
-        usageError("Usage: varlatch project <create|list|rename>");
+        usageError("Usage: varlatch project <create|list|rename|delete>");
         return;
       }
 

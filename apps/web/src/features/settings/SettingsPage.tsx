@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowUpRight, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, Sun, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
@@ -16,6 +16,7 @@ import { errorMessage } from "../../shell/Shell";
 import { useCapability, useMeta, useOrgName } from "../projects/hooks";
 import { backupHealth } from "../installation/backupHealth";
 import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../installation/releaseNotice";
+import { OrganizationDeletionCard, deletionKey } from "./OrganizationDeletion";
 
 /** Organization settings and facts about this installation. */
 
@@ -24,16 +25,24 @@ const SECTIONS = [
   { id: "server", label: "Server", icon: Server },
   { id: "backups", label: "Backups", icon: Archive },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "danger", label: "Delete organization", icon: TriangleAlert },
 ] as const;
 
 export function SettingsPage() {
   const { org } = useParams() as { org: string };
   const { api } = useSession();
-  useOrgRealtime(org, ["organization"], [["org", org], ["orgs"]]);
+  useOrgRealtime(org, ["organization"], [["org", org], ["orgs"], deletionKey(org)]);
   const orgName = useOrgName(org);
   const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
   const [active, setActive] = useState<string>("general");
+  const canDelete = useCapability("organizations.delete");
+  const { hash } = useLocation();
+
+  // A link to a section (the deletion banner's) scrolls to it once it is there.
+  useEffect(() => {
+    if (hash.startsWith("#settings-")) document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" });
+  }, [hash, canDelete, orgQuery.data]);
 
   // Highlight the section in view.
   useEffect(() => {
@@ -47,9 +56,9 @@ export function SettingsPage() {
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [backups.data]);
+  }, [backups.data, canDelete]);
 
-  const sections = SECTIONS.filter((s) => s.id !== "backups" || backups.data);
+  const sections = SECTIONS.filter((s) => (s.id !== "backups" || backups.data) && (s.id !== "danger" || canDelete));
 
   return (
     <>
@@ -84,6 +93,7 @@ export function SettingsPage() {
           <ServerCard admin={Boolean(backups.data)} />
           {backups.data && <BackupsSummary data={backups.data} />}
           <AppearanceCard />
+          {canDelete && <OrganizationDeletionCard org={org} slug={orgQuery.data?.slug} id={orgQuery.data?.id} />}
         </div>
       </div>
     </>

@@ -760,6 +760,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/deleted-organizations/{organization}/audit-events/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream a deleted Organization's audit log as NDJSON, oldest first, for the same readers as the listing (ADR-0051 Decision 8). Anyone else gets RESOURCE_NOT_FOUND. */
+        get: operations["exportDeletedOrganizationAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/installation/deleted-organizations": {
         parameters: {
             query?: never;
@@ -4795,6 +4812,30 @@ export interface operations {
                         items: components["schemas"]["AuditEvent"][];
                         nextCursor: string | null;
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    exportDeletedOrganizationAuditEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The deleted Organization's ID */
+                organization: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One versioned AuditEvent JSON document per line */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": components["schemas"]["AuditEvent"];
                 };
             };
             default: components["responses"]["Error"];
