@@ -3026,6 +3026,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     lastAttemptAt: t.last_attempt_at ? iso(t.last_attempt_at) : null,
     lastResult: t.last_result ?? null,
     lastNotes: t.last_notes ?? null,
+    // The last drift the Target observed (ADR-0050 Decision 11): names only,
+    // like notes; the event itself needs audit.read.
+    lastDrift: t.last_drift_at
+      ? { at: iso(t.last_drift_at), count: t.last_drift_count ?? 0, names: t.last_drift_names ?? [], eventId: t.last_drift_event_id ?? null }
+      : null,
     drained: !runs.has(t.id),
     runStartedAt: runs.has(t.id) ? iso(runs.get(t.id) as Date) : null,
     createdAt: iso(t.created_at),

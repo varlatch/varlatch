@@ -2501,6 +2501,14 @@ export interface components {
             lastResult: string | null;
             /** @description The names the last run held, first, then hints on how the destination itself uses the managed names (ADR-0031, amendments 2026-10-21 and 2026-10-22). They never fail a run, and each run that reaches the value check replaces them. Null when no run has since 0.18.1. */
             lastNotes: components["schemas"]["SyncTargetNote"][] | null;
+            /** @description The last drift the Target observed (ADR-0050): destination names that differed from what Varlatch last wrote when a repair read the destination back, before it put them back. Names only; count is exact, names holds at most the first 50; eventId is the sync.drift_detected audit event (reading it needs audit.read). Cleared when the destination changes. Null when no drift was observed, and on servers before 0.20.0. */
+            lastDrift?: {
+                /** Format: date-time */
+                at: string;
+                count: number;
+                names: string[];
+                eventId: string | null;
+            } | null;
             /** @description True when no run of this Target can start another request to the destination (ADR-0050): every run has ended or passed its deadline. A request a run had already sent may still reach the platform. Requires capability `sync.pause-wait`; absent from older servers. */
             drained?: boolean;
             /**

@@ -575,6 +575,26 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
           target ? dest : str(m.destination) ? { kind: "mono", text: str(m.destination)! } : dest,
         ],
       };
+    case "sync.drift_detected": {
+      // Names that differed from what Varlatch last wrote, found by a
+      // repair before it put them back (ADR-0050). Usually a change made
+      // on the platform; the event says what was observed, not who did it.
+      const count = typeof m.count === "number" ? m.count : 0;
+      const kinds = [
+        str(m.changed) ? `changed: ${str(m.changed)}` : "",
+        str(m.removed) ? `removed: ${str(m.removed)}` : "",
+        str(m.recreated) ? `back after deletion: ${str(m.recreated)}` : "",
+      ].filter(Boolean);
+      return {
+        icon: "alert",
+        title: "Drift detected",
+        segments: [
+          `found ${plural(count, "name")} that differed from what Varlatch last wrote to `,
+          target ? dest : str(m.destination) ? { kind: "mono", text: str(m.destination)! } : dest,
+          ...(kinds.length > 0 ? [` (${kinds.join("; ")})`] : []),
+        ],
+      };
+    }
     case "sync.push_result": {
       const failed = typeof m.failed === "number" ? m.failed : 0;
       const written = typeof m.written === "number" ? m.written : 0;

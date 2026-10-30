@@ -330,6 +330,16 @@ export function TargetCard({
           </Menu>
         </div>
       </div>
+      {target.lastDrift && (
+        <p data-testid={`target-drift-${target.id}`} className="mt-2 text-xs text-muted">
+          <span className="font-medium text-warn">Drift detected {formatDate(target.lastDrift.at)}:</span>{" "}
+          {target.lastDrift.count === 1 ? "1 name" : `${target.lastDrift.count} names`} differed from what Varlatch last
+          wrote:{" "}
+          <span className="font-mono text-fg/90">{target.lastDrift.names.join(", ")}</span>
+          {target.lastDrift.count > target.lastDrift.names.length ? ` and ${target.lastDrift.count - target.lastDrift.names.length} more` : ""}.
+          Usually a change made on the platform itself.
+        </p>
+      )}
       {notes.length > 0 && (
         <ul
           data-testid={`target-notes-${target.id}`}

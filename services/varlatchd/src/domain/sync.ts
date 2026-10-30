@@ -117,13 +117,18 @@ export interface SyncTargetRow {
   /** Owed while redeploy_owed > redeploy_paid (migration 33, ADR-0050 Decision 4). bigint: a string from the driver. */
   redeploy_owed: string | number;
   redeploy_paid: string | number;
+  /** The last observed drift (migration 34, ADR-0050 Decision 11). */
+  last_drift_at: string | null;
+  last_drift_count: number | null;
+  last_drift_names: string[] | null;
+  last_drift_event_id: string | null;
 }
 
 export const TARGET_COLUMNS = `id, organization_id, project_id, environment_id, connection_id,
   destination, canonical_destination, mapping, remove_orphans, redeploy, state,
   disabled_reason, failure_count, needs_sync, next_attempt_at, last_attempt_at,
   last_result, last_notes, last_repair_at, created_at, revoked_at, version, updated_at,
-  redeploy_owed, redeploy_paid`;
+  redeploy_owed, redeploy_paid, last_drift_at, last_drift_count, last_drift_names, last_drift_event_id`;
 
 const CONNECTION_COLUMNS = `id, organization_id, platform, base_identity, name,
   created_at, revoked_at, version, updated_at, credential_expires_at, credential_expiry_seen_at,
@@ -139,6 +144,8 @@ export function targetRow(raw: Record<string, unknown>): SyncTargetRow {
     destination: parseJson<Record<string, string>>(raw.destination),
     mapping: parseJson<SyncMapping>(raw.mapping),
     last_notes: raw.last_notes === null || raw.last_notes === undefined ? null : parseJson<TargetNote[]>(raw.last_notes),
+    last_drift_names:
+      raw.last_drift_names === null || raw.last_drift_names === undefined ? null : parseJson<string[]>(raw.last_drift_names),
   };
 }
 
@@ -1178,6 +1185,11 @@ export async function updateTarget(
              version = version + 1, updated_at = now(),
              -- Notes describe the old destination: they go with it.
              last_notes = CASE WHEN $8 THEN NULL ELSE last_notes END,
+             -- So does the drift observed there.
+             last_drift_at = CASE WHEN $8 THEN NULL ELSE last_drift_at END,
+             last_drift_count = CASE WHEN $8 THEN NULL ELSE last_drift_count END,
+             last_drift_names = CASE WHEN $8 THEN NULL ELSE last_drift_names END,
+             last_drift_event_id = CASE WHEN $8 THEN NULL ELSE last_drift_event_id END,
              -- An owed redeploy was for the old destination, or is no longer
              -- wanted: settled without paying it (ADR-0050 Decision 4).
              redeploy_paid = CASE WHEN $8 OR NOT $6 THEN redeploy_owed ELSE redeploy_paid END
