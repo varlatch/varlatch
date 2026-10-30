@@ -598,6 +598,101 @@ describe("convergence", () => {
     expect((await targetRowFromDb()).last_result).toBe("ok");
   });
 
+  it("replacing a rejected credential resumes the Targets it stopped, and only those (#57)", async () => {
+    const coolify = fakeCoolify();
+    const { connection, target: rejected } = await activeTarget();
+    const otherFailure = await (await createTarget(connection.id, { destination: { applicationUuid: "app2" } })).json();
+    const failing = await (await createTarget(connection.id, { destination: { applicationUuid: "app3" } })).json();
+    // As the worker leaves them: one stopped by the old credential, one
+    // stopped by the platform for another reason, one still retrying.
+    const stop = "UPDATE sync_targets SET state = 'disabled', disabled_reason = 'failure-budget-exhausted', failure_count = 10, needs_sync = false, last_result = $2 WHERE id = $1";
+    await ctx.db.query(stop, [rejected.id, "AdapterError: Coolify env update failed (401) Unauthenticated."]);
+    await ctx.db.query(stop, [otherFailure.id, "AdapterError: Coolify env update failed (500) boom"]);
+    await ctx.db.query("UPDATE sync_targets SET failure_count = 3, last_result = 'AdapterError: Coolify env update failed (401)' WHERE id = $1", [failing.id]);
+
+    const replaced = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, { credential: "coolify-token-456", expectedVersion: connection.version });
+    expect(replaced.status).toBe(200);
+    const state = async (id: string) =>
+      (await ctx.db.query("SELECT state, disabled_reason, failure_count, needs_sync FROM sync_targets WHERE id = $1", [id])).rows[0];
+    expect(await state(rejected.id)).toEqual({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true });
+    expect(await state(otherFailure.id)).toEqual({ state: "disabled", disabled_reason: "failure-budget-exhausted", failure_count: 10, needs_sync: true });
+    expect(await state(failing.id)).toEqual({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true });
+    const resumedEvents = (await ctx.db.query("SELECT resource, metadata FROM audit_events WHERE event_type = 'sync.target_resumed'")).rows.map(
+      (r) => ({ resource: asJson<Record<string, unknown>>((r as { resource: unknown }).resource), metadata: asJson<Record<string, unknown>>((r as { metadata: unknown }).metadata) }),
+    );
+    expect(resumedEvents).toEqual([{ resource: expect.objectContaining({ targetId: rejected.id }), metadata: { cause: "credential_replaced", connectionId: connection.id } }]);
+    const replacement = (await ctx.db.query("SELECT metadata, event_order FROM audit_events WHERE event_type = 'sync.connection_credential_replaced'")).rows[0] as { metadata: unknown };
+    expect(asJson<Record<string, unknown>>(replacement.metadata)).toMatchObject({ resumedTargets: rejected.id });
+
+    // The resumed Target pushes with the new credential; the other stays stopped.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await ctx.db.query("SELECT last_result FROM sync_targets WHERE id = $1", [rejected.id])).rows[0]).toEqual({ last_result: "ok" });
+    expect((await state(otherFailure.id)).state).toBe("disabled");
+  });
+
+  it("a run still using the replaced credential can neither restore its failures nor stop the Target (#57)", async () => {
+    const coolify = fakeCoolify();
+    const { connection, target } = await activeTarget();
+    // Nine failures with the old credential: one more would stop the Target.
+    await ctx.db.query(
+      "UPDATE sync_targets SET failure_count = 9, last_result = 'AdapterError: Coolify env update failed (401)', needs_sync = true, next_attempt_at = NULL WHERE id = $1",
+      [target.id],
+    );
+    // The run's first write waits on the wire while the credential is
+    // replaced, then the platform refuses the old credential.
+    let reached!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>((r) => (reached = r));
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    const fetchImpl = (async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (first && init?.method && init.method !== "GET") {
+        first = false;
+        reached();
+        await held;
+        return new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+      }
+      return coolify.fetchImpl(url, init);
+    }) as typeof fetch;
+    const running = runSyncOnce(ctx, { fetchImpl });
+    await arrived;
+    const replaced = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, { credential: "coolify-token-456", expectedVersion: connection.version });
+    expect(replaced.status).toBe(200);
+    release();
+    await running;
+    const row = await targetRowFromDb();
+    expect(row).toMatchObject({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true, next_attempt_at: null });
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.target_disabled'")).rows).toHaveLength(0);
+    // The next run uses the new credential and converges.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+  });
+
+  it("a write the old credential completed after its replacement keeps its ledger entry and its redeploy (#57)", async () => {
+    const coolify = fakeCoolify();
+    const { connection } = await activeTarget({ redeploy: true, mapping: { kind: "explicit", items: [{ name: "PORT" }] } });
+    const target = await (await get(`${ENV_PATH}/sync-targets`)).json();
+    const id = target.items[0].id as string;
+    let replaced = false;
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      const res = await coolify.fetchImpl(url as string, init);
+      const method = init?.method ?? "GET";
+      if (!replaced && String(url).endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        replaced = true;
+        const done = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, { credential: "coolify-token-456", expectedVersion: connection.version });
+        expect(done.status).toBe(200);
+      }
+      return res;
+    }) as typeof fetch;
+    await reconcileTarget(ctx, id, { fetchImpl });
+    expect(replaced).toBe(true);
+    // The write landed: its ledger entry stands, and the application was redeployed.
+    expect(coolify.values().get("PORT")).toBe("8080");
+    expect((await ctx.db.query("SELECT dest_name FROM sync_ledger WHERE target_id = $1", [id])).rows).toEqual([{ dest_name: "PORT" }]);
+    expect(coolify.restarts()).toBe(1);
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+  });
+
   it("a failed push retries automatically once its backoff expires", async () => {
     const coolify = fakeCoolify();
     await activeTarget();

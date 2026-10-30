@@ -264,6 +264,8 @@ export async function reconcileTarget(
   if (!leaseRow) return; // another run holds the lease, or state changed
   const target = targetRow(leaseRow);
   const generation = Number(leaseRow.generation as string | number);
+  /** The Connection version this run read its credential at, once read. */
+  let credentialVersion: number | undefined;
   // Kept in memory: the row may be cleaned by another process's tick before
   // this run classifies how it ended.
   const runDeadline = leaseRow.run_deadline as Date | string;
@@ -286,6 +288,7 @@ export async function reconcileTarget(
       [target.connection_id, target.organization_id],
     );
     const live = connRes.rows[0] as LiveConnection | undefined;
+    if (live) credentialVersion = Number(live.connection_version);
     if (!live || live.connection_revoked_at) {
       // Revocation disables referencing Targets in the same transaction;
       // reaching here is a narrow race — surface it, never push.
@@ -367,7 +370,7 @@ export async function reconcileTarget(
         return;
       }
       if (!fenced) {
-        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes).catch(
+        await recordFailure(ctx, target, "interrupted mid-run; retrying", true, generation, inspected.notes, credentialVersion).catch(
           (e) => console.error("sync interruption bookkeeping failed:", e),
         );
       }
@@ -394,7 +397,7 @@ export async function reconcileTarget(
           : [target.id, outcome.result, generation],
       );
     } else {
-      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes);
+      await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes, credentialVersion);
     }
   } catch (err) {
     await recordFailure(
@@ -404,6 +407,7 @@ export async function reconcileTarget(
       true,
       generation,
       inspected.notes,
+      credentialVersion,
     ).catch((e) => console.error("sync failure bookkeeping failed:", e));
   } finally {
     await ctx.db
@@ -1245,37 +1249,60 @@ async function recordFailure(
   backoff: boolean,
   generation?: number,
   notes?: TargetNote[],
+  credentialVersion?: number,
 ): Promise<void> {
-  const failures = target.failure_count + 1;
-  const delayMs = Math.min(BASE_BACKOFF_MS * 2 ** target.failure_count, MAX_BACKOFF_MS);
-  const disable = backoff && failures >= FAILURE_BUDGET;
-  // A failed run leaves pending work: needs_sync must come back on (lease
-  // acquisition cleared it) or the backed-off retry would never qualify for
-  // selection and the Target would wait for the next trigger or repair pass.
-  const params: unknown[] = [target.id, failures, result.slice(0, 500), delayMs, disable];
-  const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
-  const setNotes = notes !== undefined ? `, last_notes = $${params.push(JSON.stringify(notes))}` : "";
-  const applied = await ctx.db.query(
-    `UPDATE sync_targets
-     SET failure_count = $2, last_result = $3, needs_sync = true,
-         next_attempt_at = now() + ($4 * interval '1 millisecond'),
-         state = CASE WHEN $5 THEN 'disabled' ELSE state END,
-         disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END${setNotes}
-     WHERE id = $1 AND revoked_at IS NULL${guard}
-     RETURNING id`,
-    params,
-  );
-  if (disable && applied.rows.length > 0) {
-    // Auto-disable is a state the UI must surface; a human resumes (§5).
-    await recordAuditEvent(ctx.db, {
-      eventType: "sync.target_disabled",
-      decision: "info",
-      organizationId: target.organization_id,
-      action: "config.sync.manage",
-      resource: { targetId: target.id, environmentId: target.environment_id },
-      metadata: { reason: "failure-budget-exhausted", failures, lastResult: result.slice(0, 300) },
-    });
-  }
+  await withTx(ctx.db, async (db) => {
+    // A failure with a credential replaced since the run read it is the old
+    // credential's, not this Target's (#57): the replacement reset the count
+    // and resumed what the old credential stopped, so it is not counted.
+    // The Connection first, then the Target (ADR-0047 Decision 5's order): a
+    // replacement holds the Connection while it resets the Target, so this
+    // waits for it and then sees its version.
+    if (credentialVersion !== undefined) {
+      const connection = await db.query("SELECT version FROM platform_connections WHERE id = $1 FOR SHARE", [target.connection_id]);
+      const row = connection.rows[0] as { version: number | string } | undefined;
+      if (!row || Number(row.version) !== credentialVersion) return;
+    }
+    const params: unknown[] = [target.id];
+    const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
+    // The count as it is now, not as the run's lease read it: a replacement
+    // may have reset it since.
+    const locked = await db.query(
+      `SELECT failure_count FROM sync_targets WHERE id = $1 AND revoked_at IS NULL${guard} FOR UPDATE`,
+      params,
+    );
+    const current = locked.rows[0] as { failure_count: number | string } | undefined;
+    if (!current) return;
+    const previous = Number(current.failure_count);
+    const failures = previous + 1;
+    const delayMs = Math.min(BASE_BACKOFF_MS * 2 ** previous, MAX_BACKOFF_MS);
+    const disable = backoff && failures >= FAILURE_BUDGET;
+    // A failed run leaves pending work: needs_sync must come back on (lease
+    // acquisition cleared it) or the backed-off retry would never qualify for
+    // selection and the Target would wait for the next trigger or repair pass.
+    const update: unknown[] = [target.id, failures, result.slice(0, 500), delayMs, disable];
+    const setNotes = notes !== undefined ? `, last_notes = $${update.push(JSON.stringify(notes))}` : "";
+    await db.query(
+      `UPDATE sync_targets
+       SET failure_count = $2, last_result = $3, needs_sync = true,
+           next_attempt_at = now() + ($4 * interval '1 millisecond'),
+           state = CASE WHEN $5 THEN 'disabled' ELSE state END,
+           disabled_reason = CASE WHEN $5 THEN 'failure-budget-exhausted' ELSE disabled_reason END${setNotes}
+       WHERE id = $1`,
+      update,
+    );
+    if (disable) {
+      // Auto-disable is a state the UI must surface; a human resumes (§5).
+      await recordAuditEvent(db, {
+        eventType: "sync.target_disabled",
+        decision: "info",
+        organizationId: target.organization_id,
+        action: "config.sync.manage",
+        resource: { targetId: target.id, environmentId: target.environment_id },
+        metadata: { reason: "failure-budget-exhausted", failures, lastResult: result.slice(0, 300) },
+      });
+    }
+  });
 }
 
 function flagSummary(flags: string[]): string {
