@@ -51,8 +51,14 @@ const execFileAsync = promisify(execFile);
 /** Docker, asynchronous and bounded, so deadlines and signals stay responsive. */
 const docker = async (args, timeout = 30_000) => (await execFileAsync('docker', args, { encoding: 'utf8', timeout })).stdout.trim();
 
+const IMAGE = 'postgres:17.6';
+const RUN_TIMEOUT = 60_000;
+
 /** Containers this process started and has not removed yet. */
 const running = new Set();
+/** `docker run` calls in flight: removal waits for them, so none creates a container after it. */
+const startups = new Set();
+const startupsSettled = () => Promise.race([Promise.allSettled([...startups]), deadline(RUN_TIMEOUT + 10_000)]);
 const removeContainer = (name) => {
   try {
     execFileSync('docker', ['rm', '-f', name], { stdio: 'ignore', timeout: 30_000 });
@@ -62,9 +68,10 @@ const removeContainer = (name) => {
   }
 };
 // Interrupted (Ctrl-C), the container would outlive the script: --rm only
-// removes a stopped container.
+// removes a stopped container. A start in flight finishes first.
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.once(signal, () => {
+  process.once(signal, async () => {
+    await startupsSettled();
     for (const name of running) removeContainer(name);
     process.exit(130);
   });
@@ -73,13 +80,19 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 /**
  * Starts the container under a name registered first, so the caller (and a
  * signal) removes it even when `docker run` fails after starting it. Then
- * waits until it accepts connections, every check bounded in time.
+ * waits until it accepts connections, every check bounded in time. The
+ * image is pulled before (see below), so `docker run` itself is quick.
  */
-async function startPostgres(name) {
+async function startPostgres(name, aborted) {
   running.add(name);
-  // Bounded generously: the first run may download the image.
-  await docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', 'postgres:17.6'], 600_000);
-  for (let i = 0; i < 120; i++) {
+  const started = docker(['run', '-d', '--rm', '--name', name, '--cpus', pgCpus, '--memory', pgMemory, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust', '-p', '127.0.0.1::5432', IMAGE], RUN_TIMEOUT);
+  startups.add(started);
+  try {
+    await started;
+  } finally {
+    startups.delete(started);
+  }
+  for (let i = 0; i < 120 && !aborted(); i++) {
     try {
       await execFileAsync('docker', ['exec', name, 'pg_isready', '-U', 'postgres', '-h', '127.0.0.1', '-t', '2'], { timeout: 5000 });
       const port = (await docker(['port', name, '5432'])).split(':').pop();
@@ -88,7 +101,7 @@ async function startPostgres(name) {
       await sleep(500);
     }
   }
-  throw new Error('PostgreSQL did not start');
+  throw new Error(aborted() ? 'stopped' : 'PostgreSQL did not start');
 }
 
 function percentiles(latencies) {
@@ -110,7 +123,9 @@ async function measure(versions) {
     // The whole measurement has a deadline: stalled anywhere, it fails,
     // and finally removes the container, which ends the stalled work.
     const work = (async () => {
-      db = createPgQuerier(await startPostgres(name));
+      const url = await startPostgres(name, () => background.stop);
+      if (background.stop) throw new Error('stopped');
+      db = createPgQuerier(url);
       const connection = await db.connect();
       try {
         await runMigrations(connection);
@@ -260,13 +275,17 @@ async function measure(versions) {
     // Every step is bounded, so the container is always removed: a request
     // stalled in the probe or the pool cannot hold it. Removing it breaks
     // any connection still open.
+    // background.stop also tells timed-out work to stop where it checks.
     background.stop = true;
     await Promise.race([Promise.allSettled(background.tasks), deadline(10_000)]);
     await Promise.race([db?.end().catch(() => {}), deadline(5_000)]);
+    await startupsSettled();
     removeContainer(name);
   }
 }
 
+// Pulled before any container exists: an interrupted pull leaves nothing behind.
+await docker(['pull', '--quiet', IMAGE], 900_000);
 const rows = [];
 for (const size of sizes) {
   console.error(`measuring ${size} value versions…`);
