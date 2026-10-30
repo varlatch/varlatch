@@ -75,7 +75,8 @@ export function GrantsTab({ org }: { org: string }) {
 
   const subjectOptions = [
     ...(identities.data?.items ?? [])
-      .filter((i) => !i.disabled)
+      // Former members can be given nothing (ADR-0052).
+      .filter((i) => !i.disabled && !i.removedAt)
       .map((i) => ({ value: `idn:${i.id}`, label: i.name, description: KIND_LABEL[i.kind], icon: <KindIcon kind={i.kind} size={15} /> })),
     ...(groups.data?.items ?? []).map((g) => ({ value: `grp:${g.id}`, label: g.name, description: "group", icon: <KindIcon kind="group" size={15} /> })),
     ...(teams.data?.items ?? []).map((t) => ({ value: `grp:${t.id}`, label: t.name, description: "team", icon: <KindIcon kind="team" size={15} /> })),

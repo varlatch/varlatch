@@ -54,20 +54,40 @@ export function useMeRealtime(domains: "*" | string[], queryKeys: QueryKey[]): v
   useSignalInvalidation(docs, domains, queryKeys);
 }
 
+/**
+ * Me-scoped, with a callback instead of query keys: `onChange` runs when the
+ * caller's identitySignal reports a change in any of `domains` (for
+ * instance "membership": removed from an organization, or a new role).
+ */
+export function useMeSignal(domains: "*" | string[], onChange: () => void): void {
+  const docs = useConvexQuery(mirrorListMine, { kind: "identitySignal" }) as
+    | { data?: ChangeSignal }[]
+    | undefined;
+  useSignal(docs, domains, onChange);
+}
+
 function useSignalInvalidation(
   docs: { data?: ChangeSignal }[] | undefined,
   domains: "*" | string[],
   queryKeys: QueryKey[],
 ): void {
   const qc = useQueryClient();
+  const keys = useRef(queryKeys);
+  keys.current = queryKeys;
+  useSignal(docs, domains, () => {
+    for (const key of keys.current) void qc.invalidateQueries({ queryKey: key });
+  });
+}
+
+function useSignal(docs: { data?: ChangeSignal }[] | undefined, domains: "*" | string[], onChange: () => void): void {
   const signal = docs?.[0]?.data;
   // undefined = subscription not loaded yet; null = loaded, no signal doc.
   const lastEventId = docs === undefined ? undefined : (signal?.lastEventId ?? null);
 
   // Latest args live in refs so the effect can depend on the signal alone —
-  // callers pass fresh array literals every render.
-  const args = useRef({ domains, queryKeys, touched: signal?.domains });
-  args.current = { domains, queryKeys, touched: signal?.domains };
+  // callers pass fresh array literals and callbacks every render.
+  const args = useRef({ domains, onChange, touched: signal?.domains });
+  args.current = { domains, onChange, touched: signal?.domains };
   const seen = useRef<string | null | undefined>(undefined);
 
   useEffect(() => {
@@ -79,10 +99,10 @@ function useSignalInvalidation(
     }
     if (!lastEventId || seen.current === lastEventId) return;
     seen.current = lastEventId;
-    const { domains: watch, queryKeys: keys, touched } = args.current;
+    const { domains: watch, onChange: run, touched } = args.current;
     if (watch !== "*" && !(touched ?? []).some((d) => watch.includes(d))) return;
-    for (const key of keys) void qc.invalidateQueries({ queryKey: key });
-  }, [lastEventId, qc]);
+    run();
+  }, [lastEventId]);
 }
 
 /**

@@ -14,7 +14,8 @@ Usage:
                (exit 78; --omit <NAME> leaves it out when the command does not need it), and refuses
                --allow-unmasked and --no-redact; values set/rotate never take a
                Secret's value from the command line, and replace an existing value only with --replace <ITEM>;
-               values delete deletes only with --confirm <ITEM>; login with no method starts a device sign-in
+               values delete deletes only with --confirm <ITEM>; member remove and member leave always need --confirm;
+               login with no method starts a device sign-in
   varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
                the named short Secrets; every other known Secret stays masked
   varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in, in a browser on this machine
@@ -123,6 +124,8 @@ Usage:
                 exit 1 findings, 2 some files not scanned; never prints values or line contents)
   varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
   varlatch invite <name> [--role member|admin]
+  varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member>
+                                                       # people in the organization; former members are listed too
   varlatch tailnet <require --tailnet <tn> --tags tag:prod|requirements [--json]|remove <id>>
   varlatch audit <list [--json]|export>
   varlatch org <list [--json]|create <slug> [name]> [--server <url>]

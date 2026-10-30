@@ -38,6 +38,13 @@ interface SessionState {
   maintenance: boolean;
   /** Increments on every (re-)authentication: disclosed state must reset. */
   authEpoch: number;
+  /**
+   * Increments when the signed-in person's access changed (ADR-0052
+   * Decision 9: removed from an organization, or a new role): disclosed
+   * state resets and the realtime token is minted again.
+   */
+  accessEpoch: number;
+  accessChanged: () => void;
   api: VarlatchClient;
   /** fetch with this session's bearer and its one silent re-exchange on 401, for another origin of this installation. */
   fetch: typeof fetch;
@@ -175,6 +182,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [maintenance, setMaintenance] = useState(false);
   const [checked, setChecked] = useState(false);
   const [authEpoch, setAuthEpoch] = useState(0);
+  const [accessEpoch, setAccessEpoch] = useState(0);
+  const accessChanged = useCallback(() => setAccessEpoch((n) => n + 1), []);
 
   const adopt = useCallback((token: string, id: string) => {
     if (currentIdentity.current !== id) {
@@ -287,8 +296,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, api, fetch: sessionFetch, mintConvexToken, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, api, sessionFetch, mintConvexToken, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, fetch: sessionFetch, mintConvexToken, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, sessionFetch, mintConvexToken, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;

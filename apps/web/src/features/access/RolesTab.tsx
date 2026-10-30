@@ -447,7 +447,7 @@ function MembersEditor({ org, groupId, isTeam }: { org: string; groupId: string;
   });
   const memberIds = new Set((members.data?.items ?? []).map((m) => m.identityId));
   const nameOf = (id: string) => identities.data?.items.find((i) => i.id === id)?.name ?? id;
-  const candidates = (identities.data?.items ?? []).filter((i) => !i.disabled && !memberIds.has(i.id));
+  const candidates = (identities.data?.items ?? []).filter((i) => !i.disabled && !i.removedAt && !memberIds.has(i.id));
   return (
     <div data-testid={`members-${groupId}`}>
       <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-subtle">Members</p>

@@ -15,6 +15,7 @@ import {
   Field,
   Input,
   Menu,
+  type MenuItem,
   SectionCard,
   Segmented,
   StatusDot,
@@ -30,6 +31,7 @@ import { useCapability } from "../projects/hooks";
 import { useIdentities } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
+import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
 
 /**
  * People: every human in the organization and the invite flow. Enrollment is
@@ -38,16 +40,63 @@ import { useAccessNames } from "./useAccessNames";
  */
 export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId: string) => void }) {
   const { api, identityId: me } = useSession();
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const toast = useToast();
   const identities = useIdentities(org);
   const grants = useQuery({ queryKey: ["grants", org], queryFn: () => api.listGrants(org) });
-  const { names, roleName } = useAccessNames(org);
+  const orgInfo = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
+  const { names, nameOf, roleName } = useAccessNames(org);
+  const lifecycle = useCapability("members.lifecycle");
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
+  const [removing, setRemoving] = useState<MemberRef | null>(null);
+  const [demoting, setDemoting] = useState<MemberRef | null>(null);
   const now = useNow();
 
-  const people = (identities.data?.items ?? []).filter((i) => i.kind === "human");
+  const humans = (identities.data?.items ?? []).filter((i) => i.kind === "human");
+  // Former members stay listed apart, so history keeps their names (ADR-0052).
+  const people = humans.filter((p) => !p.removedAt);
+  const former = humans.filter((p) => p.removedAt);
+  const myRole = people.find((p) => p.id === me)?.orgRole ?? null;
   const shown = people.filter((p) => matchesFilter(filter, p.name, displayEmail(p.email), p.orgRole));
+  const promote = useMutation({
+    mutationFn: (person: MemberRef) => api.changeMemberRole(org, person.id, "admin"),
+    onSuccess: (_, person) => {
+      toast.success(`${person.name} is now an admin`);
+      void qc.invalidateQueries({ queryKey: ["identities", org] });
+    },
+    onError: (err) => toast.error("Could not change the role", { description: errorMessage(err) }),
+  });
+  const actionsFor = (p: (typeof people)[number]): MenuItem[] => {
+    const ref = { id: p.id, name: p.name };
+    const items: MenuItem[] = [{ label: "Add a grant…", onSelect: () => onGrant(p.id) }];
+    if (!lifecycle) return items;
+    if (myRole === "admin" && p.orgRole === "member") {
+      items.push({
+        label: "Make admin…",
+        "data-testid": `promote-${p.id}`,
+        onSelect: async () => {
+          const ok = await confirm({
+            title: `Make ${p.name} an admin?`,
+            description: `${ROLE_ACCESS.admin.long} Admins can also remove members and change their roles.`,
+            confirmLabel: "Make admin",
+          });
+          if (ok) promote.mutate(ref);
+        },
+      });
+    }
+    if (myRole === "admin" && p.orgRole === "admin") {
+      items.push({ label: "Make member…", "data-testid": `demote-${p.id}`, onSelect: () => setDemoting(ref) });
+    }
+    if (p.id === me) {
+      items.push({ label: "Leave organization…", danger: true, separatorBefore: true, "data-testid": "leave-organization", onSelect: () => setRemoving(ref) });
+    } else if (myRole === "admin") {
+      items.push({ label: "Remove from organization…", danger: true, separatorBefore: true, "data-testid": `remove-${p.id}`, onSelect: () => setRemoving(ref) });
+    }
+    return items;
+  };
   const grantsBySubject = useMemo(() => {
     const map = new Map<string, Grant[]>();
     for (const g of grants.data?.items ?? []) {
@@ -127,10 +176,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
                       </span>
                     </td>
                     <td className={cn(table.td, "text-right")}>
-                      <Menu
-                        label={`Actions for ${p.name}`}
-                        items={[{ label: "Add a grant…", onSelect: () => onGrant(p.id) }]}
-                      >
+                      <Menu label={`Actions for ${p.name}`} items={actionsFor(p)}>
                         <MoreHorizontal size={16} />
                       </Menu>
                     </td>
@@ -150,6 +196,50 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
       </SectionCard>
 
       <PendingInvitations org={org} freshLink={freshLink} onDismissFresh={() => setFreshLink(null)} onReissued={setFreshLink} />
+
+      {former.length > 0 && (
+        <SectionCard
+          title={
+            <span>
+              Former members<span className="font-normal text-muted"> · {former.length}</span>
+            </span>
+          }
+          data-testid="former-members"
+        >
+          <ul>
+            {former.map((p) => (
+              <li key={p.id} data-former={p.name} className="flex items-center gap-3 border-b border-bd px-5 py-3 last:border-b-0">
+                <Avatar name={p.name} image={p.image ?? null} size="md" />
+                <span className="min-w-0 flex-1">
+                  <span className="font-medium">{p.name}</span>
+                  <span className="block text-xs text-muted" title={new Date(p.removedAt as string).toLocaleString()}>
+                    Left {timeAgo(p.removedAt as string, now)}. They reach nothing here; history keeps their name.
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </SectionCard>
+      )}
+
+      <RemoveMemberDialog
+        org={org}
+        orgName={orgInfo.data?.name ?? org}
+        person={removing}
+        self={removing?.id === me}
+        names={names}
+        onClose={() => setRemoving(null)}
+      />
+      <DemoteDialog
+        org={org}
+        person={demoting}
+        self={demoting?.id === me}
+        grants={grants.data?.items ?? []}
+        names={names}
+        nameOf={nameOf}
+        roleName={roleName}
+        onClose={() => setDemoting(null)}
+      />
 
       <InviteDialog
         org={org}

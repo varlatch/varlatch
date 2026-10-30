@@ -88,7 +88,7 @@ export function useOnboarding(org: string, projects: Project[] | undefined): Onb
   const people = identities.data
     ? {
         workload: identities.data.items.some((i) => i.kind !== "human" && !i.disabled),
-        invite: identities.data.items.filter((i) => i.kind === "human").length > 1,
+        invite: identities.data.items.filter((i) => i.kind === "human" && !i.removedAt).length > 1,
       }
     : null;
   // While new checks load (a project or environment just appeared), keep
