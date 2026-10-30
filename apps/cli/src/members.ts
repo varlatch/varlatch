@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { MemberRemoval, MemberReview, OrgIdentity } from "@varlatch/sdk";
+import type { ExposureReport, MemberRemoval, MemberReview, OrgIdentity } from "@varlatch/sdk";
 
 /**
  * `varlatch member` (capability members.lifecycle, ADR-0052): list, remove,
@@ -41,6 +41,95 @@ export function resolveMember(identities: OrgIdentity[], arg: string): OrgIdenti
     );
   }
   throw new MemberError(`${arg} is not a member of this organization (varlatch member list shows who is). Nothing was changed.`);
+}
+
+/**
+ * A current or former member `arg` names, for the exposure report: an
+ * identity ID of a person who has or had a membership here, or the exact
+ * name of exactly one such person.
+ */
+export function resolvePerson(identities: OrgIdentity[], arg: string): OrgIdentity {
+  const people = identities.filter((i) => i.kind === "human" && (Boolean(i.orgRole) || Boolean(i.removedAt)));
+  const byId = identities.find((i) => i.id === arg);
+  if (byId) {
+    if (people.includes(byId)) return byId;
+    throw new MemberError(`${arg} (${byId.name}) is ${byId.kind !== "human" ? `a ${byId.kind} identity` : "not a member"}, never a member of this organization.`);
+  }
+  const named = people.filter((i) => i.name === arg);
+  if (named.length === 1) return named[0]!;
+  if (named.length > 1) {
+    throw new MemberError(`Several people are named ${arg}; name one by its identity ID: ${named.map((i) => i.id).join(", ")}.`);
+  }
+  throw new MemberError(`${arg} is not a current or former member of this organization (varlatch member list shows who is).`);
+}
+
+const WAY_WORDS: Record<string, string> = {
+  revealed: "revealed",
+  delivered: "delivered to a process",
+  export: "read for export",
+  written: "written by them",
+};
+
+/** A version's state, in words. */
+function stateWords(v: ExposureReport["received"][number]): string {
+  const served = v.servedAs === "current" ? "still served (current)" : v.servedAs === "retiring" ? `still served (retiring until ${v.retiringUntil})` : null;
+  const notServed = {
+    replaced: "no longer served (replaced)",
+    "value-deleted": "no longer served (value deleted)",
+    "environment-deleted": "no longer served (environment deleted)",
+    unknown: "unknown here",
+  }[v.notServedBecause ?? "unknown"];
+  const base = served ?? notServed;
+  return v.confirmation ? `revoked at the provider, confirmed ${v.confirmation.confirmedAt}; ${base}` : base;
+}
+
+/**
+ * The report for people: what they received, what they could reach at
+ * removal, what is not covered, and what they set up. `envName` and
+ * `requirementWords` turn IDs into names when known.
+ */
+export function exposureLines(
+  report: ExposureReport,
+  envName: (id: string | null) => string,
+): string[] {
+  const m = report.member;
+  const lines = [
+    `Exposure report for ${m.name} (${m.removedAt ? `former member, removed ${m.removedAt}` : `${m.role ?? "no role"}`}).`,
+  ];
+  if (!report.coverage.complete) {
+    lines.push(
+      `Older history is still being indexed: events from ${report.coverage.from ?? "?"} to ${report.coverage.to ?? "?"} are not covered yet.`,
+    );
+  }
+  lines.push("", "Received (observed in the audit log; a delivery is not proof that a copy was kept):");
+  if (report.received.length === 0) lines.push("  nothing");
+  for (const v of report.received) {
+    lines.push(`  ${v.itemName}  ${v.versionId}  in ${envName(v.owningEnvironmentId)}: ${stateWords(v)}`);
+    for (const r of v.receipts) {
+      const through = r.environmentId !== v.owningEnvironmentId ? ` through ${envName(r.environmentId)}` : "";
+      lines.push(`    ${WAY_WORDS[r.way] ?? r.way}${through}, ${r.firstAt === r.lastAt ? r.firstAt : `${r.firstAt} to ${r.lastAt}`}`);
+    }
+    if (v.rotationHint && v.served) lines.push(`    to rotate: ${v.rotationHint}`);
+  }
+  if (report.received.some((v) => !v.served && !v.confirmation)) {
+    lines.push("  No longer served is not safe: replacing a value in Varlatch does not revoke the old credential at its provider.");
+  }
+  const authority = report.authorityAtRemoval;
+  if (authority) {
+    lines.push("", `Could reach when removed (${authority.removedAt}):`);
+    if (authority.environments.length === 0) lines.push("  nothing");
+    for (const e of authority.environments) {
+      const condition = e.conditionalOn.length === 0 ? "unconditional" : `conditional on Tailnet Requirement ${e.conditionalOn.join(", ")}`;
+      lines.push(`  ${envName(e.environmentId)}: ${e.actions.map((a) => a.action).join(", ")} (reading values ${condition})`);
+    }
+  }
+  lines.push(
+    "",
+    "Not covered: what they could reach before removal and no longer could then, and values that reached a broker, an agent or a platform; those are listed below as indirect paths.",
+  );
+  const review = reviewLines(report.indirect);
+  lines.push("", review.length === 0 ? "Indirect paths: none." : "Indirect paths (what they set up; not evidence that they held a value):", ...review);
+  return lines;
 }
 
 /** `word` as one shell word, quoted only when it needs to be, for a command a human copies. */

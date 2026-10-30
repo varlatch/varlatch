@@ -32,6 +32,7 @@ import { useIdentities } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
 import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
+import { ExposureDialog } from "./ExposureDialog";
 
 /**
  * People: every human in the organization and the invite flow. Enrollment is
@@ -53,6 +54,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
   const [removing, setRemoving] = useState<MemberRef | null>(null);
   const [demoting, setDemoting] = useState<MemberRef | null>(null);
+  const [exposing, setExposing] = useState<MemberRef | null>(null);
   const now = useNow();
 
   const humans = (identities.data?.items ?? []).filter((i) => i.kind === "human");
@@ -89,6 +91,9 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
     }
     if (myRole === "admin" && p.orgRole === "admin") {
       items.push({ label: "Make member…", "data-testid": `demote-${p.id}`, onSelect: () => setDemoting(ref) });
+    }
+    if (myRole === "admin") {
+      items.push({ label: "What they received…", "data-testid": `exposure-${p.id}`, onSelect: () => setExposing(ref) });
     }
     if (p.id === me) {
       items.push({ label: "Leave organization…", danger: true, separatorBefore: true, "data-testid": "leave-organization", onSelect: () => setRemoving(ref) });
@@ -216,6 +221,11 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
                     Left {timeAgo(p.removedAt as string, now)}. They reach nothing here; history keeps their name.
                   </span>
                 </span>
+                {lifecycle && myRole === "admin" && (
+                  <Button size="sm" variant="secondary" data-testid={`exposure-${p.id}`} onClick={() => setExposing({ id: p.id, name: p.name })}>
+                    What they received
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -230,6 +240,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
         names={names}
         onClose={() => setRemoving(null)}
       />
+      <ExposureDialog org={org} person={exposing} names={names} onClose={() => setExposing(null)} />
       <DemoteDialog
         org={org}
         person={demoting}

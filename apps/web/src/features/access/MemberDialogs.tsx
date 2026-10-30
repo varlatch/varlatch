@@ -175,7 +175,9 @@ export function RemoveMemberDialog({
         toast.success(`You left ${orgName}`);
         return;
       }
-      toast.success(`Removed ${person?.name ?? "them"} from ${orgName}`);
+      toast.success(`Removed ${person?.name ?? "them"} from ${orgName}`, {
+        description: "Their exposure report, under Former members, lists what they received and which values Varlatch still serves.",
+      });
       for (const key of ["identities", "grants", "groups", "teams", "invitations"]) {
         void qc.invalidateQueries({ queryKey: [key, org] });
       }

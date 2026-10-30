@@ -115,7 +115,11 @@ fixes.
   operator confirms that separately, version by version. Reading the report
   needs `audit.read`. The audit history recorded before this release is
   indexed in the background after the upgrade; until it is done, the
-  report names the period it does not cover yet.
+  report names the period it does not cover yet. In the dashboard, an
+  admin opens it from a person's menu or from Former members, as a
+  checklist: Rotate for each version still served, Revoked at provider to
+  record the confirmation, and Revoke for a machine credential that still
+  works.
 
 ### CLI
 
@@ -126,6 +130,9 @@ fixes.
   admin|member` changes a role. A member is named by identity ID or by
   name. Removing and leaving always need `--confirm`; in assisted mode the
   refusal gives the human's command, as for `values delete`.
+  `varlatch member exposure <member> [--json]` prints a current or former
+  member's exposure report (with `--json`, one record per line); it is
+  read-only and never shows a value.
 - **`varlatch values list` shows rotations in progress.** With `--json`,
   each item has `rotating`: `true` while a dual-phase rotation keeps its
   previous value working. Without `--json`, the list is unchanged, and
