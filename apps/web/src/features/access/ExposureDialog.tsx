@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ExposureReport } from "@varlatch/protocol";
+import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { Badge, Button, Callout } from "../../components/ui";
 import { Dialog, useConfirm } from "../../components/Dialog";
@@ -56,6 +57,21 @@ export function requirementWords(r: Requirement, envLabel: (id: string) => strin
   const target = r.target as { kind?: string; tier?: string; environmentIds?: string[] } | null;
   const on = target?.kind === "tier" ? `the ${target.tier} tier` : target?.kind === "environments" ? (target.environmentIds ?? []).map(envLabel).join(", ") : "its target";
   return `a device in ${selector.tailnet ?? "a tailnet"}${by.length ? ` with ${by.join(" or ")}` : ""} (Requirement on ${on}, as defined at removal)`;
+}
+
+/**
+ * Whether the viewer may read exposure reports: they need audit.read,
+ * whatever their role (Decision 6). Asked by reading one audit event; a
+ * refusal means no, any other failure is an error.
+ */
+export async function canReadAudit(api: Pick<VarlatchClient, "listAuditEvents">, org: string): Promise<boolean> {
+  try {
+    await api.listAuditEvents(org, { limit: 1 });
+    return true;
+  } catch (err) {
+    if (err instanceof VarlatchApiError && (err.status === 403 || err.status === 404)) return false;
+    throw err;
+  }
 }
 
 /** When a version was first received, through any environment and in any way. */

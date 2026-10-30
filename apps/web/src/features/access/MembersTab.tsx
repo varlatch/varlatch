@@ -32,7 +32,7 @@ import { useIdentities } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
 import { DemoteDialog, RemoveMemberDialog, type MemberRef } from "./MemberDialogs";
-import { ExposureDialog } from "./ExposureDialog";
+import { ExposureDialog, canReadAudit } from "./ExposureDialog";
 
 /**
  * People: every human in the organization and the invite flow. Enrollment is
@@ -49,6 +49,14 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
   const orgInfo = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   const { names, nameOf, roleName } = useAccessNames(org);
   const lifecycle = useCapability("members.lifecycle");
+  // Exposure reports follow audit.read, not the admin role (ADR-0052 Decision 6).
+  const auditAccess = useQuery({
+    queryKey: ["audit-access", org],
+    queryFn: () => canReadAudit(api, org),
+    enabled: lifecycle,
+    staleTime: 60_000,
+  });
+  const reports = lifecycle && auditAccess.data === true;
   const [filter, setFilter] = useState("");
   const [inviting, setInviting] = useState(false);
   const [freshLink, setFreshLink] = useState<{ name: string; url: string } | null>(null);
@@ -92,7 +100,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
     if (myRole === "admin" && p.orgRole === "admin") {
       items.push({ label: "Make member…", "data-testid": `demote-${p.id}`, onSelect: () => setDemoting(ref) });
     }
-    if (myRole === "admin") {
+    if (reports) {
       items.push({ label: "What they received…", "data-testid": `exposure-${p.id}`, onSelect: () => setExposing(ref) });
     }
     if (p.id === me) {
@@ -221,7 +229,7 @@ export function MembersTab({ org, onGrant }: { org: string; onGrant: (identityId
                     Left {timeAgo(p.removedAt as string, now)}. They reach nothing here; history keeps their name.
                   </span>
                 </span>
-                {lifecycle && myRole === "admin" && (
+                {reports && (
                   <Button size="sm" variant="secondary" data-testid={`exposure-${p.id}`} onClick={() => setExposing({ id: p.id, name: p.name })}>
                     What they received
                   </Button>

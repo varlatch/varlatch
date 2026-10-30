@@ -36,7 +36,8 @@ vi.mock("../src/components/Dialog", () => ({
   },
 }));
 
-import { ExposureDialog, firstReceived, openItems, versionState } from "../src/features/access/ExposureDialog";
+import { VarlatchApiError } from "@varlatch/sdk";
+import { ExposureDialog, canReadAudit, firstReceived, openItems, versionState } from "../src/features/access/ExposureDialog";
 import type { Names } from "../src/features/access/model";
 
 const names: Names = {
@@ -150,6 +151,22 @@ describe("version states", () => {
       ],
     });
     expect(firstReceived(v)).toBe(new Date("2026-09-01T10:00:00.000Z").toLocaleString());
+  });
+});
+
+describe("who may open reports", () => {
+  it("anyone who may read the audit log, whatever their role; a refusal is no, other failures are errors", async () => {
+    const allowed = { listAuditEvents: vi.fn(async () => ({ items: [], nextCursor: null })) };
+    expect(await canReadAudit(allowed as never, "acme")).toBe(true);
+    expect(allowed.listAuditEvents).toHaveBeenCalledWith("acme", { limit: 1 });
+    const refused = (status: number, code: string) => ({
+      listAuditEvents: vi.fn(async () => {
+        throw new VarlatchApiError(status, { code: code as never, message: "no", requestId: "req_1" });
+      }),
+    });
+    expect(await canReadAudit(refused(403, "PERMISSION_DENIED") as never, "acme")).toBe(false);
+    expect(await canReadAudit(refused(404, "RESOURCE_NOT_FOUND") as never, "acme")).toBe(false);
+    await expect(canReadAudit(refused(500, "INTERNAL") as never, "acme")).rejects.toBeInstanceOf(VarlatchApiError);
   });
 });
 
