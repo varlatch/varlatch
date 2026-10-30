@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.20.0)
+## 0.20.0 (2026-10-30)
 
 ### Integrations
 
@@ -305,6 +305,9 @@ An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it
 in `varlatch types`. Upgrade the server and every CLI that generates types
 before adding a hint.
+
+Backups: archives of 0.19.1 and earlier still restore into this release.
+From 0.18.1 or 0.19.0, read the 0.19.0 and 0.19.1 notes below as well.
 
 ## 0.19.1 (2026-10-29)
 
