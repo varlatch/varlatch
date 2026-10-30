@@ -773,13 +773,18 @@ export async function revokeConnection(
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
     // Revoking a Connection disables every referencing Target (ADR-0031 §1).
-    // They keep their destination claims: paused, not gone.
+    // They keep their destination claims: paused, not gone. Locked in
+    // ascending ID order first, as every other transaction takes them.
+    const referencing = await db.query(
+      "SELECT id FROM sync_targets WHERE connection_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE",
+      [connectionId],
+    );
     const disabled = await db.query(
       `UPDATE sync_targets
        SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
            version = version + 1, updated_at = now()
-       WHERE connection_id = $1 AND revoked_at IS NULL RETURNING id`,
-      [connectionId],
+       WHERE id = ANY($1) AND revoked_at IS NULL RETURNING id`,
+      [(referencing.rows as { id: string }[]).map((r) => r.id)],
     );
     await recordAuditEvent(db, {
       eventType: "sync.connection_revoked",

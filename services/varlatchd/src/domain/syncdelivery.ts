@@ -137,15 +137,25 @@ export async function scanSyncTriggers(ctx: AppCtx): Promise<void> {
   }
   if (environmentIds.size > 0 || projectIds.size > 0) {
     // A write in a root parent triggers Targets of derived children (§6).
-    await ctx.db.query(
-      `UPDATE sync_targets SET needs_sync = true
-       WHERE revoked_at IS NULL AND NOT needs_sync AND (
-         environment_id = ANY($1)
-         OR environment_id IN (SELECT id FROM environments WHERE parent_environment_id = ANY($1))
-         OR project_id = ANY($2)
-       )`,
-      [[...environmentIds], [...projectIds]],
-    );
+    // The Targets are locked in ascending ID order first, as every other
+    // transaction locks them (ADR-0051): a bulk UPDATE would lock them in
+    // physical order and could deadlock with a Project's deletion.
+    await withTx(ctx.db, async (db) => {
+      const due = await db.query(
+        `SELECT id FROM sync_targets
+         WHERE revoked_at IS NULL AND NOT needs_sync AND (
+           environment_id = ANY($1)
+           OR environment_id IN (SELECT id FROM environments WHERE parent_environment_id = ANY($1))
+           OR project_id = ANY($2)
+         )
+         ORDER BY id FOR UPDATE`,
+        [[...environmentIds], [...projectIds]],
+      );
+      const ids = (due.rows as { id: string }[]).map((r) => r.id);
+      if (ids.length > 0) {
+        await db.query("UPDATE sync_targets SET needs_sync = true WHERE id = ANY($1) AND revoked_at IS NULL", [ids]);
+      }
+    });
   }
   const last = rows[rows.length - 1] as { id: string; occurred_at: string; event_order: string };
   await ctx.db.query(
@@ -850,7 +860,8 @@ async function decryptForSync(
   valueRowId: string,
   versionId: string,
 ): Promise<string> {
-  const res = await ctx.db.query("SELECT payload, wrapped_dek FROM value_versions WHERE id = $1", [versionId]);
+  // An erased version (ADR-0051) is never decrypted: it fails closed as missing.
+  const res = await ctx.db.query("SELECT payload, wrapped_dek FROM value_versions WHERE id = $1 AND erased_at IS NULL", [versionId]);
   const version = res.rows[0] as { payload: string; wrapped_dek: string } | undefined;
   if (!version) throw new DomainError("INTERNAL", "Missing value version");
   return decryptValue(orgKekOf(ctx, org), org.id, valueRowId, versionId, {
