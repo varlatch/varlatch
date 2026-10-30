@@ -639,6 +639,7 @@ export function ValuesGrid() {
           project={slug}
           env={rotating.env.name}
           defaultGraceSeconds={contract.byName.get(rotating.item)?.rotationGraceSeconds}
+          rotationHint={contract.byName.get(rotating.item)?.rotationHint}
           targets={(targetsByEnv.get(rotating.env.id) ?? [])
             .filter((t) => t.state === "active" && targetCoversItem(t, rotating.item))
             .map((t) => targetLabel(t, connections.data?.items))}

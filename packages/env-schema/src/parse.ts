@@ -12,6 +12,8 @@
  *                     @type=string|number|integer|boolean|url|email|enum(a,b,...)
  *                     (integer needs Contract Semantics version 3)
  *                     @example=... / @example="..."
+ *                     @rotationGrace=<seconds>   1 to 2592000, once per item
+ *                     @rotationHint=... / @rotationHint="..."   one line, once per item
  *   Items:            NAME=            (no default)
  *                     NAME=literal     (defaultValue)
  *                     NAME=fn(...)     (dynamic resolver; no defaultValue)
@@ -23,7 +25,7 @@
  * never discarded, never approximated.
  */
 
-import { TIERS, type Tier } from "@varlatch/contract";
+import { TIERS, rotationHintProblem, type Tier } from "@varlatch/contract";
 
 export type DraftRequired =
   | { kind: "always" }
@@ -41,6 +43,8 @@ export interface DraftItem {
   defaultValue?: string;
   description?: string;
   example?: string;
+  rotationGraceSeconds?: number;
+  rotationHint?: string;
 }
 
 export interface ContractDraft {
@@ -280,6 +284,29 @@ function buildItem(
       case "example":
         item.example = stripQuotes(d.value ?? "");
         break;
+      case "rotationGrace": {
+        // One physical line each, and never twice (ADR-0053).
+        if (item.rotationGraceSeconds !== undefined) {
+          throw new EnvSchemaParseError(d.line, "@rotationGrace appears twice for this item");
+        }
+        const v = stripQuotes(d.value ?? "");
+        const seconds = /^[0-9]+$/.test(v) ? Number(v) : Number.NaN;
+        if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 2_592_000) {
+          throw new EnvSchemaParseError(d.line, "@rotationGrace takes whole seconds from 1 to 2592000 (30 days)");
+        }
+        item.rotationGraceSeconds = seconds;
+        break;
+      }
+      case "rotationHint": {
+        if (item.rotationHint !== undefined) {
+          throw new EnvSchemaParseError(d.line, "@rotationHint appears twice for this item");
+        }
+        const hint = stripQuotes(d.value ?? "");
+        const problem = rotationHintProblem(hint);
+        if (problem) throw new EnvSchemaParseError(d.line, `@rotationHint: ${problem}`);
+        item.rotationHint = hint;
+        break;
+      }
       case "docs":
       case "icon":
       case "tag":

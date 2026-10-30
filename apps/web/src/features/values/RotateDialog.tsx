@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Dices, Eye, EyeOff, Lock, RefreshCw } from "lucide-react";
 import { Dialog } from "../../components/Dialog";
-import { Button, Field, Input, Segmented, Select, cn } from "../../components/ui";
+import { Button, Callout, Field, Input, Segmented, Select, cn } from "../../components/ui";
 import { errorMessage } from "../../shell/Shell";
 import { generateSecret, listNames } from "./model";
 
@@ -29,6 +29,7 @@ export function RotateDialog({
   env,
   targets,
   defaultGraceSeconds,
+  rotationHint,
   onClose,
   onRotate,
 }: {
@@ -39,6 +40,8 @@ export function RotateDialog({
   /** Labels of the integrations that carry this item. */
   targets: string[];
   defaultGraceSeconds?: number | undefined;
+  /** The Contract's note on how to rotate this credential, shown before rotating. */
+  rotationHint?: string | undefined;
   onClose: () => void;
   /** Throws to keep the dialog open with the error shown. */
   onRotate: (value: string, graceSeconds: number) => Promise<void>;
@@ -151,6 +154,11 @@ export function RotateDialog({
         <p className="text-[13px] text-muted">
           Consumers switch over without an outage. Revoke the old credential upstream after finishing.
         </p>
+        {rotationHint && (
+          <Callout tone="info" icon={<RefreshCw size={15} />} data-testid="rotate-hint" title="How to rotate this credential">
+            {rotationHint}
+          </Callout>
+        )}
 
         <Field label="New value" htmlFor="rotate-value">
           <div className="flex gap-2">

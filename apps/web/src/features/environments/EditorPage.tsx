@@ -583,6 +583,7 @@ export function EditorPage() {
           project={slug}
           env={envName}
           defaultGraceSeconds={contract.byName.get(rotateItem)?.rotationGraceSeconds}
+          rotationHint={contract.byName.get(rotateItem)?.rotationHint}
           targets={targetsFor([rotateItem])}
           onClose={() => setRotateItem(null)}
           onRotate={async (value, graceSeconds) => {

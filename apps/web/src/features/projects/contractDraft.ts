@@ -21,6 +21,9 @@ export type ContractItem = {
   enumValues?: string[] | undefined;
   defaultValue?: string | undefined;
   description?: string | undefined;
+  rotationGraceSeconds?: number | undefined;
+  /** How to rotate this credential (ADR-0053). */
+  rotationHint?: string | undefined;
   /** Fields the editor does not show travel through unchanged. */
   [key: string]: unknown;
 };

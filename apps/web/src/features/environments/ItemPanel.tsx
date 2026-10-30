@@ -217,6 +217,11 @@ export function ItemPanelBody({
                 <span>{rotationDeadline ? `Grace ends ${timeUntil(rotationDeadline, now)}` : "Grace window open"}</span>
               </div>
               <p className="text-[13px] text-fg/90">Old and new values both work until you finish or the grace window ends.</p>
+              {contract?.rotationHint && (
+                <p className="text-xs text-muted" data-testid="panel-rotation-hint">
+                  How to rotate: <span className="text-fg/90">{contract.rotationHint}</span>
+                </p>
+              )}
               {disclosed?.retiring !== undefined && (
                 <p className="text-xs text-muted">
                   Previous value: <span className="font-mono text-fg/90">{disclosed.retiring}</span>
@@ -234,7 +239,14 @@ export function ItemPanelBody({
             </div>
           ) : (
             <div className="flex items-center justify-between gap-3">
-              <p className="text-[13px] text-muted">Replace the value with an overlap window so consumers switch without an outage.</p>
+              <div className="space-y-1">
+                <p className="text-[13px] text-muted">Replace the value with an overlap window so consumers switch without an outage.</p>
+                {contract?.rotationHint && (
+                  <p className="text-xs text-muted" data-testid="panel-rotation-hint">
+                    How to rotate: <span className="text-fg/90">{contract.rotationHint}</span>
+                  </p>
+                )}
+              </div>
               <Button
                 size="sm"
                 icon={<RefreshCw size={13} />}

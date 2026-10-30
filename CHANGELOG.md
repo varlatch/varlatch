@@ -7,6 +7,22 @@ fixes.
 
 ## Unreleased (0.20.0)
 
+### Contracts
+
+- **Rotation hints.** A Contract item can say how its credential is
+  rotated, in a sentence or two: `rotationHint` in a JSON Contract, or
+  `@rotationHint=...` in `.env.schema`. The dashboard shows it in the
+  rotate dialog, the item panel and the Contract page. `varlatch values
+  rotate` prints it on stderr before it asks for the new value, and again
+  after. It never appears in generated types. A hint is one paragraph of
+  1 to 1024 characters: tabs, line breaks, control characters and
+  bidirectional formatting characters are refused rather than removed.
+  Every Member can read the Contract, so a hint must never contain a
+  secret.
+- **`@rotationGrace=<seconds>` in `.env.schema`** sets an item's default
+  rotation grace window, which until now only a JSON Contract could set.
+  Each rotation decorator may appear once per item.
+
 ### Fixes
 
 - **The dashboard's `.env` download no longer writes values that tools
@@ -26,6 +42,13 @@ fixes.
   after it, since their values are only known once disclosed. Pasting a
   downloaded file into the dashboard, or `varlatch import`, reads the same
   values back.
+
+### Upgrading
+
+An item with a rotation hint needs this release on both sides: older
+servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it
+in `varlatch types`. Upgrade the server and every CLI that generates types
+before adding a hint.
 
 ## 0.19.1 (2026-10-29)
 

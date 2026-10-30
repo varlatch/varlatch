@@ -88,6 +88,8 @@ export function resolveDraft(
     if (item.defaultValue !== undefined) resolved.defaultValue = item.defaultValue;
     if (item.description !== undefined) resolved.description = item.description;
     if (item.example !== undefined) resolved.example = item.example;
+    if (item.rotationGraceSeconds !== undefined) resolved.rotationGraceSeconds = item.rotationGraceSeconds;
+    if (item.rotationHint !== undefined) resolved.rotationHint = item.rotationHint;
     return resolved;
   });
   if (unknown.size > 0 || derived.size > 0) {

@@ -51,7 +51,7 @@ let noActiveContract = false;
 let failPut: Set<string>;
 
 const CONTRACT = [
-  contractItem("API_TOKEN", { sensitive: true }),
+  contractItem("API_TOKEN", { sensitive: true, rotationHint: "Issue a new token at the provider, then revoke the old one." }),
   contractItem("LEGACY_KEY", { sensitive: true }), // in the Contract, never stored
   contractItem("PIN", { sensitive: true }),
   contractItem("PORT"),
@@ -924,6 +924,17 @@ describe("values set and values rotate: Secret input", () => {
     const refused = await cli(["--assisted", "values", "rotate", "API_TOKEN", "--replace", "API_TOKEN", "argv-rotated-9"]);
     expect(refused.code).toBe(64);
     expect(refused.stderr).toMatch(/values rotate API_TOKEN -e development --generate hex:32/);
+  });
+
+  it("values rotate shows the Contract's rotation hint before and after, on stderr (ADR-0053)", async () => {
+    const r = await cli(["values", "rotate", "API_TOKEN", "--stdin"], { input: "rotated-value-404\n" });
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("How to rotate API_TOKEN (from the Contract): Issue a new token at the provider, then revoke the old one.");
+    expect(r.stderr).toContain("Remaining steps for API_TOKEN (from the Contract): Issue a new token at the provider, then revoke the old one.");
+    expect(r.stdout).not.toContain("Issue a new token");
+    // values set never shows it.
+    const set = await cli(["values", "set", "API_TOKEN", "--stdin"], { input: "set-value-405\n" });
+    expect(set.stderr).not.toContain("Issue a new token");
   });
 
   it("with no value: assisted mode never prompts; otherwise a non-terminal is told how to give one", async () => {

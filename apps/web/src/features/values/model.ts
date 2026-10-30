@@ -16,6 +16,8 @@ export interface ContractItemMeta {
   defaultValue?: string | undefined;
   description?: string | undefined;
   rotationGraceSeconds?: number | undefined;
+  /** How to rotate this credential (ADR-0053): shown where rotation happens. */
+  rotationHint?: string | undefined;
 }
 
 /** One effective item as the server returned it (metadata, plus non-sensitive plaintext when readable). */

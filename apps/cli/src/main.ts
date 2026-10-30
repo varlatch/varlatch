@@ -46,7 +46,7 @@ import {
   type GenerateSpec,
   type ValueSource,
 } from "./secretInput.js";
-import { CONFIG_ITEM_NAME_PATTERN, type ConfigurationContract } from "@varlatch/contract";
+import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContract } from "@varlatch/contract";
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
@@ -509,6 +509,23 @@ async function valuePresence(api: VarlatchClient, ctx: ResolvedContext, item: st
  * every item of a project without one, are (ADR-0012). A caller that cannot
  * read the Contract treats the item as a Secret, the safe classification.
  */
+/**
+ * The item's rotation hint from the active Contract (ADR-0053), or
+ * undefined. Any failure, a refused Contract read included, only means no
+ * hint: rotation goes ahead. A hint that would not pass validation is not
+ * printed, so a server cannot put control characters on the terminal.
+ */
+async function rotationHintOf(api: VarlatchClient, ctx: ResolvedContext, item: string): Promise<string | undefined> {
+  try {
+    const revision = await api.getActiveContract(ctx.organization, ctx.project);
+    const contract = revision.contract as unknown as { items?: { name: string; rotationHint?: unknown }[] };
+    const hint = contract.items?.find((i) => i.name === item)?.rotationHint;
+    return typeof hint === "string" && rotationHintProblem(hint) === null ? hint : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function sensitiveItem(api: VarlatchClient, ctx: ResolvedContext, item: string): Promise<boolean> {
   try {
     const revision = await api.getActiveContract(ctx.organization, ctx.project);
@@ -1526,6 +1543,10 @@ async function main(): Promise<void> {
               );
             }
           }
+          // How to rotate this credential, from the Contract: before the value is
+          // asked for or sent (the steps may come first) and again after.
+          const hint = sub === "rotate" ? await rotationHintOf(api, ctx, item) : undefined;
+          if (hint !== undefined) console.error(`How to rotate ${item} (from the Contract): ${hint}`);
           const obtained = await obtainValue(source, item);
           // An unpaired UTF-16 surrogate (possible in a Windows command line) has no exact UTF-8 form.
           if (!isWellFormedText(obtained.value)) fail("varlatch: the value is not well-formed Unicode text; nothing was stored.");
@@ -1542,6 +1563,7 @@ async function main(): Promise<void> {
           console.log(
             `${item} rotating${how} — new primary ${rot.primaryVersionId}, previous value valid until ${rot.rotationDeadline}. Run "varlatch values rotate-complete ${item}" once consumers have migrated.`,
           );
+          if (hint !== undefined) console.error(`Remaining steps for ${item} (from the Contract): ${hint}`);
           return;
         }
         if (sub === "delete") {

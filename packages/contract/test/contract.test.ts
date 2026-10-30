@@ -277,6 +277,19 @@ describe("diffContracts", () => {
     expect(d.securityRelevant).toBe(false);
   });
 
+  it("treats rotation hint edits as cosmetic, though the hash changes", () => {
+    const to = normalizeContract({
+      ...sample,
+      items: sample.items.map((i) =>
+        i.name === "DATABASE_URL" ? { ...i, rotationHint: "Change the password in the database, then set it here." } : i,
+      ),
+    });
+    const d = diffContracts(from, to);
+    expect(d.otherChanged).toEqual(["DATABASE_URL"]);
+    expect(d.securityRelevant).toBe(false);
+    expect(contractHash(to)).not.toBe(contractHash(from));
+  });
+
   it("flags requiredness/applicability changes as security-relevant", () => {
     const to = normalizeContract({
       ...sample,
@@ -329,6 +342,29 @@ describe("the integer type (ADR-0042)", () => {
     const ratio = { ...port, name: "RATIO", type: "number" };
     for (const semanticsVersion of [1, 2, 3]) {
       expect(normalizeContract({ schemaVersion: 1, semanticsVersion, items: [ratio] }).items[0]?.type).toBe("number");
+    }
+  });
+});
+
+describe("rotation hints (ADR-0053)", () => {
+  const withHint = (rotationHint: string) => ({
+    schemaVersion: 1,
+    items: [{ name: "ADMIN_KEY", required: { kind: "always" }, sensitive: true, type: "string", rotationHint }],
+  });
+
+  it("keeps a one-paragraph hint as written", () => {
+    const hint = "Derived from the instance secret: change it on the host, restart, then set the new key here.";
+    expect(normalizeContract(withHint(hint)).items[0]?.rotationHint).toBe(hint);
+  });
+
+  it("counts characters as code points, up to 1024", () => {
+    expect(() => normalizeContract(withHint("🔑".repeat(1024)))).not.toThrow();
+    expect(() => normalizeContract(withHint("🔑".repeat(1025)))).toThrow(ContractValidationError);
+  });
+
+  it("rejects an empty hint and every character that would break a paragraph or hide text", () => {
+    for (const bad of ["", "a\tb", "a\nb", "a\rb", "a\u0085b", "a\u2028b", "a\u2029b", "a\u0000b", "a\u007fb", "a\u009bb", "a\u202eb", "a\u2066b", "a\u200eb", "a\u061cb"]) {
+      expect(() => normalizeContract(withHint(bad)), JSON.stringify(bad)).toThrow(ContractValidationError);
     }
   });
 });

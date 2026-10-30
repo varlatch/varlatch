@@ -48,6 +48,18 @@ Item decorators, on comment lines directly above an item, one per line:
 | `@type=string`, `number`, `integer`, `boolean`, `url`, or `email` | type (`integer` needs Contract Semantics version 3; see [Contract Semantics](contract-semantics.md#integers-in-version-3)) |
 | `@type=enum(a, b, ...)` | enum type with these values |
 | `@example=...` | example (quotes stripped) |
+| `@rotationGrace=86400` | default grace window for a rotation, in whole seconds from 1 to 2592000 (30 days); at most once per item |
+| `@rotationHint=...` | how to rotate this credential, shown where rotation happens (quotes stripped); at most once per item |
+
+A rotation hint is one line: comment lines after it are still the item's
+description. It holds 1 to 1024 characters, without tabs, line breaks,
+control characters or bidirectional formatting characters, which are
+rejected rather than removed. Every Member can read the Contract, so a
+hint must never contain a secret: write the steps, not the credential.
+It never appears in generated types. An item that uses `@rotationHint`
+needs Varlatch 0.20.0 or later on the server and in the CLI: older
+servers refuse such a Contract, and older CLIs refuse it in
+`varlatch types`.
 
 What each type accepts, and which version of the rules a pushed revision
 uses, is described in [Contract Semantics](contract-semantics.md).
