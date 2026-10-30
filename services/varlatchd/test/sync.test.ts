@@ -588,6 +588,46 @@ describe("convergence", () => {
     expect((await state(otherFailure.id)).state).toBe("disabled");
   });
 
+  it("a run still using the replaced credential can neither restore its failures nor stop the Target (#57)", async () => {
+    const coolify = fakeCoolify();
+    const { connection, target } = await activeTarget();
+    // Nine failures with the old credential: one more would stop the Target.
+    await ctx.db.query(
+      "UPDATE sync_targets SET failure_count = 9, last_result = 'AdapterError: Coolify env update failed (401)', needs_sync = true, next_attempt_at = NULL WHERE id = $1",
+      [target.id],
+    );
+    const before = Number((await targetRowFromDb()).generation);
+    // The run's first write waits on the wire while the credential is
+    // replaced, then the platform refuses the old credential.
+    let reached!: () => void;
+    let release!: () => void;
+    const arrived = new Promise<void>((r) => (reached = r));
+    const held = new Promise<void>((r) => (release = r));
+    let first = true;
+    const fetchImpl = (async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      if (first && init?.method && init.method !== "GET") {
+        first = false;
+        reached();
+        await held;
+        return new Response(JSON.stringify({ message: "Unauthenticated." }), { status: 401 });
+      }
+      return coolify.fetchImpl(url, init);
+    }) as typeof fetch;
+    const running = runSyncOnce(ctx, { fetchImpl });
+    await arrived;
+    const replaced = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, { credential: "coolify-token-456", expectedVersion: connection.version });
+    expect(replaced.status).toBe(200);
+    release();
+    await running;
+    const row = await targetRowFromDb();
+    expect(row).toMatchObject({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true, next_attempt_at: null });
+    expect(Number(row.generation)).toBeGreaterThan(before);
+    expect((await ctx.db.query("SELECT 1 FROM audit_events WHERE event_type = 'sync.target_disabled'")).rows).toHaveLength(0);
+    // The next run uses the new credential and converges.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await targetRowFromDb()).last_result).toBe("ok");
+  });
+
   it("a failed push retries automatically once its backoff expires", async () => {
     const coolify = fakeCoolify();
     await activeTarget();
