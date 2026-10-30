@@ -291,3 +291,49 @@ Where the data lives:
 
 Keep every volume through restarts and upgrades. Docker names them after
 the Compose project, `varlatch`: for example `varlatch_postgres-data`.
+
+### Deleting an organization
+
+Deleting an organization runs as one database transaction when its waiting
+period ends: it erases every value version, ends every membership and
+revokes everything the organization holds. Measured 2026-10-30 with
+`scripts/measure-org-deletion.mjs`, on the host above (local NVMe disk):
+
+- PostgreSQL 17.6 limited to 2 CPUs and 4 GB.
+- The deleted organization: 20 projects of 5 environments, every item with
+  5 versions, 25 people, 10 machine identities, 10 integrations and 2
+  webhooks.
+- Meanwhile, one client wrote a value in another organization, each write
+  audited, pausing 250 ms after each one.
+- Lock waits were sampled from PostgreSQL every 20 ms during the deletion;
+  a shorter wait can go unseen.
+
+| Value versions | Database | Deletion | Other writes p50 / p95 / max, before | … during the deletion | Failed writes | Lock waits sampled |
+|---|---|---|---|---|---|---|
+| 100,000 | 73 MB | 2.2 s | 15 / 16 / 17 ms | 16 / 28 / 28 ms | 0 | 0 |
+| 1,000,000 | 636 MB | 34.1 s | 13 / 14 / 17 ms | 27 / 108 / 1,508 ms | 0 | 0 |
+
+What this means:
+
+- **Deletion time grows with the organization's value versions**: about
+  35 seconds per million on this budget. Three runs at a million took 31 to
+  39 seconds. Organizations of up to about a million value versions are
+  supported; a larger one is deleted too, but its one transaction takes
+  longer and writes more to PostgreSQL's write-ahead log.
+- **Other organizations keep working.** No write in another organization
+  failed, and no lock wait was seen in sampling: the deletion records its
+  audit events, which take the installation-wide audit order, only at its
+  end. A diagnostic run that sampled every wait saw the other writes wait
+  on the disk instead, on write-ahead log flushes while the erasure fills
+  the log, and while a checkpoint writes out changed pages. So a few writes
+  took longer: the slowest in each of three runs at a million took 0.8 to
+  3.8 seconds.
+- **Plan for the write-ahead log**: the erasure rewrites every version, and
+  PostgreSQL logs each change. Replicas, and backups that keep write-ahead
+  log segments, hold that log for a while.
+
+To measure your own hardware:
+`MEASURE_VERSIONS=100000,1000000 node scripts/measure-org-deletion.mjs`
+after `pnpm build`. It runs varlatchd's code against a throwaway PostgreSQL
+container, which it removes at the end. See the script's header for the
+shape and the load it applies.

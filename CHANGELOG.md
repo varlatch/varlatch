@@ -280,6 +280,14 @@ fixes.
 - A Grant for a person who is not a live member of the Organization, or for
   a machine of another Organization, is refused with `RESOURCE_NOT_FOUND`.
 
+### Documentation
+
+- The host requirements state how long deleting an organization takes,
+  measured at 100,000 and 1,000,000 value versions on a 2-CPU database, and
+  what it does to other organizations meanwhile: no write failed and no
+  lock wait was seen in sampling; some writes waited on the disk.
+  `scripts/measure-org-deletion.mjs` measures your own hardware.
+
 ### Upgrading
 
 Database schema: migration 32 adds `sync_runs`, one row per push in
