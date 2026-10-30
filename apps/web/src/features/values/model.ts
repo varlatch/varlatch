@@ -131,11 +131,25 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
   return parsed;
 }
 
-/** One `.env` line; quotes only when the value needs them. */
-export function dotenvLine(name: string, value: string): string {
-  if (/^[A-Za-z0-9_./:@,+%=?&-]*$/.test(value)) return `${name}=${value}`;
-  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
-  return `${name}="${escaped}"`;
+/**
+ * One `.env` line that every common loader reads back as exactly this value
+ * and never expands or runs: shells (sh, bash and zsh with `set -a; .
+ * ./.env`), dotenv (any version) with or without dotenv-expand,
+ * python-dotenv and Docker Compose. The value goes unquoted when only inert
+ * characters are in it (no `=`, which zsh expands at the start or after a
+ * `:`, and no `?`, which zsh globs with GLOB_ASSIGN), in single quotes
+ * otherwise. Some values have no such form:
+ * dotenv-expand and python-dotenv expand `$` even in single quotes (recent
+ * dotenv-expand also runs `$(…)`), python-dotenv and Compose read backslash
+ * escapes there, dotenv before 15 ends a value at a line break and reads the
+ * next line as a new variable, and loaders disagree on carriage returns and
+ * other control characters. For those it returns null, and the value is not
+ * written (ADR-0038).
+ */
+export function dotenvLine(name: string, value: string): string | null {
+  if (/^[A-Za-z0-9_./:@,+%-]*$/.test(value)) return `${name}=${value}`;
+  if (/[$'\x00-\x08\x0a-\x1f\x7f\u0085\u2028\u2029]|\\\\|\\$/.test(value)) return null;
+  return `${name}='${value}'`;
 }
 
 /** 32 random bytes, base64url: a fresh credential for rotations. */

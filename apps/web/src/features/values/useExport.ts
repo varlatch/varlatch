@@ -55,9 +55,11 @@ export function useExport(org: string, project: string, env: Environment | null)
 
   const secrets = (items ?? []).filter((i) => i.sensitive);
   const plain = (items ?? []).filter((i) => !i.sensitive && !withheld.has(i.name) && i.value != null);
+  // Values no `.env` line carries safely to every loader; never written.
+  const unwritable = plain.filter((i) => dotenvLine(i.name, i.value as string) === null).map((i) => i.name);
 
   /** The file to write, or an error; never a file built across a change of protection. */
-  const build = useCallback(async (): Promise<{ text: string; filename: string }> => {
+  const build = useCallback(async (): Promise<{ text: string; filename: string; notWritten: string[] }> => {
     if (!env || !items || !api || tailnetNow.current) throw new TailnetOnlyError();
     const mine = generation.current;
     let disclosed = new Map<string, string>();
@@ -67,18 +69,25 @@ export function useExport(org: string, project: string, env: Environment | null)
     }
     if (generation.current !== mine) throw tailnetNow.current ? new TailnetOnlyError() : new DisclosureDiscardedError();
     const lines = [`# ${project} / ${env.name}, exported ${new Date().toISOString()}`];
+    const notWritten: string[] = [];
+    const write = (name: string, value: string) => {
+      const line = dotenvLine(name, value);
+      if (line === null) notWritten.push(name);
+      lines.push(line ?? `# ${name}: not written, tools would load its value differently`);
+    };
     for (const item of [...items].sort((a, b) => a.name.localeCompare(b.name))) {
       if (item.sensitive) {
         const value = disclosed.get(item.name);
-        lines.push(value !== undefined ? dotenvLine(item.name, value) : `# ${item.name}: secret, not exported`);
+        if (value !== undefined) write(item.name, value);
+        else lines.push(`# ${item.name}: secret, not exported`);
       } else if (withheld.has(item.name) || item.value == null) {
         lines.push(`# ${item.name}: not readable with your access`);
       } else {
-        lines.push(dotenvLine(item.name, item.value));
+        write(item.name, item.value);
       }
     }
-    return { text: `${lines.join("\n")}\n`, filename: `${project}.${env.name.replace(/\//g, "-")}.env` };
+    return { text: `${lines.join("\n")}\n`, filename: `${project}.${env.name.replace(/\//g, "-")}.env`, notWritten };
   }, [api, org, project, env, items, withheld, includeSecrets, secrets]);
 
-  return { items, withheld, secrets, plain, includeSecrets, setIncludeSecrets, error, tailnetOnly, build };
+  return { items, withheld, secrets, plain, unwritable, includeSecrets, setIncludeSecrets, error, tailnetOnly, build };
 }

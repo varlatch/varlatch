@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Environment, SyncTarget } from "@varlatch/protocol";
 import {
@@ -115,11 +119,77 @@ describe(".env", () => {
     expect(parseDotenv("A=1\nnot a line")).toBeNull();
     expect(parseDotenv("lower=1")).toBeNull();
   });
+
+  // Every value written loads back exactly in shells, dotenv (any version),
+  // dotenv-expand, python-dotenv and Docker Compose; values without such a
+  // form are not written.
+  const writable = [
+    "8080",
+    "https://x.example/a?b=c",
+    "https://x.example/a?b=c&d=e",
+    "a:b@c,d+e%f",
+    "foo?",
+    "two words",
+    "`id`",
+    'say "hi"',
+    '{"k":"-----BEGIN\\nabc\\n-----END"}',
+    "C:\\path\\to",
+    "a\\nb",
+    "a\\ b",
+    "#hash",
+    "a # not comment",
+    " padded ",
+    "tab\there",
+    "héllo ✓",
+    "a=b",
+    "abc==",
+    "=sh",
+    "foo:=sh",
+    "",
+  ];
+  const unwritable = [
+    "pa$$word",
+    "$HOME",
+    "${HOME}",
+    "$(id)",
+    "it's",
+    "ends\\",
+    "\\\\server\\share",
+    "line1\nline2",
+    "trailing\n",
+    "a\rb",
+    "esc\u001bx",
+    "nul\u0000x",
+    "sep\u2028x",
+  ];
+
   it("quotes only when needed and round-trips", () => {
     expect(dotenvLine("PORT", "8080")).toBe("PORT=8080");
-    expect(dotenvLine("URL", "https://x.example/a?b=c")).toBe("URL=https://x.example/a?b=c");
-    for (const value of ['say "hi"\nback\\slash', "a\\nb", "two words"]) {
-      expect(parseDotenv(dotenvLine("MSG", value))).toEqual([{ name: "MSG", value }]);
+    expect(dotenvLine("URL", "https://x.example/a/b")).toBe("URL=https://x.example/a/b");
+    expect(dotenvLine("URL", "https://x.example/a?b=c&d=e")).toBe("URL='https://x.example/a?b=c&d=e'");
+    // zsh expands an unquoted `=` at the start of a value or after a `:`.
+    expect(dotenvLine("CMD", "=sh")).toBe("CMD='=sh'");
+    expect(dotenvLine("CMD", "foo:=sh")).toBe("CMD='foo:=sh'");
+    // zsh with GLOB_ASSIGN globs an unquoted `?`.
+    expect(dotenvLine("GLOB", "foo?")).toBe("GLOB='foo?'");
+    for (const value of writable) {
+      expect(parseDotenv(dotenvLine("MSG", value) as string)).toEqual([{ name: "MSG", value }]);
+    }
+  });
+  it("writes no line for a value some loader would change, expand or run", () => {
+    for (const value of unwritable) expect(dotenvLine("MSG", value)).toBeNull();
+  });
+  it("keeps every written value literal when a shell loads the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "dotenv-line-"));
+    try {
+      for (const value of [...writable, "`touch ran1`", "a&touch ran2", "a;touch ran3", "x > ran4"]) {
+        writeFileSync(join(dir, ".env"), `${dotenvLine("MSG", value)}\n`);
+        const out = execFileSync("sh", ["-c", 'set -a; . ./.env; printf %s "$MSG"'], { cwd: dir, encoding: "utf8" });
+        expect(out).toBe(value);
+      }
+      expect(readdirSync(dir)).toEqual([".env"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

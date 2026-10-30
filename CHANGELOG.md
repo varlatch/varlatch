@@ -5,6 +5,28 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.20.0)
+
+### Fixes
+
+- **The dashboard's `.env` download no longer writes values that tools
+  would change or run.** It put values in double quotes without escaping
+  `$` or backticks, and wrote a value containing `&` without quotes. So
+  loading the file with a shell or a variable-expanding loader could expand
+  `$NAME` or run part of a value. No single `.env` form is read the same
+  way by every common loader: dotenv-expand and python-dotenv expand `$`
+  even inside single quotes, dotenv-expand 1000 also runs `$(…)`, and
+  dotenv before 15 reads a line break inside a value as the start of a new
+  variable. Values are now unquoted or single-quoted. In that form, shells
+  (sh, bash, zsh), dotenv, dotenv-expand, python-dotenv and Docker Compose
+  read every written value exactly. A value containing `$`, a single quote,
+  a line break, a backslash pair, a trailing backslash or a control
+  character is left out of the file, with a comment in its place. The
+  dialog names these values: plain values before the download, and secrets
+  after it, since their values are only known once disclosed. Pasting a
+  downloaded file into the dashboard, or `varlatch import`, reads the same
+  values back.
+
 ## 0.19.1 (2026-10-29)
 
 ### Documentation
