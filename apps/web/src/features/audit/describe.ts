@@ -565,7 +565,12 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
     case "sync.target_paused":
       return { icon: "pause", title: "Integration paused", segments: ["paused ", dest, ...inPlace(r, names, "for")] };
     case "sync.target_resumed":
-      return { icon: "play", title: "Integration resumed", segments: ["resumed ", dest, ...inPlace(r, names, "for")] };
+      // A credential replacement resumes the integrations the old credential stopped (#57).
+      return {
+        icon: "play",
+        title: "Integration resumed",
+        segments: ["resumed ", dest, ...inPlace(r, names, "for"), ...(str(m.cause) === "credential_replaced" ? [" after the credential was replaced"] : [])],
+      };
     case "sync.target_revoked":
       return { icon: "trash", title: "Integration revoked", segments: ["revoked ", dest, ...inPlace(r, names, "for")] };
     case "sync.target_disabled":

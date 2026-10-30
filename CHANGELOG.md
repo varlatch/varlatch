@@ -218,6 +218,14 @@ fixes.
   after it, since their values are only known once disclosed. Pasting a
   downloaded file into the dashboard, or `varlatch import`, reads the same
   values back.
+- **Replacing a rejected credential resumes the integrations it stopped.**
+  An integration stopped after its failure budget, because the platform
+  refused the old credential, stayed stopped after the credential was
+  replaced, and still asked for a new one: each had to be resumed by hand.
+  Now the replacement resumes those and starts every integration the old
+  credential failed afresh, recording `sync.target_resumed` with the
+  replacement as its cause. Integrations stopped for another reason stay
+  stopped (#57).
 
 ### Copies in env files
 

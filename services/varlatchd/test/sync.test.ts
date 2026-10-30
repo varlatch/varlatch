@@ -556,6 +556,38 @@ describe("convergence", () => {
     expect((await targetRowFromDb()).last_result).toBe("ok");
   });
 
+  it("replacing a rejected credential resumes the Targets it stopped, and only those (#57)", async () => {
+    const coolify = fakeCoolify();
+    const { connection, target: rejected } = await activeTarget();
+    const otherFailure = await (await createTarget(connection.id, { destination: { applicationUuid: "app2" } })).json();
+    const failing = await (await createTarget(connection.id, { destination: { applicationUuid: "app3" } })).json();
+    // As the worker leaves them: one stopped by the old credential, one
+    // stopped by the platform for another reason, one still retrying.
+    const stop = "UPDATE sync_targets SET state = 'disabled', disabled_reason = 'failure-budget-exhausted', failure_count = 10, needs_sync = false, last_result = $2 WHERE id = $1";
+    await ctx.db.query(stop, [rejected.id, "AdapterError: Coolify env update failed (401) Unauthenticated."]);
+    await ctx.db.query(stop, [otherFailure.id, "AdapterError: Coolify env update failed (500) boom"]);
+    await ctx.db.query("UPDATE sync_targets SET failure_count = 3, last_result = 'AdapterError: Coolify env update failed (401)' WHERE id = $1", [failing.id]);
+
+    const replaced = await post(`/v1/organizations/acme/platform-connections/${connection.id}/credential`, { credential: "coolify-token-456", expectedVersion: connection.version });
+    expect(replaced.status).toBe(200);
+    const state = async (id: string) =>
+      (await ctx.db.query("SELECT state, disabled_reason, failure_count, needs_sync FROM sync_targets WHERE id = $1", [id])).rows[0];
+    expect(await state(rejected.id)).toEqual({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true });
+    expect(await state(otherFailure.id)).toEqual({ state: "disabled", disabled_reason: "failure-budget-exhausted", failure_count: 10, needs_sync: true });
+    expect(await state(failing.id)).toEqual({ state: "active", disabled_reason: null, failure_count: 0, needs_sync: true });
+    const resumedEvents = (await ctx.db.query("SELECT resource, metadata FROM audit_events WHERE event_type = 'sync.target_resumed'")).rows.map(
+      (r) => ({ resource: asJson<Record<string, unknown>>((r as { resource: unknown }).resource), metadata: asJson<Record<string, unknown>>((r as { metadata: unknown }).metadata) }),
+    );
+    expect(resumedEvents).toEqual([{ resource: expect.objectContaining({ targetId: rejected.id }), metadata: { cause: "credential_replaced", connectionId: connection.id } }]);
+    const replacement = (await ctx.db.query("SELECT metadata, event_order FROM audit_events WHERE event_type = 'sync.connection_credential_replaced'")).rows[0] as { metadata: unknown };
+    expect(asJson<Record<string, unknown>>(replacement.metadata)).toMatchObject({ resumedTargets: rejected.id });
+
+    // The resumed Target pushes with the new credential; the other stays stopped.
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    expect((await ctx.db.query("SELECT last_result FROM sync_targets WHERE id = $1", [rejected.id])).rows[0]).toEqual({ last_result: "ok" });
+    expect((await state(otherFailure.id)).state).toBe("disabled");
+  });
+
   it("a failed push retries automatically once its backoff expires", async () => {
     const coolify = fakeCoolify();
     await activeTarget();

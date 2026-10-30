@@ -100,6 +100,14 @@ describe("describeEvent", () => {
     );
   });
 
+  it("says when a credential replacement resumed an integration (#57)", () => {
+    const resource = { targetId: "snt_1", environmentId: "env_prod" };
+    expect(sentence(event({ eventType: "sync.target_resumed", resource }))).toBe("resumed GitHub Actions acme-org/api for api / production");
+    expect(sentence(event({ eventType: "sync.target_resumed", resource, metadata: { cause: "credential_replaced", connectionId: "pcn_1" } }))).toBe(
+      "resumed GitHub Actions acme-org/api for api / production after the credential was replaced",
+    );
+  });
+
   it("describes a GitHub App registered, and one refused because GitHub created it on another account", () => {
     expect(
       sentence(event({ eventType: "sync.github_app_registered", resource: { githubAppId: "gha_1" }, metadata: { via: "manifest", appId: 5254113, slug: "varlatch-acme", owner: "acme-gh", ownerType: "organization" } })),

@@ -7,7 +7,7 @@ import {
   type DestinationListing,
   type PlatformAdapter,
 } from "@varlatch/sync";
-import { recordAuditEvent } from "../audit/events.js";
+import { recordAuditEvent, recordAuditEvents } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, encryptGitHubAppKey, encryptPlatformCredential } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
@@ -681,6 +681,14 @@ export async function getConnection(
  * the whole replacement. The Connection and Target rows are locked so the
  * check serializes with concurrent attachment and re-pointing.
  */
+/**
+ * A run's result that says the platform refused the credential, as the
+ * dashboard reads it (apps/web/src/features/sync/status.ts isCredentialError).
+ */
+export function isCredentialRejection(result: string | null | undefined): boolean {
+  return /\b(401|403)\b|unauthori[sz]ed|bad credentials|forbidden|invalid (api )?(token|key|credential)|authentication failed/i.test(result ?? "");
+}
+
 export async function replaceConnectionCredential(
   ctx: AppCtx,
   org: OrgRow,
@@ -734,6 +742,28 @@ export async function replaceConnectionCredential(
        WHERE id = $2 RETURNING ${CONNECTION_COLUMNS}`,
       [JSON.stringify(envelope), connectionId],
     );
+    // The old credential's failures were the credential's (#57): a Target
+    // whose last attempt it failed starts afresh, and one it stopped (its
+    // failure budget used up) resumes. A Target stopped for any other
+    // reason stays stopped. The rows are already locked, in ID order.
+    const rejected = rows.filter((t) => isCredentialRejection(t.last_result));
+    const resumed = rejected.filter((t) => t.state === "disabled" && t.disabled_reason === "failure-budget-exhausted");
+    if (resumed.length > 0) {
+      await db.query(
+        `UPDATE sync_targets SET state = 'active', disabled_reason = NULL, version = version + 1, updated_at = now()
+         WHERE id = ANY($1)`,
+        [resumed.map((t) => t.id)],
+      );
+    }
+    if (rejected.length > 0) {
+      await db.query("UPDATE sync_targets SET failure_count = 0 WHERE id = ANY($1)", [rejected.map((t) => t.id)]);
+    }
+    // A replacement is a Target mutation class trigger (ADR-0031 §6):
+    // enqueue directly, never via the audit cursor.
+    await db.query(
+      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE connection_id = $1 AND revoked_at IS NULL",
+      [connectionId],
+    );
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -741,23 +771,32 @@ export async function replaceConnectionCredential(
       resourceId: connectionId,
       changes: ["credential_replaced"],
     });
-    await recordAuditEvent(db, {
-      eventType: "sync.connection_credential_replaced",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { connectionId },
-      // Each re-authorized Target's write-time gate, as it decided.
-      authz: { reauthorizedTargets: provenance },
-      metadata: { reauthorizedTargets: rows.map((t) => t.id).join(",") || null },
-    });
-    // A replacement is a Target mutation class trigger (ADR-0031 §6):
-    // enqueue directly, never via the audit cursor.
-    await db.query(
-      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE connection_id = $1 AND revoked_at IS NULL",
-      [connectionId],
-    );
+    // Audit last (ADR-0051): the replacement, then each Target it resumed.
+    await recordAuditEvents(db, [
+      {
+        eventType: "sync.connection_credential_replaced",
+        decision: "info",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { connectionId },
+        // Each re-authorized Target's write-time gate, as it decided.
+        authz: { reauthorizedTargets: provenance },
+        metadata: {
+          reauthorizedTargets: rows.map((t) => t.id).join(",") || null,
+          resumedTargets: resumed.map((t) => t.id).join(",") || null,
+        },
+      },
+      ...resumed.map((t) => ({
+        eventType: "sync.target_resumed",
+        decision: "info" as const,
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { targetId: t.id, environmentId: t.environment_id },
+        metadata: { cause: "credential_replaced", connectionId },
+      })),
+    ]);
     return updated.rows[0] as PlatformConnectionRow;
   });
 }
