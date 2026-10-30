@@ -37,6 +37,18 @@ fixes.
   a crash at the wrong moment the application may be redeployed twice.
   Changing the destination or turning redeploy off cancels an owed
   redeploy.
+- **Drift is named before it is put back.** When the periodic repair of a
+  Convex or Coolify integration finds a value that differs from what
+  Varlatch last wrote (changed or removed on the platform, or a deleted
+  name the platform has again), it records `sync.drift_detected` before
+  putting it back: destination and item names only, never a value. The
+  integration card shows the last drift, the item's history and the
+  audit log show the event, and audit webhooks can deliver it. It is
+  usually a change made on the platform, but the event says what was
+  observed, not who did it. Putting drift back counts as a change, so an
+  integration with redeploy turned on redeploys. GitHub Actions cannot
+  read values back, so its integrations report no drift. A Convex value
+  that is not a string now reads as unknown instead of empty.
 
 ### Contracts
 
@@ -87,6 +99,9 @@ fixes.
 
 ### API
 
+- Sync Targets have `lastDrift` (`at`, `count`, the first 50 `names`,
+  `eventId`), and `sync.push_result` gains `driftRepaired` and
+  `driftFailed` when a run put drift back.
 - Sync Targets have `drained` (no run can start another request) and
   `runStartedAt`. `POST …/sync-targets/{target}/pause?wait=true` answers
   once the Target is drained, or after 30 seconds with `drained: false`;
@@ -97,7 +112,7 @@ fixes.
 Database schema: migration 32 adds `sync_runs`, one row per push in
 progress, and the repair-cycle columns `sync_targets.repair_cycle_started_at`
 and `sync_ledger.repaired_at`; migration 33 adds `sync_targets.redeploy_owed`
-and `redeploy_paid`.
+and `redeploy_paid`; migration 34 adds the `last_drift_*` columns.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

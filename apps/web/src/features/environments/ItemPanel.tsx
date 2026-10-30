@@ -382,6 +382,7 @@ const EVENT_LABEL: Record<string, string> = {
   "secret.validated": "validated it",
   "value.validated": "validated it",
   "sync.push_attempted": "pushed it to an integration",
+  "sync.drift_detected": "found it changed on an integration's platform, and put it back",
   "capability.issued": "issued a capability for it",
   "capability.exercised": "used it through a capability",
 };

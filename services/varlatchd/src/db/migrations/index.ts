@@ -33,6 +33,7 @@ import { sql as githubAppRegistrations } from "./0030_github_app_registrations.j
 import { sql as syncTargetNotes } from "./0031_sync_target_notes.js";
 import { sql as syncRuns } from "./0032_sync_runs.js";
 import { sql as redeployDebt } from "./0033_redeploy_debt.js";
+import { sql as syncDrift } from "./0034_sync_drift.js";
 
 export interface Migration {
   id: number;
@@ -75,4 +76,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 31, name: "sync_target_notes", sql: syncTargetNotes },
   { id: 32, name: "sync_runs", sql: syncRuns },
   { id: 33, name: "redeploy_debt", sql: redeployDebt },
+  { id: 34, name: "sync_drift", sql: syncDrift },
 ];

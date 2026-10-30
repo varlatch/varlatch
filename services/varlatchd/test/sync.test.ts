@@ -124,6 +124,9 @@ function fakeCoolify() {
       store.set(uuid, { uuid, key, value, ...flags });
     },
     row: (key: string) => [...store.values()].find((e) => e.key === key),
+    remove: (key: string) => {
+      for (const [uuid, e] of store) if (e.key === key) store.delete(uuid);
+    },
     setFailWrites: (v: boolean) => {
       failWrites = v;
     },
@@ -1152,6 +1155,101 @@ describe("convergence", () => {
       await activeTarget({ redeploy: false });
       await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
       expect(await debt()).toEqual({ owed: 0, paid: 0 });
+    });
+  });
+
+  describe("drift events (ADR-0050 part B)", () => {
+    const repairDue = () =>
+      ctx.db.query("UPDATE sync_targets SET last_repair_at = now() - interval '7 hours', needs_sync = true");
+    const syncEvents = async () =>
+      (await ctx.db.query("SELECT event_type, metadata FROM audit_events WHERE event_type LIKE 'sync.%' ORDER BY event_order")).rows.map(
+        (r) => r as { event_type: string; metadata: Record<string, unknown> | string },
+      );
+    const meta = (m: Record<string, unknown> | string) => (typeof m === "string" ? (JSON.parse(m) as Record<string, unknown>) : m);
+
+    it("names a value changed on the platform before putting it back, names only", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.values().get("PORT")).toBe("8080");
+      const events = await syncEvents();
+      const at = events.findIndex((e) => e.event_type === "sync.drift_detected");
+      expect(at).toBeGreaterThan(-1);
+      const drift = meta(events[at]!.metadata);
+      expect(drift).toMatchObject({ items: "PORT", changed: "PORT", removed: "", recreated: "", count: 1 });
+      expect(JSON.stringify(drift)).not.toContain("1111");
+      // Recorded before the push that puts it back, and counted in its result.
+      expect(events[at + 1]?.event_type).toBe("sync.push_attempted");
+      const result = events.filter((e) => e.event_type === "sync.push_result").at(-1)!;
+      expect(meta(result.metadata)).toMatchObject({ driftRepaired: 1, driftFailed: 0 });
+      const listed = await (await get(`${ENV_PATH}/sync-targets`)).json();
+      expect(listed.items[0].lastDrift).toMatchObject({ count: 1, names: ["PORT"] });
+    });
+
+    it("names a value removed on the platform, and a deleted name the platform has again", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      const id = ((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].id) as string;
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      coolify.remove("DATABASE_URL");
+      await ctx.db.query(
+        "INSERT INTO sync_ledger (target_id, dest_name, fingerprint, state, generation) VALUES ($1, 'OLD_KEY', NULL, 'tombstone', 0)",
+        [id],
+      );
+      coolify.seed("OLD_KEY", "back-again", { is_literal: true, is_multiline: true });
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      const drift = meta((await syncEvents()).find((e) => e.event_type === "sync.drift_detected")!.metadata);
+      expect(drift).toMatchObject({ removed: "DATABASE_URL", recreated: "OLD_KEY", items: "DATABASE_URL", count: 2 });
+      expect(coolify.values().get("DATABASE_URL")).toBe("postgres://dev-db/main");
+      expect(coolify.values().has("OLD_KEY")).toBe(false);
+    });
+
+    it("does not call a first write, a change Varlatch is making, or a converged repair drift", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl }); // first writes
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl }); // converged repair
+      // Varlatch changes PORT, and the platform happens to differ too.
+      await put(`${ENV_PATH}/values/PORT`, { value: "9090" });
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.values().get("PORT")).toBe("9090");
+      expect((await syncEvents()).some((e) => e.event_type === "sync.drift_detected")).toBe(false);
+      expect((await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0].lastDrift).toBeNull();
+    });
+
+    it("putting drift back owes a redeploy", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget({ redeploy: true });
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(1);
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      expect(coolify.restarts()).toBe(2);
+    });
+
+    it("a destination change clears the last drift", async () => {
+      const coolify = fakeCoolify();
+      await activeTarget();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      (coolify.row("PORT") as { value: string }).value = "1111";
+      await repairDue();
+      await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+      const target = (await (await get(`${ENV_PATH}/sync-targets`)).json()).items[0];
+      expect(target.lastDrift).not.toBeNull();
+      const moved = await patchReq(`${ENV_PATH}/sync-targets/${target.id}`, {
+        expectedVersion: target.version,
+        destination: { applicationUuid: "app2" },
+      });
+      expect(moved.status).toBe(200);
+      expect((await moved.json()).lastDrift).toBeNull();
     });
   });
 

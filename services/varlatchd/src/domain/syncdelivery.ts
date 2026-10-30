@@ -647,6 +647,41 @@ async function reconcileUnderLease(
     };
   }
 
+  // Drift (ADR-0050 Decision 8): on a forced run that read the destination
+  // back, among the actions just selected, the names the platform changed,
+  // removed or re-created since Varlatch last wrote them. Only a confirmed
+  // ledger entry at the fingerprint Varlatch wants now can drift; a value
+  // the platform withholds (null), a form-only rewrite, an ambiguous name
+  // or a change Varlatch is making itself is not drift.
+  const drift = { changed: [] as string[], removed: [] as string[], recreated: [] as string[] };
+  if (force && remote) {
+    for (const w of writes) {
+      const entry = ledger.get(w.destName);
+      if (!entry || entry.state !== "written" || entry.fingerprint !== w.fingerprint || ambiguous.has(w.destName)) continue;
+      const there = remote.get(w.destName);
+      if (!remote.has(w.destName)) drift.removed.push(w.destName);
+      else if (typeof there === "string" && there !== w.value) drift.changed.push(w.destName);
+    }
+    for (const name of deletes) {
+      if (ledger.get(name)?.state === "tombstone" && !ambiguous.has(name) && remote.has(name)) drift.recreated.push(name);
+    }
+  }
+  const drifted = new Set([...drift.changed, ...drift.removed, ...drift.recreated]);
+  if (drifted.size > 0) {
+    const sourceOf = new Map(rendered.items.map((i) => [i.destName, i.name]));
+    const items = [...new Set([...drift.changed, ...drift.removed].map((d) => sourceOf.get(d)).filter((n): n is string => !!n))];
+    const recorded = await recordDrift(ctx, target, generation, [...drifted], {
+      destination: describeDestination(adapter.platform, destinationKey(target)),
+      items: items.join(","),
+      changed: drift.changed.join(","),
+      removed: drift.removed.join(","),
+      recreated: drift.recreated.join(","),
+      count: drifted.size,
+      generation,
+    });
+    if (!recorded) return LEASE_LOST;
+  }
+
   // Audit precedes disclosure (§7): if this commit fails, the push does not
   // happen. Names and versions only; destination redacted like webhook URLs.
   // A run fenced by now records nothing and sends nothing (ADR-0050).
@@ -690,7 +725,11 @@ async function reconcileUnderLease(
         // owes no redeploy (ADR-0031 §5). An intent or a failed write also
         // carries the fingerprint, but nothing confirmed it landed: a retry
         // of a change still owes its redeploy.
-        o.ok && redeploys && !(ledger.get(o.name)?.state === "written" && ledger.get(o.name)?.fingerprint === w?.fingerprint),
+        // Putting drift back is a change on the platform too (ADR-0050
+        // Decision 10).
+        o.ok &&
+          redeploys &&
+          (drifted.has(o.name) || !(ledger.get(o.name)?.state === "written" && ledger.get(o.name)?.fingerprint === w?.fingerprint)),
       );
     }
     // Fewer outcomes than items means shouldAbort cut the batch short:
@@ -747,6 +786,12 @@ async function reconcileUnderLease(
       deleted: deleteOutcomes.filter((o) => o.ok).length,
       failed: failed.length,
       held: heldReasons.length,
+      ...(drifted.size > 0
+        ? {
+            driftRepaired: [...writeOutcomes, ...deleteOutcomes].filter((o) => o.ok && drifted.has(o.name)).length,
+            driftFailed: [...writeOutcomes, ...deleteOutcomes].filter((o) => !o.ok && drifted.has(o.name)).length,
+          }
+        : {}),
       generation,
       result: failed.length === 0 ? "ok" : "degraded",
     },
@@ -784,6 +829,8 @@ function usageNotes(name: string, usage: NameUsage): TargetNote[] {
 // becomes a side door around the gate).
 
 interface RenderedItem {
+  /** The Config Item the value comes from (a mapping may rename it). */
+  name: string;
   destName: string;
   value: string;
   versionId: string;
@@ -895,6 +942,7 @@ export async function renderEffectiveOutput(
     const rawValue = plaintext.get(item.name) as string;
     try {
       items.push({
+        name: item.name,
         destName: item.destName,
         value: expandReferences(rawValue, (n) => plaintext.get(n), true),
         versionId: item.versionId,
@@ -1064,6 +1112,41 @@ export async function ledgerSet(
     // Only while the Target still wants redeploys: turning them off settles
     // the debt and fences the run, under the same row lock.
     if (oweRedeploy) await db.query("UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1 WHERE id = $1 AND redeploy", [targetId]);
+    return true;
+  });
+}
+
+/**
+ * Records drift before it is put back (ADR-0050 Decisions 9 and 11): the
+ * sync.drift_detected event and the Target's last-drift summary, in one
+ * transaction under the same generation guard as the other delivery
+ * events. Names only. Returns false when the run was fenced.
+ */
+async function recordDrift(
+  ctx: AppCtx,
+  target: SyncTargetRow,
+  generation: number,
+  names: string[],
+  metadata: Record<string, string | number>,
+): Promise<boolean> {
+  return withTx(ctx.db, async (db) => {
+    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [target.id]);
+    const current = res.rows[0] as { generation: string | number } | undefined;
+    if (!current || Number(current.generation) !== generation) return false;
+    const eventId = await recordAuditEvent(db, {
+      eventType: "sync.drift_detected",
+      decision: "info",
+      organizationId: target.organization_id,
+      action: "config.sync.manage",
+      resource: { targetId: target.id, environmentId: target.environment_id },
+      metadata,
+    });
+    await db.query(
+      `UPDATE sync_targets
+       SET last_drift_at = now(), last_drift_count = $2, last_drift_names = $3, last_drift_event_id = $4
+       WHERE id = $1`,
+      [target.id, names.length, JSON.stringify(names.slice(0, 50)), eventId],
+    );
     return true;
   });
 }
