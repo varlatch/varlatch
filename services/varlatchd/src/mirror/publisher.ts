@@ -128,6 +128,12 @@ export async function syncAllMirrors(
   for (const e of deletedEnvs.rows as { id: string }[]) {
     await callMutation(config, token, "mirror:remove", { kind: "environment", resourceId: e.id }, fetchImpl);
   }
+  // Deleted Organizations' records too (ADR-0051 Decision 9).
+  const deletedOrgs = await ctx.db.query("SELECT id FROM organizations WHERE deleted_at IS NOT NULL");
+  for (const o of deletedOrgs.rows as { id: string }[]) {
+    await callMutation(config, token, "mirror:remove", { kind: "organization", resourceId: o.id }, fetchImpl);
+    await callMutation(config, token, "mirror:remove", { kind: "changeSignal", resourceId: o.id }, fetchImpl);
+  }
   // Deleted Projects too (ADR-0051 Decision 9); their environments are tombstoned with them.
   const deletedProjects = await ctx.db.query("SELECT id FROM projects WHERE deleted_at IS NOT NULL");
   for (const p of deletedProjects.rows as { id: string }[]) {
@@ -265,6 +271,27 @@ export async function syncNewMirrorEvents(
         pushed++;
       }
     }
+    if (ev.event_type === "organization.deleted") {
+      // A deleted Organization's published metadata goes, all of it (ADR-0051 Decision 9).
+      const projects = await ctx.db.query("SELECT id FROM projects WHERE organization_id = $1", [orgId]);
+      const envs = await ctx.db.query(
+        "SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $1",
+        [orgId],
+      );
+      for (const e of envs.rows as { id: string }[]) {
+        await callMutation(config, token, "mirror:remove", { kind: "environment", resourceId: e.id }, fetchImpl);
+        pushed++;
+      }
+      for (const p of projects.rows as { id: string }[]) {
+        await callMutation(config, token, "mirror:remove", { kind: "project", resourceId: p.id }, fetchImpl);
+        pushed++;
+      }
+      await callMutation(config, token, "mirror:remove", { kind: "organization", resourceId: orgId }, fetchImpl);
+      await callMutation(config, token, "mirror:remove", { kind: "changeSignal", resourceId: orgId }, fetchImpl);
+      pushed += 2;
+      signals.delete(orgId);
+      continue;
+    }
     if (ev.event_type === "project.deleted") {
       // A deleted Project's published metadata goes, with its environments'.
       const projectId = (resource as { projectId?: string } | null)?.projectId;
@@ -302,7 +329,18 @@ export async function syncNewMirrorEvents(
     signal.occurredAt = ev.occurred_at as string;
     signals.set(orgId, signal);
   }
+  // A deleted Organization publishes no change signal any more, whatever
+  // audit events still name it (a tombstone reader's removal, say); the
+  // identity signals of the people it affected still go (ADR-0051 Decision 9).
+  const deletedOrgs = signals.size
+    ? new Set(
+        ((await ctx.db.query("SELECT id FROM organizations WHERE id = ANY($1) AND deleted_at IS NOT NULL", [[...signals.keys()]])).rows as {
+          id: string;
+        }[]).map((r) => r.id),
+      )
+    : new Set<string>();
   for (const [orgId, signal] of signals) {
+    if (deletedOrgs.has(orgId)) continue;
     await push("changeSignal", orgId, orgId, {
       lastEventId: signal.lastEventId,
       occurredAt: signal.occurredAt,

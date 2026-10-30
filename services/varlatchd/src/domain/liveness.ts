@@ -39,6 +39,12 @@ const SQL_MODE: Record<LockMode, string> = {
 export interface LiveScope {
   organizationId: string;
   organizationMode?: LockMode | undefined;
+  /**
+   * Whether the write is allowed while the Organization is frozen by an open
+   * deletion request (ADR-0051 Decision 5): only approving and cancelling
+   * the deletion are.
+   */
+  allowFrozen?: boolean | undefined;
   projectId?: string | undefined;
   projectMode?: LockMode | undefined;
   /** Environments of the Project, locked in ascending ID order. */
@@ -59,6 +65,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   );
   const orgRow = org.rows[0] as { deleted_at: string | null } | undefined;
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+  if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
 
   if (scope.projectId !== undefined) {
     const project = await db.query(
@@ -81,4 +88,33 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
       throw new DomainError("RESOURCE_NOT_FOUND", "Environment not found");
     }
   }
+}
+
+/**
+ * The Organization's open deletion request, if any. Read under the
+ * Organization row's lock: scheduling takes that row FOR UPDATE, so a
+ * writer either finishes before a request is scheduled or sees it.
+ */
+export async function openDeletion(
+  db: Querier,
+  organizationId: string,
+): Promise<{ id: string; run_after: string | Date; approval_required: boolean; approved_by: string | null } | null> {
+  const res = await db.query(
+    `SELECT id, run_after, approval_required, approved_by FROM organization_deletions
+     WHERE organization_id = $1 AND cancelled_at IS NULL AND completed_at IS NULL`,
+    [organizationId],
+  );
+  return (res.rows[0] as { id: string; run_after: string | Date; approval_required: boolean; approved_by: string | null } | undefined) ?? null;
+}
+
+/** Refuses every operational write while the Organization is being deleted (ADR-0051 Decision 5). */
+export async function refuseIfFrozen(db: Querier, organizationId: string): Promise<void> {
+  const open = await openDeletion(db, organizationId);
+  if (!open) return;
+  const runAfter = new Date(open.run_after).toISOString();
+  throw new DomainError(
+    "ORGANIZATION_DELETING",
+    `This Organization is being deleted: it may be deleted from ${runAfter}. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.`,
+    { deletionId: open.id, runAfter },
+  );
 }

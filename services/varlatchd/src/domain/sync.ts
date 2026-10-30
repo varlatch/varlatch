@@ -15,7 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
@@ -349,6 +349,8 @@ export async function createConnection(
   input: { platform: string; baseIdentity: string; name: string; credential: string },
   actorIdentityId: string,
 ): Promise<PlatformConnectionRow> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   const adapter = canonicalizeOrValidationError(() => getAdapter(input.platform));
   const baseIdentity = canonicalizeOrValidationError(() =>
     adapter.canonicalizeBaseIdentity(input.baseIdentity),
@@ -403,6 +405,8 @@ export async function createAppConnection(
   allowedAdapters: string[] | null,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PlatformConnectionRow> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
     throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
   }
@@ -495,6 +499,8 @@ export async function rotateGitHubAppKey(
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<KeyRotationOutcome> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
@@ -683,6 +689,8 @@ export async function replaceConnectionCredential(
   gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
   actorIdentityId: string,
 ): Promise<PlatformConnectionRow> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (input.credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
@@ -823,6 +831,8 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
+  // Stored external credentials are not used while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   // No destination fields: the check stops at the base identity.
@@ -880,6 +890,7 @@ export async function listConnectionDestinations(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
+  await refuseIfFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   if (!adapter.listDestinations) {
@@ -1455,12 +1466,17 @@ export async function targetLedger(ctx: AppCtx, targetId: string): Promise<Ledge
 
 /** Direct enqueue for "push now" — a Target mutation class trigger. */
 export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): Promise<void> {
-  const res = await ctx.db.query(
-    `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
-     WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
-    [targetId, org.id],
-  );
-  if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+  // The Organization lock and the freeze check in the same transaction as
+  // the update (ADR-0051): a request that waited behind a scheduling sees it.
+  await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id });
+    const res = await db.query(
+      `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
+       WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
+      [targetId, org.id],
+    );
+    if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+  });
 }
 
 // ---------------------------------------------------------------------------

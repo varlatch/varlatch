@@ -14,6 +14,7 @@ import { withSerializableTx, withSnapshot } from "../db/tx.js";
 import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 
 /**
  * Removing a person from an Organization, a member leaving, and role
@@ -107,11 +108,9 @@ async function liveMembership(db: Querier, organizationId: string, identityId: s
  * exclusive lock excludes it.
  */
 async function lockOrganization(db: Querier, organizationId: string): Promise<void> {
-  const res = await db.query(
-    "SELECT id FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE",
-    [organizationId],
-  );
-  if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+  // The writer protocol's Organization lock and liveness, freeze included
+  // (ADR-0051): no membership changes while the Organization is being deleted.
+  await lockLiveScope(db, { organizationId });
 }
 
 /**
@@ -392,38 +391,8 @@ export async function removeMember(
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
 
-    const removalId = newId("membershipRemoval");
-    const inserted = await db.query(
-      `INSERT INTO membership_removals (id, organization_id, identity_id, role, actor_identity_id)
-       VALUES ($1,$2,$3,$4,$5) RETURNING removed_at`,
-      [removalId, organizationId, identityId, membership.role, actor.id],
-    );
-    const removedAt = (inserted.rows[0] as { removed_at: Date | string }).removed_at;
-    await captureAuthority(ctx, db, organizationId, removalId, identityId, membership.role);
-
-    // now() is the transaction's time, the same as the removal record's.
-    await db.query(
-      `UPDATE org_memberships SET removed_at = now(), version = version + 1
-       WHERE organization_id = $1 AND identity_id = $2`,
-      [organizationId, identityId],
-    );
-    const grants = await db.query(
-      `UPDATE grants SET revoked_at = now()
-       WHERE organization_id = $1 AND subject_identity_id = $2 AND revoked_at IS NULL RETURNING id`,
-      [organizationId, identityId],
-    );
-    const groups = await db.query(
-      `DELETE FROM group_members gm USING groups g
-       WHERE g.id = gm.group_id AND g.organization_id = $1 AND gm.identity_id = $2 RETURNING gm.group_id`,
-      [organizationId, identityId],
-    );
-    const invitations = await db.query(
-      `UPDATE setup_grants SET revoked_at = now()
-       WHERE kind = 'invite' AND invite_organization_id = $1 AND created_by = $2
-         AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
-       RETURNING id`,
-      [organizationId, identityId],
-    );
+    const ended = await endMembership(ctx, db, organizationId, identityId, membership.role, actor.id);
+    const { removalId, removedAt, grants, groups, invitations } = ended;
     const review = await memberReview(db, organizationId, identityId);
 
     await recordAuditEvent(db, {
@@ -436,9 +405,9 @@ export async function removeMember(
       metadata: {
         role: membership.role,
         left,
-        grantsRevoked: grants.rows.length,
-        groupsLeft: groups.rows.length,
-        invitationsRevoked: invitations.rows.length,
+        grantsRevoked: grants,
+        groupsLeft: groups,
+        invitationsRevoked: invitations,
       },
     });
     return {
@@ -446,13 +415,71 @@ export async function removeMember(
       identityId,
       role: membership.role,
       left,
-      removedAt: new Date(removedAt).toISOString(),
-      grantsRevoked: grants.rows.length,
-      groupsLeft: groups.rows.length,
-      invitationsRevoked: invitations.rows.length,
+      removedAt,
+      grantsRevoked: grants,
+      groupsLeft: groups,
+      invitationsRevoked: invitations,
       review,
     };
   });
+}
+
+/**
+ * Ends a live membership inside the caller's transaction, without its
+ * audit event (the caller appends it last): records the authority
+ * snapshot first, then sets removed_at, revokes the person's direct
+ * Grants, removes their group and team links and revokes the invitations
+ * they issued that are still pending. Removal and leaving call it after
+ * their checks; Organization deletion's finalization calls it for every
+ * member, without the actor check and the last-admin rule, because the
+ * Organization itself is going (ADR-0051 Decision 6).
+ */
+export async function endMembership(
+  ctx: AppCtx,
+  db: Querier,
+  organizationId: string,
+  identityId: string,
+  role: OrgRole,
+  actorId: string,
+): Promise<{ removalId: string; removedAt: string; grants: number; groups: number; invitations: number }> {
+  const removalId = newId("membershipRemoval");
+  const inserted = await db.query(
+    `INSERT INTO membership_removals (id, organization_id, identity_id, role, actor_identity_id)
+     VALUES ($1,$2,$3,$4,$5) RETURNING removed_at`,
+    [removalId, organizationId, identityId, role, actorId],
+  );
+  const removedAt = (inserted.rows[0] as { removed_at: Date | string }).removed_at;
+  await captureAuthority(ctx, db, organizationId, removalId, identityId, role);
+  // now() is the transaction's time, the same as the removal record's.
+  await db.query(
+    `UPDATE org_memberships SET removed_at = now(), version = version + 1
+     WHERE organization_id = $1 AND identity_id = $2`,
+    [organizationId, identityId],
+  );
+  const grants = await db.query(
+    `UPDATE grants SET revoked_at = now()
+     WHERE organization_id = $1 AND subject_identity_id = $2 AND revoked_at IS NULL RETURNING id`,
+    [organizationId, identityId],
+  );
+  const groups = await db.query(
+    `DELETE FROM group_members gm USING groups g
+     WHERE g.id = gm.group_id AND g.organization_id = $1 AND gm.identity_id = $2 RETURNING gm.group_id`,
+    [organizationId, identityId],
+  );
+  const invitations = await db.query(
+    `UPDATE setup_grants SET revoked_at = now()
+     WHERE kind = 'invite' AND invite_organization_id = $1 AND created_by = $2
+       AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+     RETURNING id`,
+    [organizationId, identityId],
+  );
+  return {
+    removalId,
+    removedAt: new Date(removedAt).toISOString(),
+    grants: grants.rows.length,
+    groups: groups.rows.length,
+    invitations: invitations.rows.length,
+  };
 }
 
 /**

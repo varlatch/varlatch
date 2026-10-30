@@ -15,6 +15,7 @@ import { selfNodeResolver } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
+import { startDeletionLoop } from "./domain/orgdeletion.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
 import { createPgQuerier } from "./db/pg.js";
@@ -169,6 +170,8 @@ async function serveCommand(): Promise<void> {
   startWebhookLoop(ctx);
   // Builds the exposure and integration indexes from older audit events, then stops (ADR-0052).
   startExposureBackfillLoop(ctx);
+  // Runs Organization deletions that are due (ADR-0051), in every process.
+  startDeletionLoop(ctx);
 
   if (config.sync) {
     const { startSyncLoop } = await import("./domain/syncdelivery.js");

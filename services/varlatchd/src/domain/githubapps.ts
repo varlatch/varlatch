@@ -10,7 +10,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import {
   GITHUB_API,
   GITHUB_HEADERS,
@@ -120,6 +120,8 @@ export async function startRegistration(
   actorIdentityId: string,
   base: URL,
 ): Promise<RegistrationStart> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (!LOGIN_PATTERN.test(account.login)) {
     throw new DomainError("VALIDATION_FAILED", "account.login: not a GitHub account name");
   }
@@ -215,6 +217,8 @@ export async function completeRegistration(
   actorIdentityId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RegistrationOutcome> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   const stateHash = hashToken(input.state);
   // Claim the state: one completion per registration, by the actor who
   // started it, in this Organization, within the hour.
@@ -405,6 +409,8 @@ export async function importGitHubApp(
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<ImportOutcome> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
@@ -523,6 +529,7 @@ export async function listAppInstallations(
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<InstallationListing> {
+  await refuseIfFrozen(ctx.db, org.id);
   const { app, pem } = await appWithKey(ctx, org);
   const listing = await readInstallations(fetchImpl, Number(app.github_app_id), app.client_id, pem, now);
   await recordAuditEvent(ctx.db, {

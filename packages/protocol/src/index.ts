@@ -32,6 +32,7 @@ export type CreatedIdentity = components["schemas"]["CreatedIdentity"];
 export type Invitation = components["schemas"]["Invitation"];
 export type MemberReview = components["schemas"]["MemberReview"];
 export type MemberRemoval = components["schemas"]["MemberRemoval"];
+export type OrganizationDeletion = components["schemas"]["OrganizationDeletion"];
 export type ExposureReport = components["schemas"]["ExposureReport"];
 export type ExposureConfirmation = components["schemas"]["ExposureConfirmation"];
 export type InvitationStatus = components["schemas"]["InvitationStatus"];

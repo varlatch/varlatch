@@ -7,13 +7,15 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import type { OrgRole } from "../authz/evaluate.js";
 
 export interface OrgRow {
   id: string;
   slug: string;
   name: string;
-  wrapped_org_kek: Envelope;
+  /** Null once the Organization was deleted and its KEK destroyed. */
+  wrapped_org_kek: Envelope | null;
   deleted_at: string | null;
   created_at: string;
 }
@@ -77,14 +79,13 @@ export async function renameOrganization(
     throw new DomainError("VALIDATION_FAILED", "Organization name must be 1 to 200 characters, not counting surrounding spaces");
   }
   return withTx(ctx.db, async (db) => {
-    // A rename changes no key: FOR NO KEY UPDATE serializes renames without
-    // blocking the key-share locks that inserts referencing the
-    // Organization take (ADR-0051's writer protocol). FOR UPDATE would make
-    // such an insert wait behind a rename that waits for the audit counter.
-    const prev = await db.query(
-      "SELECT slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
-      [organizationId],
-    );
+    // The writer protocol, freeze included (ADR-0051). A rename changes no
+    // key: FOR NO KEY UPDATE serializes renames without blocking the
+    // key-share locks that inserts referencing the Organization take. FOR
+    // UPDATE would make such an insert wait behind a rename that waits for
+    // the audit counter.
+    await lockLiveScope(db, { organizationId, organizationMode: "no key update" });
+    const prev = await db.query("SELECT slug, name FROM organizations WHERE id = $1", [organizationId]);
     const row = prev.rows[0] as { slug: string; name: string } | undefined;
     if (!row) throw notFound("Organization");
     await db.query("UPDATE organizations SET name = $1 WHERE id = $2", [trimmed, organizationId]);
@@ -173,6 +174,11 @@ export async function listOrganizationsFor(
 
 /** Unwraps the organization KEK; callers must never persist or log it. */
 export function orgKekOf(ctx: AppCtx, org: OrgRow): Buffer {
+  // A deleted Organization's KEK is destroyed (ADR-0051 Decision 6): fail
+  // closed with a clear error, never attempt to decrypt.
+  if (org.wrapped_org_kek === null || org.wrapped_org_kek === undefined) {
+    throw new DomainError("ORGANIZATION_DELETED", "This Organization was deleted: its key is destroyed");
+  }
   const wrapped =
     typeof org.wrapped_org_kek === "string"
       ? (JSON.parse(org.wrapped_org_kek) as Envelope)
