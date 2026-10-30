@@ -41,8 +41,10 @@ export function organizationDeletionConsequences(approvalNeeded: boolean): strin
     `After the waiting period${approvalNeeded ? ", and another admin's approval" : ""}: every membership ends, machines are retired, values are erased and the organization's key is destroyed. There is no undo.`,
     "Any admin can cancel until then. A cancel brings back the suspended machines and webhooks; Sync Targets stay paused, and invitations must be issued again.",
     "Whoever can read the audit log then can still export it afterwards.",
-    "Values pushed to platforms, copies people revealed or downloaded, and backups taken before the deletion completes are not reached: rotate values at their provider.",
-    "A GitHub App stays installed on GitHub: uninstall or delete it there, and revoke copies of its private key.",
+    "Values pushed to platforms and copies people revealed or downloaded are not reached: rotate them at their provider.",
+    "Backups taken before the deletion completes keep the data until their retention removes them, and restoring one brings it back.",
+    "PostgreSQL's old row versions and write-ahead log, its replicas and volume snapshots keep the data for a while. Requests already authorized may still hold keys or values in memory, and one in flight when the deletion runs may still complete.",
+    "A GitHub App stays installed on GitHub: uninstall or delete it there, and revoke copies of its private key. Installation tokens already issued stay valid until they expire.",
   ];
 }
 

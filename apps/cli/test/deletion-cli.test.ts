@@ -22,6 +22,8 @@ const dir = mkdtempSync(join(tmpdir(), "varlatch-deletion-"));
 const bundle = join(dir, "varlatch.cjs");
 const repo = join(dir, "repo");
 const outside = join(dir, "outside");
+/** A repository whose configuration cannot be read. */
+const broken = join(dir, "broken");
 const ORG = "/v1/organizations/acme";
 
 let server: http.Server;
@@ -90,6 +92,8 @@ beforeAll(async () => {
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   mkdirSync(repo);
   mkdirSync(outside);
+  mkdirSync(broken);
+  writeFileSync(join(broken, "varlatch.toml"), "organization = \"acme\"\nthis is not toml\n");
   writeFileSync(join(repo, "varlatch.toml"), `organization = "acme"\nproject = "web"\nserver = "${origin}"\n`);
 });
 
@@ -167,6 +171,9 @@ describe("varlatch project delete", () => {
     expect(r.stdout).toContain("Erased 9 value versions of 4 items in 3 environments; revoked 1 Capabilities and 2 Sync Targets; removed 1 Team links.");
     expect(r.stdout).toContain("backups taken before it completes");
     expect(r.stdout).toContain("values already pushed to platforms: they stay there");
+    expect(r.stdout).toContain("its replicas and snapshots of its volume");
+    expect(r.stdout).toContain("may still hold their keys or values in memory;");
+    expect(r.stdout).toContain("restoring one brings it back");
     expect(r.stdout).not.toContain("GitHub App");
   });
 
@@ -185,6 +192,23 @@ describe("varlatch project delete", () => {
     expect(assisted.stderr).toContain("That is the human's decision. With their approval, add --confirm api.");
     expect(assisted.stderr).toContain("Nothing was deleted.");
     expect(requests).toEqual([]);
+  });
+
+  it("with --org and --server, never reads a repository's configuration, even to refuse", async () => {
+    const r = await cli(["project", "delete", "api", "--confirm", "api", "--org", "acme", "--server", origin], {}, broken);
+    expect(r.code, r.stderr).toBe(0);
+    const assisted = await cli(["project", "delete", "api", "--org", "acme", "--server", origin], { VARLATCH_ASSISTED: "1" }, broken);
+    expect(assisted.code).toBe(EXIT.config);
+    expect(assisted.stderr).toContain(`varlatch project delete api --confirm api --org acme --server ${origin}`);
+    // Nothing to name the Organization with: the refusal still holds, with a placeholder.
+    const unnamed = await cli(["project", "delete", "api"], { VARLATCH_ASSISTED: "1" }, broken);
+    expect(unnamed.code).toBe(EXIT.config);
+    expect(unnamed.stderr).toContain("varlatch project delete api --confirm api --org <org>");
+    const org = await cli(["org", "delete", "acme", "--confirm", "acme", "--server", origin], {}, broken);
+    expect(org.code, org.stderr).toBe(0);
+    const orgRefused = await cli(["org", "delete", "acme"], { VARLATCH_ASSISTED: "1" }, broken);
+    expect(orgRefused.code).toBe(EXIT.config);
+    expect(requests.map((q) => q.url).filter((u) => u !== "/v1/meta" && u !== ORG)).toEqual([`${ORG}/projects/api`, `${ORG}/deletion`]);
   });
 
   it("works outside a repository with --org and --server, and refuses an older server", async () => {
@@ -209,7 +233,9 @@ describe("varlatch org delete", () => {
     expect(r.stdout).toContain("varlatch org delete acme --approve odl_1");
     expect(r.stdout).toContain("varlatch org delete acme --cancel odl_1");
     expect(r.stdout).toContain("varlatch audit export --deleted-org org_acme");
-    expect(r.stdout).toContain("Uninstall it or delete it there");
+    expect(r.stdout).toContain("uninstall it or delete it there");
+    expect(r.stdout).toContain("Installation tokens already issued stay valid until they expire.");
+    expect(r.stdout).toContain("one in flight when the deletion runs may still complete");
   });
 
   it("refuses without --confirm before any request; assisted mode refuses scheduling and approval without it", async () => {

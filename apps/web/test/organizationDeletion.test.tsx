@@ -104,7 +104,12 @@ describe("the Settings danger zone", () => {
     await settle();
     const asked = fake.confirm.mock.calls[0]![0] as { typeToConfirm: string; consequences: { text: string }[] };
     expect(asked.typeToConfirm).toBe("acme");
-    expect(asked.consequences.map((c) => c.text).join("\n")).toContain("and another admin's approval");
+    const said = asked.consequences.map((c) => c.text).join("\n");
+    expect(said).toContain("and another admin's approval");
+    // Every limit of Decision 10.
+    for (const limit of ["write-ahead log", "replicas and volume snapshots", "in memory", "in flight", "restoring one brings it back", "pushed to platforms", "Installation tokens already issued"]) {
+      expect(said, limit).toContain(limit);
+    }
     expect(fake.api.scheduleOrganizationDeletion).toHaveBeenCalledWith("acme", { afterDays: 3 });
     expect(fake.toasts).toEqual(["Deletion scheduled"]);
   });
@@ -186,7 +191,12 @@ describe("deleting a project", () => {
     expect(fake.api.deleteProject).not.toHaveBeenCalled();
     fake.confirm.mockResolvedValue(true);
     expect(await act(async () => run({ slug: "api" }, left))).toBe(true);
-    expect((fake.confirm.mock.calls[1]![0] as { typeToConfirm: string }).typeToConfirm).toBe("api");
+    const asked = fake.confirm.mock.calls[1]![0] as { typeToConfirm: string; consequences: { text: string }[] };
+    expect(asked.typeToConfirm).toBe("api");
+    const said = asked.consequences.map((c) => c.text).join("\n");
+    for (const limit of ["write-ahead log", "replicas and volume snapshots", "in memory", "restoring one brings them back", "pushed to platforms"]) {
+      expect(said, limit).toContain(limit);
+    }
     expect(fake.api.deleteProject).toHaveBeenCalledWith("acme", "api");
     expect(left).toHaveBeenCalledOnce();
     expect(fake.toasts).toEqual(["Project api deleted"]);

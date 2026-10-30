@@ -15,7 +15,8 @@ export const PROJECT_DELETION_CONSEQUENCES = [
   "Every value of its environments, current and past, is erased from this installation's database at once. There is no undo.",
   "Its environments, Sync Targets and Capabilities stop working, and Teams lose their link to it.",
   "Values already pushed to platforms stay there, and copies people revealed or downloaded stay wherever they are: rotate them at their provider.",
-  "Backups taken before now keep the values until their retention removes them.",
+  "Backups taken before now keep the values until their retention removes them, and restoring one brings them back.",
+  "PostgreSQL's old row versions and write-ahead log, its replicas and volume snapshots keep the values for a while, and requests already authorized may still hold them in memory.",
   "The audit log keeps the project's events. Its slug can be used again for a new, empty project.",
 ];
 

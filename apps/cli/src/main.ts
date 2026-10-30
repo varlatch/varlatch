@@ -673,15 +673,34 @@ function credentialLimit(option: string, value: string | undefined, max: number)
  */
 /**
  * The server and Organization for a command that may name its Organization
- * itself: the options first, then the repository's configuration.
- * serverOption repeats --server in a suggested command when it was given.
+ * itself: the options first, then the repository's configuration, which is
+ * read only when one of them is missing. `lenient` is for a refusal, which
+ * must still be said when the configuration cannot be read.
  */
-function organizationTarget(parsed: ParsedOptions, organization: string | undefined): { server: string; organization: string; serverOption: string } {
+function organizationTarget(
+  parsed: ParsedOptions,
+  organization: string | undefined,
+  lenient = false,
+): { server: string | undefined; organization: string | undefined; serverOption: string } {
   const given = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
-  const repo = findRepoRoot(process.cwd()) ? resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(given ? { server: given } : {}) }) : null;
-  const server = given ?? repo?.server ?? usageError("Provide --server <url>, or run inside a configured repository");
-  const org = organization ?? repo?.organization ?? usageError("Provide --org <slug>, or run inside a configured repository");
-  return { server, organization: org, serverOption: given ? ` --server ${shellWord(server)}` : "" };
+  let repo: ResolvedContext | null = null;
+  if ((!given || !organization) && findRepoRoot(process.cwd())) {
+    try {
+      repo = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(given ? { server: given } : {}) });
+    } catch (err) {
+      if (!lenient) throw err;
+    }
+  }
+  return { server: given ?? repo?.server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(given)}` : "" };
+}
+
+/** organizationTarget, both parts required: a missing one is a wrong command line. */
+function requiredTarget(parsed: ParsedOptions, organization: string | undefined): { server: string; organization: string } {
+  const target = organizationTarget(parsed, organization);
+  return {
+    server: target.server ?? usageError("Provide --server <url>, or run inside a configured repository"),
+    organization: target.organization ?? usageError("Provide --org <slug>, or run inside a configured repository"),
+  };
 }
 
 const PROJECT_DELETE_USAGE = "Usage: varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]";
@@ -694,11 +713,11 @@ async function projectDelete(args: string[], assisted: AssistedMode): Promise<vo
   if (confirm !== undefined && confirm !== slug) {
     usageError(`varlatch project delete: --confirm names ${confirm}, but this command deletes ${slug}; approval for one Project never covers another.\n${PROJECT_DELETE_USAGE}`);
   }
-  const target = organizationTarget(parsed, parsed.values.get("--org"));
   if (confirm === undefined) {
+    const known = organizationTarget(parsed, parsed.values.get("--org"), true);
     const quoted = shellWord(slug);
-    const command = `varlatch project delete ${quoted} --confirm ${quoted} --org ${shellWord(target.organization)}${target.serverOption}`;
-    const what = `Deleting ${slug} erases every value of its environments from ${target.organization} at once; there is no undo`;
+    const command = `varlatch project delete ${quoted} --confirm ${quoted} --org ${known.organization ? shellWord(known.organization) : "<org>"}${known.serverOption}`;
+    const what = `Deleting ${slug} erases every value of its environments${known.organization ? ` from ${known.organization}` : ""} at once; there is no undo`;
     if (assisted.on) {
       fail(
         `varlatch project delete: ${what}. That is the human's decision. With their approval, add --confirm ${slug}. ` +
@@ -708,6 +727,7 @@ async function projectDelete(args: string[], assisted: AssistedMode): Promise<vo
     }
     usageError(`${what}. Name it again to confirm:\n  ${command}\nNothing was deleted.`);
   }
+  const target = requiredTarget(parsed, parsed.values.get("--org"));
   const api = client(target);
   const meta = await api.meta();
   if (!meta.capabilities.includes(PROJECT_DELETION_CAPABILITY)) {
@@ -745,11 +765,12 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
       throw err;
     }
   }
-  const target = organizationTarget(parsed, slug);
+  // The slug is always given; the configuration is read only for a missing server.
+  const known = organizationTarget(parsed, slug, true);
   const quoted = shellWord(slug);
   if (mode?.mode === "schedule" && !parsed.values.has("--confirm")) {
     const after = mode.afterDays ? ` --after ${mode.afterDays}` : "";
-    const command = `varlatch org delete ${quoted} --confirm ${quoted}${after}${target.serverOption}`;
+    const command = `varlatch org delete ${quoted} --confirm ${quoted}${after}${known.serverOption}`;
     const what =
       `Deleting ${slug} freezes it now and, after the waiting period, ends every membership, retires its machines ` +
       `and destroys its key: its values become unreadable, and there is no undo`;
@@ -766,11 +787,11 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
     fail(
       `varlatch org delete: approving the deletion of ${slug} lets it run; that is the human's decision. ` +
         `With their approval, add --confirm ${slug}. Or the human runs, in their own terminal:\n` +
-        `  varlatch org delete ${quoted} --approve ${shellWord(mode.deletionId)}${target.serverOption}\nNothing was changed.`,
+        `  varlatch org delete ${quoted} --approve ${shellWord(mode.deletionId)}${known.serverOption}\nNothing was changed.`,
       EXIT.config,
     );
   }
-  const api = client(target);
+  const api = client(requiredTarget(parsed, slug));
   const meta = await api.meta();
   if (!meta.capabilities.includes(ORGANIZATION_DELETION_CAPABILITY)) {
     fail(`This server (${meta.serverVersion ?? "an older release"}) cannot delete organizations; that needs Varlatch 0.20.0 or later. Nothing was changed.`);

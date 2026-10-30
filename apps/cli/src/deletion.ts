@@ -52,14 +52,15 @@ export function orgDeleteMode(slug: string, values: Map<string, string>): OrgDel
 export function deletionLimits(kind: "project" | "organization"): string[] {
   const lines = [
     "Deletion covers this installation's live database. It does not reach:",
-    "  backups taken before it completes: they keep the data until their retention removes them, and restoring one restores it;",
+    "  PostgreSQL's old row versions and write-ahead log, its replicas and snapshots of its volume, which keep the data for a while;",
+    `  requests already authorized: the server may still hold their keys or values in memory${kind === "organization" ? ", and one in flight when the deletion runs may still complete" : ""};`,
+    "  backups taken before it completes: they keep the data until their retention removes them, and restoring one brings it back;",
     "  values already pushed to platforms: they stay there;",
-    "  values revealed, downloaded or exported: they stay wherever they were copied. Rotate them at their provider to make old copies useless;",
-    "  PostgreSQL's old row versions and write-ahead log, which it keeps for a while.",
+    "  values revealed, downloaded or exported: they stay wherever they were copied. Rotate them at their provider to make old copies useless.",
   ];
   if (kind === "organization") {
     lines.push(
-      "A GitHub App stays as it is on GitHub. Uninstall it or delete it there, revoke copies of its private key; installation tokens already issued expire on their own.",
+      "A GitHub App stays as it is on GitHub: uninstall it or delete it there, and revoke copies of its private key. Installation tokens already issued stay valid until they expire.",
     );
   }
   return lines;
