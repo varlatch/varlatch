@@ -2,13 +2,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
+import { encryptGitHubAppKey } from "../src/crypto/hierarchy.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
+import { importGitHubApp } from "../src/domain/githubapps.js";
 import { finalizeDeletion, runDueDeletions } from "../src/domain/orgdeletion.js";
 import { getOrganization, orgKekOf } from "../src/domain/orgs.js";
+import { createAppConnection } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
 import { deliverWebhooksOnce } from "../src/domain/webhooks.js";
 import { latestEventCursor, syncNewMirrorEvents } from "../src/mirror/publisher.js";
+import { fakeGitHubApps } from "./helpers/fake-github-app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
@@ -165,6 +169,27 @@ describe("cancelling", () => {
 });
 
 describe("while frozen", () => {
+  it("refuses a rename, and anything that would use a stored key or call out, before it does", async () => {
+    const org = await getOrganization(ctx, "acme");
+    const github = fakeGitHubApps();
+    const pem = github.addApp({ id: 5254113, slug: "varlatch-test", clientId: "Iv23frozen", owner: { login: "acme", id: 1, type: "Organization" }, permissions: { secrets: "write", environments: "write", metadata: "read" } });
+    const installationId = github.install(5254113, { login: "acme", id: 1, type: "Organization" }, "selected", null, [{ name: "api", private: true }]);
+    await ctx.db.query(
+      `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
+       VALUES ('gha_frozen', $1, 5254113, 'varlatch-test', 'Iv23frozen', 'acme', 1, 'organization', $2, $3)`,
+      [org.id, JSON.stringify(encryptGitHubAppKey(orgKekOf(ctx, org), org.id, "gha_frozen", pem)), adminId],
+    );
+    await call("POST", `${ORG}/deletion`, {});
+
+    const renamed = await call("PATCH", ORG, { name: "Renamed" });
+    expect(renamed.body.error?.code).toBe("ORGANIZATION_DELETING");
+    expect((await getOrganization(ctx, "acme")).name).not.toBe("Renamed");
+    const outcome = (p: Promise<unknown>) => p.then(() => "done", (err: unknown) => (err as { code?: string }).code);
+    expect(await outcome(createAppConnection(ctx, org, { installationId, name: "App" }, adminId, null, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
+    expect(await outcome(importGitHubApp(ctx, org, { appId: 5254113, privateKey: pem }, adminId, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
+    expect(github.calls).toEqual([]);
+  });
+
   it("keeps a suspended machine's credentials: revoking one is refused, and a cancel restores it whole", async () => {
     const svc = (await call("POST", `${ORG}/identities`, { name: "deployer", kind: "service" })).body;
     const credentialId = (await ctx.db.query("SELECT id FROM credentials WHERE identity_id = $1", [svc.id])).rows[0]!.id as string;

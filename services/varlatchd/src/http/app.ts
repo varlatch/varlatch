@@ -2252,14 +2252,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const expiresAt = new Date(Date.now() + body.ttlSeconds * 1000).toISOString();
-    const issued = await issueCredential(ctx.db, {
-      identityId: agent.id,
-      kind: "agent-run",
-      name: body.runId ?? "agent-run",
-      expiresAt,
-      actorIdentityId: principal.identity.id,
-      organizationId: org.id,
-      metadata: { ...(body.runId ? { runId: body.runId } : {}), ttlSeconds: body.ttlSeconds },
+    // The writer protocol (ADR-0051): a live Organization that is not being
+    // deleted, and an Agent still enabled, in the issuing transaction.
+    const issued = await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
+      const live = await db.query("SELECT 1 FROM identities WHERE id = $1 AND NOT disabled FOR SHARE", [agent.id]);
+      if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+      return issueCredential(db, {
+        identityId: agent.id,
+        kind: "agent-run",
+        name: body.runId ?? "agent-run",
+        expiresAt,
+        actorIdentityId: principal.identity.id,
+        organizationId: org.id,
+        metadata: { ...(body.runId ? { runId: body.runId } : {}), ttlSeconds: body.ttlSeconds },
+      });
     });
     c.header("Cache-Control", "no-store");
     return c.json({ id: issued.credentialId, token: issued.token, expiresAt }, 201);

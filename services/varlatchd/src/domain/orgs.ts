@@ -7,6 +7,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import type { OrgRole } from "../authz/evaluate.js";
 
 export interface OrgRow {
@@ -78,14 +79,13 @@ export async function renameOrganization(
     throw new DomainError("VALIDATION_FAILED", "Organization name must be 1 to 200 characters, not counting surrounding spaces");
   }
   return withTx(ctx.db, async (db) => {
-    // A rename changes no key: FOR NO KEY UPDATE serializes renames without
-    // blocking the key-share locks that inserts referencing the
-    // Organization take (ADR-0051's writer protocol). FOR UPDATE would make
-    // such an insert wait behind a rename that waits for the audit counter.
-    const prev = await db.query(
-      "SELECT slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
-      [organizationId],
-    );
+    // The writer protocol, freeze included (ADR-0051). A rename changes no
+    // key: FOR NO KEY UPDATE serializes renames without blocking the
+    // key-share locks that inserts referencing the Organization take. FOR
+    // UPDATE would make such an insert wait behind a rename that waits for
+    // the audit counter.
+    await lockLiveScope(db, { organizationId, organizationMode: "no key update" });
+    const prev = await db.query("SELECT slug, name FROM organizations WHERE id = $1", [organizationId]);
     const row = prev.rows[0] as { slug: string; name: string } | undefined;
     if (!row) throw notFound("Organization");
     await db.query("UPDATE organizations SET name = $1 WHERE id = $2", [trimmed, organizationId]);

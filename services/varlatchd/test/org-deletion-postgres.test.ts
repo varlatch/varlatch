@@ -154,6 +154,30 @@ describe.skipIf(!url)("organization deletion on real PostgreSQL", () => {
     expect((await db.query("SELECT needs_sync FROM sync_targets WHERE id = $1", [target.id])).rows[0]).toEqual({ needs_sync: false });
   });
 
+  it("an Agent credential a Broker asks for while the deletion is being scheduled is refused", async () => {
+    const broker = (await call("POST", `${ORG}/identities`, { name: "broker", kind: "broker" })).body;
+    const agent = (await call("POST", `${ORG}/identities`, { name: "agent", kind: "agent" })).body;
+    // Scheduling holds the Organization but has not yet suspended anyone:
+    // the Broker authenticates and finds its Agent enabled, then issuing waits.
+    const paused = pauseAt(/^\s*INSERT INTO organization_deletions/);
+    const scheduling = call("POST", `${ORG}/deletion`, {});
+    await paused.arrived;
+    const minting = app
+      .request(`${ORG}/identities/${agent.id}/credentials`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${broker.credential}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ttlSeconds: 600 }),
+      })
+      .then(async (res) => ({ status: res.status, body: await res.json() }));
+    expect(await settled(minting, 500)).toBe(false);
+    paused.release();
+    expect((await scheduling).status).toBe(201);
+    const minted = await minting;
+    expect(minted.status).toBe(409);
+    expect(minted.body.error.code).toBe("ORGANIZATION_DELETING");
+    expect((await db.query("SELECT count(*)::int AS n FROM credentials WHERE kind = 'agent-run'")).rows[0]).toEqual({ n: 0 });
+  });
+
   it("two workers never run one deletion twice", async () => {
     const scheduled = (await call("POST", `${ORG}/deletion`, {})).body;
     await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute'");

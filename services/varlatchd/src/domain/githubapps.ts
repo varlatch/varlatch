@@ -120,6 +120,8 @@ export async function startRegistration(
   actorIdentityId: string,
   base: URL,
 ): Promise<RegistrationStart> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (!LOGIN_PATTERN.test(account.login)) {
     throw new DomainError("VALIDATION_FAILED", "account.login: not a GitHub account name");
   }
@@ -215,6 +217,8 @@ export async function completeRegistration(
   actorIdentityId: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<RegistrationOutcome> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   const stateHash = hashToken(input.state);
   // Claim the state: one completion per registration, by the actor who
   // started it, in this Organization, within the hour.
@@ -405,6 +409,8 @@ export async function importGitHubApp(
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<ImportOutcome> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }

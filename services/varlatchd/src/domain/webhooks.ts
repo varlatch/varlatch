@@ -8,7 +8,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -50,6 +50,8 @@ export async function createWebhook(
   input: { url: string; eventTypes?: string[] | undefined },
   actorIdentityId: string,
 ): Promise<{ webhook: WebhookRow; secret: string }> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   let parsed: URL;
   try {
     parsed = new URL(input.url);
