@@ -8,6 +8,7 @@ import {
   ensureInstallation,
   issueBootstrapGrant,
 } from "../src/domain/bootstrap.js";
+import { recordAuditEvent } from "../src/audit/events.js";
 import { SEND_CHECK_SQL, ledgerSet, reconcileTarget, runSyncOnce, scanSyncTriggers } from "../src/domain/syncdelivery.js";
 import { mappingWidens, recordCredentialExpiry } from "../src/domain/sync.js";
 import { buildApp } from "../src/http/app.js";
@@ -398,6 +399,47 @@ describe("convergence", () => {
     expect(row.needs_sync).toBe(true);
     await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     expect(coolify.values().get("PORT")).toBe("9090");
+  });
+
+  it("reads and validation mark no Target; a denied write neither; a write does (#59)", async () => {
+    const coolify = fakeCoolify();
+    // A Contract with a Secret and a plain item, so validation reports on both.
+    const revision = await (
+      await post("/v1/organizations/acme/projects/api/contract/revisions", {
+        contract: {
+          schemaVersion: 1,
+          items: [
+            { name: "DATABASE_URL", required: { kind: "never" }, sensitive: true, type: "string" },
+            { name: "PORT", required: { kind: "never" }, sensitive: false, type: "string" },
+          ],
+        },
+      })
+    ).json();
+    expect((await post(`/v1/organizations/acme/projects/api/contract/revisions/${revision.id}/activate`, {})).status).toBe(200);
+    await activeTarget();
+    await scanSyncTriggers(ctx);
+    await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
+    await scanSyncTriggers(ctx);
+    expect((await targetRowFromDb()).needs_sync).toBe(false);
+    // Strict retrieval (value.disclosed and secret.disclosed), the
+    // effective values read, and a validation verdict.
+    expect((await post(`${ENV_PATH}/disclosures`, { items: ["DATABASE_URL", "PORT"] })).status).toBe(200);
+    expect((await get(`${ENV_PATH}/effective-configuration?include=values`)).status).toBe(200);
+    expect((await post(`${ENV_PATH}/validate`, {})).status).toBe(200);
+    const reads = await ctx.db.query(
+      "SELECT DISTINCT event_type FROM audit_events WHERE event_type IN ('value.disclosed', 'secret.disclosed', 'value.validated', 'secret.validated') ORDER BY event_type",
+    );
+    expect(reads.rows.map((r) => (r as { event_type: string }).event_type)).toEqual(["secret.disclosed", "secret.validated", "value.disclosed", "value.validated"]);
+    await scanSyncTriggers(ctx);
+    expect((await targetRowFromDb()).needs_sync).toBe(false);
+    // A denied action changed nothing.
+    const env = (await ctx.db.query("SELECT e.id, p.organization_id FROM environments e JOIN projects p ON p.id = e.project_id WHERE e.name = 'development'")).rows[0] as { id: string; organization_id: string };
+    await recordAuditEvent(ctx.db, { eventType: "value.written", decision: "deny", organizationId: env.organization_id, resource: { environmentId: env.id } });
+    await scanSyncTriggers(ctx);
+    expect((await targetRowFromDb()).needs_sync).toBe(false);
+    await put(`${ENV_PATH}/values/PORT`, { value: "9191" });
+    await scanSyncTriggers(ctx);
+    expect((await targetRowFromDb()).needs_sync).toBe(true);
   });
 
   it("rotation pushes the new primary", async () => {

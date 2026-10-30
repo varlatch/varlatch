@@ -218,6 +218,12 @@ fixes.
   after it, since their values are only known once disclosed. Pasting a
   downloaded file into the dashboard, or `varlatch import`, reads the same
   values back.
+- **Reading values no longer re-runs an environment's integrations.**
+  Viewing values in the dashboard, a strict retrieval, a validation, and
+  every other audited read or denied action naming an environment made
+  each integration of the environment decrypt its values and record an
+  audit event on the next pass, with nothing to push. Only configuration
+  changes now do (#59).
 
 ### Copies in env files
 
