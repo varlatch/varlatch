@@ -5001,6 +5001,22 @@ components:
             2026-10-21 and 2026-10-22). They never fail a run, and each run
             that reaches the value check replaces them. Null when no run has
             since 0.18.1.
+        lastDrift:
+          type: [object, "null"]
+          description: >
+            The last drift the Target observed (ADR-0050): destination names
+            that differed from what Varlatch last wrote when a repair read
+            the destination back, before it put them back. Names only;
+            count is exact, names holds at most the first 50; eventId is
+            the sync.drift_detected audit event (reading it needs
+            audit.read). Cleared when the destination changes. Null when
+            no drift was observed, and on servers before 0.20.0.
+          required: [at, count, names, eventId]
+          properties:
+            at: { type: string, format: date-time }
+            count: { type: integer }
+            names: { type: array, maxItems: 50, items: { type: string } }
+            eventId: { type: [string, "null"] }
         drained:
           type: boolean
           description: >

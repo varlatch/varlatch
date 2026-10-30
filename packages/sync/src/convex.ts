@@ -199,7 +199,7 @@ export const convexAdapter: PlatformAdapter = {
     );
   },
 
-  async readValues(req: AdapterRequest): Promise<Map<string, string>> {
+  async readValues(req: AdapterRequest): Promise<Map<string, string | null>> {
     const res = await request(req, "/api/query", {
       path: ENV_LIST_QUERY,
       args: {},
@@ -220,7 +220,9 @@ export const convexAdapter: PlatformAdapter = {
     return new Map(
       (parsed.value as ConvexEnvVar[])
         .filter((e) => e && typeof e.name === "string")
-        .map((e) => [e.name, typeof e.value === "string" ? e.value : ""]),
+        // A value Convex does not return as a string is unknown, not empty:
+        // neither drift nor a match (ADR-0050 Decision 10).
+        .map((e) => [e.name, typeof e.value === "string" ? e.value : null]),
     );
   },
 

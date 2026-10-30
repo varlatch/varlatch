@@ -79,6 +79,21 @@ describe("describeEvent", () => {
     expect(segmentsText(plain.segments)).not.toMatch(/download/);
   });
 
+  it("says what drift a repair found, by kind and name, never who changed it (ADR-0050)", () => {
+    const d = describeEvent(
+      event({
+        eventType: "sync.drift_detected",
+        resource: { targetId: "snt_1", environmentId: "env_prod" },
+        metadata: { changed: "PORT", removed: "", recreated: "OLD_KEY", count: 2, items: "PORT", generation: 7 },
+      }),
+      names,
+    );
+    expect(d.title).toBe("Drift detected");
+    expect(segmentsText(d.segments)).toBe(
+      "found 2 names that differed from what Varlatch last wrote to GitHub Actions acme-org/api (changed: PORT; back after deletion: OLD_KEY)",
+    );
+  });
+
   it("resolves sync places through the environment", () => {
     expect(sentence(event({ eventType: "sync.target_paused", resource: { targetId: "snt_1", environmentId: "env_prod" } }))).toBe(
       "paused GitHub Actions acme-org/api for api / production",
