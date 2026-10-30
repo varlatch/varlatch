@@ -560,6 +560,14 @@ paths:
         - name: include
           in: query
           schema: { type: string, enum: [metadata, values] }
+        - name: purpose
+          in: query
+          description: >
+            Why values are read, recorded as `purpose` in the `value.disclosed`
+            audit event. `export`: read for an env file (capability
+            `disclosure.purpose.export`). Any other value is refused with
+            VALIDATION_FAILED.
+          schema: { $ref: "#/components/schemas/DisclosurePurpose" }
       responses:
         "200":
           description: Effective configuration
@@ -3886,13 +3894,15 @@ components:
 
     DisclosurePurpose:
       type: string
-      enum: [scan]
+      enum: [scan, export]
       description: >
         Why the caller asks for a disclosure, recorded as `purpose` in the
         disclosure's `secret.disclosed` audit event and in any
         reference-expansion `value.disclosed` events it causes. `scan`: a
-        local secret scan (`varlatch scan`). Any other value is refused
-        with VALIDATION_FAILED.
+        local secret scan (`varlatch scan`). `export`: read for an env file
+        (capability `disclosure.purpose.export`, ADR-0053); it proves
+        neither that a file was saved nor which values went into it. Any
+        other value is refused with VALIDATION_FAILED.
 
     StateDigest:
       type: string

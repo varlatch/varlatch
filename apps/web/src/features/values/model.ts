@@ -194,3 +194,24 @@ export function listNames(names: string[]): string {
   if (names.length <= 1) return names[0] ?? "";
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
+
+/**
+ * The checklist after pasted drafts were saved (ADR-0053): the source of the
+ * paste is a copy Varlatch cannot see or remove.
+ */
+export const PASTE_SAVED_CHECKLIST =
+  "Values you pasted are now in Varlatch, and their source still exists: delete the file you pasted from, check where else it was copied (CI settings, teammates, chat), and rotate any secret whose copies you cannot account for.";
+
+/**
+ * Whether a save stored a value exactly as it was pasted: a pasted draft
+ * reverted, or edited before saving, does not count, so the checklist never
+ * advises deleting the only remaining copy of something not saved.
+ */
+export function savedPastedValue(pasted: Map<string, string> | undefined, saved: Map<string, { op: string; value?: string }> | undefined): boolean {
+  if (!pasted || !saved) return false;
+  for (const [name, value] of pasted) {
+    const draft = saved.get(name);
+    if (draft?.op === "set" && draft.value === value) return true;
+  }
+  return false;
+}

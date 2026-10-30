@@ -123,11 +123,32 @@ fixes.
   downloaded file into the dashboard, or `varlatch import`, reads the same
   values back.
 
+### Copies in env files
+
+- **Every `.env` copy is called a copy.** The dashboard's `.env` download
+  always says that the file is a copy outside Varlatch: rotating or deleting
+  a value in Varlatch does not change it, and anyone with the file can use
+  a credential in it until it is rotated at its provider. The paste import
+  says the pasted text still exists where it came from, and once the
+  pasted drafts are saved a short checklist follows. `varlatch import`
+  says, after it stored values, that the file still holds copies (or, after
+  `--delete-source`, that other copies may exist), with a checklist when
+  Secrets were stored.
+- **Reads for an export are recorded as such.** The download now reads
+  plain values and discloses Secrets with the purpose `export`, so the
+  audit log shows "read for export" instead of "revealed". It records a
+  read, not a saved file. Older servers do not accept the purpose, and the
+  dashboard then reads without one.
+
 ### API
 
 - Sync Targets have `lastDrift` (`at`, `count`, the first 50 `names`,
   `eventId`), and `sync.push_result` gains `driftRepaired` and
   `driftFailed` when a run put drift back.
+- The disclosure purpose `export` (capability `disclosure.purpose.export`),
+  accepted by `POST …/disclosures` and, as `?purpose=export`, by the
+  effective configuration's values read, which records it in
+  `value.disclosed`.
 - Sync Targets have `drained` (no run can start another request) and
   `runStartedAt`. `POST …/sync-targets/{target}/pause?wait=true` answers
   once the Target is drained, or after 30 seconds with `drained: false`;

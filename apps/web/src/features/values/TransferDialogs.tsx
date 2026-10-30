@@ -11,6 +11,8 @@ import { errorMessage } from "../../shell/Shell";
 import { plural } from "./model";
 import { SecretMask } from "./bits";
 import { useExport } from "./useExport";
+export { PASTE_SAVED_CHECKLIST, savedPastedValue } from "./model";
+import { useMeta } from "../projects/hooks";
 
 /**
  * `.env` in and out. Import fills drafts (never writes); export downloads
@@ -70,6 +72,10 @@ export function ImportDialog({
             />
           </Field>
         )}
+        <Callout tone="info" data-testid="import-copies" title="The text you pasted still exists">
+          Importing does not remove it from where it came from: the file, the clipboard, a chat. Nothing is saved yet;
+          once you save these drafts, a short checklist follows.
+        </Callout>
         <ul className="max-h-80 divide-y divide-bd overflow-y-auto rounded-lg border border-bd">
           {(rows ?? []).map((r) => (
             <li key={r.name} className="flex items-center gap-3 px-3 py-2">
@@ -96,6 +102,18 @@ export function ImportDialog({
 const NOT_WRITTEN_REASON =
   "Their values contain characters ($, a single quote, a line break, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv, older dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
 
+/**
+ * The export reads once the server's capabilities are known, so a server
+ * that accepts the export purpose always gets it (ADR-0053); a server whose
+ * metadata cannot be read is treated as an older one.
+ */
+function exportOptions(meta: { data?: { capabilities?: string[] } | undefined; isSuccess: boolean; isError: boolean }) {
+  return {
+    ready: meta.isSuccess || meta.isError,
+    exportPurpose: (meta.data?.capabilities ?? []).includes("disclosure.purpose.export"),
+  };
+}
+
 export function ExportDialog({
   org,
   project,
@@ -110,7 +128,7 @@ export function ExportDialog({
   // `env` is the environment as it is now (the grid resolves it from current
   // data), so a Requirement added while the dialog is open takes effect here.
   const { items, withheld, secrets, plain, unwritable, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } =
-    useExport(org, project, env);
+    useExport(org, project, env, exportOptions(useMeta()));
   const { connection, connect } = useTailnetConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -189,6 +207,12 @@ export function ExportDialog({
         {notWritten && (
           <Callout tone="warn" icon={<FileWarning size={15} />} data-testid="export-not-written" title="Downloaded, with values left out">
             Not written: <span className="font-mono">{notWritten.join(", ")}</span>. {NOT_WRITTEN_REASON}
+          </Callout>
+        )}
+        {items && (
+          <Callout tone="info" data-testid="export-copy-notice" title="The file is a copy outside Varlatch">
+            Rotating or deleting a value in Varlatch does not change it. Anyone with the file can use a credential in it
+            until that credential is rotated at its provider.
           </Callout>
         )}
         {items && !notWritten && (
