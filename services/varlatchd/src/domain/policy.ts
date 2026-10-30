@@ -6,6 +6,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { pinLiveMembership } from "./orgs.js";
 
 /**
@@ -48,6 +49,7 @@ export async function createRole(
     throw new DomainError("VALIDATION_FAILED", "A role must grant at least one action");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const id = newId("role");
     try {
       await db.query(
@@ -105,6 +107,7 @@ export async function updateRole(
     throw new DomainError("VALIDATION_FAILED", "A role must grant at least one action");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "SELECT id, name, actions, version, updated_at FROM roles WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE",
       [roleId, organizationId],
@@ -159,6 +162,7 @@ export async function deleteRole(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "UPDATE roles SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [roleId, organizationId],
@@ -185,6 +189,7 @@ export async function createGroup(
     throw new DomainError("VALIDATION_FAILED", "Invalid group name");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const id = newId(input.kind === "team" ? "team" : "group");
     try {
       await db.query(
@@ -241,6 +246,7 @@ export async function updateGroup(
     throw new DomainError("VALIDATION_FAILED", "Invalid group name");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "SELECT id, name, kind, version, updated_at FROM groups WHERE id = $1 AND organization_id = $2 AND kind = $3 AND revoked_at IS NULL FOR UPDATE",
       [groupId, organizationId, kind],
@@ -286,6 +292,7 @@ export async function deleteGroup(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "UPDATE groups SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING kind",
       [groupId, organizationId],
@@ -347,6 +354,7 @@ export async function addGroupMember(
 ): Promise<void> {
   const group = await requireGroup(ctx, organizationId, groupId);
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const member = await db.query(
       "SELECT kind FROM identities WHERE id = $1 AND NOT disabled AND (organization_id = $2 OR kind = 'human')",
       [identityId, organizationId],
@@ -381,6 +389,7 @@ export async function removeGroupMember(
 ): Promise<void> {
   const group = await requireGroup(ctx, organizationId, groupId);
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "DELETE FROM group_members WHERE group_id = $1 AND identity_id = $2 RETURNING group_id",
       [groupId, identityId],
@@ -419,11 +428,9 @@ export async function addTeamProject(
 ): Promise<void> {
   await requireGroup(ctx, organizationId, teamId, "team");
   await withTx(ctx.db, async (db) => {
-    const project = await db.query(
-      "SELECT id FROM projects WHERE id = $1 AND organization_id = $2",
-      [projectId, organizationId],
-    );
-    if (!project.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Project not in this organization");
+    // A live Project of this Organization, locked so its deletion, which
+    // removes Teams' links, cannot miss this one (ADR-0051).
+    await lockLiveScope(db, { organizationId, projectId });
     await db.query(
       "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
       [teamId, projectId],
@@ -448,6 +455,7 @@ export async function removeTeamProject(
 ): Promise<void> {
   await requireGroup(ctx, organizationId, teamId, "team");
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "DELETE FROM team_projects WHERE team_id = $1 AND project_id = $2 RETURNING team_id",
       [teamId, projectId],

@@ -367,6 +367,26 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * Delete a project (capability projects.delete): tombstones it and its
+   * environments and erases every value version from the live database.
+   */
+  deleteProject(
+    org: string,
+    project: string,
+  ): Promise<{
+    projectId: string;
+    slug: string;
+    environments: number;
+    values: number;
+    versionsErased: number;
+    capabilitiesRevoked: number;
+    targetsRevoked: number;
+    teamLinksRemoved: number;
+  }> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}`);
+  }
+
   listEnvironments(org: string, project: string): Promise<Page<Environment>> {
     return this.request(
       "GET",

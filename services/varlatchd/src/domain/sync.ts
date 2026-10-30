@@ -15,6 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
@@ -358,6 +359,8 @@ export async function createConnection(
   const id = newId("platformConnection");
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -422,6 +425,8 @@ export async function createAppConnection(
   const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
   const id = newId("platformConnection");
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = await db.query(
       "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [app.id, org.id],
@@ -513,6 +518,8 @@ export async function rotateGitHubAppKey(
   }
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = (await db.query(
       "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
@@ -567,6 +574,8 @@ export async function rotateGitHubAppKey(
  */
 export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = (await db.query(
       "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
@@ -684,6 +693,8 @@ export async function replaceConnectionCredential(
     input.credential,
   );
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const res = await db.query(
       `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
@@ -748,6 +759,8 @@ export async function revokeConnection(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
@@ -1071,6 +1084,8 @@ export async function createTarget(
 ): Promise<SyncTargetRow> {
   const id = newId("syncTarget");
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id, projectId, environmentIds: [environmentId] });
     // Lock the Connection (and an App Connection's App before it):
     // attachment serializes with credential replacement and key rotation.
     const locked = await lockConnectionsAndApps(db, org.id, [input.connectionId]);
@@ -1160,6 +1175,8 @@ export async function updateTarget(
   actorIdentityId: string,
 ): Promise<SyncTargetRow> {
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id, projectId: target.project_id, environmentIds: [target.environment_id] });
     // Lock order: Apps, then Connections, then the Target, as key rotation,
     // credential replacement, and Connection revocation take them, so a
     // Target edit serializes with each instead of deadlocking. The Target's
@@ -1298,6 +1315,8 @@ export async function setTargetState(
   actorIdentityId: string,
 ): Promise<SyncTargetRow | null> {
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,

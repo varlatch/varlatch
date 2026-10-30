@@ -11,6 +11,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 
 /**
  * OIDC machine authentication (ADR-0007 foresaw CI federation): an admin
@@ -76,6 +77,7 @@ export async function createOidcBinding(
     throw new DomainError("VALIDATION_FAILED", "Issuer must be a plain https URL");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const id = newId("oidcBinding");
     const res = await db.query(
       `INSERT INTO oidc_bindings (id, identity_id, organization_id, issuer, audience, subject, claims, created_by)
@@ -128,6 +130,7 @@ export async function revokeOidcBinding(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       `UPDATE oidc_bindings SET revoked_at = now()
        WHERE id = $1 AND organization_id = $2 AND identity_id = $3 AND revoked_at IS NULL
@@ -187,7 +190,8 @@ export async function exchangeOidcToken(
      FROM oidc_bindings b
      JOIN identities i ON i.id = b.identity_id
      JOIN organizations o ON o.id = b.organization_id
-     WHERE (o.id = $2 OR o.slug = $2) AND b.issuer = $1 AND b.revoked_at IS NULL AND i.disabled = false`,
+     WHERE (o.id = $2 OR o.slug = $2) AND o.deleted_at IS NULL
+       AND b.issuer = $1 AND b.revoked_at IS NULL AND i.disabled = false`,
     [typeof peek.iss === "string" ? peek.iss : "", opts.organization],
   );
   const bindings = res.rows as OidcBindingRow[];
@@ -221,19 +225,24 @@ export async function exchangeOidcToken(
 
   const binding = matched[0] as OidcBindingRow;
   const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-  const issued = await issueCredential(ctx.db, {
-    identityId: binding.identity_id,
-    kind: "oidc",
-    name: `oidc:${claims.sub.slice(0, 180)}`,
-    expiresAt,
-    actorIdentityId: binding.identity_id,
-    organizationId: binding.organization_id,
-    metadata: {
-      method: "oidc",
-      oidcBindingId: binding.id,
-      issuer: binding.issuer,
-      subject: claims.sub,
-    },
+  // Issued under a live, locked Organization (ADR-0051): verification
+  // took time, and the Organization may have changed meanwhile.
+  const issued = await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: binding.organization_id });
+    return issueCredential(db, {
+      identityId: binding.identity_id,
+      kind: "oidc",
+      name: `oidc:${claims.sub.slice(0, 180)}`,
+      expiresAt,
+      actorIdentityId: binding.identity_id,
+      organizationId: binding.organization_id,
+      metadata: {
+        method: "oidc",
+        oidcBindingId: binding.id,
+        issuer: binding.issuer,
+        subject: claims.sub,
+      },
+    });
   });
   return {
     credentialId: issued.credentialId,

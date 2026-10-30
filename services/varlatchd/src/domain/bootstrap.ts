@@ -9,6 +9,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { pinLiveMembership } from "./orgs.js";
+import { lockLiveScope } from "./liveness.js";
 
 /**
  * Installation lifecycle, bootstrap, and break-glass (ADR-0010/0019/0020).
@@ -233,6 +234,7 @@ export async function issueInviteGrant(
   actorIdentityId: string,
 ): Promise<{ id: string; token: string; expiresAt: string }> {
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: input.organizationId });
     // A person issues invitations through a live membership, pinned so a
     // concurrent removal revokes this invitation with their others
     // (ADR-0052 Decision 2). A machine has no membership to pin.
@@ -476,6 +478,20 @@ export async function consumeSetupGrant(
   onConsumed?: (db: Querier, identityId: string, grantId: string) => Promise<void>,
 ): Promise<{ identityId: string; kind: SetupGrantKind; grantId: string }> {
   const result = await withTx(ctx.db, async (db) => {
+    // An invitation's Organization comes first in the writer protocol
+    // (ADR-0051): read which one it is, lock it live, then lock the grant.
+    // A deleted Organization's invitation is refused like a dead one.
+    const target = (await db.query("SELECT invite_organization_id FROM setup_grants WHERE token_hash = $1", [hashToken(token)])).rows[0] as
+      | { invite_organization_id: string | null }
+      | undefined;
+    if (target?.invite_organization_id) {
+      try {
+        await lockLiveScope(db, { organizationId: target.invite_organization_id });
+      } catch (err) {
+        if (err instanceof DomainError) return null;
+        throw err;
+      }
+    }
     const res = await db.query("SELECT * FROM setup_grants WHERE token_hash = $1 FOR UPDATE", [
       hashToken(token),
     ]);

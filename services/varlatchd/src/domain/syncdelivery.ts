@@ -431,7 +431,7 @@ async function reconcileUnderLease(
   // Freshly resolved state, always (§6: a missed trigger delays a push,
   // never corrupts one).
   const project = (
-    await ctx.db.query("SELECT * FROM projects WHERE id = $1", [target.project_id])
+    await ctx.db.query("SELECT * FROM projects WHERE id = $1 AND deleted_at IS NULL", [target.project_id])
   ).rows[0] as ProjectRow | undefined;
   const env = (
     await ctx.db.query("SELECT * FROM environments WHERE id = $1 AND deleted_at IS NULL", [

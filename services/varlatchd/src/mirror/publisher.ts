@@ -92,7 +92,7 @@ export async function syncAllMirrors(
   }
 
   const projects = await ctx.db.query(
-    "SELECT id, organization_id, slug, name, contract_authority, active_contract_revision_id, created_at FROM projects",
+    "SELECT id, organization_id, slug, name, contract_authority, active_contract_revision_id, created_at FROM projects WHERE deleted_at IS NULL",
   );
   for (const p of projects.rows as Record<string, string | null>[]) {
     await push("project", p.id as string, p.organization_id as string, {
@@ -107,7 +107,7 @@ export async function syncAllMirrors(
     `SELECT e.id, e.name, e.kind, e.tier, e.parent_environment_id, e.expires_at,
             p.organization_id, e.project_id
      FROM environments e JOIN projects p ON p.id = e.project_id
-     WHERE e.deleted_at IS NULL`,
+     WHERE e.deleted_at IS NULL AND p.deleted_at IS NULL`,
   );
   for (const e of envs.rows as Record<string, string | null>[]) {
     await push("environment", e.id as string, e.organization_id as string, {
@@ -127,6 +127,11 @@ export async function syncAllMirrors(
   );
   for (const e of deletedEnvs.rows as { id: string }[]) {
     await callMutation(config, token, "mirror:remove", { kind: "environment", resourceId: e.id }, fetchImpl);
+  }
+  // Deleted Projects too (ADR-0051 Decision 9); their environments are tombstoned with them.
+  const deletedProjects = await ctx.db.query("SELECT id FROM projects WHERE deleted_at IS NOT NULL");
+  for (const p of deletedProjects.rows as { id: string }[]) {
+    await callMutation(config, token, "mirror:remove", { kind: "project", resourceId: p.id }, fetchImpl);
   }
 
   return { pushed };
@@ -257,6 +262,19 @@ export async function syncNewMirrorEvents(
           kind: "environment",
           resourceId: environmentId,
         }, fetchImpl);
+        pushed++;
+      }
+    }
+    if (ev.event_type === "project.deleted") {
+      // A deleted Project's published metadata goes, with its environments'.
+      const projectId = (resource as { projectId?: string } | null)?.projectId;
+      if (projectId) {
+        const envs = await ctx.db.query("SELECT id FROM environments WHERE project_id = $1", [projectId]);
+        for (const e of envs.rows as { id: string }[]) {
+          await callMutation(config, token, "mirror:remove", { kind: "environment", resourceId: e.id }, fetchImpl);
+          pushed++;
+        }
+        await callMutation(config, token, "mirror:remove", { kind: "project", resourceId: projectId }, fetchImpl);
         pushed++;
       }
     }

@@ -8,6 +8,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -68,6 +69,7 @@ export async function createWebhook(
   const secret = `vlt_whsec_${randomBytes(32).toString("base64url")}`;
   const envelope = encryptWebhookSecret(orgKekOf(ctx, org), org.id, id, secret);
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id });
     const eventId = await recordAuditEvent(db, {
       eventType: "webhook.created",
       decision: "info",
@@ -141,6 +143,7 @@ export async function updateWebhook(
     }
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       `SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
        FROM webhooks WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
@@ -193,6 +196,7 @@ export async function revokeWebhook(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "UPDATE webhooks SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [webhookId, organizationId],

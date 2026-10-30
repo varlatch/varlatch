@@ -68,6 +68,26 @@ fixes.
   rotation grace window, which until now only a JSON Contract could set.
   Each rotation decorator may appear once per item.
 
+### Projects
+
+- **A Project can be deleted.** Deleting one, which needs `project.manage`,
+  tombstones it and every environment and erases every version of its
+  values from the live database, those of environments deleted earlier
+  included. It also revokes the Capabilities of its environments and its
+  integrations (a push in progress stops, and the destination can be used
+  by another integration), and removes Teams' links to it. Contract
+  Revisions and the audit log stay. The slug can be used again, by a new
+  Project that inherits no Grant of the old one. Not reached by the
+  deletion: PostgreSQL's old row versions and write-ahead log for a while,
+  backups taken before, values already pushed to platforms, and copies
+  people made.
+- **Writes check what they write into, inside their own transaction.**
+  Every write that creates values or access now locks its Organization,
+  Project and environment in a fixed order and checks that they still
+  exist before it changes anything. A value can no longer land in an
+  environment deleted a moment earlier, and a deletion waits for writes
+  already under way.
+
 ### Members
 
 - **An Organization Admin can remove a person, and a member can leave.**
@@ -191,6 +211,9 @@ fixes.
   `membership.removed` and `membership.role_changed`. When concurrent
   changes keep getting in its way, a removal or role change gives up with
   `STATE_CHANGED` and `details.retryable: true`, having changed nothing.
+- `DELETE /v1/organizations/{org}/projects/{project}` deletes a Project
+  and returns the counts (capability `projects.delete`); the audit event is
+  `project.deleted`.
 - `GET /v1/organizations/{org}/members/{member}/exposure` returns the
   exposure report, and `POST …/exposure/confirmations` with a `versionId`
   records a revocation at the provider (`exposure.revocation_confirmed`):
@@ -213,7 +236,10 @@ issuance audit events), the removal snapshot tables and
 `member_integrations`; migration 36 adds the exposure index
 (`member_exposure`), its backfill state and `exposure_confirmations`. After
 the upgrade, varlatchd indexes the audit events recorded before it in the
-background, in small batches that resume after a restart.
+background, in small batches that resume after a restart. Migration 37
+adds `projects.deleted_at` (a Project's slug is now unique among live
+Projects only) and `value_versions.erased_at`, with a version's payload and
+key nullable once erased.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

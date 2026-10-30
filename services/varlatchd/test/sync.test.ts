@@ -2480,7 +2480,7 @@ describe("held names and names Coolify resolves (ADR-0031 amendment 2026-10-22)"
     expect(held).toHaveLength(1);
     // The next run throws before it renders anything.
     await ctx.db.query("UPDATE sync_targets SET needs_sync = true");
-    const restore = failQuery("SELECT * FROM projects WHERE id = $1");
+    const restore = failQuery("SELECT * FROM projects WHERE id = $1 AND deleted_at IS NULL");
     try {
       await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     } finally {

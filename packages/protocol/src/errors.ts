@@ -85,6 +85,7 @@ export const CAPABILITIES = [
   "disclosure.purpose.export",
   "sync.pause-wait",
   "members.lifecycle",
+  "projects.delete",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
