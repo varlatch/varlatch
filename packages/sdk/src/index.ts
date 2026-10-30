@@ -17,6 +17,8 @@ import type {
   DeviceSignInStarted,
   GrantReplacement,
   IssuedCliCredential,
+  ExposureConfirmation,
+  ExposureReport,
   MemberRemoval,
   MemberReview,
   OwnCredential,
@@ -191,7 +193,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, Invitation, MemberRemoval, MemberReview, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -631,6 +633,26 @@ export class VarlatchClient {
       "PATCH",
       `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}`,
       { role },
+    );
+  }
+
+  /**
+   * What a current or former member received, could reach at removal, and
+   * set up (capability members.lifecycle; needs audit.read). Never a value.
+   */
+  memberExposure(org: string, member: string): Promise<ExposureReport> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}/exposure`,
+    );
+  }
+
+  /** Record that an exposed version was revoked at its provider; once per version. */
+  confirmExposureRevocation(org: string, member: string, versionId: string): Promise<ExposureConfirmation> {
+    return this.request(
+      "POST",
+      `/v1/organizations/${encodeURIComponent(org)}/members/${encodeURIComponent(member)}/exposure/confirmations`,
+      { versionId },
     );
   }
 

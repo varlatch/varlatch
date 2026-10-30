@@ -722,6 +722,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/members/{member}/exposure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a current or former member received, what they could reach at removal, and what they set up (capability members.lifecycle, ADR-0052 Decision 6). Needs audit.read; existence-hiding. Three kinds of facts, never mixed: received (observed in their own audit events: Secrets and values disclosed to them in any mode, and values they wrote; one entry per version, with the environments and ways they received it), authority at removal (the snapshot taken when they were removed, with the Tailnet Requirements it was conditional on; null for a current member), and indirect paths (what they created or changed; not evidence that they held any value). Each version says whether Varlatch still serves it (current, or retiring until its deadline), and whether an operator confirmed it revoked at its provider. No longer served is not safe: replacing a value does not revoke the old credential at its provider. Names, IDs and states only, never a value. Returned whole, never paginated. While older audit history is still being indexed, coverage names that period. */
+        get: operations["memberExposure"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/members/{member}/exposure/confirmations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record that a version in this member's exposure was revoked or rotated at its provider (capability members.lifecycle, ADR-0052 Decision 7), audited as exposure.revocation_confirmed. Needs config.value.write where the value lives; once the value or its environment is deleted, a live Organization Admin. A version not in the member's exposure is RESOURCE_NOT_FOUND. Once per version: a repeated confirmation returns the first with 200. */
+        post: operations["confirmExposureRevocation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -1982,6 +2016,92 @@ export interface components {
                 name: string;
                 projectId: string;
             }[];
+        };
+        ExposureConfirmation: {
+            versionId: string;
+            /** Format: date-time */
+            confirmedAt: string;
+            actorIdentityId: string;
+        };
+        ExposureReport: {
+            member: {
+                identityId: string;
+                name: string;
+                /** @enum {string|null} */
+                role: "admin" | "member" | null;
+                /** Format: date-time */
+                removedAt: string | null;
+            };
+            /** @description complete is false while audit events recorded before this release are still being indexed; from and to bound that period. */
+            coverage: {
+                complete: boolean;
+                /** Format: date-time */
+                from?: string | null;
+                /** Format: date-time */
+                to?: string | null;
+            };
+            received: {
+                itemName: string;
+                versionId: string;
+                /** @description The environment whose value owns the version, which may be a parent of where it was received. */
+                owningEnvironmentId: string | null;
+                projectId: string | null;
+                /** @enum {string} */
+                state: "served" | "not-served" | "revocation-confirmed";
+                /** @enum {string|null} */
+                servedAs: "current" | "retiring" | null;
+                /** Format: date-time */
+                retiringUntil: string | null;
+                /** @enum {string|null} */
+                notServedBecause: "replaced" | "value-deleted" | "environment-deleted" | "unknown" | null;
+                /** @description Whether Varlatch still serves it */
+                served: boolean;
+                confirmation: {
+                    /** Format: date-time */
+                    confirmedAt: string;
+                    actorIdentityId: string;
+                } | null;
+                rotationHint: string | null;
+                receipts: {
+                    environmentId: string;
+                    /** @enum {string} */
+                    way: "revealed" | "delivered" | "export" | "written";
+                    /** Format: date-time */
+                    firstAt: string;
+                    /** Format: date-time */
+                    lastAt: string;
+                }[];
+            }[];
+            authorityAtRemoval: {
+                removalId: string;
+                /** Format: date-time */
+                removedAt: string;
+                /** @enum {string} */
+                role: "admin" | "member";
+                left: boolean;
+                environments: {
+                    environmentId: string;
+                    actions: {
+                        action: string;
+                        sources: {
+                            source: string;
+                            role: string | null;
+                            grantId: string | null;
+                            viaGroupId: string | null;
+                            roleId: string | null;
+                        }[];
+                    }[];
+                    /** @description Requirements reading values here was conditional on; empty means unconditional. */
+                    conditionalOn: string[];
+                }[];
+                requirements: {
+                    requirementId: string;
+                    requirementVersion: number | null;
+                    target: unknown;
+                    selector: unknown;
+                }[];
+            } | null;
+            indirect: components["schemas"]["MemberReview"];
         };
         MemberRemoval: {
             removalId: string;
@@ -4464,6 +4584,73 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemberReview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    memberExposure: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description An identity ID */
+                member: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExposureReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmExposureRevocation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description An identity ID */
+                member: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    versionId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Already confirmed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExposureConfirmation"];
+                };
+            };
+            /** @description Confirmed */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExposureConfirmation"];
                 };
             };
             default: components["responses"]["Error"];

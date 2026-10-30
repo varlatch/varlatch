@@ -72,6 +72,7 @@ import {
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
+import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import {
   createAppConnection,
   createConnection,
@@ -2380,6 +2381,49 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       changeMemberRole(ctx, org.id, member, body.role, principal.identity),
     );
     return c.json(changed);
+  });
+
+  // The exposure report (ADR-0052 Decision 6): for current and former
+  // members, to anyone with audit.read. Names, versions and states only.
+  app.get("/v1/organizations/:org/members/:member/exposure", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await memberExposure(ctx, org.id, memberParam(c, principal)));
+  });
+
+  // An operator's confirmation that an exposed version was revoked at its
+  // provider (Decision 7): config.value.write where the value lives, or a
+  // live Organization Admin once the value or its environment is deleted.
+  app.post("/v1/organizations/:org/members/:member/exposure/confirmations", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ versionId: z.string().min(1).max(200) }).strict(), await c.req.json());
+    const member = memberParam(c, principal);
+    const version = await exposedVersion(ctx.db, org.id, member, body.versionId);
+    if (!version) throw new DomainError("RESOURCE_NOT_FOUND", "That version is not in this member's exposure");
+    if (version.live && version.environmentId && version.projectId) {
+      const env = (
+        await ctx.db.query("SELECT id, tier, parent_environment_id FROM environments WHERE id = $1", [version.environmentId])
+      ).rows[0] as { id: string; tier: "development" | "staging" | "production"; parent_environment_id: string | null };
+      await authorize(ctx, c, principal, "config.value.write", {
+        organizationId: org.id,
+        projectId: version.projectId,
+        environment: { id: env.id, rootId: env.parent_environment_id ?? env.id, tier: env.tier },
+      });
+    } else {
+      const role = principal.identity.kind === "human" ? await getOrgRole(ctx, org.id, principal.identity.id) : null;
+      if (role !== "admin") {
+        throw new DomainError("PERMISSION_DENIED", "The value or its environment was deleted: only an Organization Admin can confirm its revocation");
+      }
+    }
+    const confirmed = await confirmRevocation(ctx, org.id, member, body.versionId, version, principal.identity.id);
+    return c.json(
+      { versionId: confirmed.versionId, confirmedAt: confirmed.confirmedAt, actorIdentityId: confirmed.actorIdentityId },
+      confirmed.created ? 201 : 200,
+    );
   });
 
   // ---- Invitations (ADR-0006: links an admin hands out, never emails).

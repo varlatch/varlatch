@@ -102,6 +102,20 @@ fixes.
   removed while signed in loses the organization in their open dashboard
   at once: its cached data and revealed values are dropped and its pages
   closed.
+- **What a person received, and what is still in use.** The exposure report
+  of a current or former member separates three kinds of facts: what the
+  audit log shows they received (each version of each value, the
+  environments and ways they received it: revealed, delivered to a process
+  such as `varlatch run`, read for an export, or written by them), what
+  they could reach when they were removed (with the Tailnet Requirements it
+  was conditional on), and what they set up. Each version says whether
+  Varlatch still serves it, as the current version or a retiring one until
+  its deadline, and shows the Contract's rotation hint. Replacing a value in
+  Varlatch does not revoke the old credential at its provider, so an
+  operator confirms that separately, version by version. Reading the report
+  needs `audit.read`. The audit history recorded before this release is
+  indexed in the background after the upgrade; until it is done, the
+  report names the period it does not cover yet.
 
 ### CLI
 
@@ -177,6 +191,11 @@ fixes.
   `membership.removed` and `membership.role_changed`. When concurrent
   changes keep getting in its way, a removal or role change gives up with
   `STATE_CHANGED` and `details.retryable: true`, having changed nothing.
+- `GET /v1/organizations/{org}/members/{member}/exposure` returns the
+  exposure report, and `POST …/exposure/confirmations` with a `versionId`
+  records a revocation at the provider (`exposure.revocation_confirmed`):
+  it needs `config.value.write` where the value lives, or the built-in
+  admin role once the value or its environment is deleted.
 - Identities in an Organization's listing have `removedAt`, and `orgRole`
   is null for a former member.
 - A Grant for a person who is not a live member of the Organization, or for
@@ -191,7 +210,10 @@ and `redeploy_paid`; migration 34 adds the `last_drift_*` columns; migration
 35 adds `org_memberships.removed_at` and `version`,
 `credentials.issued_by` (filled in for existing credentials from their
 issuance audit events), the removal snapshot tables and
-`member_integrations`.
+`member_integrations`; migration 36 adds the exposure index
+(`member_exposure`), its backfill state and `exposure_confirmations`. After
+the upgrade, varlatchd indexes the audit events recorded before it in the
+background, in small batches that resume after a restart.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

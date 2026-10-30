@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
+import { withTx } from "../db/tx.js";
 import { currentAttribution } from "./attribution.js";
+import { exposureFromEvent, indexExposures } from "./exposure.js";
 
 /**
  * Security Audit Events (ADR-0016). Events are written through this module
@@ -50,6 +52,34 @@ export async function recordAuditEvent(
   db: Querier,
   event: AuditEventInput,
 ): Promise<string> {
+  const [id] = await recordAuditEvents(db, [event]);
+  return id as string;
+}
+
+/**
+ * Several events in one transaction. A disclosure or a write also updates
+ * the exposure index (ADR-0052 Decision 6), in the same transaction: all
+ * of the events' index rows first, in one statement, then the events. So
+ * the index never lags the audit log, and no transaction waits for an
+ * exposure row while it holds the audit counter, which every audit insert
+ * takes until commit: that order is what keeps two disclosures of the
+ * same values from deadlocking.
+ */
+export async function recordAuditEvents(db: Querier, events: AuditEventInput[]): Promise<string[]> {
+  const exposures = events.flatMap((event) => {
+    const entry = exposureFromEvent(event);
+    return entry ? [{ entry }] : [];
+  });
+  if (exposures.length === 0 && events.length === 1) return [await insertAuditEvent(db, events[0]!)];
+  return withTx(db, async (tx) => {
+    await indexExposures(tx, exposures);
+    const ids: string[] = [];
+    for (const event of events) ids.push(await insertAuditEvent(tx, event));
+    return ids;
+  });
+}
+
+async function insertAuditEvent(db: Querier, event: AuditEventInput): Promise<string> {
   const id = newId("auditEvent");
   // Only the request's own identity is attributed to its credential: an
   // event about someone else, or with no actor, keeps what the caller gave.

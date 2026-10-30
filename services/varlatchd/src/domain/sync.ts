@@ -358,6 +358,13 @@ export async function createConnection(
   const id = newId("platformConnection");
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: id,
+      changes: ["created"],
+    });
     await recordAuditEvent(db, {
       eventType: "sync.connection_created",
       decision: "info",
@@ -366,13 +373,6 @@ export async function createConnection(
       action: "config.sync.manage",
       resource: { connectionId: id },
       metadata: { platform: adapter.platform, baseIdentity, name: input.name },
-    });
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "connection",
-      resourceId: id,
-      changes: ["created"],
     });
     const res = await db.query(
       `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by)
@@ -429,6 +429,13 @@ export async function createAppConnection(
     if (!locked.rows[0]) {
       throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
     }
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: id,
+      changes: ["created"],
+    });
     await recordAuditEvent(db, {
       eventType: "sync.connection_created",
       decision: "info",
@@ -444,13 +451,6 @@ export async function createAppConnection(
         githubAppId: app.id,
         installationId: input.installationId,
       },
-    });
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "connection",
-      resourceId: id,
-      changes: ["created"],
     });
     const res = await db.query(
       `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
@@ -713,6 +713,13 @@ export async function replaceConnectionCredential(
        WHERE id = $2 RETURNING ${CONNECTION_COLUMNS}`,
       [JSON.stringify(envelope), connectionId],
     );
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "connection",
+      resourceId: connectionId,
+      changes: ["credential_replaced"],
+    });
     await recordAuditEvent(db, {
       eventType: "sync.connection_credential_replaced",
       decision: "info",
@@ -723,13 +730,6 @@ export async function replaceConnectionCredential(
       // Each re-authorized Target's write-time gate, as it decided.
       authz: { reauthorizedTargets: provenance },
       metadata: { reauthorizedTargets: rows.map((t) => t.id).join(",") || null },
-    });
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "connection",
-      resourceId: connectionId,
-      changes: ["credential_replaced"],
     });
     // A replacement is a Target mutation class trigger (ADR-0031 §6):
     // enqueue directly, never via the audit cursor.
@@ -1084,6 +1084,13 @@ export async function createTarget(
       connection.base_identity,
       key,
     );
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: id,
+      changes: ["created"],
+    });
     await recordAuditEvent(db, {
       eventType: "sync.target_created",
       decision: "info",
@@ -1099,13 +1106,6 @@ export async function createTarget(
         removeOrphans: input.removeOrphans,
         ...expandsMetadata(destination),
       },
-    });
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "target",
-      resourceId: id,
-      changes: ["created"],
     });
     let res;
     try {
@@ -1259,6 +1259,16 @@ export async function updateTarget(
         [current.id],
       );
     }
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: current.id,
+      changes: [
+        ...(connection.id !== target.connection_id ? (["repointed"] as const) : []),
+        ...(destinationChanged ? (["destination_changed"] as const) : []),
+      ],
+    });
     await recordAuditEvent(db, {
       eventType: "sync.target_updated",
       decision: "info",
@@ -1275,16 +1285,6 @@ export async function updateTarget(
         widened: mappingWidens(current.mapping, mapping),
         ...expandsMetadata(destination),
       },
-    });
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "target",
-      resourceId: current.id,
-      changes: [
-        ...(connection.id !== target.connection_id ? (["repointed"] as const) : []),
-        ...(destinationChanged ? (["destination_changed"] as const) : []),
-      ],
     });
     return targetRow(res.rows[0] as Record<string, unknown>);
   });

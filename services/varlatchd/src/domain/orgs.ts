@@ -77,8 +77,12 @@ export async function renameOrganization(
     throw new DomainError("VALIDATION_FAILED", "Organization name must be 1 to 200 characters, not counting surrounding spaces");
   }
   return withTx(ctx.db, async (db) => {
+    // A rename changes no key: FOR NO KEY UPDATE serializes renames without
+    // blocking the key-share locks that inserts referencing the
+    // Organization take (ADR-0051's writer protocol). FOR UPDATE would make
+    // such an insert wait behind a rename that waits for the audit counter.
     const prev = await db.query(
-      "SELECT slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+      "SELECT slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE",
       [organizationId],
     );
     const row = prev.rows[0] as { slug: string; name: string } | undefined;

@@ -294,11 +294,13 @@ export async function issueReenrollmentGrants(
   }
   return withTx(ctx.db, async (db) => {
     const res = await db.query(
-      // FOR UPDATE: two issuances for the same person serialize, so at most
-      // one link per person stays live.
+      // FOR NO KEY UPDATE: two issuances for the same person serialize, so
+      // at most one link per person stays live. It changes no key, so it
+      // does not block the key-share locks of inserts that reference these
+      // identities (the exposure backfill takes them in another order).
       `SELECT id, name, installation_admin, kind, disabled FROM identities
         WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
-        ORDER BY installation_admin DESC, created_at, id FOR UPDATE`,
+        ORDER BY installation_admin DESC, created_at, id FOR NO KEY UPDATE`,
       input.identityIds === "all" ? [] : [input.identityIds],
     );
     const rows = res.rows as { id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean }[];

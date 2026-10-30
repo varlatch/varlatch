@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { ConfigurationContract } from "@varlatch/contract";
-import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
+import { recordAuditEvents, type AuditEventInput } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptValue } from "../crypto/hierarchy.js";
-import { withSnapshot, withTx } from "../db/tx.js";
+import { withSnapshot } from "../db/tx.js";
 import { getRevision, sensitivityOf, type ContractRevisionRow } from "./contracts.js";
 import type { AppCtx } from "./ctx.js";
 import type { EnvironmentRow } from "./environments.js";
@@ -176,9 +176,8 @@ export async function auditThenDecrypt(
   versionIds: string[],
 ): Promise<Map<string, string>> {
   if (events.length > 0) {
-    await withTx(ctx.db, async (db) => {
-      for (const event of events) await recordAuditEvent(db, event);
-    });
+    // One call: every event's exposure rows before the first audit insert.
+    await recordAuditEvents(ctx.db, events);
   }
   const orgKek = orgKekOf(ctx, state.org);
   const plaintext = new Map<string, string>();
