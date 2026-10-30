@@ -166,6 +166,30 @@ describe.skipIf(!url)("exposure index on real PostgreSQL", () => {
     expect((await db.query("SELECT 1 FROM member_exposure WHERE identity_id = $1", [bob.id])).rows).toHaveLength(1);
   });
 
+  it("issuing re-enrollment links does not hold up the backfill: it locks no key", async () => {
+    expect((await call("POST", `${PROD}/disclosures`, { items: ["TOKEN"] }, bob.token)).status).toBe(200);
+    await db.query("DELETE FROM member_exposure");
+    await db.query("UPDATE exposure_backfill SET cursor = 0, until_order = (SELECT value FROM audit_position), finished_at = NULL");
+    const { issueReenrollmentGrants } = await import("../src/domain/bootstrap.js");
+    const { backfillExposureOnce } = await import("../src/domain/exposure.js");
+    // The issuance holds every person's row and waits, as for the audit counter.
+    const paused = pauseAt(/^\s*INSERT INTO audit_events/);
+    const issuing = issueReenrollmentGrants(ctx, { identityIds: "all" });
+    await paused.arrived;
+    const outcome = await Promise.race([
+      (async () => {
+        while (!(await backfillExposureOnce(ctx)).done) {
+          /* next batch */
+        }
+        return "finished";
+      })(),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
+    ]);
+    paused.release();
+    expect((await issuing).length).toBeGreaterThanOrEqual(2);
+    expect(outcome).toBe("finished");
+  });
+
   it("a Connection change holds its integration row before it takes the audit counter", async () => {
     const connection = (
       await call("POST", "/v1/organizations/test/platform-connections", {
