@@ -624,14 +624,15 @@ export const coolifyAdapter: PlatformAdapter = {
    * requested. Throws on a non-2xx so the caller can surface "pushed but
    * not redeployed" instead of reporting a phantom success.
    */
-  async triggerRedeploy(req: AdapterRequest): Promise<void> {
-    if (req.shouldAbort && (await req.shouldAbort())) return;
+  async triggerRedeploy(req: AdapterRequest): Promise<"sent" | "aborted"> {
+    if (req.shouldAbort && (await req.shouldAbort())) return "aborted";
     const resource = resourceOf(req.destination);
     const restart = resource.kind === "service" || req.destination.deployAction === "restart";
     const res = await request(req, "POST", restart ? `${resource.path}/restart` : `${resource.path}/start?force=true`);
     if (!res.ok) {
       throw new AdapterError(`Coolify ${restart ? "restart" : "deploy"} failed (${res.status})`);
     }
+    return "sent";
   },
 
   /**
