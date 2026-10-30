@@ -686,9 +686,11 @@ async function reconcileUnderLease(
         o.ok ? "written" : "failed-write",
         w?.fingerprint ?? null,
         o.ok ? null : (o.error ?? "failed"),
-        // A write whose content matches the ledger fingerprint is not a
-        // change and owes no redeploy (ADR-0031 §5).
-        o.ok && redeploys && ledger.get(o.name)?.fingerprint !== w?.fingerprint,
+        // Only a write of what the ledger already confirmed is no change and
+        // owes no redeploy (ADR-0031 §5). An intent or a failed write also
+        // carries the fingerprint, but nothing confirmed it landed: a retry
+        // of a change still owes its redeploy.
+        o.ok && redeploys && !(ledger.get(o.name)?.state === "written" && ledger.get(o.name)?.fingerprint === w?.fingerprint),
       );
     }
     // Fewer outcomes than items means shouldAbort cut the batch short:
@@ -1059,7 +1061,9 @@ export async function ledgerSet(
              repaired_at = CASE WHEN $5 IN ('written', 'tombstone') THEN now() END`,
       [targetId, destName, generation, fp, state, lastError],
     );
-    if (oweRedeploy) await db.query("UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1 WHERE id = $1", [targetId]);
+    // Only while the Target still wants redeploys: turning them off settles
+    // the debt and fences the run, under the same row lock.
+    if (oweRedeploy) await db.query("UPDATE sync_targets SET redeploy_owed = redeploy_owed + 1 WHERE id = $1 AND redeploy", [targetId]);
     return true;
   });
 }
@@ -1080,12 +1084,14 @@ async function payRedeploy(
   req: Parameters<NonNullable<ReturnType<typeof getAdapter>["triggerRedeploy"]>>[0],
 ): Promise<string | typeof LEASE_LOST> {
   if (!target.redeploy || !adapter.supportsRedeploy || !adapter.triggerRedeploy) return "";
+  // The current setting, not the one the run started with.
   const res = await ctx.db.query(
-    "SELECT redeploy_owed, redeploy_paid FROM sync_targets WHERE id = $1 AND generation = $2",
+    "SELECT redeploy, redeploy_owed, redeploy_paid FROM sync_targets WHERE id = $1 AND generation = $2",
     [target.id, generation],
   );
-  const row = res.rows[0] as { redeploy_owed: string | number; redeploy_paid: string | number } | undefined;
+  const row = res.rows[0] as { redeploy: boolean; redeploy_owed: string | number; redeploy_paid: string | number } | undefined;
   if (!row) return LEASE_LOST; // fenced: the successor pays
+  if (!row.redeploy) return "";
   const owed = Number(row.redeploy_owed);
   if (owed <= Number(row.redeploy_paid)) return "";
   let outcome: "sent" | "aborted";

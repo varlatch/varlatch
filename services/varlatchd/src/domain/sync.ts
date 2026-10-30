@@ -1196,6 +1196,12 @@ export async function updateTarget(
     } catch (err) {
       throw destinationClaimError(err);
     }
+    if (current.redeploy && patch.redeploy === false && !destinationChanged) {
+      // Turning redeploys off fences a run in progress, so it can neither
+      // record a new debt nor send a redeploy nobody wants any more; the
+      // debt itself was settled in the update above (ADR-0050 Decision 4).
+      await db.query("UPDATE sync_targets SET generation = generation + 1, lease_expires_at = NULL WHERE id = $1", [current.id]);
+    }
     if (destinationChanged) {
       // The new destination starts with an empty ledger and receives a full
       // write even when every name and value is identical (ADR-0031 §3).
