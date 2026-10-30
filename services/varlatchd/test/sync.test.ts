@@ -403,7 +403,21 @@ describe("convergence", () => {
 
   it("reads and validation mark no Target; a denied write neither; a write does (#59)", async () => {
     const coolify = fakeCoolify();
+    // A Contract with a Secret and a plain item, so validation reports on both.
+    const revision = await (
+      await post("/v1/organizations/acme/projects/api/contract/revisions", {
+        contract: {
+          schemaVersion: 1,
+          items: [
+            { name: "DATABASE_URL", required: { kind: "never" }, sensitive: true, type: "string" },
+            { name: "PORT", required: { kind: "never" }, sensitive: false, type: "string" },
+          ],
+        },
+      })
+    ).json();
+    expect((await post(`/v1/organizations/acme/projects/api/contract/revisions/${revision.id}/activate`, {})).status).toBe(200);
     await activeTarget();
+    await scanSyncTriggers(ctx);
     await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
     await scanSyncTriggers(ctx);
     expect((await targetRowFromDb()).needs_sync).toBe(false);
@@ -413,9 +427,9 @@ describe("convergence", () => {
     expect((await get(`${ENV_PATH}/effective-configuration?include=values`)).status).toBe(200);
     expect((await post(`${ENV_PATH}/validate`, {})).status).toBe(200);
     const reads = await ctx.db.query(
-      "SELECT DISTINCT event_type FROM audit_events WHERE event_type IN ('value.disclosed', 'secret.disclosed', 'secret.validated')",
+      "SELECT DISTINCT event_type FROM audit_events WHERE event_type IN ('value.disclosed', 'secret.disclosed', 'value.validated', 'secret.validated') ORDER BY event_type",
     );
-    expect(reads.rows.length).toBeGreaterThan(0);
+    expect(reads.rows.map((r) => (r as { event_type: string }).event_type)).toEqual(["secret.disclosed", "secret.validated", "value.disclosed", "value.validated"]);
     await scanSyncTriggers(ctx);
     expect((await targetRowFromDb()).needs_sync).toBe(false);
     // A denied action changed nothing.

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHmac } from "node:crypto";
 import { getAdapter, type NameOutcome, type NameUsage, type SyncItem, type UsageReport } from "@varlatch/sync";
-import { recordAuditEvent } from "../audit/events.js";
+import { recordAuditEvent, type AuditEventType } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptPlatformCredential, decryptValue, syncFingerprintKey } from "../crypto/hierarchy.js";
 import { withTx } from "../db/tx.js";
@@ -109,13 +109,14 @@ export interface SyncRunOptions {
  * Audit events that never change what a Target would push: reads, Secret
  * validation verdicts, a Capability's lifecycle, denials and exposure
  * attestations. They still advance the cursor; they mark no Target. A
- * denied action of any type changed nothing either. test/sync-triggers.test.ts
- * classifies every event type varlatchd records, so a new one is decided
- * on purpose.
+ * denied action of any type changed no configuration either.
+ * test/sync-triggers.test.ts classifies every type in AUDIT_EVENT_TYPES, so a
+ * new one is decided on purpose.
  */
-export const NON_TRIGGERING_EVENTS: ReadonlySet<string> = new Set([
+export const NON_TRIGGERING_EVENTS: ReadonlySet<AuditEventType> = new Set<AuditEventType>([
   "value.disclosed",
   "secret.disclosed",
+  "value.validated",
   "secret.validated",
   "capability.issued",
   "capability.exercised",
@@ -145,7 +146,7 @@ export async function scanSyncTriggers(ctx: AppCtx): Promise<void> {
   const environmentIds = new Set<string>();
   const projectIds = new Set<string>();
   for (const row of rows) {
-    if (row.decision === "deny" || NON_TRIGGERING_EVENTS.has(row.event_type)) continue;
+    if (row.decision === "deny" || NON_TRIGGERING_EVENTS.has(row.event_type as AuditEventType)) continue;
     const resource = (
       typeof row.resource === "string" ? JSON.parse(row.resource) : row.resource
     ) as Record<string, string | null> | null;
