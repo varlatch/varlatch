@@ -306,7 +306,11 @@ function buildItem(
         // hint refuses those rather than cleaning them (ADR-0053). Only
         // ordinary spaces around the value, and one pair of quotes, go.
         const raw = d.raw ?? "";
-        const payload = raw.slice(raw.indexOf("@rotationHint=") + "@rotationHint=".length).replace(/^ +| +$/g, "");
+        const at = raw.indexOf("@rotationHint=");
+        if (d.value === undefined || at < 0) {
+          throw new EnvSchemaParseError(d.line, "@rotationHint needs a value: @rotationHint=How to rotate it");
+        }
+        const payload = raw.slice(at + "@rotationHint=".length).replace(/^ +| +$/g, "");
         const hint =
           payload.length >= 2 && (payload[0] === '"' || payload[0] === "'") && payload.at(-1) === payload[0]
             ? payload.slice(1, -1)

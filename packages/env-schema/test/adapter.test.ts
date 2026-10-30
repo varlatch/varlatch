@@ -267,6 +267,8 @@ describe("rotation decorators (ADR-0053)", () => {
 
   it("refuses an empty hint, and a hint with a tab or a control character", () => {
     expect(() => parseEnvSchema(schema("# @rotationHint="))).toThrow(/cannot be empty/);
+    expect(() => parseEnvSchema(schema("# @rotationHint"))).toThrow(/needs a value/);
+    expect(() => parseEnvSchema(schema("# @rotationHint(rotate it)"))).toThrow(/needs a value/);
     expect(() => parseEnvSchema(schema('# @rotationHint=""'))).toThrow(/cannot be empty/);
     expect(() => parseEnvSchema(schema("# @rotationHint=one\ttwo"))).toThrow(/one paragraph/);
     expect(() => parseEnvSchema(schema("# @rotationHint=one\u202etwo"))).toThrow(/one paragraph/);

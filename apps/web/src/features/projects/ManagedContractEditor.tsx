@@ -621,7 +621,7 @@ function EditorRow({
  * typed, so "0." on the way to "0.5" survives; seconds are reported when it
  * parses, and an empty field means no default.
  */
-function GraceInput({
+export function GraceInput({
   name,
   seconds,
   disabled,
@@ -634,11 +634,10 @@ function GraceInput({
 }) {
   const [text, setText] = useState(seconds !== undefined ? graceHours(seconds) : "");
   useEffect(() => {
-    // Follow outside changes (undo, restore), not our own echo.
-    setText((current) => {
-      const parsed = current === "" ? undefined : Math.round(Number(current) * 3600);
-      return parsed === seconds ? current : seconds !== undefined ? graceHours(seconds) : "";
-    });
+    // Follow outside changes (undo, restore), not our own echo: text that
+    // parses to what the row holds, NaN for unfinished input such as "."
+    // included, stays as typed.
+    setText((current) => (Object.is(graceSeconds(current), seconds) ? current : seconds !== undefined ? graceHours(seconds) : ""));
   }, [seconds]);
   return (
     <input
@@ -651,14 +650,18 @@ function GraceInput({
       disabled={disabled}
       value={text}
       onChange={(e) => {
-        const next = e.target.value;
-        setText(next);
-        if (next.trim() === "") onChange(undefined);
-        else if (/^\d+(\.\d*)?$|^\.\d+$/.test(next.trim())) onChange(Math.round(Number(next) * 3600));
-        else onChange(Number.NaN);
+        setText(e.target.value);
+        onChange(graceSeconds(e.target.value));
       }}
     />
   );
+}
+
+/** Typed hours as seconds: undefined when empty, NaN when not (yet) a number. */
+function graceSeconds(text: string): number | undefined {
+  const t = text.trim();
+  if (t === "") return undefined;
+  return /^\d+(\.\d*)?$|^\.\d+$/.test(t) ? Math.round(Number(t) * 3600) : Number.NaN;
 }
 
 function changeText(c: Change): React.ReactNode {
