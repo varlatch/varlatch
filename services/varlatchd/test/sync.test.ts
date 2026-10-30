@@ -1276,9 +1276,12 @@ describe("convergence", () => {
       await reconcileTarget(ctx, id, { fetchImpl: cut });
       await runSyncOnce(ctx, { fetchImpl: coolify.fetchImpl });
       const reports = (await syncEvents()).filter((e) => e.event_type === "sync.drift_detected").map((e) => meta(e.metadata));
+      // Reported once, by the run that found it. The continuation does not
+      // report it again: the name put back is credited, and the one the cut
+      // run had started is ambiguous (intent), which is rewritten without
+      // being called drift (ADR-0050 Decision 8).
+      expect(reports).toHaveLength(1);
       expect(reports[0]).toMatchObject({ count: 2 });
-      // The continuation reports only the name still to put back.
-      expect(reports.slice(1).every((r) => r.count === 1)).toBe(true);
       expect(coolify.values().get("PORT")).toBe("8080");
       expect(coolify.values().get("DATABASE_URL")).toBe("postgres://dev-db/main");
     });
