@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { recordAuditEvent } from "../audit/events.js";
-import { exposureFromEvent, indexExposure, indexIntegration, integrationFromEvent, type ExposureWay } from "../audit/exposure.js";
+import { exposureFromEvent, indexExposures, indexIntegrations, integrationFromEvent, type ExposureWay } from "../audit/exposure.js";
 import type { OrgRole } from "../authz/evaluate.js";
 import type { Querier } from "../db/migrate.js";
 import { withSnapshot, withTx } from "../db/tx.js";
@@ -30,34 +30,46 @@ const BACKFILL_EVENT_TYPES = [
 ];
 
 export interface BackfillLimits {
-  /** Events read per batch. */
+  /** Indexable events processed per batch. */
   events: number;
   /** Items (versions) indexed per batch; a batch stops after the event that reaches it. */
   items: number;
+  /**
+   * Audit positions read per batch: a batch looks at most this many events
+   * (through the event_order index), matching or not, so its work is
+   * bounded however sparse the indexable events are.
+   */
+  span: number;
 }
 
-const DEFAULT_LIMITS: BackfillLimits = { events: 500, items: 5000 };
+const DEFAULT_LIMITS: BackfillLimits = { events: 500, items: 5000, span: 20_000 };
 
 const parse = (v: unknown) => (typeof v === "string" ? (JSON.parse(v) as Record<string, unknown>) : (v as Record<string, unknown> | null));
 
 /**
  * One batch of the backfill, in one transaction with its cursor: a restart
  * resumes exactly after the last committed batch, and an overlap with live
- * indexing changes nothing (the times only widen). Returns whether the
- * backfill is finished.
+ * indexing changes nothing (the times only widen). The batch reads the
+ * audit positions (cursor, cursor + span], and stops early at the event
+ * or item limit; the cursor then moves to the last event it indexed, else
+ * to the end of the range, nonmatching events included. Returns whether
+ * the backfill is finished.
  */
-export async function backfillExposureOnce(ctx: AppCtx, limits: BackfillLimits = DEFAULT_LIMITS): Promise<{ done: boolean; events: number }> {
+export async function backfillExposureOnce(ctx: AppCtx, limits: Partial<BackfillLimits> = {}): Promise<{ done: boolean; events: number }> {
+  const { events: maxEvents, items: maxItems, span } = { ...DEFAULT_LIMITS, ...limits };
   return withTx(ctx.db, async (db) => {
     const state = (await db.query("SELECT cursor::text, until_order::text, finished_at FROM exposure_backfill WHERE singleton FOR UPDATE")).rows[0] as
       | { cursor: string; until_order: string; finished_at: string | null }
       | undefined;
     if (!state || state.finished_at) return { done: true, events: 0 };
+    const until = BigInt(state.until_order);
+    const rangeEnd = BigInt(state.cursor) + BigInt(span) < until ? BigInt(state.cursor) + BigInt(span) : until;
     const res = await db.query(
       `SELECT event_order::text, event_type, actor_identity_id, organization_id, resource, metadata, occurred_at
        FROM audit_events
        WHERE event_order > $1::bigint AND event_order <= $2::bigint AND event_type = ANY($3)
        ORDER BY event_order LIMIT $4`,
-      [state.cursor, state.until_order, BACKFILL_EVENT_TYPES, limits.events],
+      [state.cursor, rangeEnd.toString(), BACKFILL_EVENT_TYPES, maxEvents],
     );
     const rows = res.rows as {
       event_order: string;
@@ -68,6 +80,8 @@ export async function backfillExposureOnce(ctx: AppCtx, limits: BackfillLimits =
       metadata: unknown;
       occurred_at: string | Date;
     }[];
+    const exposures: { entry: NonNullable<ReturnType<typeof exposureFromEvent>>; at: string | Date }[] = [];
+    const integrations: { entry: NonNullable<ReturnType<typeof integrationFromEvent>>; at: string | Date }[] = [];
     let cursor = state.cursor;
     let items = 0;
     let processed = 0;
@@ -81,52 +95,67 @@ export async function backfillExposureOnce(ctx: AppCtx, limits: BackfillLimits =
       };
       const exposure = exposureFromEvent(event);
       if (exposure) {
-        await indexExposure(db, exposure, row.occurred_at);
+        exposures.push({ entry: exposure, at: row.occurred_at });
         items += exposure.items.length;
       }
       const integration = integrationFromEvent(event);
-      if (integration) await indexIntegration(db, integration, row.occurred_at);
+      if (integration) integrations.push({ entry: integration, at: row.occurred_at });
       cursor = row.event_order;
       processed++;
-      if (items >= limits.items) break;
+      if (items >= maxItems) break;
     }
-    // Fewer rows than asked, all processed: nothing indexable is left up to until_order.
-    const done = processed === rows.length && rows.length < limits.events;
+    // Merged and in key order, like live indexing (no lock-order cycles).
+    await indexExposures(db, exposures);
+    await indexIntegrations(db, integrations);
+    // Every indexable event of the range seen: the cursor moves past the
+    // nonmatching rest of it too.
+    const exhausted = processed === rows.length && rows.length < maxEvents;
+    const next = exhausted ? rangeEnd : BigInt(cursor);
+    const done = next >= until;
     await db.query(
       "UPDATE exposure_backfill SET cursor = $1::bigint, finished_at = CASE WHEN $2 THEN now() END WHERE singleton",
-      [done ? state.until_order : cursor, done],
+      [next.toString(), done],
     );
     return { done, events: processed };
   });
 }
 
-/** Runs the backfill in the background until it is finished: best-effort, never throws. */
-export function startExposureBackfillLoop(ctx: AppCtx, intervalMs = 2_000): () => void {
-  let busy = false;
+/**
+ * Runs the backfill in the background: best-effort, never throws. After it
+ * finishes it keeps looking, rarely: restoring an archive taken while it
+ * was unfinished brings unfinished state back, and it resumes from there.
+ */
+export function startExposureBackfillLoop(ctx: AppCtx, opts: { busyMs?: number; idleMs?: number } = {}): () => void {
+  const busyMs = opts.busyMs ?? 2_000;
+  const idleMs = opts.idleMs ?? 60_000;
   let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (ms: number) => {
+    if (stopped) return;
+    timer = setTimeout(() => void tick(), ms);
+    timer.unref?.();
+  };
   const tick = async () => {
-    if (busy || stopped) return;
+    let next = busyMs;
     const leave = ctx.maintenance?.enter();
-    if (ctx.maintenance && !leave) return;
-    busy = true;
+    if (ctx.maintenance && !leave) return schedule(busyMs);
     try {
-      const { done } = await backfillExposureOnce(ctx);
-      if (done) stop();
+      // A cheap read first: once finished, nothing is locked.
+      const state = (await ctx.db.query("SELECT finished_at FROM exposure_backfill WHERE singleton")).rows[0] as { finished_at: unknown } | undefined;
+      if (!state || state.finished_at) next = idleMs;
+      else if ((await backfillExposureOnce(ctx)).done) next = idleMs;
     } catch (err) {
       console.error("exposure backfill error:", err);
     } finally {
-      busy = false;
       leave?.();
     }
-  };
-  const timer = setInterval(tick, intervalMs);
-  timer.unref();
-  const stop = () => {
-    stopped = true;
-    clearInterval(timer);
+    schedule(next);
   };
   void tick();
-  return stop;
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
 }
 
 // ---------------------------------------------------------------------------

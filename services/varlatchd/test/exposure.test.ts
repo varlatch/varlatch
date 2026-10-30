@@ -166,6 +166,19 @@ describe("live indexing", () => {
     expect(await exposureRows(bob.id)).toHaveLength(before);
   });
 
+  it("indexes everything a transaction indexes before its first audit insert, in one statement", async () => {
+    // A strict retrieval records two events (plain values and Secrets) in one transaction.
+    log.reset();
+    expect((await call("POST", `${PROD}/retrievals`, { mode: "strict" }, bob.token)).status).toBe(200);
+    const sql = log.entries.filter((e) => e.kind === "sql").map((e) => (e as { text: string }).text);
+    const indexes = sql.flatMap((t, i) => (t.includes("INSERT INTO member_exposure") ? [i] : []));
+    const audits = sql.flatMap((t, i) => (t.includes("INSERT INTO audit_events") ? [i] : []));
+    expect(indexes).toHaveLength(1);
+    expect(audits.length).toBeGreaterThanOrEqual(2);
+    expect(indexes[0]!).toBeLessThan(audits[0]!);
+    expect((await exposureRows(bob.id)).map((r) => `${r.item_name} ${r.way}`).sort()).toEqual(["DB_HOST delivered", "TOKEN delivered"]);
+  });
+
   it("keeps an inherited version's receipts through each environment apart", async () => {
     const personal = await call("POST", `${P}/environments`, { name: "development/bob", kind: "personal", parentEnvironmentId: devId }, bob.token);
     expect(personal.status, JSON.stringify(personal.body)).toBe(201);
@@ -336,6 +349,52 @@ describe("the backfill", () => {
     expect(rows).toHaveLength(1);
     // The backfill moved first_at back to the first disclosure; live indexing set last_at.
     expect(new Date(rows[0]!.first_at).getTime()).toBeLessThan(new Date(rows[0]!.last_at).getTime());
+  });
+
+  it("reads a bounded range of audit positions per batch, moving past events it does not index", async () => {
+    const { recordAuditEvent } = await import("../src/audit/events.js");
+    for (let i = 0; i < 30; i++) await recordAuditEvent(ctx.db, { eventType: "test.noise", decision: "info" });
+    expect((await call("POST", `${PROD}/disclosures`, { items: ["TOKEN"] }, bob.token)).status).toBe(200);
+    for (let i = 0; i < 30; i++) await recordAuditEvent(ctx.db, { eventType: "test.noise", decision: "info" });
+    const live = await exposureRows(bob.id);
+    await restartBackfill();
+    const position = Number((await ctx.db.query("SELECT value::int AS v FROM audit_position")).rows[0]!.v);
+    let batches = 0;
+    let previous = 0;
+    for (;;) {
+      const { done } = await backfillExposureOnce(ctx, { span: 10 });
+      batches++;
+      const cursor = Number((await ctx.db.query("SELECT cursor::int AS c FROM exposure_backfill")).rows[0]!.c);
+      // Every batch moves on, at most one span, matching events or not.
+      expect(cursor).toBeGreaterThan(previous);
+      expect(cursor - previous).toBeLessThanOrEqual(10);
+      previous = cursor;
+      if (done) break;
+    }
+    expect(previous).toBe(position);
+    expect(batches).toBeGreaterThanOrEqual(Math.ceil(position / 10));
+    expect(await exposureRows(bob.id)).toEqual(live);
+  });
+
+  it("keeps looking after it finishes, so a restored unfinished backfill resumes", async () => {
+    const { startExposureBackfillLoop } = await import("../src/domain/exposure.js");
+    expect((await call("POST", `${PROD}/disclosures`, { items: ["TOKEN"] }, bob.token)).status).toBe(200);
+    const live = await exposureRows(bob.id);
+    const stop = startExposureBackfillLoop(ctx, { busyMs: 5, idleMs: 5 });
+    try {
+      // Finished state: nothing to do. Then an archive from before it finished comes back.
+      await new Promise((r) => setTimeout(r, 30));
+      await restartBackfill();
+      for (let i = 0; i < 200; i++) {
+        const state = (await ctx.db.query("SELECT finished_at FROM exposure_backfill")).rows[0] as { finished_at: unknown };
+        if (state.finished_at) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    } finally {
+      stop();
+    }
+    expect((await ctx.db.query("SELECT finished_at FROM exposure_backfill")).rows[0]).not.toEqual({ finished_at: null });
+    expect(await exposureRows(bob.id)).toEqual(live);
   });
 
   it("rebuilds the integration index from Sync Target and Connection events", async () => {
