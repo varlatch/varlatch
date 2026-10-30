@@ -50,7 +50,7 @@ import { CONFIG_ITEM_NAME_PATTERN, rotationHintProblem, type ConfigurationContra
 import { validationDocument, validationOutcome } from "./validation.js";
 import { obtainOidcIdToken } from "./oidcLogin.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
-import { MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
+import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -2261,8 +2261,11 @@ async function main(): Promise<void> {
           if (!meta.capabilities.includes(MEMBERS_CAPABILITY)) {
             fail(`This server (${meta.serverVersion ?? "an older release"}) has no exposure report; that needs Varlatch 0.20.0 or later.`);
           }
-          let id = "me";
-          if (target !== "me") {
+          // An identity ID (or "me") goes to the report as it is: the server
+          // checks it, and reading the report needs only audit.read. Only a
+          // name is resolved, through the identity listing (identity.read).
+          let id = target;
+          if (target !== "me" && !IDENTITY_ID.test(target)) {
             try {
               id = resolvePerson((await api.listIdentities(ctx.organization)).items, target).id;
             } catch (err) {

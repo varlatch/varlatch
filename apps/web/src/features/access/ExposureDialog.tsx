@@ -43,6 +43,21 @@ export function versionState(v: Received): { tone: "danger" | "warn" | "mono" | 
   return { tone: "warn", label: "no longer served", detail: `${why} Not safe until it is revoked at its provider.` };
 }
 
+type Requirement = NonNullable<ExposureReport["authorityAtRemoval"]>["requirements"][number];
+
+/** A Requirement as it was defined at removal: a later edit does not change it. */
+export function requirementWords(r: Requirement, envLabel: (id: string) => string): string {
+  const selector = (r.selector ?? {}) as { tailnet?: string; tags?: string[]; users?: string[]; nodes?: string[] };
+  const by = [
+    selector.tags?.length ? `tags ${selector.tags.join(", ")}` : null,
+    selector.users?.length ? `users ${selector.users.join(", ")}` : null,
+    selector.nodes?.length ? `nodes ${selector.nodes.join(", ")}` : null,
+  ].filter(Boolean);
+  const target = r.target as { kind?: string; tier?: string; environmentIds?: string[] } | null;
+  const on = target?.kind === "tier" ? `the ${target.tier} tier` : target?.kind === "environments" ? (target.environmentIds ?? []).map(envLabel).join(", ") : "its target";
+  return `a device in ${selector.tailnet ?? "a tailnet"}${by.length ? ` with ${by.join(" or ")}` : ""} (Requirement on ${on}, as defined at removal)`;
+}
+
 /** The open items: versions not yet confirmed revoked at their provider. */
 export function openItems(report: ExposureReport): Received[] {
   return report.received.filter((v) => !v.confirmation);
@@ -130,6 +145,9 @@ export function ExposureDialog({
                   <li key={v.versionId} data-version={v.versionId} className="rounded-md border border-bd px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-[13px] font-medium">{v.itemName}</span>
+                      <span className="font-mono text-xs text-muted" data-testid="version-id" title="Version">
+                        {v.versionId}
+                      </span>
                       <span className="text-xs text-muted">in {envLabel(v.owningEnvironmentId)}</span>
                       <Badge tone={state.tone} data-testid="version-state">
                         {state.label}
@@ -148,9 +166,8 @@ export function ExposureDialog({
                             loading={confirmRevocation.isPending && confirmRevocation.variables === v.versionId}
                             onClick={async () => {
                               const ok = await confirm({
-                                title: `Confirm ${v.itemName} was revoked at its provider?`,
-                                description:
-                                  "Confirm only after the credential stopped working at its provider. Changing the value in Varlatch does not revoke the old one there.",
+                                title: `Confirm ${v.itemName} version ${v.versionId} was revoked at its provider?`,
+                                description: `This version, first received ${new Date(v.receipts[0]?.firstAt ?? "").toLocaleString()}, in ${envLabel(v.owningEnvironmentId)}. Confirm only after this credential stopped working at its provider. Changing the value in Varlatch does not revoke the old one there.`,
                                 confirmLabel: "It was revoked",
                               });
                               if (ok) confirmRevocation.mutate(v.versionId);
@@ -191,7 +208,15 @@ export function ExposureDialog({
               {data.authorityAtRemoval.environments.map((e) => (
                 <li key={e.environmentId} data-authority={e.environmentId} className="text-[13px]">
                   {envLabel(e.environmentId)}: {e.actions.map((a) => a.action).join(", ")}{" "}
-                  <Badge tone={e.conditionalOn.length ? "mono" : "warn"}>{e.conditionalOn.length ? "conditional on a Tailnet Requirement" : "unconditional"}</Badge>
+                  <Badge tone={e.conditionalOn.length ? "mono" : "warn"}>{e.conditionalOn.length ? "conditional" : "unconditional"}</Badge>
+                  {e.conditionalOn.length > 0 && (
+                    <ul className="ml-4 text-xs text-muted" data-testid="authority-conditions">
+                      {e.conditionalOn.map((id) => {
+                        const r = data.authorityAtRemoval!.requirements.find((x) => x.requirementId === id);
+                        return <li key={id}>reading values needed {r ? requirementWords(r, envLabel) : `Requirement ${id}`}</li>;
+                      })}
+                    </ul>
+                  )}
                 </li>
               ))}
             </ul>

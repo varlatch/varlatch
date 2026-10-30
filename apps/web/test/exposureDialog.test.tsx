@@ -76,7 +76,9 @@ const REPORT: ExposureReport = {
     role: "member",
     left: false,
     environments: [{ environmentId: "env_1", actions: [{ action: "secret.reveal", sources: [] }], conditionalOn: ["req_1"] }],
-    requirements: [],
+    requirements: [
+      { requirementId: "req_1", requirementVersion: 1, target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"], users: ["ops@example.com"] } },
+    ],
   },
   indirect: {
     syncTargets: [],
@@ -153,7 +155,11 @@ describe("the exposure dialog", () => {
     expect(inRow("ver_2", "rotate-link")).toHaveLength(0);
     // A confirmed version has no confirm action.
     expect(inRow("ver_3", "confirm-revoked")).toHaveLength(0);
-    expect(text(byTestId("exposure-authority"))).toContain("conditional on a Tailnet Requirement");
+    expect(text(byTestId("authority-conditions"))).toBe(
+      "reading values needed a device in example.ts.net with tags tag:prod or users ops@example.com (Requirement on the production tier, as defined at removal)",
+    );
+    // Each row names its version, so two versions of one item are told apart.
+    expect(text(inRow("ver_2", "version-id")[0]!)).toBe("ver_2");
     expect(text(byTestId("exposure-indirect"))).toContain("deploy for deployer still works");
   });
 
@@ -161,7 +167,7 @@ describe("the exposure dialog", () => {
     await mount();
     await act(async () => inRow("ver_1", "confirm-revoked")[0]!.props.onClick());
     await settle();
-    expect(fake.confirms).toEqual(["Confirm TOKEN was revoked at its provider?"]);
+    expect(fake.confirms).toEqual(["Confirm TOKEN version ver_1 was revoked at its provider?"]);
     expect(fake.api.confirmExposureRevocation).toHaveBeenCalledWith("acme", "idn_bob", "ver_1");
     // The report is read again afterwards.
     expect(fake.api.memberExposure).toHaveBeenCalledTimes(2);

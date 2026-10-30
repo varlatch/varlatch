@@ -24,6 +24,8 @@ const ORG = "/v1/organizations/acme";
 let server: http.Server;
 let origin = "";
 let capabilities: string[] = [];
+/** When set, the identity listing is refused, as for a caller without identity.read. */
+let denyIdentities = false;
 let requests: { method: string; url: string; body: unknown }[] = [];
 
 const IDENTITIES = [
@@ -108,13 +110,20 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.end(JSON.stringify(payload));
     };
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.20.0", capabilities });
-    if (url === `${ORG}/identities`) return json(200, { items: IDENTITIES, nextCursor: null });
+    if (url === `${ORG}/identities`) {
+      if (denyIdentities) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_d" } });
+      return json(200, { items: IDENTITIES, nextCursor: null });
+    }
     if (url === `${ORG}/projects`) return json(200, { items: [{ id: "prj_1", slug: "api", name: "API" }], nextCursor: null });
     if (url === `${ORG}/projects/api/environments`) {
       return json(200, { items: [{ id: "env_1", name: "production" }, { id: "env_2", name: "development/bob" }], nextCursor: null });
     }
     const exposed = /^\/v1\/organizations\/acme\/members\/([a-z_0-9]+)\/exposure$/.exec(url)?.[1];
-    if (exposed && req.method === "GET") return json(200, { ...EXPOSURE, member: { ...EXPOSURE.member, identityId: exposed } });
+    if (exposed && req.method === "GET") {
+      // As the server: a machine, or someone never a member, is not found.
+      if (exposed === "idn_svc") return json(404, { error: { code: "RESOURCE_NOT_FOUND", message: "Member not found", requestId: "req_n" } });
+      return json(200, { ...EXPOSURE, member: { ...EXPOSURE.member, identityId: exposed } });
+    }
     const member = /^\/v1\/organizations\/acme\/members\/([a-z_0-9]+)$/.exec(url)?.[1];
     if (member && req.method === "DELETE") {
       return json(200, {
@@ -161,6 +170,7 @@ afterAll(async () => {
 beforeEach(() => {
   requests = [];
   capabilities = ["members.lifecycle"];
+  denyIdentities = false;
 });
 
 interface Result {
@@ -312,6 +322,7 @@ describe("varlatch member exposure", () => {
     expect(r.stdout).toContain("OLD_KEY  ver_2  in api / production: no longer served (replaced)");
     expect(r.stdout).toContain("No longer served is not safe");
     expect(r.stdout).toContain("api / production: secret.reveal, config.metadata.read (reading values conditional on Tailnet Requirement req_1)");
+    expect(r.stdout).toContain("req_1: on the production tier, a device in example.ts.net with tags tag:prod");
     expect(r.stdout).toContain("whk_1  sink.example");
     expect(changes()).toEqual([]);
   });
@@ -326,11 +337,23 @@ describe("varlatch member exposure", () => {
     expect(records[1]).toMatchObject({ itemName: "TOKEN", versionId: "ver_1", state: "served" });
   });
 
+  it("reads an ID with audit.read alone: only a name needs the identity listing", async () => {
+    denyIdentities = true;
+    const byId = await cli(["member", "exposure", "idn_old", "--json"]);
+    expect(byId.code, byId.stderr).toBe(0);
+    expect(requests.some((q) => q.url.endsWith("/identities"))).toBe(false);
+    const byName = await cli(["member", "exposure", "Old"]);
+    expect(byName.code).not.toBe(0);
+  });
+
   it("is read-only: no --confirm, no machines, and a server without the report is refused", async () => {
     expect((await cli(["member", "exposure", "Bob", "--confirm", "Bob"])).code).toBe(EXIT.usage);
+    // An ID goes to the server, which refuses a machine; a name never matches one.
     const machine = await cli(["member", "exposure", "idn_svc"]);
-    expect(machine.code).toBe(EXIT.failure);
-    expect(machine.stderr).toContain("idn_svc (deployer) is a service identity");
+    expect(machine.code).not.toBe(0);
+    expect(machine.stderr).toContain("Member not found");
+    const named = await cli(["member", "exposure", "deployer"]);
+    expect(named.stderr).toContain("deployer is not a current or former member");
     capabilities = [];
     const old = await cli(["member", "exposure", "Old"]);
     expect(old.code).toBe(EXIT.failure);

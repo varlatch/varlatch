@@ -10,6 +10,24 @@ import type { ExposureReport, MemberRemoval, MemberReview, OrgIdentity } from "@
 
 export const MEMBERS_CAPABILITY = "members.lifecycle";
 
+/** The shape of an identity ID (idn_ and lowercase base32). */
+export const IDENTITY_ID = /^idn_[a-z2-7]+$/;
+
+type Requirement = NonNullable<ExposureReport["authorityAtRemoval"]>["requirements"][number];
+
+/** A Requirement as it was defined at removal, in words: what it applied to and which devices satisfied it. */
+export function requirementWords(r: Requirement): string {
+  const target = r.target as { kind?: string; tier?: string; environmentIds?: string[] } | null;
+  const selector = (r.selector ?? {}) as { tailnet?: string; tags?: string[]; users?: string[]; nodes?: string[] };
+  const on = target?.kind === "tier" ? `the ${target.tier} tier` : target?.kind === "environments" ? `environments ${(target.environmentIds ?? []).join(", ")}` : "its target";
+  const by = [
+    selector.tags?.length ? `tags ${selector.tags.join(", ")}` : null,
+    selector.users?.length ? `users ${selector.users.join(", ")}` : null,
+    selector.nodes?.length ? `nodes ${selector.nodes.join(", ")}` : null,
+  ].filter(Boolean);
+  return `on ${on}, a device in ${selector.tailnet ?? "a tailnet"}${by.length ? ` with ${by.join(" or ")}` : ""}`;
+}
+
 /** A member named on the command line could not be resolved; nothing was changed. */
 export class MemberError extends Error {
   override name = "MemberError";
@@ -121,6 +139,11 @@ export function exposureLines(
     for (const e of authority.environments) {
       const condition = e.conditionalOn.length === 0 ? "unconditional" : `conditional on Tailnet Requirement ${e.conditionalOn.join(", ")}`;
       lines.push(`  ${envName(e.environmentId)}: ${e.actions.map((a) => a.action).join(", ")} (reading values ${condition})`);
+    }
+    // The Requirements as they were defined at removal: a later edit does not change them.
+    if (authority.requirements.length > 0) {
+      lines.push("  Tailnet Requirements as defined at removal:");
+      for (const r of authority.requirements) lines.push(`    ${r.requirementId}: ${requirementWords(r)}`);
     }
   }
   lines.push(
