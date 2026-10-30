@@ -104,9 +104,23 @@ export async function backfillExposureOnce(ctx: AppCtx, limits: Partial<Backfill
       processed++;
       if (items >= maxItems) break;
     }
+    // The rows' foreign keys take key-share locks on their Organizations
+    // and identities. Take them all first, in order, before any index row:
+    // the batch never holds an index row while it waits for one of them.
+    // An event whose Organization or identity no longer exists has nothing
+    // to index, and must not stop the backfill on a foreign key.
+    const orgs = [...new Set([...exposures, ...integrations].map((e) => e.entry.organizationId))].sort();
+    const people = [...new Set([...exposures, ...integrations].map((e) => e.entry.identityId))].sort();
+    const lockedIds = async (table: "organizations" | "identities", ids: string[]) =>
+      ids.length === 0
+        ? new Set<string>()
+        : new Set((await db.query(`SELECT id FROM ${table} WHERE id = ANY($1) ORDER BY id FOR KEY SHARE`, [ids])).rows.map((r) => (r as { id: string }).id));
+    const liveOrgs = await lockedIds("organizations", orgs);
+    const livePeople = await lockedIds("identities", people);
+    const exists = (e: { entry: { organizationId: string; identityId: string } }) => liveOrgs.has(e.entry.organizationId) && livePeople.has(e.entry.identityId);
     // Merged and in key order, like live indexing (no lock-order cycles).
-    await indexExposures(db, exposures);
-    await indexIntegrations(db, integrations);
+    await indexExposures(db, exposures.filter(exists));
+    await indexIntegrations(db, integrations.filter(exists));
     // Every indexable event of the range seen: the cursor moves past the
     // nonmatching rest of it too.
     const exhausted = processed === rows.length && rows.length < maxEvents;

@@ -142,6 +142,63 @@ describe.skipIf(!url)("exposure index on real PostgreSQL", () => {
     expect(locked).toBe(true);
   });
 
+  it("a rename does not hold up the backfill: it locks no key", async () => {
+    expect((await call("POST", `${PROD}/disclosures`, { items: ["TOKEN"] }, bob.token)).status).toBe(200);
+    await db.query("DELETE FROM member_exposure");
+    await db.query("UPDATE exposure_backfill SET cursor = 0, until_order = (SELECT value FROM audit_position), finished_at = NULL");
+    // The rename holds its Organization's row and waits, as for the audit counter.
+    const paused = pauseAt(/^\s*INSERT INTO audit_events/);
+    const rename = call("PATCH", "/v1/organizations/test", { name: "Renamed" });
+    await paused.arrived;
+    const { backfillExposureOnce } = await import("../src/domain/exposure.js");
+    const outcome = await Promise.race([
+      (async () => {
+        while (!(await backfillExposureOnce(ctx)).done) {
+          /* next batch */
+        }
+        return "finished";
+      })(),
+      new Promise((resolve) => setTimeout(() => resolve("blocked"), 3000)),
+    ]);
+    paused.release();
+    expect((await rename).status).toBe(200);
+    expect(outcome).toBe("finished");
+    expect((await db.query("SELECT 1 FROM member_exposure WHERE identity_id = $1", [bob.id])).rows).toHaveLength(1);
+  });
+
+  it("a Connection change holds its integration row before it takes the audit counter", async () => {
+    const connection = (
+      await call("POST", "/v1/organizations/test/platform-connections", {
+        platform: "coolify",
+        baseIdentity: "https://coolify.example.com",
+        name: "c",
+        credential: "token-c-0001",
+      })
+    ).body;
+    const paused = pauseAt(/^\s*INSERT INTO audit_events/);
+    const replacing = call("POST", `/v1/organizations/test/platform-connections/${connection.id}/credential`, {
+      credential: "token-c-0002",
+      expectedVersion: connection.version,
+    });
+    await paused.arrived;
+    const probe = await db.connect();
+    let locked = false;
+    try {
+      await probe.query("BEGIN");
+      try {
+        await probe.query("SELECT 1 FROM member_integrations WHERE resource_id = $1 FOR UPDATE NOWAIT", [connection.id]);
+      } catch (err) {
+        locked = (err as { code?: string }).code === "55P03";
+      }
+      await probe.query("ROLLBACK");
+    } finally {
+      probe.release();
+    }
+    paused.release();
+    expect((await replacing).status).toBe(200);
+    expect(locked).toBe(true);
+  });
+
   it("concurrent retrievals and scans of the same values all succeed", async () => {
     const results = await Promise.all(
       Array.from({ length: 12 }, (_, i) =>

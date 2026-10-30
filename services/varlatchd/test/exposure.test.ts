@@ -397,6 +397,23 @@ describe("the backfill", () => {
     expect(await exposureRows(bob.id)).toEqual(live);
   });
 
+  it("skips events whose Organization or identity no longer exists, and goes on", async () => {
+    expect((await call("POST", `${PROD}/disclosures`, { items: ["TOKEN"] }, bob.token)).status).toBe(200);
+    const live = await exposureRows(bob.id);
+    // Audit events carry no foreign keys: an event may name what is gone.
+    await ctx.db.query(
+      `INSERT INTO audit_events (id, event_type, decision, actor_identity_id, organization_id, resource, metadata) VALUES
+       ('evt_gone_org', 'secret.disclosed', 'allow', $1, 'org_gone', '{"environmentId":"env_gone"}', '{"mode":"requested","items":"TOKEN@ver_gone"}'),
+       ('evt_gone_idn', 'secret.disclosed', 'allow', 'idn_gone', $2, '{"environmentId":"env_gone"}', '{"mode":"requested","items":"TOKEN@ver_gone"}')`,
+      [bob.id, orgId],
+    );
+    await restartBackfill();
+    while (!(await backfillExposureOnce(ctx)).done) {
+      /* next batch */
+    }
+    expect(await exposureRows(bob.id)).toEqual(live);
+  });
+
   it("rebuilds the integration index from Sync Target and Connection events", async () => {
     await ctx.db.query("UPDATE org_memberships SET role = 'admin' WHERE identity_id = $1", [bob.id]);
     const connection = (await call("POST", `${ORG}/platform-connections`, {

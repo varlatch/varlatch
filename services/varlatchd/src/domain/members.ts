@@ -497,7 +497,10 @@ export type IntegrationChange = "created" | "repointed" | "destination_changed" 
 
 /**
  * The integration index (ADR-0052 Decision 6): written in the transaction
- * that changes the Sync Target or Platform Connection. The kinds of change
+ * that changes the Sync Target or Platform Connection, before its audit
+ * event. Like the exposure index, it is never written while the
+ * transaction holds the audit counter, so a backfill batch holding index
+ * rows cannot close a lock cycle through it. The kinds of change
  * accumulate and the first and last times only ever widen.
  */
 export async function recordIntegrationChange(
