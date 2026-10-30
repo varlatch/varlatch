@@ -111,20 +111,42 @@ export function buildChanges(drafts: Map<string, Draft>, reviewed: Map<string, S
 
 /**
  * The `.env` paste format accepted as draft input: KEY=value lines, comments
- * and blank lines ignored, one level of matching quotes stripped. Anything
+ * and blank lines ignored, one level of matching quotes stripped. A
+ * single-quoted value may span lines, as the export writes one. Anything
  * else makes the whole paste ambiguous: no silent partial import.
  */
 export function parseDotenv(text: string): { name: string; value: string }[] | null {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith("#"));
+  const lines = text.split(/\r?\n/);
   const parsed: { name: string; value: string }[] = [];
-  for (const line of lines) {
-    const match = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/.exec(line.trim());
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] as string).trimStart();
+    if (!line.trim() || line.startsWith("#")) continue;
+    const match = /^(?:export\s+)?([A-Z][A-Z0-9_]*)=(.*)$/s.exec(line);
     if (!match) return null;
     let value = match[2] as string;
-    if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
-      const quote = value[0];
-      value = value.slice(1, -1);
-      if (quote === '"') value = value.replace(/\\([nr"\\$`])/g, (_, c: string) => (c === "n" ? "\n" : c === "r" ? "\r" : c));
+    if (value.startsWith("'") && !value.includes("'", 1)) {
+      // The lines up to the closing quote, kept exactly.
+      const parts = [value.slice(1)];
+      for (;;) {
+        if (++i >= lines.length) return null;
+        const next = lines[i] as string;
+        const close = next.indexOf("'");
+        if (close === -1) {
+          parts.push(next);
+          continue;
+        }
+        if (next.slice(close + 1).trim()) return null;
+        parts.push(next.slice(0, close));
+        break;
+      }
+      value = parts.join("\n");
+    } else {
+      value = value.trimEnd();
+      if (value.length >= 2 && ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))) {
+        const quote = value[0];
+        value = value.slice(1, -1);
+        if (quote === '"') value = value.replace(/\\(n|"|\\)/g, (_, c: string) => (c === "n" ? "\n" : c));
+      }
     }
     parsed.push({ name: match[1] as string, value });
   }
@@ -132,17 +154,20 @@ export function parseDotenv(text: string): { name: string; value: string }[] | n
 }
 
 /**
- * One `.env` line; quotes only when the value needs them. Single quotes keep
- * a value literal for shells, dotenv and Compose alike. A value holding a
- * single quote or a line break goes in double quotes with `\`, `"`, `$`,
- * backtick and line breaks escaped. Either way `$(cmd)` or `${NAME}` never
- * executes or expands when the file is loaded again (ADR-0038).
+ * One `.env` line that every common loader reads back as exactly this value
+ * and never expands or runs: shells (`set -a; . ./.env`), dotenv with or
+ * without dotenv-expand, python-dotenv and Docker Compose. The value goes
+ * unquoted when only inert characters are in it, in single quotes otherwise
+ * (line breaks included). Some values have no such form: dotenv-expand and
+ * python-dotenv expand `$` even in single quotes (recent dotenv-expand also
+ * runs `$(…)`), python-dotenv and Compose read backslash escapes there, and
+ * loaders disagree on carriage returns and other control characters. For
+ * those it returns null, and the value is not written (ADR-0038).
  */
-export function dotenvLine(name: string, value: string): string {
+export function dotenvLine(name: string, value: string): string | null {
   if (/^[A-Za-z0-9_./:@,+%=?-]*$/.test(value)) return `${name}=${value}`;
-  if (!/['\r\n]/.test(value)) return `${name}='${value}'`;
-  const escaped = value.replace(/[\\"$`]/g, (c) => `\\${c}`).replace(/\n/g, "\\n").replace(/\r/g, "\\r");
-  return `${name}="${escaped}"`;
+  if (/[$'\x00-\x08\x0b-\x1f\x7f\u0085\u2028\u2029]|\\\\|\\$/.test(value)) return null;
+  return `${name}='${value}'`;
 }
 
 /** 32 random bytes, base64url: a fresh credential for rotations. */

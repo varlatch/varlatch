@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from "react";
-import { Download, Lock, ShieldAlert, Wifi } from "lucide-react";
+import { Download, FileWarning, Lock, ShieldAlert, Wifi } from "lucide-react";
 import type { Environment, Tier } from "@varlatch/protocol";
 import { TAILNET_ONLY_GUIDANCE } from "../../lib/tailnet";
 import { useTailnetConnection } from "../../lib/tailnetConnection";
@@ -93,6 +93,9 @@ export function ImportDialog({
   );
 }
 
+const NOT_WRITTEN_REASON =
+  "Their values contain characters ($, a single quote, backslashes or control characters) that some tools, such as dotenv-expand, python-dotenv or Docker Compose, would change or expand while loading the file. Copy them from the dashboard, or run the app with varlatch run.";
+
 export function ExportDialog({
   org,
   project,
@@ -106,16 +109,20 @@ export function ExportDialog({
 }) {
   // `env` is the environment as it is now (the grid resolves it from current
   // data), so a Requirement added while the dialog is open takes effect here.
-  const { items, withheld, secrets, plain, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } = useExport(org, project, env);
+  const { items, withheld, secrets, plain, unwritable, includeSecrets, setIncludeSecrets, error: loadError, tailnetOnly, build } =
+    useExport(org, project, env);
   const { connection, connect } = useTailnetConnection();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Set after a download that left values out, so the dialog can say which.
+  const [notWritten, setNotWritten] = useState<string[] | null>(null);
+  useEffect(() => setNotWritten(null), [env?.id]);
 
   const download = async () => {
     setBusy(true);
     setError("");
     try {
-      const { text, filename } = await build();
+      const { text, filename, notWritten: left } = await build();
       const blob = new Blob([text], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -125,7 +132,8 @@ export function ExportDialog({
       a.click();
       a.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      onClose();
+      if (left.length > 0) setNotWritten(left);
+      else onClose();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -147,21 +155,27 @@ export function ExportDialog({
       }
       description="Downloads a file to this computer."
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose} disabled={busy}>
-            Cancel
+        notWritten ? (
+          <Button variant="primary" data-testid="export-close" onClick={onClose}>
+            Close
           </Button>
-          <Button
-            variant="primary"
-            icon={<Download size={14} />}
-            data-testid="export-download"
-            disabled={!items || tailnetOnly}
-            loading={busy}
-            onClick={() => void download()}
-          >
-            {includeSecrets ? "Reveal and download" : "Download"}
-          </Button>
-        </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon={<Download size={14} />}
+              data-testid="export-download"
+              disabled={!items || tailnetOnly}
+              loading={busy}
+              onClick={() => void download()}
+            >
+              {includeSecrets ? "Reveal and download" : "Download"}
+            </Button>
+          </>
+        )
       }
     >
       <div className="space-y-4 text-[13px]">
@@ -172,14 +186,24 @@ export function ExportDialog({
           </Callout>
         )}
         {!items && !shownError && !tailnetOnly && <Skeleton className="h-10 w-full" />}
-        {items && (
+        {notWritten && (
+          <Callout tone="warn" icon={<FileWarning size={15} />} data-testid="export-not-written" title="Downloaded, with values left out">
+            Not written: <span className="font-mono">{notWritten.join(", ")}</span>. {NOT_WRITTEN_REASON}
+          </Callout>
+        )}
+        {items && !notWritten && (
           <p className="text-muted">
-            <span className="text-fg">{plural(plain.length, "value")}</span> exported.{" "}
+            <span className="text-fg">{plural(plain.length - unwritable.length, "value")}</span> exported.{" "}
             {secrets.length > 0 && !includeSecrets && <>{plural(secrets.length, "secret")} left out. </>}
             {withheld.size > 0 && <>{plural(withheld.size, "value")} not readable with your access.</>}
           </p>
         )}
-        {items && secrets.length > 0 && (
+        {items && !notWritten && unwritable.length > 0 && (
+          <Callout tone="warn" icon={<FileWarning size={15} />} data-testid="export-unwritable" title={`${plural(unwritable.length, "value")} left out`}>
+            <span className="font-mono">{unwritable.join(", ")}</span>. {NOT_WRITTEN_REASON}
+          </Callout>
+        )}
+        {items && !notWritten && secrets.length > 0 && (
           <Checkbox
             data-testid="export-include-secrets"
             checked={includeSecrets}
@@ -188,7 +212,7 @@ export function ExportDialog({
             description="An audited disclosure, like revealing them on screen."
           />
         )}
-        {includeSecrets && (
+        {includeSecrets && !notWritten && (
           <Callout tone="warn" icon={<ShieldAlert size={15} />} title="This is an audited disclosure">
             The secret values are revealed to this browser and written into the file. The disclosure is recorded in the
             audit log; deleting the file does not undo it.

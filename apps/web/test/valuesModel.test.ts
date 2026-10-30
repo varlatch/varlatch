@@ -118,46 +118,75 @@ describe(".env", () => {
   it("refuses ambiguous input as a whole", () => {
     expect(parseDotenv("A=1\nnot a line")).toBeNull();
     expect(parseDotenv("lower=1")).toBeNull();
+    expect(parseDotenv("A='never closed\nB=2")).toBeNull();
+    expect(parseDotenv("A='two\nlines' trailing")).toBeNull();
   });
+  it("reads a single-quoted value across lines, exactly", () => {
+    expect(parseDotenv("A='one \n\n  # two\nB=3'\nC=4")).toEqual([
+      { name: "A", value: "one \n\n  # two\nB=3" },
+      { name: "C", value: "4" },
+    ]);
+  });
+
+  // Every value written loads back exactly in shells, dotenv, dotenv-expand,
+  // python-dotenv and Docker Compose; values without such a form are not written.
+  const writable = [
+    "8080",
+    "https://x.example/a?b=c",
+    "https://x.example/a?b=c&d=e",
+    "two words",
+    "`id`",
+    'say "hi"',
+    "C:\\path\\to",
+    "a\\nb",
+    "a\\ b",
+    "#hash",
+    "a # not comment",
+    " padded ",
+    "tab\there",
+    "héllo ✓",
+    "-----BEGIN X-----\nabc\n-----END X-----",
+    '{"k":"-----BEGIN\\nabc\\n-----END"}',
+    "\nlead",
+    "trail\n",
+    "a\n\nb",
+    "OTHER=1\nB=2",
+    "",
+  ];
+  const unwritable = [
+    "pa$$word",
+    "$HOME",
+    "${HOME}",
+    "$(id)",
+    "it's",
+    "ends\\",
+    "\\\\server\\share",
+    "a\rb",
+    "esc\u001bx",
+    "nul\u0000x",
+    "sep\u2028x",
+  ];
+
   it("quotes only when needed and round-trips", () => {
     expect(dotenvLine("PORT", "8080")).toBe("PORT=8080");
     expect(dotenvLine("URL", "https://x.example/a?b=c")).toBe("URL=https://x.example/a?b=c");
     expect(dotenvLine("URL", "https://x.example/a?b=c&d=e")).toBe("URL='https://x.example/a?b=c&d=e'");
-    expect(dotenvLine("MSG", "pa$$word")).toBe("MSG='pa$$word'");
-    expect(dotenvLine("MSG", "it's $HOME")).toBe('MSG="it\'s \\$HOME"');
-    for (const value of [
-      'say "hi"\nback\\slash',
-      "a\\nb",
-      "two words",
-      "$(id) `id` ${HOME}",
-      "it's $(id)\r\nnext `id`",
-      "\\$HOME",
-    ]) {
-      expect(parseDotenv(dotenvLine("MSG", value))).toEqual([{ name: "MSG", value }]);
+    expect(dotenvLine("KEY", "a\nb")).toBe("KEY='a\nb'");
+    for (const value of writable) {
+      expect(parseDotenv(dotenvLine("MSG", value) as string)).toEqual([{ name: "MSG", value }]);
     }
   });
-  it("never executes or expands a value when a shell loads the file", () => {
+  it("writes no line for a value some loader would change, expand or run", () => {
+    for (const value of unwritable) expect(dotenvLine("MSG", value)).toBeNull();
+  });
+  it("keeps every written value literal when a shell loads the file", () => {
     const dir = mkdtempSync(join(tmpdir(), "dotenv-line-"));
     try {
-      const values = [
-        "$(touch ran1)",
-        "`touch ran2`",
-        "${HOME}",
-        "a&touch ran3",
-        "a;touch ran4",
-        "it's $(touch ran5) `touch ran6` ${HOME}",
-        "x > ran7",
-        "#not a comment",
-        "\\$HOME",
-      ];
-      for (const value of values) {
+      for (const value of [...writable, "`touch ran1`", "a&touch ran2", "a;touch ran3", "x > ran4"]) {
         writeFileSync(join(dir, ".env"), `${dotenvLine("MSG", value)}\n`);
         const out = execFileSync("sh", ["-c", 'set -a; . ./.env; printf %s "$MSG"'], { cwd: dir, encoding: "utf8" });
         expect(out).toBe(value);
       }
-      // Shells keep an escaped line break as `\n`; what matters is that nothing runs.
-      writeFileSync(join(dir, ".env"), `${dotenvLine("MSG", "one\n$(touch ran8) `touch ran9`")}\n`);
-      execFileSync("sh", ["-c", "set -a; . ./.env"], { cwd: dir });
       expect(readdirSync(dir)).toEqual([".env"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

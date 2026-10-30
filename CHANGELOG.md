@@ -9,15 +9,21 @@ fixes.
 
 ### Fixes
 
-- **The dashboard's `.env` download keeps every value literal.** It put
-  values with special characters in double quotes without escaping `$` or
-  backticks, so loading the file with a shell or a variable-expanding
-  dotenv tool could expand `$NAME`, or run `$(…)`, inside a value. A value
-  with `&` was not quoted at all, so sourcing the file in a shell could run
-  what followed it. Values now go in single quotes, or, when they
-  hold a single quote or a line break, in double quotes with `\`, `"`, `$`,
-  backticks and line breaks escaped. Pasting such a file back in reads the
-  same values.
+- **The dashboard's `.env` download no longer writes values that tools
+  would change or run.** It put values in double quotes without escaping
+  `$` or backticks, and wrote a value containing `&` without quotes. So
+  loading the file with a shell or a variable-expanding loader could expand
+  `$NAME` or run part of a value. No single `.env` form is read the same
+  way by every common loader: dotenv-expand and python-dotenv expand `$`
+  even inside single quotes, and dotenv-expand 1000 also runs `$(…)`.
+  Values are now unquoted or single-quoted (line breaks included). With
+  that format, shells, dotenv, dotenv-expand, python-dotenv and Docker
+  Compose all read every written value exactly. A value containing `$`, a
+  single quote, a backslash pair, a trailing backslash or a control
+  character is left out of the file, with a comment in its place. The
+  dialog names these values before and after the download. Pasting a
+  downloaded file into the dashboard, or `varlatch import`, reads the same
+  values back.
 
 ## 0.19.1 (2026-10-29)
 
