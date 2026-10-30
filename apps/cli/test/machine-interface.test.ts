@@ -114,9 +114,27 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       return json(200, {
         environmentId: "env_1",
         items: [
-          { name: "API_TOKEN", sensitive: true, source: "self", value: null },
+          { name: "API_TOKEN", sensitive: true, source: "self", value: null, rotating: true },
           { name: "PORT", sensitive: false, source: "self", value: "8080" },
         ],
+      });
+    }
+    if (url.startsWith(`${ENV("preview")}/effective-configuration`)) {
+      return json(200, {
+        environmentId: "env_2",
+        items: [
+          { name: "API_TOKEN", sensitive: true, source: "parent", value: null, rotating: true },
+          { name: "PORT", sensitive: false, source: "self", value: "8081" },
+        ],
+      });
+    }
+    if (url === `${PROJECT}/environments`) {
+      return json(200, {
+        items: [
+          { id: "env_1", projectId: "prj_1", name: "development", kind: "shared", tier: "development", parentEnvironmentId: null, createdAt: "2026-09-01T00:00:00.000Z" },
+          { id: "env_2", projectId: "prj_1", name: "preview", kind: "derived", tier: "development", parentEnvironmentId: "env_1", createdAt: "2026-09-01T00:00:00.000Z" },
+        ],
+        nextCursor: null,
       });
     }
     if (url === `${ENV("development")}/disclosures`) return json(200, { items: [{ name: "API_TOKEN", versionId: "v", value: "json-canary-value-81" }], withheld: [] });
@@ -332,17 +350,37 @@ describe("--json documents", () => {
     return JSON.parse(r.stdout) as Record<string, unknown>;
   };
 
-  it("values list: names and classification, never a value", async () => {
+  it("values list: names, classification and rotation, never a value", async () => {
     const d = await doc(["values", "list"]);
     expect(d).toEqual({
       version: 1,
       environment: "development",
       items: [
-        { name: "API_TOKEN", sensitive: true, source: "self" },
-        { name: "PORT", sensitive: false, source: "self" },
+        { name: "API_TOKEN", sensitive: true, source: "self", rotating: true },
+        { name: "PORT", sensitive: false, source: "self", rotating: false },
       ],
     });
     expect(requests.some((r) => r.url.includes("include=values") || r.url.endsWith("/disclosures"))).toBe(false);
+  });
+
+  it("values list keeps its human format and notes a rotation on stderr, with the context to complete it", async () => {
+    const r = await cli(["values", "list"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toBe("API_TOKEN  (secret, self)\nPORT  (plain, self)\n");
+    expect(r.stderr).toContain("API_TOKEN is rotating: its previous value still works until the rotation completes (varlatch values rotate-complete API_TOKEN -e development).");
+    expect(r.stderr).not.toMatch(/PORT is/);
+    const explicit = await cli(["values", "list", "-e", "development", "--server", origin]);
+    expect(explicit.stderr).toContain(`(varlatch values rotate-complete API_TOKEN -e development --server ${origin})`);
+  });
+
+  it("values list sends an inherited rotation to the parent environment, where it can be completed", async () => {
+    const r = await cli(["values", "list", "-e", "preview"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toBe("API_TOKEN  (secret, parent)\nPORT  (plain, self)\n");
+    expect(r.stderr).toContain(
+      "API_TOKEN is inherited from development, where it is rotating: its previous value still works until the rotation completes (varlatch values rotate-complete API_TOKEN -e development).",
+    );
+    expect(r.stderr).not.toMatch(/-e preview/);
   });
 
   it("org, project, identity, and credential lists", async () => {
