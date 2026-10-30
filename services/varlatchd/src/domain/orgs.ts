@@ -13,7 +13,8 @@ export interface OrgRow {
   id: string;
   slug: string;
   name: string;
-  wrapped_org_kek: Envelope;
+  /** Null once the Organization was deleted and its KEK destroyed. */
+  wrapped_org_kek: Envelope | null;
   deleted_at: string | null;
   created_at: string;
 }
@@ -173,6 +174,11 @@ export async function listOrganizationsFor(
 
 /** Unwraps the organization KEK; callers must never persist or log it. */
 export function orgKekOf(ctx: AppCtx, org: OrgRow): Buffer {
+  // A deleted Organization's KEK is destroyed (ADR-0051 Decision 6): fail
+  // closed with a clear error, never attempt to decrypt.
+  if (org.wrapped_org_kek === null || org.wrapped_org_kek === undefined) {
+    throw new DomainError("ORGANIZATION_DELETED", "This Organization was deleted: its key is destroyed");
+  }
   const wrapped =
     typeof org.wrapped_org_kek === "string"
       ? (JSON.parse(org.wrapped_org_kek) as Envelope)

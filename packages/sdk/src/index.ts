@@ -21,6 +21,7 @@ import type {
   ExposureReport,
   MemberRemoval,
   MemberReview,
+  OrganizationDeletion,
   OwnCredential,
   Requirement,
   IssuedAgentCredential,
@@ -193,7 +194,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -365,6 +366,39 @@ export class VarlatchClient {
       `/v1/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}`,
       { name },
     );
+  }
+
+  /** The Organization's open deletion request, or null (capability organizations.delete). */
+  async organizationDeletion(org: string): Promise<OrganizationDeletion | null> {
+    const res = await this.request<{ deletion: OrganizationDeletion | null }>("GET", `/v1/organizations/${encodeURIComponent(org)}/deletion`);
+    return res.deletion;
+  }
+
+  /** Schedule the Organization's deletion; it freezes the Organization (capability organizations.delete). */
+  scheduleOrganizationDeletion(org: string, opts: { afterDays?: number } = {}): Promise<OrganizationDeletion> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/deletion`, opts);
+  }
+
+  /** A second admin's approval of this deletion request. */
+  approveOrganizationDeletion(org: string, deletionId: string): Promise<OrganizationDeletion> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/deletion/${encodeURIComponent(deletionId)}/approve`, {});
+  }
+
+  /** Cancel this deletion request; what it suspended comes back. */
+  cancelOrganizationDeletion(org: string, deletionId: string): Promise<OrganizationDeletion> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/deletion/${encodeURIComponent(deletionId)}/cancel`, {});
+  }
+
+  /** A deleted Organization's audit log, for its readers. */
+  listDeletedOrganizationAuditEvents(
+    organizationId: string,
+    opts: { limit?: number; cursor?: string } = {},
+  ): Promise<Pick<AuditEventPage, "items" | "nextCursor">> {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set("limit", String(opts.limit));
+    if (opts.cursor) params.set("cursor", opts.cursor);
+    const query = params.size ? `?${params}` : "";
+    return this.request("GET", `/v1/deleted-organizations/${encodeURIComponent(organizationId)}/audit-events${query}`);
   }
 
   /**

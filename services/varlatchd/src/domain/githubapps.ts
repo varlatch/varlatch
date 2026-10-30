@@ -10,7 +10,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import {
   GITHUB_API,
   GITHUB_HEADERS,
@@ -523,6 +523,7 @@ export async function listAppInstallations(
   fetchImpl: typeof fetch = fetch,
   now: number = Date.now(),
 ): Promise<InstallationListing> {
+  await refuseIfFrozen(ctx.db, org.id);
   const { app, pem } = await appWithKey(ctx, org);
   const listing = await readInstallations(fetchImpl, Number(app.github_app_id), app.client_id, pem, now);
   await recordAuditEvent(ctx.db, {

@@ -15,7 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
@@ -823,6 +823,8 @@ export async function checkConnectionAccess(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<AccessCheck> {
+  // Stored external credentials are not used while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   // No destination fields: the check stops at the base identity.
@@ -880,6 +882,7 @@ export async function listConnectionDestinations(
   actorIdentityId: string,
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
+  await refuseIfFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   if (!adapter.listDestinations) {
@@ -1455,6 +1458,7 @@ export async function targetLedger(ctx: AppCtx, targetId: string): Promise<Ledge
 
 /** Direct enqueue for "push now" — a Target mutation class trigger. */
 export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): Promise<void> {
+  await refuseIfFrozen(ctx.db, org.id);
   const res = await ctx.db.query(
     `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
      WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,

@@ -37,6 +37,7 @@ import { sql as syncDrift } from "./0034_sync_drift.js";
 import { sql as memberRemoval } from "./0035_member_removal.js";
 import { sql as memberExposure } from "./0036_member_exposure.js";
 import { sql as projectDeletion } from "./0037_project_deletion.js";
+import { sql as organizationDeletion } from "./0038_organization_deletion.js";
 
 export interface Migration {
   id: number;
@@ -83,4 +84,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 35, name: "member_removal", sql: memberRemoval },
   { id: 36, name: "member_exposure", sql: memberExposure },
   { id: 37, name: "project_deletion", sql: projectDeletion },
+  { id: 38, name: "organization_deletion", sql: organizationDeletion },
 ];

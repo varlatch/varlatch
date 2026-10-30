@@ -227,7 +227,7 @@ export async function deliverWebhooksOnce(
     `SELECT w.id, w.organization_id, w.url, w.event_types, w.secret_envelope,
             w.cursor_occurred_at, w.cursor_event_id, w.cursor_order, o.wrapped_org_kek
      FROM webhooks w JOIN organizations o ON o.id = w.organization_id
-     WHERE w.revoked_at IS NULL AND o.deleted_at IS NULL`,
+     WHERE w.revoked_at IS NULL AND w.suspended_by_deletion IS NULL AND o.deleted_at IS NULL`,
   );
   for (const raw of hooks.rows as Record<string, unknown>[]) {
     try {

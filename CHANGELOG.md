@@ -88,6 +88,28 @@ fixes.
   environment deleted a moment earlier, and a deletion waits for writes
   already under way.
 
+### Organizations
+
+- **An Organization can be deleted, after a waiting period.** An admin
+  schedules the deletion to run 1 to 30 days later (7 by default); when the
+  Organization has more than one admin, another admin must approve it, and
+  any admin can cancel it until it runs. While it waits, the Organization
+  is frozen: nothing can be changed (the refusal says from when the
+  deletion may run), but people can still read and make a last copy.
+  Integrations are paused, webhooks and machine identities suspended, and
+  pending invitations revoked; cancelling brings back the webhooks and
+  machine identities. When it runs, every membership ends (people keep
+  their accounts), machine identities are retired, integrations,
+  Connections and webhooks are revoked, the GitHub App's registration is
+  removed (the App itself stays on GitHub), every value is erased and the
+  Organization's key is destroyed, so nothing it protected can be read from
+  the live database any more. The people who could read the audit log at
+  that moment can still export it; an Installation Admin can see that the
+  Organization existed and remove such a reader, but not add one or read the
+  events. Not reached by the deletion: PostgreSQL's old row versions and
+  write-ahead log for a while, backups taken before, values pushed to
+  platforms, and copies people made.
+
 ### Members
 
 - **An Organization Admin can remove a person, and a member can leave.**
@@ -218,6 +240,15 @@ fixes.
   `membership.removed` and `membership.role_changed`. When concurrent
   changes keep getting in its way, a removal or role change gives up with
   `STATE_CHANGED` and `details.retryable: true`, having changed nothing.
+- `GET`, `POST /v1/organizations/{org}/deletion` (with `afterDays`), and
+  `POST …/deletion/{deletion}/approve` and `…/cancel` manage an
+  Organization's deletion (capability `organizations.delete`); a write to a
+  frozen Organization is refused with `ORGANIZATION_DELETING`, and a
+  deleted Organization's key with `ORGANIZATION_DELETED`. Readers export a
+  deleted Organization's audit log from
+  `GET /v1/deleted-organizations/{organization}/audit-events`; Installation
+  Admins list deleted Organizations and remove readers under
+  `/v1/installation/deleted-organizations`.
 - `DELETE /v1/organizations/{org}/projects/{project}` deletes a Project
   and returns the counts (capability `projects.delete`); the audit event is
   `project.deleted`.
@@ -246,7 +277,11 @@ the upgrade, varlatchd indexes the audit events recorded before it in the
 background, in small batches that resume after a restart. Migration 37
 adds `projects.deleted_at` (a Project's slug is now unique among live
 Projects only) and `value_versions.erased_at`, with a version's payload and
-key nullable once erased.
+key nullable once erased. Migration 38 adds `organization_deletions`, the
+suspension markers on identities and webhooks,
+`organizations.org_kek_destroyed_at` (the wrapped key becomes nullable) and
+`audit_tombstone_readers`. Every varlatchd process now runs a loop that
+completes due deletions.
 
 An item with a rotation hint needs this release on both sides: older
 servers refuse a Contract that uses `rotationHint`, and older CLIs refuse it

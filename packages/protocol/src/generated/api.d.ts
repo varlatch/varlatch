@@ -688,6 +688,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/deletion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's open deletion request, or null (capability organizations.delete, ADR-0051). Requires organization.read. */
+        get: operations["getOrganizationDeletion"];
+        put?: never;
+        /**
+         * Schedule the Organization's deletion (capability organizations.delete, ADR-0051 Decisions 4 to 6). Needs a live built-in admin membership; an explicit Grant does not substitute.
+         * @description The deletion may run afterDays (1 to 30, default 7) days after scheduling, at the earliest; downtime can delay it. When the Organization has more than one admin, a different admin must approve it. Scheduling freezes the Organization: every operational write is refused with ORGANIZATION_DELETING (details: deletionId, runAfter) until the request is cancelled; reads, audit, sign-in, approval and cancellation still work. In the same transaction it pauses Sync Targets, suspends webhooks and enabled machine identities (a cancel restores them), revokes pending invitations and invalidates unfinished GitHub App registrations. Audited as organization.deletion_scheduled. One open request at a time (STATE_CHANGED otherwise).
+         */
+        post: operations["scheduleOrganizationDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/deletion/{deletion}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** A second admin's approval of this request (capability organizations.delete): a different, enabled human with a live built-in admin membership. It names the request, so it cannot approve a later one; the approver's membership is checked again when the deletion runs. Audited as organization.deletion_approved. */
+        post: operations["approveOrganizationDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/deletion/{deletion}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel this request (capability organizations.delete): any live built-in admin, until the deletion completes. The machine identities and webhooks it suspended come back; Sync Targets stay paused and revoked invitations stay revoked. Audited as organization.deletion_cancelled. */
+        post: operations["cancelOrganizationDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/deleted-organizations/{organization}/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A deleted Organization's audit log (capability organizations.delete, ADR-0051 Decision 8), for the people who held Organization-level audit.read when it was deleted, while their identity stays enabled and an Installation Admin has not removed them. Anyone else gets RESOURCE_NOT_FOUND. Newest first, cursor-paged. */
+        get: operations["listDeletedOrganizationAuditEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/installation/deleted-organizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Deleted Organizations and their audit readers, for Installation Admins (capability organizations.delete): IDs, slugs, names, deletion times and readers, never events. */
+        get: operations["listDeletedOrganizations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/installation/deleted-organizations/{organization}/readers/{identity}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a reader of a deleted Organization's audit log (Installation Admins; capability organizations.delete). Readers can only be removed, never added. Audited as audit_tombstone.reader_removed. */
+        delete: operations["removeDeletedOrganizationReader"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/members/{member}": {
         parameters: {
             query?: never;
@@ -1642,7 +1748,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -2106,6 +2212,25 @@ export interface components {
                 }[];
             } | null;
             indirect: components["schemas"]["MemberReview"];
+        };
+        OrganizationDeletion: {
+            id: string;
+            requestedBy: string;
+            /** Format: date-time */
+            scheduledAt: string;
+            /**
+             * Format: date-time
+             * @description The earliest time the deletion may run
+             */
+            runAfter: string;
+            approvalRequired: boolean;
+            approvedBy: string | null;
+            /** Format: date-time */
+            approvedAt: string | null;
+            /** Format: date-time */
+            cancelledAt: string | null;
+            /** Format: date-time */
+            completedAt: string | null;
         };
         MemberRemoval: {
             removalId: string;
@@ -4529,6 +4654,200 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getOrganizationDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open request, or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deletion: components["schemas"]["OrganizationDeletion"] | null;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    scheduleOrganizationDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    afterDays?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Scheduled */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeletion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    approveOrganizationDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                deletion: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Approved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeletion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelOrganizationDeletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                deletion: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cancelled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDeletion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDeletedOrganizationAuditEvents: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["limit"];
+                /** @description Opaque cursor from a previous response; never parse. */
+                cursor?: components["parameters"]["cursor"];
+            };
+            header?: never;
+            path: {
+                /** @description The deleted Organization's ID */
+                organization: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AuditEvent"][];
+                        nextCursor: string | null;
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listDeletedOrganizations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted Organizations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: {
+                            id: string;
+                            slug: string;
+                            name: string;
+                            /** Format: date-time */
+                            deletedAt: string;
+                            readers: {
+                                identityId: string;
+                                name: string;
+                                /** Format: date-time */
+                                removedAt: string | null;
+                            }[];
+                        }[];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeDeletedOrganizationReader: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization: string;
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
             204: {
                 headers: {
                     [name: string]: unknown;

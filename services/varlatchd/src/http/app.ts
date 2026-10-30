@@ -72,6 +72,7 @@ import {
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
+import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
 import { lockLiveScope } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import {
@@ -1180,6 +1181,123 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const body = parseBody(z.object({ name: z.string().trim().min(1).max(200) }), await c.req.json());
     const renamed = await renameOrganization(ctx, org.id, body.name, principal.identity.id);
     return c.json(serialize.org(renamed));
+  });
+
+  // ---- Organization deletion (ADR-0051, capability organizations.delete).
+  // The request's lifecycle; the checks (a live built-in admin, the second
+  // admin, the freeze) run inside each transaction.
+  app.get("/v1/organizations/:org/deletion", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    return c.json({ deletion: await getDeletion(ctx, org.id) });
+  });
+
+  app.post("/v1/organizations/:org/deletion", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ afterDays: z.number().int().min(1).max(30).optional() }).strict(), await c.req.json());
+    return c.json(await scheduleDeletion(ctx, org.id, principal.identity, body), 201);
+  });
+
+  app.post("/v1/organizations/:org/deletion/:deletion/approve", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    return c.json(await approveDeletion(ctx, org.id, routeParam(c, "deletion"), principal.identity));
+  });
+
+  app.post("/v1/organizations/:org/deletion/:deletion/cancel", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    return c.json(await cancelDeletion(ctx, org.id, routeParam(c, "deletion"), principal.identity));
+  });
+
+  // The audit-access tombstone (ADR-0016 §6, ADR-0051 Decision 8): a deleted
+  // Organization's audit log, for the readers fixed at its deletion while
+  // their identity stays enabled. Nothing else bypasses the live checks.
+  app.get("/v1/deleted-organizations/:organization/audit-events", async (c) => {
+    const principal = c.get("principal");
+    const organizationId = routeParam(c, "organization");
+    const reader = await ctx.db.query(
+      `SELECT 1 FROM audit_tombstone_readers r JOIN organizations o ON o.id = r.organization_id
+       WHERE r.organization_id = $1 AND r.identity_id = $2 AND r.removed_at IS NULL AND o.deleted_at IS NOT NULL`,
+      [organizationId, principal.identity.id],
+    );
+    if (!reader.rows[0] || principal.identity.disabled) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+    const limit = Math.max(1, Math.min(Math.floor(Number(c.req.query("limit") ?? 100)) || 100, 500));
+    const cursor = c.req.query("cursor");
+    const decoded = cursor ? decodeCursor(cursor) : null;
+    if (cursor && !decoded) throw new DomainError("VALIDATION_FAILED", "Invalid cursor");
+    const params: unknown[] = [organizationId, limit + 1];
+    let where = "organization_id = $1";
+    if (decoded) {
+      params.push(decoded[0], decoded[1]);
+      where += " AND (occurred_at, id) < ($3::timestamptz, $4)";
+    }
+    const res = await ctx.db.query(
+      `SELECT *, occurred_at::text AS cursor_time FROM audit_events WHERE ${where} ORDER BY occurred_at DESC, id DESC LIMIT $2`,
+      params,
+    );
+    const rows = res.rows as Record<string, unknown>[];
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    return c.json({
+      items: page.map(serializeAuditEvent),
+      nextCursor: rows.length > limit && last ? encodeCursor([last.cursor_time as string, last.id as string]) : null,
+    });
+  });
+
+  // Installation Admins see that a tombstone exists and who may read it,
+  // and can remove a reader; never add one, nor read the events.
+  app.get("/v1/installation/deleted-organizations", async (c) => {
+    if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
+    const orgs = (
+      await ctx.db.query("SELECT id, slug, name, deleted_at FROM organizations WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id")
+    ).rows as { id: string; slug: string; name: string; deleted_at: string }[];
+    const readers = (
+      await ctx.db.query(
+        `SELECT r.organization_id, r.identity_id, i.name, r.removed_at FROM audit_tombstone_readers r
+         JOIN identities i ON i.id = r.identity_id WHERE r.organization_id = ANY($1) ORDER BY r.identity_id`,
+        [orgs.map((o) => o.id)],
+      )
+    ).rows as { organization_id: string; identity_id: string; name: string; removed_at: string | null }[];
+    return c.json({
+      items: orgs.map((o) => ({
+        id: o.id,
+        slug: o.slug,
+        name: o.name,
+        deletedAt: iso(o.deleted_at),
+        readers: readers
+          .filter((r) => r.organization_id === o.id)
+          .map((r) => ({ identityId: r.identity_id, name: r.name, removedAt: r.removed_at ? iso(r.removed_at) : null })),
+      })),
+    });
+  });
+
+  app.delete("/v1/installation/deleted-organizations/:organization/readers/:identity", async (c) => {
+    const principal = c.get("principal");
+    if (!principal.identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
+    const organizationId = routeParam(c, "organization");
+    const identityId = routeParam(c, "identity");
+    await withTx(ctx.db, async (db) => {
+      const res = await db.query(
+        `UPDATE audit_tombstone_readers SET removed_at = now(), removed_by = $3
+         WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL RETURNING identity_id`,
+        [organizationId, identityId, principal.identity.id],
+      );
+      if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Reader not found");
+      await recordAuditEvent(db, {
+        eventType: "audit_tombstone.reader_removed",
+        decision: "info",
+        actorIdentityId: principal.identity.id,
+        organizationId,
+        resource: { identityId },
+      });
+    });
+    return c.body(null, 204);
   });
 
   // ---- Cross-project Config Item name search (ADR-0030, capability

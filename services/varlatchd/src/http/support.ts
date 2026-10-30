@@ -34,6 +34,8 @@ export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   ACCESS_DENIED: 403,
   EXPIRED: 410,
   CONSUMED: 410,
+  ORGANIZATION_DELETING: 409,
+  ORGANIZATION_DELETED: 410,
 };
 
 export function requestId(): string {

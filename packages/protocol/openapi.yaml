@@ -1575,6 +1575,192 @@ paths:
         "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/deletion:
+    get:
+      tags: [organizations]
+      operationId: getOrganizationDeletion
+      summary: >
+        The Organization's open deletion request, or null (capability
+        organizations.delete, ADR-0051). Requires organization.read.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The open request, or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deletion]
+                properties:
+                  deletion:
+                    oneOf:
+                      - $ref: "#/components/schemas/OrganizationDeletion"
+                      - type: "null"
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [organizations]
+      operationId: scheduleOrganizationDeletion
+      summary: >
+        Schedule the Organization's deletion (capability
+        organizations.delete, ADR-0051 Decisions 4 to 6). Needs a live
+        built-in admin membership; an explicit Grant does not substitute.
+      description: >
+        The deletion may run afterDays (1 to 30, default 7) days after
+        scheduling, at the earliest; downtime can delay it. When the
+        Organization has more than one admin, a different admin must approve
+        it. Scheduling freezes the Organization: every operational write is
+        refused with ORGANIZATION_DELETING (details: deletionId, runAfter)
+        until the request is cancelled; reads, audit, sign-in, approval and
+        cancellation still work. In the same transaction it pauses Sync
+        Targets, suspends webhooks and enabled machine identities (a cancel
+        restores them), revokes pending invitations and invalidates
+        unfinished GitHub App registrations. Audited as
+        organization.deletion_scheduled. One open request at a time
+        (STATE_CHANGED otherwise).
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                afterDays: { type: integer, minimum: 1, maximum: 30 }
+      responses:
+        "201":
+          description: Scheduled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/deletion/{deletion}/approve:
+    post:
+      tags: [organizations]
+      operationId: approveOrganizationDeletion
+      summary: >
+        A second admin's approval of this request (capability
+        organizations.delete): a different, enabled human with a live
+        built-in admin membership. It names the request, so it cannot
+        approve a later one; the approver's membership is checked again when
+        the deletion runs. Audited as organization.deletion_approved.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: deletion, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Approved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/deletion/{deletion}/cancel:
+    post:
+      tags: [organizations]
+      operationId: cancelOrganizationDeletion
+      summary: >
+        Cancel this request (capability organizations.delete): any live
+        built-in admin, until the deletion completes. The machine identities
+        and webhooks it suspended come back; Sync Targets stay paused and
+        revoked invitations stay revoked. Audited as
+        organization.deletion_cancelled.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: deletion, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /deleted-organizations/{organization}/audit-events:
+    get:
+      tags: [audit]
+      operationId: listDeletedOrganizationAuditEvents
+      summary: >
+        A deleted Organization's audit log (capability organizations.delete,
+        ADR-0051 Decision 8), for the people who held Organization-level
+        audit.read when it was deleted, while their identity stays enabled
+        and an Installation Admin has not removed them. Anyone else gets
+        RESOURCE_NOT_FOUND. Newest first, cursor-paged.
+      parameters:
+        - { name: organization, in: path, required: true, schema: { type: string }, description: The deleted Organization's ID }
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/cursor"
+      responses:
+        "200":
+          description: A page of events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/AuditEvent" }
+                  nextCursor: { type: [string, "null"] }
+        default: { $ref: "#/components/responses/Error" }
+
+  /installation/deleted-organizations:
+    get:
+      tags: [meta]
+      operationId: listDeletedOrganizations
+      summary: >
+        Deleted Organizations and their audit readers, for Installation
+        Admins (capability organizations.delete): IDs, slugs, names, deletion
+        times and readers, never events.
+      responses:
+        "200":
+          description: Deleted Organizations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, slug, name, deletedAt, readers]
+                      properties:
+                        id: { type: string }
+                        slug: { type: string }
+                        name: { type: string }
+                        deletedAt: { type: string, format: date-time }
+                        readers:
+                          type: array
+                          items:
+                            type: object
+                            required: [identityId, name, removedAt]
+                            properties:
+                              identityId: { type: string }
+                              name: { type: string }
+                              removedAt: { type: [string, "null"], format: date-time }
+        default: { $ref: "#/components/responses/Error" }
+
+  /installation/deleted-organizations/{organization}/readers/{identity}:
+    delete:
+      tags: [meta]
+      operationId: removeDeletedOrganizationReader
+      summary: >
+        Remove a reader of a deleted Organization's audit log (Installation
+        Admins; capability organizations.delete). Readers can only be
+        removed, never added. Audited as audit_tombstone.reader_removed.
+      parameters:
+        - { name: organization, in: path, required: true, schema: { type: string } }
+        - { name: identity, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/members/{member}:
     delete:
       tags: [identities]
@@ -3728,6 +3914,8 @@ components:
         - ACCESS_DENIED
         - EXPIRED
         - CONSUMED
+        - ORGANIZATION_DELETING
+        - ORGANIZATION_DELETED
 
     NextCursor:
       type: [string, "null"]
@@ -4469,6 +4657,20 @@ components:
                   target: {}
                   selector: {}
         indirect: { $ref: "#/components/schemas/MemberReview" }
+
+    OrganizationDeletion:
+      type: object
+      required: [id, requestedBy, scheduledAt, runAfter, approvalRequired, approvedBy, approvedAt, cancelledAt, completedAt]
+      properties:
+        id: { type: string }
+        requestedBy: { type: string }
+        scheduledAt: { type: string, format: date-time }
+        runAfter: { type: string, format: date-time, description: The earliest time the deletion may run }
+        approvalRequired: { type: boolean }
+        approvedBy: { type: [string, "null"] }
+        approvedAt: { type: [string, "null"], format: date-time }
+        cancelledAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
 
     MemberRemoval:
       type: object

@@ -29,6 +29,9 @@ export const ERROR_CODES = [
   "ACCESS_DENIED",
   "EXPIRED",
   "CONSUMED",
+  // Organization deletion (ADR-0051): refused while frozen; gone after.
+  "ORGANIZATION_DELETING",
+  "ORGANIZATION_DELETED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -86,6 +89,7 @@ export const CAPABILITIES = [
   "sync.pause-wait",
   "members.lifecycle",
   "projects.delete",
+  "organizations.delete",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
