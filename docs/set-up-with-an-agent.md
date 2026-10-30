@@ -91,7 +91,7 @@ it is: each step runs only when the one before it succeeded (`&&`), so a
 failed download or check never reaches `install`.
 
 ```sh
-V=0.19.1  # serverVersion from step 1
+V=0.20.0  # serverVersion from step 1
 REPO=varlatch/varlatch
 IDENTITY="https://github.com/${REPO}/.github/workflows/release.yml@refs/tags/v${V}"
 ISSUER=https://token.actions.githubusercontent.com
