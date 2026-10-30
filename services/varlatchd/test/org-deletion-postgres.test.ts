@@ -178,6 +178,29 @@ describe.skipIf(!url)("organization deletion on real PostgreSQL", () => {
     expect((await db.query("SELECT count(*)::int AS n FROM credentials WHERE kind = 'agent-run'")).rows[0]).toEqual({ n: 0 });
   });
 
+  it("a machine revoking its own credential while the deletion is being scheduled is refused", async () => {
+    const svc = (await call("POST", `${ORG}/identities`, { name: "deployer", kind: "service" })).body;
+    const credentialId = (await db.query("SELECT id FROM credentials WHERE identity_id = $1", [svc.id])).rows[0]!.id as string;
+    const paused = pauseAt(/^\s*INSERT INTO organization_deletions/);
+    const scheduling = call("POST", `${ORG}/deletion`, {});
+    await paused.arrived;
+    // The machine authenticates before its suspension commits; revoking waits.
+    const revoking = app
+      .request(`/v1/me/credentials/${credentialId}`, { method: "DELETE", headers: { Authorization: `Bearer ${svc.credential}` } })
+      .then(async (res) => ({ status: res.status, body: await res.json().catch(() => null) }));
+    expect(await settled(revoking, 500)).toBe(false);
+    paused.release();
+    const scheduled = (await scheduling).body;
+    const revoked = await revoking;
+    expect(revoked.status).toBe(409);
+    expect(revoked.body.error.code).toBe("ORGANIZATION_DELETING");
+    // A cancel restores the machine with its credential.
+    expect((await call("POST", `${ORG}/deletion/${scheduled.id}/cancel`)).status).toBe(200);
+    await call("POST", `${ORG}/grants`, { subjectIdentityId: svc.id, scope: { kind: "organization" }, actions: ["environment.read"] });
+    const read = await app.request(DEV, { headers: { Authorization: `Bearer ${svc.credential}` } });
+    expect(read.status).toBe(200);
+  });
+
   it("two workers never run one deletion twice", async () => {
     const scheduled = (await call("POST", `${ORG}/deletion`, {})).body;
     await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute'");

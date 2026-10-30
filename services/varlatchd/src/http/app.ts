@@ -942,12 +942,20 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/me/credentials/:credential", async (c) => {
     const principal = c.get("principal");
-    const res = await ctx.db.query(
-      "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
-      [c.req.param("credential"), principal.identity.id],
-    );
-    if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
-    await revokeCredential(ctx.db, c.req.param("credential"), principal.identity.id);
+    // A machine's credentials belong to its Organization: the writer
+    // protocol, freeze included (ADR-0051), so a machine that authenticated
+    // just before a deletion was scheduled cannot revoke what a cancel
+    // restores. People's credentials belong to the Installation.
+    const organizationId = principal.identity.organization_id;
+    await withTx(ctx.db, async (db) => {
+      if (organizationId) await lockLiveScope(db, { organizationId });
+      const res = await db.query(
+        "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
+        [c.req.param("credential"), principal.identity.id],
+      );
+      if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Credential not found");
+      await revokeCredential(db, c.req.param("credential"), principal.identity.id);
+    });
     return c.body(null, 204);
   });
 
