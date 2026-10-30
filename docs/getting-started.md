@@ -316,9 +316,22 @@ From their next request they reach nothing in the organization: the
 Grants given to them directly are revoked, and they leave every group and
 team. Their sign-in itself is not affected. What they set up, such as
 integrations, Connections, webhooks and machine credentials they were
-shown, keeps working: removal lists it for you to review. Rotate the
-Secrets they could read, starting with the ones in production. The last
-admin of an organization cannot be removed or leave.
+shown, keeps working: removal lists it for you to review. The last admin
+of an organization cannot be removed or leave.
+
+Then see what they received, from the dashboard (Former members, then
+What they received) or the CLI:
+
+```sh
+varlatch member exposure "Ada Lovelace"        # --json for one record per line
+```
+
+The report lists each version of each value they received, how, and
+whether Varlatch still serves it, with what they could reach when they were
+removed and what they set up. Rotate what is still served, at the provider
+too: a new value in Varlatch does not revoke the old one there. Then mark
+each version as revoked at the provider; the report never does that on its
+own. It needs permission to read the audit log, and never shows a value.
 
 ## Join a project
 
