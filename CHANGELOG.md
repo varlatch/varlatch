@@ -7,6 +7,15 @@ fixes.
 
 ## Unreleased (0.20.0)
 
+### CLI
+
+- **`varlatch values list` shows rotations in progress.** With `--json`,
+  each item has `rotating`: `true` while a dual-phase rotation keeps its
+  previous value working. Without `--json`, the list is unchanged, and
+  stderr names each item that is rotating, with the command that completes
+  it in the environment where the rotation lives (the parent, for an
+  inherited item). The command still never fetches a value.
+
 ### Fixes
 
 - **The dashboard's `.env` download no longer writes values that tools

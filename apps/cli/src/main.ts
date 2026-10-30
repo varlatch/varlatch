@@ -1590,12 +1590,35 @@ async function main(): Promise<void> {
             // Names and classification only: this command never fetches values.
             printJson({
               environment: ctx.environment,
-              items: (effective.items ?? []).map((i) => ({ name: i.name, sensitive: i.sensitive, source: i.source })),
+              items: (effective.items ?? []).map((i) => ({ name: i.name, sensitive: i.sensitive, source: i.source, rotating: i.rotating === true })),
             });
             return;
           }
           for (const i of effective.items ?? []) {
             console.log(`${i.name}  (${i.sensitive ? "secret" : "plain"}, ${i.source})`);
+          }
+          // The human format stays as it is; an active rotation is a note on
+          // stderr, with the command that completes it where it lives. An
+          // inherited item rotates in the parent (inheritance is one level).
+          const rotating = (effective.items ?? []).filter((i) => i.rotating);
+          let parent: string | undefined;
+          if (rotating.some((i) => i.source === "parent")) {
+            try {
+              const envs = (await api.listEnvironments(ctx.organization, ctx.project)).items;
+              const self = envs.find((e) => e.name === ctx.environment);
+              parent = envs.find((e) => e.id === self?.parentEnvironmentId)?.name;
+            } catch {
+              // The note then names no environment and offers no command.
+            }
+          }
+          for (const i of rotating) {
+            const owner = i.source === "parent" ? parent : ctx.environment;
+            const subject =
+              i.source === "parent"
+                ? `${i.name} is inherited from ${parent ?? "the parent environment"}, where it is rotating`
+                : `${i.name} is rotating`;
+            const command = owner ? ` (varlatch values rotate-complete ${i.name} ${contextOptions(args, { ...ctx, environment: owner })})` : "";
+            console.error(`${subject}: its previous value still works until the rotation completes${command}.`);
           }
           return;
         }
