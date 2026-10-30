@@ -13,6 +13,7 @@ import { recordAuditEvent } from "../audit/events.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
+import { lockLiveScope } from "./liveness.js";
 import { DomainError, notFound } from "./errors.js";
 import type { ProjectRow } from "./projects.js";
 
@@ -75,6 +76,8 @@ export async function pushRevision(
   // type exists at it (ADR-0042) runs on the second normalization.
   const pushed = normalizeOrReject(contractInput, { versionUndecided: !pinned });
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): a live Organization and Project.
+    await lockLiveScope(db, { organizationId, projectId });
     let contract = pushed;
     if (!pinned) {
       const active = await db.query(
@@ -135,6 +138,15 @@ export async function activateRevision(
   actorIdentityId: string,
 ): Promise<ContractRevisionRow> {
   return withTx(ctx.db, async (db) => {
+    // The Project is updated: locked so from the start (never upgraded), and
+    // its active revision read under the lock, not from the route's copy, so
+    // two concurrent activations each diff against what they replace.
+    await lockLiveScope(db, { organizationId, projectId: project.id, projectMode: "no key update" });
+    const active = (
+      (await db.query("SELECT active_contract_revision_id FROM projects WHERE id = $1", [project.id])).rows[0] as {
+        active_contract_revision_id: string | null;
+      }
+    ).active_contract_revision_id;
     const res = await db.query(
       "SELECT * FROM contract_revisions WHERE id = $1 AND project_id = $2",
       [revisionId, project.id],
@@ -143,10 +155,8 @@ export async function activateRevision(
     if (!revision) throw notFound("Contract revision");
 
     let diffSummary: Record<string, string | number | boolean> = { initial: true };
-    if (project.active_contract_revision_id) {
-      const prevRes = await db.query("SELECT * FROM contract_revisions WHERE id = $1", [
-        project.active_contract_revision_id,
-      ]);
+    if (active) {
+      const prevRes = await db.query("SELECT * FROM contract_revisions WHERE id = $1", [active]);
       const prev = prevRes.rows[0] as ContractRevisionRow | undefined;
       if (prev) {
         const diff = diffContracts(parseContract(prev), parseContract(revision));

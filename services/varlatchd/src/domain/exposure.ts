@@ -6,6 +6,7 @@ import type { Querier } from "../db/migrate.js";
 import { withSnapshot, withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { memberReview, type MemberReview } from "./members.js";
 
 /**
@@ -403,7 +404,8 @@ export async function exposedVersion(
   versionId: string,
 ): Promise<{ itemName: string; environmentId: string | null; projectId: string | null; live: boolean } | null> {
   const res = await db.query(
-    `SELECT x.item_name, ev.environment_id, e.project_id, (ev.deleted_at IS NULL AND e.deleted_at IS NULL AND p.id IS NOT NULL) AS live
+    `SELECT x.item_name, ev.environment_id, e.project_id,
+            (ev.deleted_at IS NULL AND e.deleted_at IS NULL AND p.id IS NOT NULL AND p.deleted_at IS NULL) AS live
      FROM member_exposure x
      LEFT JOIN value_versions v ON v.id = x.version_id
      LEFT JOIN env_values ev ON ev.id = v.value_id
@@ -432,6 +434,7 @@ export async function confirmRevocation(
   actorIdentityId: string,
 ): Promise<{ versionId: string; confirmedAt: string; actorIdentityId: string; created: boolean }> {
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const inserted = await db.query(
       `INSERT INTO exposure_confirmations (organization_id, version_id, identity_id, actor_identity_id)
        VALUES ($1,$2,$3,$4) ON CONFLICT (organization_id, version_id) DO NOTHING

@@ -17,6 +17,7 @@ import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import type { OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 import {
@@ -276,6 +277,7 @@ export async function issueCapability(
   const expiresAt = new Date(Date.now() + input.ttlSeconds * 1000).toISOString();
 
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id] });
     await db.query(
       `INSERT INTO capabilities
          (id, organization_id, broker_identity_id, agent_identity_id, project_id,
@@ -359,6 +361,7 @@ export async function revokeCapability(
   opts: { actorIdentityId: string; brokerIdentityId?: string | undefined },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id });
     const params: unknown[] = [capabilityId, org.id];
     let where = "id = $1 AND organization_id = $2 AND revoked_at IS NULL";
     if (opts.brokerIdentityId) {

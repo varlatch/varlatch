@@ -30,7 +30,7 @@ import {
   renameOrganization,
   type OrgRow,
 } from "../domain/orgs.js";
-import { createProject, renameProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
+import { createProject, deleteProject, renameProject, getProject, listProjects, type ProjectRow } from "../domain/projects.js";
 import {
   createEnvironment,
   deleteEnvironment,
@@ -72,6 +72,7 @@ import {
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
+import { lockLiveScope } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import {
   createAppConnection,
@@ -1392,6 +1393,17 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json(serialize.project(renamed));
   });
 
+  // Deleting a Project (ADR-0051 Decision 2): project.manage, as for a root
+  // environment, and now for the whole Project's history, without reveal
+  // authority. Its values are erased from the live database.
+  app.delete("/v1/organizations/:org/projects/:project", async (c) => {
+    const principal = c.get("principal");
+    const { org, project } = await projectScope(ctx, c);
+    await authorize(ctx, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+    const deleted = await deleteProject(ctx, org.id, project.id, principal.identity.id);
+    return c.json({ projectId: project.id, slug: project.slug, ...deleted });
+  });
+
   // ---- Environments
   app.get("/v1/organizations/:org/projects/:project/environments", async (c) => {
     const principal = c.get("principal");
@@ -2541,6 +2553,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const id = newId("grant");
     await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
       if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
@@ -2590,6 +2603,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
       const res = await db.query(
         "UPDATE grants SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("grant"), org.id],
@@ -2622,6 +2636,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
+        await lockLiveScope(db, { organizationId: org.id });
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
@@ -2903,6 +2918,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const id = newId("requirement");
     await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
       await db.query(
         "INSERT INTO requirements (id, organization_id, kind, target, config, created_by) VALUES ($1,$2,'tailnet',$3,$4,$5)",
         [id, org.id, JSON.stringify(body.target), JSON.stringify(body.selector), principal.identity.id],
@@ -2958,6 +2974,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const endpoint = `PATCH requirements ${requirementId}`;
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) =>
       withTx(ctx.db, async (db) => {
+        await lockLiveScope(db, { organizationId: org.id });
         const res = await db.query(
           "SELECT id, kind, target, config, created_at, version, updated_at FROM requirements WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE",
           [requirementId, org.id],
@@ -3020,6 +3037,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id });
       const res = await db.query(
         "UPDATE requirements SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("requirement"), org.id],

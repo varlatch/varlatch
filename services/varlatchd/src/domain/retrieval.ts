@@ -149,7 +149,9 @@ export async function captureState(
   const ciphertext = new Map<string, Ciphertext>();
   if (valueRowOf.size > 0) {
     const res = await sctx.db.query(
-      "SELECT id, payload, wrapped_dek FROM value_versions WHERE id = ANY($1)",
+      // An erased version (ADR-0051) has nothing to capture: its
+      // decryption then fails closed as uncaptured.
+      "SELECT id, payload, wrapped_dek FROM value_versions WHERE id = ANY($1) AND erased_at IS NULL",
       [[...valueRowOf.keys()]],
     );
     for (const r of res.rows as { id: string; payload: Envelope | string; wrapped_dek: Envelope | string }[]) {

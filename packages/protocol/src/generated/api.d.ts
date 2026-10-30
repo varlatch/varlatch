@@ -196,7 +196,11 @@ export interface paths {
         get: operations["getProject"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a project (capability projects.delete, ADR-0051). Requires project.manage, as deleting a root environment does; it now also permits erasing all of the project's history, without reveal authority. Existence-hiding.
+         * @description One transaction tombstones the project and every environment, erases every value version of the project from the live database (payload and wrapped key; versions of environments and values deleted earlier included), clears current and retiring version pointers, revokes the environments' Capabilities and the project's Sync Targets (stopping a push in progress and releasing their destination claims), and removes Teams' links to it. The audit event project.deleted records the counts. Contract Revisions stay with the tombstone, and audit events keep their IDs and names. The slug can be used again; a new project with it inherits no Grants that named the old one. Afterwards the project is not found anywhere but in audit. Not reached by deletion: PostgreSQL's old row versions and write-ahead log for a while, backups taken before, values pushed to platforms, and copies made by people.
+         */
+        delete: operations["deleteProject"];
         options?: never;
         head?: never;
         /** Rename a project's display name (capability projects.rename). The slug, which the CLI, URLs, contracts and grants use, does not change. The audit event project.renamed records the previous and the new name. Requires project.manage; existence-hiding. */
@@ -3258,6 +3262,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Project"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                /** @description Project slug or ID */
+                project: components["parameters"]["project"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        projectId: string;
+                        slug: string;
+                        /** @description Live environments tombstoned */
+                        environments: number;
+                        values: number;
+                        versionsErased: number;
+                        capabilitiesRevoked: number;
+                        targetsRevoked: number;
+                        teamLinksRemoved: number;
+                    };
                 };
             };
             default: components["responses"]["Error"];

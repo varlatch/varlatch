@@ -12,6 +12,7 @@ import {
   sensitivityOf,
 } from "./contracts.js";
 import { isExpired, rootIdOf, type EnvironmentRow } from "./environments.js";
+import { lockLiveScope } from "./liveness.js";
 import { DomainError } from "./errors.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import {
@@ -76,9 +77,10 @@ export async function setValue(
   const sensitive = sensitivityOf(contract, itemName);
 
   return withTx(ctx.db, async (db) => {
-    // Serialize all mutations of this environment, including absent rows.
-    // The version comparison below runs only after earlier writers commit.
-    await db.query("SELECT id FROM environments WHERE id = $1 FOR UPDATE", [env.id]);
+    // The writer protocol (ADR-0051): the Organization, Project and
+    // Environment, live, in order; the Environment exclusively among its
+    // writers, so the version comparison below runs after earlier ones commit.
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
     let row = (
       await db.query(
         "SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2",
@@ -164,9 +166,10 @@ export async function deleteValue(
 ): Promise<void> {
   assertNotExpired(env);
   await withTx(ctx.db, async (db) => {
-    // Serialize all mutations of this environment, including absent rows.
-    // The version comparison below runs only after earlier writers commit.
-    await db.query("SELECT id FROM environments WHERE id = $1 FOR UPDATE", [env.id]);
+    // The writer protocol (ADR-0051): the Organization, Project and
+    // Environment, live, in order; the Environment exclusively among its
+    // writers, so the version comparison below runs after earlier ones commit.
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
     const res = await db.query(
       `UPDATE env_values
        SET deleted_at = now(), current_version_id = NULL,
@@ -223,9 +226,10 @@ export async function beginRotation(
   );
 
   return withTx(ctx.db, async (db) => {
-    // Serialize all mutations of this environment, including absent rows.
-    // The version comparison below runs only after earlier writers commit.
-    await db.query("SELECT id FROM environments WHERE id = $1 FOR UPDATE", [env.id]);
+    // The writer protocol (ADR-0051): the Organization, Project and
+    // Environment, live, in order; the Environment exclusively among its
+    // writers, so the version comparison below runs after earlier ones commit.
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
     const row = (
       await db.query("SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2", [
         env.id,
@@ -316,9 +320,10 @@ export async function completeRotation(
 ): Promise<RotationResult> {
   assertNotExpired(env);
   return withTx(ctx.db, async (db) => {
-    // Serialize all mutations of this environment, including absent rows.
-    // The version comparison below runs only after earlier writers commit.
-    await db.query("SELECT id FROM environments WHERE id = $1 FOR UPDATE", [env.id]);
+    // The writer protocol (ADR-0051): the Organization, Project and
+    // Environment, live, in order; the Environment exclusively among its
+    // writers, so the version comparison below runs after earlier ones commit.
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
     const row = (
       await db.query("SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2", [
         env.id,
@@ -762,9 +767,10 @@ export async function applyChangeSet(
   const changeSetId = newId("version").replace("ver_", "cs_");
 
   return withTx(ctx.db, async (db) => {
-    // Serialize all mutations of this environment, including absent rows.
-    // The version comparison below runs only after earlier writers commit.
-    await db.query("SELECT id FROM environments WHERE id = $1 FOR UPDATE", [env.id]);
+    // The writer protocol (ADR-0051): the Organization, Project and
+    // Environment, live, in order; the Environment exclusively among its
+    // writers, so the version comparison below runs after earlier ones commit.
+    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
     // Phase 1: load current rows and validate every guard before mutating.
     const rows = new Map<string, ValueRow | undefined>();
     const conflicts: { item: string; currentVersionId: string | null }[] = [];

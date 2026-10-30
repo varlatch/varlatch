@@ -15,6 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
@@ -358,6 +359,8 @@ export async function createConnection(
   const id = newId("platformConnection");
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -422,6 +425,8 @@ export async function createAppConnection(
   const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
   const id = newId("platformConnection");
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = await db.query(
       "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [app.id, org.id],
@@ -513,6 +518,8 @@ export async function rotateGitHubAppKey(
   }
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = (await db.query(
       "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
@@ -567,6 +574,8 @@ export async function rotateGitHubAppKey(
  */
 export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = (await db.query(
       "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
@@ -684,6 +693,8 @@ export async function replaceConnectionCredential(
     input.credential,
   );
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const res = await db.query(
       `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
@@ -695,10 +706,12 @@ export async function replaceConnectionCredential(
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
     }
+    // Targets in ascending ID order, as every other transaction locks them
+    // (ADR-0051 Decision 1): Project deletion takes the same rows.
     const targets = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE connection_id = $1 AND revoked_at IS NULL
-       ORDER BY created_at, id FOR UPDATE`,
+       ORDER BY id FOR UPDATE`,
       [connectionId],
     );
     const rows = (targets.rows as Record<string, unknown>[]).map(targetRow);
@@ -748,6 +761,8 @@ export async function revokeConnection(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
@@ -758,13 +773,18 @@ export async function revokeConnection(
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
     // Revoking a Connection disables every referencing Target (ADR-0031 §1).
-    // They keep their destination claims: paused, not gone.
+    // They keep their destination claims: paused, not gone. Locked in
+    // ascending ID order first, as every other transaction takes them.
+    const referencing = await db.query(
+      "SELECT id FROM sync_targets WHERE connection_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE",
+      [connectionId],
+    );
     const disabled = await db.query(
       `UPDATE sync_targets
        SET state = 'disabled', disabled_reason = 'connection-revoked', generation = generation + 1, lease_expires_at = NULL, repair_cycle_started_at = NULL,
            version = version + 1, updated_at = now()
-       WHERE connection_id = $1 AND revoked_at IS NULL RETURNING id`,
-      [connectionId],
+       WHERE id = ANY($1) AND revoked_at IS NULL RETURNING id`,
+      [(referencing.rows as { id: string }[]).map((r) => r.id)],
     );
     await recordAuditEvent(db, {
       eventType: "sync.connection_revoked",
@@ -1071,6 +1091,8 @@ export async function createTarget(
 ): Promise<SyncTargetRow> {
   const id = newId("syncTarget");
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id, projectId, environmentIds: [environmentId] });
     // Lock the Connection (and an App Connection's App before it):
     // attachment serializes with credential replacement and key rotation.
     const locked = await lockConnectionsAndApps(db, org.id, [input.connectionId]);
@@ -1084,29 +1106,6 @@ export async function createTarget(
       connection.base_identity,
       key,
     );
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "target",
-      resourceId: id,
-      changes: ["created"],
-    });
-    await recordAuditEvent(db, {
-      eventType: "sync.target_created",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { targetId: id, environmentId, connectionId: connection.id },
-      authz,
-      metadata: {
-        platform: adapter.platform,
-        destination: describeDestination(adapter.platform, key),
-        mapping: mappingSummary(input.mapping),
-        removeOrphans: input.removeOrphans,
-        ...expandsMetadata(destination),
-      },
-    });
     let res;
     try {
       res = await db.query(
@@ -1131,6 +1130,33 @@ export async function createTarget(
     } catch (err) {
       throw destinationClaimError(err);
     }
+    // The index and the audit event come after the claim: an audit insert
+    // holds the audit counter until commit, and a claim may wait for a
+    // Project deletion releasing the same destination, which itself takes
+    // the counter last (ADR-0051 Decision 6). Claim first, audit last.
+    await recordIntegrationChange(db, {
+      organizationId: org.id,
+      identityId: actorIdentityId,
+      kind: "target",
+      resourceId: id,
+      changes: ["created"],
+    });
+    await recordAuditEvent(db, {
+      eventType: "sync.target_created",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { targetId: id, environmentId, connectionId: connection.id },
+      authz,
+      metadata: {
+        platform: adapter.platform,
+        destination: describeDestination(adapter.platform, key),
+        mapping: mappingSummary(input.mapping),
+        removeOrphans: input.removeOrphans,
+        ...expandsMetadata(destination),
+      },
+    });
     return targetRow(res.rows[0] as Record<string, unknown>);
   });
 }
@@ -1160,6 +1186,8 @@ export async function updateTarget(
   actorIdentityId: string,
 ): Promise<SyncTargetRow> {
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id, projectId: target.project_id, environmentIds: [target.environment_id] });
     // Lock order: Apps, then Connections, then the Target, as key rotation,
     // credential replacement, and Connection revocation take them, so a
     // Target edit serializes with each instead of deadlocking. The Target's
@@ -1298,6 +1326,8 @@ export async function setTargetState(
   actorIdentityId: string,
 ): Promise<SyncTargetRow | null> {
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id });
     const locked = await db.query(
       `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,

@@ -5,6 +5,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import { activeContractOf } from "./contracts.js";
 import type { AppCtx } from "./ctx.js";
+import { lockLiveScope } from "./liveness.js";
 import { DomainError, notFound } from "./errors.js";
 import type { ProjectRow } from "./projects.js";
 
@@ -48,6 +49,9 @@ export async function createEnvironment(
   actorIdentityId: string,
 ): Promise<EnvironmentRow> {
   return withTx(ctx.db, async (db) => {
+    // The writer protocol (ADR-0051): a live Organization and Project, then
+    // the live parent, before anything is inserted under them.
+    await lockLiveScope(db, { organizationId, projectId });
     const id = newId("environment");
     let tier: Tier;
     let kind: EnvironmentRow["kind"];
@@ -55,6 +59,7 @@ export async function createEnvironment(
 
     if (input.parentEnvironmentId) {
       const parent = await getEnvironment(ctx, projectId, input.parentEnvironmentId, db);
+      await lockLiveScope(db, { organizationId, projectId, environmentIds: [parent.id] });
       if (parent.parent_environment_id !== null) {
         throw new DomainError(
           "VALIDATION_FAILED",
@@ -197,6 +202,9 @@ export async function deleteEnvironment(
   }
 
   await withTx(ctx.db, async (db) => {
+    // The Environment exclusively: writers in progress finish first, and
+    // later ones (a new derived environment included) find it deleted.
+    await lockLiveScope(db, { organizationId, projectId: project.id, environmentIds: [env.id], environmentMode: "update" });
     const children = await db.query(
       "SELECT name FROM environments WHERE parent_environment_id = $1 AND deleted_at IS NULL",
       [env.id],

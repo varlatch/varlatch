@@ -10,6 +10,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
@@ -46,6 +47,7 @@ export async function createMachineIdentity(
     throw new DomainError("VALIDATION_FAILED", "Invalid identity name");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const id = newId("identity");
     await db.query(
       "INSERT INTO identities (id, kind, name, organization_id) VALUES ($1,$2,$3,$4)",
@@ -114,6 +116,7 @@ export async function issueMachineCredential(
     throw new DomainError("VALIDATION_FAILED", "Invalid credential name");
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     // FOR SHARE serializes with retire's UPDATE: a retirement committed first
     // is seen here, and one committing after this issuance revokes the new
     // credential with the rest, so a reactivation never resurrects it.
@@ -184,6 +187,7 @@ export async function retireIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     await db.query("UPDATE identities SET disabled = true WHERE id = $1", [identityId]);
     const live = await db.query(
       "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
@@ -217,6 +221,7 @@ export async function reactivateIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     await db.query("UPDATE identities SET disabled = false WHERE id = $1", [identityId]);
     await recordAuditEvent(db, {
       eventType: "identity.reactivated",
@@ -245,6 +250,7 @@ export async function renameIdentity(
     throw new DomainError("VALIDATION_FAILED", "Invalid identity name");
   }
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const prev = await db.query("SELECT name FROM identities WHERE id = $1", [identityId]);
     const previous = (prev.rows[0] as { name: string } | undefined)?.name;
     await db.query("UPDATE identities SET name = $1 WHERE id = $2", [name, identityId]);

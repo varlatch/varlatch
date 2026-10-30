@@ -3,6 +3,7 @@ import { recordAuditEvent } from "../audit/events.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 
 /**
  * Invitation management (capability invitations.manage): an organization's
@@ -79,6 +80,7 @@ export async function revokeInvitation(
   actorIdentityId: string,
 ): Promise<InvitationRow> {
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       `SELECT ${COLUMNS} FROM setup_grants
        WHERE id = $1 AND kind = 'invite' AND invite_organization_id = $2 FOR UPDATE`,

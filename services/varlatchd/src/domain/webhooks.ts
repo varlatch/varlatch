@@ -8,6 +8,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockLiveScope } from "./liveness.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -68,6 +69,7 @@ export async function createWebhook(
   const secret = `vlt_whsec_${randomBytes(32).toString("base64url")}`;
   const envelope = encryptWebhookSecret(orgKekOf(ctx, org), org.id, id, secret);
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId: org.id });
     const eventId = await recordAuditEvent(db, {
       eventType: "webhook.created",
       decision: "info",
@@ -141,6 +143,7 @@ export async function updateWebhook(
     }
   }
   return withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       `SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
        FROM webhooks WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
@@ -193,6 +196,7 @@ export async function revokeWebhook(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
+    await lockLiveScope(db, { organizationId });
     const res = await db.query(
       "UPDATE webhooks SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [webhookId, organizationId],
@@ -257,8 +261,20 @@ async function deliverOne(
     `SELECT * FROM audit_events WHERE ${where} ORDER BY event_order LIMIT $3`,
     params,
   );
-  const rows = events.rows as Record<string, unknown>[];
-  if (rows.length === 0) return;
+  const batch = events.rows as Record<string, unknown>[];
+  if (batch.length === 0) return;
+  const last = batch[batch.length - 1] as { occurred_at: string; id: string; event_order: string };
+  // Events of a deleted Project are not delivered (ADR-0051 Decision 3),
+  // its deletion included; the cursor still moves past them.
+  const rows = await withoutDeletedProjects(ctx, batch);
+  if (rows.length === 0) {
+    await ctx.db.query("UPDATE webhooks SET cursor_order = GREATEST(cursor_order, $2), cursor_event_id = $3 WHERE id = $1", [
+      webhookId,
+      last.event_order,
+      last.id,
+    ]);
+    return;
+  }
 
   const envelope =
     typeof raw.secret_envelope === "string"
@@ -302,7 +318,6 @@ async function deliverOne(
     status = err instanceof Error ? err.name : "error";
   }
 
-  const last = rows[rows.length - 1] as { occurred_at: string; id: string; event_order: string };
   if (ok) {
     await ctx.db.query(
       `UPDATE webhooks SET cursor_order = GREATEST(cursor_order, $2), cursor_event_id = $3,
@@ -318,6 +333,27 @@ async function deliverOne(
       [webhookId, status],
     );
   }
+}
+
+/** The events of `rows` that name no deleted Project, directly or through one of its environments. */
+async function withoutDeletedProjects(ctx: AppCtx, rows: Record<string, unknown>[]): Promise<Record<string, unknown>[]> {
+  const resourceOf = (r: Record<string, unknown>) =>
+    ((typeof r.resource === "string" ? JSON.parse(r.resource) : r.resource) ?? {}) as { projectId?: unknown; environmentId?: unknown };
+  const projectIds = [...new Set(rows.map((r) => resourceOf(r).projectId).filter((x): x is string => typeof x === "string"))];
+  const envIds = [...new Set(rows.map((r) => resourceOf(r).environmentId).filter((x): x is string => typeof x === "string"))];
+  if (projectIds.length === 0 && envIds.length === 0) return rows;
+  const deleted = await ctx.db.query(
+    `SELECT p.id AS project_id, e.id AS environment_id FROM projects p LEFT JOIN environments e ON e.project_id = p.id
+     WHERE p.deleted_at IS NOT NULL AND (p.id = ANY($1) OR e.id = ANY($2))`,
+    [projectIds, envIds],
+  );
+  const goneProjects = new Set((deleted.rows as { project_id: string }[]).map((r) => r.project_id));
+  const goneEnvs = new Set((deleted.rows as { environment_id: string | null }[]).map((r) => r.environment_id).filter(Boolean));
+  if (goneProjects.size === 0) return rows;
+  return rows.filter((r) => {
+    const res = resourceOf(r);
+    return !(typeof res.projectId === "string" && goneProjects.has(res.projectId)) && !(typeof res.environmentId === "string" && goneEnvs.has(res.environmentId));
+  });
 }
 
 /** Periodic delivery, modeled on the mirror loop: best-effort, never throws. */
