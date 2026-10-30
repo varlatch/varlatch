@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { recordAuditEvent } from "../audit/events.js";
+import { indexIntegration } from "../audit/exposure.js";
 import {
   evaluate,
   requirementsCovering,
@@ -510,13 +511,5 @@ export async function recordIntegrationChange(
   },
 ): Promise<void> {
   if (entry.changes.length === 0) return;
-  await db.query(
-    `INSERT INTO member_integrations (organization_id, identity_id, kind, resource_id, changes, first_at, last_at)
-     VALUES ($1,$2,$3,$4,$5,now(),now())
-     ON CONFLICT (organization_id, identity_id, kind, resource_id) DO UPDATE SET
-       changes = ARRAY(SELECT DISTINCT unnest(member_integrations.changes || EXCLUDED.changes) ORDER BY 1),
-       first_at = LEAST(member_integrations.first_at, EXCLUDED.first_at),
-       last_at = GREATEST(member_integrations.last_at, EXCLUDED.last_at)`,
-    [entry.organizationId, entry.identityId, entry.kind, entry.resourceId, entry.changes],
-  );
+  await indexIntegration(db, entry);
 }

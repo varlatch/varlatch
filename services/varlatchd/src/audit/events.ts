@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
+import { withTx } from "../db/tx.js";
 import { currentAttribution } from "./attribution.js";
+import { exposureFromEvent, indexExposure } from "./exposure.js";
 
 /**
  * Security Audit Events (ADR-0016). Events are written through this module
@@ -50,6 +52,21 @@ export async function recordAuditEvent(
   db: Querier,
   event: AuditEventInput,
 ): Promise<string> {
+  // A disclosure or a write also updates the exposure index (ADR-0052
+  // Decision 6), in the same transaction and before the event, so the
+  // index never lags the audit log and the audit counter's hold is not
+  // lengthened by it.
+  const exposure = exposureFromEvent(event);
+  if (exposure) {
+    return withTx(db, async (tx) => {
+      await indexExposure(tx, exposure);
+      return insertAuditEvent(tx, event);
+    });
+  }
+  return insertAuditEvent(db, event);
+}
+
+async function insertAuditEvent(db: Querier, event: AuditEventInput): Promise<string> {
   const id = newId("auditEvent");
   // Only the request's own identity is attributed to its credential: an
   // event about someone else, or with no actor, keeps what the caller gave.

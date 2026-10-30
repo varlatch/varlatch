@@ -1624,6 +1624,76 @@ paths:
               schema: { $ref: "#/components/schemas/MemberReview" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/members/{member}/exposure:
+    get:
+      tags: [identities]
+      operationId: memberExposure
+      summary: >
+        What a current or former member received, what they could reach at
+        removal, and what they set up (capability members.lifecycle,
+        ADR-0052 Decision 6). Needs audit.read; existence-hiding. Three kinds
+        of facts, never mixed: received (observed in their own audit events:
+        Secrets and values disclosed to them in any mode, and values they
+        wrote; one entry per version, with the environments and ways they
+        received it), authority at removal (the snapshot taken when they
+        were removed, with the Tailnet Requirements it was conditional on;
+        null for a current member), and indirect paths (what they created or
+        changed; not evidence that they held any value). Each version says
+        whether Varlatch still serves it (current, or retiring until its
+        deadline), and whether an operator confirmed it revoked at its
+        provider. No longer served is not safe: replacing a value does not
+        revoke the old credential at its provider. Names, IDs and states
+        only, never a value. Returned whole, never paginated. While older
+        audit history is still being indexed, coverage names that period.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+      responses:
+        "200":
+          description: The report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExposureReport" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/members/{member}/exposure/confirmations:
+    post:
+      tags: [identities]
+      operationId: confirmExposureRevocation
+      summary: >
+        Record that a version in this member's exposure was revoked or
+        rotated at its provider (capability members.lifecycle, ADR-0052
+        Decision 7), audited as exposure.revocation_confirmed. Needs
+        config.value.write where the value lives; once the value or its
+        environment is deleted, a live Organization Admin. A version not in
+        the member's exposure is RESOURCE_NOT_FOUND. Once per version: a
+        repeated confirmation returns the first with 200.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [versionId]
+              properties:
+                versionId: { type: string }
+      responses:
+        "201":
+          description: Confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExposureConfirmation" }
+        "200":
+          description: Already confirmed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ExposureConfirmation" }
+        default: { $ref: "#/components/responses/Error" }
+
   /me:
     get:
       tags: [identities]
@@ -4242,6 +4312,119 @@ components:
               id: { type: string }
               name: { type: string }
               projectId: { type: string }
+
+    ExposureConfirmation:
+      type: object
+      required: [versionId, confirmedAt, actorIdentityId]
+      properties:
+        versionId: { type: string }
+        confirmedAt: { type: string, format: date-time }
+        actorIdentityId: { type: string }
+
+    ExposureReport:
+      type: object
+      required: [member, coverage, received, authorityAtRemoval, indirect]
+      properties:
+        member:
+          type: object
+          required: [identityId, name, role, removedAt]
+          properties:
+            identityId: { type: string }
+            name: { type: string }
+            role: { type: [string, "null"], enum: [admin, member, null] }
+            removedAt: { type: [string, "null"], format: date-time }
+        coverage:
+          type: object
+          required: [complete]
+          description: >
+            complete is false while audit events recorded before this
+            release are still being indexed; from and to bound that period.
+          properties:
+            complete: { type: boolean }
+            from: { type: [string, "null"], format: date-time }
+            to: { type: [string, "null"], format: date-time }
+        received:
+          type: array
+          items:
+            type: object
+            required: [itemName, versionId, owningEnvironmentId, projectId, state, servedAs, retiringUntil, notServedBecause, served, confirmation, rotationHint, receipts]
+            properties:
+              itemName: { type: string }
+              versionId: { type: string }
+              owningEnvironmentId:
+                type: [string, "null"]
+                description: The environment whose value owns the version, which may be a parent of where it was received.
+              projectId: { type: [string, "null"] }
+              state: { type: string, enum: [served, not-served, revocation-confirmed] }
+              servedAs: { type: [string, "null"], enum: [current, retiring, null] }
+              retiringUntil: { type: [string, "null"], format: date-time }
+              notServedBecause: { type: [string, "null"], enum: [replaced, value-deleted, environment-deleted, unknown, null] }
+              served: { type: boolean, description: Whether Varlatch still serves it, whatever was confirmed }
+              confirmation:
+                type: [object, "null"]
+                required: [confirmedAt, actorIdentityId]
+                properties:
+                  confirmedAt: { type: string, format: date-time }
+                  actorIdentityId: { type: string }
+              rotationHint: { type: [string, "null"] }
+              receipts:
+                type: array
+                items:
+                  type: object
+                  required: [environmentId, way, firstAt, lastAt]
+                  properties:
+                    environmentId: { type: string }
+                    way: { type: string, enum: [revealed, delivered, export, written] }
+                    firstAt: { type: string, format: date-time }
+                    lastAt: { type: string, format: date-time }
+        authorityAtRemoval:
+          type: [object, "null"]
+          required: [removalId, removedAt, role, left, environments, requirements]
+          properties:
+            removalId: { type: string }
+            removedAt: { type: string, format: date-time }
+            role: { type: string, enum: [admin, member] }
+            left: { type: boolean }
+            environments:
+              type: array
+              items:
+                type: object
+                required: [environmentId, actions, conditionalOn]
+                properties:
+                  environmentId: { type: string }
+                  actions:
+                    type: array
+                    items:
+                      type: object
+                      required: [action, sources]
+                      properties:
+                        action: { type: string }
+                        sources:
+                          type: array
+                          items:
+                            type: object
+                            required: [source, role, grantId, viaGroupId, roleId]
+                            properties:
+                              source: { type: string }
+                              role: { type: [string, "null"] }
+                              grantId: { type: [string, "null"] }
+                              viaGroupId: { type: [string, "null"] }
+                              roleId: { type: [string, "null"] }
+                  conditionalOn:
+                    type: array
+                    items: { type: string }
+                    description: Requirements reading values here was conditional on; empty means unconditional.
+            requirements:
+              type: array
+              items:
+                type: object
+                required: [requirementId, requirementVersion, target, selector]
+                properties:
+                  requirementId: { type: string }
+                  requirementVersion: { type: [integer, "null"] }
+                  target: {}
+                  selector: {}
+        indirect: { $ref: "#/components/schemas/MemberReview" }
 
     MemberRemoval:
       type: object
