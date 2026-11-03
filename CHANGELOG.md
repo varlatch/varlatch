@@ -5,6 +5,16 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.20.1)
+
+### Backups
+
+- **A failed upload or remote check says why.** "Remote archive retrieval
+  failed" and "Destination upload failed" now name the storage error code
+  and HTTP status (for example `S3 error InvalidAccessKeyId, HTTP 403`) or
+  the network error, and say whether to check the key or the archive. The
+  storage provider's message is still not shown, and neither is the key.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations
