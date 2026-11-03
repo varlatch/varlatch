@@ -10,10 +10,12 @@ fixes.
 ### Backups
 
 - **A failed upload or remote check says why.** "Remote archive retrieval
-  failed" and "Destination upload failed" now name the storage error code
-  and HTTP status (for example `S3 error InvalidAccessKeyId, HTTP 403`) or
-  the network error, and say whether to check the key or the archive. The
-  storage provider's message is still not shown, and neither is the key.
+  failed" and "Destination upload failed" now give the HTTP status and,
+  when Varlatch recognizes it, the storage error code (for example
+  `S3 error InvalidAccessKeyId, HTTP 403`) or the network error, with what
+  to check: the key, its access to the bucket, the archive, or the host
+  clock. Codes Varlatch does not recognize, the storage provider's message
+  and the key are never shown.
 
 ## 0.20.0 (2026-10-30)
 

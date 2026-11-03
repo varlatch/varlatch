@@ -24,24 +24,51 @@ function objectKey(destination: Destination, archiveId: string): string {
   return `${destination.prefix.replace(/\/?$/, '/')}${archiveId}.vltbak`;
 }
 // What an operator needs to tell a wrong key from a missing object or an
-// unreachable endpoint: the S3 error code, the HTTP status, and a network
-// error code. Never the message or response body, which the store writes and
-// which may echo request details; only values that match a strict shape.
-const ACCESS_CODES = new Set(['AccessDenied', 'InvalidAccessKeyId', 'SignatureDoesNotMatch', 'Unauthorized', 'Forbidden', 'ExpiredToken', 'InvalidToken']);
-const MISSING_CODES = new Set(['NoSuchKey', 'NotFound', 'NoSuchBucket']);
+// unreachable endpoint. Every word comes from the tables below: the store
+// writes the error code, message and body, and any of them may echo a key ID,
+// a signature or an object path, so an unrecognised value is never shown.
+const KEY = 'the destination rejected the key; check its ID and secret, and that it is not deleted or expired';
+const ACCESS = 'the key may not do this; check that it can access this bucket';
+const S3_CODES: ReadonlyMap<string, string> = new Map([
+  ['InvalidAccessKeyId', KEY], ['SignatureDoesNotMatch', KEY], ['ExpiredToken', KEY], ['InvalidToken', KEY],
+  ['TokenRefreshRequired', KEY], ['Unauthorized', KEY],
+  ['AccessDenied', ACCESS], ['AllAccessDisabled', ACCESS], ['AccountProblem', 'the destination account has a problem; check it with the provider'],
+  ['NoSuchKey', 'the archive is not at the destination'], ['NotFound', 'the archive is not at the destination'],
+  ['NoSuchBucket', 'the bucket does not exist at the destination'],
+  ['RequestTimeTooSkewed', "this host's clock differs too much from the destination's; check the time on this host"],
+  ['InvalidObjectState', 'the archive is in a storage class that cannot be read directly; restore it at the provider first'],
+  ['InternalError', 'the destination had a temporary problem; try again later'], ['ServiceUnavailable', 'the destination had a temporary problem; try again later'],
+  ['SlowDown', 'the destination is limiting requests; try again later'],
+]);
+const LOCAL_NAMES: ReadonlyMap<string, string> = new Map([
+  ['TimeoutError', 'request timed out'], ['CredentialsProviderError', 'credentials could not be loaded'],
+]);
+const NETWORK_CODES: ReadonlyMap<string, string> = new Map([
+  ['ENOTFOUND', 'endpoint host name not found'], ['EAI_AGAIN', 'endpoint host name lookup failed'],
+  ['ECONNREFUSED', 'connection refused'], ['ECONNRESET', 'connection reset'], ['ETIMEDOUT', 'connection timed out'],
+  ['EHOSTUNREACH', 'endpoint unreachable'], ['ENETUNREACH', 'network unreachable'], ['EPIPE', 'connection closed'],
+  ['CERT_HAS_EXPIRED', 'endpoint TLS certificate expired'], ['ERR_TLS_CERT_ALTNAME_INVALID', 'endpoint TLS certificate does not match the host'],
+  ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'endpoint TLS certificate not trusted'], ['SELF_SIGNED_CERT_IN_CHAIN', 'endpoint TLS certificate not trusted'],
+  ['DEPTH_ZERO_SELF_SIGNED_CERT', 'endpoint TLS certificate not trusted'],
+]);
+function known(table: ReadonlyMap<string, string>, value: unknown): string | undefined {
+  return typeof value === 'string' ? table.get(value) : undefined;
+}
 export function storageErrorDetail(error: unknown): string {
   if (typeof error !== 'object' || error === null) return '';
   const e = error as { name?: unknown; Code?: unknown; code?: unknown; $metadata?: { httpStatusCode?: unknown } };
-  const status = typeof e.$metadata?.httpStatusCode === 'number' && Number.isInteger(e.$metadata.httpStatusCode) ? e.$metadata.httpStatusCode : undefined;
-  const raw = typeof e.Code === 'string' ? e.Code : typeof e.name === 'string' ? e.name : undefined;
-  const code = raw && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(raw) && !['Error', 'TypeError', 'BackupError'].includes(raw) ? raw : undefined;
-  const network = typeof e.code === 'string' && /^E[A-Z0-9_]{1,31}$/.test(e.code) ? e.code : undefined;
-  const parts = [code && `S3 error ${code}`, status !== undefined && `HTTP ${status}`, network].filter(Boolean);
+  const raw = e.$metadata?.httpStatusCode;
+  const status = typeof raw === 'number' && Number.isInteger(raw) && raw >= 100 && raw <= 599 ? raw : undefined;
+  const s3Code = [e.Code, e.name].find(value => known(S3_CODES, value) !== undefined) as string | undefined;
+  const local = known(LOCAL_NAMES, e.name);
+  const network = known(NETWORK_CODES, e.code);
+  const parts = [s3Code && `S3 error ${s3Code}`, status !== undefined && `HTTP ${status}`, local, network].filter(Boolean);
   if (!parts.length) return '';
-  const hint = (code && ACCESS_CODES.has(code)) || status === 401 || status === 403
-    ? ': the destination rejected the key; check its ID and secret, that it is not deleted or expired, and that it can access this bucket'
-    : (code && MISSING_CODES.has(code)) || status === 404 ? ': the bucket or archive is not at the destination' : '';
-  return ` (${parts.join(', ')})${hint}`;
+  const hint = s3Code ? S3_CODES.get(s3Code)
+    : status === 401 ? KEY
+    : status === 403 ? 'the destination refused the request; check that the key can access this bucket'
+    : status === 404 ? 'the bucket or archive is not at the destination' : undefined;
+  return ` (${parts.join(', ')})${hint ? `: ${hint}` : ''}`;
 }
 export async function uploadArchive(destination: Destination, credentials: StorageCredentials, archiveId: string, path: string): Promise<void> {
   const s3 = client(destination, credentials);
