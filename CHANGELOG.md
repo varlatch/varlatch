@@ -5,6 +5,18 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.20.1)
+
+### Backups
+
+- **A failed upload or remote check says why.** "Remote archive retrieval
+  failed" and "Destination upload failed" now give the HTTP status and,
+  when Varlatch recognizes it, the storage error code (for example
+  `S3 error InvalidAccessKeyId, HTTP 403`) or the network error, with what
+  to check: the key, its access to the bucket, the archive, or the host
+  clock. Codes Varlatch does not recognize, the storage provider's message
+  and the key are never shown.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations
