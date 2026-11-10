@@ -453,9 +453,12 @@ export async function countWouldBlockAfter(
  * dropped, with nothing written.
  */
 async function runAccessCount(ctx: AppCtx, report: PendingAccessReport, operation: PasskeyVerificationOperation): Promise<void> {
-  const leave = ctx.maintenance?.enter();
-  if (ctx.maintenance && !leave) return;
+  let leave: (() => void) | undefined;
   try {
+    // Admission can throw (unreadable maintenance state): the count is
+    // dropped, never left as an unhandled rejection in the queue.
+    leave = ctx.maintenance?.enter();
+    if (ctx.maintenance && !leave) return;
     await accessCountHooks.beforeCount?.();
     await countWouldBlockAfter(ctx, report, operation);
   } catch (err) {
@@ -477,7 +480,9 @@ function pumpAccessQueue(): void {
   while (accessQueue.running < ACCESS_COUNTS.concurrency && accessQueue.waiting.length > 0) {
     const job = accessQueue.waiting.shift()!;
     accessQueue.running++;
-    void job().finally(() => {
+    // A job handles its own errors; the catch is a last guard so the queue
+    // can never produce an unhandled rejection.
+    void job().catch(() => undefined).finally(() => {
       accessQueue.running--;
       pumpAccessQueue();
     });

@@ -315,6 +315,30 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
       expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
     });
 
+    it("a count whose maintenance admission throws is dropped, with no unhandled rejection", async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        const throwing = {
+          enter: () => { throw new Error("maintenance state unreadable"); },
+          busy: 0,
+        } as unknown as Maintenance;
+        let ran = false;
+        accessCountHooks.beforeCount = async () => { ran = true; };
+        queueAccessCount({ ...ctx, maintenance: throwing }, report(), "organization.read");
+        await accessCountsSettled();
+        // Let any stray rejection surface before checking.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(ran).toBe(false);
+        expect(unhandled).toEqual([]);
+        expect(await passkeyRows()).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    });
+
     it("drops the count after the lock timeout while the Organization row or the counter row is locked", { timeout: 60_000 }, async () => {
       for (const lock of [
         (tx: Awaited<ReturnType<typeof db.connect>>) => tx.query("SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE", [orgId]),
