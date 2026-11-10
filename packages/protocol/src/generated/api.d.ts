@@ -533,6 +533,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/security/credential-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's machine credentials worth a look (capability security.credential-review, ADR-0054 Decision 8): never used, not used for idleDays (30) days, or without expiry, each with its identity and last use. Reviewed are the credentials of machine identities (every kind but human) that are not revoked, not expired and whose use budget is not spent; OIDC exchange and agent-run credentials are left out, since they expire within an hour by construction. Reporting only: it changes no authorization and nothing is retired automatically. Metadata only, never a token or a hash. Needs identity.manage, like listing an identity's credentials; existence-hiding. Returned whole, never paginated. */
+        get: operations["credentialReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/identities/{identity}/credentials/{credential}": {
         parameters: {
             query?: never;
@@ -2372,6 +2389,61 @@ export interface components {
             lastUsedAt: string | null;
             /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
             client?: string | null;
+        };
+        /**
+         * @description never-used: no successful authentication yet. idle: last used more than idleDays days ago. no-expiry: it never expires.
+         * @enum {string}
+         */
+        CredentialReviewReason: "never-used" | "idle" | "no-expiry";
+        /** @description Credential review (ADR-0054 Decision 8). Items are ordered by identity name, then creation. */
+        CredentialReview: {
+            /** Format: date-time */
+            generatedAt: string;
+            /** @description Days without use after which a used credential is idle (30). */
+            idleDays: number;
+            /** @description reviewed counts every machine credential checked, listed those with at least one reason; a credential can count under several reasons. */
+            summary: {
+                reviewed: number;
+                listed: number;
+                neverUsed: number;
+                idle: number;
+                noExpiry: number;
+            };
+            items: components["schemas"]["ReviewedCredential"][];
+        };
+        ReviewedCredential: {
+            id: string;
+            name: string | null;
+            /** @description The credential kind; every long-lived machine credential is service today. */
+            kind: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /**
+             * Format: date-time
+             * @description Last successful authentication, about a minute granular; null when never used.
+             */
+            lastUsedAt: string | null;
+            /** @description Who was shown the token at issuance; null when unknown. */
+            issuedBy: null | {
+                id: string;
+                name: string;
+            };
+            identity: {
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "service" | "workload" | "ci" | "broker" | "agent";
+                /**
+                 * @description live: can authenticate. disabled: suspended while the Organization is being deleted (disabledReason); its credentials work again if the deletion is cancelled. retired: disabled by an operator; a credential still listed here was not revoked and would work again on reactivation.
+                 * @enum {string}
+                 */
+                state: "live" | "disabled" | "retired";
+                /** @enum {string|null} */
+                disabledReason: "organization-deletion" | null;
+            };
+            reasons: components["schemas"]["CredentialReviewReason"][];
         };
         IssuedAgentCredential: {
             id: string;
@@ -4347,6 +4419,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssuedAgentCredential"] | components["schemas"]["IssuedMachineCredential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    credentialReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialReview"];
                 };
             };
             default: components["responses"]["Error"];
