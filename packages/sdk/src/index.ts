@@ -13,12 +13,14 @@ import type {
   ConfigItemSearchResult,
   ContractRevision,
   CreatedIdentity,
+  CredentialReview,
   DeviceSignInLookup,
   DeviceSignInStarted,
   GrantReplacement,
   IssuedCliCredential,
   ExposureConfirmation,
   ExposureReport,
+  MachineReach,
   MemberRemoval,
   MemberReview,
   OrganizationDeletion,
@@ -180,6 +182,9 @@ export interface OrgIdentity {
   image?: string | null;
 }
 
+/** The credential review (capability security.credential-review, ADR-0054 Decision 8). */
+export type { CredentialReview, ReviewedCredential } from "@varlatch/protocol";
+
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
   id: string;
@@ -205,7 +210,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -897,6 +902,15 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * The Organization's machine credentials never used, idle for 30 days, or
+   * without expiry, with identity and last use (identity.manage; capability
+   * security.credential-review). Reporting only; never a token.
+   */
+  credentialReview(org: string): Promise<CredentialReview> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/credential-review`);
+  }
+
   /** Revoke a service/oidc credential of an in-org machine identity (identity.manage). */
   revokeIdentityCredential(org: string, identityId: string, credentialId: string): Promise<void> {
     return this.request(
@@ -918,6 +932,19 @@ export class VarlatchClient {
     return this.request(
       "POST",
       `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/retire`,
+    );
+  }
+
+  /**
+   * What a machine identity's Grants allow, per Project and Environment,
+   * with the Tailnet Requirements that would constrain each action as
+   * conditions (capability identity.reach; needs identity.read and
+   * policy.read). Read-only: never evaluated against a request, never stored.
+   */
+  machineReach(org: string, identityId: string): Promise<MachineReach> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/reach`,
     );
   }
 

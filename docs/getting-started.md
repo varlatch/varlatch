@@ -394,6 +394,15 @@ needs: like a person, it starts with no access.
   varlatch credential revoke <identity-id> <credential-id>
   ```
 
+  To find credentials that may no longer be needed, run
+  `varlatch security report` (`--json` for the whole document). It lists
+  the organization's machine credentials that were never used, have not
+  been used for 30 days, or never expire, each with its identity and when
+  it was last used. It only reports: nothing is revoked or retired for
+  you. It needs `identity.manage`, as `credential list` does. Short-lived
+  credentials from OIDC sign-ins and agent-safe runs expire within an hour
+  and are left out.
+
   To replace a credential, issue the new one, move the program to it, then
   revoke the old one.
 
@@ -416,6 +425,20 @@ needs: like a person, it starts with no access.
   convention: identities can be renamed) is an error to report. Each call
   spends a use of a use-limited credential, so ask once and keep the
   answer.
+
+To see what a machine can reach, open it in Access, then Machines, or ask
+the CLI:
+
+```sh
+varlatch identity reach deployer        # an identity ID or name; --json for the whole document
+```
+
+It lists the machine's state and, per project and environment, what its
+grants allow. Reading values where a tailnet requirement applies shows the
+requirement as a condition, such as
+`needs tailnet example.ts.net: tag:prod`: a request must come from a
+device that meets it. The list checks no device and never shows a value.
+It needs permission to read identities and policy.
 
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
 or Convex, for platforms that keep their own copy: add an integration on the

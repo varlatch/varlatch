@@ -37,6 +37,38 @@ fixes.
   clock. Codes Varlatch does not recognize, the storage provider's message
   and the key are never shown.
 
+### Machine identities
+
+- **See what a machine can reach.** Open a machine in Access, then
+  Machines, or run `varlatch identity reach <id or name>` (`--json` for
+  the whole document), to see its state (live, disabled, retired), its
+  live credentials, and per project and environment the actions its
+  grants allow, directly or through groups, roles and teams. Value reads
+  covered by a tailnet requirement say so as a condition, such as
+  `needs tailnet example.ts.net: tag:prod`: requirements are listed, not
+  checked against any device, so a condition is never shown as a denial.
+  A derived environment shows what its root's grants and requirements
+  give it. For a broker it notes that agent runs use Capabilities, which
+  are not its grants. The reach is computed when asked and never stored;
+  it changes no access. It needs both `identity.read` and `policy.read`,
+  since it shows grants and requirements, and refuses a person: for a
+  member, see the exposure report. API: `GET
+  /v1/organizations/{org}/identities/{identity}/reach`, capability
+  `identity.reach`.
+- **See which machine credentials may no longer be needed.** `varlatch
+  security report` (`--json` for the whole document) lists the
+  organization's machine credentials that were never used, have not been
+  used for 30 days, or never expire, grouped by reason, each with its
+  identity, when it was last used, its expiry and who issued it, and a
+  count per reason. Revoked, expired and used-up credentials are not
+  listed, nor are people's credentials or the short-lived credentials of
+  OIDC sign-ins and agent-safe runs. A credential of a machine suspended
+  by the organization's deletion is listed with that state. It only
+  reports: nothing is revoked or retired, and it changes no access. It
+  needs `identity.manage`, as `varlatch credential list` does. API: `GET
+  /v1/organizations/{org}/security/credential-review`, capability
+  `security.credential-review`.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

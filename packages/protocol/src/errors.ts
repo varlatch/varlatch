@@ -90,6 +90,8 @@ export const CAPABILITIES = [
   "members.lifecycle",
   "projects.delete",
   "organizations.delete",
+  "identity.reach",
+  "security.credential-review",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
