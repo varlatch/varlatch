@@ -92,6 +92,7 @@ export const CAPABILITIES = [
   "organizations.delete",
   "identity.reach",
   "security.credential-review",
+  "account.passkeys",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

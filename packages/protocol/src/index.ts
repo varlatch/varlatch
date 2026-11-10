@@ -65,6 +65,9 @@ export type IssuedMachineCredential = components["schemas"]["IssuedMachineCreden
 export type CapabilityExercise = components["schemas"]["CapabilityExercise"];
 export type Webhook = components["schemas"]["Webhook"];
 export type OwnCredential = components["schemas"]["OwnCredential"];
+/** A person's passkey with its provenance (capability account.passkeys). */
+export type OwnPasskey = components["schemas"]["OwnPasskey"];
+export type PasskeyConfirmationOptions = components["schemas"]["PasskeyConfirmationOptions"];
 export type IssuedCliCredential = components["schemas"]["IssuedCliCredential"];
 export type OidcBinding = components["schemas"]["OidcBinding"];
 export type IssuedOidcCredential = components["schemas"]["IssuedOidcCredential"];
