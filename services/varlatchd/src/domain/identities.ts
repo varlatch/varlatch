@@ -11,6 +11,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp, reportProtectedWrite } from "./securityreport.js";
 
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
@@ -53,6 +54,18 @@ export async function createMachineIdentity(
       "INSERT INTO identities (id, kind, name, organization_id) VALUES ($1,$2,$3,$4)",
       [id, input.kind, input.name, organizationId],
     );
+    // Report mode (ADR-0054 Decision 9), before the first audit insert:
+    // admin-step-up, and credential-lifetime when a credential is issued.
+    await reportProtectedWrite(db, {
+      organizationId,
+      actorIdentityId,
+      checks: [
+        { control: "admin-step-up", operation: "identity.create" },
+        ...(SERVICE_CREDENTIAL_KINDS.has(input.kind)
+          ? [{ control: "credential-lifetime" as const, operation: "identity.create" as const, ttlSeconds: input.credentialTtlSeconds }]
+          : []),
+      ],
+    });
     await recordAuditEvent(db, {
       eventType: "identity.created",
       decision: "info",
@@ -132,6 +145,15 @@ export async function issueMachineCredential(
       ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString()
       : null;
     const maxUses = input.maxUses ?? null;
+    // Report mode (ADR-0054 Decision 9), before issueCredential's audit insert.
+    await reportProtectedWrite(db, {
+      organizationId,
+      actorIdentityId,
+      checks: [
+        { control: "admin-step-up", operation: "credential.issue" },
+        { control: "credential-lifetime", operation: "credential.issue", ttlSeconds: input.ttlSeconds },
+      ],
+    });
     const issued = await issueCredential(db, {
       identityId,
       kind: "service",
@@ -224,11 +246,14 @@ export async function reactivateIdentity(
     await lockLiveScope(db, { organizationId });
     // An identity suspended by a deletion request comes back only through
     // that request's cancellation (ADR-0051 Decision 5).
-    const suspended = await db.query("SELECT suspended_by_deletion FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
-    if ((suspended.rows[0] as { suspended_by_deletion: string | null } | undefined)?.suspended_by_deletion) {
+    const suspended = await db.query("SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
+    const before = suspended.rows[0] as { suspended_by_deletion: string | null; disabled: boolean } | undefined;
+    if (before?.suspended_by_deletion) {
       throw new DomainError("ORGANIZATION_DELETING", "This identity was suspended by the Organization's deletion; cancelling the deletion restores it");
     }
     await db.query("UPDATE identities SET disabled = false WHERE id = $1", [identityId]);
+    // Report mode counts only a reactivation of a disabled identity; an enabled one stays as it was.
+    if (before?.disabled) await reportAdminStepUp(db, organizationId, actorIdentityId, "identity.reactivate");
     await recordAuditEvent(db, {
       eventType: "identity.reactivated",
       decision: "info",

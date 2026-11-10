@@ -109,6 +109,32 @@ fixes.
   /v1/organizations/{org}/security/controls` and `PATCH
   /v1/organizations/{org}/security/controls/{control}`, capability
   `security.controls`.
+- **Report mode counts what each control would have done.** With a
+  control at `report`, nothing is refused and nothing issued changes;
+  instead Varlatch counts, per hour, each time the control would have
+  acted: `requirement-protection` each tailnet requirement edit or
+  revocation, `admin-step-up` each administrative change on its list
+  (machine identities and credentials, grants, roles, groups, teams,
+  admins, member removal, webhooks, connections, the GitHub App, project
+  and organization deletion, `.env` export), `passkey-verification` each
+  request by a person whose sign-in was not made with a trusted passkey
+  that verified them (machine credentials never), including each
+  organization in the dashboard's realtime token, and
+  `credential-lifetime` each machine credential issued without a lifetime
+  (would get the default) or with one above the maximum (would be
+  refused). A change is counted only when it was saved and changed
+  something, an access only when it was allowed and succeeded. Access
+  counts are best-effort: made after the response, never slowing a
+  request, and dropped when they cannot be made within about a second
+  or the server stops or enters maintenance first. Counts are kept per control version,
+  operation, person or machine, reason and hour, with fixed fields only:
+  never a request body, URL, token, hash or value. About 10 minutes after
+  each hour, one `security_control.would_block` audit event per counter
+  summarizes it; counters are deleted 35 days after their summary. `GET
+  /v1/organizations/{org}/security/control-report?days=30` returns the
+  live current hour and the last 30 days per control, operation, reason
+  and actor, for `organization.manage` (capability `security.report`).
+  See [What report mode counts](docs/reference/security-controls.md#what-report-mode-counts).
 - **Turning a control down needs your approval with a trusted passkey.**
   A change that moves a control towards off, makes a lifetime longer or
   clears the lifetimes, even alongside a tightening, is answered with
@@ -199,6 +225,8 @@ fixes.
 
 - Migration 41 adds the security control and approval tables. Controls
   start off; nothing to do.
+- Migration 42 adds the report counters. Nothing is counted while every
+  control is off; nothing to do.
 
 ## 0.20.0 (2026-10-30)
 

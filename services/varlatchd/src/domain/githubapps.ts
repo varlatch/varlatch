@@ -11,6 +11,7 @@ import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import {
   GITHUB_API,
   GITHUB_HEADERS,
@@ -332,6 +333,7 @@ export async function completeRegistration(
       }
       return refused(db, "app-in-use", `Another Organization on this Varlatch already uses the App ${conversion.slug}, so Varlatch did not keep it here.`);
     }
+    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.register");
     await recordAuditEvent(db, {
       eventType: "sync.github_app_registered",
       decision: "info",
@@ -482,6 +484,7 @@ export async function importGitHubApp(
           : `Another Organization on this Varlatch already uses the App ${slug}.`,
       );
     }
+    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.import");
     await recordAuditEvent(db, {
       eventType: "sync.github_app_registered",
       decision: "info",

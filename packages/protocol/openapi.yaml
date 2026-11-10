@@ -1299,6 +1299,41 @@ paths:
               schema: { $ref: "#/components/schemas/SecurityControlList" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/security/control-report:
+    get:
+      tags: [organizations]
+      operationId: securityControlReport
+      summary: >
+        What the Security Controls in report mode counted (capability
+        security.report, ADR-0054 Decision 9). For each control: its mode
+        and version, the counts of the last `days` days, the current hour's
+        live counts, the counts not yet summarized in the audit log, and
+        entries per configuration version, operation, reason and actor,
+        with their counts and first and last times. Counting refuses and
+        changes nothing. A write is counted only when it committed and
+        changed something, an access only when it was authorized and
+        succeeded; access counts are best-effort, made after the response
+        and dropped when they cannot be made quickly. Summaries are
+        written to the audit log as security_control.would_block once an
+        hour has been over for 10 minutes; counts are kept 35 days after
+        their summary. Fixed fields only: never a request body, URL, token,
+        hash or value, and no target. It names who did what, so it needs
+        organization.manage; existence-hiding. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: days
+          in: query
+          required: false
+          description: The window, in days back from now (whole hours). 30 when absent.
+          schema: { type: integer, minimum: 1, maximum: 30 }
+      responses:
+        "200":
+          description: The counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecurityControlReport" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/security/controls/{control}:
     patch:
       tags: [organizations]
@@ -5890,6 +5925,86 @@ components:
           type: array
           description: The modes this server accepts in a change.
           items: { $ref: "#/components/schemas/SecurityControlMode" }
+
+    SecurityReportReason:
+      type: string
+      enum: [no-approval, machine-credential, no-evidence, not-user-verified, untrusted-passkey, would-default, would-refuse]
+      description: >
+        Why the control would have acted. admin-step-up and
+        requirement-protection: no-approval (a person, without an approval)
+        or machine-credential (a machine credential, which can never pass
+        one). passkey-verification: no-evidence (a sign-in recorded no
+        evidence, such as one from before the upgrade), not-user-verified
+        (the passkey did not verify the person), untrusted-passkey (the
+        passkey that signed in is not trusted). credential-lifetime:
+        would-default (no TTL given: it would get the default) or
+        would-refuse (a TTL above the maximum).
+
+    SecurityReportEntry:
+      type: object
+      required: [configVersion, operation, reason, actor, count, firstSeen, lastSeen]
+      properties:
+        configVersion:
+          type: integer
+          description: The control's version when the attempts were decided.
+        operation:
+          type: string
+          description: >
+            The semantic operation, such as grant.create, requirement.revoke or
+            credential.issue; for passkey-verification the first action the
+            request was authorized for (secret.reveal, project.read, ...),
+            organization.access, or convex.token.
+        reason: { $ref: "#/components/schemas/SecurityReportReason" }
+        actor:
+          type: object
+          required: [id, name, kind]
+          properties:
+            id: { type: string }
+            name: { type: [string, "null"] }
+            kind: { type: [string, "null"] }
+        count: { type: integer, minimum: 1 }
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+
+    SecurityControlCounts:
+      type: object
+      required: [control, mode, version, total, currentHour, pending, entries]
+      properties:
+        control: { $ref: "#/components/schemas/SecurityControlName" }
+        mode: { $ref: "#/components/schemas/SecurityControlMode" }
+        version: { type: integer }
+        total:
+          type: integer
+          description: Every count in the window.
+        currentHour:
+          type: integer
+          description: Counted in the current hour, live.
+        pending:
+          type: integer
+          description: Counted, but not yet summarized in the audit log.
+        entries:
+          type: array
+          description: Largest count first.
+          items: { $ref: "#/components/schemas/SecurityReportEntry" }
+
+    SecurityControlReport:
+      type: object
+      required: [organizationId, days, since, generatedAt, summaryDelayMinutes, controls]
+      properties:
+        organizationId: { type: string }
+        days: { type: integer }
+        since:
+          type: string
+          format: date-time
+          description: The start of the window, a whole hour.
+        generatedAt: { type: string, format: date-time }
+        summaryDelayMinutes:
+          type: integer
+          description: How long after an hour ends its summaries are written to the audit log.
+        controls:
+          type: array
+          description: All four controls, in the order of SecurityControlName.
+          items: { $ref: "#/components/schemas/SecurityControlCounts" }
 
     SecurityControlChangeInput:
       type: object

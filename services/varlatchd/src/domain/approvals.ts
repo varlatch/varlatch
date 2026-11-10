@@ -74,8 +74,17 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *   6. The Better Auth session row.
  *   7. The credential row.
  *   8. Then only rows nothing else orders against: security_controls,
- *      passkey provenance, the deletion of a passkey already held, and the
+ *      passkey provenance, the deletion of a passkey already held; then
+ *      the report counters (securityreport.ts: a protected operation's
+ *      counter upserts come after its own domain rows, in key order when
+ *      several, and before the exposure and integration indexes); and the
  *      audit insert last (it holds the audit counter until commit).
+ *      Counters carry no foreign key, so their upserts lock no row of an
+ *      earlier step. The summary worker claims counter rows FOR UPDATE
+ *      SKIP LOCKED in key order, never waiting for one, then inserts its
+ *      audit events: a transaction that holds the audit counter never
+ *      waits for a counter row, so the worker and a counting transaction
+ *      cannot deadlock.
  *
  * An INSERT or an UPDATE of a foreign key column takes FOR KEY SHARE on the
  * row it references (an intent: its credential, person and Organization; a
@@ -115,6 +124,16 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *     restricted, then 8.
  *   Passkey confirmation: issuing 2, 3 (the target), 5; confirming 2, 3
  *     (all), 5, then 8.
+ *   A protected operation counting in report mode: 1 KEY SHARE
+ *     (lockLiveScope), its own domain rows, then 8 (counters, indexes,
+ *     audit). An export's count, in the disclosure's audit transaction
+ *     after its snapshot: 1 KEY SHARE (skipped when the Organization was
+ *     deleted), then 8. A passkey-verification count after a request: 1
+ *     KEY SHARE, then 8 (counters only), with lock and statement timeouts.
+ *   The report summary worker: its advisory lock (only it takes it), then
+ *     8 (counter rows SKIP LOCKED in key order, then audit).
+ *   Organization deletion's finalization deletes the Organization's
+ *     counter rows after its domain rows and before its audit.
  */
 
 export const APPROVALS = {

@@ -177,7 +177,17 @@ import {
   routeParam,
   type Principal,
 } from "./support.js";
-import { resolveOrganization } from "./organization.js";
+import { entryRequester, queueEntryReport, resolveOrganization } from "./organization.js";
+import {
+  passkeyVerificationReports,
+  queueAccessCount,
+  reportAdminStepUp,
+  reportingControls,
+  reportProtectedWrite,
+  securityControlReport,
+  type PendingAccessReport,
+  type WouldBlock,
+} from "../domain/securityreport.js";
 
 export const SERVER_VERSION = "0.20.0";
 
@@ -209,6 +219,10 @@ type Vars = {
   tailnetContext: TailnetContext | undefined;
   /** What the tailnet listener resolved the peer to, or why not (for audit, ADR-0046 Decision 8). */
   tailnetResolution: Record<string, unknown> | undefined;
+  /** A passkey-verification report noted where the request entered its Organization (http/organization.ts). */
+  organizationEntryReport: PendingAccessReport | undefined;
+  /** The first action the request was authorized for (support.ts decide). */
+  authorizedAction: Action | undefined;
 };
 
 /**
@@ -743,6 +757,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       },
       () => next(),
     );
+    // A passkey-verification report noted where the request entered an
+    // Organization is counted at its outcome: only when it succeeded, after
+    // the response, best-effort (ADR-0054 Decision 9). Not awaited.
+    queueEntryReport(ctx, c);
     if (expiring) c.res.headers.set(CREDENTIAL_EXPIRES_HEADER, expiring);
   });
 
@@ -782,21 +800,31 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Application Plane token exchange (ADR-0018 §6): a Secret Plane
   // credential mints a short-lived Convex-only JWT. One-way: varlatchd never
   // accepts these back.
+  //
+  // Each Organization id in the token is Organization-scoped access for
+  // passkey-verification (ADR-0054 Decision 7): evaluated per Organization
+  // before minting, and in report mode counted per Organization after the
+  // response, each in a short transaction of its own. Machine credentials
+  // are exempt.
   app.post("/v1/tokens/convex", async (c) => {
     const principal = c.get("principal");
     const orgs = await listOrganizationsFor(ctx, principal.identity.id);
     const issuer = options.issuer ?? "varlatch";
+    const orgIds =
+      principal.identity.kind === "human"
+        ? orgs.map((o) => o.id)
+        : principal.identity.organization_id
+          ? [principal.identity.organization_id]
+          : [];
+    const reports = await passkeyVerificationReports(ctx.db, entryRequester(principal), orgIds);
     const minted = await mintConvexToken(ctx, issuer, {
       sub: principal.identity.id,
       name: principal.identity.name,
-      orgIds:
-        principal.identity.kind === "human"
-          ? orgs.map((o) => o.id)
-          : principal.identity.organization_id
-            ? [principal.identity.organization_id]
-            : [],
+      orgIds,
       installationAdmin: principal.identity.installation_admin,
     });
+    // After the response, best-effort, like every access count.
+    for (const report of reports) queueAccessCount(ctx, report, "convex.token");
     return c.json(minted);
   });
 
@@ -1988,7 +2016,20 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const state = await captureState(sctx, scope, now, (item) =>
           item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
         );
-        return { state, body, reveal, plain, metadata };
+        // admin-step-up in report mode (ADR-0054 Decision 5): an export,
+        // the dashboard's .env download, is done without an approval.
+        // Decided on the snapshot; counted with the disclosure's audit.
+        const stepUp = body.purpose === "export" ? (await reportingControls(sctx.db, scope.org.id)).get("admin-step-up") : undefined;
+        const report: WouldBlock[] = stepUp
+          ? [{
+              control: "admin-step-up",
+              configVersion: stepUp.version,
+              operation: "secret.export",
+              actorIdentityId: principal.identity.id,
+              reason: principal.identity.kind === "human" ? "no-approval" : "machine-credential",
+            }]
+          : [];
+        return { state, body, reveal, plain, metadata, report: { attempts: report, at: now } };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
       const { state, body, plain, metadata } = phase;
@@ -2001,6 +2042,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         requestId: c.get("requestId"),
         mayReadPlain: plain.allowed,
         authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
+        report: phase.report,
       });
       c.header("Cache-Control", "no-store");
       return c.json(
@@ -2562,6 +2604,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json({ items: await listControls(ctx.db, org.id), availableModes: [...AVAILABLE_MODES] });
   });
 
+  // What the controls in report mode counted (ADR-0054 Decision 9;
+  // capability security.report): the current hour's live counters and the
+  // last `days` (1 to 30, 30 by default) of counts, per control, operation,
+  // reason and actor. It names people and machines and what they did, so it
+  // needs organization.manage, what changing a control needs, not the
+  // organization.read that lets every member see the modes.
+  app.get("/v1/organizations/:org/security/control-report", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    const raw = c.req.query("days");
+    if (raw !== undefined && !/^\d{1,2}$/.test(raw)) throw new DomainError("VALIDATION_FAILED", "days must be an integer in 1..30");
+    c.header("Cache-Control", "no-store");
+    return c.json(await securityControlReport(ctx.db, org.id, raw === undefined ? 30 : Number(raw)));
+  });
+
   app.patch("/v1/organizations/:org/security/controls/:control", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -2957,6 +3015,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           principal.identity.id,
         ],
       );
+      await reportAdminStepUp(db, org.id, principal.identity.id, "grant.create");
       await recordAuditEvent(db, {
         eventType: "grant.created",
         decision: "info",
@@ -2997,6 +3056,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         [c.req.param("grant"), org.id],
       );
       if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+      await reportAdminStepUp(db, org.id, principal.identity.id, "grant.revoke");
       await recordAuditEvent(db, {
         eventType: "grant.revoked",
         decision: "info",
@@ -3029,10 +3089,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         const existing = await db.query(
-          "SELECT id, revoked_at FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE",
-          [grantId, org.id],
+          `SELECT id, revoked_at,
+                  (subject_identity_id IS NOT DISTINCT FROM $3 AND subject_group_id IS NOT DISTINCT FROM $4
+                   AND scope = $5::jsonb AND actions IS NOT DISTINCT FROM $6::text[] AND role_id IS NOT DISTINCT FROM $7) AS same
+           FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+          [grantId, org.id, body.subjectIdentityId ?? null, body.subjectGroupId ?? null, JSON.stringify(body.scope), body.actions ?? null,
+            body.roleId ?? null],
         );
-        const row = existing.rows[0] as { id: string; revoked_at: string | null } | undefined;
+        const row = existing.rows[0] as { id: string; revoked_at: string | null; same: boolean } | undefined;
         if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
         if (row.revoked_at) {
           throw new DomainError("VERSION_CONFLICT", "Grant is already revoked or replaced");
@@ -3052,6 +3116,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             principal.identity.id,
           ],
         );
+        // Report mode counts a replacement that changes the declaration; one
+        // with identical content still replaces the Grant, but changes no access.
+        if (!row.same) await reportAdminStepUp(db, org.id, principal.identity.id, "grant.replace");
         await recordAuditEvent(db, {
           eventType: "grant.revoked",
           decision: "info",
@@ -3399,6 +3466,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           [JSON.stringify(target), JSON.stringify(selector), requirementId],
         );
         const out = updated.rows[0] as { version: number; updated_at: string };
+        // Report mode (ADR-0054 Decision 9): an edit without an approval.
+        await reportProtectedWrite(db, {
+          organizationId: org.id,
+          actorIdentityId: principal.identity.id,
+          checks: [{ control: "requirement-protection", operation: "requirement.update" }],
+        });
         await recordAuditEvent(db, {
           eventType: "requirement.updated",
           decision: "info",
@@ -3431,6 +3504,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         [c.req.param("requirement"), org.id],
       );
       if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+      // Report mode (ADR-0054 Decision 9): a revocation without an approval.
+      await reportProtectedWrite(db, {
+        organizationId: org.id,
+        actorIdentityId: principal.identity.id,
+        checks: [{ control: "requirement-protection", operation: "requirement.revoke" }],
+      });
       await recordAuditEvent(db, {
         eventType: "requirement.revoked",
         decision: "info",

@@ -24,7 +24,7 @@ Each control has a mode:
 - **`report`**: nothing is refused and nothing changes. Each time the
   control would have refused a request, asked for an approval or changed
   an outcome, Varlatch counts it, so you can see what turning it on would
-  do before you decide.
+  do before you decide (see [What report mode counts](#what-report-mode-counts)).
 - **`enforce`**: the control applies. **This release does not offer
   `enforce` yet**: the server refuses it with `CONTROL_MODE_UNAVAILABLE`,
   and the dashboard shows it as not available.
@@ -57,6 +57,110 @@ Who may do what:
 - **Changing** needs `organization.manage` (organization admins have it)
   and a person's sign-in: the dashboard or the CLI. A machine credential
   can never change a control, whatever its grants.
+
+## What report mode counts
+
+In `report` mode a control refuses nothing and changes nothing. Each time
+it would have refused a request, asked for an approval, or changed what is
+issued, Varlatch adds one to a counter. Only what actually happened is
+counted:
+
+- **A change** (a write) is counted in the same database transaction as
+  the change, so it is counted only if the change was saved. A request that
+  was refused, failed, or changed nothing is not counted: an edit to the
+  same values, adding a member or project that is already there,
+  reactivating a machine identity that is not retired, or replacing a
+  grant with an identical one.
+- **An access** (`passkey-verification`) is counted only when the request
+  was allowed and succeeded. Someone outside the organization, or a
+  request that was refused, is never counted. Access counts are
+  best-effort: they are made after the response is sent, so they never
+  slow or fail a request, and a count that cannot be made within about a
+  second (a busy database, or too many counts waiting in one server
+  process) is dropped, and so are counts still waiting when the server
+  stops or enters maintenance (a backup or restore). Counts of changes are
+  never dropped.
+
+Per control:
+
+| Control | Counted | Reasons |
+| --- | --- | --- |
+| `requirement-protection` | Editing (`requirement.update`) or revoking (`requirement.revoke`) a tailnet requirement. Creating one is not counted. | `no-approval`, `machine-credential` |
+| `admin-step-up` | Each operation below. | `no-approval`, `machine-credential` |
+| `passkey-verification` | Each request by a person's dashboard or CLI sign-in to the organization, when that sign-in was not made with a trusted passkey that verified the person (PIN, fingerprint or face). Machine credentials are never counted. | `no-evidence`, `not-user-verified`, `untrusted-passkey` |
+| `credential-lifetime` | Issuing a machine credential: creating a machine identity that gets one (`identity.create`) and `credential issue` (`credential.issue`). OIDC and agent-run credentials are not counted. | `would-default`, `would-refuse` |
+
+`admin-step-up` counts these operations:
+
+- machine identities and credentials: `identity.create`,
+  `credential.issue`, `identity.reactivate`, `oidc_binding.create`,
+  `oidc_binding.delete`;
+- access: `grant.create`, `grant.replace`, `grant.revoke`; `role.create`,
+  `role.update`, `role.delete`; `group.create`, `group.update`,
+  `group.delete`, `group.member_add`, `group.member_remove`;
+  `team.create`, `team.update`, `team.delete`, `team.member_add`,
+  `team.member_remove`, `team.project_add`, `team.project_remove`;
+- people: `member.invite_admin` (an invitation as admin),
+  `member.promote`, `member.demote`, `member.remove` (removing someone
+  else; leaving an organization yourself is not counted);
+- integrations: `webhook.create`, `webhook.update`, `webhook.delete`;
+  `connection.create`, `connection.replace_credential`,
+  `connection.delete`; `github_app.register`, `github_app.import`,
+  `github_app.replace_key`, `github_app.remove`;
+- deletion: `project.delete`, `organization.delete` (scheduling it);
+- export: `secret.export`, the dashboard's `.env` download (a disclosure
+  with the purpose `export`). Reading values and `varlatch run` are not
+  counted.
+
+What the reasons mean:
+
+- `no-approval`: a person did it without an approval. No operation asks
+  for one yet; with `enforce`, these would need one.
+- `machine-credential`: a machine credential did it. A machine can never
+  give an approval, so with `enforce` it would be refused.
+- `no-evidence`: the sign-in recorded no evidence, such as a sign-in from
+  before this release. Signing in again records it.
+- `not-user-verified`: the passkey did not verify the person.
+- `untrusted-passkey`: the passkey that signed in is not trusted (see
+  [Trusted passkeys only](#trusted-passkeys-only)).
+- `would-default`: no lifetime was given, so the credential would have
+  got the default lifetime.
+- `would-refuse`: the lifetime asked for is above the maximum, so the
+  request would have been refused.
+
+For `passkey-verification`, the operation is the first permission the
+request was allowed (for example `project.read` or `secret.reveal`),
+`organization.access` for a request allowed without one, or
+`convex.token` for the dashboard's realtime token, which counts once for
+each organization it covers.
+
+### How counts appear
+
+Counters are kept per organization, control, the control's version,
+operation, person or machine, reason and hour (UTC). The version is the
+control's version when the request was decided, so counts made before and
+after a change of mode or lifetimes stay apart.
+
+- **Live:** the current hour's counters and the counts of the last 30
+  days are available from `GET
+  /v1/organizations/{org}/security/control-report?days=30` (capability
+  `security.report`). It needs `organization.manage`, because it names
+  who did what.
+- **Summaries:** about 10 minutes after each hour ends, Varlatch writes one
+  `security_control.would_block` event to the audit log for each counter
+  of that hour: the control, its version, the operation, the person or
+  machine, the reason, the hour and the count. Audit events are never
+  changed afterwards; a count that arrives late for an hour already
+  summarized is added to the current hour.
+- **Retention:** counters are deleted 35 days after their summary. The
+  summaries stay in the audit log. When an organization is deleted, its
+  counters go with it.
+
+### What is stored
+
+Only the fields named above. Never a request body, a URL, a token, a
+hash or a value, and no target: a count says "12 grant changes without an
+approval by this person", not which grants.
 
 ## Tightening and loosening
 
@@ -214,4 +318,7 @@ every control. See the [threat model](../THREAT-MODEL.md).
 - `GET /v1/me/approvals/{id}`, `POST /v1/me/approvals/{id}/options`,
   `POST /v1/me/approvals/{id}/approve`, `POST /v1/me/approvals/{id}/cancel`.
 
-The capability is `security.controls`.
+- `GET /v1/organizations/{org}/security/control-report?days=<1-30>`:
+  what report mode counted (see [How counts appear](#how-counts-appear)).
+
+The capabilities are `security.controls` and `security.report`.

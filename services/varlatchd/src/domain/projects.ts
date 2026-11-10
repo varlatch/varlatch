@@ -5,6 +5,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 
 export interface ProjectRow {
   id: string;
@@ -202,6 +203,7 @@ export async function deleteProject(
       targetsRevoked: targets.length,
       teamLinksRemoved: teamLinks.rows.length,
     };
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "project.delete");
     await recordAuditEvent(db, {
       eventType: "project.deleted",
       decision: "info",

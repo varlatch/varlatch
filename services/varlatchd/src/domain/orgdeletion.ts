@@ -10,6 +10,7 @@ import { DomainError } from "./errors.js";
 import { closeOpenApprovals } from "./approvals.js";
 import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import { endMembership } from "./members.js";
 
 /**
@@ -156,6 +157,7 @@ export async function scheduleDeletion(
     );
     await db.query("DELETE FROM github_app_registrations WHERE organization_id = $1", [organizationId]);
     const row = inserted.rows[0] as Record<string, unknown>;
+    await reportAdminStepUp(db, organizationId, actor.id, "organization.delete");
     await recordAuditEvent(db, {
       eventType: "organization.deletion_scheduled",
       decision: "info",
@@ -438,6 +440,12 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       [machines],
     );
     await db.query("UPDATE oidc_bindings SET revoked_at = now() WHERE organization_id = $1 AND revoked_at IS NULL", [organizationId]);
+
+    // Report counters (ADR-0054 Decision 9) go with the Organization, after
+    // its domain rows and before the audit (lock order, approvals.ts): no
+    // increment can come in (they hold this row FOR KEY SHARE first), and
+    // nothing is summarized for a deleted Organization.
+    await db.query("DELETE FROM security_control_counters WHERE organization_id = $1", [organizationId]);
 
     // The tombstone, and the Organization KEK destroyed: what it protected
     // (platform credentials, webhook secrets, the App key, the sync

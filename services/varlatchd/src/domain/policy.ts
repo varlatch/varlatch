@@ -7,6 +7,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import { pinLiveMembership } from "./orgs.js";
 
 /**
@@ -59,6 +60,7 @@ export async function createRole(
     } catch {
       throw new DomainError("VALIDATION_FAILED", "A role with that name already exists");
     }
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "role.create");
     await recordAuditEvent(db, {
       eventType: "role.created",
       decision: "info",
@@ -136,6 +138,7 @@ export async function updateRole(
       throw new DomainError("VALIDATION_FAILED", "A role with that name already exists");
     }
     const out = updated.rows[0] as { version: number; updated_at: string };
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "role.update");
     await recordAuditEvent(db, {
       eventType: "role.updated",
       decision: "info",
@@ -168,6 +171,7 @@ export async function deleteRole(
       [roleId, organizationId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "role.delete");
     await recordAuditEvent(db, {
       eventType: "role.deleted",
       decision: "info",
@@ -199,6 +203,7 @@ export async function createGroup(
     } catch {
       throw new DomainError("VALIDATION_FAILED", `A ${input.kind} with that name already exists`);
     }
+    await reportAdminStepUp(db, organizationId, actorIdentityId, input.kind === "team" ? "team.create" : "group.create");
     await recordAuditEvent(db, {
       eventType: input.kind === "team" ? "team.created" : "group.created",
       decision: "info",
@@ -272,6 +277,7 @@ export async function updateGroup(
       throw new DomainError("VALIDATION_FAILED", `A ${kind} with that name already exists`);
     }
     const out = updated.rows[0] as { version: number; updated_at: string };
+    await reportAdminStepUp(db, organizationId, actorIdentityId, kind === "team" ? "team.update" : "group.update");
     await recordAuditEvent(db, {
       eventType: kind === "team" ? "team.updated" : "group.updated",
       decision: "info",
@@ -299,6 +305,7 @@ export async function deleteGroup(
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Group not found");
     const kind = (res.rows[0] as { kind: string }).kind;
+    await reportAdminStepUp(db, organizationId, actorIdentityId, kind === "team" ? "team.delete" : "group.delete");
     await recordAuditEvent(db, {
       eventType: kind === "team" ? "team.deleted" : "group.deleted",
       decision: "info",
@@ -365,10 +372,12 @@ export async function addGroupMember(
     if (!kind || (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId)))) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
     }
-    await db.query(
-      "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+    const added = await db.query(
+      "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING group_id",
       [groupId, identityId],
     );
+    // Report mode counts only a membership this added; repeating one changes nothing.
+    if (added.rows[0]) await reportAdminStepUp(db, organizationId, actorIdentityId, group.kind === "team" ? "team.member_add" : "group.member_add");
     await recordAuditEvent(db, {
       eventType: group.kind === "team" ? "team.member_added" : "group.member_added",
       decision: "info",
@@ -395,6 +404,7 @@ export async function removeGroupMember(
       [groupId, identityId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Membership not found");
+    await reportAdminStepUp(db, organizationId, actorIdentityId, group.kind === "team" ? "team.member_remove" : "group.member_remove");
     await recordAuditEvent(db, {
       eventType: group.kind === "team" ? "team.member_removed" : "group.member_removed",
       decision: "info",
@@ -431,10 +441,12 @@ export async function addTeamProject(
     // A live Project of this Organization, locked so its deletion, which
     // removes Teams' links, cannot miss this one (ADR-0051).
     await lockLiveScope(db, { organizationId, projectId });
-    await db.query(
-      "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+    const added = await db.query(
+      "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING team_id",
       [teamId, projectId],
     );
+    // Report mode counts only a link this added; repeating one changes nothing.
+    if (added.rows[0]) await reportAdminStepUp(db, organizationId, actorIdentityId, "team.project_add");
     await recordAuditEvent(db, {
       eventType: "team.project_added",
       decision: "info",
@@ -461,6 +473,7 @@ export async function removeTeamProject(
       [teamId, projectId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Team does not own that project");
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "team.project_remove");
     await recordAuditEvent(db, {
       eventType: "team.project_removed",
       decision: "info",

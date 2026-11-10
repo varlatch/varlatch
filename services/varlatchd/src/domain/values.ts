@@ -24,6 +24,7 @@ import {
 import type { ProjectRow } from "./projects.js";
 import type { CallerView } from "./manifest.js";
 import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
+import { countWouldBlockInLiveOrganization, type WouldBlock } from "./securityreport.js";
 
 interface ValueRow {
   id: string;
@@ -924,6 +925,12 @@ export async function discloseSecrets(
     mayReadPlain?: boolean | undefined;
     /** What secret.reveal and config.value.read were allowed by, for the audit events (auditAuthz). */
     authz?: { secret?: Record<string, unknown> | undefined; plain?: Record<string, unknown> | undefined };
+    /**
+     * Report counts decided in the retrieval snapshot (ADR-0054 Decision 9:
+     * admin-step-up's export), counted in the transaction that commits the
+     * disclosure's audit event, before it.
+     */
+    report?: { attempts: WouldBlock[]; at: Date } | undefined;
   },
 ): Promise<DisclosureResult & { unexpanded: CallerView["unexpanded"] }> {
   const { org, project, env } = state;
@@ -956,6 +963,10 @@ export async function discloseSecrets(
       },
     ],
     selected.flatMap((i) => (i.retiringVersionId ? [i.versionId, i.retiringVersionId] : [i.versionId])),
+    opts.report && opts.report.attempts.length > 0
+      // Only while the Organization is live: its deletion may have run since the snapshot.
+      ? async (db) => { await countWouldBlockInLiveOrganization(db, org.id, opts.report!.attempts, { at: opts.report!.at }); }
+      : undefined,
   );
 
   const items: DisclosureResult["items"] = [];

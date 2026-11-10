@@ -49,6 +49,11 @@ export function errorBody(code: ErrorCode, message: string, reqId: string, detai
   return { error: { code, message, requestId: reqId, ...(details ? { details } : {}) } };
 }
 
+/** The request variable that carries an Organization entry check's report to the request's outcome (http/organization.ts). */
+export const ENTRY_REPORT = "organizationEntryReport";
+/** The request variable naming the first action the request was authorized for (decide). */
+export const AUTHORIZED_ACTION = "authorizedAction";
+
 export interface Principal {
   identity: IdentityRow;
   credentialId: string;
@@ -217,7 +222,12 @@ export async function decide(
   const tailnetContext = (c.get("tailnetContext") as TailnetContext | undefined) ?? null;
 
   const result = evaluate({ action, resource, orgRole: role, grants, requirements, tailnetContext });
-  if (result.allowed) return { allowed: true, evaluation: result };
+  if (result.allowed) {
+    // The first action this request was authorized for: what a
+    // passkey-verification report counts it as (http/organization.ts).
+    if (!c.get(AUTHORIZED_ACTION)) c.set(AUTHORIZED_ACTION, action);
+    return { allowed: true, evaluation: result };
+  }
 
   const denialEvent: AuditEventInput = {
     eventType: "authorization.denied",

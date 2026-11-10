@@ -6,6 +6,7 @@ import type {
   SecurityControlChangeInput,
   SecurityControlList,
   SecurityControlName,
+  SecurityControlReport,
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
@@ -247,6 +248,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
 }
 
 export type { Approval, ApprovalChange, ApprovalOptions, CredentialLifetimeConfig, SecurityControl, SecurityControlChange, SecurityControlChangeInput, SecurityControlList, SecurityControlMode, SecurityControlName } from "@varlatch/protocol";
+export type { SecurityControlCounts, SecurityControlReport, SecurityReportEntry, SecurityReportReason } from "@varlatch/protocol";
 export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
@@ -968,14 +970,20 @@ export class VarlatchClient {
     );
   }
 
-  /**
-   * The Organization's machine credentials never used, idle for 30 days, or
-   * without expiry, with identity and last use (identity.manage; capability
-   * security.credential-review). Reporting only; never a token.
-   */
   /** The Organization's Security Controls (capability security.controls). */
   listSecurityControls(org: string): Promise<SecurityControlList> {
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/controls`);
+  }
+
+  /**
+   * What the Security Controls in report mode counted: per control, the
+   * last `days` days (1 to 30, 30 by default), the current hour's live
+   * counts, and entries per operation, reason and actor
+   * (organization.manage; capability security.report).
+   */
+  securityControlReport(org: string, opts: { days?: number } = {}): Promise<SecurityControlReport> {
+    const query = opts.days === undefined ? "" : `?days=${encodeURIComponent(String(opts.days))}`;
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/control-report${query}`);
   }
 
   /**
@@ -995,6 +1003,11 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * The Organization's machine credentials never used, idle for 30 days, or
+   * without expiry, with identity and last use (identity.manage; capability
+   * security.credential-review). Reporting only; never a token.
+   */
   credentialReview(org: string): Promise<CredentialReview> {
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/credential-review`);
   }

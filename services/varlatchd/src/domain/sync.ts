@@ -16,6 +16,7 @@ import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
 import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
@@ -363,6 +364,8 @@ export async function createConnection(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
+    // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
+    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -438,6 +441,8 @@ export async function createAppConnection(
     if (!locked.rows[0]) {
       throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
     }
+    // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
+    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -548,6 +553,7 @@ export async function rotateGitHubAppKey(
       [targets.map((t) => t.id)],
     );
     const app = updated.rows[0] as GitHubAppRow;
+    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.replace_key");
     await recordAuditEvent(db, {
       eventType: "sync.github_app_key_rotated",
       decision: "info",
@@ -608,6 +614,7 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
       "UPDATE github_apps SET removed_at = now(), key_envelope = NULL, version = version + 1, updated_at = now() WHERE id = $1",
       [locked.id],
     );
+    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.remove");
     await recordAuditEvent(db, {
       eventType: "sync.github_app_removed",
       decision: "info",
@@ -768,6 +775,8 @@ export async function replaceConnectionCredential(
       "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE connection_id = $1 AND revoked_at IS NULL",
       [connectionId],
     );
+    // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
+    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.replace_credential");
     await recordIntegrationChange(db, {
       organizationId: org.id,
       identityId: actorIdentityId,
@@ -837,6 +846,7 @@ export async function revokeConnection(
        WHERE id = ANY($1) AND revoked_at IS NULL RETURNING id`,
       [(referencing.rows as { id: string }[]).map((r) => r.id)],
     );
+    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.delete");
     await recordAuditEvent(db, {
       eventType: "sync.connection_revoked",
       decision: "info",

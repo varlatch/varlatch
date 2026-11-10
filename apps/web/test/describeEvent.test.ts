@@ -225,4 +225,14 @@ describe("security control events (ADR-0054)", () => {
     expect(sentence(reset)).toBe("reset security control admin-step-up to off (the host operator's reset), closing 2 pending approvals");
     expect(describeEvent(reset, names).title).toBe("Security control reset");
   });
+
+  it("summarizes an hour of what a control in report mode would have done", () => {
+    const summary = event({
+      eventType: "security_control.would_block",
+      resource: { control: "admin-step-up" },
+      metadata: { control: "admin-step-up", configVersion: 1, operation: "grant.create", reason: "no-approval", bucketHour: "2026-11-10T10:00:00.000Z", count: 3 },
+    });
+    expect(sentence(summary)).toBe("would have been stopped 3 times by admin-step-up doing grant.create (no-approval) in report mode");
+    expect(describeEvent(summary, names).title).toBe("Security control report");
+  });
 });
