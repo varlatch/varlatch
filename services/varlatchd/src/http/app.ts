@@ -75,6 +75,7 @@ import { changeMemberRole, previewMemberReview, removeMember } from "../domain/m
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
 import { lockLiveScope } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
+import { machineReach } from "../domain/reach.js";
 import {
   createAppConnection,
   createConnection,
@@ -2373,6 +2374,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const identity = await loadMachineIdentity(c, org.id);
     await reactivateIdentity(ctx, org.id, identity.id, principal.identity.id);
     return c.json({ id: identity.id, disabled: false });
+  });
+
+  // Machine reach (ADR-0054 Decision 8; capability identity.reach): what a
+  // machine's Grants allow per Project and Environment, with the Tailnet
+  // Requirements that would constrain each action as conditions. It names
+  // the identity (identity.read) and reveals its Grants and the
+  // Requirements covering them, which are policy.read everywhere else, so
+  // it needs both. Read-only: it changes no authorization and issues nothing.
+  app.get("/v1/organizations/:org/identities/:identity/reach", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.read", { organizationId: org.id }, { hideExistence: true });
+    await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await machineReach(ctx, org.id, routeParam(c, "identity")));
   });
 
   app.patch("/v1/organizations/:org/identities/:identity", async (c) => {

@@ -17,6 +17,25 @@ fixes.
   clock. Codes Varlatch does not recognize, the storage provider's message
   and the key are never shown.
 
+### Machine identities
+
+- **See what a machine can reach.** Open a machine in Access, then
+  Machines, or run `varlatch identity reach <id or name>` (`--json` for
+  the whole document), to see its state (live, disabled, retired), its
+  live credentials, and per project and environment the actions its
+  grants allow, directly or through groups, roles and teams. Value reads
+  covered by a tailnet requirement say so as a condition, such as
+  `needs tailnet example.ts.net: tag:prod`: requirements are listed, not
+  checked against any device, so a condition is never shown as a denial.
+  A derived environment shows what its root's grants and requirements
+  give it. For a broker it notes that agent runs use Capabilities, which
+  are not its grants. The reach is computed when asked and never stored;
+  it changes no access. It needs both `identity.read` and `policy.read`,
+  since it shows grants and requirements, and refuses a person: for a
+  member, see the exposure report. API: `GET
+  /v1/organizations/{org}/identities/{identity}/reach`, capability
+  `identity.reach`.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

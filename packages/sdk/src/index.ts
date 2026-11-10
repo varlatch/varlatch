@@ -19,6 +19,7 @@ import type {
   IssuedCliCredential,
   ExposureConfirmation,
   ExposureReport,
+  MachineReach,
   MemberRemoval,
   MemberReview,
   OrganizationDeletion,
@@ -194,7 +195,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -897,6 +898,19 @@ export class VarlatchClient {
     return this.request(
       "POST",
       `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/retire`,
+    );
+  }
+
+  /**
+   * What a machine identity's Grants allow, per Project and Environment,
+   * with the Tailnet Requirements that would constrain each action as
+   * conditions (capability identity.reach; needs identity.read and
+   * policy.read). Read-only: never evaluated against a request, never stored.
+   */
+  machineReach(org: string, identityId: string): Promise<MachineReach> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/reach`,
     );
   }
 

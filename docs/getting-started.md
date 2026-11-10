@@ -409,6 +409,20 @@ needs: like a person, it starts with no access.
   spends a use of a use-limited credential, so ask once and keep the
   answer.
 
+To see what a machine can reach, open it in Access, then Machines, or ask
+the CLI:
+
+```sh
+varlatch identity reach deployer        # an identity ID or name; --json for the whole document
+```
+
+It lists the machine's state and, per project and environment, what its
+grants allow. Reading values where a tailnet requirement applies shows the
+requirement as a condition, such as
+`needs tailnet example.ts.net: tag:prod`: a request must come from a
+device that meets it. The list checks no device and never shows a value.
+It needs permission to read identities and policy.
+
 Varlatch can also push an environment's values to GitHub Actions, Coolify,
 or Convex, for platforms that keep their own copy: add an integration on the
 environment's Integrations tab. [Integrations](reference/integrations.md)

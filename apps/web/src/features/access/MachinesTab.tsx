@@ -43,6 +43,7 @@ import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
+import { MachineReachPanel } from "./MachineReach";
 
 /**
  * Machines: non-human identities and how each signs in. Token kinds show
@@ -64,6 +65,7 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
   const prompt = usePrompt();
   const toast = useToast();
   const lifecycle = useCapability("identity.lifecycle");
+  const reachable = useCapability("identity.reach");
   const identities = useIdentities(org);
   const grants = useQuery({ queryKey: ["grants", org], queryFn: () => api.listGrants(org) });
   const [filter, setFilter] = useState("");
@@ -211,7 +213,7 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
                           label={`Actions for ${i.name}`}
                           items={[
                             { label: "Add a grant…", onSelect: () => onGrant(i.id), "data-testid": `machine-grant-${i.id}` },
-                            { label: open ? "Hide details" : "Credentials and sign-in", onSelect: () => setExpanded(open ? null : i.id), "data-testid": `machine-credentials-${i.id}` },
+                            { label: open ? "Hide details" : reachable ? "Reach, credentials and sign-in" : "Credentials and sign-in", onSelect: () => setExpanded(open ? null : i.id), "data-testid": `machine-credentials-${i.id}` },
                             ...(lifecycle
                               ? [
                                   { label: "Rename…", onSelect: () => void askRename(i), "data-testid": `machine-rename-${i.id}` },
@@ -316,8 +318,15 @@ function SignsInWith({ org, identity, now }: { org: string; identity: OrgIdentit
 }
 
 function MachineDetails({ org, identity, lifecycle }: { org: string; identity: OrgIdentity; lifecycle: boolean }) {
+  // Reach (ADR-0054 Decision 8): what its grants allow, with conditions.
+  const reach = useCapability("identity.reach");
   return (
     <div className="grid gap-4 pt-1 lg:grid-cols-2">
+      {reach && (
+        <div className="lg:col-span-2">
+          <MachineReachPanel org={org} identity={identity} />
+        </div>
+      )}
       <OidcBindings org={org} identity={identity} />
       {lifecycle && <CredentialsList org={org} identity={identity} />}
     </div>

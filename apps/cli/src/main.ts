@@ -62,6 +62,7 @@ import {
   tombstoneExportLine,
 } from "./deletion.js";
 import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
+import { MachineError, REACH_CAPABILITY, REACH_USAGE, reachLines, resolveMachine } from "./reach.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -2344,6 +2345,38 @@ async function main(): Promise<void> {
 
       case "identity": {
         const sub = args[0];
+        if (sub === "reach") {
+          // ADR-0054 Decision 8: read-only, conditions shown, never evaluated.
+          const parsed = strictOptions("identity reach", args, { values: ["--server"], booleans: ["--json"], positionals: 2 }, REACH_USAGE);
+          const target = parsed.positionals[1] ?? usageError(REACH_USAGE);
+          // The organization comes from the repository; no Environment is involved.
+          const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+          if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
+          const ctx = resolveContext(opts);
+          const api = client(ctx);
+          const meta = await api.meta();
+          if (!meta.capabilities.includes(REACH_CAPABILITY)) {
+            fail(`This server (${meta.serverVersion ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.20.1 or later.`);
+          }
+          // An identity ID goes to the server as it is; only a name is
+          // resolved, through the identity listing.
+          let id = target;
+          if (!IDENTITY_ID.test(target)) {
+            try {
+              id = resolveMachine((await api.listIdentities(ctx.organization)).items, target).id;
+            } catch (err) {
+              if (err instanceof MachineError) fail(err.message);
+              throw err;
+            }
+          }
+          const reach = await api.machineReach(ctx.organization, id);
+          if (parsed.booleans.has("--json")) {
+            printJson({ organization: ctx.organization, ...reach });
+            return;
+          }
+          for (const line of reachLines(reach)) console.log(line);
+          return;
+        }
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
@@ -2396,7 +2429,7 @@ async function main(): Promise<void> {
           console.log(`Identity ${identity.id} reactivated. It has zero working credentials until you issue one.`);
           return;
         }
-        usageError("Usage: varlatch identity <list|rename|retire|reactivate>");
+        usageError("Usage: varlatch identity <list|reach|rename|retire|reactivate>");
         return;
       }
 
