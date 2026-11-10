@@ -274,6 +274,31 @@ varlatch --assisted org delete <slug> --cancel <request-id>
 - `org deletion` shows the open request and needs no `--confirm`. The MCP
   server has no tool for either deletion.
 
+## Changes that need your approval
+
+```
+varlatch --assisted security set admin-step-up off
+varlatch --assisted --approval <id> security set admin-step-up off
+```
+
+Some changes need the person's approval with a trusted passkey, such as
+turning an organization's [security control](security-controls.md) down or
+off. Unlike `--confirm`, this is proof: the server makes the change only
+after you approved that exact change in a browser with your passkey.
+
+- **The CLI never waits in assisted mode.** It prints what the change does
+  (the server's summary), the approval address and its expiry on stderr,
+  tells the agent to stop and show you the address, prints the command to
+  run again, and exits 75. Nothing has changed yet.
+- **You approve it yourself**, in a browser where you are signed in, with
+  a trusted passkey and its PIN, fingerprint or face. The agent must never
+  open or approve it for you, and cannot: an approval needs your passkey.
+- **Then the agent runs the printed command**: the same command with
+  `--approval <id>`. The CLI checks that the approval is approved and
+  sends the change with it. An approval covers that one change and is used
+  once; it expires 10 minutes after the CLI asked for it.
+- The output never contains a secret value.
+
 ## Signing in
 
 ```

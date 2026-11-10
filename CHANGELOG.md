@@ -87,6 +87,55 @@ fixes.
   later behave exactly as before. The tailnet browser endpoint exposes the
   header to the pages it allows.
 
+### Security controls
+
+- **Optional security controls per organization, all off.** Four
+  controls: `requirement-protection` (editing or revoking a tailnet
+  requirement), `admin-step-up` (administrative changes),
+  `passkey-verification` (people's access with a verified sign-in by a
+  trusted passkey) and `credential-lifetime` (a default and a maximum
+  lifetime for machine credentials). Each is `off`, `report` or `enforce`.
+  They start off on new and upgraded installations alike, and with every
+  control off nothing works differently. `report` refuses and changes
+  nothing: it counts what the control would have done. `enforce` is not
+  offered yet: the server refuses it with `CONTROL_MODE_UNAVAILABLE`.
+  Organization admins manage them in Settings, then Security controls, or
+  with `varlatch security controls` and `varlatch security set <control>
+  <off|report> [--default-ttl <s> --max-ttl <s>]`. Reading needs
+  `organization.read`; changing needs `organization.manage` and a
+  person's sign-in, never a machine credential. Every change is recorded
+  as `security_control.changed`. See [Security controls and
+  approvals](docs/reference/security-controls.md). API: `GET
+  /v1/organizations/{org}/security/controls` and `PATCH
+  /v1/organizations/{org}/security/controls/{control}`, capability
+  `security.controls`.
+- **Turning a control down needs your approval with a trusted passkey.**
+  A change that moves a control towards off, makes a lifetime longer or
+  clears the lifetimes, even alongside a tightening, is answered with
+  `STEP_UP_REQUIRED` and an approval address. You open it in a browser
+  where you are signed in, check the server's summary, and approve with a
+  trusted passkey and its PIN, fingerprint or face. The approval covers
+  that exact change, the version it expects and the sign-in that asked,
+  is seen and approved only by you, is used once, and expires 2 minutes
+  (dashboard) or 10 minutes (CLI) after it was asked for. Tightening needs
+  none. The dashboard shows the approval in a dialog; the CLI prints the
+  address and waits, then sends the change again with the
+  `Varlatch-Approval` header. In assisted mode the CLI does not wait: it
+  prints the address and the command to run again with `--approval <id>`,
+  and exits 75, so a coding agent stops and you approve. New exit status
+  130 when Ctrl-C stops the wait (the approval is cancelled). New error
+  codes `STEP_UP_REQUIRED`, `APPROVAL_INVALID` and
+  `CONTROL_MODE_UNAVAILABLE`; new routes under `/v1/me/approvals`.
+- **Removing a trusted passkey** will need an approval while you belong to
+  an organization with any control at `enforce`; until `enforce` is
+  offered, removing passkeys works as before.
+- **The host operator's way back.** `varlatch admin security reset --org
+  <slug> (--control <name>... | --all)` (or `admin security reset` in the
+  `varlatchd` container) sets controls back to off without anyone's
+  passkey, closes their open approvals, and records
+  `security_control.reset`. It never touches deletion, suspended
+  identities, passkeys or grants.
+
 ### Passkeys
 
 - **Each passkey is trusted or unconfirmed.** The account's Security page
@@ -95,10 +144,10 @@ fixes.
   are trusted, and so is every passkey that exists when you upgrade. A
   passkey added in the dashboard while signed in starts unconfirmed: a
   stolen session could add one, so it does not count as yours until you
-  confirm it. Nothing is restricted by this yet. Signing in, approving a
-  CLI sign-in, and adding and removing passkeys work as before, with any
-  passkey. The organization security controls of a later release will use
-  it. See [Your passkeys](docs/getting-started.md#your-passkeys).
+  confirm it. Signing in, approving a CLI sign-in, and adding and removing
+  passkeys work as before, with any passkey. Only a trusted passkey can
+  approve a change that needs your approval (see Security controls below).
+  See [Your passkeys](docs/getting-started.md#your-passkeys).
 - **Confirm a new passkey with a trusted one.** On the Security page,
   **Confirm with another passkey** asks for one of your trusted passkeys
   with its PIN, fingerprint or face, and then trusts the new one. The
@@ -135,6 +184,11 @@ fixes.
   with `varlatch admin reenroll --identity <identity id>`, which sends a
   link that enrolls a new trusted passkey. See [Passkeys that shared a
   credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39).
+
+### Upgrading
+
+- Migration 40 adds the security control and approval tables. Controls
+  start off; nothing to do.
 
 ## 0.20.0 (2026-10-30)
 

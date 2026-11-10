@@ -33,6 +33,8 @@ human formats do not change either: scripts that parse them keep working.
 | `varlatch credential list <identity> --json` | `identity`, `credentials`: id, kind, name, createdAt, expiresAt, revokedAt, lastUsedAt |
 | `varlatch credential issue <identity> --name <name> --out <file> --json` | `identity`, `credential`: id, kind, name, expiresAt, maxUses; `out`, the file that holds the token (never the token) |
 | `varlatch security report --json` | `organization`, `credentialReview`: `generatedAt`, `idleDays`, `summary` (reviewed, listed, neverUsed, idle, noExpiry), `items` (id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, `identity` with id, name, kind, state, disabledReason, and `reasons`: never-used, idle, no-expiry; never a token) |
+| `varlatch security controls --json` | `organization`, `items` (control, mode, config with defaultTtlSeconds and maxTtlSeconds or null, version, changedAt, changedBy), `availableModes` |
+| `varlatch security set <control> <mode> --json` | `organization`, `control` (as in `security controls`), `changed`, `loosened` |
 | `varlatch audit list --json` | `organization`, `events`: the audit events as the API returns them |
 | `varlatch tailnet requirements --json` | `organization`, `requirements`: as the API returns them |
 | `varlatch scan --json` | findings and files not scanned; see [secret scanning](secret-scanning.md) |
@@ -52,8 +54,9 @@ human formats do not change either: scripts that parse them keep working.
 | 1 | Any other failure: a server error, a file that cannot be read, a failed write. |
 | 64 | The command line is wrong: an unknown command or subcommand, a missing argument, flags that conflict, or a value given the way assisted mode refuses. Checked before any credential is needed, so it is 64 whether or not you are signed in. Nothing was changed. |
 | 69 | The server cannot be reached, or is in maintenance or overloaded (502, 503, 504), including an error page from a proxy in front of it. Try again later. |
-| 75 | `varlatch login --wait` reached its deadline while the sign-in still waits for approval. The sign-in is kept: run `--wait` again. |
-| 77 | Not authenticated, or the server denied the request (401, 403). |
+| 75 | `varlatch login --wait` reached its deadline while the sign-in still waits for approval. The sign-in is kept: run `--wait` again. Also: a change waits for your [approval](security-controls.md#approvals) and the CLI does not wait for it (assisted mode), or the approval expired before anyone approved it. Nothing was changed. |
+| 77 | Not authenticated, or the server denied the request (401, 403). Also: an approval was denied or cancelled, was already used, or does not fit the request. |
+| 130 | Ctrl-C stopped the wait for an approval; the CLI cancelled it. Nothing was changed. |
 | 78 | Strict startup found a violation, or assisted mode cannot mask a Secret shorter than 8 bytes. The command was not started. |
 
 These keep the meanings they always had:
@@ -66,6 +69,12 @@ These keep the meanings they always had:
 - `varlatch sync check`: 1 for drift (a key differs, or is missing on or
   extra on the platform); 2 when not everything could be checked and no
   drift was found. With `--json` too. See [sync check](sync-check.md).
+- A command whose change needs your [approval](security-controls.md#approvals):
+  0 once you approved and the change was made; 75 when the approval
+  expired, or in assisted mode as soon as the address is printed; 77 when
+  it was denied, cancelled, closed by the host operator's reset or does
+  not fit; 130 for Ctrl-C. Only the server's summary, the address and the
+  expiry are printed, on stderr.
 - `varlatch login --wait`: 0 once the credential is stored; 75 when the
   sign-in is still waiting for approval at the deadline (60 seconds, or
   `--timeout` up to 600); 77 when it was denied, expired, or already
