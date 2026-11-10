@@ -305,17 +305,41 @@ See docs/reference/secret-scanning.md and docs/reference/import.md.
   `a symbolic link, not followed`, without looking at its target. A
   directory given on the command line is resolved first, so it may itself
   be a link.
-- **Bounds.** The search stops after 200,000 directory entries and does not
-  enter directories more than 20 levels down. Both are reported, as is a
-  directory it cannot read, so an incomplete search is never shown as
-  clean.
+- **Bounds.** The search reads at most 200,000 directory entries, counted
+  as they are read, so a huge directory is never held in memory whole, and
+  does not enter directories more than 20 levels down. Both are reported,
+  as is a directory it cannot read, so an incomplete search is never shown
+  as clean.
+- **Names as they are.** A name that is not UTF-8 keeps its exact bytes
+  through the search and Git. On the terminal, a name that holds a control
+  character (including DEL and C1 controls such as U+009B) or bytes that
+  are not UTF-8 is shown quoted, with each control escaped (`\n`,
+  `\u009b`) and each such byte as `\xfe`. Messages that quote a path or
+  Git's error are escaped the same way.
 - **Git state.** For each file, the search asks Git, by name only, in the
-  repository that holds it (a nested repository counts as its own):
-  `tracked by Git` (it is committed: the worst case, since removing it does
-  not remove it from history), `not ignored by Git` (a `git add .` would
-  commit it), `ignored by Git`, or `not in a Git repository`. When Git
-  cannot answer (it is not installed, or the repository is not trusted),
+  repository that holds it (a nested repository or a linked worktree counts
+  as its own): `tracked by Git` (it is committed: the worst case, since
+  removing it does not remove it from history), `not ignored by Git` (a
+  `git add .` would commit it), `ignored by Git`, or `not in a Git
+  repository`. When Git cannot answer (it is not installed, the repository
+  is not trusted under `safe.directory`, or a directory name is not UTF-8),
   the line says `Git status unknown` and why.
+- **Git does not read a copy either.** Git's configuration can make it open
+  other files: an `include.path` or `includeIf` file, the
+  `core.excludesFile` (by default `~/.config/git/ignore`), and the
+  repository's `info/exclude`. Before Git runs for a repository, the
+  search finds the repository itself and reads the configuration Git would
+  load (the global files and the repository's own, following includes
+  itself, each file parsed with includes turned off), and checks the name
+  of every file Git would open, through any symbolic links. When one has
+  the name of a secret copy (or the repository's `HEAD` or index links to
+  one), Git is not run for that repository and the line says
+  `Git status unknown: the Git configuration could make Git read other
+  files`, with the file. The system configuration (`/etc/gitconfig`) and
+  configuration passed in environment variables (`GIT_CONFIG_COUNT`,
+  `GIT_CONFIG_PARAMETERS`) are not given to Git, and Git runs only
+  `rev-parse`, `ls-files`, and `check-ignore`, with `core.fsmonitor` off
+  and a 30-second limit.
 - **Next steps.** Move a dotenv file in with
   [`varlatch import <file> --delete-source`](import.md), and store a key or
   certificate file as one Secret with `varlatch values set <ITEM>
@@ -344,8 +368,11 @@ scan, `-e`, and the other options of the value scan are refused.
 }
 ```
 
-`path` is relative to `root`, with `/` separators. `kind` is `dotenv` or
-`key`. `git` is one of `tracked`, `not-ignored`, `ignored`,
+`path` is relative to `root`, with `/` separators. A path (or `root`)
+that is not UTF-8 is given lossily in `path`, with its exact bytes in
+`pathBase64` (`rootBase64`); use those when present. DEL and C1 controls
+are escaped as `\u007f` to `\u009f`, which is still the same JSON.
+`kind` is `dotenv` or `key`. `git` is one of `tracked`, `not-ignored`, `ignored`,
 `no-repository`, and `unknown` (with `gitError`). `notSearched` lists the
 directories not searched, with the reason, and `stopped` is `true` when the
 entry bound was reached.

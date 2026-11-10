@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { copyKindOf, findFilesExitCode, formatFindFilesHuman, walkForCopies, type FindFilesReport } from "../src/findFiles.js";
+import {
+  copyKindOf,
+  displayBytes,
+  findFilesExitCode,
+  findFilesJson,
+  formatFindFilesHuman,
+  walkForCopies,
+  type FindFilesReport,
+} from "../src/findFiles.js";
 import { parseScanArgs, ScanUsageError } from "../src/scanCommand.js";
 
 /**
@@ -45,7 +53,7 @@ describe("the walk", () => {
     symlinkSync(join(dir, "nonexistent"), join(root, "dangling.key"));
     mkdirSync(join(root, "venv.pem")); // a directory with a matching name is entered, not listed
     const walk = await walkForCopies(".", root);
-    expect(walk.files.map((f) => [f.path, f.kind, f.symlink])).toEqual([
+    expect(walk.files.map((f) => [f.path.toString(), f.kind, f.symlink])).toEqual([
       [".env", "dotenv", false],
       ["a/z.pem", "key", false],
       ["b/.env.local", "dotenv", false],
@@ -59,7 +67,7 @@ describe("the walk", () => {
 
   it("takes a directory relative to the working directory, and refuses a file or a missing path", async () => {
     const root = tree(["sub/.env"]);
-    expect((await walkForCopies("sub", root)).files.map((f) => f.path)).toEqual([".env"]);
+    expect((await walkForCopies("sub", root)).files.map((f) => f.path.toString())).toEqual([".env"]);
     await expect(walkForCopies("sub/.env", root)).rejects.toThrow("--find-files takes a directory");
     await expect(walkForCopies("missing", root)).rejects.toThrow("cannot search missing: does not exist");
   });
@@ -67,34 +75,39 @@ describe("the walk", () => {
   it("names the directories past the depth bound, and stops at the entry bound", async () => {
     const root = tree(["a/.env", "a/b/.env", "a/b/c/.env", "z/1", "z/2", "z/3"]);
     const shallow = await walkForCopies(".", root, { maxEntries: 1000, maxDepth: 1 });
-    expect(shallow.files.map((f) => f.path)).toEqual(["a/.env"]);
-    expect(shallow.notSearched).toEqual([{ path: "a/b/", reason: "below the depth bound of 1 directory levels" }]);
+    expect(shallow.files.map((f) => f.path.toString())).toEqual(["a/.env"]);
+    expect(shallow.notSearched.map((n) => [n.path.toString(), n.reason])).toEqual([["a/b/", "below the depth bound of 1 directory levels"]]);
 
-    const few = await walkForCopies(".", root, { maxEntries: 3, maxDepth: 20 });
+    // The bound is enforced while a directory is read: no more entries than that are held.
+    const wide = tree(Array.from({ length: 50 }, (_, i) => `f${i}.key`));
+    const few = await walkForCopies(".", wide, { maxEntries: 3, maxDepth: 20 });
     expect(few.stopped).toBe(true);
     expect(few.entriesChecked).toBe(3);
-    const report: FindFilesReport = { root, files: [], notSearched: [], entriesChecked: 3, stopped: true };
+    expect(few.files).toHaveLength(3);
+    const exact = await walkForCopies(".", wide, { maxEntries: 50, maxDepth: 20 });
+    expect([exact.stopped, exact.entriesChecked, exact.files.length]).toEqual([false, 50, 50]);
+    const report: FindFilesReport = { root: Buffer.from(root), files: [], notSearched: [], entriesChecked: 3, stopped: true };
     expect(findFilesExitCode(report)).toBe(2);
     expect(formatFindFilesHuman(report, { maxEntries: 3, maxDepth: 20 }).join("\n")).toContain("The search stopped after 3 entries");
   });
 });
 
 describe("exit status and output", () => {
-  const base: FindFilesReport = { root: "/r", files: [], notSearched: [], entriesChecked: 10, stopped: false };
+  const base: FindFilesReport = { root: Buffer.from("/r"), files: [], notSearched: [], entriesChecked: 10, stopped: false };
   it("is 0 when nothing is found, 1 when anything is, 2 when nothing is but the search was incomplete", () => {
     expect(findFilesExitCode(base)).toBe(0);
-    const found = { ...base, files: [{ path: ".env", kind: "dotenv" as const, symlink: false, git: "ignored" as const }] };
+    const found = { ...base, files: [{ path: Buffer.from(".env"), kind: "dotenv" as const, symlink: false, git: "ignored" as const }] };
     expect(findFilesExitCode(found)).toBe(1);
     expect(findFilesExitCode({ ...found, stopped: true })).toBe(1);
-    expect(findFilesExitCode({ ...base, notSearched: [{ path: "x/", reason: "directory unreadable (EACCES)" }] })).toBe(2);
+    expect(findFilesExitCode({ ...base, notSearched: [{ path: Buffer.from("x/"), reason: "directory unreadable (EACCES)" }] })).toBe(2);
   });
 
   it("suggests import for dotenv files and values set for key files, and rotation for tracked ones", () => {
     const lines = formatFindFilesHuman({
       ...base,
       files: [
-        { path: ".env", kind: "dotenv", symlink: false, git: "tracked" },
-        { path: "certs/tls.key", kind: "key", symlink: true, git: "not-ignored" },
+        { path: Buffer.from(".env"), kind: "dotenv", symlink: false, git: "tracked" },
+        { path: Buffer.from("certs/tls.key"), kind: "key", symlink: true, git: "not-ignored" },
       ],
     }).join("\n");
     expect(lines).toContain("  .env: tracked by Git, so it is in the repository's history");
@@ -103,6 +116,48 @@ describe("exit status and output", () => {
     expect(lines).toContain("varlatch import <file> --delete-source");
     expect(lines).toContain("varlatch values set <ITEM> --from-file <file>");
     expect(lines).toContain("rotate the secrets it holds");
+  });
+});
+
+describe("names that are not UTF-8 or hold controls", () => {
+  it("keep their identity: escaped bytes on the terminal, the exact bytes in JSON", () => {
+    const fe = Buffer.from([0xfe, 0x2e, 0x6b, 0x65, 0x79]); // \xfe.key
+    const ff = Buffer.from([0xff, 0x2e, 0x6b, 0x65, 0x79]); // \xff.key
+    expect(displayBytes(fe)).toBe('"\\xfe.key"');
+    expect(displayBytes(ff)).toBe('"\\xff.key"');
+    expect(displayBytes(Buffer.from([0x61, 0x22, 0x5c, 0xc3, 0xa9, 0x0a, 0xc2, 0x9b, 0x7f, 0xfe]))).toBe('"a\\"\\\\é\\n\\u009b\\u007f\\xfe"');
+    expect(displayBytes(Buffer.from("plain/é.env"))).toBe("plain/é.env");
+    const doc = findFilesJson({
+      root: Buffer.from("/r"),
+      files: [
+        { path: fe, kind: "key", symlink: false, git: "tracked" },
+        { path: ff, kind: "key", symlink: false, git: "not-ignored" },
+        { path: Buffer.from("ok.key"), kind: "key", symlink: false, git: "ignored" },
+      ],
+      notSearched: [],
+      entriesChecked: 3,
+      stopped: false,
+    });
+    expect(doc.root).toBe("/r");
+    expect(doc.files.map((f) => [f.path, (f as { pathBase64?: string }).pathBase64])).toEqual([
+      ["\ufffd.key", fe.toString("base64")],
+      ["\ufffd.key", ff.toString("base64")],
+      ["ok.key", undefined],
+    ]);
+  });
+
+  it("show every control escaped, C1 and DEL included, in paths and diagnostics", () => {
+    const lines = formatFindFilesHuman({
+      root: Buffer.from("/r\u009b"),
+      files: [{ path: Buffer.from(".env.\u009b31m\u007f"), kind: "dotenv", symlink: false, git: "unknown", gitError: "fatal: '\u001b[2J'" }],
+      notSearched: [{ path: Buffer.from("x\u0085/"), reason: "directory unreadable (EACCES)" }],
+      entriesChecked: 2,
+      stopped: false,
+    }).join("\n");
+    expect(lines).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(lines).toContain('under "/r\\u009b":');
+    expect(lines).toContain('  ".env.\\u009b31m\\u007f": Git status unknown: "fatal: \'\\u001b[2J\'"');
+    expect(lines).toContain('  "x\\u0085/": directory unreadable (EACCES)');
   });
 });
 
