@@ -16,7 +16,7 @@ import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
-import { startSecurityReportLoop } from "./domain/securityreport.js";
+import { ACCESS_COUNTS, startSecurityReportLoop } from "./domain/securityreport.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
 import { createPgQuerier } from "./db/pg.js";
@@ -100,7 +100,14 @@ async function serveCommand(): Promise<void> {
   const rootKek = config.loadRootKek();
   const db = createPgQuerier(config.databaseUrl);
   const maintenance = new Maintenance(stateDir());
-  const ctx: AppCtx = { db, rootKek, maintenance };
+  // Security Control access counts (ADR-0054 Decision 9) have their own
+  // small pool, so best-effort counting never takes a request's connection
+  // and an acquisition that times out leaves no waiter behind.
+  const accessCountDb = createPgQuerier(config.databaseUrl, {
+    max: ACCESS_COUNTS.concurrency,
+    connectionTimeoutMillis: ACCESS_COUNTS.acquireTimeoutMs,
+  });
+  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb };
 
   const interruptedCapture = maintenance.gate;
   if (interruptedCapture?.kind === "capture") maintenance.finishCapture(interruptedCapture.id);

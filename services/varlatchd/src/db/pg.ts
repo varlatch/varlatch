@@ -4,8 +4,13 @@ import type { Querier } from "./migrate.js";
 import type { PoolQuerier } from "./tx.js";
 
 /** node-postgres wiring for production; tests use pglite instead. */
-export function createPgQuerier(databaseUrl: string): PoolQuerier & { end: () => Promise<void> } {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 10 });
+export function createPgQuerier(
+  databaseUrl: string,
+  options: { max?: number; connectionTimeoutMillis?: number } = {},
+): PoolQuerier & { end: () => Promise<void>; stats: () => { total: number; idle: number; waiting: number } } {
+  // connectionTimeoutMillis: a connect() still waiting after it fails and
+  // leaves the pool's queue (0, the default, waits for ever).
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: options.max ?? 10, connectionTimeoutMillis: options.connectionTimeoutMillis ?? 0 });
   // Idle socket failures must not become unhandled EventEmitter errors.
   // The pool removes the failed client and reconnects on the next query.
   pool.on("error", () => console.error("PostgreSQL idle connection failed; reconnecting on next query"));
@@ -32,5 +37,6 @@ export function createPgQuerier(databaseUrl: string): PoolQuerier & { end: () =>
       return querier;
     },
     end: () => pool.end(),
+    stats: () => ({ total: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount }),
   };
 }

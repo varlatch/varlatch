@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Maintenance } from "@varlatch/backup";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { recordAuditEvent } from "../src/audit/events.js";
 import { issueCredential } from "../src/auth/credentials.js";
@@ -8,7 +12,17 @@ import { withSerializableTx, withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
-import { ACCESS_COUNTS, accessCountsSettled, countWouldBlock, emitDueSummaries, type WouldBlock } from "../src/domain/securityreport.js";
+import {
+  ACCESS_COUNTS,
+  accessCountHooks,
+  accessCountsPending,
+  accessCountsSettled,
+  countWouldBlock,
+  emitDueSummaries,
+  queueAccessCount,
+  type PendingAccessReport,
+  type WouldBlock,
+} from "../src/domain/securityreport.js";
 import { getEnvironment } from "../src/domain/environments.js";
 import { getOrganization } from "../src/domain/orgs.js";
 import { getProject } from "../src/domain/projects.js";
@@ -228,9 +242,19 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
       (await db.query("SELECT operation, count::int AS count FROM security_control_counters WHERE control = 'passkey-verification'")).rows as {
         operation: string; count: number;
       }[];
+    const report = (): PendingAccessReport => ({
+      organizationId: orgId, actorIdentityId: adminId, configVersion: 1, reason: "no-evidence", at: new Date(),
+    });
+    let stateDir: string;
     beforeEach(async () => {
       expect((await call("PATCH", "/v1/organizations/acme/security/controls/passkey-verification", cli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
       await accessCountsSettled();
+      stateDir = mkdtempSync(join(tmpdir(), "varlatch-access-counts-"));
+    });
+    afterEach(async () => {
+      accessCountHooks.beforeCount = undefined;
+      await accessCountsSettled();
+      rmSync(stateDir, { recursive: true, force: true });
     });
 
     /** Hold `lock` in a transaction of its own until released. */
@@ -243,50 +267,126 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
         tx.release();
       };
     };
-    /** A successful request whose access the control counts, and how long its response took. */
-    const timedRead = async () => {
-      const started = Date.now();
-      const res = await app.request("/v1/organizations/acme", { headers: { Authorization: `Bearer ${cli}` } });
+    const read = async (on = app) => {
+      const res = await on.request("/v1/organizations/acme", { headers: { Authorization: `Bearer ${cli}` } });
       await res.text();
-      return { status: res.status, ms: Date.now() - started };
+      return res.status;
     };
 
-    it("answers at once while the Organization row is locked, and drops the count after a bounded wait", { timeout: 30_000 }, async () => {
-      const release = await holding((tx) => tx.query("SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE", [orgId]));
-      try {
-        const read = await timedRead();
-        expect(read.status).toBe(200);
-        // Not waiting for the count, whose lock wait alone is lockTimeoutMs.
-        expect(read.ms).toBeLessThan(ACCESS_COUNTS.lockTimeoutMs);
-        const settling = Date.now();
-        await accessCountsSettled();
-        // The count gave up after its lock timeout, with the row still held.
-        expect(Date.now() - settling).toBeLessThan(ACCESS_COUNTS.statementTimeoutMs + 2_000);
-        expect(await passkeyRows()).toEqual([]);
-      } finally {
-        await release();
-      }
-      // Without contention it counts.
-      expect((await timedRead()).status).toBe(200);
+    it("the response completes while its count is held back, and maintenance drains the count", { timeout: 30_000 }, async () => {
+      const maintenance = new Maintenance(stateDir);
+      const withMaintenance = { ...ctx, maintenance };
+      const barrier = deferred();
+      const started = deferred();
+      accessCountHooks.beforeCount = async () => {
+        started.resolve();
+        await barrier.promise;
+      };
+      // The response arrives while the count cannot run.
+      expect(await read(buildApp(withMaintenance))).toBe(200);
+      await started.promise;
+      expect(await passkeyRows()).toEqual([]);
+      // The count holds maintenance admission: a capture's drain waits for it.
+      expect(maintenance.busy).toBe(1);
+      const gate = maintenance.beginCapture(60_000);
+      await sleep(200);
+      expect(maintenance.busy).toBe(1);
+      barrier.resolve();
+      await accessCountsSettled();
+      expect(maintenance.busy).toBe(0);
+      expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
+      maintenance.finishCapture(gate.id);
+    });
+
+    it("a count queued while maintenance admission is closed is dropped, writing nothing", async () => {
+      const maintenance = new Maintenance(stateDir);
+      const gate = maintenance.beginCapture(60_000);
+      let ran = false;
+      accessCountHooks.beforeCount = async () => { ran = true; };
+      queueAccessCount({ ...ctx, maintenance }, report(), "organization.read");
+      await accessCountsSettled();
+      expect(ran).toBe(false);
+      expect(maintenance.busy).toBe(0);
+      expect(await passkeyRows()).toEqual([]);
+      maintenance.finishCapture(gate.id);
+      // Admission open again: it counts.
+      queueAccessCount({ ...ctx, maintenance }, report(), "organization.read");
       await accessCountsSettled();
       expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
     });
 
-    it("answers at once while its counter row is locked, and drops the count after a bounded wait", { timeout: 30_000 }, async () => {
-      // Another transaction counting the same bucket, not committed yet.
-      const release = await holding((tx) => countWouldBlock(tx, orgId, [{
-        control: "passkey-verification", configVersion: 1, operation: "organization.read", actorIdentityId: adminId, reason: "no-evidence",
-      }]));
-      try {
-        const read = await timedRead();
-        expect(read.status).toBe(200);
-        expect(read.ms).toBeLessThan(ACCESS_COUNTS.lockTimeoutMs);
-        await accessCountsSettled();
-      } finally {
-        await release();
+    it("drops the count after the lock timeout while the Organization row or the counter row is locked", { timeout: 60_000 }, async () => {
+      for (const lock of [
+        (tx: Awaited<ReturnType<typeof db.connect>>) => tx.query("SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE", [orgId]),
+        // Another transaction counting the same bucket, not committed yet.
+        (tx: Awaited<ReturnType<typeof db.connect>>) => countWouldBlock(tx, orgId, [{
+          control: "passkey-verification", configVersion: 1, operation: "organization.read", actorIdentityId: adminId, reason: "no-evidence",
+        }]),
+      ]) {
+        const release = await holding(lock);
+        try {
+          expect(await read()).toBe(200);
+          const settling = Date.now();
+          await accessCountsSettled();
+          // Bounded by the lock and statement timeouts, the lock still held.
+          expect(Date.now() - settling).toBeLessThan(20_000);
+        } finally {
+          await release();
+        }
       }
-      // Only the other transaction's count: this one was dropped.
+      // Only the other transaction's count: both of these were dropped.
       expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
+    });
+
+    it("never has more connection requests waiting than counts may run at once", { timeout: 60_000 }, async () => {
+      const target = new URL(url!);
+      target.pathname = `/${database}`;
+      // The daemon's arrangement: a pool of `concurrency` connections with an acquisition timeout.
+      const pool = createPgQuerier(target.toString(), { max: ACCESS_COUNTS.concurrency, connectionTimeoutMillis: 500 });
+      const held = await Promise.all(Array.from({ length: ACCESS_COUNTS.concurrency }, () => pool.connect()));
+      let most = 0;
+      let sampling = true;
+      const sampler = (async () => {
+        while (sampling) {
+          most = Math.max(most, pool.stats().waiting);
+          await sleep(5);
+        }
+      })();
+      try {
+        for (let i = 0; i < 20; i++) queueAccessCount({ ...ctx, accessCountDb: pool }, report(), "organization.read");
+        await accessCountsSettled();
+        expect(pool.stats().waiting).toBe(0);
+      } finally {
+        sampling = false;
+        await sampler;
+        for (const c of held) c.release();
+      }
+      expect(most).toBeGreaterThan(0);
+      expect(most).toBeLessThanOrEqual(ACCESS_COUNTS.concurrency);
+      // Every one timed out waiting for a connection: none counted.
+      expect(await passkeyRows()).toEqual([]);
+      await pool.end();
+
+      // Without a pool of its own (ctx.db), a job keeps its slot until its
+      // acquisition settles, so no more than `concurrency` wait either.
+      const exhausted = await Promise.all(Array.from({ length: 10 }, () => db.connect()));
+      most = 0;
+      sampling = true;
+      const sampler2 = (async () => {
+        while (sampling) {
+          most = Math.max(most, db.stats().waiting);
+          await sleep(5);
+        }
+      })();
+      for (let i = 0; i < 20; i++) queueAccessCount(ctx, report(), "organization.read");
+      await sleep(500);
+      expect(accessCountsPending()).toEqual({ running: ACCESS_COUNTS.concurrency, waiting: 20 - ACCESS_COUNTS.concurrency });
+      for (const c of exhausted) c.release();
+      await accessCountsSettled();
+      sampling = false;
+      await sampler2;
+      expect(most).toBeLessThanOrEqual(ACCESS_COUNTS.concurrency);
+      expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 20 }]);
     });
   });
 

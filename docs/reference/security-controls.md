@@ -77,7 +77,9 @@ counted:
   best-effort: they are made after the response is sent, so they never
   slow or fail a request, and a count that cannot be made within about a
   second (a busy database, or too many counts waiting in one server
-  process) is dropped. Counts of changes are never dropped.
+  process) is dropped, and so are counts still waiting when the server
+  stops or enters maintenance (a backup or restore). Counts of changes are
+  never dropped.
 
 Per control:
 

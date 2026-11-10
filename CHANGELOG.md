@@ -125,7 +125,8 @@ fixes.
   refused). A change is counted only when it was saved and changed
   something, an access only when it was allowed and succeeded. Access
   counts are best-effort: made after the response, never slowing a
-  request, and dropped when they cannot be made within about a second. Counts are kept per control version,
+  request, and dropped when they cannot be made within about a second
+  or the server stops or enters maintenance first. Counts are kept per control version,
   operation, person or machine, reason and hour, with fixed fields only:
   never a request body, URL, token, hash or value. About 10 minutes after
   each hour, one `security_control.would_block` audit event per counter

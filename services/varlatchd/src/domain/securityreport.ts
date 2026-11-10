@@ -378,19 +378,28 @@ export async function passkeyVerificationReports(
  * after the response, off the request's path, so a busy Organization row
  * or counter can never slow or fail an allowed request: a count that
  * cannot be made quickly is dropped, never retried and never waited for.
+ * Counts still queued when the process stops are lost.
  */
 export const ACCESS_COUNTS = {
   /** Counts running at once in this process; each holds one connection. */
   concurrency: 2,
   /** Counts waiting to run; beyond this a new one is dropped. */
   maxQueued: 500,
-  /** Waiting for a pooled connection. */
+  /**
+   * Waiting for a connection of the daemon's access-count pool
+   * (ctx.accessCountDb: its own pg.Pool of `concurrency` connections with
+   * this connectionTimeoutMillis, so counting never takes a connection
+   * that requests need, and a timed-out acquisition leaves no waiter).
+   */
   acquireTimeoutMs: 1_000,
   /** SET LOCAL lock_timeout in the count's transaction. */
   lockTimeoutMs: 1_000,
   /** SET LOCAL statement_timeout in the count's transaction. */
   statementTimeoutMs: 2_000,
 } as const;
+
+/** Test hooks for the access-count queue. Never set outside tests. */
+export const accessCountHooks: { beforeCount?: (() => Promise<void>) | undefined } = {};
 
 /**
  * Count a retrieval-time attempt after the decision, in a short
@@ -400,7 +409,8 @@ export const ACCESS_COUNTS = {
  * outsider nor a removed member is ever counted. Every wait is bounded
  * (ACCESS_COUNTS): a connection not available in time, or a lock or
  * statement timeout, drops the count. It never throws. Requests use
- * queueAccessCount, which calls this after the response.
+ * queueAccessCount, which calls this after the response, inside
+ * maintenance admission.
  */
 export async function countWouldBlockAfter(
   ctx: AppCtx,
@@ -408,7 +418,10 @@ export async function countWouldBlockAfter(
   operation: PasskeyVerificationOperation,
 ): Promise<boolean> {
   try {
-    return await withBoundedTx(ctx.db, async (db) => {
+    // The daemon's own small pool for counts (cli.ts); tests without one
+    // use ctx.db, still at most `concurrency` acquisitions at a time,
+    // since each job holds its queue slot until its acquisition settles.
+    return await withTx(ctx.accessCountDb ?? ctx.db, async (db) => {
       await db.query(`SET LOCAL lock_timeout = '${ACCESS_COUNTS.lockTimeoutMs}ms'`);
       await db.query(`SET LOCAL statement_timeout = '${ACCESS_COUNTS.statementTimeoutMs}ms'`);
       const live = await db.query("SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [report.organizationId]);
@@ -434,30 +447,21 @@ export async function countWouldBlockAfter(
 }
 
 /**
- * withTx on a connection taken from the pool within
- * ACCESS_COUNTS.acquireTimeoutMs; one that arrives later is released
- * unused. A single-connection Querier (PGlite in tests) runs it directly.
+ * One queued count, run like the daemon's other background work: inside
+ * maintenance admission, so a capture, restore or upgrade drains it (it
+ * waits for maintenance.busy to reach 0) and a count refused admission is
+ * dropped, with nothing written.
  */
-async function withBoundedTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): Promise<T> {
-  const pool = db as Querier & { connect?: () => Promise<Querier & { release: (destroy?: boolean) => void }> };
-  if (typeof pool.connect !== "function") return withTx(db, fn);
-  const acquiring = pool.connect();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ACCESS_COUNTS.acquireTimeoutMs); });
-  const client = await Promise.race([acquiring, timedOut]);
-  clearTimeout(timer);
-  if (!client) {
-    acquiring.then((late) => late.release(), () => undefined);
-    throw Object.assign(new Error("no database connection in time"), { code: "ACQUIRE_TIMEOUT" });
-  }
-  let broken = false;
+async function runAccessCount(ctx: AppCtx, report: PendingAccessReport, operation: PasskeyVerificationOperation): Promise<void> {
+  const leave = ctx.maintenance?.enter();
+  if (ctx.maintenance && !leave) return;
   try {
-    return await withTx(client, fn);
+    await accessCountHooks.beforeCount?.();
+    await countWouldBlockAfter(ctx, report, operation);
   } catch (err) {
-    broken = (err as { code?: string }).code === undefined;
-    throw err;
+    console.error("security report: a passkey-verification count failed:", err);
   } finally {
-    client.release(broken);
+    leave?.();
   }
 }
 
@@ -495,12 +499,17 @@ export function queueAccessCount(ctx: AppCtx, report: PendingAccessReport, opera
     }
     return;
   }
-  accessQueue.waiting.push(() => countWouldBlockAfter(ctx, report, operation));
+  accessQueue.waiting.push(() => runAccessCount(ctx, report, operation));
   // After the current request has finished its own work.
   setImmediate(pumpAccessQueue);
 }
 
-/** Resolves once every queued access count has run (tests, and an orderly shutdown). */
+/** Counts running and waiting in this process (tests). */
+export function accessCountsPending(): { running: number; waiting: number } {
+  return { running: accessQueue.running, waiting: accessQueue.waiting.length };
+}
+
+/** Resolves once every queued access count has run (tests). */
 export function accessCountsSettled(): Promise<void> {
   if (accessQueue.running === 0 && accessQueue.waiting.length === 0) return Promise.resolve();
   return new Promise((resolve) => {
