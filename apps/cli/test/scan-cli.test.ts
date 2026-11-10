@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -151,9 +152,17 @@ function git(cwd: string, ...args: string[]) {
  * Run a command asynchronously: the fake server answers from this process,
  * so a synchronous spawn would block it.
  */
-function run(cmd: string, args: string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function run(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  /** Added to the suite's environment; `undefined` leaves a variable out. */
+  extraEnv: Record<string, string | undefined> = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const merged: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...env, ...extraEnv })) if (v !== undefined) merged[k] = v;
+    const child = spawn(cmd, args, { cwd, env: merged, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -430,5 +439,451 @@ describe("the pre-commit hook, with real commits (A-S4)", () => {
     expect(again.code).toBe(0);
     expect(readFileSync(hook, "utf8")).toContain("exec varlatch scan --staged --environment 'staging'");
     expect(requests).toEqual([]);
+  });
+});
+
+describe("varlatch scan <path> outside the project", () => {
+  it("scans a file outside the project directory, such as a shell history, with the project's context", async () => {
+    const { project } = newRepo();
+    const history = join(dir, `history-${repoCount}`);
+    writeFileSync(history, `ls\nexport DB_PASS=${DB_PASS}\n`);
+    const run = await varlatch(project, "scan", history);
+    expect(run.code, run.stderr).toBe(1);
+    expect(run.stdout).toContain(`../history-${repoCount}:2:16: DB_PASS (version ver_db), as written`);
+    expect(disclosures()).toHaveLength(1);
+    expectNoValues(run.stdout + run.stderr);
+  });
+});
+
+describe("varlatch scan --find-files lists likely copies by name (ADR-0054 Decision 8)", () => {
+  /**
+   * A tree with every case: a Git repository with ignored, unignored, and
+   * committed copies, a nested repository, links, a template, an unreadable
+   * file, and no varlatch.toml anywhere.
+   */
+  function copiesTree(): { top: string; outside: string } {
+    const top = join(dir, `copies-${++repoCount}`);
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    writeFileSync(join(top, ".gitignore"), ".env\n");
+    writeFileSync(join(top, ".env"), `API_KEY=${API_KEY}\n`);
+    writeFileSync(join(top, ".env.example"), "API_KEY=\n");
+    mkdirSync(join(top, "config"));
+    writeFileSync(join(top, "config", ".env.local"), `DB_PASS=${DB_PASS}\n`);
+    mkdirSync(join(top, "certs"));
+    writeFileSync(join(top, "certs", "server.key"), "CANARY\n");
+    git(top, "add", ".gitignore", ".env.example", "certs/server.key");
+    git(top, "commit", "-q", "-m", "init");
+    writeFileSync(join(top, "locked.pem"), "CANARY\n");
+    chmodSync(join(top, "locked.pem"), 0o000);
+    mkdirSync(join(top, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(top, "node_modules", "pkg", ".env"), "CANARY\n");
+    const nested = join(top, "vendor", "tool");
+    mkdirSync(nested, { recursive: true });
+    git(nested, "init", "-q", "-b", "main");
+    writeFileSync(join(nested, ".env.production"), "CANARY\n");
+    const outside = join(dir, `outside-${repoCount}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, ".env"), "CANARY\n");
+    symlinkSync(outside, join(top, "linked-dir"));
+    symlinkSync(join(outside, ".env"), join(top, ".env.link"));
+    return { top, outside };
+  }
+
+  const expected = [
+    { path: ".env", kind: "dotenv", symlink: false, git: "ignored" },
+    { path: ".env.link", kind: "dotenv", symlink: true, git: "not-ignored" },
+    { path: "certs/server.key", kind: "key", symlink: false, git: "not-ignored" },
+    { path: "config/.env.local", kind: "dotenv", symlink: false, git: "not-ignored" },
+    { path: "locked.pem", kind: "key", symlink: false, git: "not-ignored" },
+    { path: "vendor/tool/.env.production", kind: "dotenv", symlink: false, git: "not-ignored" },
+  ];
+
+  it("names each file and its Git state, needs no project, credential, or server, and opens no file", async () => {
+    const { top, outside } = copiesTree();
+    // Record every call that opens, reads, or follows a path in the CLI process.
+    const preload = join(dir, "fs-recorder.cjs");
+    const log = join(dir, `fs-log-${repoCount}.txt`);
+    writeFileSync(
+      preload,
+      `const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const calls = [];
+const wrap = (target, name, label) => {
+  const orig = target[name];
+  target[name] = Object.assign(function (p, ...rest) { calls.push(label + " " + String(p)); return orig.call(this, p, ...rest); }, orig);
+};
+for (const n of ["open", "openSync", "readFile", "readFileSync", "createReadStream", "stat", "statSync", "realpath", "realpathSync", "access", "accessSync"]) wrap(fs, n, n);
+for (const n of ["open", "readFile", "stat", "realpath", "access"]) wrap(fsp, n, "promises." + n);
+const write = fs.writeFileSync;
+process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
+`,
+    );
+    const found = await run(process.execPath, ["-r", preload, bundle, "scan", "--find-files", "--json"], top, {
+      FS_LOG: log,
+      VARLATCH_TOKEN: "",
+      VARLATCH_ASSISTED: "0",
+    });
+    chmodSync(join(top, "locked.pem"), 0o600);
+    expect(found.code, found.stderr).toBe(1);
+    const report = JSON.parse(found.stdout);
+    expect(report).toMatchObject({ version: 1, mode: "find-files", exitCode: 1, root: realpathSync(top), notSearched: [], stopped: false });
+    expect(report.files).toEqual(expected);
+    expect(requests).toEqual([]);
+    expectNoValues(found.stdout + found.stderr);
+
+    const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    // The recorder works: the starting directory itself is resolved.
+    expect(calls).toContain(`promises.realpath ${top}`);
+    // No matched file, and nothing behind a link, is opened, read, or followed;
+    // only directories are resolved (the Git top level of the nested repository).
+    const matched = new Set([...expected.map((f) => join(top, f.path)), join(top, ".env.example"), join(top, "node_modules", "pkg", ".env")]);
+    const touched = calls.filter((c) => {
+      const path = c.slice(c.indexOf(" ") + 1);
+      return matched.has(path) || path.startsWith(outside) || path.startsWith(join(top, "linked-dir"));
+    });
+    expect(touched).toEqual([]);
+
+    // A directory outside any Git repository.
+    const plain = await run(process.execPath, [bundle, "scan", "--find-files", outside, "--json"], top, { VARLATCH_ASSISTED: "0" });
+    expect(plain.code, plain.stderr).toBe(1);
+    expect(JSON.parse(plain.stdout).files).toEqual([{ path: ".env", kind: "dotenv", symlink: false, git: "no-repository" }]);
+  });
+
+  it("prints the same list in assisted mode as outside it, with the next steps", async () => {
+    const { top } = copiesTree();
+    chmodSync(join(top, "locked.pem"), 0o600);
+    const human = await run(process.execPath, [bundle, "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    expect(human.code, human.stderr).toBe(1);
+    expect(human.stdout).toContain("  .env: ignored by Git\n");
+    expect(human.stdout).toContain("  certs/server.key: not ignored by Git, so it can be committed\n");
+    expect(human.stdout).toContain("  .env.link: a symbolic link, not followed; not ignored by Git, so it can be committed\n");
+    expect(human.stdout).toContain("  vendor/tool/.env.production: not ignored by Git");
+    expect(human.stdout).not.toContain(".env.example");
+    expect(human.stdout).not.toContain("node_modules");
+    expect(human.stdout).not.toContain("linked-dir");
+    expect(human.stdout).toContain("varlatch scan: 6 file(s) look like copies of secrets (5 not ignored by Git)");
+    expect(human.stdout).toContain("may already be committed (git log --all -- <file>)");
+    expect(human.stdout).toContain("varlatch import <file> --delete-source");
+    expect(human.stdout).toContain("varlatch values set <ITEM> --from-file <file>");
+    expect(human.stderr).toBe("");
+
+    // Assisted mode, by a coding agent's marker and by the option, changes nothing.
+    const marker = await run(process.execPath, [bundle, "scan", "--find-files"], top, { CLAUDECODE: "1" });
+    const option = await run(process.execPath, [bundle, "--assisted", "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    for (const assisted of [marker, option]) {
+      expect(assisted.code, assisted.stderr).toBe(1);
+      expect(assisted.stdout).toBe(human.stdout);
+      expect(assisted.stderr).toBe("");
+    }
+    expect(requests).toEqual([]);
+
+    // Nothing to find: exit 0.
+    const clean = join(dir, `clean-${repoCount}`);
+    mkdirSync(clean);
+    writeFileSync(join(clean, ".env.schema"), "# @required\nAPI_KEY=\n");
+    const none = await run(process.execPath, [bundle, "scan", "--find-files", clean], top, { VARLATCH_ASSISTED: "0" });
+    expect(none.code, none.stderr).toBe(0);
+    expect(none.stdout).toMatch(/^varlatch scan: no file looks like a copy of a secret; 1 entries checked by name, without reading their contents\.\n$/);
+  });
+
+  it("refuses the value scan's options, more than one directory, and a file", async () => {
+    const { top } = copiesTree();
+    chmodSync(join(top, "locked.pem"), 0o600);
+    for (const args of [
+      ["--find-files", "--staged"],
+      ["--find-files", "a", "b"],
+      ["--find-files", ".", "-e", "production"],
+      ["--find-files", "--install-hook"],
+    ]) {
+      const r = await run(process.execPath, [bundle, "scan", ...args], top, { VARLATCH_ASSISTED: "0" });
+      expect(r.code, args.join(" ")).toBe(1);
+      expect(r.stderr).toContain("Usage: varlatch scan");
+      expect(r.stdout).toBe("");
+    }
+    const file = await run(process.execPath, [bundle, "scan", "--find-files", ".env"], top, { VARLATCH_ASSISTED: "0" });
+    expect(file.code).toBe(1);
+    expect(file.stderr).toContain("--find-files takes a directory; .env is not one");
+    expect(requests).toEqual([]);
+  });
+});
+
+describe("varlatch scan --find-files uses Git as little as possible (one check-ignore --no-index)", () => {
+  /**
+   * A repository holding `.env` as a FIFO: any process that opens it for
+   * reading blocks, so a Git that reads it never answers. `config/.env.local`
+   * is the matched file whose state is asked.
+   */
+  function fifoRepo(gitignore = ""): string {
+    const top = join(dir, `fifo-${++repoCount}`);
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    const made = spawnSync("mkfifo", [join(top, ".env")]);
+    if (made.status !== 0) throw new Error(`mkfifo: ${made.stderr}`);
+    mkdirSync(join(top, "config"));
+    writeFileSync(join(top, "config", ".env.local"), "CANARY\n");
+    if (gitignore) writeFileSync(join(top, ".gitignore"), gitignore);
+    return top;
+  }
+
+  function appendConfig(top: string, text: string | Buffer) {
+    writeFileSync(join(top, ".git", "config"), Buffer.concat([readFileSync(join(top, ".git", "config")), Buffer.from(text)]));
+  }
+
+  async function findFiles(cwd: string, extraEnv: Record<string, string | undefined> = {}) {
+    const started = Date.now();
+    const r = await run(process.execPath, [bundle, "scan", "--find-files", "--json"], cwd, { VARLATCH_ASSISTED: "0", ...extraEnv });
+    return { ...r, ms: Date.now() - started, report: r.stdout ? JSON.parse(r.stdout) : null };
+  }
+
+  /** The state of config/.env.local, and how long the search took. */
+  async function stateOf(cwd: string, extraEnv: Record<string, string | undefined> = {}) {
+    const r = await findFiles(cwd, extraEnv);
+    const file = r.report?.files.find((f: { path: string }) => f.path.endsWith(".env.local"));
+    return { ms: r.ms, git: file?.git, gitError: file?.gitError as string | undefined, stderr: r.stderr };
+  }
+
+  it("does not run Git for a repository with anything unusual, and says why", async () => {
+    const cases: [string, (top: string) => void, string][] = [
+      ["include.path", (top) => appendConfig(top, "[include]\n\tpath = ../.env\n"), "includes other files, which Git would read"],
+      ["includeIf", (top) => appendConfig(top, '[includeIf "gitdir:/"]\n\tpath = ../.env\n'), "includes other files"],
+      ["an include path that is not UTF-8", (top) => appendConfig(top, Buffer.concat([Buffer.from("[include]\n\tpath = ../"), Buffer.from([0xfe]), Buffer.from(".env\n")])), "includes other files"],
+      ["core.excludesFile named like a copy", (top) => appendConfig(top, `[core]\n\texcludesFile = ${join(top, ".env")}\n`), "has the name of a secret copy"],
+      [
+        "core.excludesFile linked to a copy under another name",
+        (top) => {
+          symlinkSync(join(top, ".env"), join(top, "ignore-list"));
+          appendConfig(top, `[core]\n\texcludesFile = ${join(top, "ignore-list")}\n`);
+        },
+        "has the name of a secret copy",
+      ],
+      [
+        "core.excludesFile that is not UTF-8",
+        (top) => appendConfig(top, Buffer.concat([Buffer.from(`[core]\n\texcludesFile = ${top}/`), Buffer.from([0xfe]), Buffer.from("ignore\n")])),
+        "sets a core.excludesFile that is not UTF-8",
+      ],
+      ["a relative core.excludesFile", (top) => appendConfig(top, "[core]\n\texcludesFile = ignore-list\n"), "is not an absolute path"],
+      ["core.worktree", (top) => appendConfig(top, `[core]\n\tworktree = ${top}\n`), "sets core.worktree"],
+      [
+        "a linked info/exclude",
+        (top) => {
+          rmSync(join(top, ".git", "info", "exclude"), { force: true });
+          symlinkSync(join(top, ".env"), join(top, ".git", "info", "exclude"));
+        },
+        "info/exclude is a symbolic link",
+      ],
+      [
+        "a hard-linked info/exclude",
+        (top) => {
+          writeFileSync(join(top, "other"), "# not a copy\n");
+          rmSync(join(top, ".git", "info", "exclude"), { force: true });
+          spawnSync("ln", [join(top, "other"), join(top, ".git", "info", "exclude")]);
+        },
+        "has another name (a hard link)",
+      ],
+      [
+        "a linked config",
+        (top) => {
+          rmSync(join(top, ".git", "config"));
+          symlinkSync(join(top, ".env"), join(top, ".git", "config"));
+        },
+        ".git/config is a symbolic link",
+      ],
+      ["commondir linked to .env", (top) => symlinkSync("../.env", join(top, ".git", "commondir")), ".git/commondir is a symbolic link"],
+      [
+        "objects/info/alternates linked to .env",
+        (top) => {
+          mkdirSync(join(top, ".git", "objects", "info"), { recursive: true });
+          symlinkSync(join(top, ".env"), join(top, ".git", "objects", "info", "alternates"));
+        },
+        "uses another object store",
+      ],
+    ];
+    for (const [label, setup, reason] of cases) {
+      const top = fifoRepo();
+      setup(top);
+      const r = await stateOf(top);
+      expect(r.git, `${label}: ${r.stderr}`).toBe("unknown");
+      expect(r.gitError, label).toContain(reason);
+      expect(r.ms, label).toBeLessThan(10_000);
+    }
+  });
+
+  it("gives Git none of the caller's GIT_ variables, and reads no index", async () => {
+    const top = fifoRepo("*.local\n");
+    // The usual answer first.
+    expect((await stateOf(top)).git).toBe("ignored");
+
+    // An object store elsewhere whose alternates file is a link to the FIFO.
+    const external = join(dir, `objects-${repoCount}`);
+    mkdirSync(join(external, "info"), { recursive: true });
+    symlinkSync(join(top, ".env"), join(external, "info", "alternates"));
+    const envs: Record<string, string>[] = [
+      { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "include.path", GIT_CONFIG_VALUE_0: join(top, ".env") },
+      { GIT_CONFIG_PARAMETERS: `'include.path'='${join(top, ".env")}'` },
+      { GIT_OBJECT_DIRECTORY: external },
+      { GIT_ALTERNATE_OBJECT_DIRECTORIES: external },
+      { GIT_INDEX_FILE: join(top, ".env") },
+      { GIT_DIR: join(top, ".env") },
+    ];
+    for (const extra of envs) {
+      const r = await stateOf(top, extra);
+      expect(r.git, `${JSON.stringify(extra)}: ${r.stderr}`).toBe("ignored");
+      expect(r.ms).toBeLessThan(10_000);
+    }
+
+    // A split index whose shared index is a link to the FIFO, and an index that is one: neither is read.
+    git(top, "add", ".gitignore");
+    git(top, "update-index", "--split-index");
+    const shared = readdirSync(join(top, ".git")).filter((n) => n.startsWith("sharedindex."));
+    expect(shared.length).toBeGreaterThan(0);
+    for (const n of shared) {
+      rmSync(join(top, ".git", n));
+      symlinkSync(join(top, ".env"), join(top, ".git", n));
+    }
+    let r = await stateOf(top);
+    expect([r.git, r.ms < 10_000]).toEqual(["ignored", true]);
+    rmSync(join(top, ".git", "index"));
+    symlinkSync(join(top, ".env"), join(top, ".git", "index"));
+    r = await stateOf(top);
+    expect([r.git, r.ms < 10_000]).toEqual(["ignored", true]);
+  });
+
+  it("reads only core.excludesFile from the global configuration, and never gives it to Git", async () => {
+    const top = fifoRepo("*.local\n");
+    writeFileSync(join(top, "config", ".env.other"), "CANARY\n");
+    const globalDir = join(dir, `global-${repoCount}`);
+    mkdirSync(globalDir);
+    const gitconfig = join(globalDir, "gitconfig");
+    const other = async (extraEnv: Record<string, string>) => {
+      const r = await findFiles(top, extraEnv);
+      expect(r.ms).toBeLessThan(10_000);
+      return Object.fromEntries(r.report.files.map((f: { path: string; git: string; gitError?: string }) => [f.path, [f.git, f.gitError]]));
+    };
+
+    // Its excludes file is used.
+    writeFileSync(join(globalDir, "ignore"), "*.other\n");
+    writeFileSync(gitconfig, `[core]\n\texcludesFile = ${join(globalDir, "ignore")}\n`);
+    expect(await other({ GIT_CONFIG_GLOBAL: gitconfig })).toEqual({
+      "config/.env.local": ["ignored", undefined],
+      "config/.env.other": ["ignored", undefined],
+    });
+
+    // Includes in it are not read, by Git or here, and one could replace the excludes file: every state is unknown.
+    writeFileSync(join(globalDir, "other.cfg"), `[core]\n\texcludesFile = ${join(globalDir, "empty")}\n`);
+    writeFileSync(gitconfig, `[core]\n\texcludesFile = ${join(globalDir, "ignore")}\n[include]\n\tpath = ${join(globalDir, "other.cfg")}\n`);
+    const includes = expect.stringContaining("includes other files, which are not read");
+    expect(await other({ GIT_CONFIG_GLOBAL: gitconfig })).toEqual({
+      "config/.env.local": ["unknown", includes],
+      "config/.env.other": ["unknown", includes],
+    });
+    writeFileSync(gitconfig, `[include]\n\tpath = ${join(top, ".env")}\n`);
+    expect(await other({ GIT_CONFIG_GLOBAL: gitconfig })).toEqual({
+      "config/.env.local": ["unknown", includes],
+      "config/.env.other": ["unknown", includes],
+    });
+
+    // A global configuration file that is a link to a copy is not read at all.
+    symlinkSync(join(top, ".env"), join(globalDir, "linked-gitconfig"));
+    const linked = await other({ GIT_CONFIG_GLOBAL: join(globalDir, "linked-gitconfig") });
+    expect(linked["config/.env.local"]).toEqual(["unknown", expect.stringContaining("has the name of a secret copy")]);
+  });
+
+  it("reads ~/.gitconfig after the XDG file, as Git does, so ~/.gitconfig wins", async () => {
+    const home = join(dir, `home-${++repoCount}`);
+    mkdirSync(join(home, ".config", "git"), { recursive: true });
+    writeFileSync(join(home, "xdg-ignore"), "*.key\n");
+    writeFileSync(join(home, "empty-ignore"), "");
+    writeFileSync(join(home, ".config", "git", "config"), `[core]\n\texcludesFile = ${join(home, "xdg-ignore")}\n`);
+    const top = join(home, "repo");
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    writeFileSync(join(top, "test.key"), "CANARY\n");
+    const state = async () => {
+      const r = await findFiles(top, { HOME: home, GIT_CONFIG_GLOBAL: undefined, XDG_CONFIG_HOME: undefined });
+      return r.report.files.map((f: { path: string; git: string }) => [f.path, f.git]);
+    };
+    expect(await state()).toEqual([["test.key", "ignored"]]);
+    writeFileSync(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${join(home, "empty-ignore")}\n`);
+    expect(await state()).toEqual([["test.key", "not-ignored"]]);
+  });
+
+  it("does not run Git when a .gitignore that applies is a hard link, a link, or not a regular file", async () => {
+    const cases: [string, (top: string) => void, string, string][] = [
+      [
+        "a .gitignore hard-linked to a .env holding *.key",
+        (top) => {
+          writeFileSync(join(top, "config", ".env"), "*.key\n");
+          spawnSync("ln", [join(top, "config", ".env"), join(top, "config", ".gitignore")]);
+        },
+        ".",
+        "has another name (a hard link)",
+      ],
+      ["a FIFO .gitignore", (top) => spawnSync("mkfifo", [join(top, "config", ".gitignore")]), ".", "is not a regular file"],
+      ["a linked .gitignore", (top) => symlinkSync(join(top, ".env"), join(top, "config", ".gitignore")), ".", "is a symbolic link"],
+      [
+        "a FIFO .gitignore above the directory searched",
+        (top) => spawnSync("mkfifo", [join(top, ".gitignore")]),
+        "config",
+        "is not a regular file",
+      ],
+    ];
+    for (const [label, setup, sub, reason] of cases) {
+      const top = fifoRepo();
+      setup(top);
+      const r = await stateOf(join(top, sub));
+      expect(r.git, `${label}: ${r.stderr}`).toBe("unknown");
+      expect(r.gitError, label).toContain(reason);
+      expect(r.ms, label).toBeLessThan(10_000);
+    }
+  });
+
+  it("never shows Git's own messages, only that it refused or failed and its exit status", async () => {
+    const top = fifoRepo();
+    appendConfig(top, "[core]\n\trepositoryformatversion = 99\n");
+    const r = await stateOf(top);
+    expect(r).toMatchObject({ git: "unknown", gitError: "Git refused or failed (exit status 128)", stderr: "" });
+  });
+
+  it("answers for a linked worktree, and keeps names that are not UTF-8 apart", async () => {
+    const top = join(dir, `bytes-${++repoCount}`);
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    const fe = Buffer.from([0xfe, 0x2e, 0x6b, 0x65, 0x79]);
+    const ff = Buffer.from([0xff, 0x2e, 0x6b, 0x65, 0x79]);
+    const topBytes = Buffer.from(top);
+    writeFileSync(Buffer.concat([topBytes, Buffer.from("/"), fe]), "CANARY\n");
+    writeFileSync(Buffer.concat([topBytes, Buffer.from("/"), ff]), "CANARY\n");
+    writeFileSync(join(top, ".env.\u009b31m"), "CANARY\n");
+    // Only the 0xfe name is ignored, by its exact bytes.
+    writeFileSync(join(top, ".gitignore"), Buffer.concat([Buffer.from("/"), fe, Buffer.from("\n")]));
+
+    const human = await run(process.execPath, [bundle, "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    expect(human.code, human.stderr).toBe(1);
+    expect(human.stdout).toContain('  "\\xfe.key": ignored by Git\n');
+    expect(human.stdout).toContain('  "\\xff.key": not ignored by Git');
+    expect(human.stdout).toContain('  ".env.\\u009b31m": not ignored by Git');
+    expect(human.stdout).not.toMatch(/[\u007f-\u009f]/);
+
+    const json = await findFiles(top);
+    expect(json.stdout).not.toMatch(/[\u007f-\u009f]/);
+    const byBytes = Object.fromEntries(
+      json.report.files.map((f: { path: string; pathBase64?: string; git: string }) => [f.pathBase64 ?? Buffer.from(f.path).toString("base64"), f.git]),
+    );
+    expect(byBytes).toEqual({
+      [fe.toString("base64")]: "ignored",
+      [ff.toString("base64")]: "not-ignored",
+      [Buffer.from(".env.\u009b31m").toString("base64")]: "not-ignored",
+    });
+
+    // A linked worktree: its repository is found through the .git file and commondir.
+    git(top, "add", ".gitignore");
+    git(top, "commit", "-q", "-m", "init");
+    const linked = join(dir, `linked-${repoCount}`);
+    git(top, "worktree", "add", "-q", linked);
+    writeFileSync(join(linked, ".gitignore"), ".env\n");
+    writeFileSync(join(linked, ".env"), "CANARY\n");
+    const wt = await findFiles(linked);
+    expect(wt.report.files.find((f: { path: string }) => f.path === ".env"), wt.stderr).toMatchObject({ git: "ignored" });
   });
 });

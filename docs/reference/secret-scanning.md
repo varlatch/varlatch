@@ -9,7 +9,12 @@ value.
 varlatch scan --staged [-e <env>] [--json]
 varlatch scan <path>... [-e <env>] [--json]
 varlatch scan --install-hook [-e <env>]
+varlatch scan --find-files [<dir>] [--json]
 ```
+
+`--find-files` is a separate mode that finds plaintext copies of secrets
+on disk by their names, without reading their contents. See
+[Finding copies of secrets](#finding-copies-of-secrets).
 
 ```
 $ varlatch scan --staged
@@ -256,6 +261,181 @@ In CI, run the scan on the build output before publishing it:
 varlatch scan -e production dist/
 ```
 
+## Finding copies of secrets
+
+```
+varlatch scan --find-files [<dir>] [--json]
+```
+
+Programs that steal credentials from a developer's machine look first for
+plaintext files such as `.env`. `--find-files` lists the files under a
+directory that look like such copies by their name, so you can move them
+into Varlatch and delete them.
+
+Discovery uses filenames and metadata, without reading candidate contents.
+Git ignore checks read configuration and ignore rules; unsupported setups
+report unknown. Concurrent changes to those inputs can cause Git to read a
+candidate file; preventing such races is outside this command's guarantee.
+File contents and raw Git diagnostics are never displayed.
+
+```
+$ varlatch scan --find-files
+Files that look like copies of secrets, by name, under /home/me/src/web:
+  .env: ignored by Git
+  certs/dev.key: not ignored by Git, so it can be committed
+  services/api/.env.local: Git status unknown: /home/me/src/web/.git/config includes other files, which Git would read
+
+varlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 1830 entries checked by name, without reading their contents.
+Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source
+Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>
+A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.
+See docs/reference/secret-scanning.md and docs/reference/import.md.
+```
+
+- **By name.** The search reads directory entries and file metadata, not
+  the contents of the files it lists. It needs no project, no sign-in, and
+  no server: nothing is disclosed or sent, and it works outside a Git
+  repository and outside a Varlatch project. Assisted mode changes nothing
+  about it.
+- **The names:** `.env`; `.env.*` except the templates `.env.example` and
+  `.env.schema` (the same two names the coding agent guardrails leave
+  readable); `*.pem`; and `*.key`. Names are matched case-sensitively, as
+  Git does on Linux. Only files and symbolic links are listed: a directory
+  with a matching name (a Python virtual environment called `.env`, say)
+  is searched, not listed. A name is a hint, not a verdict: a public
+  certificate bundle ends in `.pem` too.
+- **Where it looks.** The directory given, or the current directory, and
+  every directory below it, in a stable order. `.git`, `.hg`, `.svn`, and
+  `node_modules` are skipped. A symbolic link is never followed: a linked
+  directory is not entered, and a linked file is listed by its own name as
+  `a symbolic link, not followed`, without looking at its target. A
+  directory given on the command line is resolved first, so it may itself
+  be a link.
+- **Bounds.** The search reads at most 200,000 directory entries, counted
+  as they are read, so a huge directory is never held in memory whole, and
+  does not enter directories more than 20 levels down. Both are reported,
+  as is a directory it cannot read, so an incomplete search is never shown
+  as clean.
+- **Names as they are.** A name that is not UTF-8 keeps its exact bytes
+  through the search and Git. On the terminal, a name that holds a control
+  character (including DEL and C1 controls such as U+009B) or bytes that
+  are not UTF-8 is shown quoted, with each control escaped (`\n`,
+  `\u009b`) and each such byte as `\xfe`. Messages that quote a path are
+  escaped the same way.
+- **Git state.** For each file, the search asks Git whether it ignores
+  it, in the repository that holds it (a nested repository or a linked
+  worktree counts as its own): `ignored by Git`, `not ignored by Git` (a
+  `git add .` would commit it, and it may already be committed: check with
+  `git log --all -- <file>`), or `not in a Git repository`. Whether a file
+  is tracked is not reported: answering it would make Git read the index
+  and more. Git runs once per repository, as `git check-ignore
+  --no-index`, which reads no index and no object, with none of your `GIT_`
+  environment variables, without the system or global configuration (the
+  global `core.excludesFile` is passed to it after the check below), with
+  `core.fsmonitor` off, and for at most 30 seconds.
+- **When the Git status is unknown.** Git's configuration and ignore
+  files can make Git open other files, and one of them could be a secret
+  copy. So Git is not run at all for a repository where anything is
+  unusual, and its files say `Git status unknown` with the reason:
+  - its configuration (`.git/config`, or `config.worktree`) includes
+    other files (`include.path` or `includeIf`), sets `core.worktree`, or
+    sets a `core.excludesFile` that is not UTF-8;
+  - the global configuration includes other files: they are not read,
+    and one of them could set the excludes file (this applies to every
+    repository);
+  - the excludes file (`core.excludesFile`, or `~/.config/git/ignore`) is
+    not an absolute path, has the name of a secret copy (directly or
+    through a symbolic link), or is not a regular file;
+  - a file Git opens there (`.git/HEAD`, `.git/config`,
+    `config.worktree`, `info/exclude`, the `.git` file of a linked
+    worktree, or its `commondir`) is a symbolic link, has another name (a
+    hard link), or is not a regular file, or a pointer in it does not lead
+    to a directory;
+  - a `.gitignore` that applies to a listed file (in its directory or any
+    directory above it, up to the top of the working tree) is a symbolic
+    link, has another name (a hard link), or is not a regular file;
+  - it uses another object store (`objects/info/alternates`), or is a bare
+    repository;
+  - Git refuses it (for example a repository owned by someone else), fails,
+    does not answer in time, or is not installed; or a directory name on
+    the way is not UTF-8. Git's own messages are never shown: only that it
+    refused or failed, and its exit status.
+
+  The global configuration (`GIT_CONFIG_GLOBAL`, or else
+  `~/.config/git/config` and then `~/.gitconfig`, which wins, as Git
+  reads them) is read only for its `core.excludesFile`. When one of its
+  files is a link to a file named like a copy, every state is unknown.
+- **Next steps.** Move a dotenv file in with
+  [`varlatch import <file> --delete-source`](import.md), and store a key or
+  certificate file as one Secret with `varlatch values set <ITEM>
+  --from-file <file>`, then delete the file. Both run in a Varlatch project.
+  Rotate the secrets of a file that was committed or that you cannot
+  account for.
+
+`--find-files` takes `--json` and no other option: `--staged`, paths to
+scan, `-e`, and the other options of the value scan are refused.
+
+### JSON
+
+```json
+{
+  "version": 1,
+  "mode": "find-files",
+  "exitCode": 1,
+  "root": "/home/me/src/web",
+  "files": [
+    { "path": ".env", "kind": "dotenv", "symlink": false, "git": "ignored" },
+    { "path": "certs/dev.key", "kind": "key", "symlink": false, "git": "not-ignored" }
+  ],
+  "notSearched": [],
+  "entriesChecked": 1830,
+  "stopped": false
+}
+```
+
+`path` is relative to `root`, with `/` separators. A path (or `root`)
+that is not UTF-8 is given lossily in `path`, with its exact bytes in
+`pathBase64` (`rootBase64`); use those when present. DEL and C1 controls
+are escaped as `\u007f` to `\u009f`, which is still the same JSON.
+`kind` is `dotenv` or `key`. `git` is one of `not-ignored`, `ignored`,
+`no-repository`, and `unknown` (with `gitError`). `notSearched` lists the
+directories not searched, with the reason, and `stopped` is `true` when the
+entry bound was reached.
+
+### Exit status
+
+| Status | Meaning |
+| --- | --- |
+| 0 | The whole tree was searched, and no file looks like a copy. |
+| 1 | At least one file looks like a copy, or the search could not run (a usage error, or a directory that does not exist). |
+| 2 | No file looks like a copy, but part of the tree was not searched. |
+
+These follow the value scan: 1 for findings, 2 for incomplete. A CI job can
+run `varlatch scan --find-files` to fail when such a file is in the
+checkout; in a fresh checkout, the files it finds are normally committed ones.
+
+## Checking shell history for values
+
+A secret typed or pasted on a command line ends up in your shell's history
+file, another place that programs stealing credentials read. The value scan
+checks it like any other file:
+
+```
+cd ~/src/web
+varlatch scan ~/.bash_history
+varlatch scan ~/.zsh_history -e production
+```
+
+This is the ordinary value scan, not `--find-files`: it needs what every
+value scan needs. Run it from a directory of a Varlatch project (one with
+`varlatch.toml` at or above it), signed in as an identity with
+`secret.reveal` on the environment, and it makes one audited disclosure. A
+file outside the project is scanned as given, and its findings show its
+path relative to the project directory (`../../.bash_history:812:16: ...`).
+Only the selected environment's Secrets are checked: repeat with `-e` for
+others. A finding means the value was in your history: delete those lines
+and rotate the Secret.
+
 ## Limits
 
 - Only the selected environment's Secrets are checked, at their current
@@ -268,6 +448,7 @@ varlatch scan -e production dist/
   value.
 - `--staged` checks what the next commit records, not Git history, and
   `varlatch scan <path>` checks only the files given.
-- File names are not checked, and are printed as they are.
+- The value scan does not check file names, and prints them as they are.
+  `--find-files` checks names and metadata, not contents.
 - The scan protects against accidents. It does not stop anyone who means to
   copy a Secret into a file.

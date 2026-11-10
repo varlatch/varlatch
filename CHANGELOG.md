@@ -17,6 +17,27 @@ fixes.
   clock. Codes Varlatch does not recognize, the storage provider's message
   and the key are never shown.
 
+### CLI
+
+- **`varlatch scan --find-files` finds copies of secrets on disk.** It
+  lists the files under a directory (the current one by default) whose
+  names look like copies of secrets: `.env`, `.env.*` except
+  `.env.example` and `.env.schema`, `*.pem` and `*.key`. For each it says
+  whether Git ignores it, and it suggests `varlatch import` to move a
+  dotenv file in. Discovery uses file names and metadata, without reading
+  the contents of the files it lists, does not follow symbolic links,
+  skips `.git` and `node_modules`, and needs no project, sign-in or
+  server. The ignore check runs `git check-ignore --no-index`, which reads
+  Git's configuration and ignore rules; a setup it does not support (an
+  include in the configuration, a linked or hard-linked file Git would
+  open, another object store) reports the state as unknown, and Git's own
+  messages are never shown. Changing those files while the command runs is
+  outside what it guarantees. It exits 1 when it finds a file and 2 when
+  part of the tree was not searched. The secret scanning reference also
+  shows how to check a shell history file for values with `varlatch scan
+  <file>`. See [Finding copies of
+  secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
+
 ### Machine identities
 
 - **See what a machine can reach.** Open a machine in Access, then

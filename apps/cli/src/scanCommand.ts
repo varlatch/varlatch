@@ -17,10 +17,19 @@ import {
   parseSize,
   scanExitCode,
   scanNotices,
+  terminalJson,
   type BaselineEntry,
   type ScanLimits,
   type ScanSecret,
 } from "./scan.js";
+import {
+  FindFilesError,
+  findCopies,
+  findFilesExitCode,
+  findFilesJson,
+  formatFindFilesHuman,
+  type FindFilesReport,
+} from "./findFiles.js";
 import {
   ScanSourceError,
   gitTopLevel,
@@ -51,7 +60,8 @@ export class ScanUsageError extends Error {
 export const SCAN_USAGE =
   "Usage: varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]\n" +
   "                     [--max-file-size <size>] [--max-total-size <size>]\n" +
-  "       varlatch scan --install-hook [-e <env>]";
+  "       varlatch scan --install-hook [-e <env>]\n" +
+  "       varlatch scan --find-files [<dir>] [--json]";
 
 export interface ScanOptions {
   staged: boolean;
@@ -62,10 +72,12 @@ export interface ScanOptions {
   writeBaseline: boolean;
   limits: ScanLimits;
   environment: string | undefined;
+  /** `--find-files [<dir>]` (ADR-0054 Decision 8): list likely secret copies by name; offline. */
+  findFiles: boolean;
 }
 
 const VALUE_FLAGS = new Set(["-e", "--environment", "--server", "--baseline", "--max-file-size", "--max-total-size"]);
-const BOOLEAN_FLAGS = new Set(["--staged", "--json", "--install-hook", "--write-baseline"]);
+const BOOLEAN_FLAGS = new Set(["--staged", "--json", "--install-hook", "--write-baseline", "--find-files"]);
 
 export function parseScanArgs(args: string[]): ScanOptions {
   const opts: ScanOptions = {
@@ -77,7 +89,9 @@ export function parseScanArgs(args: string[]): ScanOptions {
     writeBaseline: false,
     limits: { ...DEFAULT_LIMITS },
     environment: undefined,
+    findFiles: false,
   };
+  const given: string[] = [];
   let onlyPaths = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
@@ -89,7 +103,9 @@ export function parseScanArgs(args: string[]): ScanOptions {
       onlyPaths = true;
       continue;
     }
+    if (BOOLEAN_FLAGS.has(arg) || VALUE_FLAGS.has(arg)) given.push(arg);
     if (BOOLEAN_FLAGS.has(arg)) {
+      if (arg === "--find-files") opts.findFiles = true;
       if (arg === "--staged") opts.staged = true;
       if (arg === "--json") opts.json = true;
       if (arg === "--install-hook") opts.installHook = true;
@@ -107,6 +123,14 @@ export function parseScanArgs(args: string[]): ScanOptions {
       if (arg === "--max-file-size") opts.limits.maxFileSize = size;
       else opts.limits.maxTotalSize = size;
     }
+  }
+  if (opts.findFiles) {
+    const others = [...new Set(given.filter((f) => f !== "--find-files" && f !== "--json"))];
+    if (others.length > 0) {
+      throw new ScanUsageError(`--find-files lists files by name and takes no ${others.join(", ")}; it accepts one directory and --json`);
+    }
+    if (opts.paths.length > 1) throw new ScanUsageError("--find-files takes one directory");
+    return opts;
   }
   if (opts.installHook) {
     if (opts.staged || opts.paths.length > 0 || opts.writeBaseline || opts.json || opts.baseline) {
@@ -134,6 +158,8 @@ export interface ScanDeps {
 
 /** Run `varlatch scan`; resolves to the exit code. */
 export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Promise<number> {
+  // Names only, before any context: no project, server, or credential is needed.
+  if (opts.findFiles) return runFindFiles(opts, io);
   const ctx = deps.context();
   if (opts.installHook) {
     const hook = await installHook(io.cwd, ctx.repoRoot, opts.environment);
@@ -195,13 +221,27 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
 
   for (const notice of scanNotices(report)) io.err(notice);
   if (opts.json) {
-    io.out(JSON.stringify(jsonReport(report, ctx, listing.mode), null, 2));
+    io.out(terminalJson(jsonReport(report, ctx, listing.mode)));
   } else if (files.length === 0 && unlisted.length === 0) {
     io.out(listing.mode === "staged" ? "varlatch scan: nothing is staged." : "varlatch scan: no files to scan.");
   } else {
     for (const line of formatScanHuman(report, { environment: ctx.environment, mode: listing.mode })) io.out(line);
   }
   return scanExitCode(report);
+}
+
+/** `varlatch scan --find-files`: finds files by name and metadata, without reading their contents, and sends no request. */
+async function runFindFiles(opts: ScanOptions, io: ScanIo): Promise<number> {
+  let report: FindFilesReport;
+  try {
+    report = await findCopies(opts.paths[0] ?? ".", io.cwd);
+  } catch (err) {
+    if (err instanceof FindFilesError) throw new ScanSourceError(err.message);
+    throw err;
+  }
+  if (opts.json) io.out(terminalJson(findFilesJson(report)));
+  else for (const line of formatFindFilesHuman(report)) io.out(line);
+  return findFilesExitCode(report);
 }
 
 function jsonReport(report: ReturnType<ScanEngine["result"]>, ctx: ResolvedContext, mode: "staged" | "paths") {
