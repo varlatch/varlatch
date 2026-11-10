@@ -1,0 +1,145 @@
+name: Image scan
+
+# Every night, scan the images of the latest release for known
+# vulnerabilities with OSV-Scanner and report what it finds in the job
+# summary. The scan is report-only: findings leave the job green with a
+# warning, and only a scan that could not run (download, checksum, pull,
+# export, or a scanner error) fails it. Nothing calls this workflow,
+# release.yml included, so it never blocks a release.
+#
+# The images scanned are the ones the latest release's varlatch-release.json
+# pins by digest, which is what Compose pulls on an installation, so a tag
+# moved later does not change what is scanned. Each image is scanned for
+# linux/amd64; the arm64 image is built from the same sources.
+# The summary records the release, the pinned digest, and the digest of the
+# platform image actually scanned.
+#
+# OSV-Scanner is its release binary, pinned by version and checked against
+# the SHA-256 below (copied from that release's osv-scanner_SHA256SUMS),
+# not a third-party action: the scanner that runs is exactly the file whose
+# checksum is committed here, whatever happens to a tag elsewhere. To update
+# it, change both values together.
+#
+# Runners: GitHub-hosted only. Unlike ci.yml and release.yml, this job has no
+# self-hosted fallback; a night without hosted minutes simply has no scan.
+# It uses no secrets: the job's own token, read-only, finds the release, and
+# the images are public.
+on:
+  schedule:
+    - cron: "43 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OSV_SCANNER_VERSION: v2.7.1
+  OSV_SCANNER_SHA256: fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8 # osv-scanner_linux_amd64
+
+jobs:
+  scan:
+    name: Scan ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One image's failure must not hide the other image's report.
+      fail-fast: false
+      matrix:
+        image: [varlatchd, varlatch-web]
+    steps:
+      - name: Install OSV-Scanner
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/osv-scanner"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $dir/osv-scanner" | sha256sum --check --strict
+          chmod +x "$dir/osv-scanner"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      - name: Find the latest release's image
+        id: image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          dir="$RUNNER_TEMP/release"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern varlatch-release.json --dir "$dir" --clobber
+          pinned=$(jq -er --arg name "$IMAGE" '.images[$name].digest' "$dir/varlatch-release.json")
+          if ! [[ "$pinned" =~ ^ghcr\.io/[a-z0-9._-]+/${IMAGE}@sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::varlatch-release.json of $tag pins $IMAGE as '$pinned', not a ghcr.io image by digest"
+            exit 1
+          fi
+          # The release pins a multi-platform index. Pull the linux/amd64
+          # image it lists by its own digest, so the export below holds
+          # exactly one platform whatever image store the runner's Docker
+          # uses.
+          platform=$(docker buildx imagetools inspect --raw "$pinned" | jq -er '
+            [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")]
+            | if length == 1 then .[0].digest else error("expected one linux/amd64 image, found \(length)") end')
+          {
+            echo "tag=$tag"
+            echo "pinned=$pinned"
+            echo "scanned=${pinned%@*}@$platform"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Scan
+        env:
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ steps.image.outputs.tag }}
+          PINNED: ${{ steps.image.outputs.pinned }}
+          SCANNED: ${{ steps.image.outputs.scanned }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/image.tar"
+          report="$RUNNER_TEMP/report.md"
+          docker pull --quiet "$SCANNED"
+          docker save -o "$archive" "$SCANNED"
+
+          # Exit codes (OSV-Scanner's documentation, "Return Codes"): 0 no
+          # known vulnerabilities, 1 vulnerabilities found, 128 no packages
+          # found, anything else an error. Only 0 and 1 are a completed scan.
+          # The default extractors ("artifact") find no npm packages in the
+          # node_modules that pnpm deploys (varlatchd's /app) or in the npm
+          # that comes with the Node.js base image, so the package.json
+          # extractor is added. --x-plugins is an experimental flag: check
+          # it still works when updating the scanner.
+          status=0
+          osv-scanner scan image --archive "$archive" \
+            --x-plugins artifact --x-plugins javascript/packagejson \
+            --format markdown --output-file "$report" || status=$?
+
+          {
+            echo "## $IMAGE $TAG"
+            echo
+            echo "- Release pin: \`$PINNED\`"
+            echo "- Scanned (linux/amd64): \`$SCANNED\`"
+            echo "- Scanner: OSV-Scanner $OSV_SCANNER_VERSION"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          case "$status" in
+            0)
+              echo "No known vulnerabilities found." >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            1)
+              echo "::warning title=Known vulnerabilities in $IMAGE $TAG::OSV-Scanner found known vulnerabilities in $IMAGE $TAG. The job summary lists them."
+              # A step summary holds at most 1 MiB; leave room for the
+              # header above.
+              limit=$((900 * 1024))
+              if [ "$(wc -c < "$report")" -gt "$limit" ]; then
+                head -c "$limit" "$report" | sed '$d' >> "$GITHUB_STEP_SUMMARY"
+                printf '\n\nThe report was cut to fit the job summary. Run the scan again locally for the full list.\n' >> "$GITHUB_STEP_SUMMARY"
+              else
+                cat "$report" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              ;;
+            *)
+              echo "**The scan did not complete** (OSV-Scanner exit code $status)." >> "$GITHUB_STEP_SUMMARY"
+              echo "::error title=Image scan failed for $IMAGE $TAG::OSV-Scanner exited with code $status, so the image was not scanned."
+              exit "$status"
+              ;;
+          esac
