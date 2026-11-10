@@ -1056,6 +1056,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       identityKind: principal.identity.kind,
       credentialId: principal.credentialId,
       credentialKind: principal.credentialKind,
+      authSessionId: principal.authSessionId ?? null,
     };
   };
   /** The approval a request carries in the Varlatch-Approval header; one that cannot be an approval id is not found. */

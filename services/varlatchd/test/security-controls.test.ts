@@ -314,6 +314,44 @@ describe("loosening needs an approval", () => {
     expect((await set(admin.cli, "admin-step-up", { mode: "off", expectedVersion: 1 }, "nonsense")).body.error.details.reason).toBe("not-found");
   });
 
+  it("binds a dashboard approval to its Better Auth session: a refreshed bearer of that session uses it, another session cannot", async () => {
+    const approval = await stepUp(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 });
+    expect(approval.requestedBy.credentialKind).toBe("browser");
+    expect(await rows("SELECT origin, auth_session_id, credential_id FROM approval_intents WHERE id = $1", [approval.id]))
+      .toEqual([{ origin: "dashboard", auth_session_id: `session-${admin.id}`, credential_id: admin.webId }]);
+    expect((await approve(admin, approval.id)).status).toBe(200);
+    // Another session of the same person, and a CLI credential carrying the same session, cannot use it.
+    const otherSession = await admin.session("another-session");
+    const fromOtherSession = await set(otherSession, "admin-step-up", { mode: "off", expectedVersion: 1 }, approval.id);
+    expect(fromOtherSession.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
+    const handoff = await issueCredential(ctx.db, { identityId: admin.id, kind: "cli", authSessionId: `session-${admin.id}` });
+    const fromCli = await set(handoff.token, "admin-step-up", { mode: "off", expectedVersion: 1 }, approval.id);
+    expect(fromCli.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
+    // The dashboard re-minted its bearer from the same session (a silent refresh): it still fits.
+    const refreshed = await admin.session(`session-${admin.id}`);
+    const done = await set(refreshed, "admin-step-up", { mode: "off", expectedVersion: 1 }, approval.id);
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body).toMatchObject({ changed: true, loosened: true });
+  });
+
+  it("refuses a dashboard approval when the refreshed bearer is revoked at use", async () => {
+    const approval = await stepUp(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 });
+    expect((await approve(admin, approval.id)).status).toBe(200);
+    const refreshed = await issueCredential(ctx.db, {
+      identityId: admin.id, kind: "browser", authSessionId: `session-${admin.id}`,
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    });
+    await ctx.db.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [refreshed.credentialId]);
+    const requester: Requester = {
+      identityId: admin.id, identityKind: "human", credentialId: refreshed.credentialId, credentialKind: "browser", authSessionId: `session-${admin.id}`,
+    };
+    await expect(withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, {
+      operation: "security_control.change", organizationId: orgId, target: { control: "admin-step-up" },
+      body: { mode: "off", config: null, expectedVersion: 1 }, query: {}, expectedVersion: 1, summary: { title: "", changes: [] },
+    }))).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
+    expect((await call("GET", `/v1/me/approvals/${approval.id}`, admin.web)).body.state).toBe("approved");
+  });
+
   it("refuses an approval for another target or body, and a stale version", async () => {
     const approval = await stepUp(admin.cli, "admin-step-up", { mode: "off", expectedVersion: 1 });
     expect((await approve(admin, approval.id)).status).toBe(200);

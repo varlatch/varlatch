@@ -14,7 +14,10 @@
  *   enforcement step ships.
  * - approval_intents: one person's step-up approval for one exact
  *   operation. It records the requesting credential and its human
- *   identity, the Organization (null for an account operation such as
+ *   identity (an intent the dashboard asked for is bound to the Better
+ *   Auth session behind the requesting browser bearer, auth_session_id, so
+ *   a silent refresh of the bearer keeps it usable; a CLI intent is bound
+ *   to its exact credential), the Organization (null for an account operation such as
  *   passkey.remove), the semantic operation, the stable target ids, HMACs
  *   of the normalized request body and of the query parameters the
  *   operation reads, the target's expected version, and a summary the
@@ -51,6 +54,7 @@ CREATE TABLE approval_intents (
   id text PRIMARY KEY,
   credential_id text NOT NULL REFERENCES credentials(id),
   identity_id text NOT NULL REFERENCES identities(id),
+  auth_session_id text CHECK (auth_session_id IS NULL OR char_length(auth_session_id) BETWEEN 1 AND 200),
   organization_id text REFERENCES organizations(id),
   operation text NOT NULL CHECK (operation IN ('security_control.change', 'passkey.remove')),
   target jsonb NOT NULL CHECK (jsonb_typeof(target) = 'object'),
@@ -70,6 +74,7 @@ CREATE TABLE approval_intents (
   poll_interval integer NOT NULL CHECK (poll_interval > 0),
   last_polled_at timestamptz,
   CHECK (expires_at > created_at),
+  CHECK ((origin = 'dashboard') = (auth_session_id IS NOT NULL)),
   CHECK ((approved_at IS NULL) = (approved_with_passkey_id IS NULL)),
   CHECK ((approved_at IS NULL) = (approval_user_verified IS NULL)),
   CHECK (consumed_at IS NULL OR approved_at IS NOT NULL),

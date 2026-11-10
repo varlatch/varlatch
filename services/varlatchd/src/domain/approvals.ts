@@ -31,9 +31,14 @@ import { listOwnPasskeys } from "./passkeys.js";
  * 3. The client repeats the operation with the intent id (the
  *    Varlatch-Approval header). Inside the operation's transaction one
  *    conditional update consumes it: approved, not consumed or closed, not
- *    expired by clock_timestamp(), and the same credential, person,
- *    operation, Organization, target, body hash, query hash and expected
- *    version. Then the requesting credential is revalidated; the operation
+ *    expired by clock_timestamp(), and the same person, operation,
+ *    Organization, target, body hash, query hash and expected version, from
+ *    the same requester: for an intent the CLI asked for, the exact
+ *    credential; for one the dashboard asked for, a browser bearer of the
+ *    same Better Auth session (the dashboard re-mints its bearer from the
+ *    session, so a refresh during the approval keeps it usable, and
+ *    another session of the person cannot use it). Then the requesting
+ *    credential is revalidated; the operation
  *    rechecks its own authorization and version. Consumption and the
  *    mutation commit or roll back together: a failed attempt leaves the
  *    approval usable until it expires, a successful one can never be
@@ -105,6 +110,8 @@ export interface Requester {
   identityKind: string;
   credentialId: string;
   credentialKind: string;
+  /** A browser bearer's Better Auth session: what a dashboard intent is bound to. */
+  authSessionId?: string | null | undefined;
 }
 
 /** An approval as its person sees it (protocol schema Approval). */
@@ -257,6 +264,13 @@ export async function createApproval(
     );
   }
   const origin = requester.credentialKind === "browser" ? "dashboard" : "cli";
+  if (origin === "dashboard" && !requester.authSessionId) {
+    throw new DomainError(
+      "PERMISSION_DENIED",
+      "This dashboard sign-in has no session to bind an approval to; reload the page and sign in again",
+      { reason: "no-session" },
+    );
+  }
   const lifetime = origin === "dashboard" ? APPROVALS.dashboardLifetimeSeconds : APPROVALS.cliLifetimeSeconds;
   return withTx(ctx.db, async (db) => {
     await db.query("SELECT pg_advisory_xact_lock($1, hashtext($2))", [CREATE_LOCK, requester.identityId]);
@@ -289,14 +303,14 @@ export async function createApproval(
     await db.query(
       `INSERT INTO approval_intents
          (id, credential_id, identity_id, organization_id, operation, target, body_hash, query_hash, expected_version,
-          summary, origin, created_at, expires_at, poll_interval)
+          summary, origin, created_at, expires_at, poll_interval, auth_session_id)
        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10::jsonb, $11, clock_timestamp(),
-               clock_timestamp() + make_interval(secs => $12), $13)`,
+               clock_timestamp() + make_interval(secs => $12), $13, $14)`,
       [
         id, requester.credentialId, requester.identityId, binding.organizationId, binding.operation,
         canonicalJson(binding.target), approvalHash(ctx.rootKek, "body", binding.body),
         approvalHash(ctx.rootKek, "query", binding.query), binding.expectedVersion, JSON.stringify(binding.summary),
-        origin, lifetime, APPROVALS.intervalSeconds,
+        origin, lifetime, APPROVALS.intervalSeconds, origin === "dashboard" ? requester.authSessionId : null,
       ],
     );
     return (await viewOf(db, id, requester.identityId, publicUrl))!;
@@ -420,40 +434,52 @@ export async function consumeApproval(
     `UPDATE approval_intents SET consumed_at = clock_timestamp()
      WHERE id = $1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
        AND expires_at > clock_timestamp()
-       AND credential_id = $2 AND identity_id = $3 AND operation = $4
+       AND identity_id = $3 AND operation = $4
+       AND ((origin = 'cli' AND credential_id = $2)
+            OR (origin = 'dashboard' AND $10::text = 'browser' AND auth_session_id = $11::text))
        AND organization_id IS NOT DISTINCT FROM $5 AND target = $6::jsonb
        AND body_hash = $7 AND query_hash = $8 AND expected_version IS NOT DISTINCT FROM $9
-     RETURNING id, approved_with_passkey_id, approval_user_verified`,
+     RETURNING id, approved_with_passkey_id, approval_user_verified, auth_session_id`,
     [approvalId, requester.credentialId, requester.identityId, binding.operation, binding.organizationId,
-      canonicalJson(binding.target), bodyHash, queryHash, binding.expectedVersion],
-  )).rows[0] as { id: string; approved_with_passkey_id: string; approval_user_verified: boolean } | undefined;
+      canonicalJson(binding.target), bodyHash, queryHash, binding.expectedVersion, requester.credentialKind,
+      requester.authSessionId ?? null],
+  )).rows[0] as
+    | { id: string; approved_with_passkey_id: string; approval_user_verified: boolean; auth_session_id: string | null }
+    | undefined;
   if (!consumed) {
     const row = (await db.query(
-      `SELECT credential_id, operation, organization_id, target = $3::jsonb AS same_target, body_hash, query_hash,
+      `SELECT credential_id, origin, auth_session_id, operation, organization_id, target = $3::jsonb AS same_target, body_hash, query_hash,
               expected_version, approved_at, consumed_at, closed_at, expires_at <= clock_timestamp() AS lapsed
        FROM approval_intents WHERE id = $1 AND identity_id = $2`,
       [approvalId, requester.identityId, canonicalJson(binding.target)],
     )).rows[0] as
       | (Pick<IntentRow, "credential_id" | "operation" | "organization_id" | "approved_at" | "consumed_at" | "closed_at" | "lapsed"> & {
           same_target: boolean; body_hash: string; query_hash: string; expected_version: number | null;
+          origin: "dashboard" | "cli"; auth_session_id: string | null;
         })
       | undefined;
     if (!row) throw approvalInvalid("not-found", approvalId);
     if (row.closed_at || row.consumed_at || row.lapsed || !row.approved_at) {
       throw approvalInvalid(unusableReason(row), approvalId);
     }
-    const sameRequest = row.credential_id === requester.credentialId && row.operation === binding.operation &&
+    const sameRequester = row.origin === "cli"
+      ? row.credential_id === requester.credentialId
+      : requester.credentialKind === "browser" && row.auth_session_id === (requester.authSessionId ?? null);
+    const sameRequest = sameRequester && row.operation === binding.operation &&
       row.organization_id === binding.organizationId && row.same_target && row.body_hash === bodyHash && row.query_hash === queryHash;
     throw approvalInvalid(sameRequest && row.expected_version !== binding.expectedVersion ? "stale" : "mismatch", approvalId);
   }
-  // Revalidate: the credential is still live and its person enabled. Taken
-  // FOR SHARE, so a revocation in flight waits for this operation to end.
+  // Revalidate: the requesting credential is still live and its person
+  // enabled; for a dashboard intent, it is a browser bearer of the intent's
+  // session. Taken FOR SHARE, so a revocation in flight waits for this
+  // operation to end.
   const live = (await db.query(
     `SELECT 1 FROM credentials c JOIN identities i ON i.id = c.identity_id
      WHERE c.id = $1 AND c.identity_id = $2 AND c.revoked_at IS NULL
        AND (c.expires_at IS NULL OR c.expires_at > clock_timestamp()) AND NOT i.disabled
+       AND ($3::text IS NULL OR (c.kind = 'browser' AND c.auth_session_id = $3::text))
      FOR SHARE OF c`,
-    [requester.credentialId, requester.identityId],
+    [requester.credentialId, requester.identityId, consumed.auth_session_id],
   )).rows[0];
   if (!live) throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
   return { id: consumed.id, passkeyId: consumed.approved_with_passkey_id, userVerified: consumed.approval_user_verified };
@@ -525,6 +551,11 @@ export async function startApproval(
   input: { approvalId: string; identityId: string; authSessionId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
   return withTx(ctx.db, async (db) => {
+    // The person's row first, then the intent, in every approval path:
+    // the challenge's insert takes the person's row for its foreign key, and
+    // approving takes it first. Holding it also serializes the per-person
+    // challenge count with the insert, across intents and sessions.
+    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     const state = stateOf(intent);
     if (state !== "pending") throw approvalInvalid(unusableReason(intent), input.approvalId);

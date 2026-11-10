@@ -19,7 +19,9 @@ import { registerSoftPasskey } from "./helpers/soft-authenticator.js";
  * UPDATE, a protected write takes it FOR KEY SHARE and reads the mode
  * after that lock, so the write either commits first or sees the new mode;
  * one approval is consumed once however many requests race for it; the
- * per-credential cap holds when requests arrive together.
+ * per-credential cap holds when requests arrive together; starting and
+ * approving take the person's row before the approval's, so they never
+ * deadlock, and the per-person challenge cap holds across approvals.
  */
 const url = process.env.VARLATCH_TEST_DATABASE_URL;
 describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
@@ -161,6 +163,64 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     for (const a of attempts.filter((a) => a.status === "rejected")) {
       expect((a as PromiseRejectedResult).reason).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "consumed" } });
     }
+  });
+
+  /** A browser bearer of the admin for one Better Auth session. */
+  const browser = async (sessionId: string) =>
+    (await issueCredential(db, {
+      identityId: adminId, kind: "browser", authSessionId: sessionId,
+      expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
+    })).token;
+  /** A pending approval for turning admin-step-up off, asked for by a CLI credential of its own. */
+  const pendingApproval = async () => {
+    const token = (await issueCredential(db, { identityId: adminId, kind: "cli" })).token;
+    const asked = await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", token, { mode: "off", expectedVersion: 1 });
+    expect(asked.body.error.code, JSON.stringify(asked.body)).toBe("STEP_UP_REQUIRED");
+    return asked.body.error.details.approval.id as string;
+  };
+
+  it("starting and approving one approval at once never deadlock: both take the person, then the approval", async () => {
+    expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+    const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    const sessionA = await browser("session-a");
+    const sessionB = await browser("session-b");
+    for (let round = 0; round < 8; round++) {
+      const approvalId = await pendingApproval();
+      const started = await call("POST", `/v1/me/approvals/${approvalId}/options`, sessionA);
+      expect(started.status).toBe(200);
+      const assertion = key.assert(started.body.publicKey.challenge);
+      // Session B starts while session A approves with its challenge.
+      const [restart, approved] = await Promise.all([
+        call("POST", `/v1/me/approvals/${approvalId}/options`, sessionB),
+        call("POST", `/v1/me/approvals/${approvalId}/approve`, sessionA, { assertion }),
+      ]);
+      expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+      // Before the approval: a challenge; after it: no longer pending. Never a deadlock (a 500).
+      expect([200, 409], JSON.stringify(restart.body)).toContain(restart.status);
+      if (restart.status === 409) expect(restart.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "approved" } });
+      await db.query("UPDATE approval_intents SET closed_at = clock_timestamp(), close_reason = 'cancelled' WHERE id = $1", [approvalId]);
+    }
+  });
+
+  it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {
+    expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+    await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    const approvals = [await pendingApproval(), await pendingApproval(), await pendingApproval()];
+    // One below the cap: 19 challenges already issued in the window.
+    for (let i = 0; i < APPROVALS.challengesPerPerson - 1; i++) {
+      await db.query(
+        `INSERT INTO approval_intent_challenges (id, intent_id, identity_id, auth_session_id, challenge, created_at, expires_at)
+         VALUES ($1, $2, $3, 'session-x', $4, clock_timestamp(), clock_timestamp() + interval '1 minute')`,
+        [`apc_fill${i}`, approvals[0], adminId, `fill-${i}`],
+      );
+    }
+    const sessions = await Promise.all(["s1", "s2", "s3"].map((s) => browser(s)));
+    const answers = await Promise.all(
+      approvals.map((id, i) => call("POST", `/v1/me/approvals/${id}/options`, sessions[i]!)),
+    );
+    expect(answers.filter((a) => a.status === 200)).toHaveLength(1);
+    expect(answers.filter((a) => a.body.error?.code === "RATE_LIMITED")).toHaveLength(2);
+    expect((await db.query("SELECT count(*)::int AS n FROM approval_intent_challenges")).rows).toEqual([{ n: APPROVALS.challengesPerPerson }]);
   });
 
   it("holds the open-approvals cap per credential when requests arrive together", async () => {
