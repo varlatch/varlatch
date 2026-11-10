@@ -372,11 +372,12 @@ export async function addGroupMember(
     if (!kind || (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId)))) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
     }
-    await db.query(
-      "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+    const added = await db.query(
+      "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING group_id",
       [groupId, identityId],
     );
-    await reportAdminStepUp(db, organizationId, actorIdentityId, group.kind === "team" ? "team.member_add" : "group.member_add");
+    // Report mode counts only a membership this added; repeating one changes nothing.
+    if (added.rows[0]) await reportAdminStepUp(db, organizationId, actorIdentityId, group.kind === "team" ? "team.member_add" : "group.member_add");
     await recordAuditEvent(db, {
       eventType: group.kind === "team" ? "team.member_added" : "group.member_added",
       decision: "info",
@@ -440,11 +441,12 @@ export async function addTeamProject(
     // A live Project of this Organization, locked so its deletion, which
     // removes Teams' links, cannot miss this one (ADR-0051).
     await lockLiveScope(db, { organizationId, projectId });
-    await db.query(
-      "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+    const added = await db.query(
+      "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING team_id",
       [teamId, projectId],
     );
-    await reportAdminStepUp(db, organizationId, actorIdentityId, "team.project_add");
+    // Report mode counts only a link this added; repeating one changes nothing.
+    if (added.rows[0]) await reportAdminStepUp(db, organizationId, actorIdentityId, "team.project_add");
     await recordAuditEvent(db, {
       eventType: "team.project_added",
       decision: "info",

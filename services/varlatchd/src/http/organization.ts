@@ -3,7 +3,7 @@ import type { Context } from "hono";
 import type { Action } from "../authz/evaluate.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { getOrganization, type OrgRow } from "../domain/orgs.js";
-import { countWouldBlockAfter, passkeyVerificationReports, type PendingAccessReport } from "../domain/securityreport.js";
+import { passkeyVerificationReports, queueAccessCount, type PendingAccessReport } from "../domain/securityreport.js";
 import { AUTHORIZED_ACTION, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
 
 /**
@@ -55,8 +55,8 @@ export function entryRequester(principal: Principal) {
  * retrieval). Nothing is refused and nothing is written here: this runs
  * before authorization, so counting here would count outsiders and
  * refused requests. The note is counted at the request's outcome
- * (countEntryReport), only when the request succeeded, in a short
- * transaction of its own after any retrieval snapshot ended.
+ * (queueEntryReport), only when the request succeeded, after the response,
+ * in a short transaction of its own after any retrieval snapshot ended.
  *
  * Enforcement (a later step) will refuse here, and must not tell an
  * outsider that the Organization exists before any distinct refusal.
@@ -68,15 +68,16 @@ export async function organizationEntryChecks(ctx: AppCtx, c: Context, principal
 }
 
 /**
- * At the request's outcome: count the entry check's note when the request
- * succeeded (a status below 400: it was authorized, and a write in it
- * committed), as the first action it was authorized for. The count's own
- * transaction counts only a live member of a live Organization. Never
- * fails the request.
+ * At the request's outcome: queue the entry check's note for counting when
+ * the request succeeded (a status below 400: it was authorized, and a write
+ * in it committed), as the first action it was authorized for. The count
+ * runs after the response, best-effort, with bounded waits; its own
+ * transaction counts only a live member of a live Organization. Nothing
+ * here waits for it, and it never fails or slows the request.
  */
-export async function countEntryReport(ctx: AppCtx, c: Context): Promise<void> {
+export function queueEntryReport(ctx: AppCtx, c: Context): void {
   const pending = c.get(ENTRY_REPORT) as PendingAccessReport | undefined;
   if (!pending || c.res.status >= 400) return;
   const action = c.get(AUTHORIZED_ACTION) as Action | undefined;
-  await countWouldBlockAfter(ctx, pending, action ?? "organization.access");
+  queueAccessCount(ctx, pending, action ?? "organization.access");
 }

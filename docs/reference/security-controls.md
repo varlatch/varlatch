@@ -67,11 +67,17 @@ counted:
 
 - **A change** (a write) is counted in the same database transaction as
   the change, so it is counted only if the change was saved. A request that
-  was refused, failed, or changed nothing (for example an edit to the same
-  values) is not counted.
+  was refused, failed, or changed nothing is not counted: an edit to the
+  same values, adding a member or project that is already there,
+  reactivating a machine identity that is not retired, or replacing a
+  grant with an identical one.
 - **An access** (`passkey-verification`) is counted only when the request
   was allowed and succeeded. Someone outside the organization, or a
-  request that was refused, is never counted.
+  request that was refused, is never counted. Access counts are
+  best-effort: they are made after the response is sent, so they never
+  slow or fail a request, and a count that cannot be made within about a
+  second (a busy database, or too many counts waiting in one server
+  process) is dropped. Counts of changes are never dropped.
 
 Per control:
 

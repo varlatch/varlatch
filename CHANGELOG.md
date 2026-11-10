@@ -122,8 +122,10 @@ fixes.
   organization in the dashboard's realtime token, and
   `credential-lifetime` each machine credential issued without a lifetime
   (would get the default) or with one above the maximum (would be
-  refused). A change is counted only when it was saved, an access only
-  when it was allowed and succeeded. Counts are kept per control version,
+  refused). A change is counted only when it was saved and changed
+  something, an access only when it was allowed and succeeded. Access
+  counts are best-effort: made after the response, never slowing a
+  request, and dropped when they cannot be made within about a second. Counts are kept per control version,
   operation, person or machine, reason and hour, with fixed fields only:
   never a request body, URL, token, hash or value. About 10 minutes after
   each hour, one `security_control.would_block` audit event per counter

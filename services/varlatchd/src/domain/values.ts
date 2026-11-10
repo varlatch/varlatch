@@ -24,7 +24,7 @@ import {
 import type { ProjectRow } from "./projects.js";
 import type { CallerView } from "./manifest.js";
 import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
-import { countWouldBlock, type WouldBlock } from "./securityreport.js";
+import { countWouldBlockInLiveOrganization, type WouldBlock } from "./securityreport.js";
 
 interface ValueRow {
   id: string;
@@ -964,7 +964,8 @@ export async function discloseSecrets(
     ],
     selected.flatMap((i) => (i.retiringVersionId ? [i.versionId, i.retiringVersionId] : [i.versionId])),
     opts.report && opts.report.attempts.length > 0
-      ? (db) => countWouldBlock(db, org.id, opts.report!.attempts, { at: opts.report!.at })
+      // Only while the Organization is live: its deletion may have run since the snapshot.
+      ? async (db) => { await countWouldBlockInLiveOrganization(db, org.id, opts.report!.attempts, { at: opts.report!.at }); }
       : undefined,
   );
 

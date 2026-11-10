@@ -8,7 +8,12 @@ import { withSerializableTx, withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
-import { countWouldBlock, emitDueSummaries, type WouldBlock } from "../src/domain/securityreport.js";
+import { ACCESS_COUNTS, accessCountsSettled, countWouldBlock, emitDueSummaries, type WouldBlock } from "../src/domain/securityreport.js";
+import { getEnvironment } from "../src/domain/environments.js";
+import { getOrganization } from "../src/domain/orgs.js";
+import { getProject } from "../src/domain/projects.js";
+import { captureState, inSnapshot } from "../src/domain/retrieval.js";
+import { discloseSecrets } from "../src/domain/values.js";
 import { buildApp } from "../src/http/app.js";
 
 /**
@@ -40,6 +45,7 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     const text = await res.text();
+    await accessCountsSettled();
     return { status: res.status, body: text ? JSON.parse(text) : null };
   };
 
@@ -215,6 +221,120 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
     expect(removals.filter((r) => r.status === 200)).toHaveLength(1);
     expect(removals.every((r) => r.status === 200 || r.status >= 400)).toBe(true);
     expect((await rows()).map((r) => [r.operation, r.count])).toEqual([["member.remove", 1]]);
+  });
+
+  describe("access counts are off the response path", () => {
+    const passkeyRows = async () =>
+      (await db.query("SELECT operation, count::int AS count FROM security_control_counters WHERE control = 'passkey-verification'")).rows as {
+        operation: string; count: number;
+      }[];
+    beforeEach(async () => {
+      expect((await call("PATCH", "/v1/organizations/acme/security/controls/passkey-verification", cli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+      await accessCountsSettled();
+    });
+
+    /** Hold `lock` in a transaction of its own until released. */
+    const holding = async (lock: (tx: Awaited<ReturnType<typeof db.connect>>) => Promise<unknown>) => {
+      const tx = await db.connect();
+      await tx.query("BEGIN");
+      await lock(tx);
+      return async () => {
+        await tx.query("COMMIT");
+        tx.release();
+      };
+    };
+    /** A successful request whose access the control counts, and how long its response took. */
+    const timedRead = async () => {
+      const started = Date.now();
+      const res = await app.request("/v1/organizations/acme", { headers: { Authorization: `Bearer ${cli}` } });
+      await res.text();
+      return { status: res.status, ms: Date.now() - started };
+    };
+
+    it("answers at once while the Organization row is locked, and drops the count after a bounded wait", { timeout: 30_000 }, async () => {
+      const release = await holding((tx) => tx.query("SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE", [orgId]));
+      try {
+        const read = await timedRead();
+        expect(read.status).toBe(200);
+        // Not waiting for the count, whose lock wait alone is lockTimeoutMs.
+        expect(read.ms).toBeLessThan(ACCESS_COUNTS.lockTimeoutMs);
+        const settling = Date.now();
+        await accessCountsSettled();
+        // The count gave up after its lock timeout, with the row still held.
+        expect(Date.now() - settling).toBeLessThan(ACCESS_COUNTS.statementTimeoutMs + 2_000);
+        expect(await passkeyRows()).toEqual([]);
+      } finally {
+        await release();
+      }
+      // Without contention it counts.
+      expect((await timedRead()).status).toBe(200);
+      await accessCountsSettled();
+      expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
+    });
+
+    it("answers at once while its counter row is locked, and drops the count after a bounded wait", { timeout: 30_000 }, async () => {
+      // Another transaction counting the same bucket, not committed yet.
+      const release = await holding((tx) => countWouldBlock(tx, orgId, [{
+        control: "passkey-verification", configVersion: 1, operation: "organization.read", actorIdentityId: adminId, reason: "no-evidence",
+      }]));
+      try {
+        const read = await timedRead();
+        expect(read.status).toBe(200);
+        expect(read.ms).toBeLessThan(ACCESS_COUNTS.lockTimeoutMs);
+        await accessCountsSettled();
+      } finally {
+        await release();
+      }
+      // Only the other transaction's count: this one was dropped.
+      expect(await passkeyRows()).toEqual([{ operation: "organization.read", count: 1 }]);
+    });
+  });
+
+  it("an export whose Organization is deleted after its snapshot discloses, and counts nothing", { timeout: 30_000 }, async () => {
+    const P = "/v1/organizations/acme/projects/api";
+    expect((await call("POST", "/v1/organizations/acme/projects", cli, { name: "API", slug: "api", contractAuthority: "managed" })).status).toBe(201);
+    expect((await call("POST", `${P}/environments`, cli, { name: "production", tier: "production" })).status).toBe(201);
+    const revision = (await call("POST", `${P}/contract/revisions`, cli, {
+      contract: { schemaVersion: 1, items: [{ name: "DB_PASS", required: { kind: "never" }, sensitive: true, type: "string" }] },
+    })).body;
+    await call("POST", `${P}/contract/revisions/${revision.id}/activate`, cli, {});
+    expect((await call("PUT", `${P}/environments/production/values/DB_PASS`, cli, { value: "hunter2-hunter2" })).status).toBe(200);
+    expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+    const exportOnce = async () => {
+      // The export's snapshot, and what it decided there.
+      const { state, at } = await inSnapshot(ctx, async (sctx, now) => {
+        const org = await getOrganization(sctx, "acme");
+        const project = await getProject(sctx, org.id, "api");
+        const env = await getEnvironment(sctx, project.id, "production");
+        return { state: await captureState(sctx, { org, project, env }, now, () => true), at: now };
+      });
+      return () => discloseSecrets(ctx, state, { scope: "all-authorized-secrets", purpose: "export" }, {
+        actorIdentityId: adminId,
+        report: { attempts: [attempt("secret.export")], at },
+      });
+    };
+    // Live: counted with the disclosure.
+    expect((await (await exportOnce())()).items.map((i) => i.value)).toEqual(["hunter2-hunter2"]);
+    expect((await rows()).map((r) => [r.operation, r.count])).toEqual([["secret.export", 1]]);
+
+    // Deleted after the snapshot: the deletion holds the Organization row,
+    // removes its counters and commits while the export waits for the row.
+    const disclose = await exportOnce();
+    const deletion = await db.connect();
+    await deletion.query("BEGIN");
+    await deletion.query("SELECT 1 FROM organizations WHERE id = $1 FOR UPDATE", [orgId]);
+    let done = false;
+    const exported = disclose().then((r) => { done = true; return r; });
+    await sleep(300);
+    expect(done).toBe(false);
+    await deletion.query("DELETE FROM security_control_counters WHERE organization_id = $1", [orgId]);
+    await deletion.query("UPDATE organizations SET deleted_at = now(), wrapped_org_kek = NULL, org_kek_destroyed_at = now() WHERE id = $1", [orgId]);
+    await deletion.query("COMMIT");
+    deletion.release();
+    // The authorized disclosure completes; nothing is counted after the deletion.
+    expect((await exported).items.map((i) => i.value)).toEqual(["hunter2-hunter2"]);
+    expect(await rows()).toEqual([]);
+    expect(await emitDueSummaries(ctx)).toBe(0);
   });
 
   it("mutations and workers running together lose and double nothing, and never deadlock", async () => {

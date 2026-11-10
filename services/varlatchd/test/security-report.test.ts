@@ -5,7 +5,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import { withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
-import { countWouldBlock, deleteExpiredCounters, emitDueSummaries, runSecurityReportWorker } from "../src/domain/securityreport.js";
+import { accessCountsSettled, countWouldBlock, deleteExpiredCounters, emitDueSummaries, runSecurityReportWorker } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { RP } from "./helpers/device-sign-in.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
@@ -48,6 +48,9 @@ async function call(method: string, path: string, token: string, body?: unknown)
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const text = await res.text();
+  // Access counts run after the response; wait for them, so the next step
+  // finds them done (and never shares PGlite's one connection with them).
+  await accessCountsSettled();
   return { status: res.status, body: text ? JSON.parse(text) : null };
 }
 
@@ -343,6 +346,35 @@ describe("admin-step-up in report mode", () => {
     expect(byActor.map((r) => r.actor_identity_id)).toEqual([bot.id]);
   });
 
+  it("counts only what an operation changed: repeated additions, reactivating a live identity and identical replacements change nothing", async () => {
+    const svc = await ok("POST", `${ORG}/identities`, admin, { name: "svc", kind: "service" });
+    const group = await ok("POST", `${ORG}/groups`, admin, { name: "ops" });
+    const team = await ok("POST", `${ORG}/teams`, admin, { name: "platform" });
+    const grant = await ok("POST", `${ORG}/grants`, admin, { subjectIdentityId: svc.id, scope: { kind: "organization" }, actions: ["project.read"] });
+    await setMode("admin-step-up", "report");
+    for (let i = 0; i < 2; i++) {
+      // The same HTTP answer both times, as before.
+      expect((await call("POST", `${ORG}/groups/${group.id}/members`, admin, { identityId: svc.id })).status).toBe(204);
+      expect((await call("POST", `${ORG}/teams/${team.id}/members`, admin, { identityId: svc.id })).status).toBe(204);
+      expect((await call("POST", `${ORG}/teams/${team.id}/projects`, admin, { projectId })).status).toBe(204);
+    }
+    // Still enabled: reactivating changes nothing.
+    await ok("POST", `${ORG}/identities/${svc.id}/reactivate`, admin, {});
+    // Replaced with the same declaration: a new Grant, the same access.
+    const same = await ok("POST", `${ORG}/grants/${grant.id}/replace`, admin, {
+      subjectIdentityId: svc.id, scope: { kind: "organization" }, actions: ["project.read"],
+    });
+    await ok("POST", `${ORG}/grants/${same.grant.id}/replace`, admin, {
+      subjectIdentityId: svc.id, scope: { kind: "organization" }, actions: ["environment.read"],
+    });
+    expect(await counted("admin-step-up")).toEqual({
+      "group.member_add/no-approval": 1,
+      "team.member_add/no-approval": 1,
+      "team.project_add/no-approval": 1,
+      "grant.replace/no-approval": 1,
+    });
+  });
+
   it("counts under the control's version at decision time", async () => {
     await setMode("admin-step-up", "report");
     await ok("POST", `${ORG}/groups`, admin, { name: "one" });
@@ -564,6 +596,18 @@ describe("closing buckets", () => {
     expect((await counters()).map((r) => r.operation)).toEqual(["role.create"]);
     // The summaries stay in the audit log.
     expect(await wouldBlockEvents()).toHaveLength(2);
+  });
+
+  it("never summarizes a deleted Organization's counters, and deletes them", async () => {
+    const beta = (await ok("POST", "/v1/organizations", admin, { name: "Beta", slug: "beta" })).id as string;
+    await withTx(ctx.db, (db) => countWouldBlock(db, beta, [attempt()], { at: twoHoursAgo() }));
+    await withTx(ctx.db, (db) => countWouldBlock(db, orgId, [attempt()], { at: twoHoursAgo() }));
+    // A row that survived its Organization's deletion (deletion removes them).
+    await ctx.db.query("UPDATE organizations SET deleted_at = now(), wrapped_org_kek = NULL, org_kek_destroyed_at = now() WHERE id = $1", [beta]);
+    expect(await emitDueSummaries(ctx)).toBe(1);
+    expect((await wouldBlockEvents()).map((e) => e.org)).toEqual([orgId]);
+    expect(await deleteExpiredCounters(ctx)).toBe(1);
+    expect((await rows("SELECT DISTINCT organization_id FROM security_control_counters")).map((r) => r.organization_id)).toEqual([orgId]);
   });
 
   it("goes with its Organization when the Organization is deleted", async () => {

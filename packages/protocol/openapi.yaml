@@ -1310,8 +1310,10 @@ paths:
         live counts, the counts not yet summarized in the audit log, and
         entries per configuration version, operation, reason and actor,
         with their counts and first and last times. Counting refuses and
-        changes nothing. A write is counted only when it committed, an
-        access only when it was authorized and succeeded. Summaries are
+        changes nothing. A write is counted only when it committed and
+        changed something, an access only when it was authorized and
+        succeeded; access counts are best-effort, made after the response
+        and dropped when they cannot be made quickly. Summaries are
         written to the audit log as security_control.would_block once an
         hour has been over for 10 minutes; counts are kept 35 days after
         their summary. Fixed fields only: never a request body, URL, token,

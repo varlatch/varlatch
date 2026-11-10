@@ -177,10 +177,10 @@ import {
   routeParam,
   type Principal,
 } from "./support.js";
-import { countEntryReport, entryRequester, resolveOrganization } from "./organization.js";
+import { entryRequester, queueEntryReport, resolveOrganization } from "./organization.js";
 import {
-  countWouldBlockAfter,
   passkeyVerificationReports,
+  queueAccessCount,
   reportAdminStepUp,
   reportingControls,
   reportProtectedWrite,
@@ -758,10 +758,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       () => next(),
     );
     // A passkey-verification report noted where the request entered an
-    // Organization is counted at its outcome: only when it succeeded, in a
-    // short transaction of its own, after any retrieval snapshot ended
-    // (ADR-0054 Decision 9).
-    await countEntryReport(ctx, c);
+    // Organization is counted at its outcome: only when it succeeded, after
+    // the response, best-effort (ADR-0054 Decision 9). Not awaited.
+    queueEntryReport(ctx, c);
     if (expiring) c.res.headers.set(CREDENTIAL_EXPIRES_HEADER, expiring);
   });
 
@@ -804,8 +803,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   //
   // Each Organization id in the token is Organization-scoped access for
   // passkey-verification (ADR-0054 Decision 7): evaluated per Organization
-  // before minting, and in report mode counted per Organization after it,
-  // each in a short transaction of its own. Machine credentials are exempt.
+  // before minting, and in report mode counted per Organization after the
+  // response, each in a short transaction of its own. Machine credentials
+  // are exempt.
   app.post("/v1/tokens/convex", async (c) => {
     const principal = c.get("principal");
     const orgs = await listOrganizationsFor(ctx, principal.identity.id);
@@ -823,7 +823,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       orgIds,
       installationAdmin: principal.identity.installation_admin,
     });
-    for (const report of reports) await countWouldBlockAfter(ctx, report, "convex.token");
+    // After the response, best-effort, like every access count.
+    for (const report of reports) queueAccessCount(ctx, report, "convex.token");
     return c.json(minted);
   });
 
@@ -3088,10 +3089,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
         const existing = await db.query(
-          "SELECT id, revoked_at FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE",
-          [grantId, org.id],
+          `SELECT id, revoked_at,
+                  (subject_identity_id IS NOT DISTINCT FROM $3 AND subject_group_id IS NOT DISTINCT FROM $4
+                   AND scope = $5::jsonb AND actions IS NOT DISTINCT FROM $6::text[] AND role_id IS NOT DISTINCT FROM $7) AS same
+           FROM grants WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+          [grantId, org.id, body.subjectIdentityId ?? null, body.subjectGroupId ?? null, JSON.stringify(body.scope), body.actions ?? null,
+            body.roleId ?? null],
         );
-        const row = existing.rows[0] as { id: string; revoked_at: string | null } | undefined;
+        const row = existing.rows[0] as { id: string; revoked_at: string | null; same: boolean } | undefined;
         if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
         if (row.revoked_at) {
           throw new DomainError("VERSION_CONFLICT", "Grant is already revoked or replaced");
@@ -3111,7 +3116,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             principal.identity.id,
           ],
         );
-        await reportAdminStepUp(db, org.id, principal.identity.id, "grant.replace");
+        // Report mode counts a replacement that changes the declaration; one
+        // with identical content still replaces the Grant, but changes no access.
+        if (!row.same) await reportAdminStepUp(db, org.id, principal.identity.id, "grant.replace");
         await recordAuditEvent(db, {
           eventType: "grant.revoked",
           decision: "info",

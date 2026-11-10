@@ -33,7 +33,10 @@ import { SECURITY_CONTROLS, type ControlMode, type LifetimeConfig, type Security
  *   is one, and counted afterwards with countWouldBlockAfter in a separate
  *   short transaction, only when the request succeeded and its person is
  *   still a member: never inside the read-only snapshot, and never for a
- *   refused or failed request.
+ *   refused or failed request. These access counts are best-effort: they
+ *   run after the response, from a bounded in-process queue, with bounded
+ *   waits, and a count that cannot be made quickly is dropped
+ *   (queueAccessCount).
  *
  * Only fixed fields are stored: the identifiers of the Organization and
  * the actor, the control, its version, the operation and the reason from
@@ -243,6 +246,26 @@ export async function countWouldBlock(
 }
 
 /**
+ * countWouldBlock for a transaction that has not taken the Organization row
+ * (a disclosure's audit transaction, after its snapshot): it takes the row
+ * FOR KEY SHARE first (lock step 1, before the counters) and counts only
+ * while the Organization is live, so a count can never land after the
+ * Organization's deletion removed its counters. Returns whether it counted.
+ */
+export async function countWouldBlockInLiveOrganization(
+  db: Querier,
+  organizationId: string,
+  attempts: readonly WouldBlock[],
+  opts: { at?: Date | undefined } = {},
+): Promise<boolean> {
+  if (attempts.length === 0) return false;
+  const live = await db.query("SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [organizationId]);
+  if (!live.rows[0]) return false;
+  await countWouldBlock(db, organizationId, attempts, opts);
+  return true;
+}
+
+/**
  * A protected write's checks, evaluated against the controls in report
  * mode in the write's own transaction and counted there. Call it after
  * the operation's own rows and before its indexes and first audit insert.
@@ -351,12 +374,33 @@ export async function passkeyVerificationReports(
 }
 
 /**
+ * Access counts are best-effort (passkey-verification). They are counted
+ * after the response, off the request's path, so a busy Organization row
+ * or counter can never slow or fail an allowed request: a count that
+ * cannot be made quickly is dropped, never retried and never waited for.
+ */
+export const ACCESS_COUNTS = {
+  /** Counts running at once in this process; each holds one connection. */
+  concurrency: 2,
+  /** Counts waiting to run; beyond this a new one is dropped. */
+  maxQueued: 500,
+  /** Waiting for a pooled connection. */
+  acquireTimeoutMs: 1_000,
+  /** SET LOCAL lock_timeout in the count's transaction. */
+  lockTimeoutMs: 1_000,
+  /** SET LOCAL statement_timeout in the count's transaction. */
+  statementTimeoutMs: 2_000,
+} as const;
+
+/**
  * Count a retrieval-time attempt after the decision, in a short
  * transaction of its own, never inside a retrieval's snapshot: only while
  * the Organization is live (its row FOR KEY SHARE, lock step 1, before the
  * counter) and the person still holds a live membership, so neither an
- * outsider nor a removed member is ever counted. Failing to count never
- * fails the request.
+ * outsider nor a removed member is ever counted. Every wait is bounded
+ * (ACCESS_COUNTS): a connection not available in time, or a lock or
+ * statement timeout, drops the count. It never throws. Requests use
+ * queueAccessCount, which calls this after the response.
  */
 export async function countWouldBlockAfter(
   ctx: AppCtx,
@@ -364,7 +408,9 @@ export async function countWouldBlockAfter(
   operation: PasskeyVerificationOperation,
 ): Promise<boolean> {
   try {
-    return await withTx(ctx.db, async (db) => {
+    return await withBoundedTx(ctx.db, async (db) => {
+      await db.query(`SET LOCAL lock_timeout = '${ACCESS_COUNTS.lockTimeoutMs}ms'`);
+      await db.query(`SET LOCAL statement_timeout = '${ACCESS_COUNTS.statementTimeoutMs}ms'`);
       const live = await db.query("SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [report.organizationId]);
       if (!live.rows[0]) return false;
       const member = await db.query(
@@ -382,9 +428,85 @@ export async function countWouldBlockAfter(
       return true;
     });
   } catch (err) {
-    console.error("security report: a passkey-verification count failed:", err);
+    console.error(`security report: a passkey-verification count was dropped (${(err as { code?: string; message?: string }).code ?? (err as Error).message})`);
     return false;
   }
+}
+
+/**
+ * withTx on a connection taken from the pool within
+ * ACCESS_COUNTS.acquireTimeoutMs; one that arrives later is released
+ * unused. A single-connection Querier (PGlite in tests) runs it directly.
+ */
+async function withBoundedTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): Promise<T> {
+  const pool = db as Querier & { connect?: () => Promise<Querier & { release: (destroy?: boolean) => void }> };
+  if (typeof pool.connect !== "function") return withTx(db, fn);
+  const acquiring = pool.connect();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ACCESS_COUNTS.acquireTimeoutMs); });
+  const client = await Promise.race([acquiring, timedOut]);
+  clearTimeout(timer);
+  if (!client) {
+    acquiring.then((late) => late.release(), () => undefined);
+    throw Object.assign(new Error("no database connection in time"), { code: "ACQUIRE_TIMEOUT" });
+  }
+  let broken = false;
+  try {
+    return await withTx(client, fn);
+  } catch (err) {
+    broken = (err as { code?: string }).code === undefined;
+    throw err;
+  } finally {
+    client.release(broken);
+  }
+}
+
+/** The in-process queue of access counts: bounded in parallelism and length. */
+const accessQueue = {
+  running: 0,
+  waiting: [] as (() => Promise<unknown>)[],
+  dropped: 0,
+  idle: [] as (() => void)[],
+};
+
+function pumpAccessQueue(): void {
+  while (accessQueue.running < ACCESS_COUNTS.concurrency && accessQueue.waiting.length > 0) {
+    const job = accessQueue.waiting.shift()!;
+    accessQueue.running++;
+    void job().finally(() => {
+      accessQueue.running--;
+      pumpAccessQueue();
+    });
+  }
+  if (accessQueue.running === 0 && accessQueue.waiting.length === 0) {
+    for (const resolve of accessQueue.idle.splice(0)) resolve();
+  }
+}
+
+/**
+ * Count an access after the response: queued, run later with bounded
+ * waits, its errors logged and swallowed. When the queue is full the count
+ * is dropped. Returns at once; nothing the request does waits for it.
+ */
+export function queueAccessCount(ctx: AppCtx, report: PendingAccessReport, operation: PasskeyVerificationOperation): void {
+  if (accessQueue.waiting.length >= ACCESS_COUNTS.maxQueued) {
+    if (accessQueue.dropped++ % 1000 === 0) {
+      console.error(`security report: the access count queue is full; ${accessQueue.dropped} count(s) dropped so far`);
+    }
+    return;
+  }
+  accessQueue.waiting.push(() => countWouldBlockAfter(ctx, report, operation));
+  // After the current request has finished its own work.
+  setImmediate(pumpAccessQueue);
+}
+
+/** Resolves once every queued access count has run (tests, and an orderly shutdown). */
+export function accessCountsSettled(): Promise<void> {
+  if (accessQueue.running === 0 && accessQueue.waiting.length === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    accessQueue.idle.push(resolve);
+    setImmediate(pumpAccessQueue);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -439,8 +561,10 @@ export async function emitDueSummaries(
     }
     const claimed = (await db.query(
       `SELECT organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen
-       FROM security_control_counters
+       FROM security_control_counters c
        WHERE emitted_at IS NULL AND bucket_hour <= clock_timestamp() - make_interval(hours => 1, mins => $1)
+         -- Never a summary for a deleted Organization (retention deletes its rows).
+         AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = c.organization_id AND o.deleted_at IS NULL)
        ORDER BY organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour
        LIMIT $2
        FOR UPDATE SKIP LOCKED`,
@@ -484,15 +608,18 @@ export async function emitDueSummaries(
   });
 }
 
-/** Retention: delete counter rows 35 days after their summary, a batch at a time. */
+/** Retention: delete counter rows 35 days after their summary, and any of a deleted Organization, a batch at a time. */
 export async function deleteExpiredCounters(ctx: AppCtx, batch = 1000): Promise<number> {
   return withTx(ctx.db, async (db) => {
     const res = await db.query(
       `DELETE FROM security_control_counters c
        USING (
          SELECT organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour
-         FROM security_control_counters
-         WHERE emitted_at IS NOT NULL AND emitted_at <= clock_timestamp() - make_interval(days => $1)
+         FROM security_control_counters k
+         WHERE (emitted_at IS NOT NULL AND emitted_at <= clock_timestamp() - make_interval(days => $1))
+            -- Defensively, any row of an Organization that is deleted or gone:
+            -- deletion removes them, and nothing may count after it.
+            OR NOT EXISTS (SELECT 1 FROM organizations o WHERE o.id = k.organization_id AND o.deleted_at IS NULL)
          ORDER BY organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour
          LIMIT $2
          FOR UPDATE SKIP LOCKED

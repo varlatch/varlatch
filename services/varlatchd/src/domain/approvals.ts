@@ -126,8 +126,10 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *     (all), 5, then 8.
  *   A protected operation counting in report mode: 1 KEY SHARE
  *     (lockLiveScope), its own domain rows, then 8 (counters, indexes,
- *     audit). A passkey-verification count after a request: 1 KEY SHARE,
- *     then 8 (counters only).
+ *     audit). An export's count, in the disclosure's audit transaction
+ *     after its snapshot: 1 KEY SHARE (skipped when the Organization was
+ *     deleted), then 8. A passkey-verification count after a request: 1
+ *     KEY SHARE, then 8 (counters only), with lock and statement timeouts.
  *   The report summary worker: its advisory lock (only it takes it), then
  *     8 (counter rows SKIP LOCKED in key order, then audit).
  *   Organization deletion's finalization deletes the Organization's

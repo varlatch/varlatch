@@ -246,12 +246,14 @@ export async function reactivateIdentity(
     await lockLiveScope(db, { organizationId });
     // An identity suspended by a deletion request comes back only through
     // that request's cancellation (ADR-0051 Decision 5).
-    const suspended = await db.query("SELECT suspended_by_deletion FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
-    if ((suspended.rows[0] as { suspended_by_deletion: string | null } | undefined)?.suspended_by_deletion) {
+    const suspended = await db.query("SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
+    const before = suspended.rows[0] as { suspended_by_deletion: string | null; disabled: boolean } | undefined;
+    if (before?.suspended_by_deletion) {
       throw new DomainError("ORGANIZATION_DELETING", "This identity was suspended by the Organization's deletion; cancelling the deletion restores it");
     }
     await db.query("UPDATE identities SET disabled = false WHERE id = $1", [identityId]);
-    await reportAdminStepUp(db, organizationId, actorIdentityId, "identity.reactivate");
+    // Report mode counts only a reactivation of a disabled identity; an enabled one stays as it was.
+    if (before?.disabled) await reportAdminStepUp(db, organizationId, actorIdentityId, "identity.reactivate");
     await recordAuditEvent(db, {
       eventType: "identity.reactivated",
       decision: "info",
