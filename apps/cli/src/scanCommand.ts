@@ -17,6 +17,7 @@ import {
   parseSize,
   scanExitCode,
   scanNotices,
+  terminalJson,
   type BaselineEntry,
   type ScanLimits,
   type ScanSecret,
@@ -220,7 +221,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
 
   for (const notice of scanNotices(report)) io.err(notice);
   if (opts.json) {
-    io.out(JSON.stringify(jsonReport(report, ctx, listing.mode), null, 2));
+    io.out(terminalJson(jsonReport(report, ctx, listing.mode)));
   } else if (files.length === 0 && unlisted.length === 0) {
     io.out(listing.mode === "staged" ? "varlatch scan: nothing is staged." : "varlatch scan: no files to scan.");
   } else {
@@ -238,7 +239,7 @@ async function runFindFiles(opts: ScanOptions, io: ScanIo): Promise<number> {
     if (err instanceof FindFilesError) throw new ScanSourceError(err.message);
     throw err;
   }
-  if (opts.json) io.out(JSON.stringify(findFilesJson(report), null, 2));
+  if (opts.json) io.out(terminalJson(findFilesJson(report)));
   else for (const line of formatFindFilesHuman(report)) io.out(line);
   return findFilesExitCode(report);
 }

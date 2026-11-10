@@ -499,10 +499,27 @@ export function scanExitCode(report: ScanReport): number {
   return report.notScanned.length > 0 ? 2 : 0;
 }
 
-/** A path as shown on a terminal: control characters escaped, never interpreted. */
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const DEL_AND_C1 = /[\u007f-\u009f]/g;
+
+/** `\u007f`: the escape for DEL or a C1 control, which JSON.stringify leaves as is. */
+function escapeControl(c: string): string {
+  return `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`;
+}
+
+/**
+ * A path (or any text) as shown on a terminal: when it holds a control
+ * character (C0, DEL, or C1 such as U+009B), it is shown quoted with every
+ * one of them escaped, never interpreted.
+ */
 export function displayPath(path: string): string {
-  // eslint-disable-next-line no-control-regex
-  return /[\u0000-\u001f\u007f-\u009f]/.test(path) ? JSON.stringify(path) : path;
+  return CONTROL.test(path) ? JSON.stringify(path).replace(DEL_AND_C1, escapeControl) : path;
+}
+
+/** JSON for a terminal: as JSON.stringify, with DEL and C1 controls escaped too (still the same JSON). */
+export function terminalJson(value: unknown): string {
+  return JSON.stringify(value, null, 2).replace(DEL_AND_C1, escapeControl);
 }
 
 const FORM_TEXT: Record<FormName, string> = {
