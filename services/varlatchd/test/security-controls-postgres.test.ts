@@ -5,8 +5,9 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { completePublicUrlChange, consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
-import { lockPerson } from "../src/domain/personlocks.js";
+import { completePublicUrlChange, consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant, issueReenrollmentGrants } from "../src/domain/bootstrap.js";
+import { approveDeviceSignIn, findSignInByCode, issueApprovalChallenge, requestDeviceSignIn } from "../src/domain/device-sign-in.js";
+import { lockPeople, lockPerson } from "../src/domain/personlocks.js";
 import { APPROVALS, consumeApproval, createApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
 import { changeControl, controlMode, resetControls } from "../src/domain/securitycontrols.js";
@@ -417,6 +418,60 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     // The change waited for the person, then removed both passkeys; never a deadlock (40P01).
     expect(await change).toMatchObject({ passkeysRemoved: 2 });
     expect((await db.query("SELECT count(*)::int AS n FROM passkey")).rows).toEqual([{ n: 0 }]);
+  });
+
+  /** Run `during` while another connection holds what `hold` locked, then let `finish` take more and commit. */
+  async function whileHeld(hold: (q: typeof db) => Promise<void>, during: () => Promise<unknown>, finish: (q: typeof db) => Promise<void>) {
+    const held = await db.connect();
+    let outcome: Promise<unknown> = Promise.resolve();
+    try {
+      await held.query("BEGIN");
+      await hold(held as unknown as typeof db);
+      outcome = during().then((r) => r, (e) => e);
+      await sleep(300);
+      const second = await finish(held as unknown as typeof db).then(() => "locked", (e) => e);
+      expect(second).toBe("locked");
+      await held.query("COMMIT");
+    } finally {
+      await held.query("ROLLBACK").catch(() => undefined);
+      held.release();
+    }
+    return outcome;
+  }
+
+  it("device sign-in approval takes the person and their passkeys before it advances a counter", async () => {
+    const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    const started = await requestDeviceSignIn(ctx, { peer: "203.0.113.9", userAgent: null, requestId: "req_test" });
+    const found = await findSignInByCode(ctx, { identityId: adminId, peer: "203.0.113.9", userCode: started.userCode, requestId: "req_test" });
+    if (found.kind !== "found") throw new Error("no sign-in");
+    const options = await issueApprovalChallenge(ctx, RP, { signInId: found.signIn.id, identityId: adminId, authSessionId: "session-d" });
+    const assertion = key.assert(options!.challenge);
+    // An approval, a confirmation or the public-URL change: the person FOR UPDATE, then the passkey.
+    const outcome = await whileHeld(
+      (q) => lockPerson(q, adminId, "update"),
+      () => approveDeviceSignIn(ctx, RP, { signInId: found.signIn.id, identityId: adminId, authSessionId: "session-d", assertion, requestId: "req_test" }),
+      async (q) => { await q.query("SELECT id FROM passkey WHERE id = $1 FOR UPDATE", [key.passkeyId]); },
+    );
+    // The approval waited for the person, then went through; never a deadlock (40P01).
+    expect(outcome).toBeUndefined();
+    expect((await db.query("SELECT status FROM device_sign_ins WHERE id = $1", [found.signIn.id])).rows).toEqual([{ status: "approved" }]);
+  });
+
+  it("re-enrollment takes several people in id order, as every transaction locking people does", async () => {
+    // The lowest id is a member; a higher id is an Installation Admin, listed (and once locked) first.
+    await db.query("INSERT INTO identities (id, kind, name, installation_admin) VALUES ('idn_0reenroll', 'human', 'Low', false)");
+    await db.query("INSERT INTO identities (id, kind, name, installation_admin) VALUES ('idn_zreenroll', 'human', 'High', true)");
+    const outcome = await whileHeld(
+      (q) => lockPerson(q, "idn_0reenroll", "update"),
+      () => issueReenrollmentGrants(ctx, { identityIds: "all" }),
+      (q) => lockPeople(q, ["idn_0reenroll", "idn_zreenroll"], "update"),
+    );
+    // Issued for everyone, still listed admins first; never a deadlock (40P01).
+    const grants = outcome as { identityId: string; installationAdmin: boolean }[];
+    expect(Array.isArray(grants), String(outcome)).toBe(true);
+    expect(grants.map((g) => g.identityId).sort()).toEqual([adminId, "idn_0reenroll", "idn_zreenroll"].sort());
+    expect(grants.at(-1)).toMatchObject({ identityId: "idn_0reenroll", installationAdmin: false });
+    expect(grants.slice(0, 2).every((g) => g.installationAdmin)).toBe(true);
   });
 
   it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {

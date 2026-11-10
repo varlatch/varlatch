@@ -301,12 +301,19 @@ export async function issueReenrollmentGrants(
       // at most one link per person stays live. It changes no key, so it
       // does not block the key-share locks of inserts that reference these
       // identities (the exposure backfill takes them in another order).
-      `SELECT id, name, installation_admin, kind, disabled FROM identities
+      // Taken in id order, as every transaction locking several people does
+      // (approvals.ts lock order, step 2); the links are listed admins first.
+      `SELECT id, name, installation_admin, kind, disabled, created_at FROM identities
         WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
-        ORDER BY installation_admin DESC, created_at, id FOR NO KEY UPDATE`,
+        ORDER BY id FOR NO KEY UPDATE`,
       input.identityIds === "all" ? [] : [input.identityIds],
     );
-    const rows = res.rows as { id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean }[];
+    const rows = (res.rows as {
+      id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean; created_at: Date | string;
+    }[]).sort((a, b) =>
+      Number(b.installation_admin) - Number(a.installation_admin) ||
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     if (input.identityIds !== "all") {
       for (const id of input.identityIds) {
         const row = rows.find((r) => r.id === id);

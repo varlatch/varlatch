@@ -10,6 +10,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockPerson, lockPersonPasskeys } from "./personlocks.js";
 
 /**
  * Device-authorization sign-in (ADR-0043 Decision 2, design notes
@@ -378,6 +379,9 @@ export async function issueApprovalChallenge(
   input: { signInId: string; identityId: string; authSessionId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON | null> {
   return withTx(ctx.db, async (db) => {
+    // The person (approvals.ts lock order, step 2) before the challenge's
+    // insert references it.
+    await lockPerson(db, input.identityId, "key share");
     // Any passkey of the person, user verification preferred, as at sign-in:
     // approval records what the authenticator did (ADR-0054 Decision 6).
     const options = await assertionOptions(db, rp, input.identityId, DEVICE_SIGN_IN.challengeSeconds * 1000, {
@@ -457,6 +461,14 @@ export async function approveDeviceSignIn(
 ): Promise<void> {
   const challenge = assertionChallenge(input.assertion);
   const refusal = await withTx(ctx.db, async (db) => {
+    // The lock order of approvals.ts first: the person (2), then all of
+    // their passkeys (3, the assertion advances one's counter), and only
+    // then the sign-in and its challenge, whose approval references the
+    // person. KEY SHARE on the person, as collection's credential insert
+    // takes it while holding the sign-in row; it still waits for an
+    // approval, a confirmation or the public-URL change holding the person.
+    await lockPerson(db, input.identityId, "key share");
+    await lockPersonPasskeys(db, input.identityId);
     // Decided or expired meanwhile (a concurrent denial wins, say): say so,
     // and leave the challenge and the audit log alone. The row lock orders
     // this approval after any decision in flight.
