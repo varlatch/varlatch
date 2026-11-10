@@ -184,6 +184,16 @@ fixes.
   with `varlatch admin reenroll --identity <identity id>`, which sends a
   link that enrolls a new trusted passkey. See [Passkeys that shared a
   credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39).
+- **A passkey's signature counter can no longer go back.** Each use of a
+  passkey that counts its uses must show a higher count than the last,
+  which lets the server notice and refuse a copied authenticator. Two
+  sign-ins with the same passkey at the same moment could both pass, and
+  the second to finish could store the lower count, which weakened that
+  check. Now the one with the lower count fails as a sign-in with a stale
+  count does, without a session, for browser sign-ins, CLI sign-in
+  approvals and passkey confirmations alike. Passkeys that report no count
+  (always 0, as most passkeys synced by Apple or Google do) work as
+  before, also at the same moment. Migration 40 adds the database check.
 
 ### Upgrading
 

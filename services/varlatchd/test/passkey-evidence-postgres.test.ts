@@ -5,6 +5,8 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { buildHumanAuth, type HumanAuth } from "../src/auth/humanauth.js";
+import { verifyAssertion } from "../src/auth/approval-assertion.js";
+import { withTx } from "../src/db/tx.js";
 import { ensureInstallation, issueBootstrapGrant, issueReenrollmentGrants } from "../src/domain/bootstrap.js";
 import { credentialEvidence, quarantineReport, quarantinedPasskeys } from "../src/domain/passkeys.js";
 import { buildApp } from "../src/http/app.js";
@@ -18,7 +20,8 @@ import { softAuthenticator, type UnregisteredAuthenticator } from "./helpers/sof
  * own connection pool, which PGlite cannot serve. Enrollment through a
  * setup grant, a passkey added by a signed-in session, sign-in evidence
  * written to the ceremony's own session only (concurrent sign-ins of one
- * person included), the CLI handoff's session link, and the native passkey
+ * person included), the signature counter under concurrent assertions of
+ * one passkey, the CLI handoff's session link, and the native passkey
  * removal turned off.
  */
 const url = process.env.VARLATCH_TEST_DATABASE_URL;
@@ -185,16 +188,23 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
     expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [key.credentialId])).toHaveLength(1);
   });
 
-  /** Browsers signed in as the bootstrap admin, each ready to post a registration of `credentialId` (options already fetched). */
+  /**
+   * Browsers signed in as the bootstrap admin, each ready to post a
+   * registration of `credentialId` (options already fetched). They sign in
+   * one after another: concurrent assertions of one key race on its
+   * signature counter, and only the registrations race here.
+   */
   async function racingRegistrations(key: UnregisteredAuthenticator, count: number, credentialId: string) {
-    return Promise.all(Array.from({ length: count }, async () => {
+    const posts: Array<() => ReturnType<Browser["request"]>> = [];
+    for (let i = 0; i < count; i++) {
       const browser = new Browser();
       await browser.signIn(key, await browser.signInOptions());
       const options = await browser.request("GET", "/auth/passkey/generate-register-options");
       expect(options.status).toBe(200);
       const response = softAuthenticator(RP).attest(options.body.challenge, { credentialId });
-      return () => browser.request("POST", "/auth/passkey/verify-registration", { response, name: "racing key" });
-    }));
+      posts.push(() => browser.request("POST", "/auth/passkey/verify-registration", { response, name: "racing key" }));
+    }
+    return posts;
   }
 
   it("concurrent registrations of one credential id store exactly one passkey; the others are a 400", async () => {
@@ -272,7 +282,7 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
   });
 
   /**
-   * A database at migration 38, seeded by `seed`, then migrated to 39 and
+   * A database at migration 38, seeded by `seed`, then migrated to the latest and
    * served by its own Better Auth while `body` runs (Browser talks to it).
    */
   async function withUpgradedDatabase(
@@ -346,7 +356,7 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
       expect((await refused.request("POST", "/auth/passkey/verify-authentication", { response })).status).not.toBe(200);
       expect((await legacy.query("SELECT count(*)::int AS n FROM auth_session_evidence")).rows).toEqual([{ n: 1 }]);
     });
-  });
+  }, 30_000);
 
   it("across people: B's only passkey, sharing A's older credential id, is quarantined; that key signs in as A, and the report names B", async () => {
     const key = softAuthenticator(RP);
@@ -395,7 +405,7 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
       const signedInAsB = await asB.request("POST", "/auth/passkey/verify-authentication", { response: fresh.assert(await asB.signInOptions()) });
       expect(signedInAsB.body.user.id).toBe("bau_b");
     });
-  });
+  }, 30_000);
 
   it("sign-in writes the evidence onto its own session only, user verification as the authenticator said", async () => {
     const { key, sessionId: enrollmentSession } = await bootstrapAdmin();
@@ -410,15 +420,18 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
 
   it("concurrent sign-ins of one person each get their own evidence", async () => {
     const admin = await bootstrapAdmin();
-    // A second, unconfirmed key that signs in without user verification.
-    const other = softAuthenticator(RP);
-    expect((await admin.browser.enroll(other)).status).toBe(200);
-    const keys = [
-      { key: admin.key, userVerified: true, passkeyId: await passkeyIdOf(admin.key.credentialId) },
-      { key: other, userVerified: false, passkeyId: await passkeyIdOf(other.credentialId) },
-    ];
+    // One key per concurrent sign-in: concurrent assertions of one key race
+    // on its signature counter, and the one that arrives out of order is
+    // refused (see the counter tests below). Every other key is unconfirmed
+    // and signs in without user verification.
+    const keys = [{ key: admin.key, userVerified: true, passkeyId: await passkeyIdOf(admin.key.credentialId) }];
+    for (let i = 1; i < 8; i++) {
+      const added = softAuthenticator(RP);
+      expect((await admin.browser.enroll(added)).status).toBe(200);
+      keys.push({ key: added, userVerified: i % 2 === 0, passkeyId: await passkeyIdOf(added.credentialId) });
+    }
     for (let round = 0; round < 4; round++) {
-      const attempts = Array.from({ length: 8 }, (_, i) => ({ ...keys[i % 2]!, browser: new Browser() }));
+      const attempts = keys.map((k) => ({ ...k, browser: new Browser() }));
       const challenges = await Promise.all(attempts.map((a) => a.browser.signInOptions()));
       const sessions = await Promise.all(attempts.map((a, i) => a.browser.signIn(a.key, challenges[i]!, a.userVerified)));
       expect(new Set(sessions).size).toBe(attempts.length);
@@ -426,6 +439,147 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
         expect(await evidenceOf(sessionId)).toEqual({ ceremony: "sign-in", user_verified: attempts[i]!.userVerified, passkey_id: attempts[i]!.passkeyId });
       }
     }
+  });
+
+  const counterOf = async (passkeyId: string) => (await rows("SELECT counter FROM passkey WHERE id = $1", [passkeyId]))[0].counter as number;
+  const sessionCount = async () => (await rows(`SELECT count(*)::int AS n FROM "session"`))[0].n as number;
+  const hasSessionCookie = (browser: Browser) => [...browser.cookies.keys()].some((name) => name.includes("session_token"));
+  const postAssertion = (browser: Browser, response: unknown) => browser.request("POST", "/auth/passkey/verify-authentication", { response });
+
+  /**
+   * Holds Better Auth's first write of signature counter `counter` (its
+   * UPDATE of the passkey row) until `release`; `held` resolves once that
+   * write waits. Install it before the test's first Better Auth query:
+   * pooled clients pick it up when they connect.
+   */
+  function holdCounterWrite(counter: number) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let markHeld!: () => void;
+    const held = new Promise<void>((resolve) => { markHeld = resolve; });
+    let holding = true;
+    const original = pg.Client.prototype.query as (...a: unknown[]) => unknown;
+    const spy = vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+      const [text, values] = args;
+      if (holding && typeof text === "string" && /^update "passkey" set "counter"/i.test(text) && Array.isArray(values) && values[0] === counter) {
+        holding = false;
+        markHeld();
+        return gate.then(() => original.apply(this, args)) as never;
+      }
+      return original.apply(this, args) as never;
+    });
+    return { held, release, restore: () => spy.mockRestore() };
+  }
+
+  it("a sign-in whose counter write lands after a later counter's is refused, creates no session, and the counter never goes back", async () => {
+    const hold = holdCounterWrite(1);
+    try {
+      const { key } = await bootstrapAdmin();
+      const passkeyId = await passkeyIdOf(key.credentialId);
+      const sessionsBefore = await sessionCount();
+      const first = new Browser();
+      const second = new Browser();
+      const [c1, c2] = await Promise.all([first.signInOptions(), second.signInOptions()]);
+      // The authenticator signs counter 1, then counter 2.
+      const a1 = key.assert(c1);
+      const a2 = key.assert(c2);
+      // Counter 1 is verified against the stored 0; its write is held.
+      const late = postAssertion(first, a1);
+      await hold.held;
+      // Counter 2, verified against the same stored 0, commits first.
+      const won = await postAssertion(second, a2);
+      expect(won.status).toBe(200);
+      expect(await counterOf(passkeyId)).toBe(2);
+      hold.release();
+      const lost = await late;
+      expect(lost.status).toBe(400);
+      expect(await counterOf(passkeyId)).toBe(2);
+      expect(await sessionCount()).toBe(sessionsBefore + 1);
+      expect(hasSessionCookie(first)).toBe(false);
+      // The same answer as an assertion whose counter is plainly stale.
+      const replay = new Browser();
+      const stale = await postAssertion(replay, key.assert(await replay.signInOptions(), { signCount: 2 }));
+      expect(stale.status).toBe(400);
+      expect(lost.body).toEqual(stale.body);
+      expect(await counterOf(passkeyId)).toBe(2);
+    } finally {
+      hold.release();
+      hold.restore();
+    }
+  });
+
+  it("an authenticator without a counter (always 0) signs in concurrently, every time", async () => {
+    const hold = holdCounterWrite(0);
+    try {
+      const { key } = await bootstrapAdmin();
+      const passkeyId = await passkeyIdOf(key.credentialId);
+      const first = new Browser();
+      const second = new Browser();
+      const [c1, c2] = await Promise.all([first.signInOptions(), second.signInOptions()]);
+      const late = postAssertion(first, key.assert(c1, { signCount: 0 }));
+      await hold.held;
+      expect((await postAssertion(second, key.assert(c2, { signCount: 0 }))).status).toBe(200);
+      hold.release();
+      expect((await late).status).toBe(200);
+      const browsers = Array.from({ length: 6 }, () => new Browser());
+      const challenges = await Promise.all(browsers.map((b) => b.signInOptions()));
+      const results = await Promise.all(browsers.map((b, i) => postAssertion(b, key.assert(challenges[i]!, { signCount: 0 }))));
+      expect(results.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
+      expect(await counterOf(passkeyId)).toBe(0);
+    } finally {
+      hold.release();
+      hold.restore();
+    }
+  });
+
+  /**
+   * Varlatch's own assertion (device sign-in approval, passkey
+   * confirmation): `first` verified in a transaction left open, then
+   * `late` verified in another while it is, then the first commits.
+   * Returns both outcomes.
+   */
+  async function raceOwnAssertions(identityId: string, first: { assertion: unknown; challenge: string }, late: { assertion: unknown; challenge: string }) {
+    const holder = await db.connect();
+    try {
+      await holder.query("BEGIN");
+      const firstResult = await verifyAssertion(holder, RP, identityId, first.assertion, first.challenge, { requireUserVerification: false });
+      const pending = withTx(db, (tx) => verifyAssertion(tx, RP, identityId, late.assertion, late.challenge, { requireUserVerification: false }));
+      // The late verification waits on the passkey row the first one holds.
+      let waited = false;
+      for (let i = 0; i < 200 && !waited; i++) {
+        waited = (await rows("SELECT 1 FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'", [database])).length > 0;
+        if (!waited) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(waited).toBe(true);
+      await holder.query("COMMIT");
+      return { first: firstResult, late: await pending };
+    } finally {
+      holder.release();
+    }
+  }
+
+  it("Varlatch's own assertions verify the counter under the passkey's lock: the late, lower counter is an invalid assertion", async () => {
+    const { key, identityId } = await bootstrapAdmin();
+    const passkeyId = await passkeyIdOf(key.credentialId);
+    const one = { challenge: "Y291bnRlci1vbmU", assertion: undefined as unknown };
+    const two = { challenge: "Y291bnRlci10d28", assertion: undefined as unknown };
+    one.assertion = key.assert(one.challenge);
+    two.assertion = key.assert(two.challenge);
+    const { first, late } = await raceOwnAssertions(identityId, two, one);
+    expect(first).toEqual({ ok: true, passkeyId, userVerified: true });
+    expect(late).toEqual({ ok: false, reason: "invalid-assertion" });
+    expect(await counterOf(passkeyId)).toBe(2);
+  });
+
+  it("Varlatch's own assertions from an authenticator without a counter both pass", async () => {
+    const { key, identityId } = await bootstrapAdmin();
+    const passkeyId = await passkeyIdOf(key.credentialId);
+    const one = { challenge: "emVyby1vbmU", assertion: key.assert("emVyby1vbmU", { signCount: 0 }) };
+    const two = { challenge: "emVyby10d28", assertion: key.assert("emVyby10d28", { signCount: 0 }) };
+    const { first, late } = await raceOwnAssertions(identityId, one, two);
+    expect(first).toEqual({ ok: true, passkeyId, userVerified: true });
+    expect(late).toEqual({ ok: true, passkeyId, userVerified: true });
+    expect(await counterOf(passkeyId)).toBe(0);
   });
 
   it("the CLI handoff credential links the browser session and carries its evidence", async () => {

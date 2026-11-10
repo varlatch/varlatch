@@ -39,6 +39,7 @@ import { sql as memberExposure } from "./0036_member_exposure.js";
 import { sql as projectDeletion } from "./0037_project_deletion.js";
 import { sql as organizationDeletion } from "./0038_organization_deletion.js";
 import { sql as passkeyEvidence } from "./0039_passkey_evidence.js";
+import { sql as passkeyCounter } from "./0040_passkey_counter.js";
 import { sql as securityControls } from "./0040_security_controls.js";
 
 export interface Migration {
@@ -88,5 +89,6 @@ export const MIGRATIONS: Migration[] = [
   { id: 37, name: "project_deletion", sql: projectDeletion },
   { id: 38, name: "organization_deletion", sql: organizationDeletion },
   { id: 39, name: "passkey_evidence", sql: passkeyEvidence },
-  { id: 40, name: "security_controls", sql: securityControls },
+  { id: 40, name: "passkey_counter", sql: passkeyCounter },
+  { id: 41, name: "security_controls", sql: securityControls },
 ];

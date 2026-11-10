@@ -180,6 +180,26 @@ describe("migration 39 on an installation without duplicate credential ids", () 
   });
 });
 
+describe("migration 40: a passkey's signature counter only moves forward", () => {
+  it("refuses any write that does not increase a counter above zero, and allows 0 over 0", async () => {
+    const ada = await person("Ada");
+    const key = await ada.key("trusted");
+    const set = (counter: number) => ctx.db.query("UPDATE passkey SET counter = $2 WHERE id = $1", [key.passkeyId, counter]);
+    const counter = async () => (await rows("SELECT counter FROM passkey WHERE id = $1", [key.passkeyId]))[0].counter as number;
+    // An authenticator without a counter reports 0 every time.
+    await set(0);
+    await set(0);
+    await set(1);
+    await set(5);
+    for (const lower of [5, 4, 1, 0]) await expect(set(lower)).rejects.toThrow(/signature counter/);
+    expect(await counter()).toBe(5);
+    // Writes that leave the counter out are not checked: renaming a passkey.
+    await ctx.db.query("UPDATE passkey SET name = 'renamed' WHERE id = $1", [key.passkeyId]);
+    await set(6);
+    expect(await counter()).toBe(6);
+  });
+});
+
 describe("GET /v1/me/passkeys", () => {
   it("lists the caller's own passkeys with their provenance; a passkey without a record is unconfirmed", async () => {
     const ada = await person("Ada");

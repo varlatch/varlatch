@@ -5,7 +5,8 @@ import { runMigrations } from "../src/db/migrate.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { PUBLIC_URL, approvingHuman, deviceClient } from "./helpers/device-sign-in.js";
+import { PUBLIC_URL, RP, approvingHuman, deviceClient } from "./helpers/device-sign-in.js";
+import { registerSoftPasskey } from "./helpers/soft-authenticator.js";
 
 /**
  * Device sign-in races on real PostgreSQL (PGlite runs one connection, so
@@ -293,5 +294,52 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
     expect(results.filter((r) => r.status === 201)).toHaveLength(10);
     expect(results.filter((r) => r.status === 429)).toHaveLength(6);
     expect(await rows("SELECT id FROM device_sign_ins")).toHaveLength(10);
+  });
+
+  it("an approval and a passkey confirmation start of one person, on the same passkey, both complete without a deadlock", async () => {
+    const human = await approvingHuman(ctx, "Admin", adminId);
+    // human.passkey is unconfirmed: it approves the sign-in and is the passkey being confirmed.
+    await registerSoftPasskey(db, human.identityId, { ...RP, trust: "trusted" });
+    const confirmationOptions = () =>
+      app.request(`/v1/me/passkeys/${human.passkey.passkeyId}/confirmation/options`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${human.token}` },
+      });
+    // An earlier, unused confirmation challenge, which the next start supersedes.
+    expect((await confirmationOptions()).status).toBe(200);
+    const started = (await client.start()).body;
+    const { challenge } = (await client.lookup(human.token, started.userCode)).body.approval.publicKey;
+    const assertion = human.passkey.assert(challenge);
+    const lockWaiters = async () =>
+      (await rows("SELECT query FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'", [database])).map((r) => r.query as string);
+    const until = async (done: (waiting: string[]) => boolean) => {
+      for (let i = 0; i < 400; i++) {
+        if (done(await lockWaiters())) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error(`Lock waits never matched: ${JSON.stringify(await lockWaiters())}`);
+    };
+    // Hold the earlier challenge, so the confirmation start stops at superseding it while it holds the person.
+    const gate = await db.connect();
+    let confirming: Promise<Response> | undefined;
+    let approving: ReturnType<typeof client.decide> | undefined;
+    try {
+      await gate.query("BEGIN");
+      await gate.query("SELECT id FROM passkey_confirmation_challenges WHERE target_passkey_id = $1 FOR UPDATE", [human.passkey.passkeyId]);
+      confirming = confirmationOptions();
+      await until((waiting) => waiting.some((q) => /UPDATE passkey_confirmation_challenges/i.test(q)));
+      // The approval runs as far as it can while the confirmation holds the person.
+      approving = client.decide(human.token, started.userCode, "approve", assertion);
+      await until((waiting) => waiting.length === 2);
+      // Released, the confirmation start goes on to reference the passkey.
+      await gate.query("COMMIT");
+    } finally {
+      gate.release();
+    }
+    const [confirmed, approved] = await Promise.all([confirming, approving]);
+    expect(confirmed.status).toBe(200);
+    expect(approved.status).toBe(200);
+    expect((await rows("SELECT status FROM device_sign_ins")).map((r) => r.status)).toEqual(["approved"]);
+    expect((await rows("SELECT counter FROM passkey WHERE id = $1", [human.passkey.passkeyId]))[0].counter).toBe(1);
   });
 });

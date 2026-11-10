@@ -445,7 +445,7 @@ export async function denyDeviceSignIn(
 
 /**
  * Approve with a fresh passkey assertion. In one transaction, under the
- * sign-in's row lock: check it is still pending and unexpired, consume the
+ * approver's locks and the sign-in's row lock: check it is still pending and unexpired, consume the
  * challenge (only one issued for this sign-in, identity, and session, unused
  * and unexpired), verify the assertion with one of the identity's passkeys,
  * and move the sign-in from pending to approved, again only while pending
@@ -461,12 +461,16 @@ export async function approveDeviceSignIn(
 ): Promise<void> {
   const challenge = assertionChallenge(input.assertion);
   const refusal = await withTx(ctx.db, async (db) => {
-    // The lock order of approvals.ts first: the person (2), then all of
-    // their passkeys (3, the assertion advances one's counter), and only
-    // then the sign-in and its challenge, whose approval references the
-    // person. KEY SHARE on the person, as collection's credential insert
-    // takes it while holding the sign-in row; it still waits for an
-    // approval, a confirmation or the public-URL change holding the person.
+    // The approver first, in the lock order of approvals.ts: their
+    // identities row FOR KEY SHARE (2; the approval references it, and
+    // collection's credential insert takes the same mode while holding the
+    // sign-in row), then all their passkeys in id order FOR UPDATE (3; the
+    // assertion advances one passkey's counter, and which one is only known
+    // then; verifyAssertion's own FOR UPDATE then finds it held). Only then
+    // the sign-in and its challenge. Locking the passkey first and
+    // referencing the person after deadlocked with a confirmation, an
+    // approval or the public-URL change that held the person and then took
+    // the passkey.
     await lockPerson(db, input.identityId, "key share");
     await lockPersonPasskeys(db, input.identityId);
     // Decided or expired meanwhile (a concurrent denial wins, say): say so,
