@@ -102,6 +102,7 @@ export const CAPABILITIES = [
   "account.passkeys",
   "security.controls",
   "security.report",
+  "security.approval-keys",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

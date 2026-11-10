@@ -7,6 +7,7 @@ import type {
   SecurityControlList,
   SecurityControlName,
   SecurityControlReport,
+  ApprovalKeys,
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
@@ -220,7 +221,9 @@ export interface OrgIdentity {
 }
 
 /** The credential review (capability security.credential-review, ADR-0054 Decision 8). */
-export type { CredentialReview, ReviewedCredential } from "@varlatch/protocol";
+export type { CredentialExpiryReview, CredentialReview, ExpiringCredential, ReviewedCredential } from "@varlatch/protocol";
+/** The approval keys of an Organization's admins (capability security.approval-keys, ADR-0054 Decision 4). */
+export type { AdminApprovalKeys, ApprovalKey, ApprovalKeys } from "@varlatch/protocol";
 
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
@@ -987,6 +990,15 @@ export class VarlatchClient {
   }
 
   /**
+   * The approval keys of the Organization's admins: per admin, trusted and
+   * unconfirmed passkeys by name, never key material (organization.manage;
+   * capability security.approval-keys).
+   */
+  securityApprovalKeys(org: string): Promise<ApprovalKeys> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/approval-keys`);
+  }
+
+  /**
    * Change one Security Control. Loosening needs a step-up approval: the
    * server answers STEP_UP_REQUIRED, which onStepUp handles (or the error
    * surfaces). enforce is refused with CONTROL_MODE_UNAVAILABLE for now.
@@ -1005,7 +1017,8 @@ export class VarlatchClient {
 
   /**
    * The Organization's machine credentials never used, idle for 30 days, or
-   * without expiry, with identity and last use (identity.manage; capability
+   * without expiry, with identity and last use, and the service credentials
+   * expiring within 7 days or expired (identity.manage; capability
    * security.credential-review). Reporting only; never a token.
    */
   credentialReview(org: string): Promise<CredentialReview> {

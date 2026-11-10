@@ -159,6 +159,7 @@ import {
   type Requester,
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
+import { approvalKeys } from "../domain/approvalKeys.js";
 import { lockPerson } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
@@ -2618,6 +2619,19 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     if (raw !== undefined && !/^\d{1,2}$/.test(raw)) throw new DomainError("VALIDATION_FAILED", "days must be an integer in 1..30");
     c.header("Cache-Control", "no-store");
     return c.json(await securityControlReport(ctx.db, org.id, raw === undefined ? 30 : Number(raw)));
+  });
+
+  // The approval keys of the Organization's admins (ADR-0054 Decisions 4
+  // and 11; capability security.approval-keys): per admin, how many of their
+  // passkeys are trusted and how many unconfirmed, with names and dates. It
+  // describes the admins' sign-in keys, so it needs organization.manage, as
+  // the control report does. Never a credential id or key material.
+  app.get("/v1/organizations/:org/security/approval-keys", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await approvalKeys(ctx.db, org.id));
   });
 
   app.patch("/v1/organizations/:org/security/controls/:control", async (c) => {
