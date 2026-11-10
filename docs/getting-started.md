@@ -397,6 +397,13 @@ needs: like a person, it starts with no access.
   To replace a credential, issue the new one, move the program to it, then
   revoke the old one.
 
+  A credential issued with an expiry (`--ttl`) warns ahead: within 7 days
+  of it, the machine's Credentials panel marks it, every API response to it
+  carries a `Varlatch-Credential-Expires` header, and the CLI, given it in
+  `VARLATCH_TOKEN`, prints a warning on stderr (never on stdout).
+  [Credential expiry warnings](reference/scripting.md#credential-expiry-warnings)
+  has the details.
+
   A program can ask Varlatch which identity its credential belongs to:
   `GET /v1/me` answers with the identity, its organization, and the
   credential's own name, and needs no grant. On the command line,

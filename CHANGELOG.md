@@ -7,6 +7,23 @@ fixes.
 
 ## Unreleased (0.20.1)
 
+### Machine identities
+
+- **The CLI warns when the credential in `VARLATCH_TOKEN` is about to
+  expire.** Until now it warned only about the credential `varlatch login`
+  stored, and said nothing for `VARLATCH_TOKEN`, where machine credentials
+  issued with an expiry live, until requests started failing. Now every
+  `/v1` response to a request authenticated by a credential that expires
+  within 7 days, errors included, carries a `Varlatch-Credential-Expires`
+  header with the expiry (ISO 8601, UTC). The CLI turns it into one
+  warning on stderr per command, before `varlatch run` starts its command,
+  and never writes it to stdout, so the output scripts parse, `varlatch
+  env list` included, is unchanged. It does not warn inside an agent-safe
+  run. In the dashboard, Access → Machines marks a service credential that
+  expires within 7 days or has expired. Credentials without an expiry, or
+  expiring later, behave exactly as before. The tailnet browser endpoint
+  exposes the header to the pages it allows.
+
 ### Backups
 
 - **A failed upload or remote check says why.** "Remote archive retrieval

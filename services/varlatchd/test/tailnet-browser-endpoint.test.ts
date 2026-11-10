@@ -229,6 +229,8 @@ describe("tailnet browser endpoint", () => {
     expect(disclosed.body.items[0]).toMatchObject({ name: "SECRET_A", value: "s3cr3t" });
     expect(disclosed.headers["access-control-allow-origin"]).toBe(ORIGIN);
     expect(disclosed.headers["access-control-allow-credentials"]).toBeUndefined();
+    // The page may read the request ID, Retry-After, and a soon-expiring credential's expiry.
+    expect(disclosed.headers["access-control-expose-headers"]).toBe("Retry-After, X-Request-Id, Varlatch-Credential-Expires");
     // WhoIs was asked about exactly this connection's own local port.
     expect(whoisAsked).toEqual([`127.0.0.1:${socket.localPort}`]);
     const audit = await latestAudit("secret.disclosed");

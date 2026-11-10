@@ -12,7 +12,7 @@ import {
 } from "@varlatch/contract";
 import { CAPABILITIES, type TailnetDevice } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
-import { authenticateBearer } from "../auth/credentials.js";
+import { CREDENTIAL_EXPIRES_HEADER, authenticateBearer, credentialExpiresNotice } from "../auth/credentials.js";
 import { clientLabel } from "../auth/client-label.js";
 import { withAttribution } from "../audit/attribution.js";
 import { recordAuditEvent } from "../audit/events.js";
@@ -689,6 +689,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       });
       throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
     }
+    // A credential expiring within 7 days says so on every response to it,
+    // refusals included (ADR-0054 Decision 8). Set before anything below can
+    // refuse, so error responses built from this context carry it; set again
+    // on the final response for handlers that return a Response of their own.
+    const expiring = credentialExpiresNotice(result.credential.expires_at);
+    if (expiring) c.header(CREDENTIAL_EXPIRES_HEADER, expiring);
     // Agent-run credentials (ADR-0023) are read-only at the HTTP layer:
     // metadata access for an Agent Run, nothing that mutates or exercises.
     // The plaintext-producing endpoints (disclosures, capability exercises)
@@ -710,7 +716,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
     // The rest of the request is attributed to this credential and client:
     // every audit event its identity records names them (ADR-0016 §9).
-    return withAttribution(
+    await withAttribution(
       {
         identityId: result.identity.id,
         credentialId: result.credential.id,
@@ -722,6 +728,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       },
       () => next(),
     );
+    if (expiring) c.res.headers.set(CREDENTIAL_EXPIRES_HEADER, expiring);
   });
 
   // Where a browser reads tailnet-protected values, for any authenticated

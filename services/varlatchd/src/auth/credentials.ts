@@ -25,6 +25,27 @@ const PREFIX: Record<CredentialKind, string> = {
   oidc: "vlt_oidc_",
 };
 
+/**
+ * ADR-0054 Decision 8: every /v1 response to a request authenticated by a
+ * credential that expires within this window names the expiry in this
+ * header, so a client holding a credential it did not sign in for (a
+ * machine's VARLATCH_TOKEN) can warn before requests start failing.
+ */
+export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
+export const CREDENTIAL_EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The header's value, an ISO 8601 UTC timestamp, or null: no expiry, or not within the window. */
+export function credentialExpiresNotice(
+  expiresAt: string | Date | null | undefined,
+  now: number = Date.now(),
+): string | null {
+  if (!expiresAt) return null;
+  const at = new Date(expiresAt);
+  const ms = at.getTime();
+  if (Number.isNaN(ms) || ms - now > CREDENTIAL_EXPIRY_WARNING_MS) return null;
+  return at.toISOString();
+}
+
 export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }

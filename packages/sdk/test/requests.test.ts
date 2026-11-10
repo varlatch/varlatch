@@ -157,3 +157,26 @@ describe("GitHub App", () => {
     expect(removing.requests.map((r) => [r.method, r.url])).toEqual([["DELETE", "https://v.example/v1/organizations/acme/github-app?appId=gha_1"]]);
   });
 });
+
+describe("credential expiry notice", () => {
+  const header = { "Varlatch-Credential-Expires": "2026-11-12T08:00:00.000Z" };
+
+  it("hands the header's value to onCredentialExpires, on success and on error responses", async () => {
+    const seen: string[] = [];
+    const responses = [
+      new Response(JSON.stringify({ items: [], nextCursor: null }), { headers: header }),
+      new Response(JSON.stringify({ error: { code: "PERMISSION_DENIED", message: "no", requestId: "r" } }), { status: 403, headers: header }),
+      new Response(JSON.stringify({ items: [], nextCursor: null })),
+    ];
+    const client = new VarlatchClient({
+      server: "https://v.example",
+      token: "vlt_svc_x",
+      fetch: async () => responses.shift()!,
+      onCredentialExpires: (at) => seen.push(at),
+    });
+    await client.listOrganizations();
+    await expect(client.listOrganizations()).rejects.toMatchObject({ status: 403 });
+    await client.listOrganizations();
+    expect(seen).toEqual(["2026-11-12T08:00:00.000Z", "2026-11-12T08:00:00.000Z"]);
+  });
+});

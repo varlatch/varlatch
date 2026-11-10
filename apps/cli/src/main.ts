@@ -71,6 +71,7 @@ import {
 } from "./deviceLogin.js";
 import {
   STATUS_SCHEMA_VERSION,
+  envTokenExpiryWarning,
   expiryWarning,
   formatStatusHuman,
   repoStatus,
@@ -329,13 +330,39 @@ function context(args: string[]): ResolvedContext {
   return resolveContext(opts);
 }
 
-/** ADR-0032: stderr only, and always before any child process spawns —
-    consumer scripts parse `varlatch run` stdout. Silent for VARLATCH_TOKEN
-    (CI credentials are short-lived by design). */
+/** At most one expiry warning per process, whichever path finds it first. */
+let expiryWarned = false;
+function warnExpiryOnce(warning: string | null): void {
+  if (!warning || expiryWarned) return;
+  expiryWarned = true;
+  console.error(warning);
+}
+
+/** ADR-0032: stderr only, and always before any child process spawns:
+    consumer scripts parse `varlatch run` stdout. Judges the stored
+    credential from its store metadata. A VARLATCH_TOKEN credential has no
+    stored metadata, and machine credentials may live for years or never
+    expire, so for it the server says when it is close to expiry
+    (credentialExpiryNotice). */
 function warnIfExpiring(server: string): void {
   if (process.env.VARLATCH_TOKEN) return;
-  const warning = expiryWarning(server, loadCredential(server));
-  if (warning) console.error(warning);
+  warnExpiryOnce(expiryWarning(server, loadCredential(server)));
+}
+
+/**
+ * The client's onCredentialExpires (ADR-0054 Decision 8): warns, on stderr
+ * and once per process, when the server names the expiry of the credential
+ * a request presented and that credential came from VARLATCH_TOKEN. The
+ * client calls it as each response arrives, before the command reads the
+ * response, so for `varlatch run` the warning precedes the child process.
+ * Silent inside an agent-safe run: its agent-run credential is minted for
+ * the run and ends with it, and the Agent cannot renew it.
+ */
+function credentialExpiryNotice(server: string, token: string): (expiresAt: string) => void {
+  return (expiresAt) => {
+    if (token !== process.env.VARLATCH_TOKEN || agentRunOf()) return;
+    warnExpiryOnce(envTokenExpiryWarning(server, expiresAt));
+  };
 }
 
 /**
@@ -378,7 +405,13 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
     );
   }
   warnIfExpiring(ctx.server);
-  return new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() });
+  return new VarlatchClient({
+    onMaintenance: maintenanceNotice,
+    onCredentialExpires: credentialExpiryNotice(ctx.server, token),
+    server: ctx.server,
+    token,
+    userAgent: cliUserAgent(),
+  });
 }
 
 async function probeServer(
@@ -1299,7 +1332,7 @@ async function main(): Promise<void> {
             const ctx = resolveContext({ cwd: process.cwd(), environment: name });
             const token = loadToken(ctx.server);
             if (token) {
-              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() }).listEnvironments(
+              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(ctx.server, token), server: ctx.server, token, userAgent: cliUserAgent() }).listEnvironments(
                 ctx.organization,
                 ctx.project,
               );
@@ -2231,7 +2264,7 @@ async function main(): Promise<void> {
           (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));
         const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
         warnIfExpiring(server);
-        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
         if (sub === "list") {
           const page = await api.listOrganizations();
           if (has(args, "--json")) {
@@ -2265,7 +2298,7 @@ async function main(): Promise<void> {
           const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
           const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
           warnIfExpiring(server);
-          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
           const project = await api.createProject(org, {
             slug,
             name: positional(args, 2) ?? slug,

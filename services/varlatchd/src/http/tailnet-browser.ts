@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Context, Next } from "hono";
+import { CREDENTIAL_EXPIRES_HEADER } from "../auth/credentials.js";
 import { errorBody } from "./support.js";
 
 /**
@@ -67,7 +68,7 @@ export function tailnetBrowserGate(opts: TailnetBrowserOptions) {
     }
     await next();
     c.res.headers.set("Access-Control-Allow-Origin", origin);
-    c.res.headers.set("Access-Control-Expose-Headers", "Retry-After, X-Request-Id");
+    c.res.headers.set("Access-Control-Expose-Headers", `Retry-After, X-Request-Id, ${CREDENTIAL_EXPIRES_HEADER}`);
     c.res.headers.append("Vary", "Origin");
   };
 }

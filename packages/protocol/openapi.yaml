@@ -3691,6 +3691,9 @@ components:
       description: >
         Opaque Varlatch credential (session-derived browser bearer, CLI
         credential, or service credential). Cookies never authenticate /v1.
+        Every response to a request authenticated by a credential that
+        expires within 7 days, errors included, carries the
+        Varlatch-Credential-Expires header (components/headers).
 
   parameters:
     org:
@@ -3795,6 +3798,16 @@ components:
         original result; the same key with a materially different body fails
         with IDEMPOTENCY_CONFLICT.
       schema: { type: string, maxLength: 255 }
+
+  headers:
+    VarlatchCredentialExpires:
+      description: >
+        Sent on every response to a request authenticated by a credential
+        that expires within 7 days, errors included: when that credential
+        expires. Absent for credentials without an expiry or expiring later,
+        and on unauthenticated responses. Clients holding a credential they
+        cannot renew by signing in (VARLATCH_TOKEN) use it to warn ahead.
+      schema: { type: string, format: date-time, examples: ["2026-11-17T12:00:00.000Z"] }
 
   responses:
     Error:
