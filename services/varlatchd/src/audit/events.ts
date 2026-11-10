@@ -97,6 +97,8 @@ export const AUDIT_EVENT_TYPES = [
   "role.updated",
   "secret.disclosed",
   "secret.validated",
+  "security_control.changed",
+  "security_control.reset",
   "setup.grant_rejected",
   "sync.connection_checked",
   "sync.connection_created",

@@ -79,6 +79,9 @@ const TRIGGERING = [
   "role.created",
   "role.deleted",
   "role.updated",
+  // Security Controls (ADR-0054): writes that name no environment, so they mark nothing.
+  "security_control.changed",
+  "security_control.reset",
   "setup.grant_rejected",
   "team.project_added",
   "team.project_removed",

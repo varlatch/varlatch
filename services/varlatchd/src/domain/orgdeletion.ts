@@ -7,6 +7,7 @@ import { withTx } from "../db/tx.js";
 import { loadGrants } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { closeOpenApprovals } from "./approvals.js";
 import { lockLiveScope, openDeletion } from "./liveness.js";
 import { endMembership } from "./members.js";
 
@@ -378,6 +379,9 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       [envIds],
     );
     await db.query("UPDATE capabilities SET revoked_at = now() WHERE organization_id = $1 AND revoked_at IS NULL", [organizationId]);
+    // Open step-up approvals end with it (ADR-0054); its Security Controls
+    // rows stay with the Organization's tombstone row, like its other rows.
+    await closeOpenApprovals(db, { organizationId, reason: "organization-deleted" });
     const targetIds = (
       (await db.query("SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [organizationId]))
         .rows as { id: string }[]

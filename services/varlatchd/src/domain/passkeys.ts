@@ -5,6 +5,7 @@ import { assertionChallenge, assertionOptions, verifyAssertion, type RelyingPart
 import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
+import type { ApprovalGate } from "./approvals.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 
@@ -352,34 +353,63 @@ export async function confirmPasskey(
 }
 
 /**
- * Whether removing this passkey needs a step-up approval. ADR-0054
- * Decision 4: removing a trusted passkey will need one when the person holds
- * a live membership in an Organization with any Security Control at
- * `enforce`. Security Controls do not exist yet, so nothing is restricted.
- * The rule belongs here, in one place, run inside the removal's transaction
- * after the person's row is locked.
+ * Whether removing this passkey needs a step-up approval (ADR-0054
+ * Decision 4): it does when the passkey is trusted and the person holds a
+ * live membership in a live Organization with any Security Control at
+ * `enforce`. Removing an unconfirmed passkey never does, and Organizations
+ * whose controls are all off or report never cause it. Run inside the
+ * removal's transaction, after the person's row is locked: a control set to
+ * enforce after that commits does not affect this removal.
  */
 export async function passkeyRemovalRestriction(
-  _db: Querier,
-  _input: { identityId: string; passkey: OwnPasskey },
-): Promise<{ restricted: false }> {
-  return { restricted: false };
+  db: Querier,
+  input: { identityId: string; passkey: OwnPasskey },
+): Promise<{ restricted: boolean; organizationIds: string[] }> {
+  if (input.passkey.trust !== "trusted") return { restricted: false, organizationIds: [] };
+  const rows = (await db.query(
+    `SELECT DISTINCT m.organization_id FROM org_memberships m
+     JOIN organizations o ON o.id = m.organization_id AND o.deleted_at IS NULL
+     JOIN security_controls s ON s.organization_id = m.organization_id AND s.mode = 'enforce'
+     WHERE m.identity_id = $1 AND m.removed_at IS NULL
+     ORDER BY m.organization_id`,
+    [input.identityId],
+  )).rows as { organization_id: string }[];
+  return { restricted: rows.length > 0, organizationIds: rows.map((r) => r.organization_id) };
 }
 
 /**
  * Remove one of the caller's own passkeys, as Better Auth's
  * `/passkey/delete-passkey` did (which is now disabled): another person's,
  * or an unknown id, is not found. Locks the person's row first, so the
- * removal and any later rule it reads (passkeyRemovalRestriction) are
- * serialized with confirmations and with each other.
+ * removal and the restriction it reads are serialized with confirmations
+ * and with each other. When the restriction applies, the removal needs an
+ * approval for `passkey.remove` (no Organization, the passkey as target),
+ * consumed here, in the removal's transaction.
  */
-export async function removeOwnPasskey(ctx: AppCtx, input: { identityId: string; passkeyId: string }): Promise<void> {
+export async function removeOwnPasskey(
+  ctx: AppCtx,
+  gate: ApprovalGate,
+  input: { identityId: string; passkeyId: string },
+): Promise<void> {
   await withTx(ctx.db, async (db) => {
     await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
     const passkey = await ownPasskey(db, input.identityId, input.passkeyId, true);
     if (!passkey) throw new DomainError("RESOURCE_NOT_FOUND", "Passkey not found");
     const restriction = await passkeyRemovalRestriction(db, { identityId: input.identityId, passkey });
-    if (restriction.restricted) throw new DomainError("PERMISSION_DENIED", "Removing this passkey needs an approval");
+    if (restriction.restricted) {
+      await gate.require(db, {
+        operation: "passkey.remove",
+        organizationId: null,
+        target: { passkeyId: passkey.id },
+        body: null,
+        query: {},
+        expectedVersion: null,
+        summary: {
+          title: `Remove your trusted passkey ${passkey.name ? `"${passkey.name}"` : passkey.id}`,
+          changes: [],
+        },
+      });
+    }
     await db.query("DELETE FROM passkey WHERE id = $1", [input.passkeyId]);
   });
 }

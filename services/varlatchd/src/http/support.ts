@@ -36,6 +36,9 @@ export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   CONSUMED: 410,
   ORGANIZATION_DELETING: 409,
   ORGANIZATION_DELETED: 410,
+  STEP_UP_REQUIRED: 403,
+  APPROVAL_INVALID: 409,
+  CONTROL_MODE_UNAVAILABLE: 422,
 };
 
 export function requestId(): string {

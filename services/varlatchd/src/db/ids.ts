@@ -33,6 +33,8 @@ const PREFIXES = {
   membershipRemoval: "mrm",
   organizationDeletion: "odl",
   passkeyConfirmationChallenge: "pcc",
+  approvalIntent: "apr",
+  approvalIntentChallenge: "apc",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;

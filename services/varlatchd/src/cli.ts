@@ -47,6 +47,7 @@ import { fileURLToPath } from "node:url";
  *   varlatchd admin bootstrap            — issue the one-time setup grant (host exec)
  *   varlatchd admin recover ...          — break-glass recovery grant (host exec)
  *   varlatchd admin doctor [--wait s]    — read-only Installation Health checks (JSON)
+ *   varlatchd admin security reset --org <org> (--control <name>... | --all): Security Controls to off (ADR-0054)
  *   varlatchd admin kek verify [--file]  — verify a KEK candidate against the canary
  *   varlatchd admin kek export --out     — passphrase-wrapped KEK escrow blob
  *   varlatchd admin kek restore --in --out — decrypt an escrow blob back to a KEK file
@@ -486,6 +487,18 @@ async function adminCommand(rest: string[]): Promise<void> {
         console.log(`Expire: ${links[0]?.expiresAt ?? "-"}.`);
         break;
       }
+      case "security": {
+        // The host operator's reset (ADR-0054 Decision 10): named controls to
+        // off, their open approvals closed. Host only; no API reaches it.
+        const { parseResetArgs, resetControls, resetReportLines, RESET_USAGE } = await import("./domain/securitycontrols.js");
+        if (rest[1] !== "reset") fail(RESET_USAGE);
+        const parsed = parseResetArgs(rest.slice(2));
+        if ("error" in parsed) fail(parsed.error);
+        const outcome = await resetControls(makeCtx(), { organization: parsed.organization, controls: parsed.controls });
+        if (parsed.json) console.log(JSON.stringify(outcome));
+        else for (const line of resetReportLines(outcome)) console.log(line);
+        break;
+      }
       case "mirror-sync": {
         if (!config.convexUrl) fail("Set VARLATCH_CONVEX_URL to enable mirror sync");
         const { syncAllMirrors } = await import("./mirror/publisher.js");
@@ -509,7 +522,7 @@ async function adminCommand(rest: string[]): Promise<void> {
       }
       default:
         fail(
-          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | custody attest|status | " +
+          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | custody attest|status | security reset | " +
             "kek verify|export|restore|split|combine>",
         );
     }
