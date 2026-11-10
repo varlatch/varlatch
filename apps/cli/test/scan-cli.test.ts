@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -151,9 +152,14 @@ function git(cwd: string, ...args: string[]) {
  * Run a command asynchronously: the fake server answers from this process,
  * so a synchronous spawn would block it.
  */
-function run(cmd: string, args: string[], cwd: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function run(
+  cmd: string,
+  args: string[],
+  cwd: string,
+  extraEnv: Record<string, string> = {},
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { cwd, env: { ...env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -429,6 +435,171 @@ describe("the pre-commit hook, with real commits (A-S4)", () => {
     const again = await varlatch(project, "scan", "--install-hook", "-e", "staging");
     expect(again.code).toBe(0);
     expect(readFileSync(hook, "utf8")).toContain("exec varlatch scan --staged --environment 'staging'");
+    expect(requests).toEqual([]);
+  });
+});
+
+describe("varlatch scan <path> outside the project", () => {
+  it("scans a file outside the project directory, such as a shell history, with the project's context", async () => {
+    const { project } = newRepo();
+    const history = join(dir, `history-${repoCount}`);
+    writeFileSync(history, `ls\nexport DB_PASS=${DB_PASS}\n`);
+    const run = await varlatch(project, "scan", history);
+    expect(run.code, run.stderr).toBe(1);
+    expect(run.stdout).toContain(`../history-${repoCount}:2:16: DB_PASS (version ver_db), as written`);
+    expect(disclosures()).toHaveLength(1);
+    expectNoValues(run.stdout + run.stderr);
+  });
+});
+
+describe("varlatch scan --find-files lists likely copies by name (ADR-0054 Decision 8)", () => {
+  /**
+   * A tree with every case: a Git repository with ignored, unignored, and
+   * tracked copies, a nested repository, links, a template, an unreadable
+   * file, and no varlatch.toml anywhere.
+   */
+  function copiesTree(): { top: string; outside: string } {
+    const top = join(dir, `copies-${++repoCount}`);
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    writeFileSync(join(top, ".gitignore"), ".env\n");
+    writeFileSync(join(top, ".env"), `API_KEY=${API_KEY}\n`);
+    writeFileSync(join(top, ".env.example"), "API_KEY=\n");
+    mkdirSync(join(top, "config"));
+    writeFileSync(join(top, "config", ".env.local"), `DB_PASS=${DB_PASS}\n`);
+    mkdirSync(join(top, "certs"));
+    writeFileSync(join(top, "certs", "server.key"), "CANARY\n");
+    git(top, "add", ".gitignore", ".env.example", "certs/server.key");
+    git(top, "commit", "-q", "-m", "init");
+    writeFileSync(join(top, "locked.pem"), "CANARY\n");
+    chmodSync(join(top, "locked.pem"), 0o000);
+    mkdirSync(join(top, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(top, "node_modules", "pkg", ".env"), "CANARY\n");
+    const nested = join(top, "vendor", "tool");
+    mkdirSync(nested, { recursive: true });
+    git(nested, "init", "-q", "-b", "main");
+    writeFileSync(join(nested, ".env.production"), "CANARY\n");
+    const outside = join(dir, `outside-${repoCount}`);
+    mkdirSync(outside);
+    writeFileSync(join(outside, ".env"), "CANARY\n");
+    symlinkSync(outside, join(top, "linked-dir"));
+    symlinkSync(join(outside, ".env"), join(top, ".env.link"));
+    return { top, outside };
+  }
+
+  const expected = [
+    { path: ".env", kind: "dotenv", symlink: false, git: "ignored" },
+    { path: ".env.link", kind: "dotenv", symlink: true, git: "not-ignored" },
+    { path: "certs/server.key", kind: "key", symlink: false, git: "tracked" },
+    { path: "config/.env.local", kind: "dotenv", symlink: false, git: "not-ignored" },
+    { path: "locked.pem", kind: "key", symlink: false, git: "not-ignored" },
+    { path: "vendor/tool/.env.production", kind: "dotenv", symlink: false, git: "not-ignored" },
+  ];
+
+  it("names each file and its Git state, needs no project, credential, or server, and opens no file", async () => {
+    const { top, outside } = copiesTree();
+    // Record every call that opens, reads, or follows a path in the CLI process.
+    const preload = join(dir, "fs-recorder.cjs");
+    const log = join(dir, `fs-log-${repoCount}.txt`);
+    writeFileSync(
+      preload,
+      `const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const calls = [];
+const wrap = (target, name, label) => {
+  const orig = target[name];
+  target[name] = Object.assign(function (p, ...rest) { calls.push(label + " " + String(p)); return orig.call(this, p, ...rest); }, orig);
+};
+for (const n of ["open", "openSync", "readFile", "readFileSync", "createReadStream", "stat", "statSync", "realpath", "realpathSync", "access", "accessSync"]) wrap(fs, n, n);
+for (const n of ["open", "readFile", "stat", "realpath", "access"]) wrap(fsp, n, "promises." + n);
+const write = fs.writeFileSync;
+process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
+`,
+    );
+    const found = await run(process.execPath, ["-r", preload, bundle, "scan", "--find-files", "--json"], top, {
+      FS_LOG: log,
+      VARLATCH_TOKEN: "",
+      VARLATCH_ASSISTED: "0",
+    });
+    chmodSync(join(top, "locked.pem"), 0o600);
+    expect(found.code, found.stderr).toBe(1);
+    const report = JSON.parse(found.stdout);
+    expect(report).toMatchObject({ version: 1, mode: "find-files", exitCode: 1, root: realpathSync(top), notSearched: [], stopped: false });
+    expect(report.files).toEqual(expected);
+    expect(requests).toEqual([]);
+    expectNoValues(found.stdout + found.stderr);
+
+    const calls = readFileSync(log, "utf8").split("\n").filter(Boolean);
+    // The recorder works: the starting directory itself is resolved.
+    expect(calls).toContain(`promises.realpath ${top}`);
+    // No matched file, and nothing behind a link, is opened, read, or followed;
+    // only directories are resolved (the Git top level of the nested repository).
+    const matched = new Set([...expected.map((f) => join(top, f.path)), join(top, ".env.example"), join(top, "node_modules", "pkg", ".env")]);
+    const touched = calls.filter((c) => {
+      const path = c.slice(c.indexOf(" ") + 1);
+      return matched.has(path) || path.startsWith(outside) || path.startsWith(join(top, "linked-dir"));
+    });
+    expect(touched).toEqual([]);
+
+    // A directory outside any Git repository.
+    const plain = await run(process.execPath, [bundle, "scan", "--find-files", outside, "--json"], top, { VARLATCH_ASSISTED: "0" });
+    expect(plain.code, plain.stderr).toBe(1);
+    expect(JSON.parse(plain.stdout).files).toEqual([{ path: ".env", kind: "dotenv", symlink: false, git: "no-repository" }]);
+  });
+
+  it("prints the same list in assisted mode as outside it, with the next steps", async () => {
+    const { top } = copiesTree();
+    chmodSync(join(top, "locked.pem"), 0o600);
+    const human = await run(process.execPath, [bundle, "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    expect(human.code, human.stderr).toBe(1);
+    expect(human.stdout).toContain("  .env: ignored by Git\n");
+    expect(human.stdout).toContain("  certs/server.key: tracked by Git, so it is in the repository's history\n");
+    expect(human.stdout).toContain("  .env.link: a symbolic link, not followed; not ignored by Git, so a commit could add it\n");
+    expect(human.stdout).toContain("  vendor/tool/.env.production: not ignored by Git");
+    expect(human.stdout).not.toContain(".env.example");
+    expect(human.stdout).not.toContain("node_modules");
+    expect(human.stdout).not.toContain("linked-dir");
+    expect(human.stdout).toContain("varlatch scan: 6 file(s) look like copies of secrets (1 tracked by Git, 4 not ignored)");
+    expect(human.stdout).toContain("varlatch import <file> --delete-source");
+    expect(human.stdout).toContain("varlatch values set <ITEM> --from-file <file>");
+    expect(human.stderr).toBe("");
+
+    // Assisted mode, by a coding agent's marker and by the option, changes nothing.
+    const marker = await run(process.execPath, [bundle, "scan", "--find-files"], top, { CLAUDECODE: "1" });
+    const option = await run(process.execPath, [bundle, "--assisted", "scan", "--find-files"], top, { VARLATCH_ASSISTED: "0" });
+    for (const assisted of [marker, option]) {
+      expect(assisted.code, assisted.stderr).toBe(1);
+      expect(assisted.stdout).toBe(human.stdout);
+      expect(assisted.stderr).toBe("");
+    }
+    expect(requests).toEqual([]);
+
+    // Nothing to find: exit 0.
+    const clean = join(dir, `clean-${repoCount}`);
+    mkdirSync(clean);
+    writeFileSync(join(clean, ".env.schema"), "# @required\nAPI_KEY=\n");
+    const none = await run(process.execPath, [bundle, "scan", "--find-files", clean], top, { VARLATCH_ASSISTED: "0" });
+    expect(none.code, none.stderr).toBe(0);
+    expect(none.stdout).toMatch(/^varlatch scan: no file looks like a copy of a secret; 1 entries checked by name\. No file was opened\.\n$/);
+  });
+
+  it("refuses the value scan's options, more than one directory, and a file", async () => {
+    const { top } = copiesTree();
+    chmodSync(join(top, "locked.pem"), 0o600);
+    for (const args of [
+      ["--find-files", "--staged"],
+      ["--find-files", "a", "b"],
+      ["--find-files", ".", "-e", "production"],
+      ["--find-files", "--install-hook"],
+    ]) {
+      const r = await run(process.execPath, [bundle, "scan", ...args], top, { VARLATCH_ASSISTED: "0" });
+      expect(r.code, args.join(" ")).toBe(1);
+      expect(r.stderr).toContain("Usage: varlatch scan");
+      expect(r.stdout).toBe("");
+    }
+    const file = await run(process.execPath, [bundle, "scan", "--find-files", ".env"], top, { VARLATCH_ASSISTED: "0" });
+    expect(file.code).toBe(1);
+    expect(file.stderr).toContain("--find-files takes a directory; .env is not one");
     expect(requests).toEqual([]);
   });
 });

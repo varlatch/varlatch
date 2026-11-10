@@ -123,6 +123,10 @@ Usage:
                (look for this identity's Secrets in staged files or build output; one audited disclosure;
                 exit 1 findings, 2 some files not scanned; never prints values or line contents)
   varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
+  varlatch scan --find-files [<dir>] [--json]
+               (list files that look like copies of secrets by name: .env, .env.* except .env.example and
+                .env.schema, *.pem, *.key; says whether Git ignores or tracks each; reads names only, needs
+                no project or server; exit 1 files found, 2 search incomplete)
   varlatch invite <name> [--role member|admin]
   varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member>
                                                        # people in the organization; former members are listed too

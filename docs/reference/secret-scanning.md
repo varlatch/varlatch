@@ -9,7 +9,12 @@ value.
 varlatch scan --staged [-e <env>] [--json]
 varlatch scan <path>... [-e <env>] [--json]
 varlatch scan --install-hook [-e <env>]
+varlatch scan --find-files [<dir>] [--json]
 ```
+
+`--find-files` is a separate mode that looks only at file names, to find
+plaintext copies of secrets on disk. See
+[Finding copies of secrets](#finding-copies-of-secrets).
 
 ```
 $ varlatch scan --staged
@@ -256,6 +261,129 @@ In CI, run the scan on the build output before publishing it:
 varlatch scan -e production dist/
 ```
 
+## Finding copies of secrets
+
+```
+varlatch scan --find-files [<dir>] [--json]
+```
+
+Programs that steal credentials from a developer's machine look first for
+plaintext files such as `.env`. `--find-files` lists the files under a
+directory that look like such copies by their name, so you can move them
+into Varlatch and delete them.
+
+```
+$ varlatch scan --find-files
+Files that look like copies of secrets, by name, under /home/me/src/web:
+  .env: ignored by Git
+  certs/dev.key: tracked by Git, so it is in the repository's history
+  services/api/.env.local: not ignored by Git, so a commit could add it
+
+varlatch scan: 3 file(s) look like copies of secrets (1 tracked by Git, 1 not ignored); 1830 entries checked by name. No file was opened.
+Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source
+Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>
+Removing a tracked file does not remove it from Git history: rotate the secrets it holds.
+See docs/reference/secret-scanning.md and docs/reference/import.md.
+```
+
+- **Names only.** The search reads directory entries and never opens a
+  file, a matched one included. It needs no project, no sign-in, and no
+  server: nothing is disclosed or sent, and it works outside a Git
+  repository and outside a Varlatch project. Assisted mode changes
+  nothing about it.
+- **The names:** `.env`; `.env.*` except the templates `.env.example` and
+  `.env.schema` (the same two names the coding agent guardrails leave
+  readable); `*.pem`; and `*.key`. Names are matched case-sensitively, as
+  Git does on Linux. Only files and symbolic links are listed: a directory
+  with a matching name (a Python virtual environment called `.env`, say)
+  is searched, not listed. A name is a hint, not a verdict: a public
+  certificate bundle ends in `.pem` too.
+- **Where it looks.** The directory given, or the current directory, and
+  every directory below it, in a stable order. `.git`, `.hg`, `.svn`, and
+  `node_modules` are skipped. A symbolic link is never followed: a linked
+  directory is not entered, and a linked file is listed by its own name as
+  `a symbolic link, not followed`, without looking at its target. A
+  directory given on the command line is resolved first, so it may itself
+  be a link.
+- **Bounds.** The search stops after 200,000 directory entries and does not
+  enter directories more than 20 levels down. Both are reported, as is a
+  directory it cannot read, so an incomplete search is never shown as
+  clean.
+- **Git state.** For each file, the search asks Git, by name only, in the
+  repository that holds it (a nested repository counts as its own):
+  `tracked by Git` (it is committed: the worst case, since removing it does
+  not remove it from history), `not ignored by Git` (a `git add .` would
+  commit it), `ignored by Git`, or `not in a Git repository`. When Git
+  cannot answer (it is not installed, or the repository is not trusted),
+  the line says `Git status unknown` and why.
+- **Next steps.** Move a dotenv file in with
+  [`varlatch import <file> --delete-source`](import.md), and store a key or
+  certificate file as one Secret with `varlatch values set <ITEM>
+  --from-file <file>`, then delete the file. Both run in a Varlatch project.
+  Rotate the secrets of a file that was tracked or that you cannot account
+  for.
+
+`--find-files` takes `--json` and no other option: `--staged`, paths to
+scan, `-e`, and the other options of the value scan are refused.
+
+### JSON
+
+```json
+{
+  "version": 1,
+  "mode": "find-files",
+  "exitCode": 1,
+  "root": "/home/me/src/web",
+  "files": [
+    { "path": ".env", "kind": "dotenv", "symlink": false, "git": "ignored" },
+    { "path": "certs/dev.key", "kind": "key", "symlink": false, "git": "tracked" }
+  ],
+  "notSearched": [],
+  "entriesChecked": 1830,
+  "stopped": false
+}
+```
+
+`path` is relative to `root`, with `/` separators. `kind` is `dotenv` or
+`key`. `git` is one of `tracked`, `not-ignored`, `ignored`,
+`no-repository`, and `unknown` (with `gitError`). `notSearched` lists the
+directories not searched, with the reason, and `stopped` is `true` when the
+entry bound was reached.
+
+### Exit status
+
+| Status | Meaning |
+| --- | --- |
+| 0 | The whole tree was searched, and no file looks like a copy. |
+| 1 | At least one file looks like a copy, or the search could not run (a usage error, or a directory that does not exist). |
+| 2 | No file looks like a copy, but part of the tree was not searched. |
+
+These follow the value scan: 1 for findings, 2 for incomplete. A CI job can
+run `varlatch scan --find-files` to fail when such a file is in the
+checkout; in a fresh checkout, the files it finds are normally tracked ones.
+
+## Checking shell history for values
+
+A secret typed or pasted on a command line ends up in your shell's history
+file, another place that programs stealing credentials read. The value scan
+checks it like any other file:
+
+```
+cd ~/src/web
+varlatch scan ~/.bash_history
+varlatch scan ~/.zsh_history -e production
+```
+
+This is the ordinary value scan, not `--find-files`: it needs what every
+value scan needs. Run it from a directory of a Varlatch project (one with
+`varlatch.toml` at or above it), signed in as an identity with
+`secret.reveal` on the environment, and it makes one audited disclosure. A
+file outside the project is scanned as given, and its findings show its
+path relative to the project directory (`../../.bash_history:812:16: ...`).
+Only the selected environment's Secrets are checked: repeat with `-e` for
+others. A finding means the value was in your history: delete those lines
+and rotate the Secret.
+
 ## Limits
 
 - Only the selected environment's Secrets are checked, at their current
@@ -268,6 +396,7 @@ varlatch scan -e production dist/
   value.
 - `--staged` checks what the next commit records, not Git history, and
   `varlatch scan <path>` checks only the files given.
-- File names are not checked, and are printed as they are.
+- The value scan does not check file names, and prints them as they are.
+  `--find-files` checks names only, never contents.
 - The scan protects against accidents. It does not stop anyone who means to
   copy a Secret into a file.

@@ -17,6 +17,21 @@ fixes.
   clock. Codes Varlatch does not recognize, the storage provider's message
   and the key are never shown.
 
+### CLI
+
+- **`varlatch scan --find-files` finds copies of secrets on disk.** It
+  lists the files under a directory (the current one by default) whose
+  names look like copies of secrets: `.env`, `.env.*` except
+  `.env.example` and `.env.schema`, `*.pem` and `*.key`. For each it says
+  whether Git tracks it, ignores it, or would commit it, and it suggests
+  `varlatch import` to move a dotenv file in. It reads names only and never
+  opens a file, does not follow symbolic links, skips `.git` and
+  `node_modules`, and needs no project, sign-in or server. It exits 1 when
+  it finds a file and 2 when part of the tree was not searched. The secret
+  scanning reference also shows how to check a shell history file for
+  values with `varlatch scan <file>`. See
+  [Finding copies of secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

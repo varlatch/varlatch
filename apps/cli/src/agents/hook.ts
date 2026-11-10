@@ -34,7 +34,8 @@ export interface HookContext {
 /** A denial: what was refused and what to do instead, for the coding agent. */
 export type Denial = string;
 
-const ENV_TEMPLATES = new Set([".env.example", ".env.schema"]);
+/** Dotenv templates that hold no values: readable, and not listed by `varlatch scan --find-files`. */
+export const ENV_TEMPLATES: ReadonlySet<string> = new Set([".env.example", ".env.schema"]);
 /** Names a glob is tried against: a glob that can match one of them reads a .env file. */
 const ENV_NAMES = [".env", ".envrc", ".env.local", ".env.production", ".env.development.local", ".env.bak"];
 
