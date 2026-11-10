@@ -306,6 +306,13 @@ export async function authorize(
   return enforce(ctx, await decide(ctx, c, principal, action, resource, opts));
 }
 
+/** A required route parameter; a missing one is a validation failure. */
+export function routeParam(c: Context, name: string): string {
+  const value = c.req.param(name);
+  if (!value) throw new DomainError("VALIDATION_FAILED", `Missing route parameter: ${name}`);
+  return value;
+}
+
 /** Cursor helpers: opaque base64 of (occurredAt,id) or (createdAt,id). */
 export function encodeCursor(parts: string[]): string {
   return Buffer.from(JSON.stringify(parts), "utf8").toString("base64url");
