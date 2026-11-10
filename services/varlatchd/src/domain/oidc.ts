@@ -12,6 +12,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 
 /**
  * OIDC machine authentication (ADR-0007 foresaw CI federation): an admin
@@ -94,6 +95,7 @@ export async function createOidcBinding(
         actorIdentityId,
       ],
     );
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "oidc_binding.create");
     await recordAuditEvent(db, {
       eventType: "oidc_binding.created",
       decision: "info",
@@ -138,6 +140,7 @@ export async function revokeOidcBinding(
       [bindingId, organizationId, identityId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Binding not found");
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "oidc_binding.delete");
     await recordAuditEvent(db, {
       eventType: "oidc_binding.revoked",
       decision: "info",

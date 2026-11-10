@@ -76,6 +76,11 @@ export type SecurityControl = components["schemas"]["SecurityControl"];
 export type SecurityControlList = components["schemas"]["SecurityControlList"];
 export type SecurityControlChangeInput = components["schemas"]["SecurityControlChangeInput"];
 export type SecurityControlChange = components["schemas"]["SecurityControlChange"];
+/** What the Security Controls in report mode counted (capability security.report, ADR-0054 Decision 9). */
+export type SecurityControlReport = components["schemas"]["SecurityControlReport"];
+export type SecurityControlCounts = components["schemas"]["SecurityControlCounts"];
+export type SecurityReportEntry = components["schemas"]["SecurityReportEntry"];
+export type SecurityReportReason = components["schemas"]["SecurityReportReason"];
 /** A step-up approval (Approval Intent, ADR-0054 Decision 3). */
 export type Approval = components["schemas"]["Approval"];
 export type ApprovalChange = components["schemas"]["ApprovalChange"];

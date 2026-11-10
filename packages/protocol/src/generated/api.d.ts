@@ -567,6 +567,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/security/control-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the Security Controls in report mode counted (capability security.report, ADR-0054 Decision 9). For each control: its mode and version, the counts of the last `days` days, the current hour's live counts, the counts not yet summarized in the audit log, and entries per configuration version, operation, reason and actor, with their counts and first and last times. Counting refuses and changes nothing. A write is counted only when it committed, an access only when it was authorized and succeeded. Summaries are written to the audit log as security_control.would_block once an hour has been over for 10 minutes; counts are kept 35 days after their summary. Fixed fields only: never a request body, URL, token, hash or value, and no target. It names who did what, so it needs organization.manage; existence-hiding. Never cached. */
+        get: operations["securityControlReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/security/controls/{control}": {
         parameters: {
             query?: never;
@@ -2959,6 +2976,56 @@ export interface components {
             /** @description The modes this server accepts in a change. */
             availableModes: components["schemas"]["SecurityControlMode"][];
         };
+        /**
+         * @description Why the control would have acted. admin-step-up and requirement-protection: no-approval (a person, without an approval) or machine-credential (a machine credential, which can never pass one). passkey-verification: no-evidence (a sign-in recorded no evidence, such as one from before the upgrade), not-user-verified (the passkey did not verify the person), untrusted-passkey (the passkey that signed in is not trusted). credential-lifetime: would-default (no TTL given: it would get the default) or would-refuse (a TTL above the maximum).
+         * @enum {string}
+         */
+        SecurityReportReason: "no-approval" | "machine-credential" | "no-evidence" | "not-user-verified" | "untrusted-passkey" | "would-default" | "would-refuse";
+        SecurityReportEntry: {
+            /** @description The control's version when the attempts were decided. */
+            configVersion: number;
+            /** @description The semantic operation, such as grant.create, requirement.revoke or credential.issue; for passkey-verification the first action the request was authorized for (secret.reveal, project.read, ...), organization.access, or convex.token. */
+            operation: string;
+            reason: components["schemas"]["SecurityReportReason"];
+            actor: {
+                id: string;
+                name: string | null;
+                kind: string | null;
+            };
+            count: number;
+            /** Format: date-time */
+            firstSeen: string;
+            /** Format: date-time */
+            lastSeen: string;
+        };
+        SecurityControlCounts: {
+            control: components["schemas"]["SecurityControlName"];
+            mode: components["schemas"]["SecurityControlMode"];
+            version: number;
+            /** @description Every count in the window. */
+            total: number;
+            /** @description Counted in the current hour, live. */
+            currentHour: number;
+            /** @description Counted, but not yet summarized in the audit log. */
+            pending: number;
+            /** @description Largest count first. */
+            entries: components["schemas"]["SecurityReportEntry"][];
+        };
+        SecurityControlReport: {
+            organizationId: string;
+            days: number;
+            /**
+             * Format: date-time
+             * @description The start of the window, a whole hour.
+             */
+            since: string;
+            /** Format: date-time */
+            generatedAt: string;
+            /** @description How long after an hour ends its summaries are written to the audit log. */
+            summaryDelayMinutes: number;
+            /** @description All four controls, in the order of SecurityControlName. */
+            controls: components["schemas"]["SecurityControlCounts"][];
+        };
         SecurityControlChangeInput: {
             mode?: components["schemas"]["SecurityControlMode"];
             /** @description The new configuration, or null to clear it; absent keeps it. */
@@ -4856,6 +4923,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecurityControlList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    securityControlReport: {
+        parameters: {
+            query?: {
+                /** @description The window, in days back from now (whole hours). 30 when absent. */
+                days?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityControlReport"];
                 };
             };
             default: components["responses"]["Error"];

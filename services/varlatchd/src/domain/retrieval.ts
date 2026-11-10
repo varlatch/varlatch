@@ -3,7 +3,8 @@ import type { ConfigurationContract } from "@varlatch/contract";
 import { recordAuditEvents, type AuditEventInput } from "../audit/events.js";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptValue } from "../crypto/hierarchy.js";
-import { withSnapshot } from "../db/tx.js";
+import type { Querier } from "../db/migrate.js";
+import { withSnapshot, withTx } from "../db/tx.js";
 import { getRevision, sensitivityOf, type ContractRevisionRow } from "./contracts.js";
 import type { AppCtx } from "./ctx.js";
 import type { EnvironmentRow } from "./environments.js";
@@ -170,14 +171,24 @@ export async function captureState(
  * ciphertext. The events are committed together before any decryption
  * starts; if the commit fails, nothing is decrypted and the error stops the
  * request. Nothing is read from the database.
+ *
+ * `beforeAudit` runs in the same transaction, before the exposure rows and
+ * the first audit insert: a report counter (ADR-0054 Decision 9) commits
+ * with the disclosure's audit or not at all.
  */
 export async function auditThenDecrypt(
   ctx: AppCtx,
   state: CapturedState,
   events: AuditEventInput[],
   versionIds: string[],
+  beforeAudit?: (db: Querier) => Promise<void>,
 ): Promise<Map<string, string>> {
-  if (events.length > 0) {
+  if (events.length > 0 && beforeAudit) {
+    await withTx(ctx.db, async (db) => {
+      await beforeAudit(db);
+      await recordAuditEvents(db, events);
+    });
+  } else if (events.length > 0) {
     // One call: every event's exposure rows before the first audit insert.
     await recordAuditEvents(ctx.db, events);
   }

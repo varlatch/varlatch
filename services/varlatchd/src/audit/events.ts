@@ -99,6 +99,7 @@ export const AUDIT_EVENT_TYPES = [
   "secret.validated",
   "security_control.changed",
   "security_control.reset",
+  "security_control.would_block",
   "setup.grant_rejected",
   "sync.connection_checked",
   "sync.connection_created",

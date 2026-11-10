@@ -15,6 +15,7 @@ import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 
 /**
  * Removing a person from an Organization, a member leaving, and role
@@ -395,6 +396,9 @@ export async function removeMember(
     const { removalId, removedAt, grants, groups, invitations } = ended;
     const review = await memberReview(db, organizationId, identityId);
 
+    // Report mode (ADR-0054 Decision 9): removing someone else; leaving is
+    // the person's own and not on admin-step-up's list.
+    if (!left) await reportAdminStepUp(db, organizationId, actor.id, "member.remove");
     await recordAuditEvent(db, {
       eventType: "membership.removed",
       decision: "info",
@@ -507,6 +511,7 @@ export async function changeMemberRole(
        WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL`,
       [organizationId, identityId, role],
     );
+    await reportAdminStepUp(db, organizationId, actor.id, role === "admin" ? "member.promote" : "member.demote");
     await recordAuditEvent(db, {
       eventType: "membership.role_changed",
       decision: "info",

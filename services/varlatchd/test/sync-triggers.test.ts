@@ -82,6 +82,8 @@ const TRIGGERING = [
   // Security Controls (ADR-0054): writes that name no environment, so they mark nothing.
   "security_control.changed",
   "security_control.reset",
+  // A report summary (Decision 9): it names no environment either.
+  "security_control.would_block",
   "setup.grant_rejected",
   "team.project_added",
   "team.project_removed",

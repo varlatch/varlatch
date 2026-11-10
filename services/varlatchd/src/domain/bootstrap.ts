@@ -11,6 +11,7 @@ import { lockAllPeopleAndPasskeys } from "./personlocks.js";
 import { DomainError } from "./errors.js";
 import { pinLiveMembership } from "./orgs.js";
 import { lockLiveScope } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 
 /**
  * Installation lifecycle, bootstrap, and break-glass (ADR-0010/0019/0020).
@@ -254,6 +255,8 @@ export async function issueInviteGrant(
        VALUES ($1,'invite',$2,$3,$4,$5,$6,$7)`,
       [id, hashToken(token), expiresAt, input.organizationId, input.role, input.name, actorIdentityId],
     );
+    // Report mode (ADR-0054 Decision 9): inviting someone as admin.
+    if (input.role === "admin") await reportAdminStepUp(db, input.organizationId, actorIdentityId, "member.invite_admin");
     await recordAuditEvent(db, {
       eventType: "invitation.issued",
       decision: "info",

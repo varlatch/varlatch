@@ -32,8 +32,7 @@ import { lockLiveScope } from "./liveness.js";
  * mode.
  *
  * `enforce` is refused with CONTROL_MODE_UNAVAILABLE until the enforcement
- * step ships. `report` is stored; what it counts arrives with the report
- * counters.
+ * step ships. What `report` counts, where and when: securityreport.ts.
  */
 
 export const SECURITY_CONTROLS = ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"] as const;

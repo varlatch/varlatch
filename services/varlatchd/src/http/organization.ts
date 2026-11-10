@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Context } from "hono";
+import type { Action } from "../authz/evaluate.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { getOrganization, type OrgRow } from "../domain/orgs.js";
-import { routeParam, type Principal } from "./support.js";
+import { countWouldBlockAfter, passkeyVerificationReports, type PendingAccessReport } from "../domain/securityreport.js";
+import { AUTHORIZED_ACTION, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
 
 /**
  * Where a request's principal enters an Organization (ADR-0054 Decision 7).
@@ -16,10 +18,10 @@ import { routeParam, type Principal } from "./support.js";
  *   RESOURCE_NOT_FOUND, for members and outsiders alike. Nothing here
  *   authorizes; routes still do, hiding existence where they did.
  * - Then the per-request Organization checks run for the requesting
- *   principal and credential (organizationEntryChecks).
+ *   principal and credential (organizationEntryChecks), and are awaited.
  *
- * `ctx` may be a retrieval snapshot's (inSnapshot): the lookup then reads
- * from that snapshot, as before.
+ * `ctx` may be a retrieval snapshot's (inSnapshot): the lookup and the
+ * checks then read from that snapshot, as before, and write nothing.
  *
  * This is for the requester only. getOrgRole, loadGrants and
  * captureAuthority load a subject's authority, also for other people (a
@@ -28,8 +30,18 @@ import { routeParam, type Principal } from "./support.js";
  */
 export async function resolveOrganization(ctx: AppCtx, c: Context): Promise<OrgRow> {
   const org = await getOrganization(ctx, routeParam(c, "org"));
-  organizationEntryChecks(ctx, c.get("principal") as Principal, org);
+  await organizationEntryChecks(ctx, c, c.get("principal") as Principal | undefined, org);
   return org;
+}
+
+/** The requester as the security report sees it. */
+export function entryRequester(principal: Principal) {
+  return {
+    identityId: principal.identity.id,
+    identityKind: principal.identity.kind,
+    credentialId: principal.credentialId,
+    credentialKind: principal.credentialKind,
+  };
 }
 
 /**
@@ -37,14 +49,34 @@ export async function resolveOrganization(ctx: AppCtx, c: Context): Promise<OrgR
  * requesting principal and its credential, after the Organization resolved
  * and before the route authorizes anything (ADR-0054 Decisions 7 and 9).
  *
- * There are none yet: this does nothing, so every route behaves as it did.
- * When checks arrive (report-mode counting first, enforcement later):
+ * passkey-verification, in report mode: a person's credential whose
+ * sign-in evidence lacks user verification or a trusted passkey is noted
+ * here, against the mode and version read now (in the snapshot, on a
+ * retrieval). Nothing is refused and nothing is written here: this runs
+ * before authorization, so counting here would count outsiders and
+ * refused requests. The note is counted at the request's outcome
+ * (countEntryReport), only when the request succeeded, in a short
+ * transaction of its own after any retrieval snapshot ended.
  *
- * - A refusal must not tell an outsider that the Organization exists.
- * - On retrieval routes `ctx` is a read-only snapshot: a report-mode count
- *   is written in a separate short transaction after the decision, never
- *   here inside the snapshot.
+ * Enforcement (a later step) will refuse here, and must not tell an
+ * outsider that the Organization exists before any distinct refusal.
  */
-export function organizationEntryChecks(_ctx: AppCtx, _principal: Principal, _org: OrgRow): void {
-  // Intentionally empty: no per-request Organization check exists yet.
+export async function organizationEntryChecks(ctx: AppCtx, c: Context, principal: Principal | undefined, org: OrgRow): Promise<void> {
+  if (!principal) return;
+  const [pending] = await passkeyVerificationReports(ctx.db, entryRequester(principal), [org.id]);
+  if (pending) c.set(ENTRY_REPORT, pending);
+}
+
+/**
+ * At the request's outcome: count the entry check's note when the request
+ * succeeded (a status below 400: it was authorized, and a write in it
+ * committed), as the first action it was authorized for. The count's own
+ * transaction counts only a live member of a live Organization. Never
+ * fails the request.
+ */
+export async function countEntryReport(ctx: AppCtx, c: Context): Promise<void> {
+  const pending = c.get(ENTRY_REPORT) as PendingAccessReport | undefined;
+  if (!pending || c.res.status >= 400) return;
+  const action = c.get(AUTHORIZED_ACTION) as Action | undefined;
+  await countWouldBlockAfter(ctx, pending, action ?? "organization.access");
 }

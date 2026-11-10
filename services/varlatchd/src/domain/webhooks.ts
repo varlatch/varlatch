@@ -9,6 +9,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -72,6 +73,7 @@ export async function createWebhook(
   const envelope = encryptWebhookSecret(orgKekOf(ctx, org), org.id, id, secret);
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId: org.id });
+    await reportAdminStepUp(db, org.id, actorIdentityId, "webhook.create");
     const eventId = await recordAuditEvent(db, {
       eventType: "webhook.created",
       decision: "info",
@@ -172,6 +174,7 @@ export async function updateWebhook(
       [url, eventTypes, webhookId],
     );
     const out = updated.rows[0] as { version: number; updated_at: string };
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "webhook.update");
     await recordAuditEvent(db, {
       eventType: "webhook.updated",
       decision: "info",
@@ -204,6 +207,7 @@ export async function revokeWebhook(
       [webhookId, organizationId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Webhook not found");
+    await reportAdminStepUp(db, organizationId, actorIdentityId, "webhook.delete");
     await recordAuditEvent(db, {
       eventType: "webhook.revoked",
       decision: "info",

@@ -463,6 +463,23 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         ],
       };
     }
+    case "security_control.would_block": {
+      // An hour's summary of what a control in report mode would have done
+      // (ADR-0054 Decision 9); the actor is whose attempts were counted.
+      const control = str(m.control) ?? str(r.control) ?? "a security control";
+      const count = typeof m.count === "number" ? m.count : 0;
+      return {
+        icon: "shield",
+        title: "Security control report",
+        segments: [
+          `would have been stopped ${count} time${count === 1 ? "" : "s"} by `,
+          { kind: "mono", text: control },
+          ...(str(m.operation) ? [" doing ", { kind: "mono" as const, text: str(m.operation)! }] : []),
+          ...(str(m.reason) ? [` (${str(m.reason)})`] : []),
+          " in report mode",
+        ],
+      };
+    }
     case "project.created":
       return { icon: "folder", title: "Project created", segments: ["created project ", { kind: "place", text: str(r.projectSlug) ?? names.project(str(r.projectId)) ?? "a project" }] };
     case "project.renamed":
