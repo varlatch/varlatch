@@ -87,6 +87,55 @@ fixes.
   later behave exactly as before. The tailnet browser endpoint exposes the
   header to the pages it allows.
 
+### Passkeys
+
+- **Each passkey is trusted or unconfirmed.** The account's Security page
+  says which, and why. Passkeys created from a link (setting up the
+  installation, an invitation, `varlatch admin reenroll`, `admin recover`)
+  are trusted, and so is every passkey that exists when you upgrade. A
+  passkey added in the dashboard while signed in starts unconfirmed: a
+  stolen session could add one, so it does not count as yours until you
+  confirm it. Nothing is restricted by this yet. Signing in, approving a
+  CLI sign-in, and adding and removing passkeys work as before, with any
+  passkey. The organization security controls of a later release will use
+  it. See [Your passkeys](docs/getting-started.md#your-passkeys).
+- **Confirm a new passkey with a trusted one.** On the Security page,
+  **Confirm with another passkey** asks for one of your trusted passkeys
+  with its PIN, fingerprint or face, and then trusts the new one. The
+  confirmation is tied to that passkey and to your browser session, works
+  once, lasts 5 minutes, and is limited to 10 starts in 10 minutes. It is
+  recorded in the audit log as "Passkey confirmed". A person with no trusted
+  passkey gets one through a link from whoever runs the server. API: `GET
+  /v1/me/passkeys`, `POST /v1/me/passkeys/{passkey}/confirmation/options`
+  and `POST /v1/me/passkeys/{passkey}/confirmation`, capability
+  `account.passkeys`.
+- **Sign-ins record how you verified.** Each sign-in, and each CLI sign-in
+  approved with a code, now records which passkey was used and whether it
+  asked for your PIN, fingerprint or face. The CLI credential from the
+  browser sign-in hands over keeps a link to the browser session it came
+  from. Sessions and credentials from before the upgrade have no such
+  record. This changes no access.
+- **The dashboard removes passkeys through Varlatch.** `DELETE
+  /v1/me/passkeys/{passkey}` removes one of your own passkeys, as Better
+  Auth's `/auth/passkey/delete-passkey` did; that endpoint is turned off
+  and answers 404. The dashboard still never removes your last passkey.
+- **A passkey that is already registered is refused.** Registering a
+  credential that the server already knows, for anyone, now fails with a
+  400, as the WebAuthn standard asks, also when two registrations of it
+  arrive at once. If an installation already has such duplicates, the
+  upgrade keeps the oldest passkey of each credential and moves the later
+  copies to a quarantine table, `passkey_quarantine`. A quarantined
+  passkey can no longer sign in. When the passkey that was kept belongs to
+  another person, the person whose passkey was quarantined loses it, and
+  signing in with that authenticator signs in as the other person if it
+  has the same public key. The migration job's output (with Compose,
+  `docker compose logs varlatch-migrate`) lists every quarantined
+  passkey with its person and says whose passkey was kept; the table also
+  records it (`kept_passkey_id`). Whoever runs the server restores access
+  with `varlatch admin reenroll --identity <identity id>`, which sends a
+  link that enrolls a new trusted passkey. See [Passkeys that shared a
+  credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39).
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

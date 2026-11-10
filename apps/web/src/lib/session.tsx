@@ -55,32 +55,14 @@ interface SessionState {
 
 const SessionContext = createContext<SessionState | null>(null);
 
-/** Enrolled passkeys for the signed-in Better Auth user (My Credentials). */
-export interface PasskeyInfo {
-  id: string;
-  name: string | null;
-  deviceType: string;
-  backedUp: boolean;
-  createdAt: string;
-}
-
-export async function listPasskeys(): Promise<PasskeyInfo[]> {
-  const res = await authClient.$fetch("/passkey/list-user-passkeys", { method: "GET" });
-  if (res.error) throw new Error(res.error.message ?? "could not list passkeys");
-  return res.data as PasskeyInfo[];
-}
-
+/**
+ * Add a passkey to the signed-in person, through Better Auth's registration
+ * ceremony. It starts unconfirmed (ADR-0054 Decision 4): listing, removing
+ * and confirming passkeys go through /v1/me/passkeys (the SDK).
+ */
 export async function addPasskey(name: string): Promise<void> {
   const result = await authClient.passkey.addPasskey({ name });
   if (result?.error) throw new Error(result.error.message ?? "passkey enrollment failed");
-}
-
-export async function deletePasskey(id: string): Promise<void> {
-  const res = await authClient.$fetch("/passkey/delete-passkey", {
-    method: "POST",
-    body: { id },
-  });
-  if (res.error) throw new Error(res.error.message ?? "could not remove passkey");
 }
 
 /**

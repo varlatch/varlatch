@@ -37,6 +37,7 @@ const TRIGGERING = [
   "authentication.device_denied",
   "authentication.device_requested",
   "authentication.failed",
+  "authentication.passkey_confirmed",
   "authentication.passkey_enrollment_started",
   "bootstrap.grant_issued",
   "contract.activated",

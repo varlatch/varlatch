@@ -9,12 +9,26 @@ import {
 import type { Querier } from "../db/migrate.js";
 
 /**
- * A fresh passkey assertion for one operation (device sign-in approval):
- * Better Auth's passkey sign-in cannot bind a ceremony to an operation, so
- * this module runs its own WebAuthn authentication against the passkeys
- * Better Auth stores. The challenge is generated here and kept server-side
- * by the caller, bound to the operation, identity, and session.
+ * A fresh passkey assertion for one operation (device sign-in approval, a
+ * passkey confirmation): Better Auth's passkey sign-in cannot bind a
+ * ceremony to an operation, so this module runs its own WebAuthn
+ * authentication against the passkeys Better Auth stores. The challenge is
+ * generated here and kept server-side by the caller, bound to the
+ * operation, identity, and session.
+ *
+ * User verification (ADR-0054 Decision 6): the caller says whether the
+ * operation requires it, and a verified assertion reports what the
+ * authenticator said, with the passkey that asserted, so the caller can
+ * record that evidence.
  */
+
+/** WebAuthn's userVerification for a ceremony's options. */
+export type UserVerification = "preferred" | "required";
+
+/** Which of the identity's passkeys may assert; all of them when absent. */
+export interface PasskeyScope {
+  passkeyIds?: readonly string[] | undefined;
+}
 
 export interface RelyingParty {
   /** WebAuthn RP ID: the public URL's host name. */
@@ -51,20 +65,32 @@ function transportsOf(row: PasskeyRow): { transports: AuthenticatorTransportFutu
   return row.transports ? { transports: row.transports.split(",") as AuthenticatorTransportFuture[] } : {};
 }
 
-/** Request options for the identity's own passkeys, with a new random challenge; null when it has none. */
+function inScope(passkeys: PasskeyRow[], scope: PasskeyScope): PasskeyRow[] {
+  if (!scope.passkeyIds) return passkeys;
+  const allowed = new Set(scope.passkeyIds);
+  return passkeys.filter((p) => allowed.has(p.id));
+}
+
+/**
+ * Request options for the identity's own passkeys (those in scope), with a
+ * new random challenge; null when it has none. `userVerification` is
+ * "preferred" for device sign-in approval, as Better Auth's passkey sign-in
+ * (user presence always, verification when the authenticator can), and
+ * "required" for a passkey confirmation.
+ */
 export async function assertionOptions(
   db: Querier,
   rp: RelyingParty,
   identityId: string,
   timeoutMs: number,
+  options: { userVerification: UserVerification } & PasskeyScope,
 ): Promise<PublicKeyCredentialRequestOptionsJSON | null> {
-  const passkeys = await passkeysOf(db, identityId);
+  const passkeys = inScope(await passkeysOf(db, identityId), options);
   if (passkeys.length === 0) return null;
   return generateAuthenticationOptions({
     rpID: rp.rpId,
     timeout: timeoutMs,
-    // As Better Auth's passkey sign-in: user presence always, verification when the authenticator can.
-    userVerification: "preferred",
+    userVerification: options.userVerification,
     allowCredentials: passkeys.map((p) => ({ id: p.credentialID, ...transportsOf(p) })),
   });
 }
@@ -81,11 +107,21 @@ export function assertionChallenge(response: unknown): string | null {
   }
 }
 
+/** A verified assertion: which passkey asserted, and whether the authenticator verified the user. */
+export interface AssertionEvidence {
+  passkeyId: string;
+  userVerified: boolean;
+}
+
+export type AssertionRefusal = "unknown-passkey" | "invalid-assertion" | "user-verification-required";
+
 /**
- * Verify an assertion made with one of the identity's own passkeys over
- * `expectedChallenge`, and advance that passkey's signature counter. Run it
- * inside the transaction that consumes the challenge. Returns the reason on
- * refusal; never throws for a bad assertion.
+ * Verify an assertion made with one of the identity's own passkeys (one in
+ * scope) over `expectedChallenge`, and advance that passkey's signature
+ * counter. When `requireUserVerification` is set, an assertion without
+ * user verification is refused. Run it inside the transaction that consumes
+ * the challenge. Returns the reason on refusal; never throws for a bad
+ * assertion.
  */
 export async function verifyAssertion(
   db: Querier,
@@ -93,15 +129,17 @@ export async function verifyAssertion(
   identityId: string,
   response: unknown,
   expectedChallenge: string,
-): Promise<{ ok: true } | { ok: false; reason: "unknown-passkey" | "invalid-assertion" }> {
+  options: { requireUserVerification: boolean } & PasskeyScope,
+): Promise<({ ok: true } & AssertionEvidence) | { ok: false; reason: AssertionRefusal }> {
   const credentialId = (response as { id?: unknown } | null)?.id;
   const passkey = typeof credentialId === "string"
-    ? (await passkeysOf(db, identityId)).find((p) => p.credentialID === credentialId)
+    ? inScope(await passkeysOf(db, identityId), options).find((p) => p.credentialID === credentialId)
     : undefined;
-  // A passkey of another identity, or none at all, never approves for this one.
+  // A passkey of another identity, one out of scope, or none at all, never approves for this one.
   if (!passkey) return { ok: false, reason: "unknown-passkey" };
+  let verification;
   try {
-    const verification = await verifyAuthenticationResponse({
+    verification = await verifyAuthenticationResponse({
       response: response as AuthenticationResponseJSON,
       expectedChallenge,
       expectedOrigin: rp.origin,
@@ -112,12 +150,15 @@ export async function verifyAssertion(
         counter: passkey.counter,
         ...transportsOf(passkey),
       },
+      // Checked below, so a missing verification has its own reason.
       requireUserVerification: false,
     });
-    if (!verification.verified) return { ok: false, reason: "invalid-assertion" };
-    await db.query("UPDATE passkey SET counter = $2 WHERE id = $1", [passkey.id, verification.authenticationInfo.newCounter]);
-    return { ok: true };
   } catch {
     return { ok: false, reason: "invalid-assertion" };
   }
+  if (!verification.verified) return { ok: false, reason: "invalid-assertion" };
+  const userVerified = verification.authenticationInfo.userVerified;
+  if (options.requireUserVerification && !userVerified) return { ok: false, reason: "user-verification-required" };
+  await db.query("UPDATE passkey SET counter = $2 WHERE id = $1", [passkey.id, verification.authenticationInfo.newCounter]);
+  return { ok: true, passkeyId: passkey.id, userVerified };
 }

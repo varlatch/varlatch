@@ -32,6 +32,7 @@ const PREFIXES = {
   githubApp: "gha",
   membershipRemoval: "mrm",
   organizationDeletion: "odl",
+  passkeyConfirmationChallenge: "pcc",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;

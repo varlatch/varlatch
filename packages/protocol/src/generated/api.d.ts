@@ -998,8 +998,76 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trade the short-lived browser-handoff bearer (ADR-0024) for a longer-lived CLI credential. Restricted to browser session bearers — a leaked CLI credential cannot mint successors — and one-shot: the presenting bearer is revoked by the exchange. */
+        /** Trade the short-lived browser-handoff bearer (ADR-0024) for a longer-lived CLI credential. Restricted to browser session bearers — a leaked CLI credential cannot mint successors — and one-shot: the presenting bearer is revoked by the exchange. The CLI credential keeps a link to the browser session the bearer came from, and so to that sign-in's record of which passkey was used. */
         post: operations["exchangeCliCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own passkeys with their provenance (capability account.passkeys, ADR-0054 Decision 4): trusted (existing at the upgrade that introduced provenance, enrolled through a setup grant, or confirmed) or unconfirmed (added by a signed-in session and not confirmed yet). Empty for a machine identity. Never a public key or a credential id. Returned whole, never paginated. */
+        get: operations["listMyPasskeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys/{passkey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Nothing restricts it yet; once Security Controls exist, removing a trusted passkey will need an approval while the person belongs to an Organization with a control at enforce (ADR-0054 Decision 4). */
+        delete: operations["removeMyPasskey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys/{passkey}/confirmation/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start confirming one of the caller's unconfirmed passkeys with a trusted one (capability account.passkeys): WebAuthn request options listing the caller's trusted passkeys, user verification required, with a challenge bound to the person, their dashboard session and this passkey (single use; 5 minutes). Requires a human's dashboard session bearer. STATE_CHANGED when the passkey is already trusted; PERMISSION_DENIED with details.reason no-trusted-passkey when the caller has no trusted passkey (the host operator's admin reenroll or admin recover enrolls one); RATE_LIMITED with details.retryAt after 10 starts in 10 minutes. Cache-Control no-store. */
+        post: operations["startPasskeyConfirmation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/passkeys/{passkey}/confirmation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm one of the caller's unconfirmed passkeys (capability account.passkeys): an assertion over the challenge startPasskeyConfirmation issued for this passkey and session, made with another, trusted passkey of the caller with user verification. The passkey becomes trusted (confirmed) and authentication.passkey_confirmed is recorded. A refused assertion (another person's or an unconfirmed passkey, no user verification, a used, expired or foreign challenge) is PERMISSION_DENIED with details.reason, uses up the challenge, and is recorded as authentication.failed. Requires a human's dashboard session bearer. Cache-Control no-store. */
+        post: operations["confirmMyPasskey"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1066,7 +1134,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve or deny a pending device-authorization sign-in. Requires a human's dashboard session bearer; approving also requires a passkey assertion over the challenge lookupDeviceSignIn issued for this sign-in and session (PERMISSION_DENIED otherwise). STATE_CHANGED when the sign-in is no longer pending. The code counts against the same limits as lookupDeviceSignIn. Cache-Control no-store. */
+        /** Approve or deny a pending device-authorization sign-in. Requires a human's dashboard session bearer; approving also requires a passkey assertion over the challenge lookupDeviceSignIn issued for this sign-in and session (PERMISSION_DENIED otherwise). The approval records which passkey asserted and whether it verified the user (user verification is not required), and the CLI credential the sign-in issues carries that record. STATE_CHANGED when the sign-in is no longer pending. The code counts against the same limits as lookupDeviceSignIn. Cache-Control no-store. */
         post: operations["decideDeviceSignIn"];
         delete?: never;
         options?: never;
@@ -2723,6 +2791,39 @@ export interface components {
             current: boolean;
             /** @description A short, readable summary of the client that requested a browser session or CLI login credential, such as "Firefox on Linux" or "varlatch CLI 0.14.0 on Linux". Only this summary is stored, never the User-Agent itself. Null when the client was not recognized, for every other kind, and for credentials issued before 0.14.0; absent from older servers. */
             client?: string | null;
+        };
+        /** @description One of the caller's passkeys and its provenance (ADR-0054 Decision 4). Only a trusted passkey will be able to approve operations once Security Controls exist; sign-in works with any passkey. */
+        OwnPasskey: {
+            id: string;
+            name: string | null;
+            /** @description WebAuthn device type, singleDevice or multiDevice. */
+            deviceType: string;
+            /** @description Synced by a password manager or platform. */
+            backedUp: boolean;
+            /** Format: date-time */
+            createdAt: string | null;
+            /** @enum {string} */
+            trust: "trusted" | "unconfirmed";
+            /**
+             * @description How it became trusted; null while unconfirmed.
+             * @enum {string|null}
+             */
+            trustedVia: "existing-at-upgrade" | "setup-grant" | "confirmed" | null;
+            /** Format: date-time */
+            trustedAt: string | null;
+            /**
+             * @description For setup-grant, which grant enrolled it.
+             * @enum {string|null}
+             */
+            setupGrantKind: "bootstrap" | "recover" | "invite" | "reenroll" | null;
+            /** @description For confirmed, the trusted passkey that confirmed it (it may have been removed since). */
+            confirmedByPasskeyId: string | null;
+        };
+        PasskeyConfirmationOptions: {
+            /** @description WebAuthn request options (PublicKeyCredentialRequestOptionsJSON), userVerification required, allowing only the caller's trusted passkeys. */
+            publicKey: {
+                [key: string]: unknown;
+            };
         };
         IssuedCliCredential: {
             id: string;
@@ -5393,6 +5494,106 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IssuedCliCredential"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    listMyPasskeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's passkeys, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["OwnPasskey"][];
+                        nextCursor: components["schemas"]["NextCursor"];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeMyPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startPasskeyConfirmation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The confirmation challenge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasskeyConfirmationOptions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    confirmMyPasskey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                passkey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description WebAuthn authentication response (AuthenticationResponseJSON). */
+                    assertion: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The confirmed passkey */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnPasskey"];
                 };
             };
             default: components["responses"]["Error"];

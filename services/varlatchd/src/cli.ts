@@ -264,6 +264,11 @@ async function migrateCommand(): Promise<void> {
         ? "Schema already current."
         : `Applied migrations: ${applied.map((m) => `${m.id} (${m.name})`).join(", ")}`,
     );
+    if (applied.some((m) => m.id === 39)) {
+      // Passkeys that shared a credential id with an older one (ADR-0054): who lost one, and how to restore it.
+      const { quarantinedPasskeys, quarantineReport } = await import("./domain/passkeys.js");
+      for (const line of quarantineReport(await quarantinedPasskeys(db))) console.log(line);
+    }
   } finally { await release(); await db.end(); }
 }
 
