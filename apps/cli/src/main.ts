@@ -2766,6 +2766,23 @@ async function main(): Promise<void> {
           }
           return;
         }
+        if (args[0] === "status") {
+          // The Security page as text or JSON (ADR-0054 Decision 11): read-only,
+          // exit 0 whatever it shows; parts the caller cannot read are named.
+          const status = await import("./securityStatus.js");
+          const parsed = strictOptions("security status", args.slice(1), { values: ["--server", "--org"], booleans: ["--json"] }, status.SECURITY_STATUS_USAGE);
+          const { server, organization } = securityScope("status", parsed.values, status.SECURITY_STATUS_USAGE);
+          let result: Awaited<ReturnType<typeof status.fetchSecurityStatus>>;
+          try {
+            result = await status.fetchSecurityStatus(client({ server }), organization);
+          } catch (err) {
+            if (err instanceof status.SecurityStatusUnsupportedError) fail(err.message);
+            throw err;
+          }
+          if (parsed.booleans.has("--json")) printJson({ ...result });
+          else console.log(status.securityStatusLines(result, Date.now()).join("\n"));
+          return;
+        }
         // Visibility only (ADR-0054 Decision 8): a report, never a change; exit 0 whatever it lists.
         const parsed = strictOptions(`security ${args[0] ?? ""}`.trim(), args, { values: ["--server", "--org"], booleans: ["--json"], positionals: 1 }, SECURITY_USAGE);
         if (parsed.positionals[0] !== "report") usageError(SECURITY_USAGE);

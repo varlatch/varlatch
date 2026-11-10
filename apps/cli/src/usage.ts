@@ -160,9 +160,15 @@ Usage:
   varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
                (another credential for a service, workload, or broker identity, such as one per program;
                 the token goes only to --out, a new file readable by you only, never to the output)
+  varlatch security status [--json] [--org <organization>] [--server <url>]
+               (the organization's security at a glance, as on the dashboard's Security page: each control's mode,
+                what it counts and what enforce would change, its counts of the last 30 days, the admins' trusted and
+                unconfirmed passkeys, credentials to review or expiring, tailnet requirements, and a checklist with
+                links to the docs; parts you cannot read are named, not shown; read-only)
   varlatch security report [--json] [--org <organization>] [--server <url>]
                (machine credentials never used, unused for 30 days, or without expiry, with their identity and
-                last use; reporting only: nothing is revoked or retired; needs identity.manage)
+                last use, and service credentials expiring within 7 days or expired; reporting only: nothing is
+                revoked or retired; needs identity.manage)
   varlatch security controls [--json] [--org <organization>] [--server <url>]
                (the organization's security controls: requirement-protection, admin-step-up, passkey-verification,
                 credential-lifetime, each off, report or enforce; enforce is not available yet)

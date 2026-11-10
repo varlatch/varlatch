@@ -73,6 +73,7 @@ function fullReview(): CredentialReview {
         reasons: ["no-expiry"],
       },
     ],
+    expiry: { warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] },
   };
 }
 
@@ -193,7 +194,7 @@ describe("varlatch security report", () => {
   });
 
   it("refuses a wrong command line before any request (exit 64)", async () => {
-    for (const args of [["security"], ["security", "status"], ["security", "report", "--jsno"], ["security", "report", "extra"]]) {
+    for (const args of [["security"], ["security", "bogus"], ["security", "report", "--jsno"], ["security", "report", "extra"]]) {
       const r = await cli(args);
       expect(r.code, args.join(" ")).toBe(EXIT.usage);
       expect(r.stderr).toContain("varlatch security report");
@@ -216,6 +217,25 @@ describe("credential review format", () => {
     expect(ago("2026-11-10T11:59:00.000Z", now)).toBe("1 minute ago");
     expect(ago("2026-11-10T07:00:00.000Z", now)).toBe("5 hours ago");
     expect(ago("2026-10-01T12:00:00.000Z", now)).toBe("40 days ago");
+  });
+
+  it("lists service credentials expiring within 7 days or expired, after the reasons", () => {
+    const r = fullReview();
+    const base = { ...r.items[1]!, reasons: undefined };
+    delete base.reasons;
+    r.expiry = {
+      warningDays: 7,
+      summary: { soon: 1, expired: 1 },
+      items: [
+        { ...base, id: "crd_gone", name: "old", expiresAt: "2026-11-01T00:00:00.000Z", state: "expired" },
+        { ...base, id: "crd_soon", name: "deploy", expiresAt: "2026-11-12T00:00:00.000Z", state: "soon" },
+      ],
+    } as CredentialReview["expiry"];
+    const lines = credentialReviewLines("acme", r, Date.now());
+    const at = lines.indexOf("Expires within 7 days or expired (2)");
+    expect(at).toBeGreaterThan(lines.indexOf("No expiry (2)"));
+    expect(lines[at + 1]).toMatch(/^ {2}crd_gone {2}old {2}for runner \(idn_runner, workload\): .*expires 2026-11-01T00:00:00.000Z.* \(expired\)$/);
+    expect(lines[at + 2]).toMatch(/^ {2}crd_soon {2}deploy {2}for runner .*expires 2026-11-12T00:00:00.000Z/);
   });
 
   it("names a retired machine's state", () => {

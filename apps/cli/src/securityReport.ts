@@ -6,7 +6,8 @@ import type { CredentialReview, ReviewedCredential, VarlatchClient } from "@varl
  * change. Today it holds the credential review (capability
  * security.credential-review): the Organization's machine credentials never
  * used, unused for 30 days, or without expiry, with their identity and last
- * use. Nothing is revoked or retired automatically; acting on it stays a
+ * use, and the service credentials that expire within 7 days or have
+ * expired. Nothing is revoked or retired automatically; acting on it stays a
  * human decision (ADR-0034).
  */
 
@@ -84,6 +85,15 @@ export function credentialReviewLines(organization: string, review: CredentialRe
     const items = review.items.filter((c) => c.reasons.includes(reason));
     if (items.length === 0) continue;
     lines.push("", `${title} (${items.length})`, ...items.map((c) => credentialLine(c, now)));
+  }
+  // Servers before 0.21.0 send no expiry warnings.
+  const expiring = review.expiry?.items ?? [];
+  if (expiring.length > 0) {
+    lines.push(
+      "",
+      `Expires within ${review.expiry.warningDays} days or expired (${expiring.length})`,
+      ...expiring.map((c) => `${credentialLine({ ...c, reasons: [] }, now)}${c.state === "expired" ? " (expired)" : ""}`),
+    );
   }
   lines.push(
     "",
