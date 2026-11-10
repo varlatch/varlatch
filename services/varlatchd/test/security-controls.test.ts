@@ -65,22 +65,35 @@ async function call(method: string, path: string, token: string, body?: unknown,
 const rows = async (sql: string, params: unknown[] = []) => (await ctx.db.query(sql, params)).rows as any[];
 
 /** A person with a CLI credential, a dashboard session and a passkey (trusted unless said otherwise). */
+/** A live Better Auth session of the person (registerSoftPasskey links their Better Auth user). */
+async function betterAuthSession(identityId: string, sessionId: string) {
+  await ctx.db.query(
+    `INSERT INTO "session" (id, "expiresAt", token, "userId")
+     SELECT $1, now() + interval '1 day', $1, better_auth_user_id FROM auth_user_links WHERE identity_id = $2
+     ON CONFLICT (id) DO NOTHING`,
+    [sessionId, identityId],
+  );
+}
+
 async function person(identityId: string, trust: "trusted" | "unconfirmed" = "trusted"): Promise<Person> {
   const cli = await issueCredential(ctx.db, { identityId, kind: "cli", name: "test cli" });
-  const session = async (sessionId: string) =>
-    (await issueCredential(ctx.db, {
+  const key = await registerSoftPasskey(ctx.db, identityId, { ...RP, trust });
+  const session = async (sessionId: string) => {
+    await betterAuthSession(identityId, sessionId);
+    return (await issueCredential(ctx.db, {
       identityId,
       kind: "browser",
       expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
       authSessionId: sessionId,
     })).token;
+  };
+  await betterAuthSession(identityId, `session-${identityId}`);
   const web = await issueCredential(ctx.db, {
     identityId,
     kind: "browser",
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     authSessionId: `session-${identityId}`,
   });
-  const key = await registerSoftPasskey(ctx.db, identityId, { ...RP, trust });
   return { id: identityId, cli: cli.token, cliId: cli.credentialId, web: web.token, webId: web.credentialId, session, key };
 }
 
@@ -332,6 +345,38 @@ describe("loosening needs an approval", () => {
     const done = await set(refreshed, "admin-step-up", { mode: "off", expectedVersion: 1 }, approval.id);
     expect(done.status, JSON.stringify(done.body)).toBe(200);
     expect(done.body).toMatchObject({ changed: true, loosened: true });
+  });
+
+  it("refuses a dashboard approval once its session ended: signed out, or expired", async () => {
+    const control = async () => (await controlOf("admin-step-up")).mode;
+    // Signed out: Better Auth deletes the session; the bearer the dashboard held stays valid otherwise.
+    const signedOut = await stepUp(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 });
+    expect((await approve(admin, signedOut.id)).status).toBe(200);
+    await ctx.db.query(`DELETE FROM "session" WHERE id = $1`, [`session-${admin.id}`]);
+    const afterSignOut = await set(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 }, signedOut.id);
+    expect(afterSignOut.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "session-ended", approvalId: signedOut.id } });
+    expect(await control()).toBe("report");
+    expect((await call("GET", `/v1/me/approvals/${signedOut.id}`, admin.cli)).body.state).toBe("approved");
+    // Expired: the session row is still there, past its expiry.
+    const sessionB = await admin.session("session-b");
+    const expired = await stepUp(sessionB, "admin-step-up", { mode: "off", expectedVersion: 1 });
+    expect((await approve(admin, expired.id, { token: sessionB })).status).toBe(200);
+    await ctx.db.query(`UPDATE "session" SET "expiresAt" = now() - interval '1 second' WHERE id = 'session-b'`);
+    const afterExpiry = await set(sessionB, "admin-step-up", { mode: "off", expectedVersion: 1 }, expired.id);
+    expect(afterExpiry.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "session-ended" } });
+    expect(await control()).toBe("report");
+    // A session that is not the requesting person's does not count either.
+    const sessionC = await admin.session("session-c");
+    const foreign = await stepUp(sessionC, "admin-step-up", { mode: "off", expectedVersion: 1 });
+    expect((await approve(admin, foreign.id, { token: sessionC })).status).toBe(200);
+    const other = await invite("Other admin", "admin");
+    await ctx.db.query(
+      `UPDATE "session" SET "userId" = (SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = $1) WHERE id = 'session-c'`,
+      [other.id],
+    );
+    const crossed = await set(sessionC, "admin-step-up", { mode: "off", expectedVersion: 1 }, foreign.id);
+    expect(crossed.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "session-ended" } });
+    expect(await control()).toBe("report");
   });
 
   it("refuses a dashboard approval when the refreshed bearer is revoked at use", async () => {

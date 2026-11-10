@@ -390,7 +390,8 @@ function notFound(): DomainError {
   return new DomainError("RESOURCE_NOT_FOUND", "Approval not found");
 }
 
-export type ApprovalRefusal = "not-found" | "pending" | "approved" | "expired" | "consumed" | "closed" | "mismatch" | "stale";
+export type ApprovalRefusal =
+  | "not-found" | "pending" | "approved" | "expired" | "consumed" | "closed" | "mismatch" | "stale" | "session-ended";
 
 const REFUSAL_MESSAGES: Record<ApprovalRefusal, string> = {
   "not-found": "No approval of yours has this id",
@@ -401,6 +402,7 @@ const REFUSAL_MESSAGES: Record<ApprovalRefusal, string> = {
   closed: "This approval was cancelled or reset; ask for a new one",
   mismatch: "This approval was given for another request: another operation, target, body or credential",
   stale: "This approval was given for another version of the target; ask for a new one",
+  "session-ended": "The dashboard session this approval was asked from has ended (signed out or expired); ask for a new one",
 };
 
 export function approvalInvalid(reason: ApprovalRefusal, approvalId: string | null): DomainError {
@@ -430,6 +432,12 @@ export async function consumeApproval(
 ): Promise<UsedApproval> {
   const bodyHash = approvalHash(key, "body", binding.body);
   const queryHash = approvalHash(key, "query", binding.query);
+  // The person's row before the intent's, as starting and approving take
+  // them: the operation may then write rows that reference the person
+  // (security_controls.changed_by), whose foreign key would otherwise take
+  // the person's row while this holds the intent, against a start that
+  // holds the person and waits for the intent.
+  await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [requester.identityId]);
   const consumed = (await db.query(
     `UPDATE approval_intents SET consumed_at = clock_timestamp()
      WHERE id = $1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
@@ -468,6 +476,24 @@ export async function consumeApproval(
     const sameRequest = sameRequester && row.operation === binding.operation &&
       row.organization_id === binding.organizationId && row.same_target && row.body_hash === bodyHash && row.query_hash === queryHash;
     throw approvalInvalid(sameRequest && row.expected_version !== binding.expectedVersion ? "stale" : "mismatch", approvalId);
+  }
+  // A dashboard intent needs its Better Auth session alive: it exists (sign
+  // out deletes it, without revoking the browser bearers minted from it),
+  // it has not expired, and it is the requesting person's. Taken FOR KEY
+  // SHARE, the weakest lock that conflicts with a DELETE: a sign-out in
+  // flight either committed first (no row: refused) or waits for this
+  // operation to end, while Better Auth's refresh of the session (an update
+  // of non-key columns) is not held up. Before the credential's lock below,
+  // in the order the public-URL change ends sessions and then revokes
+  // credentials.
+  if (consumed.auth_session_id !== null) {
+    const session = (await db.query(
+      `SELECT 1 FROM "session" s JOIN auth_user_links l ON l.better_auth_user_id = s."userId"
+       WHERE s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
+       FOR KEY SHARE OF s`,
+      [consumed.auth_session_id, requester.identityId],
+    )).rows[0];
+    if (!session) throw approvalInvalid("session-ended", approvalId);
   }
   // Revalidate: the requesting credential is still live and its person
   // enabled; for a dashboard intent, it is a browser bearer of the intent's

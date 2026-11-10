@@ -5,8 +5,8 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
-import { APPROVALS, consumeApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
+import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
+import { APPROVALS, consumeApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
 import { changeControl, controlMode } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
@@ -200,6 +200,49 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
       if (restart.status === 409) expect(restart.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "approved" } });
       await db.query("UPDATE approval_intents SET closed_at = clock_timestamp(), close_reason = 'cancelled' WHERE id = $1", [approvalId]);
     }
+  });
+
+  it("consuming an approval and starting it at once never deadlock: consumption takes the person before the approval", async () => {
+    // Another admin changed the control last, so the loosening change writes a new changed_by (a foreign key to the person).
+    const other = (await consumeSetupGrant(ctx, (await issueInviteGrant(ctx, { organizationId: orgId, role: "admin", name: "Other" }, adminId)).token, {})).identityId;
+    const otherCli = (await issueCredential(db, { identityId: other, kind: "cli" })).token;
+    expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", otherCli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+    const asked = await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "off", expectedVersion: 1 });
+    const approvalId = asked.body.error.details.approval.id as string;
+    const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    await db.query(
+      "UPDATE approval_intents SET approved_at = clock_timestamp(), approved_with_passkey_id = $2, approval_user_verified = true WHERE id = $1",
+      [approvalId, key.passkeyId],
+    );
+    const requester: Requester = { identityId: adminId, identityKind: "human", credentialId: cli.credentialId, credentialKind: "cli" };
+    // The change pauses right after consuming, holding the approval, before it writes changed_by.
+    const consumed = deferred();
+    const release = deferred();
+    const pausing: ApprovalGate = {
+      require: async (tx, binding) => {
+        const used = await consumeApproval(tx, ctx.rootKek, requester, approvalId, binding);
+        consumed.resolve();
+        await release.promise;
+        return used;
+      },
+    };
+    const change = changeControl(ctx, pausing, {
+      organizationId: orgId,
+      control: "admin-step-up",
+      mode: "off",
+      expectedVersion: 1,
+      actorIdentityId: adminId,
+      requestId: "req_test",
+      authorizeIn: async () => undefined,
+    }).then((r) => r, (e) => e);
+    await consumed.promise;
+    // A start of the same approval, from the person's dashboard session, while the change holds it.
+    const start = startApproval(ctx, RP, { approvalId, identityId: adminId, authSessionId: "session-a" }).then((r) => r, (e) => e);
+    await sleep(300);
+    release.resolve();
+    expect(await change).toMatchObject({ changed: true, loosened: true, control: { mode: "off", changedBy: { id: adminId } } });
+    // The start waited for the change and found the approval used; never a deadlock (40P01).
+    expect(await start).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "consumed" } });
   });
 
   it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {
