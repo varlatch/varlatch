@@ -43,7 +43,7 @@ import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
-import { MachineReachPanel } from "./MachineReach";
+import { MachineReachPanel, reachKey } from "./MachineReach";
 
 /**
  * Machines: non-human identities and how each signs in. Token kinds show
@@ -84,7 +84,11 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
     return m;
   }, [grants.data]);
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["identities", org] });
+  // Rename, retire, reactivate and creation change what Reach shows too.
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["identities", org] });
+    void qc.invalidateQueries({ queryKey: reachKey(org) });
+  };
   const lifecycleError = (err: unknown) => toast.error("That did not work", { description: errorMessage(err) });
   const rename = useMutation({
     mutationFn: ({ id, next }: { id: string; next: string }) => api.renameIdentity(org, id, next),
@@ -463,9 +467,14 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
   const [issued, setIssued] = useState<IssuedMachineCredential | null>(null);
   const key = ["identity-credentials", org, identity.id];
   const creds = useQuery({ queryKey: key, queryFn: () => api.listIdentityCredentials(org, identity.id) });
+  // Issuing or revoking changes the live credentials Reach counts.
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: key });
+    void qc.invalidateQueries({ queryKey: reachKey(org, identity.id) });
+  };
   const revoke = useMutation({
     mutationFn: (credentialId: string) => api.revokeIdentityCredential(org, identity.id, credentialId),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
+    onSuccess: refresh,
   });
   const items = (creds.data?.items ?? []) as (IdentityCredential & { client?: string | null })[];
   return (
@@ -535,7 +544,7 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
         onIssued={(credential) => {
           setIssuing(false);
           setIssued(credential);
-          void qc.invalidateQueries({ queryKey: key });
+          refresh();
         }}
       />
       {issued && <IssuedCredentialDialog identity={identity} issued={issued} onClose={() => setIssued(null)} />}

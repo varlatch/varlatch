@@ -43,10 +43,19 @@ const STATE_WORDS: Record<MachineReach["identity"]["state"], string> = {
   retired: "retired",
 };
 
+/**
+ * The reach query's key. Whatever changes a machine's state or credentials
+ * (retire, reactivate, issue, revoke) invalidates it; the key without an
+ * identity covers every machine of the organization.
+ */
+export function reachKey(org: string, identityId?: string): string[] {
+  return identityId === undefined ? ["machine-reach", org] : ["machine-reach", org, identityId];
+}
+
 export function MachineReachPanel({ org, identity }: { org: string; identity: OrgIdentity }) {
   const { api } = useSession();
   const reach = useQuery({
-    queryKey: ["machine-reach", org, identity.id],
+    queryKey: reachKey(org, identity.id),
     queryFn: () => api.machineReach(org, identity.id),
     retry: false,
   });
