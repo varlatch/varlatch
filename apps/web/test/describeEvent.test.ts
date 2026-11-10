@@ -199,3 +199,30 @@ describe("authorizationSummary", () => {
     expect(authorizationSummary(event({ decision: "allow", authorization: { grantIds: ["g1", "g2"] } }))).toBe("Allowed by 2 grants.");
   });
 });
+
+describe("security control events (ADR-0054)", () => {
+  it("says which control changed, how, and whether it was weakened with an approval", () => {
+    const changed = (metadata: Record<string, unknown>) =>
+      event({ eventType: "security_control.changed", resource: { control: "credential-lifetime" }, metadata });
+    expect(sentence(changed({ control: "credential-lifetime", fromMode: "off", toMode: "report", loosened: false, loosenedFields: "" }))).toBe(
+      "changed security control credential-lifetime from off to report",
+    );
+    const weakened = changed({ control: "credential-lifetime", fromMode: "report", toMode: "off", loosened: true, loosenedFields: "mode", approvalId: "apr_1" });
+    expect(sentence(weakened)).toBe("changed security control credential-lifetime from report to off, approved with a trusted passkey");
+    expect(describeEvent(weakened, names).title).toBe("Security control weakened");
+    expect(sentence(changed({ control: "credential-lifetime", fromMode: "report", toMode: "report", loosened: false }))).toBe(
+      "changed security control credential-lifetime (lifetimes only)",
+    );
+  });
+
+  it("describes the host operator's reset and the approvals it closed", () => {
+    const reset = event({
+      eventType: "security_control.reset",
+      actorIdentityId: null,
+      resource: { control: "admin-step-up" },
+      metadata: { control: "admin-step-up", operator: true, fromMode: "report", toMode: "off", approvalsClosed: 2 },
+    });
+    expect(sentence(reset)).toBe("reset security control admin-step-up to off (the host operator's reset), closing 2 pending approvals");
+    expect(describeEvent(reset, names).title).toBe("Security control reset");
+  });
+});

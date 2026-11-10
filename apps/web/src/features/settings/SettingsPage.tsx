@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArrowUpRight, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, Sun, TriangleAlert } from "lucide-react";
+import { Archive, ArrowUpRight, ChevronDown, CircleCheck, Monitor, Moon, Palette, Server, Settings2, ShieldCheck, Sun, TriangleAlert } from "lucide-react";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { SOURCE_REPOSITORY, sourceUrl } from "../../lib/source";
@@ -17,11 +17,13 @@ import { useCapability, useMeta, useOrgName } from "../projects/hooks";
 import { backupHealth } from "../installation/backupHealth";
 import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../installation/releaseNotice";
 import { OrganizationDeletionCard, deletionKey } from "./OrganizationDeletion";
+import { SecurityControlsCard, securityControlsKey } from "../security-controls/SecurityControlsCard";
 
 /** Organization settings and facts about this installation. */
 
 const SECTIONS = [
   { id: "general", label: "General", icon: Settings2 },
+  { id: "security", label: "Security controls", icon: ShieldCheck },
   { id: "server", label: "Server", icon: Server },
   { id: "backups", label: "Backups", icon: Archive },
   { id: "appearance", label: "Appearance", icon: Palette },
@@ -31,12 +33,13 @@ const SECTIONS = [
 export function SettingsPage() {
   const { org } = useParams() as { org: string };
   const { api } = useSession();
-  useOrgRealtime(org, ["organization"], [["org", org], ["orgs"], deletionKey(org)]);
+  useOrgRealtime(org, ["organization", "security_control"], [["org", org], ["orgs"], deletionKey(org), securityControlsKey(org)]);
   const orgName = useOrgName(org);
   const orgQuery = useQuery({ queryKey: ["org", org], queryFn: () => api.getOrganization(org) });
   const backups = useQuery({ queryKey: ["installation-backups"], queryFn: () => api.getInstallationBackups(), retry: false, refetchInterval: 60_000 });
   const [active, setActive] = useState<string>("general");
   const canDelete = useCapability("organizations.delete");
+  const hasControls = useCapability("security.controls");
   const { hash } = useLocation();
 
   // A link to a section (the deletion banner's) scrolls to it once it is there.
@@ -56,9 +59,11 @@ export function SettingsPage() {
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [backups.data, canDelete]);
+  }, [backups.data, canDelete, hasControls]);
 
-  const sections = SECTIONS.filter((s) => (s.id !== "backups" || backups.data) && (s.id !== "danger" || canDelete));
+  const sections = SECTIONS.filter(
+    (s) => (s.id !== "backups" || backups.data) && (s.id !== "danger" || canDelete) && (s.id !== "security" || hasControls),
+  );
 
   return (
     <>
@@ -90,6 +95,7 @@ export function SettingsPage() {
         </nav>
         <div className="min-w-0 space-y-6">
           <OrganizationCard org={org} name={orgQuery.data?.name} slug={orgQuery.data?.slug} id={orgQuery.data?.id} />
+          <SecurityControlsCard org={org} />
           <ServerCard admin={Boolean(backups.data)} />
           {backups.data && <BackupsSummary data={backups.data} />}
           <AppearanceCard />
