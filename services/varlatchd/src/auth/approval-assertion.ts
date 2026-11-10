@@ -46,13 +46,12 @@ interface PasskeyRow {
   id: string;
   credentialID: string;
   publicKey: string;
-  counter: number;
   transports: string | null;
 }
 
 async function passkeysOf(db: Querier, identityId: string): Promise<PasskeyRow[]> {
   const res = await db.query(
-    `SELECT p.id, p."credentialID", p."publicKey", p.counter, p.transports
+    `SELECT p.id, p."credentialID", p."publicKey", p.transports
      FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId"
      WHERE l.identity_id = $1 ORDER BY p."createdAt", p.id`,
     [identityId],
@@ -120,8 +119,8 @@ export type AssertionRefusal = "unknown-passkey" | "invalid-assertion" | "user-v
  * scope) over `expectedChallenge`, and advance that passkey's signature
  * counter. When `requireUserVerification` is set, an assertion without
  * user verification is refused. Run it inside the transaction that consumes
- * the challenge. Returns the reason on refusal; never throws for a bad
- * assertion.
+ * the challenge: the passkey row stays locked until that transaction ends.
+ * Returns the reason on refusal; never throws for a bad assertion.
  */
 export async function verifyAssertion(
   db: Querier,
@@ -137,6 +136,18 @@ export async function verifyAssertion(
     : undefined;
   // A passkey of another identity, one out of scope, or none at all, never approves for this one.
   if (!passkey) return { ok: false, reason: "unknown-passkey" };
+  // The signature counter is verified and advanced under the passkey row's
+  // lock, held until the caller's transaction ends: two assertions of one
+  // passkey verified at once would otherwise both pass against the same
+  // stored counter, and the later write could lower it. Verified against
+  // the counter as committed now, the second is refused like a replay.
+  // Better Auth's sign-in, which does not lock, waits for this lock at its
+  // update, where migration 40 refuses a counter that does not increase.
+  const locked = (await db.query("SELECT counter FROM passkey WHERE id = $1 FOR UPDATE", [passkey.id])).rows[0] as
+    | { counter: number }
+    | undefined;
+  // Removed meanwhile.
+  if (!locked) return { ok: false, reason: "unknown-passkey" };
   let verification;
   try {
     verification = await verifyAuthenticationResponse({
@@ -147,7 +158,7 @@ export async function verifyAssertion(
       credential: {
         id: passkey.credentialID,
         publicKey: new Uint8Array(Buffer.from(passkey.publicKey, "base64")),
-        counter: passkey.counter,
+        counter: locked.counter,
         ...transportsOf(passkey),
       },
       // Checked below, so a missing verification has its own reason.
