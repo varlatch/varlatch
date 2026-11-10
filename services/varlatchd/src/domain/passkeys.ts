@@ -6,6 +6,7 @@ import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { ApprovalGate } from "./approvals.js";
+import { lockPerson, lockPersonPasskeys } from "./personlocks.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 
@@ -27,7 +28,9 @@ import { DomainError } from "./errors.js";
  *   device sign-in CLI credentials on the credential itself.
  *
  * Time is PostgreSQL's live clock, clock_timestamp(), read after the locks
- * are held, as in device sign-in.
+ * are held, as in device sign-in. Confirmation and removal follow the lock
+ * order written down at the top of approvals.ts: the person, their
+ * passkeys, an approval intent, challenges, the session, the credential.
  */
 
 export const PASSKEY_CONFIRMATION = {
@@ -225,9 +228,11 @@ export async function issueConfirmationChallenge(
   input: { identityId: string; authSessionId: string; passkeyId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
   return withTx(ctx.db, async (db) => {
-    // Serializes this person's confirmations and removals.
-    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
-    const target = await ownPasskey(db, input.identityId, input.passkeyId);
+    // Lock order (approvals.ts): the person, which serializes this person's
+    // confirmations, approvals and removals, then the target passkey, before
+    // the challenge's insert references both.
+    await lockPerson(db, input.identityId, "update");
+    const target = await ownPasskey(db, input.identityId, input.passkeyId, true);
     if (!target) throw new DomainError("RESOURCE_NOT_FOUND", "Passkey not found");
     if (target.trust === "trusted") throw new DomainError("STATE_CHANGED", "This passkey is already trusted");
     const window = (await db.query(
@@ -284,7 +289,11 @@ export async function confirmPasskey(
 ): Promise<OwnPasskey> {
   const challenge = assertionChallenge(input.assertion);
   const outcome = await withTx(ctx.db, async (db) => {
-    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
+    // Lock order (approvals.ts): the person, all of their passkeys (the
+    // assertion advances one's counter, and provenance references the
+    // target), then the confirmation challenge.
+    await lockPerson(db, input.identityId, "update");
+    await lockPersonPasskeys(db, input.identityId);
     const bound = challenge
       ? ((await db.query(
           `SELECT id FROM passkey_confirmation_challenges
@@ -392,7 +401,9 @@ export async function removeOwnPasskey(
   input: { identityId: string; passkeyId: string },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
+    // Lock order (approvals.ts): the person, the target passkey, then
+    // consumption's intent, session and credential.
+    await lockPerson(db, input.identityId, "update");
     const passkey = await ownPasskey(db, input.identityId, input.passkeyId, true);
     if (!passkey) throw new DomainError("RESOURCE_NOT_FOUND", "Passkey not found");
     const restriction = await passkeyRemovalRestriction(db, { identityId: input.identityId, passkey });

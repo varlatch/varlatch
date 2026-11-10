@@ -9,6 +9,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { listOwnPasskeys } from "./passkeys.js";
+import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
 
 /**
  * Step-up approvals (ADR-0054 Decision 3): a fresh WebAuthn assertion, with
@@ -54,6 +55,57 @@ import { listOwnPasskeys } from "./passkeys.js";
  *
  * Time is PostgreSQL's live clock, clock_timestamp(), read after the locks
  * are held, as in device sign-in.
+ *
+ * LOCK ORDER. Every transaction of approvals, Security Controls
+ * (securitycontrols.ts), passkey confirmation and passkey removal
+ * (passkeys.ts), and Organization deletion's closing of approvals, takes
+ * row locks in this one order. A transaction may skip steps; it never goes
+ * back to an earlier one.
+ *
+ *   0. createApproval's per-person advisory lock (taken first, and only by
+ *      it, so nothing waits for it while holding a row).
+ *   1. The Organization row: FOR UPDATE to change or reset its controls
+ *      (lockLiveScope), FOR KEY SHARE to reference it.
+ *   2. The person (identities row); several people in id order.
+ *   3. That person's passkeys, in id order.
+ *   4. Approval intents; several in id order.
+ *   5. Challenges: approval challenges, then passkey-confirmation
+ *      challenges.
+ *   6. The Better Auth session row.
+ *   7. The credential row.
+ *   8. Then only rows nothing else orders against: security_controls,
+ *      passkey provenance, the deletion of a passkey already held, and the
+ *      audit insert last (it holds the audit counter until commit).
+ *
+ * An INSERT or an UPDATE of a foreign key column takes FOR KEY SHARE on the
+ * row it references (an intent: its credential, person and Organization; a
+ * challenge: its intent and person; security_controls.changed_by: the
+ * person), in constraint order. So a transaction locks those rows
+ * explicitly, in this order, before such a write, and the write's own
+ * locks find them held. Deleting a passkey cascades to its confirmation
+ * challenges (step 5) after steps 6 and 7; every other writer of those
+ * challenges holds the person's row (step 2) first, so they cannot meet.
+ *
+ * Per transaction:
+ *   createApproval: 0, then (own short transaction) the sweep of intents
+ *     ended a day ago, SKIP LOCKED; then 1 KEY SHARE (when the intent has
+ *     an Organization), 2 KEY SHARE, the intent insert (7 KEY SHARE by its
+ *     foreign key).
+ *   getApproval (poll): 4 only.
+ *   startApproval: 2, 4, 5.
+ *   approveApproval: 2, 3, 4, 5 (the counter update on 3 is already held),
+ *     audit on refusal.
+ *   cancelApproval: 2, 4.
+ *   consumption (consumeApproval, inside the operation): 2, 4, 6 (dashboard
+ *     intents), 7, after the operation's own earlier steps.
+ *   Security Control change: 1 UPDATE, 2 (UPDATE when consuming, KEY SHARE
+ *     otherwise), then consumption's 4, 6, 7, then 8.
+ *   Operator reset and Organization deletion (closeOpenApprovals): 1
+ *     UPDATE, the open intents' people 2 KEY SHARE in id order, 4, then 8.
+ *   Passkey removal: 2, 3 (the target), consumption's 4, 6, 7 when
+ *     restricted, then 8.
+ *   Passkey confirmation: issuing 2, 3 (the target), 5; confirming 2, 3
+ *     (all), 5, then 8.
  */
 
 export const APPROVALS = {
@@ -230,10 +282,17 @@ export async function withApproval<T>(
 /** Serializes one person's intent creation, so the caps hold under concurrency. */
 const CREATE_LOCK = 7330054;
 
+/**
+ * Delete intents (and, by cascade, their challenges) that ended more than
+ * a day ago: every intent has ended by its expiry at the latest. Its own
+ * short transaction, skipping rows another transaction holds, so it never
+ * waits while holding anything.
+ */
 async function sweep(db: Querier): Promise<void> {
-  // Every intent has ended by its expiry at the latest.
   await db.query(
-    "DELETE FROM approval_intents WHERE expires_at < clock_timestamp() - make_interval(secs => $1)",
+    `DELETE FROM approval_intents WHERE id IN (
+       SELECT id FROM approval_intents WHERE expires_at < clock_timestamp() - make_interval(secs => $1)
+       ORDER BY id FOR UPDATE SKIP LOCKED)`,
     [APPROVALS.retentionSeconds],
   );
 }
@@ -272,9 +331,18 @@ export async function createApproval(
     );
   }
   const lifetime = origin === "dashboard" ? APPROVALS.dashboardLifetimeSeconds : APPROVALS.cliLifetimeSeconds;
+  await withTx(ctx.db, sweep);
   return withTx(ctx.db, async (db) => {
+    // Lock order 0, 1, 2 (top of this file), before the insert's foreign
+    // keys reference the credential, the person and the Organization.
     await db.query("SELECT pg_advisory_xact_lock($1, hashtext($2))", [CREATE_LOCK, requester.identityId]);
-    await sweep(db);
+    if (binding.organizationId !== null) {
+      const org = (await db.query("SELECT id FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [
+        binding.organizationId,
+      ])).rows[0];
+      if (!org) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+    }
+    await lockPerson(db, requester.identityId, "key share");
     const open = (await db.query(
       `SELECT count(*)::int AS n FROM approval_intents
        WHERE credential_id = $1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()`,
@@ -432,12 +500,10 @@ export async function consumeApproval(
 ): Promise<UsedApproval> {
   const bodyHash = approvalHash(key, "body", binding.body);
   const queryHash = approvalHash(key, "query", binding.query);
-  // The person's row before the intent's, as starting and approving take
-  // them: the operation may then write rows that reference the person
-  // (security_controls.changed_by), whose foreign key would otherwise take
-  // the person's row while this holds the intent, against a start that
-  // holds the person and waits for the intent.
-  await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [requester.identityId]);
+  // Lock order 2, then 4 (top of this file): the person before the intent,
+  // after whatever the operation already holds (the Organization for a
+  // control change, the person and the passkey for a removal).
+  await lockPerson(db, requester.identityId, "update");
   const consumed = (await db.query(
     `UPDATE approval_intents SET consumed_at = clock_timestamp()
      WHERE id = $1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
@@ -577,11 +643,10 @@ export async function startApproval(
   input: { approvalId: string; identityId: string; authSessionId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
   return withTx(ctx.db, async (db) => {
-    // The person's row first, then the intent, in every approval path:
-    // the challenge's insert takes the person's row for its foreign key, and
-    // approving takes it first. Holding it also serializes the per-person
-    // challenge count with the insert, across intents and sessions.
-    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
+    // Lock order 2, 4, 5 (top of this file). Holding the person also
+    // serializes the per-person challenge count with the insert, across
+    // intents and sessions.
+    await lockPerson(db, input.identityId, "update");
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     const state = stateOf(intent);
     if (state !== "pending") throw approvalInvalid(unusableReason(intent), input.approvalId);
@@ -643,10 +708,11 @@ export async function approveApproval(
 ): Promise<ApprovalView> {
   const challenge = assertionChallenge(input.assertion);
   const outcome = await withTx(ctx.db, async (db) => {
-    // The person's row first, as passkey confirmation and removal take it:
-    // verifying advances a passkey's counter, and a removal holds that
-    // passkey while it consumes an approval, so both go in one order.
-    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
+    // Lock order 2, 3, 4, 5 (top of this file): verifying advances the
+    // asserting passkey's counter, and which passkey that is is only known
+    // then, so all of the person's passkeys are taken before the intent.
+    await lockPerson(db, input.identityId, "update");
+    await lockPersonPasskeys(db, input.identityId);
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     if (stateOf(intent) !== "pending") throw approvalInvalid(unusableReason(intent), input.approvalId);
     const bound = challenge
@@ -706,6 +772,8 @@ export async function cancelApproval(
   input: { approvalId: string; identityId: string; publicUrl: string | null | undefined },
 ): Promise<ApprovalView> {
   return withTx(ctx.db, async (db) => {
+    // Lock order 2, 4 (top of this file).
+    await lockPerson(db, input.identityId, "update");
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     const state = stateOf(intent);
     if (state !== "pending" && state !== "approved") throw approvalInvalid(unusableReason(intent), input.approvalId);
@@ -726,12 +794,23 @@ export async function closeOpenApprovals(
   db: Querier,
   input: { organizationId: string; reason: "reset" | "organization-deleted"; controls?: readonly string[] },
 ): Promise<number> {
+  // Lock order 1 (the caller holds the Organization FOR UPDATE, so no new
+  // intent of it can be created meanwhile), then the open intents' people
+  // in id order (2), then the intents in id order (4): a start, an approval
+  // or a consumption in flight holds its person and finishes first.
+  const filter = `organization_id = $1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()
+       AND ($2::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($2::text[])))`;
+  const controls = input.controls ? [...input.controls] : null;
+  const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, [input.organizationId, controls]))
+    .rows as { identity_id: string }[];
+  await lockPeople(db, people.map((p) => p.identity_id), "key share");
+  const intents = (await db.query(`SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls]))
+    .rows as { id: string }[];
+  if (intents.length === 0) return 0;
   const res = await db.query(
     `UPDATE approval_intents SET closed_at = clock_timestamp(), close_reason = $2
-     WHERE organization_id = $1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()
-       AND ($3::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($3::text[])))
-     RETURNING id`,
-    [input.organizationId, input.reason, input.controls ? [...input.controls] : null],
+     WHERE id = ANY($1) AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp() RETURNING id`,
+    [intents.map((i) => i.id), input.reason],
   );
   return res.rows.length;
 }

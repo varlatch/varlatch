@@ -4,6 +4,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { ApprovalChange, ApprovalGate, UsedApproval } from "./approvals.js";
 import { closeOpenApprovals } from "./approvals.js";
+import { lockPerson } from "./personlocks.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
@@ -22,7 +23,9 @@ import { lockLiveScope } from "./liveness.js";
  * none.
  *
  * Concurrency: a change locks the Organization row FOR UPDATE and checks
- * the expected version. A protected operation takes the Organization row
+ * the expected version. Every transaction here follows the lock order
+ * written down at the top of approvals.ts (Organization, person, intent,
+ * session, credential, then security_controls and audit). A protected operation takes the Organization row
  * FOR KEY SHARE (lockLiveScope's default for writes) and reads the mode
  * with controlMode inside its own transaction, after that lock, so a
  * protected write either commits before a control change or sees the new
@@ -239,6 +242,10 @@ export async function changeControl(
           changes,
         },
       });
+    } else {
+      // Lock order 2 (approvals.ts) before changed_by's foreign key takes
+      // the person; consumption took it FOR UPDATE above when loosening.
+      await lockPerson(db, input.actorIdentityId, "key share");
     }
     await db.query(
       `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)

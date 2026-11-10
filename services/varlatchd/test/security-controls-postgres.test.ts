@@ -6,9 +6,9 @@ import { runMigrations } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
-import { APPROVALS, consumeApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
+import { APPROVALS, consumeApproval, createApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
-import { changeControl, controlMode } from "../src/domain/securitycontrols.js";
+import { changeControl, controlMode, resetControls } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { registerSoftPasskey } from "./helpers/soft-authenticator.js";
@@ -68,6 +68,9 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     }
   });
 
+  /** A gate that consumes `approvalId` for the requester, like withApproval with the header. */
+  const withApprovalGate = <T,>(requester: Requester, approvalId: string, run: (gate: ApprovalGate) => Promise<T>) =>
+    run({ require: (tx, binding) => consumeApproval(tx, ctx.rootKek, requester, approvalId, binding) });
   const noApproval: ApprovalGate = { require: async () => { throw new Error("no approval expected"); } };
   const deferred = () => {
     let resolve!: () => void;
@@ -244,6 +247,142 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     // The start waited for the change and found the approval used; never a deadlock (40P01).
     expect(await start).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "consumed" } });
   });
+
+  it("asking for an approval while a control change consumes one never deadlocks: both take the Organization before the person", async () => {
+    const other = (await consumeSetupGrant(ctx, (await issueInviteGrant(ctx, { organizationId: orgId, role: "admin", name: "Other" }, adminId)).token, {})).identityId;
+    const otherCli = (await issueCredential(db, { identityId: other, kind: "cli" })).token;
+    expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", otherCli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
+    const asked = await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "off", expectedVersion: 1 });
+    const approvalId = asked.body.error.details.approval.id as string;
+    const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    await db.query(
+      "UPDATE approval_intents SET approved_at = clock_timestamp(), approved_with_passkey_id = $2, approval_user_verified = true WHERE id = $1",
+      [approvalId, key.passkeyId],
+    );
+    const requester: Requester = { identityId: adminId, identityKind: "human", credentialId: cli.credentialId, credentialKind: "cli" };
+    // The change holds the Organization FOR UPDATE and pauses before it consumes.
+    const locked = deferred();
+    const release = deferred();
+    const change = withApprovalGate(requester, approvalId, async (gate) => changeControl(ctx, gate, {
+      organizationId: orgId,
+      control: "admin-step-up",
+      mode: "off",
+      expectedVersion: 1,
+      actorIdentityId: adminId,
+      requestId: "req_test",
+      authorizeIn: async () => {
+        locked.resolve();
+        await release.promise;
+      },
+    })).then((r) => r, (e) => e);
+    await locked.promise;
+    // Meanwhile the same person asks for another approval in that Organization.
+    const second = await issueCredential(db, { identityId: adminId, kind: "cli" });
+    const asking = createApproval(ctx, { ...requester, credentialId: second.credentialId }, {
+      operation: "security_control.change",
+      organizationId: orgId,
+      target: { control: "credential-lifetime" },
+      body: { mode: "off", config: null, expectedVersion: 0 },
+      query: {},
+      expectedVersion: 0,
+      summary: { title: "t", changes: [] },
+    }, PUBLIC_URL).then((r) => r, (e) => e);
+    await sleep(300);
+    release.resolve();
+    expect(await change).toMatchObject({ changed: true, loosened: true, control: { mode: "off" } });
+    expect(await asking).toMatchObject({ state: "pending", operation: "security_control.change" });
+  });
+
+  it("stays free of deadlocks and consistent under a random mix of approval and control work", async () => {
+    const other = (await consumeSetupGrant(ctx, (await issueInviteGrant(ctx, { organizationId: orgId, role: "admin", name: "Other" }, adminId)).token, {})).identityId;
+    const otherCli = (await issueCredential(db, { identityId: other, kind: "cli" })).token;
+    const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+    const session = await browser("session-stress");
+    const clis = await Promise.all(Array.from({ length: 4 }, () => issueCredential(db, { identityId: adminId, kind: "cli" })));
+    const tokenOf = new Map(clis.map((c) => [c.credentialId, c.token]));
+    const PATH = "/v1/organizations/acme/security/controls/admin-step-up";
+    const failures: string[] = [];
+    const pick = <T,>(items: readonly T[]): T | undefined => items[Math.floor(Math.random() * items.length)];
+    const version = async () =>
+      ((await db.query("SELECT version FROM security_controls WHERE organization_id = $1 AND control = 'admin-step-up'", [orgId])).rows[0] as
+        | { version: number } | undefined)?.version ?? 0;
+    const intents = async (where: string) =>
+      (await db.query(`SELECT id, credential_id, expected_version FROM approval_intents WHERE ${where}`)).rows as
+        { id: string; credential_id: string; expected_version: number }[];
+    const check = (what: string, res: { status: number; body: any }) => {
+      if (res.status >= 500) failures.push(`${what}: ${res.status} ${JSON.stringify(res.body)}`);
+    };
+    const domain = async (what: string, run: () => Promise<unknown>) => {
+      try { await run(); } catch (err) {
+        if (!(err instanceof Error) || (err as { code?: unknown }).code === "40P01" || !("code" in err) || /deadlock/.test(err.message)) {
+          failures.push(`${what}: ${String(err)}`);
+        }
+      }
+    };
+    const ops: Record<string, (v: number) => Promise<void>> = {
+      ask: async (v) => {
+        const c = pick(clis)!;
+        check("ask", await call("PATCH", PATH, c.token, { mode: "off", expectedVersion: v }));
+      },
+      tighten: async (v) => check("tighten", await call("PATCH", PATH, otherCli, { mode: "report", expectedVersion: v })),
+      start: async () => {
+        const i = pick(await intents("operation = 'security_control.change'"));
+        if (i) check("start", await call("POST", `/v1/me/approvals/${i.id}/options`, session));
+      },
+      approve: async () => {
+        const i = pick(await intents("approved_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()"));
+        if (!i) return;
+        const started = await call("POST", `/v1/me/approvals/${i.id}/options`, session);
+        check("approve options", started);
+        if (started.status !== 200) return;
+        check("approve", await call("POST", `/v1/me/approvals/${i.id}/approve`, session, { assertion: key.assert(started.body.publicKey.challenge) }));
+      },
+      consume: async () => {
+        const i = pick(await intents("approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL"));
+        if (!i) return;
+        check("consume", await call("PATCH", PATH, tokenOf.get(i.credential_id)!, { mode: "off", expectedVersion: i.expected_version },
+          { "Varlatch-Approval": i.id }));
+      },
+      cancel: async () => {
+        const i = pick(await intents("consumed_at IS NULL AND closed_at IS NULL"));
+        if (i) check("cancel", await call("POST", `/v1/me/approvals/${i.id}/cancel`, tokenOf.get(i.credential_id)!));
+      },
+      poll: async () => {
+        const i = pick(await intents("true"));
+        if (i) check("poll", await call("GET", `/v1/me/approvals/${i.id}`, tokenOf.get(i.credential_id)!));
+      },
+      reset: async () => domain("reset", () => resetControls(ctx, { organization: "acme", controls: ["admin-step-up"] })),
+    };
+    const names = Object.keys(ops);
+    let ran = 0;
+    for (let round = 0; round < 50; round++) {
+      // Keep the per-person windows and the per-credential cap from stopping the work.
+      await db.query("UPDATE approval_intents SET created_at = created_at - interval '11 minutes'");
+      await db.query("UPDATE approval_intent_challenges SET created_at = created_at - interval '11 minutes'");
+      await db.query(
+        "UPDATE approval_intents SET expires_at = clock_timestamp() - interval '1 second' WHERE created_at < clock_timestamp() - interval '40 minutes' AND expires_at > clock_timestamp()",
+      );
+      const v = await version();
+      const batch = Array.from({ length: 6 }, () => pick(names)!);
+      ran += batch.length;
+      await Promise.all(batch.map((name) => ops[name]!(v)));
+    }
+    expect(ran).toBe(300);
+    expect(failures).toEqual([]);
+    expect((await intents("true")).length).toBeGreaterThan(0);
+    // Consistent: the version counts every recorded change and every reset that changed the mode; each used
+    // approval was used by exactly one recorded change.
+    const events = (await db.query(
+      `SELECT event_type, metadata FROM audit_events WHERE event_type IN ('security_control.changed', 'security_control.reset')
+         AND resource ->> 'control' = 'admin-step-up'`,
+    )).rows as { event_type: string; metadata: any }[];
+    const meta = (m: unknown) => (typeof m === "string" ? JSON.parse(m) : m) as Record<string, any>;
+    const bumps = events.filter((e) => e.event_type === "security_control.changed" || meta(e.metadata).toVersion !== meta(e.metadata).fromVersion).length;
+    expect(await version()).toBe(bumps);
+    const used = (await intents("consumed_at IS NOT NULL")).map((i) => i.id).sort();
+    const recorded = events.map((e) => meta(e.metadata).approvalId).filter((id) => typeof id === "string").sort();
+    expect(recorded).toEqual(used);
+  }, 120_000);
 
   it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {
     expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "report", expectedVersion: 0 })).status).toBe(200);
