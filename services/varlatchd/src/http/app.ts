@@ -24,7 +24,6 @@ import { schemaIsCurrent } from "../db/migrate.js";
 import { getInstallation, issueInviteGrant, verifyLoadedKek } from "../domain/bootstrap.js";
 import {
   createOrganization,
-  getOrganization,
   getOrgRole,
   listOrganizationsFor,
   renameOrganization,
@@ -162,8 +161,10 @@ import {
   loadGrants,
   loadTailnetRequirements,
   requestId,
+  routeParam,
   type Principal,
 } from "./support.js";
+import { resolveOrganization } from "./organization.js";
 
 export const SERVER_VERSION = "0.20.0";
 
@@ -396,19 +397,17 @@ async function readJson(c: Context): Promise<() => unknown> {
   };
 }
 
-function routeParam(c: Context, name: string): string {
-  const value = c.req.param(name);
-  if (!value) throw new DomainError("VALIDATION_FAILED", `Missing route parameter: ${name}`);
-  return value;
-}
-
+// The Organization of every /v1/organizations/:org route comes from
+// resolveOrganization (http/organization.ts), the one place a request's
+// principal enters an Organization; these three helpers only add the
+// Project and Environment below it.
 async function scope(ctx: AppCtx, c: Context) {
-  const org = await getOrganization(ctx, routeParam(c, "org"));
+  const org = await resolveOrganization(ctx, c);
   return { org };
 }
 
 async function projectScope(ctx: AppCtx, c: Context) {
-  const org = await getOrganization(ctx, routeParam(c, "org"));
+  const org = await resolveOrganization(ctx, c);
   const project = await getProject(ctx, org.id, routeParam(c, "project"));
   return { org, project };
 }
