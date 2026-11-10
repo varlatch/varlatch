@@ -282,10 +282,14 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
             ? "failed to sign in with OIDC"
             : str(m.method) === "device-approval"
               ? "failed to confirm a CLI sign-in with a passkey"
-              : "failed to sign in",
+              : str(m.method) === "passkey-confirmation"
+                ? "failed to confirm a new passkey with a trusted one"
+                : "failed to sign in",
           ...(str(m.reason) ? [` (${str(m.reason)!.replace(/[-_]/g, " ")})`] : []),
         ],
       };
+    case "authentication.passkey_confirmed":
+      return { icon: "key", title: "Passkey confirmed", segments: ["confirmed a new passkey with a trusted one, so it can approve"] };
     case "authentication.passkey_enrollment_started":
       return { icon: "key", title: "Passkey enrollment", segments: ["started adding a passkey"] };
     // ---- device sign-in (a CLI signs in after a person approves its code)

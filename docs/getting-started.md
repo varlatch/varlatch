@@ -358,6 +358,37 @@ varlatch login --server https://vault.example.com --wait    # after you approved
 `varlatch status` shows where you are signed in and when the credential
 expires.
 
+## Your passkeys
+
+Your passkeys are listed in the dashboard under your account, then
+Security. Keep at least two, for example a laptop and a security key, so
+losing one device never locks you out.
+
+Each passkey is either **trusted** or **unconfirmed**:
+
+- **Trusted:** a passkey you created from a link: setting up the
+  installation, an invitation, or a link from whoever runs the server
+  (`varlatch admin reenroll`, or `admin recover` for an Installation
+  Admin). Passkeys that existed before Varlatch began recording this are
+  trusted too.
+- **Unconfirmed:** a passkey you added in the dashboard while signed in.
+  To make it trusted, choose **Confirm with another passkey** and use one of
+  your trusted passkeys with its PIN, fingerprint or face.
+
+Why the difference: someone who stole your signed-in browser session could
+add a passkey of their own. They cannot confirm it without one of your
+trusted passkeys.
+
+Signing in and approving a CLI sign-in work with any of your passkeys, and
+you can remove any of them, as before. Nothing is restricted by this yet. Organization
+security controls, coming in a later release, will use it: only a trusted
+passkey will be able to approve a protected change, and an organization
+will be able to require a sign-in with a trusted passkey that verified you.
+
+If none of your passkeys is trusted, you cannot confirm one yourself: ask
+whoever runs the server for a link (`varlatch admin reenroll --identity
+<your identity id>`). The passkey you create with it is trusted.
+
 ## Connect CI and other machines
 
 Machines never use a person's passkey. Create a machine identity in the
