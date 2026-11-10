@@ -13,12 +13,14 @@ import { displayPath } from "./scan.js";
  * whether Git ignores each one, and point to `varlatch import`.
  *
  * Discovery uses file names and metadata (directory entries, lstat),
- * without reading candidate contents, and never follows a symbolic link. It needs no
- * project, no server, and no credential, and discloses nothing.
+ * without reading candidate contents, and never follows a symbolic link. It
+ * needs no project, no server, and no credential, and discloses nothing.
  *
- * Git is asked as little as possible, and only when it cannot be made to
- * read a matched file: anything unusual about a repository makes its state
- * "unknown" instead (see "Asking Git").
+ * Git is asked as little as possible. Git ignore checks read configuration
+ * and ignore rules; unsupported setups report unknown (see "Asking Git").
+ * Concurrent changes to those inputs can cause Git to read a candidate file;
+ * preventing such races is outside this command's guarantee. File contents
+ * and raw Git diagnostics are never displayed.
  *
  * Names are bytes: a name that is not UTF-8 keeps its identity through the
  * walk and Git, and is shown escaped.
