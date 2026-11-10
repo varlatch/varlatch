@@ -453,7 +453,7 @@ export async function countWouldBlockAfter(
  * dropped, with nothing written.
  */
 async function runAccessCount(ctx: AppCtx, report: PendingAccessReport, operation: PasskeyVerificationOperation): Promise<void> {
-  let leave: (() => void) | undefined;
+  let leave: (() => void) | null | undefined;
   try {
     // Admission can throw (unreadable maintenance state): the count is
     // dropped, never left as an unhandled rejection in the queue.
