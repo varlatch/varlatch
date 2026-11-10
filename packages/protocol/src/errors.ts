@@ -90,6 +90,7 @@ export const CAPABILITIES = [
   "members.lifecycle",
   "projects.delete",
   "organizations.delete",
+  "identity.reach",
   "security.credential-review",
 ] as const;
 

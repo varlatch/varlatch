@@ -28,6 +28,7 @@ human formats do not change either: scripts that parse them keep working.
 | `varlatch org list --json` | `organizations`: id, slug, name |
 | `varlatch project list --json` | `organization`, `projects`: slug, name, contractAuthority |
 | `varlatch identity list --json` | `organization`, `identities`: id, name, kind, retired, lastSeenAt |
+| `varlatch identity reach <identity> --json` | `organization`, `identity` (id, name, kind, state, disabledReason, liveCredentials), `organizationActions`, `projects` (each with `actions` and `environments`, each with `actions`: action, grants, conditions), `requirements` (id, version, target, selector, condition), `notes` |
 | `varlatch credential list <identity> --json` | `identity`, `credentials`: id, kind, name, createdAt, expiresAt, revokedAt, lastUsedAt |
 | `varlatch credential issue <identity> --name <name> --out <file> --json` | `identity`, `credential`: id, kind, name, expiresAt, maxUses; `out`, the file that holds the token (never the token) |
 | `varlatch security report --json` | `organization`, `credentialReview`: `generatedAt`, `idleDays`, `summary` (reviewed, listed, neverUsed, idle, noExpiry), `items` (id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, `identity` with id, name, kind, state, disabledReason, and `reasons`: never-used, idle, no-expiry; never a token) |

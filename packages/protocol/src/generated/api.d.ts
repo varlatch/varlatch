@@ -618,6 +618,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/identities/{identity}/reach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What a machine identity can reach (capability identity.reach, ADR-0054 Decision 8): its state, and per Project and Environment the actions its Grants allow (direct, through Groups, Roles and Teams), each with the Tailnet Requirements that would constrain it as conditions. Requirements are never evaluated here: there is no request, so an action they constrain is conditional, never denied. A derived Environment is decided with its root, so Grants and Requirements on the root cover it. Computed on request, never stored; it changes no authorization. Needs identity.read and policy.read; existence-hiding. Another Organization's machine is RESOURCE_NOT_FOUND; a person of this Organization is VALIDATION_FAILED (details.reason human-identity): their view is the exposure report. */
+        get: operations["machineReach"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/identities/{identity}/oidc-bindings": {
         parameters: {
             query?: never;
@@ -2289,6 +2306,63 @@ export interface components {
             name: string;
             email: string | null;
             image: string | null;
+        };
+        ReachAction: {
+            action: components["schemas"]["Action"];
+            /** @description The Grants that allow it, and the Group or Role each came through. */
+            grants: {
+                grantId: string;
+                viaGroupId: string | null;
+                roleId: string | null;
+            }[];
+            /** @description IDs of the Requirements (in MachineReach.requirements) that would constrain this action; empty means none. Only value reads (config.value.read, secret.reveal, secret.use) are constrained. */
+            conditions: string[];
+        };
+        MachineReach: {
+            identity: {
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "service" | "workload" | "ci" | "broker" | "agent";
+                /**
+                 * @description retired: retired by an operator, every credential revoked; disabled: suspended for another reason (disabledReason). Neither can sign in, whatever its Grants allow.
+                 * @enum {string}
+                 */
+                state: "live" | "disabled" | "retired";
+                /** @enum {string|null} */
+                disabledReason: "organization-deletion" | null;
+                /** @description Credentials that are unrevoked, unexpired and not used up. */
+                liveCredentials: number;
+            };
+            /** @description Actions allowed for the Organization as a whole. */
+            organizationActions: components["schemas"]["ReachAction"][];
+            /** @description Projects where something is allowed; others are left out. */
+            projects: {
+                id: string;
+                slug: string;
+                name: string;
+                actions: components["schemas"]["ReachAction"][];
+                /** @description Live Environments where something is allowed; others are left out. */
+                environments: {
+                    id: string;
+                    name: string;
+                    tier: components["schemas"]["Tier"];
+                    kind: components["schemas"]["EnvironmentKind"];
+                    parentEnvironmentId: string | null;
+                    actions: components["schemas"]["ReachAction"][];
+                }[];
+            }[];
+            /** @description The Requirements named in conditions, as they are defined now. */
+            requirements: {
+                id: string;
+                version: number | null;
+                target: components["schemas"]["RequirementTarget"];
+                selector: components["schemas"]["TailnetSelector"];
+                /** @description The condition in words, such as "needs tailnet example.ts.net: tag:prod". */
+                condition: string;
+            }[];
+            /** @description What else to know about this reach, in words (a retired identity, a Broker's Capabilities). */
+            notes: string[];
         };
         /** @description The caller as this request authenticated it (GET /v1/me). Never contains token material, another identity, or another credential. */
         WhoAmI: {
@@ -4558,6 +4632,31 @@ export interface operations {
                         id: string;
                         disabled: boolean;
                     };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    machineReach: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The machine's reach */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineReach"];
                 };
             };
             default: components["responses"]["Error"];

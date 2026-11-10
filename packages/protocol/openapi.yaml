@@ -1399,6 +1399,38 @@ paths:
                   disabled: { type: boolean }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/identities/{identity}/reach:
+    get:
+      tags: [identities]
+      operationId: machineReach
+      summary: >
+        What a machine identity can reach (capability identity.reach,
+        ADR-0054 Decision 8): its state, and per Project and Environment the
+        actions its Grants allow (direct, through Groups, Roles and Teams),
+        each with the Tailnet Requirements that would constrain it as
+        conditions. Requirements are never evaluated here: there is no
+        request, so an action they constrain is conditional, never denied.
+        A derived Environment is decided with its root, so Grants and
+        Requirements on the root cover it. Computed on request, never
+        stored; it changes no authorization. Needs identity.read and
+        policy.read; existence-hiding. Another Organization's machine is
+        RESOURCE_NOT_FOUND; a person of this Organization is
+        VALIDATION_FAILED (details.reason human-identity): their view is the
+        exposure report.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The machine's reach
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MachineReach" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/identities/{identity}/oidc-bindings:
     get:
       tags: [identities]
@@ -4738,6 +4770,102 @@ components:
         name: { type: string }
         email: { type: [string, "null"] }
         image: { type: [string, "null"] }
+
+    ReachAction:
+      type: object
+      required: [action, grants, conditions]
+      properties:
+        action: { $ref: "#/components/schemas/Action" }
+        grants:
+          type: array
+          description: The Grants that allow it, and the Group or Role each came through.
+          items:
+            type: object
+            required: [grantId, viaGroupId, roleId]
+            properties:
+              grantId: { type: string }
+              viaGroupId: { type: [string, "null"] }
+              roleId: { type: [string, "null"] }
+        conditions:
+          type: array
+          description: >
+            IDs of the Requirements (in MachineReach.requirements) that would
+            constrain this action; empty means none. Only value reads
+            (config.value.read, secret.reveal, secret.use) are constrained.
+          items: { type: string }
+
+    MachineReach:
+      type: object
+      required: [identity, organizationActions, projects, requirements, notes]
+      properties:
+        identity:
+          type: object
+          required: [id, name, kind, state, disabledReason, liveCredentials]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            kind: { type: string, enum: [service, workload, ci, broker, agent] }
+            state:
+              type: string
+              enum: [live, disabled, retired]
+              description: >
+                retired: retired by an operator, every credential revoked;
+                disabled: suspended for another reason (disabledReason).
+                Neither can sign in, whatever its Grants allow.
+            disabledReason: { type: [string, "null"], enum: [organization-deletion, null] }
+            liveCredentials:
+              type: integer
+              description: Credentials that are unrevoked, unexpired and not used up.
+        organizationActions:
+          type: array
+          description: Actions allowed for the Organization as a whole.
+          items: { $ref: "#/components/schemas/ReachAction" }
+        projects:
+          type: array
+          description: Projects where something is allowed; others are left out.
+          items:
+            type: object
+            required: [id, slug, name, actions, environments]
+            properties:
+              id: { type: string }
+              slug: { type: string }
+              name: { type: string }
+              actions: { type: array, items: { $ref: "#/components/schemas/ReachAction" } }
+              environments:
+                type: array
+                description: Live Environments where something is allowed; others are left out.
+                items:
+                  type: object
+                  required: [id, name, tier, kind, parentEnvironmentId, actions]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    tier: { $ref: "#/components/schemas/Tier" }
+                    kind: { $ref: "#/components/schemas/EnvironmentKind" }
+                    parentEnvironmentId: { type: [string, "null"] }
+                    actions: { type: array, items: { $ref: "#/components/schemas/ReachAction" } }
+        requirements:
+          type: array
+          description: The Requirements named in conditions, as they are defined now.
+          items:
+            type: object
+            required: [id, version, target, selector, condition]
+            properties:
+              id: { type: string }
+              version: { type: [integer, "null"] }
+              target: { $ref: "#/components/schemas/RequirementTarget" }
+              selector: { $ref: "#/components/schemas/TailnetSelector" }
+              condition:
+                type: string
+                description: >
+                  The condition in words, such as
+                  "needs tailnet example.ts.net: tag:prod".
+        notes:
+          type: array
+          description: >
+            What else to know about this reach, in words (a retired
+            identity, a Broker's Capabilities).
+          items: { type: string }
 
     WhoAmI:
       type: object

@@ -146,6 +146,8 @@ Usage:
   varlatch env-delete <name> [--confirm <name>]        # --confirm required for production-tier roots
   varlatch identity <list [--json]|rename <id> <new-name>|retire <id> [--confirm <name>]|reactivate <id>>
                                                        # --confirm required: retire revokes all credentials
+  varlatch identity reach <id|name> [--json]           # what a machine's grants allow, per project and
+                                                       # environment, with tailnet conditions; read-only
   varlatch credential <list <identity-id> [--json]|revoke <identity-id> <credential-id>>
   varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
                (another credential for a service, workload, or broker identity, such as one per program;
