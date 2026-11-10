@@ -16,7 +16,7 @@ import {
 import type { IssuedMachineCredential, OidcBinding } from "@varlatch/protocol";
 import type { IdentityCredential, OrgIdentity } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
-import { timeAgo, timeUntil, useNow } from "../../lib/time";
+import { formatDate, formatDateTime, timeAgo, timeUntil, useNow } from "../../lib/time";
 import {
   Badge,
   Button,
@@ -29,6 +29,7 @@ import {
   SectionCard,
   Select,
   Spinner,
+  Status,
   StatusDot,
   Switch,
   table,
@@ -41,6 +42,7 @@ import { Tabs } from "../../components/PageHeader";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
+import { expiryText, expiryTone, machineCredentialExpiry, type CredentialExpiry } from "../sync/credentialExpiry";
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
 import { MachineReachPanel, reachKey } from "./MachineReach";
@@ -311,12 +313,18 @@ function SignsInWith({ org, identity, now }: { org: string; identity: OrgIdentit
   if (active.length === 0) return <span className="text-muted">No active token</span>;
   const expiries = active.map((c) => c.expiresAt).filter(Boolean) as string[];
   const soonest = expiries.sort()[0];
-  const soon = soonest && new Date(soonest).getTime() - now < 7 * 86_400_000;
+  // Marked by the soonest credential in its last 7 days, as each one is in the list.
+  const marked = active
+    .map((c) => machineCredentialExpiry(c, now))
+    .filter((e): e is CredentialExpiry => e !== null && e.state !== "later")
+    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))[0];
   return (
     <span className="inline-flex items-center gap-2">
-      {soon && <StatusDot tone="warn" />}
+      {marked && <StatusDot tone={expiryTone(marked)} />}
       Token
-      <span className="text-muted">· {soonest ? `expires ${timeUntil(soonest, now)}` : "no expiry"}</span>
+      <span className="text-muted">
+        · {!soonest ? "no expiry" : Date.parse(soonest) <= now ? "expired" : `expires ${timeUntil(soonest, now)}`}
+      </span>
     </span>
   );
 }
@@ -453,6 +461,25 @@ function MonoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * A live service credential that expires within 7 days, or has expired, is
+ * marked, however long it was issued for: requests with it carry the
+ * Varlatch-Credential-Expires header and the CLI warns about it in
+ * VARLATCH_TOKEN. Agent-run and OIDC credentials are renewed by design.
+ */
+export function MachineCredentialExpiry({ credential, now }: { credential: IdentityCredential; now: number }) {
+  if (credential.revokedAt) return null;
+  const expiry = machineCredentialExpiry(credential, now);
+  if (!expiry || expiry.state === "later") return null;
+  return (
+    <span className="block" data-testid={`credential-expiry-${credential.id}`} title={formatDateTime(expiry.expiresAt)}>
+      <Status tone={expiryTone(expiry)} className="text-xs">
+        {expiryText(expiry, formatDate(expiry.expiresAt), "Credential")}
+      </Status>
+    </span>
+  );
+}
+
 /** Credential metadata only: never token material, except once, right after issuing. */
 function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity }) {
   const { api } = useSession();
@@ -507,6 +534,7 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
                   issued {timeAgo(c.createdAt, now)} · used {timeAgo(c.lastUsedAt, now)}
                   {c.expiresAt && ` · expires ${timeUntil(c.expiresAt, now)}`}
                 </span>
+                <MachineCredentialExpiry credential={c} now={now} />
               </span>
               {c.revokedAt ? (
                 <Badge tone="danger">revoked</Badge>

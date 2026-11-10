@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccessCheck, PlatformConnection, SyncTarget } from "@varlatch/protocol";
+import type { IdentityCredential } from "@varlatch/sdk";
 
 /**
  * GitHub says when a personal access token expires. Varlatch warns two
@@ -30,7 +31,15 @@ vi.mock("../src/components/Dialog", () => ({
   useConfirm: () => async () => true,
 }));
 
-import { EXPIRY_WARNING_DAYS, credentialExpiry, expiryText, expiryTone } from "../src/features/sync/credentialExpiry";
+import {
+  EXPIRY_WARNING_DAYS,
+  MACHINE_EXPIRY_WARNING_DAYS,
+  credentialExpiry,
+  expiryText,
+  expiryTone,
+  machineCredentialExpiry,
+} from "../src/features/sync/credentialExpiry";
+import { MachineCredentialExpiry } from "../src/features/access/MachinesTab";
 import { checkPasses } from "../src/features/sync/accessCheck";
 import { ConnectionCard, NewConnectionDialog } from "../src/features/sync/ConnectionsPage";
 import { TargetCard } from "../src/features/sync/TargetCard";
@@ -65,6 +74,27 @@ describe("credentialExpiry", () => {
       "error",
       "muted",
     ]);
+  });
+
+  it(`takes a shorter window for machine credentials (${MACHINE_EXPIRY_WARNING_DAYS} days), and names the thing`, () => {
+    expect(credentialExpiry(inDays(10, NOW), NOW, MACHINE_EXPIRY_WARNING_DAYS)).toMatchObject({ state: "later", days: 10 });
+    expect(credentialExpiry(inDays(7.5, NOW), NOW, MACHINE_EXPIRY_WARNING_DAYS)).toMatchObject({ state: "later", days: 8 });
+    expect(credentialExpiry(inDays(7, NOW), NOW, MACHINE_EXPIRY_WARNING_DAYS)).toMatchObject({ state: "soon", days: 7 });
+    expect(credentialExpiry(inDays(-1, NOW), NOW, MACHINE_EXPIRY_WARNING_DAYS)).toMatchObject({ state: "expired" });
+    expect(expiryText(credentialExpiry(inDays(3, NOW), NOW, 7)!, "Oct 12", "Credential")).toBe("Credential expires in 3 days (Oct 12)");
+    expect(expiryText(credentialExpiry(inDays(-1, NOW), NOW, 7)!, "Oct 8", "Credential")).toBe("Credential expired Oct 8");
+  });
+
+  it("marks service credentials within the window, whatever their lifetime, as varlatchd sends the header", () => {
+    const svc = (expiresAt: string | null) => ({ kind: "service", expiresAt });
+    expect(machineCredentialExpiry(svc(inDays(3, NOW)), NOW)).toMatchObject({ state: "soon", days: 3 });
+    expect(machineCredentialExpiry(svc(inDays(-1, NOW)), NOW)).toMatchObject({ state: "expired" });
+    expect(machineCredentialExpiry(svc(inDays(10, NOW)), NOW)).toMatchObject({ state: "later" });
+    expect(machineCredentialExpiry(svc(null), NOW)).toBeNull();
+    // Renewed by design: never marked.
+    for (const kind of ["oidc", "agent-run", "cli", "browser"]) {
+      expect(machineCredentialExpiry({ kind, expiresAt: inDays(0.5, NOW) }, NOW)).toBeNull();
+    }
   });
 
   it("lets a dialog save without asking only for a token not about to expire", () => {
@@ -260,5 +290,41 @@ describe("Add integration Review", () => {
     answer = { status: "ok", where: "destination", message: "ok", credentialExpiresAt: inDays(60) };
     await review(inDays(3));
     expect(text(byTestId("confirm-integration"))).toBe("Create integration");
+  });
+});
+
+describe("Machine credential", () => {
+  const credential = (expiresAt: string | null, extra: Partial<IdentityCredential> = {}): IdentityCredential => ({
+    id: "crd_1",
+    kind: "service",
+    name: "runner",
+    createdAt: "2026-09-01T00:00:00Z",
+    expiresAt,
+    revokedAt: null,
+    lastUsedAt: null,
+    ...extra,
+  });
+
+  it("is marked within 7 days of its expiry, however long it was issued for, and once it expired", async () => {
+    await mount(<MachineCredentialExpiry credential={credential(inDays(3))} now={Date.now()} />);
+    expect(text(byTestId("credential-expiry-crd_1"))).toMatch(/^Credential expires in 3 days \(/);
+    // Issued for 5 days, 2 left: nothing renews it, so it is marked too.
+    await mount(<MachineCredentialExpiry credential={credential(inDays(2), { createdAt: inDays(-3) })} now={Date.now()} />);
+    expect(text(byTestId("credential-expiry-crd_1"))).toMatch(/^Credential expires in 2 days \(/);
+    await mount(<MachineCredentialExpiry credential={credential(inDays(-1))} now={Date.now()} />);
+    expect(text(byTestId("credential-expiry-crd_1"))).toMatch(/^Credential expired /);
+  });
+
+  it("is not marked when it expires later, never expires, is revoked, or is not a service credential", async () => {
+    for (const c of [
+      credential(inDays(30)),
+      credential(null),
+      credential(inDays(3), { revokedAt: "2026-10-01T00:00:00Z" }),
+      credential(inDays(0.01), { kind: "agent-run" }),
+      credential(inDays(0.5), { kind: "oidc" }),
+    ]) {
+      await mount(<MachineCredentialExpiry credential={c} now={Date.now()} />);
+      expect(all("credential-expiry-crd_1")).toHaveLength(0);
+    }
   });
 });

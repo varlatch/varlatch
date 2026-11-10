@@ -137,7 +137,18 @@ export interface VarlatchClientOptions {
    * request records. Browsers may ignore it; omit it there.
    */
   userAgent?: string;
+  /**
+   * Called with the `Varlatch-Credential-Expires` header's value whenever a
+   * response carries it: the server names the expiry of a machine's service
+   * credential in its last 7 days on every response to it, errors
+   * included. The CLI warns on stderr with it when the credential
+   * came from VARLATCH_TOKEN.
+   */
+  onCredentialExpires?: (expiresAt: string) => void;
 }
+
+/** Names the presenting machine credential's expiry in its last 7 days (server side, ADR-0054 Decision 8). */
+export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
 
 export interface MaintenanceWait {
   /** How long this wait lasts. */
@@ -227,6 +238,7 @@ export class VarlatchClient {
   private readonly maintenanceRetryMs: number;
   private readonly onMaintenance: ((wait: MaintenanceWait) => void) | undefined;
   private readonly userAgent: string | undefined;
+  private readonly onCredentialExpires: ((expiresAt: string) => void) | undefined;
   /** End of the current maintenance budget; null while the server answers normally. */
   private maintenanceDeadline: number | null = null;
 
@@ -236,6 +248,7 @@ export class VarlatchClient {
     this.maintenanceRetryMs = options.maintenanceRetryMs ?? 180_000;
     this.onMaintenance = options.onMaintenance;
     this.userAgent = options.userAgent;
+    this.onCredentialExpires = options.onCredentialExpires;
     // Bind to globalThis: browsers throw "Illegal invocation" when window
     // fetch is called with a foreign `this`.
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -282,7 +295,7 @@ export class VarlatchClient {
     body?: unknown,
     headers: Record<string, string> = {},
   ): Promise<Response> {
-    return this.fetchImpl(`${this.server}${path}`, {
+    const res = await this.fetchImpl(`${this.server}${path}`, {
       method,
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
@@ -292,6 +305,14 @@ export class VarlatchClient {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    this.noticeCredentialExpiry(res);
+    return res;
+  }
+
+  /** Hands the presenting credential's announced expiry to onCredentialExpires, before the response is read. */
+  private noticeCredentialExpiry(res: Response): void {
+    const expiresAt = this.onCredentialExpires ? res.headers.get(CREDENTIAL_EXPIRES_HEADER) : null;
+    if (expiresAt) this.onCredentialExpires?.(expiresAt);
   }
 
   private async finish<T>(res: Response): Promise<T> {
@@ -1537,6 +1558,7 @@ export class VarlatchClient {
         },
       },
     );
+    this.noticeCredentialExpiry(res);
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as ApiError | undefined;
       throw new VarlatchApiError(

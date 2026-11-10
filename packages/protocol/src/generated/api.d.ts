@@ -3154,7 +3154,10 @@ export interface components {
         idempotencyKey: string;
     };
     requestBodies: never;
-    headers: never;
+    headers: {
+        /** @description Sent on every response to a request authenticated by a machine's service credential that expires within 7 days, whatever its total lifetime, errors included: when that credential expires. Absent for credentials without an expiry or expiring later, for credentials renewed by design (a person's browser and CLI credentials, OIDC exchanges, agent runs), and on unauthenticated responses. Clients holding a credential they cannot renew by signing in (VARLATCH_TOKEN) use it to warn ahead. */
+        VarlatchCredentialExpires: string;
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;

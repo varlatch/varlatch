@@ -127,6 +127,24 @@ export function expiryWarning(
   return null;
 }
 
+/** The warning for a VARLATCH_TOKEN credential, from the expiry the server
+    names in its Varlatch-Credential-Expires header (sent for a machine's
+    service credential in its last 7 days, ADR-0054 Decision 8). Such a
+    credential has no stored metadata and `varlatch login` does not renew
+    it: the remedy is a new credential.
+    Null for a timestamp that does not parse. */
+export function envTokenExpiryWarning(
+  server: string,
+  expiresAt: string,
+  now: number = Date.now(),
+): string | null {
+  const at = Date.parse(expiresAt);
+  if (Number.isNaN(at)) return null;
+  const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN";
+  if (at <= now) return `varlatch: credential for ${server} (VARLATCH_TOKEN) expired ${expiresAt}; ${remedy}`;
+  return `varlatch: credential for ${server} (VARLATCH_TOKEN) expires ${expiresAt}; ${remedy} before then`;
+}
+
 export function formatStatusHuman(doc: StatusDocument): string {
   const lines: string[] = [];
   if (doc.servers.length === 0) {
