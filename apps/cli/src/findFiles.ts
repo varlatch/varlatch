@@ -12,8 +12,8 @@ import { displayPath } from "./scan.js";
  * under a directory that look like copies of secrets by their name, say
  * whether Git ignores each one, and point to `varlatch import`.
  *
- * Names only: the walk reads directory entries and never opens a file, a
- * matched one included, and never follows a symbolic link. It needs no
+ * Discovery uses file names and metadata (directory entries, lstat),
+ * without reading candidate contents, and never follows a symbolic link. It needs no
  * project, no server, and no credential, and discloses nothing.
  *
  * Git is asked as little as possible, and only when it cannot be made to
@@ -262,33 +262,38 @@ function gitEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
 interface GitResult {
   code: number;
   stdout: Buffer;
-  stderr: string;
 }
 
-/** Run git with a timeout: a Git that waits on something is given up, never waited for. */
+/** Why Git gave no answer, in fixed words: Git's own diagnostics could quote a file, so they are never shown. */
+class GitFailure extends Error {
+  override name = "GitFailure";
+}
+
+/**
+ * Run git with a timeout: a Git that waits on something is given up, never
+ * waited for. Its stderr is discarded, never shown.
+ */
 function runGit(cwd: string, args: string[], env: NodeJS.ProcessEnv, input?: Buffer): Promise<GitResult> {
   return new Promise((resolvePromise, reject) => {
     const proc = spawn("git", ["-c", "core.fsmonitor=false", ...args], {
       cwd,
       env,
-      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"],
     });
     const out: Buffer[] = [];
-    let err = "";
     const timer = setTimeout(() => {
       proc.kill("SIGKILL");
-      reject(new Error(`git did not answer within ${GIT_TIMEOUT_MS / 1000} s`));
+      reject(new GitFailure(`Git timed out (${GIT_TIMEOUT_MS / 1000} s)`));
     }, GIT_TIMEOUT_MS);
     proc.stdin?.on("error", () => {});
     proc.stdout!.on("data", (d: Buffer) => out.push(d));
-    proc.stderr!.on("data", (d: Buffer) => (err += d.toString()));
-    proc.on("error", (e) => {
+    proc.on("error", () => {
       clearTimeout(timer);
-      reject(new Error(`could not run git: ${e.message}`));
+      reject(new GitFailure("Git could not be started"));
     });
     proc.on("close", (code) => {
       clearTimeout(timer);
-      resolvePromise({ code: code ?? 1, stdout: Buffer.concat(out), stderr: err.trim() });
+      resolvePromise({ code: code ?? 1, stdout: Buffer.concat(out) });
     });
     proc.stdin?.end(input);
   });
@@ -422,7 +427,7 @@ async function readConfig(file: Buffer): Promise<ConfigFacts> {
   const name = utf8OrNull(file);
   if (name === null) return { ...facts, unusual: `${displayBytes(file)} is not a UTF-8 path` };
   const r = await runGit(tmpdir(), ["config", "--file", name, "--no-includes", "--list", "-z"], gitEnv({ GIT_DIR: NO_REPOSITORY }));
-  if (r.code !== 0) return { ...facts, unusual: `${displayBytes(file)}: ${r.stderr.split("\n")[0] || `git config exited ${r.code}`}` };
+  if (r.code !== 0) return { ...facts, unusual: `Git could not read ${displayBytes(file)} (exit status ${r.code})` };
   for (const entry of nulList(r.stdout)) {
     const nl = entry.indexOf(10);
     const key = (nl < 0 ? entry : entry.subarray(0, nl)).toString("latin1").toLowerCase();
@@ -440,18 +445,22 @@ async function readConfig(file: Buffer): Promise<ConfigFacts> {
 
 interface GlobalConfig {
   unusual: string | null;
-  /** Includes are not read: an excludes file set in one is not used, so "not ignored" is not certain. */
-  includes: boolean;
   excludesFile: string | null;
 }
 
-/** The global configuration, read here (Git itself never gets it): only core.excludesFile is used. */
+/**
+ * The global configuration, read here (Git itself never gets it): only
+ * core.excludesFile is used. Git reads the XDG file first and
+ * `~/.gitconfig` second, so a value in `~/.gitconfig` wins. An include
+ * could set the excludes file, and includes are not read, so any include
+ * makes every state unknown.
+ */
 async function readGlobalConfig(): Promise<GlobalConfig> {
   const home = process.env.HOME || homedir();
   const xdg = process.env.XDG_CONFIG_HOME || join(home, ".config");
   const files =
-    process.env.GIT_CONFIG_GLOBAL !== undefined ? [process.env.GIT_CONFIG_GLOBAL] : [join(home, ".gitconfig"), join(xdg, "git", "config")];
-  const global: GlobalConfig = { unusual: null, includes: false, excludesFile: null };
+    process.env.GIT_CONFIG_GLOBAL !== undefined ? [process.env.GIT_CONFIG_GLOBAL] : [join(xdg, "git", "config"), join(home, ".gitconfig")];
+  const global: GlobalConfig = { unusual: null, excludesFile: null };
   for (const file of files) {
     if (file === "/dev/null") continue;
     const path = Buffer.from(file);
@@ -460,7 +469,7 @@ async function readGlobalConfig(): Promise<GlobalConfig> {
     if (verdict !== "ok") return { ...global, unusual: verdict };
     const facts = await readConfig(path);
     if (facts.unusual) return { ...global, unusual: facts.unusual };
-    global.includes ||= facts.includes;
+    if (facts.includes) return { ...global, unusual: `${displayBytes(path)} includes other files, which are not read` };
     global.excludesFile = facts.excludesFile ?? global.excludesFile;
   }
   return global;
@@ -526,6 +535,35 @@ function nulList(buf: Buffer): Buffer[] {
   return out;
 }
 
+/**
+ * Why Git must not read the `.gitignore` files that apply to these files
+ * (one in each directory from the top of the working tree down to each
+ * file's directory): one is a link, has another name, or is not a regular
+ * file. Git opens them without following a symbolic link, but a hard link
+ * or a FIFO would still be read.
+ */
+async function gitignoreCheck(top: Buffer, prefix: number, files: Found[]): Promise<string | null> {
+  const seen = new Set<string>();
+  for (const f of files) {
+    const rel = f.abs.subarray(prefix);
+    let dir = top;
+    let at = 0;
+    for (;;) {
+      const key = dir.toString("latin1");
+      if (!seen.has(key)) {
+        seen.add(key);
+        const verdict = await plainFile(child(dir, Buffer.from(".gitignore")));
+        if (verdict !== "missing" && verdict !== "ok") return verdict;
+      }
+      const slash = rel.indexOf(SEP[0]!, at);
+      if (slash < 0) break;
+      dir = child(top, rel.subarray(0, slash));
+      at = slash + 1;
+    }
+  }
+  return null;
+}
+
 /** Set each file's Git state, with one `git check-ignore --no-index` per repository. */
 export async function gitStates(walk: Walk): Promise<void> {
   const unknown = (files: Found[], reason: string) => {
@@ -566,6 +604,11 @@ export async function gitStates(walk: Walk): Promise<void> {
         continue;
       }
       const prefix = repo.top.length + (repo.top[repo.top.length - 1] === SEP[0] ? 0 : 1);
+      const ignoreFiles = await gitignoreCheck(repo.top, prefix, files);
+      if (ignoreFiles) {
+        unknown(files, ignoreFiles);
+        continue;
+      }
       const input = Buffer.concat(files.flatMap((f) => [f.abs.subarray(prefix), Buffer.from([0])]));
       // Git looks for the repository from its top and no higher; --no-index reads no index.
       const r = await runGit(
@@ -576,21 +619,14 @@ export async function gitStates(walk: Walk): Promise<void> {
       );
       // Exit 0: some paths are ignored; 1: none is.
       if (r.code !== 0 && r.code !== 1) {
-        unknown(files, r.stderr.split("\n")[0] || `git check-ignore exited ${r.code}`);
+        // Git's message is not shown: only that it refused or failed, and its exit status.
+        unknown(files, `Git refused or failed (exit status ${r.code})`);
         continue;
       }
       const ignored = new Set(nulList(r.stdout).map((p) => p.toString("latin1")));
-      for (const f of files) {
-        if (ignored.has(f.abs.subarray(prefix).toString("latin1"))) f.git = "ignored";
-        else if (global.includes) {
-          Object.assign(f, {
-            git: "unknown",
-            gitError: "the global Git configuration includes other files, which are not read, so an excludes file set there is not used",
-          });
-        } else f.git = "not-ignored";
-      }
+      for (const f of files) f.git = ignored.has(f.abs.subarray(prefix).toString("latin1")) ? "ignored" : "not-ignored";
     } catch (err) {
-      unknown(files, err instanceof Error ? err.message : String(err));
+      unknown(files, err instanceof GitFailure ? err.message : `the repository could not be checked (${reasonOf(err)})`);
     }
   }
 }
@@ -645,8 +681,8 @@ export function formatFindFilesHuman(report: FindFilesReport, limits: FindLimits
   lines.push(
     report.files.length > 0
       ? `varlatch scan: ${report.files.length} file(s) look like copies of secrets${notes.length > 0 ? ` (${notes.join(", ")})` : ""}; ` +
-          `${report.entriesChecked} entries checked by name. No file was opened.`
-      : `varlatch scan: no file looks like a copy of a secret; ${report.entriesChecked} entries checked by name. No file was opened.`,
+          `${report.entriesChecked} entries checked by name, without reading their contents.`
+      : `varlatch scan: no file looks like a copy of a secret; ${report.entriesChecked} entries checked by name, without reading their contents.`,
   );
   if (report.files.length === 0) return lines;
   if (report.files.some((f) => f.kind === "dotenv")) {

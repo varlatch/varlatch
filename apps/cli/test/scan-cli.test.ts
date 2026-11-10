@@ -156,10 +156,13 @@ function run(
   cmd: string,
   args: string[],
   cwd: string,
-  extraEnv: Record<string, string> = {},
+  /** Added to the suite's environment; `undefined` leaves a variable out. */
+  extraEnv: Record<string, string | undefined> = {},
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { cwd, env: { ...env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
+    const merged: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...env, ...extraEnv })) if (v !== undefined) merged[k] = v;
+    const child = spawn(cmd, args, { cwd, env: merged, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -581,7 +584,7 @@ process.on("exit", () => write(process.env.FS_LOG, calls.join("\\n")));
     writeFileSync(join(clean, ".env.schema"), "# @required\nAPI_KEY=\n");
     const none = await run(process.execPath, [bundle, "scan", "--find-files", clean], top, { VARLATCH_ASSISTED: "0" });
     expect(none.code, none.stderr).toBe(0);
-    expect(none.stdout).toMatch(/^varlatch scan: no file looks like a copy of a secret; 1 entries checked by name\. No file was opened\.\n$/);
+    expect(none.stdout).toMatch(/^varlatch scan: no file looks like a copy of a secret; 1 entries checked by name, without reading their contents\.\n$/);
   });
 
   it("refuses the value scan's options, more than one directory, and a file", async () => {
@@ -627,16 +630,16 @@ describe("varlatch scan --find-files uses Git as little as possible (one check-i
     writeFileSync(join(top, ".git", "config"), Buffer.concat([readFileSync(join(top, ".git", "config")), Buffer.from(text)]));
   }
 
-  async function findFiles(cwd: string, extraEnv: Record<string, string> = {}) {
+  async function findFiles(cwd: string, extraEnv: Record<string, string | undefined> = {}) {
     const started = Date.now();
     const r = await run(process.execPath, [bundle, "scan", "--find-files", "--json"], cwd, { VARLATCH_ASSISTED: "0", ...extraEnv });
     return { ...r, ms: Date.now() - started, report: r.stdout ? JSON.parse(r.stdout) : null };
   }
 
   /** The state of config/.env.local, and how long the search took. */
-  async function stateOf(cwd: string, extraEnv: Record<string, string> = {}) {
+  async function stateOf(cwd: string, extraEnv: Record<string, string | undefined> = {}) {
     const r = await findFiles(cwd, extraEnv);
-    const file = r.report?.files.find((f: { path: string }) => f.path === "config/.env.local");
+    const file = r.report?.files.find((f: { path: string }) => f.path.endsWith(".env.local"));
     return { ms: r.ms, git: file?.git, gitError: file?.gitError as string | undefined, stderr: r.stderr };
   }
 
@@ -766,17 +769,80 @@ describe("varlatch scan --find-files uses Git as little as possible (one check-i
       "config/.env.other": ["ignored", undefined],
     });
 
-    // Includes in it are not read, by Git or here: "ignored" still holds, "not ignored" is not certain.
+    // Includes in it are not read, by Git or here, and one could replace the excludes file: every state is unknown.
+    writeFileSync(join(globalDir, "other.cfg"), `[core]\n\texcludesFile = ${join(globalDir, "empty")}\n`);
+    writeFileSync(gitconfig, `[core]\n\texcludesFile = ${join(globalDir, "ignore")}\n[include]\n\tpath = ${join(globalDir, "other.cfg")}\n`);
+    const includes = expect.stringContaining("includes other files, which are not read");
+    expect(await other({ GIT_CONFIG_GLOBAL: gitconfig })).toEqual({
+      "config/.env.local": ["unknown", includes],
+      "config/.env.other": ["unknown", includes],
+    });
     writeFileSync(gitconfig, `[include]\n\tpath = ${join(top, ".env")}\n`);
     expect(await other({ GIT_CONFIG_GLOBAL: gitconfig })).toEqual({
-      "config/.env.local": ["ignored", undefined],
-      "config/.env.other": ["unknown", expect.stringContaining("the global Git configuration includes other files, which are not read")],
+      "config/.env.local": ["unknown", includes],
+      "config/.env.other": ["unknown", includes],
     });
 
     // A global configuration file that is a link to a copy is not read at all.
     symlinkSync(join(top, ".env"), join(globalDir, "linked-gitconfig"));
     const linked = await other({ GIT_CONFIG_GLOBAL: join(globalDir, "linked-gitconfig") });
     expect(linked["config/.env.local"]).toEqual(["unknown", expect.stringContaining("has the name of a secret copy")]);
+  });
+
+  it("reads ~/.gitconfig after the XDG file, as Git does, so ~/.gitconfig wins", async () => {
+    const home = join(dir, `home-${++repoCount}`);
+    mkdirSync(join(home, ".config", "git"), { recursive: true });
+    writeFileSync(join(home, "xdg-ignore"), "*.key\n");
+    writeFileSync(join(home, "empty-ignore"), "");
+    writeFileSync(join(home, ".config", "git", "config"), `[core]\n\texcludesFile = ${join(home, "xdg-ignore")}\n`);
+    const top = join(home, "repo");
+    mkdirSync(top);
+    git(top, "init", "-q", "-b", "main");
+    writeFileSync(join(top, "test.key"), "CANARY\n");
+    const state = async () => {
+      const r = await findFiles(top, { HOME: home, GIT_CONFIG_GLOBAL: undefined, XDG_CONFIG_HOME: undefined });
+      return r.report.files.map((f: { path: string; git: string }) => [f.path, f.git]);
+    };
+    expect(await state()).toEqual([["test.key", "ignored"]]);
+    writeFileSync(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${join(home, "empty-ignore")}\n`);
+    expect(await state()).toEqual([["test.key", "not-ignored"]]);
+  });
+
+  it("does not run Git when a .gitignore that applies is a hard link, a link, or not a regular file", async () => {
+    const cases: [string, (top: string) => void, string, string][] = [
+      [
+        "a .gitignore hard-linked to a .env holding *.key",
+        (top) => {
+          writeFileSync(join(top, "config", ".env"), "*.key\n");
+          spawnSync("ln", [join(top, "config", ".env"), join(top, "config", ".gitignore")]);
+        },
+        ".",
+        "has another name (a hard link)",
+      ],
+      ["a FIFO .gitignore", (top) => spawnSync("mkfifo", [join(top, "config", ".gitignore")]), ".", "is not a regular file"],
+      ["a linked .gitignore", (top) => symlinkSync(join(top, ".env"), join(top, "config", ".gitignore")), ".", "is a symbolic link"],
+      [
+        "a FIFO .gitignore above the directory searched",
+        (top) => spawnSync("mkfifo", [join(top, ".gitignore")]),
+        "config",
+        "is not a regular file",
+      ],
+    ];
+    for (const [label, setup, sub, reason] of cases) {
+      const top = fifoRepo();
+      setup(top);
+      const r = await stateOf(join(top, sub));
+      expect(r.git, `${label}: ${r.stderr}`).toBe("unknown");
+      expect(r.gitError, label).toContain(reason);
+      expect(r.ms, label).toBeLessThan(10_000);
+    }
+  });
+
+  it("never shows Git's own messages, only that it refused or failed and its exit status", async () => {
+    const top = fifoRepo();
+    appendConfig(top, "[core]\n\trepositoryformatversion = 99\n");
+    const r = await stateOf(top);
+    expect(r).toMatchObject({ git: "unknown", gitError: "Git refused or failed (exit status 128)", stderr: "" });
   });
 
   it("answers for a linked worktree, and keeps names that are not UTF-8 apart", async () => {

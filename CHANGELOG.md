@@ -24,15 +24,18 @@ fixes.
   names look like copies of secrets: `.env`, `.env.*` except
   `.env.example` and `.env.schema`, `*.pem` and `*.key`. For each it says
   whether Git ignores it, and it suggests `varlatch import` to move a
-  dotenv file in. It reads names only and never opens a file, does not
-  follow symbolic links, skips `.git` and `node_modules`, and needs no
-  project, sign-in or server. Git runs only `git check-ignore --no-index`,
-  and not at all for a repository with anything unusual (an include in its
-  configuration, a linked or hard-linked file Git would open, another
-  object store), whose state is then unknown. It exits 1 when it finds a
-  file and 2 when part of the tree was not searched. The secret scanning
-  reference also shows how to check a shell history file for values with
-  `varlatch scan <file>`. See [Finding copies of
+  dotenv file in. Discovery uses file names and metadata, without reading
+  the contents of the files it lists, does not follow symbolic links,
+  skips `.git` and `node_modules`, and needs no project, sign-in or
+  server. The ignore check runs `git check-ignore --no-index`, which reads
+  Git's configuration and ignore rules; a setup it does not support (an
+  include in the configuration, a linked or hard-linked file Git would
+  open, another object store) reports the state as unknown, and Git's own
+  messages are never shown. Changing those files while the command runs is
+  outside what it guarantees. It exits 1 when it finds a file and 2 when
+  part of the tree was not searched. The secret scanning reference also
+  shows how to check a shell history file for values with `varlatch scan
+  <file>`. See [Finding copies of
   secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
 
 ## 0.20.0 (2026-10-30)
