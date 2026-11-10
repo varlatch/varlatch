@@ -13,12 +13,14 @@ import type {
   ConfigItemSearchResult,
   ContractRevision,
   CreatedIdentity,
+  CredentialReview,
   DeviceSignInLookup,
   DeviceSignInStarted,
   GrantReplacement,
   IssuedCliCredential,
   ExposureConfirmation,
   ExposureReport,
+  MachineReach,
   MemberRemoval,
   MemberReview,
   OrganizationDeletion,
@@ -135,7 +137,18 @@ export interface VarlatchClientOptions {
    * request records. Browsers may ignore it; omit it there.
    */
   userAgent?: string;
+  /**
+   * Called with the `Varlatch-Credential-Expires` header's value whenever a
+   * response carries it: the server names the expiry of a machine's service
+   * credential in its last 7 days on every response to it, errors
+   * included. The CLI warns on stderr with it when the credential
+   * came from VARLATCH_TOKEN.
+   */
+  onCredentialExpires?: (expiresAt: string) => void;
 }
+
+/** Names the presenting machine credential's expiry in its last 7 days (server side, ADR-0054 Decision 8). */
+export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
 
 export interface MaintenanceWait {
   /** How long this wait lasts. */
@@ -169,6 +182,9 @@ export interface OrgIdentity {
   image?: string | null;
 }
 
+/** The credential review (capability security.credential-review, ADR-0054 Decision 8). */
+export type { CredentialReview, ReviewedCredential } from "@varlatch/protocol";
+
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
   id: string;
@@ -194,7 +210,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -222,6 +238,7 @@ export class VarlatchClient {
   private readonly maintenanceRetryMs: number;
   private readonly onMaintenance: ((wait: MaintenanceWait) => void) | undefined;
   private readonly userAgent: string | undefined;
+  private readonly onCredentialExpires: ((expiresAt: string) => void) | undefined;
   /** End of the current maintenance budget; null while the server answers normally. */
   private maintenanceDeadline: number | null = null;
 
@@ -231,6 +248,7 @@ export class VarlatchClient {
     this.maintenanceRetryMs = options.maintenanceRetryMs ?? 180_000;
     this.onMaintenance = options.onMaintenance;
     this.userAgent = options.userAgent;
+    this.onCredentialExpires = options.onCredentialExpires;
     // Bind to globalThis: browsers throw "Illegal invocation" when window
     // fetch is called with a foreign `this`.
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -277,7 +295,7 @@ export class VarlatchClient {
     body?: unknown,
     headers: Record<string, string> = {},
   ): Promise<Response> {
-    return this.fetchImpl(`${this.server}${path}`, {
+    const res = await this.fetchImpl(`${this.server}${path}`, {
       method,
       headers: {
         ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
@@ -287,6 +305,14 @@ export class VarlatchClient {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+    this.noticeCredentialExpiry(res);
+    return res;
+  }
+
+  /** Hands the presenting credential's announced expiry to onCredentialExpires, before the response is read. */
+  private noticeCredentialExpiry(res: Response): void {
+    const expiresAt = this.onCredentialExpires ? res.headers.get(CREDENTIAL_EXPIRES_HEADER) : null;
+    if (expiresAt) this.onCredentialExpires?.(expiresAt);
   }
 
   private async finish<T>(res: Response): Promise<T> {
@@ -876,6 +902,15 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * The Organization's machine credentials never used, idle for 30 days, or
+   * without expiry, with identity and last use (identity.manage; capability
+   * security.credential-review). Reporting only; never a token.
+   */
+  credentialReview(org: string): Promise<CredentialReview> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/credential-review`);
+  }
+
   /** Revoke a service/oidc credential of an in-org machine identity (identity.manage). */
   revokeIdentityCredential(org: string, identityId: string, credentialId: string): Promise<void> {
     return this.request(
@@ -897,6 +932,19 @@ export class VarlatchClient {
     return this.request(
       "POST",
       `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/retire`,
+    );
+  }
+
+  /**
+   * What a machine identity's Grants allow, per Project and Environment,
+   * with the Tailnet Requirements that would constrain each action as
+   * conditions (capability identity.reach; needs identity.read and
+   * policy.read). Read-only: never evaluated against a request, never stored.
+   */
+  machineReach(org: string, identityId: string): Promise<MachineReach> {
+    return this.request(
+      "GET",
+      `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/reach`,
     );
   }
 
@@ -1510,6 +1558,7 @@ export class VarlatchClient {
         },
       },
     );
+    this.noticeCredentialExpiry(res);
     if (!res.ok) {
       const body = (await res.json().catch(() => undefined)) as ApiError | undefined;
       throw new VarlatchApiError(

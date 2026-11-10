@@ -38,6 +38,55 @@ fixes.
   <file>`. See [Finding copies of
   secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
 
+### Machine identities
+
+- **See what a machine can reach.** Open a machine in Access, then
+  Machines, or run `varlatch identity reach <id or name>` (`--json` for
+  the whole document), to see its state (live, disabled, retired), its
+  live credentials, and per project and environment the actions its
+  grants allow, directly or through groups, roles and teams. Value reads
+  covered by a tailnet requirement say so as a condition, such as
+  `needs tailnet example.ts.net: tag:prod`: requirements are listed, not
+  checked against any device, so a condition is never shown as a denial.
+  A derived environment shows what its root's grants and requirements
+  give it. For a broker it notes that agent runs use Capabilities, which
+  are not its grants. The reach is computed when asked and never stored;
+  it changes no access. It needs both `identity.read` and `policy.read`,
+  since it shows grants and requirements, and refuses a person: for a
+  member, see the exposure report. API: `GET
+  /v1/organizations/{org}/identities/{identity}/reach`, capability
+  `identity.reach`.
+- **See which machine credentials may no longer be needed.** `varlatch
+  security report` (`--json` for the whole document) lists the
+  organization's machine credentials that were never used, have not been
+  used for 30 days, or never expire, grouped by reason, each with its
+  identity, when it was last used, its expiry and who issued it, and a
+  count per reason. Revoked, expired and used-up credentials are not
+  listed, nor are people's credentials or the short-lived credentials of
+  OIDC sign-ins and agent-safe runs. A credential of a machine suspended
+  by the organization's deletion is listed with that state. It only
+  reports: nothing is revoked or retired, and it changes no access. It
+  needs `identity.manage`, as `varlatch credential list` does. API: `GET
+  /v1/organizations/{org}/security/credential-review`, capability
+  `security.credential-review`.
+- **The CLI warns when the credential in `VARLATCH_TOKEN` is about to
+  expire.** Until now it warned only about the credential `varlatch login`
+  stored, and said nothing for `VARLATCH_TOKEN`, where machine credentials
+  issued with an expiry live, until requests started failing. Now every
+  `/v1` response to a request authenticated by a machine credential that
+  expires within 7 days, whatever its total lifetime, errors included,
+  carries a `Varlatch-Credential-Expires` header with the expiry (ISO
+  8601, UTC). Credentials renewed by design never get it: a person's
+  dashboard sessions and CLI sign-ins, OIDC exchanges, and agent-safe
+  runs. The CLI turns it into one warning on stderr per command, before
+  `varlatch run` starts its command, and never writes it to stdout, so the
+  output scripts parse, `varlatch env list` included, is unchanged. It
+  does not warn inside an agent-safe run. In the dashboard, Access →
+  Machines marks, by the same rule, a machine credential that expires
+  within 7 days or has expired. Credentials without an expiry or expiring
+  later behave exactly as before. The tailnet browser endpoint exposes the
+  header to the pages it allows.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

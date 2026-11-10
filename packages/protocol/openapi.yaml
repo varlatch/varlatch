@@ -1251,6 +1251,32 @@ paths:
                   - $ref: "#/components/schemas/IssuedMachineCredential"
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/security/credential-review:
+    get:
+      tags: [identities]
+      operationId: credentialReview
+      summary: >
+        The Organization's machine credentials worth a look (capability
+        security.credential-review, ADR-0054 Decision 8): never used, not
+        used for idleDays (30) days, or without expiry, each with its
+        identity and last use. Reviewed are the credentials of machine
+        identities (every kind but human) that are not revoked, not expired
+        and whose use budget is not spent; OIDC exchange and agent-run
+        credentials are left out, since they expire within an hour by
+        construction. Reporting only: it changes no authorization and
+        nothing is retired automatically. Metadata only, never a token or a
+        hash. Needs identity.manage, like listing an identity's credentials;
+        existence-hiding. Returned whole, never paginated.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The review
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialReview" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/identities/{identity}/credentials/{credential}:
     delete:
       tags: [identities]
@@ -1371,6 +1397,38 @@ paths:
                 properties:
                   id: { type: string }
                   disabled: { type: boolean }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/identities/{identity}/reach:
+    get:
+      tags: [identities]
+      operationId: machineReach
+      summary: >
+        What a machine identity can reach (capability identity.reach,
+        ADR-0054 Decision 8): its state, and per Project and Environment the
+        actions its Grants allow (direct, through Groups, Roles and Teams),
+        each with the Tailnet Requirements that would constrain it as
+        conditions. Requirements are never evaluated here: there is no
+        request, so an action they constrain is conditional, never denied.
+        A derived Environment is decided with its root, so Grants and
+        Requirements on the root cover it. Computed on request, never
+        stored; it changes no authorization. Needs identity.read and
+        policy.read; existence-hiding. Another Organization's machine is
+        RESOURCE_NOT_FOUND; a person of this Organization is
+        VALIDATION_FAILED (details.reason human-identity): their view is the
+        exposure report.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: identity
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The machine's reach
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MachineReach" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/oidc-bindings:
@@ -3691,6 +3749,9 @@ components:
       description: >
         Opaque Varlatch credential (session-derived browser bearer, CLI
         credential, or service credential). Cookies never authenticate /v1.
+        Every response to a request authenticated by a service credential
+        of a machine that expires within 7 days, errors included, carries
+        the Varlatch-Credential-Expires header (components/headers).
 
   parameters:
     org:
@@ -3795,6 +3856,19 @@ components:
         original result; the same key with a materially different body fails
         with IDEMPOTENCY_CONFLICT.
       schema: { type: string, maxLength: 255 }
+
+  headers:
+    VarlatchCredentialExpires:
+      description: >
+        Sent on every response to a request authenticated by a machine's
+        service credential that expires within 7 days, whatever its total
+        lifetime, errors included: when that credential expires. Absent for
+        credentials without an expiry or expiring later, for credentials
+        renewed by design (a person's browser and CLI credentials, OIDC
+        exchanges, agent runs), and on unauthenticated responses. Clients
+        holding a credential they cannot renew by signing in
+        (VARLATCH_TOKEN) use it to warn ahead.
+      schema: { type: string, format: date-time, examples: ["2026-11-17T12:00:00.000Z"] }
 
   responses:
     Error:
@@ -4713,6 +4787,102 @@ components:
         email: { type: [string, "null"] }
         image: { type: [string, "null"] }
 
+    ReachAction:
+      type: object
+      required: [action, grants, conditions]
+      properties:
+        action: { $ref: "#/components/schemas/Action" }
+        grants:
+          type: array
+          description: The Grants that allow it, and the Group or Role each came through.
+          items:
+            type: object
+            required: [grantId, viaGroupId, roleId]
+            properties:
+              grantId: { type: string }
+              viaGroupId: { type: [string, "null"] }
+              roleId: { type: [string, "null"] }
+        conditions:
+          type: array
+          description: >
+            IDs of the Requirements (in MachineReach.requirements) that would
+            constrain this action; empty means none. Only value reads
+            (config.value.read, secret.reveal, secret.use) are constrained.
+          items: { type: string }
+
+    MachineReach:
+      type: object
+      required: [identity, organizationActions, projects, requirements, notes]
+      properties:
+        identity:
+          type: object
+          required: [id, name, kind, state, disabledReason, liveCredentials]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            kind: { type: string, enum: [service, workload, ci, broker, agent] }
+            state:
+              type: string
+              enum: [live, disabled, retired]
+              description: >
+                retired: retired by an operator, every credential revoked;
+                disabled: suspended for another reason (disabledReason).
+                Neither can sign in, whatever its Grants allow.
+            disabledReason: { type: [string, "null"], enum: [organization-deletion, null] }
+            liveCredentials:
+              type: integer
+              description: Credentials that are unrevoked, unexpired and not used up.
+        organizationActions:
+          type: array
+          description: Actions allowed for the Organization as a whole.
+          items: { $ref: "#/components/schemas/ReachAction" }
+        projects:
+          type: array
+          description: Projects where something is allowed; others are left out.
+          items:
+            type: object
+            required: [id, slug, name, actions, environments]
+            properties:
+              id: { type: string }
+              slug: { type: string }
+              name: { type: string }
+              actions: { type: array, items: { $ref: "#/components/schemas/ReachAction" } }
+              environments:
+                type: array
+                description: Live Environments where something is allowed; others are left out.
+                items:
+                  type: object
+                  required: [id, name, tier, kind, parentEnvironmentId, actions]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    tier: { $ref: "#/components/schemas/Tier" }
+                    kind: { $ref: "#/components/schemas/EnvironmentKind" }
+                    parentEnvironmentId: { type: [string, "null"] }
+                    actions: { type: array, items: { $ref: "#/components/schemas/ReachAction" } }
+        requirements:
+          type: array
+          description: The Requirements named in conditions, as they are defined now.
+          items:
+            type: object
+            required: [id, version, target, selector, condition]
+            properties:
+              id: { type: string }
+              version: { type: [integer, "null"] }
+              target: { $ref: "#/components/schemas/RequirementTarget" }
+              selector: { $ref: "#/components/schemas/TailnetSelector" }
+              condition:
+                type: string
+                description: >
+                  The condition in words, such as
+                  "needs tailnet example.ts.net: tag:prod".
+        notes:
+          type: array
+          description: >
+            What else to know about this reach, in words (a retired
+            identity, a Broker's Capabilities).
+          items: { type: string }
+
     WhoAmI:
       type: object
       required: [identity, organization, credential, listener]
@@ -4867,6 +5037,90 @@ components:
             never the User-Agent itself. Null when the client was not
             recognized, for every other kind, and for credentials issued
             before 0.14.0; absent from older servers.
+    CredentialReviewReason:
+      type: string
+      enum: [never-used, idle, no-expiry]
+      description: >
+        never-used: no successful authentication yet. idle: last used more
+        than idleDays days ago. no-expiry: it never expires.
+    CredentialReview:
+      type: object
+      required: [generatedAt, idleDays, summary, items]
+      description: >
+        Credential review (ADR-0054 Decision 8). Items are ordered by
+        identity name, then creation.
+      properties:
+        generatedAt: { type: string, format: date-time }
+        idleDays:
+          type: integer
+          description: Days without use after which a used credential is idle (30).
+        summary:
+          type: object
+          required: [reviewed, listed, neverUsed, idle, noExpiry]
+          description: >
+            reviewed counts every machine credential checked, listed those
+            with at least one reason; a credential can count under several
+            reasons.
+          properties:
+            reviewed: { type: integer }
+            listed: { type: integer }
+            neverUsed: { type: integer }
+            idle: { type: integer }
+            noExpiry: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReviewedCredential" }
+    ReviewedCredential:
+      type: object
+      required: [id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, identity, reasons]
+      properties:
+        id: { type: string }
+        name: { type: [string, "null"] }
+        kind:
+          type: string
+          description: The credential kind; every long-lived machine credential is service today.
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        lastUsedAt:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            Last successful authentication, about a minute granular; null
+            when never used.
+        issuedBy:
+          description: Who was shown the token at issuance; null when unknown.
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, name]
+              properties:
+                id: { type: string }
+                name: { type: string }
+        identity:
+          type: object
+          required: [id, name, kind, state, disabledReason]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            kind:
+              type: string
+              enum: [service, workload, ci, broker, agent]
+            state:
+              type: string
+              enum: [live, disabled, retired]
+              description: >
+                live: can authenticate. disabled: suspended while the
+                Organization is being deleted (disabledReason); its
+                credentials work again if the deletion is cancelled.
+                retired: disabled by an operator; a credential still listed
+                here was not revoked and would work again on reactivation.
+            disabledReason:
+              type: [string, "null"]
+              enum: [organization-deletion, null]
+        reasons:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/CredentialReviewReason" }
     IssuedAgentCredential:
       type: object
       required: [id, token, expiresAt]

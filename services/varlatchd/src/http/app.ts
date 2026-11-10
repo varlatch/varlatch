@@ -12,7 +12,7 @@ import {
 } from "@varlatch/contract";
 import { CAPABILITIES, type TailnetDevice } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
-import { authenticateBearer } from "../auth/credentials.js";
+import { CREDENTIAL_EXPIRES_HEADER, authenticateBearer, credentialExpiresNotice } from "../auth/credentials.js";
 import { clientLabel } from "../auth/client-label.js";
 import { withAttribution } from "../audit/attribution.js";
 import { recordAuditEvent } from "../audit/events.js";
@@ -69,12 +69,14 @@ import {
   retireIdentity,
   SERVICE_CREDENTIAL_KINDS,
 } from "../domain/identities.js";
+import { credentialReview } from "../domain/credentialReview.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
 import { lockLiveScope } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
+import { machineReach } from "../domain/reach.js";
 import {
   createAppConnection,
   createConnection,
@@ -689,6 +691,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       });
       throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
     }
+    // A machine credential in its last 7 days says so on every response to
+    // it, refusals included (ADR-0054 Decision 8). Set before anything below
+    // can refuse, so error responses built from this context carry it; set
+    // again on the final response for handlers that return a Response of
+    // their own.
+    const expiring = credentialExpiresNotice(result.credential, result.identity.kind);
+    if (expiring) c.header(CREDENTIAL_EXPIRES_HEADER, expiring);
     // Agent-run credentials (ADR-0023) are read-only at the HTTP layer:
     // metadata access for an Agent Run, nothing that mutates or exercises.
     // The plaintext-producing endpoints (disclosures, capability exercises)
@@ -710,7 +719,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
     // The rest of the request is attributed to this credential and client:
     // every audit event its identity records names them (ADR-0016 §9).
-    return withAttribution(
+    await withAttribution(
       {
         identityId: result.identity.id,
         credentialId: result.credential.id,
@@ -722,6 +731,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       },
       () => next(),
     );
+    if (expiring) c.res.headers.set(CREDENTIAL_EXPIRES_HEADER, expiring);
   });
 
   // Where a browser reads tailnet-protected values, for any authenticated
@@ -2357,6 +2367,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
   });
 
+  // Credential review (ADR-0054 Decision 8; capability
+  // security.credential-review): the Organization's machine credentials
+  // never used, idle for 30 days, or without expiry. Reporting only. It
+  // shows what credential list shows, so it needs what that needs.
+  app.get("/v1/organizations/:org/security/credential-review", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await credentialReview(ctx, org.id));
+  });
+
   app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -2373,6 +2395,21 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const identity = await loadMachineIdentity(c, org.id);
     await reactivateIdentity(ctx, org.id, identity.id, principal.identity.id);
     return c.json({ id: identity.id, disabled: false });
+  });
+
+  // Machine reach (ADR-0054 Decision 8; capability identity.reach): what a
+  // machine's Grants allow per Project and Environment, with the Tailnet
+  // Requirements that would constrain each action as conditions. It names
+  // the identity (identity.read) and reveals its Grants and the
+  // Requirements covering them, which are policy.read everywhere else, so
+  // it needs both. Read-only: it changes no authorization and issues nothing.
+  app.get("/v1/organizations/:org/identities/:identity/reach", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.read", { organizationId: org.id }, { hideExistence: true });
+    await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await machineReach(ctx, org.id, routeParam(c, "identity")));
   });
 
   app.patch("/v1/organizations/:org/identities/:identity", async (c) => {

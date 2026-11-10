@@ -25,6 +25,36 @@ const PREFIX: Record<CredentialKind, string> = {
   oidc: "vlt_oidc_",
 };
 
+/**
+ * ADR-0054 Decision 8: every /v1 response to a request authenticated by a
+ * machine credential in the last days before its expiry names the expiry
+ * in this header, so a client holding a credential it did not sign in for
+ * (a machine's VARLATCH_TOKEN) can warn before requests start failing.
+ */
+export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
+export const CREDENTIAL_EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The header's value, an ISO 8601 UTC timestamp, or null. Only for a
+ * machine credential, kind `service` held by a non-human identity, that
+ * expires within 7 days (or already has, in the race between authentication
+ * and the response), whatever its total lifetime: nothing renews it, so a
+ * person must, even one issued for a few days. Human credentials (browser,
+ * cli) and OIDC-exchanged and agent-run credentials are renewed by design
+ * and never get it.
+ */
+export function credentialExpiresNotice(
+  credential: { kind: CredentialKind; expires_at: string | Date | null | undefined },
+  identityKind: IdentityRow["kind"],
+  now: number = Date.now(),
+): string | null {
+  if (credential.kind !== "service" || identityKind === "human" || !credential.expires_at) return null;
+  const at = new Date(credential.expires_at);
+  const expires = at.getTime();
+  if (Number.isNaN(expires) || expires - now > CREDENTIAL_EXPIRY_WARNING_MS) return null;
+  return at.toISOString();
+}
+
 export function hashToken(token: string): string {
   return createHash("sha256").update(token, "utf8").digest("hex");
 }

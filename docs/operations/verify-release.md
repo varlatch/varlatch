@@ -102,6 +102,13 @@ a release file instead, one per image and architecture
 (`sbom-IMAGE-VERSION-linux-ARCH.spdx.json`, in SPDX 2.3 JSON). `SHA256SUMS`
 lists them, so the release-asset checks above cover them.
 
+Every night, the repository's
+[image scan](https://github.com/varlatch/varlatch/actions/workflows/image-scan.yml)
+checks the varlatchd and varlatch-web images of the latest release, by
+the digests its manifest pins, for known vulnerabilities with
+OSV-Scanner, and lists what it finds in the run's summary. It only
+reports: it never changes a published release or holds back the next one.
+
 ## Unsigned releases
 
 These checks are for 0.15.0 and earlier, which are not signed. They show

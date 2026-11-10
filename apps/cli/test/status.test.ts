@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import type { LocalState, ResolvedContext } from "@varlatch/context";
-import { expiryState, expiryWarning, formatStatusHuman, repoStatus, serverStatus } from "../src/status.js";
+import { envTokenExpiryWarning, expiryState, expiryWarning, formatStatusHuman, repoStatus, serverStatus } from "../src/status.js";
 
 const SERVER = "https://varlatch.example.com";
 
@@ -42,6 +42,24 @@ describe("expiryWarning (ADR-0032)", () => {
     expect(serverStatus(SERVER, cred, Date.parse("2026-09-22T09:00:00Z"))).toMatchObject({ expiring: false, expired: false });
     expect(serverStatus(SERVER, cred, Date.parse("2026-09-22T10:30:00Z"))).toMatchObject({ expiring: true, expired: false });
     expect(serverStatus(SERVER, cred, Date.parse("2026-09-22T13:00:00Z"))).toMatchObject({ expiring: false, expired: true });
+  });
+});
+
+describe("envTokenExpiryWarning (ADR-0054 Decision 8)", () => {
+  const expiresAt = "2026-11-12T08:00:00.000Z";
+
+  it("names the server's expiry and the remedy: a new credential, not a login", () => {
+    const warning = envTokenExpiryWarning(SERVER, expiresAt, Date.parse("2026-11-10T08:00:00Z"));
+    expect(warning).toBe(
+      "varlatch: credential for https://varlatch.example.com (VARLATCH_TOKEN) expires 2026-11-12T08:00:00.000Z; " +
+        "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN before then",
+    );
+    expect(warning).not.toMatch(/varlatch login/);
+  });
+
+  it("reports outright expiry, and ignores a timestamp that does not parse", () => {
+    expect(envTokenExpiryWarning(SERVER, expiresAt, Date.parse("2026-11-12T09:00:00Z"))).toMatch(/\(VARLATCH_TOKEN\) expired 2026-11-12/);
+    expect(envTokenExpiryWarning(SERVER, "soon")).toBeNull();
   });
 });
 

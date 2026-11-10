@@ -9,8 +9,9 @@ distinct exit statuses, and help that never fails.
 Add `--json` to print one JSON document on stdout instead of the human
 format. Diagnostics stay on stderr, including the warning every command
 but `agents hook` prints first on a Node.js release without its line's
-security fixes ([Node.js version](../getting-started.md#nodejs-version)),
-so a script should not expect stderr to be empty. Every document has
+security fixes ([Node.js version](../getting-started.md#nodejs-version))
+and the [credential expiry warning](#credential-expiry-warnings), so a
+script should not expect stderr to be empty. Every document has
 `"version": 1`; a change that removes or renames a field raises it. The
 human formats do not change either: scripts that parse them keep working.
 
@@ -28,8 +29,10 @@ human formats do not change either: scripts that parse them keep working.
 | `varlatch org list --json` | `organizations`: id, slug, name |
 | `varlatch project list --json` | `organization`, `projects`: slug, name, contractAuthority |
 | `varlatch identity list --json` | `organization`, `identities`: id, name, kind, retired, lastSeenAt |
+| `varlatch identity reach <identity> --json` | `organization`, `identity` (id, name, kind, state, disabledReason, liveCredentials), `organizationActions`, `projects` (each with `actions` and `environments`, each with `actions`: action, grants, conditions), `requirements` (id, version, target, selector, condition), `notes` |
 | `varlatch credential list <identity> --json` | `identity`, `credentials`: id, kind, name, createdAt, expiresAt, revokedAt, lastUsedAt |
 | `varlatch credential issue <identity> --name <name> --out <file> --json` | `identity`, `credential`: id, kind, name, expiresAt, maxUses; `out`, the file that holds the token (never the token) |
+| `varlatch security report --json` | `organization`, `credentialReview`: `generatedAt`, `idleDays`, `summary` (reviewed, listed, neverUsed, idle, noExpiry), `items` (id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, `identity` with id, name, kind, state, disabledReason, and `reasons`: never-used, idle, no-expiry; never a token) |
 | `varlatch audit list --json` | `organization`, `events`: the audit events as the API returns them |
 | `varlatch tailnet requirements --json` | `organization`, `requirements`: as the API returns them |
 | `varlatch scan --json` | findings and files not scanned; see [secret scanning](secret-scanning.md) |
@@ -88,6 +91,34 @@ These keep the meanings they always had:
   `--omit` name that is neither stored in the environment nor in its
   Contract, checked before the command starts (in a default run, before any
   Secret is disclosed). Everything after `--` goes to the command unchanged.
+
+## Credential expiry warnings
+
+A machine credential (the kind `varlatch credential issue` and the
+dashboard issue for a machine) says so in its last 7 days before its
+expiry, however long it was issued for, on every API response to a request
+it authenticates, errors included: the response carries a
+`Varlatch-Credential-Expires` header with the expiry as an ISO 8601 UTC
+timestamp, such as `2026-11-17T12:00:00.000Z`. Nothing renews such a
+credential but a person. Credentials without an expiry or expiring later
+get no header, and neither do unauthenticated requests. Nor do credentials
+that are renewed by design: a person's dashboard sessions and `varlatch
+login` sign-ins, OIDC exchanges, and agent-safe runs. A program that calls
+the API directly can read the header to warn ahead.
+
+When the CLI authenticates with `VARLATCH_TOKEN` and the server sends the
+header, it prints one warning on stderr per command, never on stdout:
+
+```text
+varlatch: credential for https://vault.example.com (VARLATCH_TOKEN) expires 2026-11-17T12:00:00.000Z; issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN before then
+```
+
+`varlatch run` prints it before the command starts, so the command's own
+output is unchanged, and stdout of every command, `varlatch env list`
+included, stays exactly as without the warning. Inside an agent-safe run
+the CLI does not warn: the run's own credential ends with the run. A
+credential stored by `varlatch login` keeps its own warning, from the
+expiry recorded at sign-in, and a command warns at most once either way.
 
 ## Browser sign-in from an app
 

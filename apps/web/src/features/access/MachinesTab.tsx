@@ -16,7 +16,7 @@ import {
 import type { IssuedMachineCredential, OidcBinding } from "@varlatch/protocol";
 import type { IdentityCredential, OrgIdentity } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
-import { timeAgo, timeUntil, useNow } from "../../lib/time";
+import { formatDate, formatDateTime, timeAgo, timeUntil, useNow } from "../../lib/time";
 import {
   Badge,
   Button,
@@ -29,6 +29,7 @@ import {
   SectionCard,
   Select,
   Spinner,
+  Status,
   StatusDot,
   Switch,
   table,
@@ -41,8 +42,10 @@ import { Tabs } from "../../components/PageHeader";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
+import { expiryText, expiryTone, machineCredentialExpiry, type CredentialExpiry } from "../sync/credentialExpiry";
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
+import { MachineReachPanel, reachKey } from "./MachineReach";
 
 /**
  * Machines: non-human identities and how each signs in. Token kinds show
@@ -64,6 +67,7 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
   const prompt = usePrompt();
   const toast = useToast();
   const lifecycle = useCapability("identity.lifecycle");
+  const reachable = useCapability("identity.reach");
   const identities = useIdentities(org);
   const grants = useQuery({ queryKey: ["grants", org], queryFn: () => api.listGrants(org) });
   const [filter, setFilter] = useState("");
@@ -82,7 +86,11 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
     return m;
   }, [grants.data]);
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ["identities", org] });
+  // Rename, retire, reactivate and creation change what Reach shows too.
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey: ["identities", org] });
+    void qc.invalidateQueries({ queryKey: reachKey(org) });
+  };
   const lifecycleError = (err: unknown) => toast.error("That did not work", { description: errorMessage(err) });
   const rename = useMutation({
     mutationFn: ({ id, next }: { id: string; next: string }) => api.renameIdentity(org, id, next),
@@ -211,7 +219,7 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
                           label={`Actions for ${i.name}`}
                           items={[
                             { label: "Add a grant…", onSelect: () => onGrant(i.id), "data-testid": `machine-grant-${i.id}` },
-                            { label: open ? "Hide details" : "Credentials and sign-in", onSelect: () => setExpanded(open ? null : i.id), "data-testid": `machine-credentials-${i.id}` },
+                            { label: open ? "Hide details" : reachable ? "Reach, credentials and sign-in" : "Credentials and sign-in", onSelect: () => setExpanded(open ? null : i.id), "data-testid": `machine-credentials-${i.id}` },
                             ...(lifecycle
                               ? [
                                   { label: "Rename…", onSelect: () => void askRename(i), "data-testid": `machine-rename-${i.id}` },
@@ -305,19 +313,32 @@ function SignsInWith({ org, identity, now }: { org: string; identity: OrgIdentit
   if (active.length === 0) return <span className="text-muted">No active token</span>;
   const expiries = active.map((c) => c.expiresAt).filter(Boolean) as string[];
   const soonest = expiries.sort()[0];
-  const soon = soonest && new Date(soonest).getTime() - now < 7 * 86_400_000;
+  // Marked by the soonest credential in its last 7 days, as each one is in the list.
+  const marked = active
+    .map((c) => machineCredentialExpiry(c, now))
+    .filter((e): e is CredentialExpiry => e !== null && e.state !== "later")
+    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))[0];
   return (
     <span className="inline-flex items-center gap-2">
-      {soon && <StatusDot tone="warn" />}
+      {marked && <StatusDot tone={expiryTone(marked)} />}
       Token
-      <span className="text-muted">· {soonest ? `expires ${timeUntil(soonest, now)}` : "no expiry"}</span>
+      <span className="text-muted">
+        · {!soonest ? "no expiry" : Date.parse(soonest) <= now ? "expired" : `expires ${timeUntil(soonest, now)}`}
+      </span>
     </span>
   );
 }
 
 function MachineDetails({ org, identity, lifecycle }: { org: string; identity: OrgIdentity; lifecycle: boolean }) {
+  // Reach (ADR-0054 Decision 8): what its grants allow, with conditions.
+  const reach = useCapability("identity.reach");
   return (
     <div className="grid gap-4 pt-1 lg:grid-cols-2">
+      {reach && (
+        <div className="lg:col-span-2">
+          <MachineReachPanel org={org} identity={identity} />
+        </div>
+      )}
       <OidcBindings org={org} identity={identity} />
       {lifecycle && <CredentialsList org={org} identity={identity} />}
     </div>
@@ -440,6 +461,25 @@ function MonoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * A live service credential that expires within 7 days, or has expired, is
+ * marked, however long it was issued for: requests with it carry the
+ * Varlatch-Credential-Expires header and the CLI warns about it in
+ * VARLATCH_TOKEN. Agent-run and OIDC credentials are renewed by design.
+ */
+export function MachineCredentialExpiry({ credential, now }: { credential: IdentityCredential; now: number }) {
+  if (credential.revokedAt) return null;
+  const expiry = machineCredentialExpiry(credential, now);
+  if (!expiry || expiry.state === "later") return null;
+  return (
+    <span className="block" data-testid={`credential-expiry-${credential.id}`} title={formatDateTime(expiry.expiresAt)}>
+      <Status tone={expiryTone(expiry)} className="text-xs">
+        {expiryText(expiry, formatDate(expiry.expiresAt), "Credential")}
+      </Status>
+    </span>
+  );
+}
+
 /** Credential metadata only: never token material, except once, right after issuing. */
 function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity }) {
   const { api } = useSession();
@@ -454,9 +494,14 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
   const [issued, setIssued] = useState<IssuedMachineCredential | null>(null);
   const key = ["identity-credentials", org, identity.id];
   const creds = useQuery({ queryKey: key, queryFn: () => api.listIdentityCredentials(org, identity.id) });
+  // Issuing or revoking changes the live credentials Reach counts.
+  const refresh = () => {
+    void qc.invalidateQueries({ queryKey: key });
+    void qc.invalidateQueries({ queryKey: reachKey(org, identity.id) });
+  };
   const revoke = useMutation({
     mutationFn: (credentialId: string) => api.revokeIdentityCredential(org, identity.id, credentialId),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
+    onSuccess: refresh,
   });
   const items = (creds.data?.items ?? []) as (IdentityCredential & { client?: string | null })[];
   return (
@@ -489,6 +534,7 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
                   issued {timeAgo(c.createdAt, now)} · used {timeAgo(c.lastUsedAt, now)}
                   {c.expiresAt && ` · expires ${timeUntil(c.expiresAt, now)}`}
                 </span>
+                <MachineCredentialExpiry credential={c} now={now} />
               </span>
               {c.revokedAt ? (
                 <Badge tone="danger">revoked</Badge>
@@ -526,7 +572,7 @@ function CredentialsList({ org, identity }: { org: string; identity: OrgIdentity
         onIssued={(credential) => {
           setIssuing(false);
           setIssued(credential);
-          void qc.invalidateQueries({ queryKey: key });
+          refresh();
         }}
       />
       {issued && <IssuedCredentialDialog identity={identity} issued={issued} onClose={() => setIssued(null)} />}

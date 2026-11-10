@@ -62,6 +62,7 @@ import {
   tombstoneExportLine,
 } from "./deletion.js";
 import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
+import { MachineError, REACH_CAPABILITY, REACH_USAGE, reachLines, resolveMachine } from "./reach.js";
 import {
   WAIT_DEFAULT_SECONDS,
   WAIT_MAX_SECONDS,
@@ -71,6 +72,7 @@ import {
 } from "./deviceLogin.js";
 import {
   STATUS_SCHEMA_VERSION,
+  envTokenExpiryWarning,
   expiryWarning,
   formatStatusHuman,
   repoStatus,
@@ -329,13 +331,39 @@ function context(args: string[]): ResolvedContext {
   return resolveContext(opts);
 }
 
-/** ADR-0032: stderr only, and always before any child process spawns —
-    consumer scripts parse `varlatch run` stdout. Silent for VARLATCH_TOKEN
-    (CI credentials are short-lived by design). */
+/** At most one expiry warning per process, whichever path finds it first. */
+let expiryWarned = false;
+function warnExpiryOnce(warning: string | null): void {
+  if (!warning || expiryWarned) return;
+  expiryWarned = true;
+  console.error(warning);
+}
+
+/** ADR-0032: stderr only, and always before any child process spawns:
+    consumer scripts parse `varlatch run` stdout. Judges the stored
+    credential from its store metadata. A VARLATCH_TOKEN credential has no
+    stored metadata, and machine credentials may live for years or never
+    expire, so for it the server says when it is close to expiry
+    (credentialExpiryNotice). */
 function warnIfExpiring(server: string): void {
   if (process.env.VARLATCH_TOKEN) return;
-  const warning = expiryWarning(server, loadCredential(server));
-  if (warning) console.error(warning);
+  warnExpiryOnce(expiryWarning(server, loadCredential(server)));
+}
+
+/**
+ * The client's onCredentialExpires (ADR-0054 Decision 8): warns, on stderr
+ * and once per process, when the server names the expiry of the credential
+ * a request presented and that credential came from VARLATCH_TOKEN. The
+ * client calls it as each response arrives, before the command reads the
+ * response, so for `varlatch run` the warning precedes the child process.
+ * Silent inside an agent-safe run: its agent-run credential is minted for
+ * the run and ends with it, and the Agent cannot renew it.
+ */
+function credentialExpiryNotice(server: string, token: string): (expiresAt: string) => void {
+  return (expiresAt) => {
+    if (token !== process.env.VARLATCH_TOKEN || agentRunOf()) return;
+    warnExpiryOnce(envTokenExpiryWarning(server, expiresAt));
+  };
 }
 
 /**
@@ -378,7 +406,13 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
     );
   }
   warnIfExpiring(ctx.server);
-  return new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() });
+  return new VarlatchClient({
+    onMaintenance: maintenanceNotice,
+    onCredentialExpires: credentialExpiryNotice(ctx.server, token),
+    server: ctx.server,
+    token,
+    userAgent: cliUserAgent(),
+  });
 }
 
 async function probeServer(
@@ -1299,7 +1333,7 @@ async function main(): Promise<void> {
             const ctx = resolveContext({ cwd: process.cwd(), environment: name });
             const token = loadToken(ctx.server);
             if (token) {
-              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() }).listEnvironments(
+              const envs = await new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(ctx.server, token), server: ctx.server, token, userAgent: cliUserAgent() }).listEnvironments(
                 ctx.organization,
                 ctx.project,
               );
@@ -2231,7 +2265,7 @@ async function main(): Promise<void> {
           (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));
         const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
         warnIfExpiring(server);
-        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+        const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
         if (sub === "list") {
           const page = await api.listOrganizations();
           if (has(args, "--json")) {
@@ -2265,7 +2299,7 @@ async function main(): Promise<void> {
           const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
           const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
           warnIfExpiring(server);
-          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+          const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
           const project = await api.createProject(org, {
             slug,
             name: positional(args, 2) ?? slug,
@@ -2344,6 +2378,38 @@ async function main(): Promise<void> {
 
       case "identity": {
         const sub = args[0];
+        if (sub === "reach") {
+          // ADR-0054 Decision 8: read-only, conditions shown, never evaluated.
+          const parsed = strictOptions("identity reach", args, { values: ["--server"], booleans: ["--json"], positionals: 2 }, REACH_USAGE);
+          const target = parsed.positionals[1] ?? usageError(REACH_USAGE);
+          // The organization comes from the repository; no Environment is involved.
+          const opts: Parameters<typeof resolveContext>[0] = { cwd: process.cwd(), environment: "(unused)" };
+          if (parsed.values.has("--server")) opts.server = parsed.values.get("--server") as string;
+          const ctx = resolveContext(opts);
+          const api = client(ctx);
+          const meta = await api.meta();
+          if (!meta.capabilities.includes(REACH_CAPABILITY)) {
+            fail(`This server (${meta.serverVersion ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.20.1 or later.`);
+          }
+          // An identity ID goes to the server as it is; only a name is
+          // resolved, through the identity listing.
+          let id = target;
+          if (!IDENTITY_ID.test(target)) {
+            try {
+              id = resolveMachine((await api.listIdentities(ctx.organization)).items, target).id;
+            } catch (err) {
+              if (err instanceof MachineError) fail(err.message);
+              throw err;
+            }
+          }
+          const reach = await api.machineReach(ctx.organization, id);
+          if (parsed.booleans.has("--json")) {
+            printJson({ organization: ctx.organization, ...reach });
+            return;
+          }
+          for (const line of reachLines(reach)) console.log(line);
+          return;
+        }
         const ctx = context(args);
         const api = client(ctx);
         if (sub === "list") {
@@ -2396,7 +2462,7 @@ async function main(): Promise<void> {
           console.log(`Identity ${identity.id} reactivated. It has zero working credentials until you issue one.`);
           return;
         }
-        usageError("Usage: varlatch identity <list|rename|retire|reactivate>");
+        usageError("Usage: varlatch identity <list|reach|rename|retire|reactivate>");
         return;
       }
 
@@ -2613,6 +2679,37 @@ async function main(): Promise<void> {
           return;
         }
         usageError("Usage: varlatch credential <list|revoke|issue>");
+        return;
+      }
+
+      case "security": {
+        // Visibility only (ADR-0054 Decision 8): a report, never a change; exit 0 whatever it lists.
+        const { CredentialReviewUnsupportedError, SECURITY_USAGE, credentialReviewLines, fetchCredentialReview } = await import("./securityReport.js");
+        const parsed = strictOptions(`security ${args[0] ?? ""}`.trim(), args, { values: ["--server", "--org"], booleans: ["--json"], positionals: 1 }, SECURITY_USAGE);
+        if (parsed.positionals[0] !== "report") usageError(SECURITY_USAGE);
+        // The organization and server come from the options, else the repository.
+        let server = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
+        let organization = parsed.values.get("--org");
+        if (!server || !organization) {
+          if (!findRepoRoot(process.cwd())) {
+            usageError(`varlatch security report: run it inside a varlatch repository, or pass --org <organization> and --server <url>\n${SECURITY_USAGE}`);
+          }
+          const ctx = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(server ? { server } : {}) });
+          server ??= ctx.server;
+          organization ??= ctx.organization;
+        }
+        let review: Awaited<ReturnType<typeof fetchCredentialReview>>;
+        try {
+          review = await fetchCredentialReview(client({ server }), organization);
+        } catch (err) {
+          if (err instanceof CredentialReviewUnsupportedError) fail(err.message);
+          throw err;
+        }
+        if (parsed.booleans.has("--json")) {
+          printJson({ organization, credentialReview: review });
+          return;
+        }
+        console.log(credentialReviewLines(organization, review, Date.now()).join("\n"));
         return;
       }
 
