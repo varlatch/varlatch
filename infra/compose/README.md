@@ -355,6 +355,22 @@ reenroll`, is trusted. It is also the way back for a person whose passkeys
 are all unconfirmed or lost: a session cannot make a passkey trusted on its
 own (see [Your passkeys](../../docs/getting-started.md#your-passkeys)).
 
+When nobody can give the approval an organization's security controls ask
+for (a lost passkey, say), set them back to off from the host:
+
+```sh
+docker compose exec varlatchd node dist/cli.js admin security reset --org <slug> --all
+docker compose exec varlatchd node dist/cli.js admin security reset --org <slug> --control admin-step-up
+# or, with the CLI, in this directory:
+varlatch admin security reset --org <slug> --all
+```
+
+It sets the named controls to off, closes their open approvals and records
+`security_control.reset` in the audit log. It never touches an
+organization's deletion, suspended machine identities, passkeys or grants.
+See [Security controls and
+approvals](../../docs/reference/security-controls.md#the-way-back-the-host-operators-reset).
+
 ## Optional Tailscale integration
 
 ```sh

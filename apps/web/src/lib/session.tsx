@@ -11,7 +11,7 @@ import React, {
 import { useQueryClient } from "@tanstack/react-query";
 import { createAuthClient } from "better-auth/client";
 import { passkeyClient } from "@better-auth/passkey/client";
-import { VarlatchClient } from "@varlatch/sdk";
+import { VarlatchClient, type Approval } from "@varlatch/sdk";
 
 /**
  * Session lifecycle (design R2 §Q4): the /v1 bearer lives in memory only.
@@ -49,9 +49,18 @@ interface SessionState {
   /** fetch with this session's bearer and its one silent re-exchange on 401, for another origin of this installation. */
   fetch: typeof fetch;
   mintConvexToken: () => Promise<string | null>;
+  /**
+   * Who handles a step-up approval the server asks for (ADR-0054 Decision
+   * 3): the approval dialog registers itself here. It resolves true once
+   * the person approved, and `api` then repeats the request once with the
+   * approval. With no handler the STEP_UP_REQUIRED error surfaces.
+   */
+  setStepUpHandler: (handler: StepUpHandler | null) => void;
   signInWithPasskey: () => Promise<void>;
   signOut: () => Promise<void>;
 }
+
+export type StepUpHandler = (approval: Approval) => Promise<boolean>;
 
 const SessionContext = createContext<SessionState | null>(null);
 
@@ -250,8 +259,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [adopt, clearSession],
   );
 
+  const stepUp = useRef<StepUpHandler | null>(null);
+  const setStepUpHandler = useCallback((handler: StepUpHandler | null) => {
+    stepUp.current = handler;
+  }, []);
   const api = useMemo(
-    () => new VarlatchClient({ server: location.origin, fetch: sessionFetch }),
+    () =>
+      new VarlatchClient({
+        server: location.origin,
+        fetch: sessionFetch,
+        onStepUp: (approval) => (stepUp.current ? stepUp.current(approval) : Promise.resolve(false)),
+      }),
     [sessionFetch],
   );
 
@@ -278,8 +296,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, fetch: sessionFetch, mintConvexToken, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, sessionFetch, mintConvexToken, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, fetch: sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;

@@ -380,10 +380,12 @@ add a passkey of their own. They cannot confirm it without one of your
 trusted passkeys.
 
 Signing in and approving a CLI sign-in work with any of your passkeys, and
-you can remove any of them, as before. Nothing is restricted by this yet. Organization
-security controls, coming in a later release, will use it: only a trusted
-passkey will be able to approve a protected change, and an organization
-will be able to require a sign-in with a trusted passkey that verified you.
+you can remove any of them, as before. What only a trusted passkey can do
+is approve a change that needs your approval, such as turning an
+organization's security control down or off ([Security controls and
+approvals](reference/security-controls.md)). Once security controls can be
+enforced, an organization will also be able to require a sign-in with a
+trusted passkey that verified you.
 
 If none of your passkeys is trusted, you cannot confirm one yourself: ask
 whoever runs the server for a link (`varlatch admin reenroll --identity
@@ -488,6 +490,11 @@ Varlatch lets a coding agent use a credential without being able to read it.
 - [Agent-safe runs](reference/agent-safe-runs.md): an agent that gets
   placeholders instead of Secrets.
 - [The MCP server](reference/mcp.md), for MCP hosts without a shell.
+
+A change that needs your approval (such as turning a security control
+down) never goes through on an agent's word: the agent stops and shows you
+an address, and you approve with your passkey. See [Security controls and
+approvals](reference/security-controls.md#coding-agents).
 
 ## Delete a project or an organization
 

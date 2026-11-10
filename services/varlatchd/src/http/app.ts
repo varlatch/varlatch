@@ -10,7 +10,7 @@ import {
   semanticsVersionOf,
   type ConfigurationContract,
 } from "@varlatch/contract";
-import { CAPABILITIES, type TailnetDevice } from "@varlatch/protocol";
+import { APPROVAL_HEADER, CAPABILITIES, type TailnetDevice } from "@varlatch/protocol";
 import { PLATFORMS as SYNC_PLATFORMS } from "@varlatch/sync";
 import { CREDENTIAL_EXPIRES_HEADER, authenticateBearer, credentialExpiresNotice } from "../auth/credentials.js";
 import { clientLabel } from "../auth/client-label.js";
@@ -148,6 +148,18 @@ import {
   requestDeviceSignIn,
 } from "../domain/device-sign-in.js";
 import { confirmPasskey, issueConfirmationChallenge, listOwnPasskeys, removeOwnPasskey } from "../domain/passkeys.js";
+import {
+  approveApproval,
+  approvalInvalid,
+  cancelApproval,
+  getApproval,
+  parseApprovalId,
+  startApproval,
+  withApproval,
+  type Requester,
+} from "../domain/approvals.js";
+import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
+import { lockPerson } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -993,6 +1005,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const ttlSeconds = body.ttlSeconds ?? 43_200;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     const issued = await withTx(ctx.db, async (db) => {
+      // The lock order of domain/approvals.ts: the person (2) before the
+      // browser credential (7), since the new credential's foreign key takes
+      // the person after this update holds the old one.
+      await lockPerson(db, principal.identity.id, "key share");
       const consumed = await db.query(
         `UPDATE credentials SET revoked_at = now()
          WHERE id = $1 AND kind = 'browser' AND revoked_at IS NULL
@@ -1037,6 +1053,33 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     if (!options.publicUrl) throw new DomainError("RESOURCE_NOT_FOUND", "Passkeys are not available: this server has no public URL");
     return relyingPartyOf(options.publicUrl);
   };
+  /** The requesting credential and its person, for step-up approvals. */
+  const requesterOf = (c: Context): Requester => {
+    const principal = c.get("principal") as Principal;
+    return {
+      identityId: principal.identity.id,
+      identityKind: principal.identity.kind,
+      credentialId: principal.credentialId,
+      credentialKind: principal.credentialKind,
+      authSessionId: principal.authSessionId ?? null,
+    };
+  };
+  /** The approval a request carries in the Varlatch-Approval header; one that cannot be an approval id is not found. */
+  const approvalOf = (c: Context): string | null => {
+    const raw = c.req.header(APPROVAL_HEADER);
+    if (raw === undefined) return null;
+    const id = parseApprovalId(raw);
+    if (!id) throw approvalInvalid("not-found", null);
+    return id;
+  };
+  /** Approving takes the dashboard's session bearer of a person, as confirming a passkey does. */
+  const approvalOwner = (c: Context) => {
+    const principal = c.get("principal") as Principal;
+    if (principal.identity.kind !== "human" || principal.credentialKind !== "browser" || !principal.authSessionId) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person signed in to the dashboard may approve; open the approval's address in a browser");
+    }
+    return { identityId: principal.identity.id, authSessionId: principal.authSessionId };
+  };
 
   app.get("/v1/me/passkeys", async (c) => {
     const principal = c.get("principal");
@@ -1044,10 +1087,64 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.json({ items, nextCursor: null });
   });
 
+  // Removing a trusted passkey needs a step-up approval while the person
+  // belongs to an Organization with a control at enforce (ADR-0054
+  // Decision 4); otherwise it behaves as Better Auth's native removal did.
   app.delete("/v1/me/passkeys/:passkey", async (c) => {
     const owner = passkeyOwner(c);
-    await removeOwnPasskey(ctx, { identityId: owner.identityId, passkeyId: routeParam(c, "passkey") });
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      removeOwnPasskey(ctx, gate, { identityId: owner.identityId, passkeyId: routeParam(c, "passkey") }));
     return c.body(null, 204);
+  });
+
+  // ---- Step-up approvals (ADR-0054 Decision 3, capability
+  // security.controls): an operation that needs one answers
+  // STEP_UP_REQUIRED with a pending approval; its person, and only its
+  // person, reads it here, approves it in the dashboard with a trusted
+  // passkey (user verification required), or cancels it. The client then
+  // repeats the operation with the Varlatch-Approval header.
+  app.get("/v1/me/approvals/:approval", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const approvalId = parseApprovalId(routeParam(c, "approval"));
+    if (!approvalId) throw new DomainError("RESOURCE_NOT_FOUND", "Approval not found");
+    try {
+      return c.json(await getApproval(ctx, { approvalId, requester: requesterOf(c), publicUrl: options.publicUrl }));
+    } catch (err) {
+      if (err instanceof DomainError && err.code === "SLOW_DOWN") c.header("Retry-After", String(err.details?.interval ?? 5));
+      throw err;
+    }
+  });
+
+  app.post("/v1/me/approvals/:approval/options", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const owner = approvalOwner(c);
+    const approvalId = parseApprovalId(routeParam(c, "approval"));
+    if (!approvalId) throw new DomainError("RESOURCE_NOT_FOUND", "Approval not found");
+    const publicKey = await startApproval(ctx, passkeyRp(), { ...owner, approvalId });
+    return c.json({ publicKey });
+  });
+
+  app.post("/v1/me/approvals/:approval/approve", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const owner = approvalOwner(c);
+    const approvalId = parseApprovalId(routeParam(c, "approval"));
+    if (!approvalId) throw new DomainError("RESOURCE_NOT_FOUND", "Approval not found");
+    const body = parseBody(z.object({ assertion: z.record(z.string(), z.unknown()) }), await c.req.json().catch(() => ({})));
+    return c.json(await approveApproval(ctx, passkeyRp(), {
+      ...owner,
+      approvalId,
+      assertion: body.assertion,
+      requestId: c.get("requestId"),
+      publicUrl: options.publicUrl,
+    }));
+  });
+
+  app.post("/v1/me/approvals/:approval/cancel", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const principal = c.get("principal");
+    const approvalId = parseApprovalId(routeParam(c, "approval"));
+    if (!approvalId) throw new DomainError("RESOURCE_NOT_FOUND", "Approval not found");
+    return c.json(await cancelApproval(ctx, { approvalId, identityId: principal.identity.id, publicUrl: options.publicUrl }));
   });
 
   // A confirmation challenge for one unconfirmed passkey: the options list
@@ -2450,6 +2547,54 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const identity = await loadMachineIdentity(c, org.id);
     await reactivateIdentity(ctx, org.id, identity.id, principal.identity.id);
     return c.json({ id: identity.id, disabled: false });
+  });
+
+  // ---- Security Controls (ADR-0054 Decisions 1 and 2, capability
+  // security.controls). Reading needs organization.read: members see what
+  // applies to them. Changing needs organization.manage and a person's
+  // credential; machine credentials are always refused. A loosening change
+  // needs a step-up approval for exactly that change (STEP_UP_REQUIRED,
+  // then the same request with the Varlatch-Approval header).
+  app.get("/v1/organizations/:org/security/controls", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    return c.json({ items: await listControls(ctx.db, org.id), availableModes: [...AVAILABLE_MODES] });
+  });
+
+  app.patch("/v1/organizations/:org/security/controls/:control", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    if (principal.identity.kind !== "human" || (principal.credentialKind !== "browser" && principal.credentialKind !== "cli")) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person can change a security control; machine credentials never can");
+    }
+    const control = z.enum(SECURITY_CONTROLS).safeParse(routeParam(c, "control"));
+    if (!control.success) throw new DomainError("RESOURCE_NOT_FOUND", "No such security control");
+    const ttl = z.number().int().min(1).max(315_360_000);
+    const body = parseBody(
+      z.object({
+        mode: z.enum(["off", "report", "enforce"]).optional(),
+        config: z.object({ defaultTtlSeconds: ttl, maxTtlSeconds: ttl }).strict().nullable().optional(),
+        expectedVersion: z.number().int().min(0),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      changeControl(ctx, gate, {
+        organizationId: org.id,
+        control: control.data,
+        mode: body.mode,
+        config: body.config,
+        expectedVersion: body.expectedVersion,
+        actorIdentityId: principal.identity.id,
+        requestId: c.get("requestId"),
+        // Rechecked inside the change's transaction, after the Organization lock.
+        authorizeIn: async (db) => {
+          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+        },
+      }));
+    return c.json(result);
   });
 
   // Machine reach (ADR-0054 Decision 8; capability identity.reach): what a

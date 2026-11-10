@@ -68,6 +68,22 @@ export type OwnCredential = components["schemas"]["OwnCredential"];
 /** A person's passkey with its provenance (capability account.passkeys). */
 export type OwnPasskey = components["schemas"]["OwnPasskey"];
 export type PasskeyConfirmationOptions = components["schemas"]["PasskeyConfirmationOptions"];
+/** Security Controls (capability security.controls, ADR-0054 Decisions 1 and 2). */
+export type SecurityControlName = components["schemas"]["SecurityControlName"];
+export type SecurityControlMode = components["schemas"]["SecurityControlMode"];
+export type CredentialLifetimeConfig = components["schemas"]["CredentialLifetimeConfig"];
+export type SecurityControl = components["schemas"]["SecurityControl"];
+export type SecurityControlList = components["schemas"]["SecurityControlList"];
+export type SecurityControlChangeInput = components["schemas"]["SecurityControlChangeInput"];
+export type SecurityControlChange = components["schemas"]["SecurityControlChange"];
+/** A step-up approval (Approval Intent, ADR-0054 Decision 3). */
+export type Approval = components["schemas"]["Approval"];
+export type ApprovalChange = components["schemas"]["ApprovalChange"];
+export type ApprovalOptions = components["schemas"]["ApprovalOptions"];
+/** The request header that carries an approved step-up approval's id. */
+export const APPROVAL_HEADER = "Varlatch-Approval";
+/** The Security Controls, in the order they are shown. */
+export const SECURITY_CONTROLS = ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"] as const;
 export type IssuedCliCredential = components["schemas"]["IssuedCliCredential"];
 export type OidcBinding = components["schemas"]["OidcBinding"];
 export type IssuedOidcCredential = components["schemas"]["IssuedOidcCredential"];

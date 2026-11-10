@@ -20,12 +20,13 @@ import {
   type LocalState,
   type ResolvedContext,
 } from "@varlatch/context";
-import { VarlatchApiError, VarlatchClient } from "@varlatch/sdk";
+import { VarlatchApiError, VarlatchClient, stepUpApproval } from "@varlatch/sdk";
 import { TargetError, formatTarget, parseTarget, type EffectiveConfiguration } from "@varlatch/protocol";
 import { EnvSchemaParseError, parseEnvSchema, resolveDraft, UnknownEnvironmentNameError } from "@varlatch/env-schema";
 import { RUN_CONTEXT, buildEnv, omitProblem, runChild, withheldItems } from "./inject.js";
 import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
+import { ApprovalError, approvalLines, resumingFetch, stepUpHandler, takeApprovalOption } from "./approvals.js";
 import { cliUserAgent, setAssistedUserAgent } from "./userAgent.js";
 import { nodeRuntimeWarning } from "./nodeRuntime.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
@@ -385,6 +386,14 @@ function client(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   });
 }
 
+/**
+ * How this invocation handles step-up approvals (ADR-0054 Decision 3,
+ * approvals.ts): whether it may wait (not in assisted mode), its own
+ * arguments for the command to run again, and the approval it resumes
+ * with (--approval <id>). Set once in main.
+ */
+const stepUp: { assisted: boolean; argv: string[]; approval: string | null } = { assisted: false, argv: [], approval: null };
+
 function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
   const token = loadToken(ctx.server);
   const agentRun = agentRunOf();
@@ -406,12 +415,18 @@ function connectClient(ctx: Pick<ResolvedContext, "server">): VarlatchClient {
     );
   }
   warnIfExpiring(ctx.server);
+  // Polls and cancels approvals: the same credential, without the step-up
+  // handling or the resumed approval of the command's own client.
+  let poller: VarlatchClient | null = null;
+  const polling = () => (poller ??= new VarlatchClient({ onMaintenance: maintenanceNotice, server: ctx.server, token, userAgent: cliUserAgent() }));
   return new VarlatchClient({
     onMaintenance: maintenanceNotice,
     onCredentialExpires: credentialExpiryNotice(ctx.server, token),
     server: ctx.server,
     token,
     userAgent: cliUserAgent(),
+    onStepUp: stepUpHandler(polling, { assisted: stepUp.assisted, argv: stepUp.argv }),
+    ...(stepUp.approval ? { approval: stepUp.approval, fetch: resumingFetch(stepUp.approval, polling, {}) } : {}),
   });
 }
 
@@ -943,10 +958,17 @@ async function main(): Promise<void> {
   // The global --assisted option (ADR-0043 Decision 3): taken from the CLI's
   // own arguments, never from a command's after `--`.
   const taken = takeAssistedOption(process.argv.slice(2));
-  const [command, ...args] = taken.argv;
   const assisted = resolveAssisted(taken.given, process.env);
   // Every request then says so in its User-Agent, which the audit records.
   setAssistedUserAgent(assisted.on);
+  // The global --approval <id> option (ADR-0054 Decision 3): resume with an
+  // approved step-up approval. Taken like --assisted, before a command's `--`.
+  const resumed = takeApprovalOption(taken.argv);
+  if (resumed.error) usageError(`varlatch: ${resumed.error}`);
+  stepUp.assisted = assisted.on;
+  stepUp.argv = resumed.argv;
+  stepUp.approval = resumed.approval;
+  const [command, ...args] = resumed.argv;
   everyFailureIsOne = command === "scan";
   // A Node.js release without its line's security fixes gets one line on
   // stderr, before any other output. The guardrail hook answers its agent on
@@ -2683,21 +2705,71 @@ async function main(): Promise<void> {
       }
 
       case "security": {
-        // Visibility only (ADR-0054 Decision 8): a report, never a change; exit 0 whatever it lists.
         const { CredentialReviewUnsupportedError, SECURITY_USAGE, credentialReviewLines, fetchCredentialReview } = await import("./securityReport.js");
+        // The organization and server come from the options, else the repository.
+        const securityScope = (sub: string, values: Map<string, string>, usage: string) => {
+          let server = values.get("--server") ?? process.env.VARLATCH_SERVER;
+          let organization = values.get("--org");
+          if (!server || !organization) {
+            if (!findRepoRoot(process.cwd())) {
+              usageError(`varlatch security ${sub}: run it inside a varlatch repository, or pass --org <organization> and --server <url>\n${usage}`);
+            }
+            const ctx = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(server ? { server } : {}) });
+            server ??= ctx.server;
+            organization ??= ctx.organization;
+          }
+          return { server, organization };
+        };
+        if (args[0] === "controls" || args[0] === "set") {
+          // Security Controls (ADR-0054 Decisions 1 and 2): reading them, and
+          // changing one; loosening asks for the person's approval.
+          const controls = await import("./securityControls.js");
+          const usage = args[0] === "controls" ? controls.SECURITY_CONTROLS_USAGE : controls.SECURITY_SET_USAGE;
+          const parsed = strictOptions(
+            `security ${args[0]}`,
+            args.slice(1),
+            args[0] === "controls"
+              ? { values: ["--server", "--org"], booleans: ["--json"] }
+              : { values: ["--server", "--org", "--default-ttl", "--max-ttl"], booleans: ["--json", "--clear-config"], positionals: 2 },
+            usage,
+          );
+          let request: ReturnType<typeof controls.parseSetRequest> | null = null;
+          if (args[0] === "set") {
+            try {
+              request = controls.parseSetRequest(parsed.positionals, parsed.values, parsed.booleans);
+            } catch (err) {
+              if (err instanceof controls.SecurityUsageError) usageError(`varlatch security set: ${err.message}\n${usage}`);
+              throw err;
+            }
+          }
+          const { server, organization } = securityScope(args[0], parsed.values, usage);
+          try {
+            if (!request) {
+              const list = await controls.fetchControls(client({ server }), organization);
+              if (parsed.booleans.has("--json")) printJson({ organization, ...list });
+              else console.log(controls.controlsLines(organization, list).join("\n"));
+              return;
+            }
+            const { before, change } = await controls.setControl(client({ server }), organization, request);
+            if (parsed.booleans.has("--json")) printJson({ organization, ...change });
+            else console.log(controls.setLines(organization, before.mode, change).join("\n"));
+          } catch (err) {
+            if (err instanceof controls.SecurityUsageError) usageError(`varlatch security set: ${err.message}\n${usage}`);
+            if (err instanceof controls.SecurityControlsError) fail(err.message);
+            if (err instanceof VarlatchApiError && err.code === "CONTROL_MODE_UNAVAILABLE") {
+              fail(`varlatch security set: ${err.message}. Nothing was changed. (request ${err.requestId})`);
+            }
+            if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
+              fail(`varlatch security set: the control changed while this ran: ${err.message}. Nothing was changed; run the command again.`);
+            }
+            throw err;
+          }
+          return;
+        }
+        // Visibility only (ADR-0054 Decision 8): a report, never a change; exit 0 whatever it lists.
         const parsed = strictOptions(`security ${args[0] ?? ""}`.trim(), args, { values: ["--server", "--org"], booleans: ["--json"], positionals: 1 }, SECURITY_USAGE);
         if (parsed.positionals[0] !== "report") usageError(SECURITY_USAGE);
-        // The organization and server come from the options, else the repository.
-        let server = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
-        let organization = parsed.values.get("--org");
-        if (!server || !organization) {
-          if (!findRepoRoot(process.cwd())) {
-            usageError(`varlatch security report: run it inside a varlatch repository, or pass --org <organization> and --server <url>\n${SECURITY_USAGE}`);
-          }
-          const ctx = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(server ? { server } : {}) });
-          server ??= ctx.server;
-          organization ??= ctx.organization;
-        }
+        const { server, organization } = securityScope("report", parsed.values, SECURITY_USAGE);
         let review: Awaited<ReturnType<typeof fetchCredentialReview>>;
         try {
           review = await fetchCredentialReview(client({ server }), organization);
@@ -2734,7 +2806,30 @@ async function main(): Promise<void> {
           }
           break;
         }
-        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll");
+        if (args[0] === "security") {
+          // ADR-0054 Decision 10: the host operator's reset of an
+          // organization's security controls, run by varlatchd on this host
+          // (host-exec authority, like recovery); there is no API for it.
+          const { varlatchd, SetupError } = await import("./setup.js");
+          const usage = "Usage: varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]";
+          const parsed = strictOptions("admin security reset", args.slice(2), { values: ["--org", "--dir"], lists: ["--control"], booleans: ["--all", "--json"] }, usage);
+          const named = parsed.lists.get("--control") ?? [];
+          const all = parsed.booleans.has("--all");
+          const org = parsed.values.get("--org");
+          if (args[1] !== "reset" || !org || all === named.length > 0) usageError(usage);
+          try {
+            process.stdout.write(varlatchd(parsed.values.get("--dir") ?? process.cwd(), [
+              "admin", "security", "reset", "--org", org,
+              ...(all ? ["--all"] : named.flatMap((control) => ["--control", control])),
+              ...(parsed.booleans.has("--json") ? ["--json"] : []),
+            ]) + "\n");
+          } catch (err) {
+            if (err instanceof SetupError) fail(err.message);
+            throw err;
+          }
+          break;
+        }
+        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll | varlatch admin security reset");
         const { backupCommand } = await import("./backup.js");
         await backupCommand(args.slice(1));
         break;
@@ -2901,6 +2996,11 @@ async function main(): Promise<void> {
     if (err instanceof Error && err.name === "ExportContextError") fail(`varlatch: ${err.message}. Nothing was started.`);
     if (err instanceof ContextError) fail(err.message);
     if (err instanceof EnvSchemaParseError || err instanceof UnknownEnvironmentNameError) fail(err.message);
+    if (err instanceof ApprovalError) fail(err.message, err.exit);
+    const pending = stepUpApproval(err);
+    if (pending) {
+      fail([...approvalLines(pending), `Error STEP_UP_REQUIRED: ${(err as Error).message}`].join("\n"), EXIT.denied);
+    }
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {
       fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`, EXIT.unavailable);
     }

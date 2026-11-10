@@ -122,6 +122,11 @@ long as you follow these rules.
    `varlatch --assisted login --server <url> --start`, give them the address
    and the code it prints, wait until they say they approved it, then run
    `varlatch --assisted login --server <url> --wait` (see `references/setup.md`).
+   When a command prints an approval address instead (a change that needs
+   the human's passkey, such as turning a security control down) and exits
+   75, give them the address, stop, and never open or approve it yourself.
+   After they say they approved it, run the command it printed, the same
+   command with `--approval <id>`.
 8. **Inside an agent-safe run** (`VARLATCH_AGENT_RUN` is set), your
    variables hold Placeholders, not secret values. Putting a Placeholder in
    a `varlatch --assisted request` header or body target is how you use a
@@ -141,8 +146,8 @@ long as you follow these rules.
    and inherited values that are not Placeholders.
 9. **Read machine output.** Pass `--json` and parse it, never the human
    format. Exit statuses: 64 the command line is wrong, 69 the server cannot
-   be reached, 75 a sign-in still waiting for the human's approval, 77 not
-   signed in or denied, 78 configuration that cannot run.
+   be reached, 75 a sign-in or an approval still waiting for the human, 77
+   not signed in or denied, 78 configuration that cannot run.
    On 69, a sandbox around your commands may be blocking the connection: tell
    the human which server the command tried to reach (`varlatch --assisted
    context --json` shows it), and ask them to allow that connection. Do not

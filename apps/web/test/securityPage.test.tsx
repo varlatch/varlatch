@@ -94,7 +94,7 @@ describe("the account Security page", () => {
     expect(byTestId("confirm-passkey-pk_a")).toHaveLength(0);
     expect(byTestId("confirm-passkey-pk_new")).toHaveLength(1);
     expect(byTestId("no-trusted-passkey")).toHaveLength(0);
-    expect(text(byTestId("passkey-trust-explainer")[0]!)).toContain("Nothing is restricted by this yet");
+    expect(text(byTestId("passkey-trust-explainer")[0]!)).toContain("Only a trusted passkey can approve a change");
   });
 
   it("confirms with the browser's passkey prompt over the server's challenge", async () => {

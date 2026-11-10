@@ -9,6 +9,7 @@ import { Badge, Button, Callout, Menu, SectionCard, Spinner } from "../../compon
 import { useConfirm, usePrompt } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 
 /**
  * Passkeys: recovery relies on redundant enrolled passkeys, so enrolling a
@@ -65,7 +66,10 @@ export function SecurityPage() {
   const remove = useMutation({
     mutationFn: (id: string) => api.removeMyPasskey(id),
     onSuccess: invalidate,
-    onError: (err) => toast.error("Could not remove the passkey", { description: errorMessage(err) }),
+    // Removing a trusted passkey can need an approval (ADR-0054 Decision 4):
+    // the session's approval dialog asks for it, and says so here when it
+    // was not given or could not be used.
+    onError: (err) => toast.error("Could not remove the passkey", { description: approvalOutcomeMessage(err) ?? errorMessage(err) }),
   });
   const confirmKey = useMutation({
     mutationFn: async (id: string) => {
@@ -204,7 +208,7 @@ export function SecurityPage() {
         )}
       </SectionCard>
       <p className="text-xs text-muted" data-testid="passkey-trust-explainer">
-        A trusted passkey came with your account, from a link sent to you, or was confirmed with another trusted passkey. A passkey added here starts unconfirmed until you confirm it with a trusted one that asks for your PIN, fingerprint or face, so a stolen session cannot add its own key and pass it off as yours. Signing in works with any of your passkeys. Nothing is restricted by this yet: it matters once an organization you belong to turns on a Security Control.
+        A trusted passkey came with your account, from a link sent to you, or was confirmed with another trusted passkey. A passkey added here starts unconfirmed until you confirm it with a trusted one that asks for your PIN, fingerprint or face, so a stolen session cannot add its own key and pass it off as yours. Signing in works with any of your passkeys. Only a trusted passkey can approve a change that needs your approval, such as turning an organization's security control down or off.
       </p>
       <p className="text-xs text-muted">
         Passkeys never leave your devices. Varlatch stores only their public keys. <Badge className="ml-1">no passwords</Badge>

@@ -550,6 +550,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/security/controls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's Security Controls (capability security.controls, ADR-0054 Decision 1): each of requirement-protection, admin-step-up, passkey-verification and credential-lifetime with its mode, its configuration, its version and who changed it last. A control nobody has changed is off at version 0. availableModes lists the modes this server accepts; enforce is not among them yet. Needs organization.read; existence-hiding. */
+        get: operations["listSecurityControls"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/security/controls/{control}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change one Security Control (capability security.controls, ADR-0054 Decision 2). Needs organization.manage and a person's credential (browser or cli): machine credentials are always refused. The change is compared field by field with the current state: it is loosening when the mode moves towards off, a lifetime grows, or configuration is cleared, even alongside tightening. Loosening needs a step-up approval bound to this exact change: without the Varlatch-Approval header the answer is STEP_UP_REQUIRED with details.approval (its id, approval URL and expiry); the client repeats the identical request with the header once the person approved. Tightening needs none. expectedVersion must be the control's current version (VERSION_CONFLICT otherwise). enforce is refused with CONTROL_MODE_UNAVAILABLE. Refused while the Organization is being deleted. Records security_control.changed with metadata.loosened. */
+        patch: operations["changeSecurityControl"];
+        trace?: never;
+    };
     "/organizations/{org}/identities/{identity}/credentials/{credential}": {
         parameters: {
             query?: never;
@@ -1033,7 +1067,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Nothing restricts it yet; once Security Controls exist, removing a trusted passkey will need an approval while the person belongs to an Organization with a control at enforce (ADR-0054 Decision 4). */
+        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Removing a trusted passkey needs a step-up approval (operation passkey.remove, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header) while the person holds a live membership in an Organization with any Security Control at enforce (ADR-0054 Decision 4). No server offers enforce yet, so today nothing restricts it. Removing an unconfirmed passkey never needs an approval. */
         delete: operations["removeMyPasskey"];
         options?: never;
         head?: never;
@@ -1068,6 +1102,74 @@ export interface paths {
         put?: never;
         /** Confirm one of the caller's unconfirmed passkeys (capability account.passkeys): an assertion over the challenge startPasskeyConfirmation issued for this passkey and session, made with another, trusted passkey of the caller with user verification. The passkey becomes trusted (confirmed) and authentication.passkey_confirmed is recorded. A refused assertion (another person's or an unconfirmed passkey, no user verification, a used, expired or foreign challenge) is PERMISSION_DENIED with details.reason, uses up the challenge, and is recorded as authentication.failed. Requires a human's dashboard session bearer. Cache-Control no-store. */
         post: operations["confirmMyPasskey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/approvals/{approval}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the caller's own step-up approvals (Approval Intents, capability security.controls, ADR-0054 Decision 3): the operation, its server-generated summary (never a secret value), its state and expiry. Only the person who asked sees it; anyone else, an administrator included, gets RESOURCE_NOT_FOUND. The CLI polls it while it waits: polls by the requesting credential closer together than `interval` seconds answer SLOW_DOWN with details.interval, as device sign-in does. Cache-Control no-store. */
+        get: operations["getApproval"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/approvals/{approval}/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start approving one of the caller's pending approvals: WebAuthn request options listing only the caller's trusted passkeys, user verification required, with a challenge bound to the approval, the person and their dashboard session. It expires with the approval at the latest and is single use. Requires the dashboard's session bearer of the person who asked. PERMISSION_DENIED with details.reason no-trusted-passkey when the caller has no trusted passkey; APPROVAL_INVALID with details.reason when the approval is no longer pending; RATE_LIMITED with details.retryAt after 20 challenges in 10 minutes. Cache-Control no-store. */
+        post: operations["startApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/approvals/{approval}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve one of the caller's pending approvals with an assertion over the challenge startApproval issued for this approval and session, made with a trusted passkey of the caller, user verification required. The approval does not run the operation: the client that asked repeats it with the Varlatch-Approval header. Approving never extends the approval's expiry. A refused assertion uses up the challenge, is PERMISSION_DENIED with details.reason and is recorded as authentication.failed. Requires the dashboard's session bearer of the person who asked. Cache-Control no-store. */
+        post: operations["approveApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/approvals/{approval}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel one of the caller's approvals that is pending or approved and not used yet (the dashboard's Deny, the CLI on Ctrl-C). Any credential of the person who asked may cancel; for anyone else it is RESOURCE_NOT_FOUND. Cancelling a used, expired or closed approval is APPROVAL_INVALID with details.reason. */
+        post: operations["cancelApproval"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1867,7 +1969,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED" | "STEP_UP_REQUIRED" | "APPROVAL_INVALID" | "CONTROL_MODE_UNAVAILABLE";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -2825,6 +2927,111 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** @enum {string} */
+        SecurityControlName: "requirement-protection" | "admin-step-up" | "passkey-verification" | "credential-lifetime";
+        /**
+         * @description off has no effect (the default). report refuses and changes nothing. enforce applies the control; this server does not accept it yet.
+         * @enum {string}
+         */
+        SecurityControlMode: "off" | "report" | "enforce";
+        /** @description credential-lifetime's configuration; 0 < defaultTtlSeconds <= maxTtlSeconds. */
+        CredentialLifetimeConfig: {
+            defaultTtlSeconds: number;
+            maxTtlSeconds: number;
+        };
+        SecurityControl: {
+            control: components["schemas"]["SecurityControlName"];
+            mode: components["schemas"]["SecurityControlMode"];
+            /** @description credential-lifetime's lifetimes; null for the other controls and when not set. */
+            config: components["schemas"]["CredentialLifetimeConfig"] | null;
+            /** @description 0 for a control nobody has changed; each change adds one. */
+            version: number;
+            /** Format: date-time */
+            changedAt: string | null;
+            /** @description Who changed it last; the host operator's reset has no person. */
+            changedBy: {
+                id: string;
+                name: string | null;
+            } | null;
+        };
+        SecurityControlList: {
+            items: components["schemas"]["SecurityControl"][];
+            /** @description The modes this server accepts in a change. */
+            availableModes: components["schemas"]["SecurityControlMode"][];
+        };
+        SecurityControlChangeInput: {
+            mode?: components["schemas"]["SecurityControlMode"];
+            /** @description The new configuration, or null to clear it; absent keeps it. */
+            config?: components["schemas"]["CredentialLifetimeConfig"] | null;
+            expectedVersion: number;
+        };
+        SecurityControlChange: {
+            control: components["schemas"]["SecurityControl"];
+            /** @description False when the request matched the current state; nothing was recorded. */
+            changed: boolean;
+            /** @description The change weakened the control and used an approval. */
+            loosened: boolean;
+        };
+        ApprovalChange: {
+            /** @description What changes, such as mode or maxTtlSeconds. */
+            field: string;
+            from: string | null;
+            to: string | null;
+            loosens: boolean;
+        };
+        /** @description A step-up approval (an Approval Intent, ADR-0054 Decision 3): one person's approval with a trusted passkey for one exact operation. It never contains a secret value. */
+        Approval: {
+            id: string;
+            /**
+             * @description The semantic operation, not the HTTP route.
+             * @enum {string}
+             */
+            operation: "security_control.change" | "passkey.remove";
+            /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
+            organization: {
+                id: string;
+                slug: string;
+                name: string;
+            } | null;
+            /** @description Written by the server from the parsed request, for the approver. */
+            summary: {
+                title: string;
+                changes: components["schemas"]["ApprovalChange"][];
+            };
+            /** @enum {string} */
+            state: "pending" | "approved" | "consumed" | "expired" | "closed";
+            /** @enum {string|null} */
+            closeReason: "cancelled" | "reset" | "organization-deleted" | null;
+            requestedBy: {
+                /** @enum {string} */
+                credentialKind: "browser" | "cli";
+                /** @description The asking client's summary, such as varlatch CLI 0.21.0 on Linux. */
+                client: string | null;
+            };
+            /** @description The dashboard page that approves it; null when the server has no public URL. */
+            url: string | null;
+            /** @description Seconds between polls. */
+            interval: number;
+            /** Format: date-time */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description 2 minutes after creation from the dashboard, 10 from the CLI; approval never extends it.
+             */
+            expiresAt: string;
+            /** Format: date-time */
+            approvedAt: string | null;
+            /** Format: date-time */
+            consumedAt: string | null;
+            /** Format: date-time */
+            closedAt: string | null;
+        };
+        ApprovalOptions: {
+            /** @description WebAuthn request options (PublicKeyCredentialRequestOptionsJSON), userVerification required, allowing only the caller's trusted passkeys. */
+            publicKey: {
+                [key: string]: unknown;
+            };
+        };
         IssuedCliCredential: {
             id: string;
             /** @description Returned exactly once; never retrievable again. */
@@ -3222,6 +3429,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description Approval (Approval Intent) ID */
+        approval: string;
+        /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+        approvalHeader: string;
         /** @description Organization slug or ID */
         org: string;
         /** @description Project slug or ID */
@@ -4626,6 +4837,62 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listSecurityControls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The controls */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityControlList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    changeSecurityControl: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                control: components["schemas"]["SecurityControlName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SecurityControlChangeInput"];
+            };
+        };
+        responses: {
+            /** @description The control after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityControlChange"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     revokeIdentityCredential: {
         parameters: {
             query?: never;
@@ -5526,7 +5793,10 @@ export interface operations {
     removeMyPasskey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 passkey: string;
             };
@@ -5594,6 +5864,111 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OwnPasskey"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval (Approval Intent) ID */
+                approval: components["parameters"]["approval"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    startApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval (Approval Intent) ID */
+                approval: components["parameters"]["approval"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The approval challenge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalOptions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    approveApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval (Approval Intent) ID */
+                approval: components["parameters"]["approval"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description WebAuthn authentication response (AuthenticationResponseJSON). */
+                    assertion: {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description The approved approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    cancelApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Approval (Approval Intent) ID */
+                approval: components["parameters"]["approval"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cancelled approval */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Approval"];
                 };
             };
             default: components["responses"]["Error"];

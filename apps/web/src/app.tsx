@@ -10,6 +10,7 @@ import { showPreferredTheme } from "./lib/theme";
 import { DialogProvider } from "./components/Dialog";
 import { ToastProvider } from "./components/Toast";
 import { Shell, lastOrg } from "./shell/Shell";
+import { ApprovalDialogProvider } from "./features/security-controls/approval";
 import {
   FullPageLoading,
   MaintenanceBanner,
@@ -44,6 +45,7 @@ const ProfilePage = lazy(() => import("./features/settings/ProfilePage").then((m
 const SecurityPage = lazy(() => import("./features/account/SecurityPage").then((m) => ({ default: m.SecurityPage })));
 const SessionsPage = lazy(() => import("./features/account/SessionsPage").then((m) => ({ default: m.SessionsPage })));
 const DevicePage = lazy(() => import("./features/device/DevicePage").then((m) => ({ default: m.DevicePage })));
+const ApprovalPage = lazy(() => import("./features/security-controls/ApprovalPage").then((m) => ({ default: m.ApprovalPage })));
 const InstallationPage = lazy(() =>
   import("./features/installation/InstallationPage").then((m) => ({ default: m.InstallationPage })),
 );
@@ -123,6 +125,8 @@ const router = createBrowserRouter([
   { path: "/profile", element: <Navigate to="/account" replace /> },
   // Device sign-in's verification page: a CLI's code is approved here (outside the shell).
   { path: "/device", element: <Lazy />, children: [{ index: true, element: <DevicePage /> }] },
+  // A step-up approval's page (ADR-0054 Decision 3): the CLI prints its address (outside the shell).
+  { path: "/approve/:id", element: <Lazy />, children: [{ index: true, element: <ApprovalPage /> }] },
   {
     element: <Shell />,
     children: [
@@ -189,13 +193,15 @@ export function App() {
       <ToastProvider>
         <DialogProvider>
           <SessionProvider>
-            <AuthGate>
-              <TailnetConnectionProvider>
-                <ConvexWithSession>
-                  <RouterProvider router={router} />
-                </ConvexWithSession>
-              </TailnetConnectionProvider>
-            </AuthGate>
+            <ApprovalDialogProvider>
+              <AuthGate>
+                <TailnetConnectionProvider>
+                  <ConvexWithSession>
+                    <RouterProvider router={router} />
+                  </ConvexWithSession>
+                </TailnetConnectionProvider>
+              </AuthGate>
+            </ApprovalDialogProvider>
           </SessionProvider>
         </DialogProvider>
       </ToastProvider>

@@ -7,6 +7,7 @@ import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
+import { lockAllPeopleAndPasskeys } from "./personlocks.js";
 import { DomainError } from "./errors.js";
 import { pinLiveMembership } from "./orgs.js";
 import { lockLiveScope } from "./liveness.js";
@@ -300,12 +301,19 @@ export async function issueReenrollmentGrants(
       // at most one link per person stays live. It changes no key, so it
       // does not block the key-share locks of inserts that reference these
       // identities (the exposure backfill takes them in another order).
-      `SELECT id, name, installation_admin, kind, disabled FROM identities
+      // Taken in id order, as every transaction locking several people does
+      // (approvals.ts lock order, step 2); the links are listed admins first.
+      `SELECT id, name, installation_admin, kind, disabled, created_at FROM identities
         WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
-        ORDER BY installation_admin DESC, created_at, id FOR NO KEY UPDATE`,
+        ORDER BY id FOR NO KEY UPDATE`,
       input.identityIds === "all" ? [] : [input.identityIds],
     );
-    const rows = res.rows as { id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean }[];
+    const rows = (res.rows as {
+      id: string; name: string; installation_admin: boolean; kind: string; disabled: boolean; created_at: Date | string;
+    }[]).sort((a, b) =>
+      Number(b.installation_admin) - Number(a.installation_admin) ||
+      new Date(a.created_at).getTime() - new Date(b.created_at).getTime() ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     if (input.identityIds !== "all") {
       for (const id of input.identityIds) {
         const row = rows.find((r) => r.id === id);
@@ -389,14 +397,20 @@ export async function completePublicUrlChange(
     if (recorded !== null && recorded !== from) {
       throw new DomainError("VALIDATION_FAILED", `The installation last moved to ${recorded}, not ${from}: check --from`);
     }
+    // The lock order of approvals.ts: the people (2) and their passkeys (3)
+    // in id order, then the sessions (6) and the browser credentials (7) in
+    // id order, before the bulk statements touch them. A bulk DELETE alone
+    // locks rows in the order it scans them, against an approval or a
+    // confirmation that holds a person and takes their passkeys in id order.
+    await lockAllPeopleAndPasskeys(db);
     const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
+    await db.query(`SELECT id FROM "session" ORDER BY id FOR UPDATE`);
     const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
     // The dashboard's bearer tokens were minted from those sessions. CLI,
     // agent, and machine credentials hold no address and keep working.
-    const browser = await db.query(
-      `UPDATE credentials SET revoked_at = now()
-        WHERE kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now()) RETURNING id, identity_id`,
-    );
+    const live = `kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`;
+    await db.query(`SELECT id FROM credentials WHERE ${live} ORDER BY id FOR UPDATE`);
+    const browser = await db.query(`UPDATE credentials SET revoked_at = now() WHERE ${live} RETURNING id, identity_id`);
     // One line per credential, as every other revocation path writes.
     for (const c of browser.rows as { id: string; identity_id: string }[]) {
       await recordAuditEvent(db, {

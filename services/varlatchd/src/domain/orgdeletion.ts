@@ -7,6 +7,8 @@ import { withTx } from "../db/tx.js";
 import { loadGrants } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { closeOpenApprovals } from "./approvals.js";
+import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion } from "./liveness.js";
 import { endMembership } from "./members.js";
 
@@ -302,6 +304,24 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     const requester = request.requested_by as string;
     const events: AuditEventInput[] = [];
 
+    // Every person this transaction will reference through a foreign key
+    // (the audit readers, the members whose removals and exposure snapshots
+    // it writes, the requester as their actor, the owners of the open
+    // approvals it closes), FOR KEY SHARE in id order, after the
+    // Organization and before the first such write: the lock order of
+    // approvals.ts, step 2. Inserting them one by one would take them in
+    // whatever order the writes come, against transactions that lock people
+    // in id order.
+    const referenced = (
+      await db.query(
+        `SELECT m.identity_id AS id FROM org_memberships m JOIN identities i ON i.id = m.identity_id
+         WHERE m.organization_id = $1 AND m.removed_at IS NULL AND i.kind = 'human'
+         UNION SELECT identity_id FROM approval_intents WHERE organization_id = $1 AND consumed_at IS NULL AND closed_at IS NULL`,
+        [organizationId],
+      )
+    ).rows as { id: string }[];
+    await lockPeople(db, [requester, ...referenced.map((r) => r.id)], "key share");
+
     // The audit tombstone's readers (Decision 8), before memberships end:
     // the people holding Organization-level audit.read, through any Grant.
     const members = (
@@ -378,6 +398,9 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       [envIds],
     );
     await db.query("UPDATE capabilities SET revoked_at = now() WHERE organization_id = $1 AND revoked_at IS NULL", [organizationId]);
+    // Open step-up approvals end with it (ADR-0054); its Security Controls
+    // rows stay with the Organization's tombstone row, like its other rows.
+    await closeOpenApprovals(db, { organizationId, reason: "organization-deleted" });
     const targetIds = (
       (await db.query("SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [organizationId]))
         .rows as { id: string }[]

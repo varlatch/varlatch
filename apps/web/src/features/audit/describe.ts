@@ -432,6 +432,37 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
       return { icon: "settings", title: "Organization created", segments: ["created the organization"] };
     case "organization.renamed":
       return { icon: "settings", title: "Organization renamed", segments: ["renamed the organization to ", { kind: "name", text: str(m.name) ?? "" }] };
+    // ---- security controls (ADR-0054)
+    case "security_control.changed": {
+      const control = str(m.control) ?? str(r.control) ?? "a security control";
+      const to = str(m.toMode);
+      const from = str(m.fromMode);
+      return {
+        icon: "shield",
+        title: m.loosened === true ? "Security control weakened" : "Security control changed",
+        segments: [
+          "changed security control ",
+          { kind: "mono", text: control },
+          ...(from && to && from !== to ? [" from ", { kind: "name" as const, text: from }, " to ", { kind: "name" as const, text: to }] : []),
+          ...(from && to && from === to ? [" (lifetimes only)"] : []),
+          ...(m.loosened === true ? [", approved with a trusted passkey"] : []),
+        ],
+      };
+    }
+    case "security_control.reset": {
+      const control = str(m.control) ?? str(r.control) ?? "a security control";
+      const closed = typeof m.approvalsClosed === "number" ? m.approvalsClosed : 0;
+      return {
+        icon: "shield",
+        title: "Security control reset",
+        segments: [
+          "reset security control ",
+          { kind: "mono", text: control },
+          " to off (the host operator's reset)",
+          ...(closed > 0 ? [`, closing ${closed} pending approval${closed === 1 ? "" : "s"}`] : []),
+        ],
+      };
+    }
     case "project.created":
       return { icon: "folder", title: "Project created", segments: ["created project ", { kind: "place", text: str(r.projectSlug) ?? names.project(str(r.projectId)) ?? "a project" }] };
     case "project.renamed":

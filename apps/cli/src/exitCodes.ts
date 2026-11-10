@@ -10,6 +10,14 @@ import { VarlatchApiError } from "@varlatch/sdk";
  * through once the command has started, and `login --wait` 75 for a
  * sign-in still pending at its deadline. New distinctions follow
  * sysexits.h, as 78 (EX_CONFIG) already does. Any other failure is 1.
+ *
+ * Step-up approvals (ADR-0054 Decision 3, approvals.ts): 75 when the
+ * approval is still pending and the CLI does not wait for it (assisted
+ * mode: run the command again with --approval <id> once the person
+ * approved), or it expired before anyone approved it; 77 when it was
+ * cancelled or closed, was used already, does not fit the request
+ * (APPROVAL_INVALID), or STEP_UP_REQUIRED surfaces without a wait; 130
+ * when Ctrl-C stopped the wait.
  */
 export const EXIT = {
   ok: 0,
@@ -24,10 +32,16 @@ export const EXIT = {
   denied: 77,
   /** EX_CONFIG: strict startup found a violation, or assisted mode cannot mask a Secret. */
   config: 78,
+  /** Ctrl-C stopped a wait for a step-up approval (128 + SIGINT, as shells report it). */
+  interrupted: 130,
 } as const;
 
 /** The status for an error response from the server. */
 export function apiErrorExit(err: VarlatchApiError): number {
+  // An approval that does not fit, or one the CLI did not wait for (ADR-0054 Decision 3).
+  if (err.code === "APPROVAL_INVALID" || err.code === "STEP_UP_REQUIRED") return EXIT.denied;
+  // A mode this server does not offer yet: an ordinary failure, not a denial.
+  if (err.code === "CONTROL_MODE_UNAVAILABLE") return EXIT.failure;
   if (err.status === 401 || err.status === 403) return EXIT.denied;
   if (err.code === "MAINTENANCE" || err.status === 502 || err.status === 503 || err.status === 504) return EXIT.unavailable;
   return EXIT.failure;
