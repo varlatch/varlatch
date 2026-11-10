@@ -2649,6 +2649,37 @@ async function main(): Promise<void> {
         return;
       }
 
+      case "security": {
+        // Visibility only (ADR-0054 Decision 8): a report, never a change; exit 0 whatever it lists.
+        const { CredentialReviewUnsupportedError, SECURITY_USAGE, credentialReviewLines, fetchCredentialReview } = await import("./securityReport.js");
+        const parsed = strictOptions(`security ${args[0] ?? ""}`.trim(), args, { values: ["--server", "--org"], booleans: ["--json"], positionals: 1 }, SECURITY_USAGE);
+        if (parsed.positionals[0] !== "report") usageError(SECURITY_USAGE);
+        // The organization and server come from the options, else the repository.
+        let server = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
+        let organization = parsed.values.get("--org");
+        if (!server || !organization) {
+          if (!findRepoRoot(process.cwd())) {
+            usageError(`varlatch security report: run it inside a varlatch repository, or pass --org <organization> and --server <url>\n${SECURITY_USAGE}`);
+          }
+          const ctx = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(server ? { server } : {}) });
+          server ??= ctx.server;
+          organization ??= ctx.organization;
+        }
+        let review: Awaited<ReturnType<typeof fetchCredentialReview>>;
+        try {
+          review = await fetchCredentialReview(client({ server }), organization);
+        } catch (err) {
+          if (err instanceof CredentialReviewUnsupportedError) fail(err.message);
+          throw err;
+        }
+        if (parsed.booleans.has("--json")) {
+          printJson({ organization, credentialReview: review });
+          return;
+        }
+        console.log(credentialReviewLines(organization, review, Date.now()).join("\n"));
+        return;
+      }
+
       case "admin": {
         if (args[0] === "reenroll") {
           // Issue #103: one-time links that add a passkey to existing people,

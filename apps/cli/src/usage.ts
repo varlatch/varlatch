@@ -152,6 +152,9 @@ Usage:
   varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
                (another credential for a service, workload, or broker identity, such as one per program;
                 the token goes only to --out, a new file readable by you only, never to the output)
+  varlatch security report [--json] [--org <organization>] [--server <url>]
+               (machine credentials never used, unused for 30 days, or without expiry, with their identity and
+                last use; reporting only: nothing is revoked or retired; needs identity.manage)
   varlatch --version                                   # CLI release; refresh it after every upgrade
   varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
                                                        # replace this CLI with a release build (checksum, signature)

@@ -69,6 +69,7 @@ import {
   retireIdentity,
   SERVICE_CREDENTIAL_KINDS,
 } from "../domain/identities.js";
+import { credentialReview } from "../domain/credentialReview.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
@@ -2356,6 +2357,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       })),
       nextCursor: null,
     });
+  });
+
+  // Credential review (ADR-0054 Decision 8; capability
+  // security.credential-review): the Organization's machine credentials
+  // never used, idle for 30 days, or without expiry. Reporting only. It
+  // shows what credential list shows, so it needs what that needs.
+  app.get("/v1/organizations/:org/security/credential-review", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await credentialReview(ctx, org.id));
   });
 
   app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {

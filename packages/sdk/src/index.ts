@@ -13,6 +13,7 @@ import type {
   ConfigItemSearchResult,
   ContractRevision,
   CreatedIdentity,
+  CredentialReview,
   DeviceSignInLookup,
   DeviceSignInStarted,
   GrantReplacement,
@@ -169,6 +170,9 @@ export interface OrgIdentity {
   /** Avatar image (data or https URL) for humans; null/absent for machines. */
   image?: string | null;
 }
+
+/** The credential review (capability security.credential-review, ADR-0054 Decision 8). */
+export type { CredentialReview, ReviewedCredential } from "@varlatch/protocol";
 
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
@@ -875,6 +879,15 @@ export class VarlatchClient {
       `/v1/organizations/${encodeURIComponent(org)}/identities/${encodeURIComponent(identityId)}/credentials`,
       input,
     );
+  }
+
+  /**
+   * The Organization's machine credentials never used, idle for 30 days, or
+   * without expiry, with identity and last use (identity.manage; capability
+   * security.credential-review). Reporting only; never a token.
+   */
+  credentialReview(org: string): Promise<CredentialReview> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/credential-review`);
   }
 
   /** Revoke a service/oidc credential of an in-org machine identity (identity.manage). */
