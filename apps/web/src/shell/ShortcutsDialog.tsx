@@ -20,6 +20,7 @@ const GROUPS: { title: string; items: [keys: string[], label: string][] }[] = [
       [["G", "A"], "Access"],
       [["G", "C"], "Connections"],
       [["G", "L"], "Audit log"],
+      [["G", "K"], "Security"],
       [["G", "S"], "Settings"],
       [["G", "M"], "My account"],
     ],

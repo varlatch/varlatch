@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React from "react";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { APPROVAL_HEADER, VarlatchApiError, VarlatchClient, type Approval, type SecurityControl } from "@varlatch/sdk";
 
 /**
- * Security Controls in Settings (ADR-0054 Decisions 1 and 2): every control
- * listed with its mode and version, tightening saved at once, loosening
- * approved first in the inline dialog, enforce not offered yet, a stale
- * version reloaded, and nothing editable for a member.
+ * The Security page's controls section (ADR-0054 Decisions 1 and 2): every
+ * control listed with its mode and version, tightening saved at once,
+ * loosening approved first in the inline dialog, enforce shown as coming
+ * later, a stale version reloaded, and nothing editable for a member. The
+ * page around it is in orgSecurityPage.test.tsx.
  */
 
 const fake = vi.hoisted(() => ({
@@ -56,7 +57,7 @@ vi.mock("../src/components/Dialog", () => ({
     ) : null,
 }));
 
-import { SecurityControlsCard, changeInput, loosens, parseLifetimes } from "../src/features/security-controls/SecurityControlsCard";
+import { SecurityControlsCard, changeInput, loosens, parseLifetimes, securityControlsKey } from "../src/features/security-controls/SecurityControlsCard";
 import { ApprovalDialogProvider } from "../src/features/security-controls/approval";
 
 const control = (name: SecurityControl["control"], over: Partial<SecurityControl> = {}): SecurityControl => ({
@@ -80,6 +81,15 @@ const PEOPLE = [
   { id: "idn_ada", name: "Ada", kind: "human", orgRole: "admin", removedAt: null },
   { id: "idn_eve", name: "Eve", kind: "human", orgRole: "member", removedAt: null },
 ];
+
+/** The section as the page renders it: the controls from their query, no counts. */
+function Controls({ admin = true }: { admin?: boolean }) {
+  const controls = useQuery({
+    queryKey: securityControlsKey("acme"),
+    queryFn: () => (fake.api.listSecurityControls as (org: string) => Promise<{ items: SecurityControl[]; availableModes: ("off" | "report" | "enforce")[] }>)("acme"),
+  });
+  return <SecurityControlsCard org="acme" admin={admin} controls={controls.data} report={null} />;
+}
 
 let root: ReactTestRenderer;
 async function mount(element: React.ReactElement) {
@@ -148,7 +158,7 @@ describe("the classification the card shows", () => {
 
 describe("the Security controls section", () => {
   it("lists every control with its mode, version and last change, and explains the modes", async () => {
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     for (const c of CONTROLS) expect(byTestId(`security-control-${c.control}`)).toHaveLength(1);
     expect(text(one("security-control-mode-credential-lifetime"))).toContain("Report");
     expect(text(one("security-control-lifetimes"))).toBe("Default 1 hour, at most 1 day.");
@@ -157,18 +167,19 @@ describe("the Security controls section", () => {
     expect(text(one("security-control-requirement-protection"))).toContain("Version 0, never changed");
     const explainer = text(one("security-controls-explainer"));
     expect(explainer).toContain("without refusing or changing anything");
-    expect(explainer).toContain("Enforce, which applies a control, is not available yet");
-    expect(explainer).toContain("needs your approval with a trusted passkey");
+    expect(text(one("security-controls-enforce-note"))).toBe("Coming in a later release. Report shows today what it would do.");
+    expect(text(one("security-controls-section"))).toContain("needs your approval with a trusted passkey");
+    expect(text(one("security-control-report-text-admin-step-up"))).toContain("administrative change made without an approval");
   });
 
   it("offers enforce as not available yet", async () => {
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     expect(one("security-control-select-admin-step-up-enforce").props.disabled).toBe(true);
     expect(one("security-control-select-admin-step-up-report").props.disabled).toBe(false);
   });
 
   it("saves a tightening at once, with the version it read", async () => {
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     await click("security-control-select-admin-step-up-report");
     expect(text(one("security-control-save-admin-step-up"))).toBe("Save");
     await click("security-control-save-admin-step-up");
@@ -177,7 +188,7 @@ describe("the Security controls section", () => {
   });
 
   it("marks a loosening as needing approval, and refuses lifetimes that do not fit", async () => {
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     await type("security-control-max-ttl", "172800");
     expect(text(one("security-control-save-credential-lifetime"))).toBe("Approve and save");
     await type("security-control-default-ttl", "999999");
@@ -189,7 +200,7 @@ describe("the Security controls section", () => {
     fake.api.changeSecurityControl = vi.fn(async () => {
       throw new VarlatchApiError(409, { code: "VERSION_CONFLICT", message: "stale", requestId: "req_1" });
     });
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     const loads = (fake.api.listSecurityControls as ReturnType<typeof vi.fn>).mock.calls.length;
     await click("security-control-select-passkey-verification-report");
     await click("security-control-save-passkey-verification");
@@ -201,25 +212,18 @@ describe("the Security controls section", () => {
     fake.api.changeSecurityControl = vi.fn(async () => {
       throw new VarlatchApiError(422, { code: "CONTROL_MODE_UNAVAILABLE", message: "no", requestId: "req_1" });
     });
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls />);
     await click("security-control-select-admin-step-up-report");
     await click("security-control-save-admin-step-up");
     expect(text(one("security-control-error-admin-step-up"))).toContain("Enforce is not available yet");
   });
 
   it("shows a member the controls without anything to change", async () => {
-    fake.me = "idn_eve";
-    await mount(<SecurityControlsCard org="acme" />);
+    await mount(<Controls admin={false} />);
     expect(byTestId("security-control-admin-step-up")).toHaveLength(1);
     expect(byTestId("security-control-select-admin-step-up")).toHaveLength(0);
     expect(byTestId("security-control-default-ttl")).toHaveLength(0);
-  });
-
-  it("is hidden when the server has no Security Controls", async () => {
-    fake.api.meta = async () => ({ apiMajor: 1, capabilities: [] });
-    await mount(<SecurityControlsCard org="acme" />);
-    expect(byTestId("settings-security-controls")).toHaveLength(0);
-    expect(fake.api.listSecurityControls).not.toHaveBeenCalled();
+    expect(text(one("security-controls-member-note"))).toContain("An admin of this organization manages these controls");
   });
 });
 
@@ -267,7 +271,7 @@ describe("loosening through the dashboard", () => {
 
     await mount(
       <ApprovalDialogProvider>
-        <SecurityControlsCard org="acme" />
+        <Controls />
       </ApprovalDialogProvider>,
     );
     await click("security-control-select-credential-lifetime-off");

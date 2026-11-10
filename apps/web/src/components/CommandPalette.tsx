@@ -16,6 +16,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  ShieldCheck,
   Sun,
   UserRound,
   Users,
@@ -108,6 +109,7 @@ const PAGES = [
   { key: "access", label: "Access", icon: Users, keys: ["G", "A"] },
   { key: "connections", label: "Connections", icon: Plug, keys: ["G", "C"] },
   { key: "audit", label: "Audit log", icon: ScrollText, keys: ["G", "L"] },
+  { key: "security", label: "Security", icon: ShieldCheck, keys: ["G", "K"] },
   { key: "settings", label: "Settings", icon: Settings, keys: ["G", "S"] },
 ] as const;
 

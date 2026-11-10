@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck } from "lucide-react";
 import {
   VarlatchApiError,
@@ -8,45 +8,66 @@ import {
   type SecurityControl,
   type SecurityControlChangeInput,
   type SecurityControlMode,
+  type SecurityControlCounts,
   type SecurityControlName,
+  type SecurityReportReason,
 } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
 import { timeAgo, useNow } from "../../lib/time";
 import { Badge, Button, Input, SectionCard, Select } from "../../components/ui";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
-import { useCapability } from "../projects/hooks";
-import { useIdentities } from "../access/shared";
 import { approvalOutcomeMessage, durationWords } from "./approval";
 
 /**
- * The Organization's Security Controls (ADR-0054 Decisions 1 and 2), in
- * Settings until the Security page arrives. Every control is off unless an
- * admin changes it. Tightening saves at once; loosening (a mode towards off,
- * a lifetime that grows, lifetimes cleared) needs the admin's approval with
- * a trusted passkey, which the session's approval dialog asks for. enforce
- * is not available yet.
+ * The Organization's Security Controls (ADR-0054 Decisions 1, 2, 5 and 9),
+ * the first section of the Security page. Every control is off unless an
+ * admin changes it. Each one says what report mode counts and what enforce
+ * would change, with its counts of the last 30 days for admins. Tightening
+ * saves at once; loosening (a mode towards off, a lifetime that grows,
+ * lifetimes cleared) needs the admin's approval with a trusted passkey,
+ * which the session's approval dialog asks for. enforce is not available
+ * yet: it is shown as coming in a later release, never as a broken choice.
  */
 
 export const securityControlsKey = (org: string) => ["security-controls", org] as const;
+export const controlReportKey = (org: string) => ["security-control-report", org] as const;
 
-export const CONTROL_TEXT: Record<SecurityControlName, { label: string; enforce: string }> = {
+export const CONTROL_TEXT: Record<SecurityControlName, { label: string; report: string; enforce: string }> = {
   "requirement-protection": {
     label: "Requirement protection",
-    enforce: "Editing or revoking a Tailnet Requirement needs an approval.",
+    report: "Counts each edit or revocation of a Tailnet Requirement made without an approval. Creating one is not counted: it only restricts.",
+    enforce: "Editing or revoking a Tailnet Requirement would need an approval with a trusted passkey, so a stolen admin sign-in cannot remove one from off the tailnet.",
   },
   "admin-step-up": {
     label: "Admin step-up",
-    enforce: "Administrative changes (machine identities, credentials, access, people, integrations, deletion, export) need an approval.",
+    report:
+      "Counts each administrative change made without an approval: machine identities and credentials, grants, roles, groups and teams, admins and members, integrations, deletion, and .env export.",
+    enforce: "Those changes would need an approval with a trusted passkey. A machine credential can never give one, so it would be refused.",
   },
   "passkey-verification": {
     label: "Passkey verification",
-    enforce: "People reach this organization only after signing in with a trusted passkey that verified them.",
+    report:
+      "Counts each request by a person's dashboard or CLI sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face). Machine credentials are never counted.",
+    enforce: "Such sign-ins would be refused in this organization until the person signs in again with a trusted passkey and a PIN, fingerprint or face.",
   },
   "credential-lifetime": {
     label: "Credential lifetime",
-    enforce: "Machine credentials get a default lifetime, and longer ones are refused.",
+    report:
+      "Counts machine credentials issued without a lifetime (they would get the default) and with one above the maximum (they would be refused). OIDC and agent-run credentials are not counted.",
+    enforce: "Machine credentials would get the default lifetime when none is given, and longer ones would be refused. Existing credentials never change.",
   },
+};
+
+/** Why a control counted an attempt, in words. */
+export const REASON_TEXT: Record<SecurityReportReason, string> = {
+  "no-approval": "no approval",
+  "machine-credential": "machine credential",
+  "no-evidence": "no sign-in evidence",
+  "not-user-verified": "not verified",
+  "untrusted-passkey": "unconfirmed passkey",
+  "would-default": "would get the default",
+  "would-refuse": "would be refused",
 };
 
 const MODE_LABEL: Record<SecurityControlMode, string> = { off: "Off", report: "Report", enforce: "Enforce" };
@@ -103,41 +124,129 @@ export function saveError(err: unknown): string {
   return errorMessage(err);
 }
 
-export function SecurityControlsCard({ org }: { org: string }) {
-  const { api, identityId } = useSession();
-  const supported = useCapability("security.controls");
-  const identities = useIdentities(org);
-  const admin = (identities.data?.items ?? []).some((i) => i.id === identityId && i.orgRole === "admin" && !i.removedAt);
-  const controls = useQuery({
-    queryKey: securityControlsKey(org),
-    queryFn: () => api.listSecurityControls(org),
-    enabled: supported,
-  });
-  if (!supported) return null;
-  const available = controls.data?.availableModes ?? ["off", "report"];
+/**
+ * The controls section. `admin` decides whether the modes can be changed;
+ * `report` holds the counts, null while they are unavailable (members, or a
+ * server without them).
+ */
+export function SecurityControlsCard({
+  org,
+  admin,
+  controls,
+  report,
+}: {
+  org: string;
+  admin: boolean;
+  controls: { items: SecurityControl[]; availableModes: SecurityControlMode[] } | undefined;
+  report: { days: number; controls: SecurityControlCounts[] } | null;
+}) {
+  const available = controls?.availableModes ?? ["off", "report"];
+  const enforceAvailable = available.includes("enforce");
   return (
     <SectionCard
-      id="settings-security"
-      title="Security controls"
-      description="Optional protections for this organization. Each one is off until an admin changes it."
+      id="security-controls"
+      title="Controls"
+      description="Optional protections for this organization. Every control is off unless an admin turns it on."
       className="scroll-mt-6"
-      data-testid="settings-security-controls"
+      data-testid="security-controls-section"
     >
-      <div className="space-y-1.5 border-b border-bd px-5 py-3.5 text-[13px] text-muted" data-testid="security-controls-explainer">
-        <p>Report shows what a control would have done, without refusing or changing anything.</p>
-        <p>Enforce, which applies a control, is not available yet.</p>
-        <p>Turning a control down or off, or making a lifetime longer, needs your approval with a trusted passkey.</p>
+      <div className="grid gap-x-6 gap-y-1.5 border-b border-bd px-5 py-3.5 text-[13px] sm:grid-cols-[auto_1fr]" data-testid="security-controls-explainer">
+        <span className="font-medium">Off</span>
+        <span className="text-muted">No effect. The default for every control.</span>
+        <span className="font-medium">Report</span>
+        <span className="text-muted">Counts what the control would have done, without refusing or changing anything.</span>
+        <span className="font-medium">Enforce</span>
+        <span className="text-muted" data-testid="security-controls-enforce-note">
+          {enforceAvailable ? "The control applies." : "Coming in a later release. Report shows today what it would do."}
+        </span>
       </div>
-      {controls.error ? (
-        <p className="px-5 py-4 text-[13px] text-deny" role="alert">
-          {errorMessage(controls.error)}
+      {admin ? (
+        <p className="border-b border-bd px-5 py-2.5 text-xs text-muted">
+          Turning a control down or off, or making a lifetime longer, needs your approval with a trusted passkey.
         </p>
       ) : (
-        (controls.data?.items ?? []).map((c) => (
-          <ControlRow key={`${c.control}-${c.version}`} org={org} control={c} admin={admin} available={available} />
-        ))
+        <p className="border-b border-bd px-5 py-2.5 text-xs text-muted" data-testid="security-controls-member-note">
+          An admin of this organization manages these controls.
+        </p>
       )}
+      {(controls?.items ?? []).map((c) => (
+        <ControlRow
+          key={`${c.control}-${c.version}`}
+          org={org}
+          control={c}
+          admin={admin}
+          available={available}
+          counts={report ? (report.controls.find((r) => r.control === c.control) ?? null) : null}
+          days={report?.days ?? 30}
+        />
+      ))}
     </SectionCard>
+  );
+}
+
+/** How many entries a control shows before "Show all". */
+const ENTRIES_SHOWN = 5;
+
+/** A control's counts: totals, then per operation, reason and who. */
+export function ControlCounts({ control, counts, days }: { control: SecurityControl; counts: SecurityControlCounts; days: number }) {
+  const now = useNow();
+  const [all, setAll] = useState(false);
+  const entries = all ? counts.entries : counts.entries.slice(0, ENTRIES_SHOWN);
+  if (counts.total === 0) {
+    return (
+      <p className="mt-3 rounded-lg border border-bd bg-inset px-3 py-2 text-[13px] text-muted" data-testid={`security-control-counts-${control.control}`} data-total="0">
+        {control.mode === "off"
+          ? `Nothing counted in the last ${days} days. Set it to report to see what it would do.`
+          : `Nothing counted in the last ${days} days.`}
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-lg border border-bd" data-testid={`security-control-counts-${control.control}`} data-total={counts.total}>
+      <p className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-bd bg-inset px-3 py-2 text-[13px]">
+        <span>
+          <span className="font-semibold tabular-nums">{counts.total}</span> counted in the last {days} days
+        </span>
+        <span className="text-muted" data-testid={`security-control-current-hour-${control.control}`}>
+          {counts.currentHour} this hour
+        </span>
+      </p>
+      <table className="w-full text-[13px]">
+        <thead>
+          <tr className="text-left text-xs text-muted">
+            <th className="px-3 py-1.5 font-medium">Operation</th>
+            <th className="px-3 py-1.5 font-medium">Why</th>
+            <th className="px-3 py-1.5 font-medium">Who</th>
+            <th className="px-3 py-1.5 text-right font-medium">Count</th>
+            <th className="hidden px-3 py-1.5 text-right font-medium sm:table-cell">Last</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e) => (
+            <tr key={`${e.configVersion}-${e.operation}-${e.reason}-${e.actor.id}`} className="border-t border-bd" data-testid="security-control-entry">
+              <td className="px-3 py-1.5 font-mono text-[12px]">{e.operation}</td>
+              <td className="px-3 py-1.5 text-muted">{REASON_TEXT[e.reason] ?? e.reason}</td>
+              <td className="px-3 py-1.5">
+                {e.actor.name ?? e.actor.id}
+                {e.actor.kind && e.actor.kind !== "human" && <span className="text-muted"> ({e.actor.kind})</span>}
+              </td>
+              <td className="px-3 py-1.5 text-right tabular-nums">{e.count}</td>
+              <td className="hidden px-3 py-1.5 text-right text-muted sm:table-cell">{timeAgo(e.lastSeen, now)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {counts.entries.length > ENTRIES_SHOWN && (
+        <button
+          type="button"
+          className="w-full cursor-pointer border-t border-bd px-3 py-1.5 text-left text-xs text-muted hover:text-fg"
+          data-testid={`security-control-entries-toggle-${control.control}`}
+          onClick={() => setAll((v) => !v)}
+        >
+          {all ? "Show fewer" : `Show all ${counts.entries.length}`}
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -146,11 +255,15 @@ function ControlRow({
   control,
   admin,
   available,
+  counts,
+  days,
 }: {
   org: string;
   control: SecurityControl;
   admin: boolean;
   available: readonly SecurityControlMode[];
+  counts: SecurityControlCounts | null;
+  days: number;
 }) {
   const { api } = useSession();
   const qc = useQueryClient();
@@ -170,7 +283,10 @@ function ControlRow({
     mutationFn: (body: SecurityControlChangeInput) => api.changeSecurityControl(org, control.control, body),
     onSuccess: async (result) => {
       setError(null);
-      await qc.invalidateQueries({ queryKey: securityControlsKey(org) });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: securityControlsKey(org) }),
+        qc.invalidateQueries({ queryKey: controlReportKey(org) }),
+      ]);
       toast.success(`${text.label} saved`, {
         description: result.loosened ? "Approved with your passkey." : result.changed ? undefined : "Nothing was different.",
       });
@@ -186,7 +302,7 @@ function ControlRow({
     value: m,
     label: MODE_LABEL[m],
     disabled: !available.includes(m),
-    ...(available.includes(m) ? {} : { description: "Not available yet" }),
+    ...(available.includes(m) ? {} : { description: m === "enforce" ? "Coming in a later release" : "Not available yet" }),
   }));
   return (
     <div className="border-b border-bd px-5 py-4 last:border-b-0" data-testid={`security-control-${control.control}`} data-mode={control.mode}>
@@ -199,7 +315,21 @@ function ControlRow({
               {MODE_LABEL[control.mode]}
             </Badge>
           </p>
-          <p className="mt-0.5 text-[13px] text-muted">With enforce: {text.enforce}</p>
+          <dl className="mt-1.5 space-y-1 text-[13px]">
+            <div>
+              <dt className="inline font-medium">Report counts: </dt>
+              <dd className="inline text-muted" data-testid={`security-control-report-text-${control.control}`}>
+                {text.report}
+              </dd>
+            </div>
+            <div>
+              <dt className="inline font-medium">Enforce would: </dt>
+              <dd className="inline text-muted">
+                {text.enforce}
+                {!available.includes("enforce") && <span className="text-subtle"> (coming in a later release)</span>}
+              </dd>
+            </div>
+          </dl>
           {lifetime && control.config && (
             <p className="mt-0.5 text-[13px] text-muted" data-testid="security-control-lifetimes">
               Default {durationWords(control.config.defaultTtlSeconds)}, at most {durationWords(control.config.maxTtlSeconds)}.
@@ -223,6 +353,7 @@ function ControlRow({
           />
         )}
       </div>
+      {counts && <ControlCounts control={control} counts={counts} days={days} />}
       {admin && lifetime && (
         <div className="mt-3 flex flex-wrap items-end gap-3 text-[13px]">
           <label className="space-y-1">

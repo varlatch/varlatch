@@ -40,6 +40,9 @@ const ConnectionsPage = lazy(() => import("./features/sync/ConnectionsPage").the
 const GitHubAppCallbackPage = lazy(() => import("./features/sync/GitHubApp").then((m) => ({ default: m.GitHubAppCallbackPage })));
 const AuditPage = lazy(() => import("./features/audit/AuditPage").then((m) => ({ default: m.AuditPage })));
 const SettingsPage = lazy(() => import("./features/settings/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const OrgSecurityPage = lazy(() =>
+  import("./features/security-controls/OrgSecurityPage").then((m) => ({ default: m.OrgSecurityPage })),
+);
 const AccountLayout = lazy(() => import("./features/account/AccountLayout").then((m) => ({ default: m.AccountLayout })));
 const ProfilePage = lazy(() => import("./features/settings/ProfilePage").then((m) => ({ default: m.ProfilePage })));
 const SecurityPage = lazy(() => import("./features/account/SecurityPage").then((m) => ({ default: m.SecurityPage })));
@@ -179,6 +182,7 @@ const router = createBrowserRouter([
           { path: "connections", element: <ConnectionsPage /> },
           { path: "connections/github-app", element: <GitHubAppCallbackPage /> },
           { path: "audit", element: <AuditPage /> },
+          { path: "security", element: <OrgSecurityPage /> },
           { path: "settings", element: <SettingsPage /> },
         ],
       },
