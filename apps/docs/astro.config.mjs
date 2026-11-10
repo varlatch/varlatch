@@ -61,7 +61,13 @@ export default defineConfig({
           ],
         },
         { label: "CLI", items: [{ label: "Scripting the CLI", slug: "reference/scripting" }] },
-        { label: "Security", items: [{ label: "Threat model", slug: "threat-model" }] },
+        {
+          label: "Security",
+          items: [
+            { label: "Security controls", slug: "reference/security-controls" },
+            { label: "Threat model", slug: "threat-model" },
+          ],
+        },
         { label: "Changelog", link: "/changelog/" },
       ],
     }),

@@ -99,7 +99,7 @@ fixes.
   control off nothing works differently. `report` refuses and changes
   nothing: it counts what the control would have done. `enforce` is not
   offered yet: the server refuses it with `CONTROL_MODE_UNAVAILABLE`.
-  Organization admins manage them in Settings, then Security controls, or
+  Organization admins manage them on the organization's Security page, or
   with `varlatch security controls` and `varlatch security set <control>
   <off|report> [--default-ttl <s> --max-ttl <s>]`. Reading needs
   `organization.read`; changing needs `organization.manage` and a
@@ -155,6 +155,30 @@ fixes.
 - **Removing a trusted passkey** will need an approval while you belong to
   an organization with any control at `enforce`; until `enforce` is
   offered, removing passkeys works as before.
+- **The Security page.** Each organization has a Security page next to
+  Settings (`/o/<org>/security`) for deciding which controls to turn on.
+  It shows each control's mode, what `report` counts and what `enforce`
+  would change, the counts of the last 30 days per operation, reason and
+  person or machine (the current hour live), and the mode switch, with
+  the lifetimes for `credential-lifetime`; `enforce` is shown as coming in
+  a later release. Below it: the admins' approval keys (how many trusted
+  and unconfirmed passkeys each has, by name), the machine credentials to
+  review together with service credentials that expire within 7 days or
+  have expired (linking to Access, Machines), the number of tailnet
+  requirements (linking to their editor), and a short checklist that
+  links each item to its docs page. Members see the controls and a note
+  that an admin manages them; nothing an admin alone may read is asked
+  for. Settings links to the page. `varlatch security status` (`--json`
+  for one document) prints the same; a part you cannot read is named,
+  not shown, and it exits 0. New API: `GET
+  /v1/organizations/{org}/security/approval-keys` (per admin: trusted and
+  unconfirmed passkeys with names and dates, never key material or ids;
+  needs `organization.manage`; capability `security.approval-keys`). The
+  credential review (`GET .../security/credential-review` and `varlatch
+  security report`) gains `expiry`: the service credentials that expire
+  within 7 days or have expired, by the rule of the
+  `Varlatch-Credential-Expires` header. See [The Security
+  page](docs/reference/security-controls.md#the-security-page).
 - **The host operator's way back.** `varlatch admin security reset --org
   <slug> (--control <name>... | --all)` (or `admin security reset` in the
   `varlatchd` container) sets controls back to off without anyone's
