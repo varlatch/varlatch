@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import pg from "pg";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
+import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { buildHumanAuth, type HumanAuth } from "../src/auth/humanauth.js";
 import { ensureInstallation, issueBootstrapGrant, issueReenrollmentGrants } from "../src/domain/bootstrap.js";
 import { credentialEvidence } from "../src/domain/passkeys.js";
@@ -240,6 +242,90 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
       other.release();
     }
     expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [credentialId])).toEqual([{ id: "pk_racer" }]);
+  });
+
+  it("a failure after the passkey row is written stays a 500, not a duplicate", async () => {
+    const original = pg.Client.prototype.query;
+    // The insert commits, then its acknowledgement is lost: a matching row exists, yet this request did not lose a race.
+    const spy = vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+      const [text, values] = args;
+      const run = (original as (...a: unknown[]) => unknown).apply(this, args);
+      if (typeof text === "string" && /insert into "passkey"/i.test(text) && Array.isArray(values) && values.includes("lost-ack")) {
+        return (run as Promise<unknown>).then(() => { throw new Error("Connection terminated unexpectedly"); });
+      }
+      return run as never;
+    });
+    try {
+      // Pooled clients pick the spy up when they connect, so it is in place before the first Better Auth query.
+      const { browser: fresh } = await bootstrapAdmin();
+      const added = softAuthenticator(RP);
+      const options = await fresh.request("GET", "/auth/passkey/generate-register-options");
+      const res = await fresh.request("POST", "/auth/passkey/verify-registration", { response: added.attest(options.body.challenge), name: "lost-ack" });
+      expect(res.status).toBe(500);
+      expect(JSON.stringify(res.body)).not.toContain("already registered");
+      expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [added.credentialId])).toHaveLength(1);
+      // Its provenance was never written: it counts as unconfirmed.
+      expect(await provenance(added.credentialId)).toEqual({ trust: null, trusted_via: null, setup_grant_kind: null });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("after the upgrade, the authenticator of a quarantined duplicate signs in with the passkey that was kept", async () => {
+    const legacyName = `${database}_legacy`;
+    await admin.query(`DROP DATABASE IF EXISTS ${legacyName} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${legacyName}`);
+    const target = new URL(url!);
+    target.pathname = `/${legacyName}`;
+    const legacy = createPgQuerier(target.toString());
+    const key = softAuthenticator(RP);
+    const impostor = softAuthenticator(RP);
+    let legacyAuth: HumanAuth | undefined;
+    const mainApp = app;
+    try {
+      const connection = await legacy.connect();
+      try {
+        await connection.query("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())");
+        for (const migration of MIGRATIONS.filter((m) => m.id <= 38)) {
+          await connection.query(migration.sql);
+          await connection.query("INSERT INTO varlatch_migrations (id, name) VALUES ($1, $2)", [migration.id, migration.name]);
+        }
+        await connection.query("INSERT INTO identities (id, kind, name) VALUES ('idn_a', 'human', 'A')");
+        await connection.query(`INSERT INTO "user" (id, name, email) VALUES ('bau_a', 'A', 'a@varlatch.placeholder.invalid')`);
+        await connection.query("INSERT INTO auth_user_links (better_auth_user_id, identity_id) VALUES ('bau_a', 'idn_a')");
+        // The authenticator's own row, and a later row with its credential id but another key, as nothing refused before.
+        await connection.query(
+          `INSERT INTO passkey (id, name, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", transports, "createdAt")
+           VALUES ('pk_kept', 'laptop', $1, 'bau_a', $3, 0, 'singleDevice', false, 'internal', '2026-11-01T10:00:00Z'),
+                  ('pk_copy', 'copy', $2, 'bau_a', $3, 0, 'singleDevice', false, 'internal', '2026-11-02T10:00:00Z')`,
+          [key.coseKey.toString("base64"), impostor.coseKey.toString("base64"), key.credentialId],
+        );
+        expect((await runMigrations(connection)).applied.map((m) => m.id)).toEqual([39]);
+      } finally {
+        connection.release();
+      }
+      expect((await legacy.query(`SELECT id FROM passkey WHERE "credentialID" = $1`, [key.credentialId])).rows).toEqual([{ id: "pk_kept" }]);
+      expect((await legacy.query("SELECT id, kept_passkey_id FROM passkey_quarantine")).rows).toEqual([{ id: "pk_copy", kept_passkey_id: "pk_kept" }]);
+
+      const legacyCtx: AppCtx = { db: legacy, rootKek: Buffer.alloc(32, 31) };
+      legacyAuth = buildHumanAuth({ ctx: legacyCtx, databaseUrl: target.toString(), publicUrl: PUBLIC_URL });
+      app = buildApp(legacyCtx, { publicUrl: PUBLIC_URL, humanAuth: legacyAuth, clientAddress: () => "203.0.113.7" });
+      const browser = new Browser();
+      const sessionId = await browser.signIn(key, await browser.signInOptions());
+      expect((await legacy.query("SELECT ceremony, user_verified, passkey_id FROM auth_session_evidence WHERE session_id = $1", [sessionId])).rows)
+        .toEqual([{ ceremony: "sign-in", user_verified: true, passkey_id: "pk_kept" }]);
+      // The quarantined row's key no longer signs in: its credential id now names the kept passkey only.
+      const refused = new Browser();
+      const challenge = await refused.signInOptions();
+      const response = { ...impostor.assert(challenge), id: key.credentialId, rawId: key.credentialId };
+      expect((await refused.request("POST", "/auth/passkey/verify-authentication", { response })).status).not.toBe(200);
+      expect((await legacy.query("SELECT count(*)::int AS n FROM auth_session_evidence")).rows).toEqual([{ n: 1 }]);
+    } finally {
+      app = mainApp;
+      await legacyAuth?.close();
+      await legacy.end();
+      await admin.query(`DROP DATABASE IF EXISTS ${legacyName} WITH (FORCE)`);
+    }
   });
 
   it("sign-in writes the evidence onto its own session only, user verification as the authenticator said", async () => {

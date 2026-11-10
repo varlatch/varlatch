@@ -9,16 +9,19 @@
  *   added by a signed-in session and become trusted through a confirmation
  *   ceremony with a trusted key. A passkey without a row counts as
  *   unconfirmed, so a failure to record never trusts a key. Every passkey
- *   that exists now is trusted (`existing-at-upgrade`), except a later
- *   duplicate of a credential id (below), which is unconfirmed.
- * - passkey."credentialID" becomes unique, so a credential id names one
- *   passkey and the evidence a sign-in records is unambiguous; two
- *   concurrent registrations of one credential id cannot both be stored.
- *   Duplicates registered before this migration are not deleted: the
- *   oldest of each credential id (by "createdAt", then id) stays in the
- *   unique index, and the later ones are left out of it by id (a partial
- *   index) and recorded as unconfirmed. Every new row is unique against the
- *   indexed ones.
+ *   that remains after the quarantine below is trusted
+ *   (`existing-at-upgrade`).
+ * - passkey."credentialID" becomes unique (a plain unique index), so a
+ *   credential id names one passkey: Better Auth looks passkeys up by
+ *   credential id alone, and the evidence a sign-in records must name the
+ *   one that signed. Two concurrent registrations of one credential id
+ *   cannot both be stored.
+ * - passkey_quarantine: duplicates registered before this migration, when
+ *   nothing refused them. The oldest row of each credential id (by
+ *   "createdAt", then id) stays; every later one moves here with all its
+ *   columns, when and why it moved, and which row was kept. A quarantined
+ *   passkey can no longer sign in. The kept row has the same credential id,
+ *   so the authenticator that holds it still signs in with it.
  * - auth_session_evidence: what the ceremony that created a Better Auth
  *   session proved: whether the authenticator verified the user, and which
  *   passkey asserted (its provenance is read when the evidence is used, so a
@@ -39,6 +42,52 @@
  *   confirms; single use, short-lived, consumed on use.
  */
 export const sql = /* sql */ `
+CREATE TABLE passkey_quarantine (
+  id text PRIMARY KEY,
+  name text,
+  "publicKey" text NOT NULL,
+  "userId" text NOT NULL,
+  "credentialID" text NOT NULL,
+  counter integer NOT NULL,
+  "deviceType" text NOT NULL,
+  "backedUp" boolean NOT NULL,
+  transports text,
+  "createdAt" timestamptz,
+  aaguid text,
+  quarantined_at timestamptz NOT NULL DEFAULT now(),
+  reason text NOT NULL CHECK (reason IN ('duplicate-credential-id')),
+  kept_passkey_id text NOT NULL
+);
+
+WITH ranked AS (
+  SELECT p.*,
+         row_number() OVER w AS n,
+         first_value(p.id) OVER w AS kept
+  FROM passkey p
+  WINDOW w AS (PARTITION BY p."credentialID" ORDER BY p."createdAt" NULLS FIRST, p.id)
+), moved AS (
+  INSERT INTO passkey_quarantine
+    (id, name, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", transports, "createdAt", aaguid,
+     reason, kept_passkey_id)
+  SELECT id, name, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", transports, "createdAt", aaguid,
+         'duplicate-credential-id', kept
+  FROM ranked WHERE n > 1
+  RETURNING id
+)
+DELETE FROM passkey WHERE id IN (SELECT id FROM moved);
+
+DO $$
+DECLARE
+  moved integer;
+BEGIN
+  SELECT count(*) INTO moved FROM passkey_quarantine;
+  IF moved > 0 THEN
+    RAISE NOTICE '% passkey(s) shared a credential id with an older passkey and were moved to passkey_quarantine', moved;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX passkey_credential_id_unique ON passkey ("credentialID");
+
 CREATE TABLE passkey_provenance (
   passkey_id text PRIMARY KEY REFERENCES passkey(id) ON DELETE CASCADE,
   trust text NOT NULL CHECK (trust IN ('trusted', 'unconfirmed')),
@@ -55,29 +104,7 @@ CREATE TABLE passkey_provenance (
 );
 
 INSERT INTO passkey_provenance (passkey_id, trust, trusted_via, trusted_at)
-  SELECT id,
-         CASE WHEN n = 1 THEN 'trusted' ELSE 'unconfirmed' END,
-         CASE WHEN n = 1 THEN 'existing-at-upgrade' END,
-         CASE WHEN n = 1 THEN now() END
-  FROM (SELECT id, row_number() OVER (PARTITION BY "credentialID" ORDER BY "createdAt" NULLS FIRST, id) AS n FROM passkey) ranked;
-
-DO $$
-DECLARE
-  later_duplicates text[];
-BEGIN
-  SELECT coalesce(array_agg(id ORDER BY id), '{}') INTO later_duplicates
-  FROM (SELECT id, row_number() OVER (PARTITION BY "credentialID" ORDER BY "createdAt" NULLS FIRST, id) AS n FROM passkey) ranked
-  WHERE n > 1;
-  IF cardinality(later_duplicates) = 0 THEN
-    CREATE UNIQUE INDEX passkey_credential_id_unique ON passkey ("credentialID");
-  ELSE
-    RAISE NOTICE 'passkeys sharing a credential id with an older one, left out of the unique index and unconfirmed: %', later_duplicates;
-    EXECUTE format(
-      'CREATE UNIQUE INDEX passkey_credential_id_unique ON passkey ("credentialID") WHERE id <> ALL (%L::text[])',
-      later_duplicates
-    );
-  END IF;
-END $$;
+  SELECT id, 'trusted', 'existing-at-upgrade', now() FROM passkey;
 
 CREATE TABLE auth_session_evidence (
   session_id text PRIMARY KEY CHECK (char_length(session_id) BETWEEN 1 AND 200),

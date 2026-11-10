@@ -153,9 +153,23 @@ interface CeremonyState {
     /** Set when a setup grant was consumed for this passkey (bootstrap, invitation, recover, reenroll). */
     setupGrantKind: SetupGrantKind | null;
   };
+  /**
+   * Set when one of this request's Better Auth queries failed with a unique
+   * violation of passkey_credential_id_unique: the passkey insert lost to
+   * another registration of the same credential id.
+   */
+  duplicateCredentialId?: true;
 }
 
 const ALREADY_REGISTERED = "This passkey is already registered";
+/** Migration 39's unique index on passkey."credentialID". */
+const CREDENTIAL_ID_UNIQUE = "passkey_credential_id_unique";
+
+/** PostgreSQL's unique_violation, on the credential id index and nothing else. */
+function isDuplicateCredentialId(err: unknown): boolean {
+  const e = err as { code?: unknown; constraint?: unknown } | null;
+  return e?.code === "23505" && e.constraint === CREDENTIAL_ID_UNIQUE;
+}
 const SIGN_IN_PATH = "/passkey/verify-authentication";
 const REGISTRATION_PATH = "/passkey/verify-registration";
 
@@ -175,6 +189,24 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
   // process; the pool reconnects on the next query.
   authPool.on("error", () => console.error("Auth PostgreSQL idle connection failed; reconnecting on next query"));
   const ceremonies = new AsyncLocalStorage<CeremonyState>();
+  // Better Auth turns a failed insert into a generic 500 and keeps the
+  // database error to itself. Each pooled client's queries are observed
+  // here, in the request that runs them: a unique violation of the
+  // credential id index is noted in that request's ceremony state, and the
+  // query's own result, rejection included, reaches Better Auth unchanged.
+  authPool.on("connect", (client) => {
+    const query = client.query.bind(client) as (...args: unknown[]) => unknown;
+    (client as unknown as { query: (...args: unknown[]) => unknown }).query = (...args: unknown[]) => {
+      const result = query(...args);
+      const state = ceremonies.getStore();
+      if (state && result && typeof (result as Promise<unknown>).then === "function") {
+        (result as Promise<unknown>).then(undefined, (err: unknown) => {
+          if (isDuplicateCredentialId(err)) state.duplicateCredentialId = true;
+        });
+      }
+      return result;
+    };
+  });
   // Recording evidence or provenance never fails a sign-in or an
   // enrollment: what is not recorded counts as unverified, or unconfirmed.
   const logFailure = (what: string) => (err: unknown) =>
@@ -231,17 +263,16 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
           // The credential id is unique in the database (migration 39). A
           // registration that passed the check in afterVerification but lost
           // the race to a concurrent one fails at Better Auth's insert, which
-          // Better Auth reports as an internal error: say what happened. A
-          // Response of our own, because Better Auth keeps the endpoint's 500
-          // status for anything else an after-hook returns or throws.
-          if (registration && returned.statusCode === 500) {
-            const taken = await ctx.db.query(`SELECT 1 FROM passkey WHERE "credentialID" = $1 LIMIT 1`, [registration.credentialId]);
-            if (taken.rows[0]) {
-              return new Response(JSON.stringify({ code: "PASSKEY_ALREADY_REGISTERED", message: ALREADY_REGISTERED }), {
-                status: 400,
-                headers: { "Content-Type": "application/json" },
-              });
-            }
+          // Better Auth reports as an internal error. Only when this
+          // request's own query failed with that unique violation is it said
+          // to be a duplicate; every other failure stays a 500. A Response
+          // of our own, because Better Auth keeps the endpoint's 500 status
+          // for anything else an after-hook returns or throws.
+          if (returned.statusCode === 500 && ceremonies.getStore()?.duplicateCredentialId) {
+            return new Response(JSON.stringify({ code: "PASSKEY_ALREADY_REGISTERED", message: ALREADY_REGISTERED }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
           }
           return;
         }

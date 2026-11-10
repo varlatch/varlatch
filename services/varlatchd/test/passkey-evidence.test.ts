@@ -92,22 +92,35 @@ describe("migration 39", () => {
       await db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp")
         VALUES ('pk_1','k','bau_a','c1',0,'singleDevice',false), ('pk_2','k','bau_a','c2',0,'multiDevice',true)`);
       // Two later rows with an existing credential id, as nothing refused them before this migration.
-      await db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp","createdAt")
-        VALUES ('pk_0dup','k','bau_a','c1',0,'singleDevice',false, now()), ('pk_9dup','k','bau_a','c1',0,'singleDevice',false, now() + interval '1 second')`);
+      await db.query(`INSERT INTO passkey(id,name,"publicKey","userId","credentialID",counter,"deviceType","backedUp",transports,"createdAt",aaguid)
+        VALUES ('pk_0dup','copy','k0','bau_a','c1',3,'singleDevice',false,'usb','2026-11-01T10:00:00Z','aa-0'),
+               ('pk_9dup',NULL,'k9','bau_a','c1',7,'multiDevice',true,NULL,'2026-11-02T10:00:00Z',NULL)`);
       await db.query(`INSERT INTO "session"(id,"expiresAt",token,"userId") VALUES ('ses_old', now() + interval '1 day', 't', 'bau_a')`);
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash,auth_session_id) VALUES ('crd_web','idn_a','browser','h1','ses_old')");
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_a','cli','h2')");
 
       expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39]);
-      // The oldest row of a credential id stays trusted (pk_1 has no date, so it sorts first); later duplicates are unconfirmed.
+      // The oldest row of a credential id stays (pk_1 has no date, so it sorts first) and is trusted, like every remaining passkey.
       expect((await db.query("SELECT passkey_id, trust, trusted_via, trusted_at IS NOT NULL AS dated FROM passkey_provenance ORDER BY passkey_id")).rows).toEqual([
-        { passkey_id: "pk_0dup", trust: "unconfirmed", trusted_via: null, dated: false },
         { passkey_id: "pk_1", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },
         { passkey_id: "pk_2", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },
-        { passkey_id: "pk_9dup", trust: "unconfirmed", trusted_via: null, dated: false },
       ]);
-      // The duplicates stay, outside the unique index; every new row is unique against the indexed ones.
-      expect((await db.query(`SELECT id FROM passkey WHERE "credentialID" = 'c1' ORDER BY id`)).rows).toHaveLength(3);
+      // The later duplicates moved to the quarantine with every column, when, why, and which row was kept.
+      expect((await db.query(`SELECT id FROM passkey WHERE "credentialID" = 'c1'`)).rows).toEqual([{ id: "pk_1" }]);
+      expect((await db.query(
+        `SELECT id, name, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", transports, "createdAt", aaguid,
+                reason, kept_passkey_id, quarantined_at IS NOT NULL AS dated
+         FROM passkey_quarantine ORDER BY id`,
+      )).rows).toEqual([
+        { id: "pk_0dup", name: "copy", publicKey: "k0", userId: "bau_a", credentialID: "c1", counter: 3, deviceType: "singleDevice", backedUp: false,
+          transports: "usb", createdAt: new Date("2026-11-01T10:00:00Z"), aaguid: "aa-0", reason: "duplicate-credential-id", kept_passkey_id: "pk_1", dated: true },
+        { id: "pk_9dup", name: null, publicKey: "k9", userId: "bau_a", credentialID: "c1", counter: 7, deviceType: "multiDevice", backedUp: true,
+          transports: null, createdAt: new Date("2026-11-02T10:00:00Z"), aaguid: null, reason: "duplicate-credential-id", kept_passkey_id: "pk_1", dated: true },
+      ]);
+      // A plain unique index: every passkey's credential id is unique.
+      expect((await db.query("SELECT indexdef FROM pg_indexes WHERE indexname = 'passkey_credential_id_unique'")).rows).toEqual([
+        { indexdef: 'CREATE UNIQUE INDEX passkey_credential_id_unique ON public.passkey USING btree ("credentialID")' },
+      ]);
       const newPasskey = (id: string, credentialId: string) =>
         db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp") VALUES ($1,'k','bau_a',$2,0,'singleDevice',false)`, [id, credentialId]);
       await expect(newPasskey("pk_new1", "c1")).rejects.toThrow(/duplicate key/);

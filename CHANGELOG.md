@@ -123,8 +123,11 @@ fixes.
   credential that the server already knows, for anyone, now fails with a
   400, as the WebAuthn standard asks, also when two registrations of it
   arrive at once. If an installation already has such duplicates, the
-  upgrade keeps them, keeps the oldest one trusted and marks the later ones
-  unconfirmed.
+  upgrade keeps the oldest passkey of each credential and moves the later
+  copies out of the passkey list into a quarantine table (the upgrade log
+  says how many). A quarantined copy can no longer sign in. In practice
+  nothing changes for its owner: the copy that stays belongs to the same
+  physical security key or device, which keeps signing in with it.
 
 ## 0.20.0 (2026-10-30)
 
