@@ -230,7 +230,7 @@ export async function runScan(opts: ScanOptions, deps: ScanDeps, io: ScanIo): Pr
   return scanExitCode(report);
 }
 
-/** `varlatch scan --find-files`: never opens a file and sends no request. */
+/** `varlatch scan --find-files`: finds files by name and metadata, without reading their contents, and sends no request. */
 async function runFindFiles(opts: ScanOptions, io: ScanIo): Promise<number> {
   let report: FindFilesReport;
   try {
