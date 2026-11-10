@@ -350,6 +350,11 @@ Anyone with exec/terminal access to these containers is an Infrastructure
 Operator for this installation. That is authority they already possess
 through the host, made explicit and audited here.
 
+A passkey enrolled through a recovery link, like one from `varlatch admin
+reenroll`, is trusted. It is also the way back for a person whose passkeys
+are all unconfirmed or lost: a session cannot make a passkey trusted on its
+own (see [Your passkeys](../../docs/getting-started.md#your-passkeys)).
+
 ## Optional Tailscale integration
 
 ```sh

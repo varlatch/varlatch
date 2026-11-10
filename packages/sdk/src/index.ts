@@ -25,6 +25,8 @@ import type {
   MemberReview,
   OrganizationDeletion,
   OwnCredential,
+  OwnPasskey,
+  PasskeyConfirmationOptions,
   Requirement,
   IssuedAgentCredential,
   IssuedMachineCredential,
@@ -210,7 +212,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -1399,6 +1401,26 @@ export class VarlatchClient {
 
   revokeMyCredential(credentialId: string): Promise<void> {
     return this.request("DELETE", `/v1/me/credentials/${encodeURIComponent(credentialId)}`);
+  }
+
+  /** The caller's passkeys with their provenance, trusted or unconfirmed (capability account.passkeys). */
+  listMyPasskeys(): Promise<Page<OwnPasskey>> {
+    return this.request("GET", "/v1/me/passkeys");
+  }
+
+  /** Remove one of the caller's passkeys (dashboard session bearer; capability account.passkeys). */
+  removeMyPasskey(passkeyId: string): Promise<void> {
+    return this.request("DELETE", `/v1/me/passkeys/${encodeURIComponent(passkeyId)}`);
+  }
+
+  /** Start confirming an unconfirmed passkey: request options for the caller's trusted passkeys, user verification required. */
+  startPasskeyConfirmation(passkeyId: string): Promise<PasskeyConfirmationOptions> {
+    return this.request("POST", `/v1/me/passkeys/${encodeURIComponent(passkeyId)}/confirmation/options`);
+  }
+
+  /** Confirm an unconfirmed passkey with an assertion by a trusted one over the started challenge. */
+  confirmMyPasskey(passkeyId: string, assertion: unknown): Promise<OwnPasskey> {
+    return this.request("POST", `/v1/me/passkeys/${encodeURIComponent(passkeyId)}/confirmation`, { assertion });
   }
 
   createGrant(

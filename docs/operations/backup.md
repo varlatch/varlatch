@@ -454,6 +454,46 @@ release before changing deployment files. The former `--skip-db-backup` and
 and explicitly allowed restore sources; release tooling uses that same
 manifest. Unsupported paths fail rather than infer compatibility.
 
+### Passkeys that shared a credential (migration 39)
+
+Migration 39 makes every passkey's credential id unique. Before it, the
+server could store two passkeys with the same credential id, and signing
+in with one of them could pick either. If your installation has such
+passkeys, the migration keeps the oldest of each credential id and moves
+the others to the `passkey_quarantine` table, with all their fields, when
+they moved and which passkey was kept (`kept_passkey_id`). Nothing is
+deleted, and installations without such passkeys are not affected.
+
+A quarantined passkey can no longer sign in. The migration job prints
+each one with its person's name and identity id, and whether the passkey
+that was kept is the same person's or another person's (with Compose:
+`docker compose logs varlatch-migrate`):
+
+- **The same person's:** they sign in with their other passkeys. If the
+  quarantined one was the only one their authenticator holds, they need a
+  new one.
+- **Another person's:** the person whose passkey was quarantined lost it.
+  If both passkeys have the same public key, that authenticator now signs
+  in as the other person.
+
+To give someone a new trusted passkey, send them a one-time link:
+
+```sh
+varlatch admin reenroll --identity <identity-id>
+# or inside the container:
+docker compose exec varlatchd node dist/cli.js admin reenroll --identity <identity-id>
+```
+
+An Installation Admin who is disabled or has no way in at all uses
+`admin recover` instead (see the [break-glass
+section](../../infra/compose/README.md#break-glass-recovery)). To list the
+quarantined passkeys again later, query the table:
+
+```sql
+SELECT q.id, l.identity_id, q.kept_passkey_id, q.quarantined_at
+FROM passkey_quarantine q LEFT JOIN auth_user_links l ON l.better_auth_user_id = q."userId";
+```
+
 ### First upgrade from the published v0.7.0 release
 
 Use the **0.8.0 or newer CLI** for this upgrade. The published v0.7.0 daemon has no

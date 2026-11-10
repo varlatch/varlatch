@@ -2109,7 +2109,9 @@ paths:
         Trade the short-lived browser-handoff bearer (ADR-0024) for a
         longer-lived CLI credential. Restricted to browser session bearers —
         a leaked CLI credential cannot mint successors — and one-shot: the
-        presenting bearer is revoked by the exchange.
+        presenting bearer is revoked by the exchange. The CLI credential
+        keeps a link to the browser session the bearer came from, and so to
+        that sign-in's record of which passkey was used.
       requestBody:
         required: false
         content:
@@ -2125,6 +2127,113 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/IssuedCliCredential" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/passkeys:
+    get:
+      tags: [identities]
+      operationId: listMyPasskeys
+      summary: >
+        The caller's own passkeys with their provenance (capability
+        account.passkeys, ADR-0054 Decision 4): trusted (existing at the
+        upgrade that introduced provenance, enrolled through a setup grant,
+        or confirmed) or unconfirmed (added by a signed-in session and not
+        confirmed yet). Empty for a machine identity. Never a public key or
+        a credential id. Returned whole, never paginated.
+      responses:
+        "200":
+          description: The caller's passkeys, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextCursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OwnPasskey" }
+                  nextCursor: { $ref: "#/components/schemas/NextCursor" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/passkeys/{passkey}:
+    delete:
+      tags: [identities]
+      operationId: removeMyPasskey
+      summary: >
+        Remove one of the caller's own passkeys (capability
+        account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey,
+        which is turned off. Requires a human's dashboard session bearer.
+        Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND.
+        Nothing restricts it yet; once Security Controls exist, removing a
+        trusted passkey will need an approval while the person belongs to an
+        Organization with a control at enforce (ADR-0054 Decision 4).
+      parameters:
+        - { name: passkey, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Removed }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/passkeys/{passkey}/confirmation/options:
+    post:
+      tags: [identities]
+      operationId: startPasskeyConfirmation
+      summary: >
+        Start confirming one of the caller's unconfirmed passkeys with a
+        trusted one (capability account.passkeys): WebAuthn request options
+        listing the caller's trusted passkeys, user verification required,
+        with a challenge bound to the person, their dashboard session and
+        this passkey (single use; 5 minutes). Requires a human's dashboard
+        session bearer. STATE_CHANGED when the passkey is already trusted;
+        PERMISSION_DENIED with details.reason no-trusted-passkey when the
+        caller has no trusted passkey (the host operator's admin reenroll or
+        admin recover enrolls one); RATE_LIMITED with details.retryAt after
+        10 starts in 10 minutes. Cache-Control no-store.
+      parameters:
+        - { name: passkey, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The confirmation challenge
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PasskeyConfirmationOptions" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /me/passkeys/{passkey}/confirmation:
+    post:
+      tags: [identities]
+      operationId: confirmMyPasskey
+      summary: >
+        Confirm one of the caller's unconfirmed passkeys (capability
+        account.passkeys): an assertion over the challenge
+        startPasskeyConfirmation issued for this passkey and session, made
+        with another, trusted passkey of the caller with user verification.
+        The passkey becomes trusted (confirmed) and
+        authentication.passkey_confirmed is recorded. A refused assertion
+        (another person's or an unconfirmed passkey, no user verification, a
+        used, expired or foreign challenge) is PERMISSION_DENIED with
+        details.reason, uses up the challenge, and is recorded as
+        authentication.failed. Requires a human's dashboard session bearer.
+        Cache-Control no-store.
+      parameters:
+        - { name: passkey, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assertion]
+              properties:
+                assertion:
+                  type: object
+                  additionalProperties: true
+                  description: WebAuthn authentication response (AuthenticationResponseJSON).
+      responses:
+        "200":
+          description: The confirmed passkey
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OwnPasskey" }
         default: { $ref: "#/components/responses/Error" }
 
   /auth/device:
@@ -2235,8 +2344,11 @@ paths:
         Approve or deny a pending device-authorization sign-in. Requires a
         human's dashboard session bearer; approving also requires a passkey
         assertion over the challenge lookupDeviceSignIn issued for this
-        sign-in and session (PERMISSION_DENIED otherwise). STATE_CHANGED
-        when the sign-in is no longer pending. The code counts against the
+        sign-in and session (PERMISSION_DENIED otherwise). The approval
+        records which passkey asserted and whether it verified the user
+        (user verification is not required), and the CLI credential the
+        sign-in issues carries that record. STATE_CHANGED when the sign-in
+        is no longer pending. The code counts against the
         same limits as lookupDeviceSignIn. Cache-Control no-store.
       requestBody:
         required: true
@@ -5485,6 +5597,48 @@ components:
             never the User-Agent itself. Null when the client was not
             recognized, for every other kind, and for credentials issued
             before 0.14.0; absent from older servers.
+
+    OwnPasskey:
+      type: object
+      required: [id, name, deviceType, backedUp, createdAt, trust, trustedVia, trustedAt, setupGrantKind, confirmedByPasskeyId]
+      description: >
+        One of the caller's passkeys and its provenance (ADR-0054 Decision 4).
+        Only a trusted passkey will be able to approve operations once
+        Security Controls exist; sign-in works with any passkey.
+      properties:
+        id: { type: string }
+        name: { type: [string, "null"] }
+        deviceType:
+          type: string
+          description: WebAuthn device type, singleDevice or multiDevice.
+        backedUp:
+          type: boolean
+          description: Synced by a password manager or platform.
+        createdAt: { type: [string, "null"], format: date-time }
+        trust: { type: string, enum: [trusted, unconfirmed] }
+        trustedVia:
+          type: [string, "null"]
+          enum: [existing-at-upgrade, setup-grant, confirmed, null]
+          description: How it became trusted; null while unconfirmed.
+        trustedAt: { type: [string, "null"], format: date-time }
+        setupGrantKind:
+          type: [string, "null"]
+          enum: [bootstrap, recover, invite, reenroll, null]
+          description: For setup-grant, which grant enrolled it.
+        confirmedByPasskeyId:
+          type: [string, "null"]
+          description: For confirmed, the trusted passkey that confirmed it (it may have been removed since).
+
+    PasskeyConfirmationOptions:
+      type: object
+      required: [publicKey]
+      properties:
+        publicKey:
+          type: object
+          additionalProperties: true
+          description: >
+            WebAuthn request options (PublicKeyCredentialRequestOptionsJSON),
+            userVerification required, allowing only the caller's trusted passkeys.
 
     IssuedCliCredential:
       type: object

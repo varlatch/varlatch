@@ -72,7 +72,10 @@ export interface CredentialRow {
   revoked_at: string | null;
   max_uses: number | null;
   use_count: number;
-  /** The Better Auth session a browser bearer was minted from (migration 0025). */
+  /**
+   * The Better Auth session a browser bearer was minted from (migration
+   * 0025), or a browser-handoff CLI credential came from (migration 0039).
+   */
   auth_session_id?: string | null;
 }
 
@@ -99,16 +102,23 @@ export async function issueCredential(
     metadata?: Record<string, unknown>;
     /** Readable client label (client-label.ts), never a raw User-Agent. */
     client?: string | null;
-    /** Browser bearers only: the Better Auth session it was minted from. */
+    /**
+     * Browser bearers, and CLI credentials from the browser handoff: the
+     * Better Auth session they come from, whose sign-in evidence they carry
+     * (ADR-0054 Decision 6).
+     */
     authSessionId?: string | null;
+    /** CLI credentials from device sign-in: the approval's evidence. */
+    evidence?: { userVerified: boolean; passkeyId: string } | null;
   },
 ): Promise<{ credentialId: string; token: string }> {
   const token = generateToken(input.kind);
   const credentialId = newId("credential");
   return withTx(db, async (tx) => {
     await tx.query(
-      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id, issued_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id, issued_by,
+                                evidence_user_verified, evidence_passkey_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         credentialId,
         input.identityId,
@@ -122,6 +132,8 @@ export async function issueCredential(
         // Who was shown the token: the credential.issued event's actor
         // (ADR-0052 Decision 4 lists a removed member's).
         input.actorIdentityId ?? input.identityId,
+        input.evidence?.userVerified ?? null,
+        input.evidence?.passkeyId ?? null,
       ],
     );
     await recordAuditEvent(tx, {

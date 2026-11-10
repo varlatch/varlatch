@@ -165,6 +165,8 @@ interface SignInRow {
   requested_name: string | null;
   approved_by_identity_id: string | null;
   issued_credential_id: string | null;
+  approval_user_verified: boolean | null;
+  approval_passkey_id: string | null;
 }
 
 /**
@@ -189,7 +191,8 @@ export async function pollDeviceSignIn(
       `SELECT id, status, expires_at <= clock_timestamp() AS lapsed,
               (last_polled_at IS NOT NULL
                AND last_polled_at > clock_timestamp() - make_interval(secs => poll_interval)) AS polled_too_soon,
-              poll_interval, requested_ttl, requested_name, approved_by_identity_id, issued_credential_id
+              poll_interval, requested_ttl, requested_name, approved_by_identity_id, issued_credential_id,
+              approval_user_verified, approval_passkey_id
        FROM device_sign_ins WHERE id = $1`,
       [locked.id],
     )).rows[0] as SignInRow;
@@ -215,9 +218,11 @@ export async function pollDeviceSignIn(
     const claimed = (await db.query(
       `UPDATE device_sign_ins SET status = 'consumed', last_polled_at = clock_timestamp()
        WHERE id = $1 AND status = 'approved' AND expires_at > clock_timestamp()
-       RETURNING approved_by_identity_id`,
+       RETURNING approved_by_identity_id, approval_user_verified, approval_passkey_id`,
       [row.id],
-    )).rows[0] as { approved_by_identity_id: string } | undefined;
+    )).rows[0] as
+      | { approved_by_identity_id: string; approval_user_verified: boolean | null; approval_passkey_id: string | null }
+      | undefined;
     if (!claimed) return { kind: "expired" };
     const identityId = claimed.approved_by_identity_id;
     const expiresAt = new Date(Date.now() + row.requested_ttl * 1000).toISOString();
@@ -230,6 +235,11 @@ export async function pollDeviceSignIn(
       metadata: { deviceSignInId: row.id, ttlSeconds: row.requested_ttl },
       // The collecting CLI's User-Agent, summarized: this request comes from the CLI.
       client: clientLabel(input.userAgent),
+      // The approval's evidence (ADR-0054 Decision 6); none for a sign-in
+      // approved before the upgrade that records it.
+      evidence: claimed.approval_passkey_id !== null && claimed.approval_user_verified !== null
+        ? { userVerified: claimed.approval_user_verified, passkeyId: claimed.approval_passkey_id }
+        : null,
     });
     await db.query("UPDATE device_sign_ins SET issued_credential_id = $2 WHERE id = $1", [row.id, issued.credentialId]);
     await recordAuditEvent(db, {
@@ -368,7 +378,11 @@ export async function issueApprovalChallenge(
   input: { signInId: string; identityId: string; authSessionId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON | null> {
   return withTx(ctx.db, async (db) => {
-    const options = await assertionOptions(db, rp, input.identityId, DEVICE_SIGN_IN.challengeSeconds * 1000);
+    // Any passkey of the person, user verification preferred, as at sign-in:
+    // approval records what the authenticator did (ADR-0054 Decision 6).
+    const options = await assertionOptions(db, rp, input.identityId, DEVICE_SIGN_IN.challengeSeconds * 1000, {
+      userVerification: "preferred",
+    });
     if (!options) return null;
     await db.query(
       `DELETE FROM device_sign_in_challenges
@@ -431,7 +445,10 @@ export async function denyDeviceSignIn(
  * challenge (only one issued for this sign-in, identity, and session, unused
  * and unexpired), verify the assertion with one of the identity's passkeys,
  * and move the sign-in from pending to approved, again only while pending
- * and unexpired. A refused challenge or assertion stays consumed.
+ * and unexpired, with the assertion's evidence (which passkey, and whether
+ * it verified the user; ADR-0054 Decision 6) for collection to copy onto
+ * the credential. User verification is recorded, not required. A refused
+ * challenge or assertion stays consumed.
  */
 export async function approveDeviceSignIn(
   ctx: AppCtx,
@@ -462,7 +479,7 @@ export async function approveDeviceSignIn(
         )).rows[0]
       : undefined;
     const verified = consumed && challenge
-      ? await verifyAssertion(db, rp, input.identityId, input.assertion, challenge)
+      ? await verifyAssertion(db, rp, input.identityId, input.assertion, challenge, { requireUserVerification: false })
       : ({ ok: false, reason: "challenge" } as const);
     if (!verified.ok) {
       await recordAuditEvent(db, {
@@ -476,9 +493,10 @@ export async function approveDeviceSignIn(
       return verified.reason;
     }
     const approved = await db.query(
-      `UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = $2, decided_at = clock_timestamp()
+      `UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = $2, decided_at = clock_timestamp(),
+              approval_user_verified = $3, approval_passkey_id = $4
        WHERE id = $1 AND status = 'pending' AND expires_at > clock_timestamp() RETURNING id`,
-      [input.signInId, input.identityId],
+      [input.signInId, input.identityId, verified.userVerified, verified.passkeyId],
     );
     if (!approved.rows[0]) throw noLongerPending();
     await recordAuditEvent(db, {
