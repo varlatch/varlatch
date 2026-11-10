@@ -159,6 +159,7 @@ import {
   type Requester,
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
+import { lockPerson } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -1004,6 +1005,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const ttlSeconds = body.ttlSeconds ?? 43_200;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     const issued = await withTx(ctx.db, async (db) => {
+      // The lock order of domain/approvals.ts: the person (2) before the
+      // browser credential (7), since the new credential's foreign key takes
+      // the person after this update holds the old one.
+      await lockPerson(db, principal.identity.id, "key share");
       const consumed = await db.query(
         `UPDATE credentials SET revoked_at = now()
          WHERE id = $1 AND kind = 'browser' AND revoked_at IS NULL

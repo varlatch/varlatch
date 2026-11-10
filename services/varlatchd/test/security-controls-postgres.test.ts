@@ -5,7 +5,8 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
+import { completePublicUrlChange, consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
+import { lockPerson } from "../src/domain/personlocks.js";
 import { APPROVALS, consumeApproval, createApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
 import { changeControl, controlMode, resetControls } from "../src/domain/securitycontrols.js";
@@ -383,6 +384,40 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     const recorded = events.map((e) => meta(e.metadata).approvalId).filter((id) => typeof id === "string").sort();
     expect(recorded).toEqual(used);
   }, 120_000);
+
+  it("the public-URL change takes people, then passkeys in id order, against an approval or a confirmation holding one", async () => {
+    // A person with two passkeys, the one with the higher id stored first, so a bulk DELETE scanning the
+    // table meets it first.
+    await db.query(`INSERT INTO "user" (id, name, email, "emailVerified", "updatedAt") VALUES ('bau_pu', 'P', 'p@varlatch.placeholder.invalid', false, now())`);
+    await db.query("INSERT INTO auth_user_links (better_auth_user_id, identity_id) VALUES ('bau_pu', $1)", [adminId]);
+    for (const id of ["pk_b_order", "pk_a_order"]) {
+      await db.query(
+        `INSERT INTO passkey (id, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp", "createdAt")
+         VALUES ($1, 'k', 'bau_pu', $1, 0, 'singleDevice', false, now())`,
+        [id],
+      );
+    }
+    // A transaction in the documented order, as approveApproval and confirmPasskey take it: the person, then
+    // the passkeys in id order. It holds the first passkey when the public-URL change starts.
+    const held = await db.connect();
+    let change: Promise<unknown> = Promise.resolve();
+    try {
+      await held.query("BEGIN");
+      await lockPerson(held, adminId, "update");
+      await held.query("SELECT id FROM passkey WHERE id = 'pk_a_order' FOR UPDATE");
+      change = completePublicUrlChange(ctx, { from: "https://old.varlatch.test", to: PUBLIC_URL }).then((r) => r, (e) => e);
+      await sleep(300);
+      const second = await held.query("SELECT id FROM passkey WHERE id = 'pk_b_order' FOR UPDATE").then(() => "locked", (e) => e);
+      expect(second).toBe("locked");
+      await held.query("COMMIT");
+    } finally {
+      await held.query("ROLLBACK").catch(() => undefined);
+      held.release();
+    }
+    // The change waited for the person, then removed both passkeys; never a deadlock (40P01).
+    expect(await change).toMatchObject({ passkeysRemoved: 2 });
+    expect((await db.query("SELECT count(*)::int AS n FROM passkey")).rows).toEqual([{ n: 0 }]);
+  });
 
   it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {
     expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli.token, { mode: "report", expectedVersion: 0 })).status).toBe(200);

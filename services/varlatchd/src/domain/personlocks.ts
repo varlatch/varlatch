@@ -23,6 +23,21 @@ export async function lockPeople(db: Querier, identityIds: readonly string[], mo
 }
 
 /**
+ * Steps 2 and 3 for every person who has a Better Auth account (the
+ * public-URL change, which ends everyone's passkeys, sessions and browser
+ * credentials): the people in id order, FOR UPDATE, then all their
+ * passkeys in id order, FOR UPDATE.
+ */
+export async function lockAllPeopleAndPasskeys(db: Querier): Promise<void> {
+  await db.query(
+    `SELECT i.id FROM identities i JOIN auth_user_links l ON l.identity_id = i.id ORDER BY i.id FOR UPDATE OF i`,
+  );
+  await db.query(
+    `SELECT p.id FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId" ORDER BY p.id FOR UPDATE OF p`,
+  );
+}
+
+/**
  * Step 3: every passkey of the person, in id order, FOR UPDATE. Taken
  * before an assertion is verified (which advances the asserting passkey's
  * counter, and which passkey that is is only known then) and before a
