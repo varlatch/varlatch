@@ -13,15 +13,19 @@ fixes.
   expire.** Until now it warned only about the credential `varlatch login`
   stored, and said nothing for `VARLATCH_TOKEN`, where machine credentials
   issued with an expiry live, until requests started failing. Now every
-  `/v1` response to a request authenticated by a credential that expires
-  within 7 days, errors included, carries a `Varlatch-Credential-Expires`
-  header with the expiry (ISO 8601, UTC). The CLI turns it into one
+  `/v1` response to a request authenticated by a credential that lives
+  longer than 7 days and is in its last 7 days, errors included, carries a
+  `Varlatch-Credential-Expires` header with the expiry (ISO 8601, UTC).
+  Short-lived credentials (dashboard sessions, CLI sign-ins, OIDC
+  exchanges, agent-safe runs, a TTL of 7 days or less) never get it: they
+  are renewed by design. The CLI turns it into one
   warning on stderr per command, before `varlatch run` starts its command,
   and never writes it to stdout, so the output scripts parse, `varlatch
   env list` included, is unchanged. It does not warn inside an agent-safe
-  run. In the dashboard, Access → Machines marks a service credential that
-  expires within 7 days or has expired. Credentials without an expiry, or
-  expiring later, behave exactly as before. The tailnet browser endpoint
+  run. In the dashboard, Access → Machines marks, by the same rule, a
+  service credential that expires within 7 days or has expired.
+  Credentials without an expiry, expiring later, or short-lived behave
+  exactly as before. The tailnet browser endpoint
   exposes the header to the pages it allows.
 
 ### Backups

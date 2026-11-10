@@ -689,11 +689,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       });
       throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
     }
-    // A credential expiring within 7 days says so on every response to it,
-    // refusals included (ADR-0054 Decision 8). Set before anything below can
-    // refuse, so error responses built from this context carry it; set again
-    // on the final response for handlers that return a Response of their own.
-    const expiring = credentialExpiresNotice(result.credential.expires_at);
+    // A long-lived credential in its last 7 days says so on every response
+    // to it, refusals included (ADR-0054 Decision 8). Set before anything
+    // below can refuse, so error responses built from this context carry it;
+    // set again on the final response for handlers that return a Response of
+    // their own.
+    const expiring = credentialExpiresNotice(result.credential.expires_at, result.credential.created_at);
     if (expiring) c.header(CREDENTIAL_EXPIRES_HEADER, expiring);
     // Agent-run credentials (ADR-0023) are read-only at the HTTP layer:
     // metadata access for an Agent Run, nothing that mutates or exercises.

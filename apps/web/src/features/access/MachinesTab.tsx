@@ -42,7 +42,7 @@ import { Tabs } from "../../components/PageHeader";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
-import { MACHINE_EXPIRY_WARNING_DAYS, credentialExpiry, expiryText, expiryTone } from "../sync/credentialExpiry";
+import { expiryText, expiryTone, machineCredentialExpiry, type CredentialExpiry } from "../sync/credentialExpiry";
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
 
@@ -307,13 +307,17 @@ function SignsInWith({ org, identity, now }: { org: string; identity: OrgIdentit
   if (active.length === 0) return <span className="text-muted">No active token</span>;
   const expiries = active.map((c) => c.expiresAt).filter(Boolean) as string[];
   const soonest = expiries.sort()[0];
-  const expiry = credentialExpiry(soonest, now, MACHINE_EXPIRY_WARNING_DAYS);
+  // Marked by the soonest long-lived credential in its last 7 days, as each one is in the list.
+  const marked = active
+    .map((c) => machineCredentialExpiry(c.expiresAt, c.createdAt, now))
+    .filter((e): e is CredentialExpiry => e !== null && e.state !== "later")
+    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))[0];
   return (
     <span className="inline-flex items-center gap-2">
-      {expiry && expiry.state !== "later" && <StatusDot tone={expiryTone(expiry)} />}
+      {marked && <StatusDot tone={expiryTone(marked)} />}
       Token
       <span className="text-muted">
-        · {!soonest ? "no expiry" : expiry?.state === "expired" ? "expired" : `expires ${timeUntil(soonest, now)}`}
+        · {!soonest ? "no expiry" : Date.parse(soonest) <= now ? "expired" : `expires ${timeUntil(soonest, now)}`}
       </span>
     </span>
   );
@@ -445,14 +449,15 @@ function MonoRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * A live service credential that expires within 7 days, or has expired, is
- * marked: requests with it carry the Varlatch-Credential-Expires header and
- * the CLI warns about it in VARLATCH_TOKEN. Session, agent-run and OIDC
- * credentials are short-lived by design and renewed by their own flows.
+ * A live service credential that lives longer than 7 days and expires
+ * within the next 7, or has expired, is marked: requests with it carry the
+ * Varlatch-Credential-Expires header and the CLI warns about it in
+ * VARLATCH_TOKEN. Short-lived credentials (a TTL of 7 days or less, and
+ * session, agent-run and OIDC credentials) are renewed by design.
  */
 export function MachineCredentialExpiry({ credential, now }: { credential: IdentityCredential; now: number }) {
   if (credential.revokedAt || credential.kind !== "service") return null;
-  const expiry = credentialExpiry(credential.expiresAt, now, MACHINE_EXPIRY_WARNING_DAYS);
+  const expiry = machineCredentialExpiry(credential.expiresAt, credential.createdAt, now);
   if (!expiry || expiry.state === "later") return null;
   return (
     <span className="block" data-testid={`credential-expiry-${credential.id}`} title={formatDateTime(expiry.expiresAt)}>

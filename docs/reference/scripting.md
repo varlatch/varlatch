@@ -92,12 +92,17 @@ These keep the meanings they always had:
 
 ## Credential expiry warnings
 
-A credential that expires within 7 days says so on every API response to
-a request it authenticates, errors included: the response carries a
+A credential that lives longer than 7 days (from when it was issued to
+when it expires) says so in its last 7 days, on every API response to a
+request it authenticates, errors included: the response carries a
 `Varlatch-Credential-Expires` header with the expiry as an ISO 8601 UTC
 timestamp, such as `2026-11-17T12:00:00.000Z`. Credentials without an
-expiry, or expiring later, get no header, and neither do unauthenticated
-requests. A program that calls the API directly can read it to warn ahead.
+expiry or expiring later get no header, and neither do unauthenticated
+requests. Nor do short-lived credentials, those that live 7 days or less:
+dashboard sessions, `varlatch login` sign-ins, OIDC exchanges, agent-safe
+runs, and machine credentials issued with a short `--ttl`. They are
+renewed by design, and a warning on every run would be noise. A program
+that calls the API directly can read the header to warn ahead.
 
 When the CLI authenticates with `VARLATCH_TOKEN` and the server sends the
 header, it prints one warning on stderr per command, never on stdout:

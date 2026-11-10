@@ -3009,7 +3009,7 @@ export interface components {
     };
     requestBodies: never;
     headers: {
-        /** @description Sent on every response to a request authenticated by a credential that expires within 7 days, errors included: when that credential expires. Absent for credentials without an expiry or expiring later, and on unauthenticated responses. Clients holding a credential they cannot renew by signing in (VARLATCH_TOKEN) use it to warn ahead. */
+        /** @description Sent on every response to a request authenticated by a credential that lives longer than 7 days (issued to expiry) and expires within the next 7, errors included: when that credential expires. Absent for credentials without an expiry, expiring later, or living 7 days or less (sessions, CLI sign-ins, OIDC exchanges, agent runs, short TTLs: renewed by design), and on unauthenticated responses. Clients holding a credential they cannot renew by signing in (VARLATCH_TOKEN) use it to warn ahead. */
         VarlatchCredentialExpires: string;
     };
     pathItems: never;

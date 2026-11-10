@@ -9,10 +9,11 @@ import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
  * ADR-0054 Decision 8: every /v1 response to a request authenticated by a
- * credential that expires within 7 days carries Varlatch-Credential-Expires,
- * refusals and handler-built responses included. Credentials without an
- * expiry or expiring later get none, and neither does an unauthenticated
- * or refused request.
+ * credential that lives longer than 7 days and expires within the next 7
+ * carries Varlatch-Credential-Expires, refusals and handler-built responses
+ * included. Credentials without an expiry, expiring later, or short-lived
+ * by design (a lifetime of 7 days or less) get none, and neither does an
+ * unauthenticated or refused request.
  */
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -49,15 +50,38 @@ async function call(method: string, path: string, token?: string, body?: unknown
   });
 }
 
-async function credential(expiresInMs: number | null, kind: "service" | "agent-run" = "service"): Promise<{ token: string; expiresAt: string | undefined }> {
-  const expiresAt = expiresInMs === null ? undefined : new Date(Date.now() + expiresInMs).toISOString();
-  const { token } = await issueCredential(ctx.db, { identityId: runnerId, kind, ...(expiresAt ? { expiresAt } : {}) });
+type Kind = "service" | "agent-run" | "cli" | "browser";
+
+/**
+ * A credential of the runner (or `identityId`) that expires in `leftMs`,
+ * issued `lifetimeMs` before its expiry; no expiry when `leftMs` is null.
+ */
+async function credential(
+  leftMs: number | null,
+  lifetimeMs = 30 * DAY,
+  kind: Kind = "service",
+  identityId = runnerId,
+): Promise<{ token: string; expiresAt: string | undefined }> {
+  const expiresAt = leftMs === null ? undefined : new Date(Date.now() + leftMs).toISOString();
+  const { token, credentialId } = await issueCredential(ctx.db, { identityId, kind, ...(expiresAt ? { expiresAt } : {}) });
+  if (expiresAt) {
+    await ctx.db.query("UPDATE credentials SET created_at = $2 WHERE id = $1", [
+      credentialId,
+      new Date(Date.parse(expiresAt) - lifetimeMs).toISOString(),
+    ]);
+  }
   return { token, expiresAt };
 }
 
+async function header(token: string): Promise<string | null> {
+  const res = await call("GET", "/v1/me", token);
+  expect(res.status).toBe(200);
+  return res.headers.get(CREDENTIAL_EXPIRES_HEADER);
+}
+
 describe("Varlatch-Credential-Expires", () => {
-  it("names the expiry of a credential that expires within 7 days, as an ISO 8601 UTC timestamp", async () => {
-    const soon = await credential(3 * DAY);
+  it("names the expiry of a 30-day credential with 3 days left, as an ISO 8601 UTC timestamp", async () => {
+    const soon = await credential(3 * DAY, 30 * DAY);
     const res = await call("GET", "/v1/me", soon.token);
     expect(res.status).toBe(200);
     expect(res.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(soon.expiresAt);
@@ -68,13 +92,21 @@ describe("Varlatch-Credential-Expires", () => {
   });
 
   it("is absent for a credential without expiry or one that expires later", async () => {
-    const never = await credential(null);
-    const later = await credential(30 * DAY);
-    for (const { token } of [never, later]) {
-      const res = await call("GET", "/v1/me", token);
-      expect(res.status).toBe(200);
-      expect(res.headers.has(CREDENTIAL_EXPIRES_HEADER)).toBe(false);
-    }
+    expect(await header((await credential(null)).token)).toBeNull();
+    expect(await header((await credential(30 * DAY, 365 * DAY)).token)).toBeNull();
+    expect(await header((await credential(8 * DAY, 30 * DAY)).token)).toBeNull();
+  });
+
+  it("is absent for short-lived credentials, however close their expiry", async () => {
+    // A 1-day service credential with an hour left: a TTL a person chose short.
+    expect(await header((await credential(60 * 60 * 1000, DAY)).token)).toBeNull();
+    // Exactly 7 days of lifetime is still short-lived.
+    expect(await header((await credential(DAY, 7 * DAY)).token)).toBeNull();
+    // Renewed by their own flows: a CLI sign-in, a dashboard session, an agent run.
+    const adminId = ((await (await call("GET", "/v1/me", adminToken)).json()) as { identity: { id: string } }).identity.id;
+    expect(await header((await credential(2 * 60 * 60 * 1000, DAY, "cli", adminId)).token)).toBeNull();
+    expect(await header((await credential(10 * 60 * 1000, 15 * 60 * 1000, "browser", adminId)).token)).toBeNull();
+    expect(await header((await credential(10 * 60 * 1000, 60 * 60 * 1000, "agent-run")).token)).toBeNull();
   });
 
   it("is absent from unauthenticated and refused requests", async () => {
@@ -96,19 +128,16 @@ describe("Varlatch-Credential-Expires", () => {
     expect(missing.status).toBeGreaterThanOrEqual(400);
     expect(missing.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(soon.expiresAt);
     // Refused by the bearer middleware itself, after authentication: an
-    // agent-run credential cannot write.
-    const agentRun = await credential(60 * 60 * 1000, "agent-run");
+    // agent-run credential cannot write. (Long-lived only to reach the header.)
+    const agentRun = await credential(2 * DAY, 30 * DAY, "agent-run");
     const write = await call("POST", "/v1/organizations", agentRun.token, { name: "Other", slug: "other" });
     expect(write.status).toBe(403);
     expect(write.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(agentRun.expiresAt);
   });
 
   it("is on responses a handler builds itself, such as the NDJSON audit export", async () => {
-    const { token } = await issueCredential(ctx.db, {
-      identityId: (await (await call("GET", "/v1/me", adminToken)).json() as { identity: { id: string } }).identity.id,
-      kind: "cli",
-      expiresAt: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-    });
+    const adminId = ((await (await call("GET", "/v1/me", adminToken)).json()) as { identity: { id: string } }).identity.id;
+    const { token } = await credential(3 * DAY, 90 * DAY, "service", adminId);
     const res = await call("GET", "/v1/organizations/acme/audit-events/export", token);
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/x-ndjson");
@@ -116,14 +145,19 @@ describe("Varlatch-Credential-Expires", () => {
     await res.text();
   });
 
-  it("uses an inclusive 7-day window", () => {
+  it("needs a lifetime over 7 days and uses an inclusive 7-day window", () => {
     const now = Date.parse("2026-11-10T12:00:00Z");
-    expect(credentialExpiresNotice(null, now)).toBeNull();
-    expect(credentialExpiresNotice("garbage", now)).toBeNull();
-    expect(credentialExpiresNotice(new Date(now + 7 * DAY), now)).toBe("2026-11-17T12:00:00.000Z");
-    expect(credentialExpiresNotice(new Date(now + 7 * DAY + 1), now)).toBeNull();
-    expect(credentialExpiresNotice("2026-11-11T13:00:00+01:00", now)).toBe("2026-11-11T12:00:00.000Z");
-    // Already past (expiry checked after authentication): still named.
-    expect(credentialExpiresNotice(new Date(now - 1000), now)).toBe("2026-11-10T11:59:59.000Z");
+    const longAgo = new Date(now - 60 * DAY);
+    expect(credentialExpiresNotice(null, longAgo, now)).toBeNull();
+    expect(credentialExpiresNotice("garbage", longAgo, now)).toBeNull();
+    expect(credentialExpiresNotice(new Date(now + DAY), null, now)).toBeNull();
+    expect(credentialExpiresNotice(new Date(now + 7 * DAY), longAgo, now)).toBe("2026-11-17T12:00:00.000Z");
+    expect(credentialExpiresNotice(new Date(now + 7 * DAY + 1), longAgo, now)).toBeNull();
+    expect(credentialExpiresNotice("2026-11-11T13:00:00+01:00", longAgo, now)).toBe("2026-11-11T12:00:00.000Z");
+    // Lifetime: more than 7 days, not 7 days or less.
+    expect(credentialExpiresNotice(new Date(now + DAY), new Date(now + DAY - 7 * DAY), now)).toBeNull();
+    expect(credentialExpiresNotice(new Date(now + DAY), new Date(now + DAY - 7 * DAY - 1), now)).toBe("2026-11-11T12:00:00.000Z");
+    // Already past (expiry checked at authentication, a race): still named.
+    expect(credentialExpiresNotice(new Date(now - 1000), longAgo, now)).toBe("2026-11-10T11:59:59.000Z");
   });
 });

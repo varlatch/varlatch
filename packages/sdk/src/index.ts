@@ -138,14 +138,14 @@ export interface VarlatchClientOptions {
   /**
    * Called with the `Varlatch-Credential-Expires` header's value whenever a
    * response carries it: the server names the expiry of a credential that
-   * expires within 7 days on every response to it, errors included. The
-   * CLI warns on stderr with it when the credential came from
-   * VARLATCH_TOKEN.
+   * lives longer than 7 days, in its last 7 days, on every response to it,
+   * errors included. The CLI warns on stderr with it when the credential
+   * came from VARLATCH_TOKEN.
    */
   onCredentialExpires?: (expiresAt: string) => void;
 }
 
-/** Names the presenting credential's expiry when it is within 7 days (server side, ADR-0054 Decision 8). */
+/** Names the presenting long-lived credential's expiry in its last 7 days (server side, ADR-0054 Decision 8). */
 export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
 
 export interface MaintenanceWait {
