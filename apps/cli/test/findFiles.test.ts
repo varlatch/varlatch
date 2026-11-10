@@ -102,20 +102,20 @@ describe("exit status and output", () => {
     expect(findFilesExitCode({ ...base, notSearched: [{ path: Buffer.from("x/"), reason: "directory unreadable (EACCES)" }] })).toBe(2);
   });
 
-  it("suggests import for dotenv files and values set for key files, and rotation for tracked ones", () => {
+  it("suggests import for dotenv files and values set for key files, and checking history for files Git does not ignore", () => {
     const lines = formatFindFilesHuman({
       ...base,
       files: [
-        { path: Buffer.from(".env"), kind: "dotenv", symlink: false, git: "tracked" },
+        { path: Buffer.from(".env"), kind: "dotenv", symlink: false, git: "ignored" },
         { path: Buffer.from("certs/tls.key"), kind: "key", symlink: true, git: "not-ignored" },
       ],
     }).join("\n");
-    expect(lines).toContain("  .env: tracked by Git, so it is in the repository's history");
-    expect(lines).toContain("  certs/tls.key: a symbolic link, not followed; not ignored by Git, so a commit could add it");
-    expect(lines).toContain("varlatch scan: 2 file(s) look like copies of secrets (1 tracked by Git, 1 not ignored)");
+    expect(lines).toContain("  .env: ignored by Git");
+    expect(lines).toContain("  certs/tls.key: a symbolic link, not followed; not ignored by Git, so it can be committed");
+    expect(lines).toContain("varlatch scan: 2 file(s) look like copies of secrets (1 not ignored by Git)");
     expect(lines).toContain("varlatch import <file> --delete-source");
     expect(lines).toContain("varlatch values set <ITEM> --from-file <file>");
-    expect(lines).toContain("rotate the secrets it holds");
+    expect(lines).toContain("may already be committed (git log --all -- <file>): rotate the secrets of one that was");
   });
 });
 
@@ -130,7 +130,7 @@ describe("names that are not UTF-8 or hold controls", () => {
     const doc = findFilesJson({
       root: Buffer.from("/r"),
       files: [
-        { path: fe, kind: "key", symlink: false, git: "tracked" },
+        { path: fe, kind: "key", symlink: false, git: "ignored" },
         { path: ff, kind: "key", symlink: false, git: "not-ignored" },
         { path: Buffer.from("ok.key"), kind: "key", symlink: false, git: "ignored" },
       ],

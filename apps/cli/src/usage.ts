@@ -125,7 +125,7 @@ Usage:
   varlatch scan --install-hook [-e <env>]              # pre-commit hook running varlatch scan --staged
   varlatch scan --find-files [<dir>] [--json]
                (list files that look like copies of secrets by name: .env, .env.* except .env.example and
-                .env.schema, *.pem, *.key; says whether Git ignores or tracks each; reads names only, needs
+                .env.schema, *.pem, *.key; says whether Git ignores each; reads names only, needs
                 no project or server; exit 1 files found, 2 search incomplete)
   varlatch invite <name> [--role member|admin]
   varlatch member <list [--json]|remove <member> --confirm <member>|leave --confirm <organization>|role <member> admin|member>

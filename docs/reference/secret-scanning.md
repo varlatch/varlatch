@@ -276,13 +276,13 @@ into Varlatch and delete them.
 $ varlatch scan --find-files
 Files that look like copies of secrets, by name, under /home/me/src/web:
   .env: ignored by Git
-  certs/dev.key: tracked by Git, so it is in the repository's history
-  services/api/.env.local: not ignored by Git, so a commit could add it
+  certs/dev.key: not ignored by Git, so it can be committed
+  services/api/.env.local: Git status unknown: /home/me/src/web/.git/config includes other files, which Git would read
 
-varlatch scan: 3 file(s) look like copies of secrets (1 tracked by Git, 1 not ignored); 1830 entries checked by name. No file was opened.
+varlatch scan: 3 file(s) look like copies of secrets (1 not ignored by Git); 1830 entries checked by name. No file was opened.
 Move a dotenv file into Varlatch and delete it: varlatch import <file> --delete-source
 Store a key or certificate as one Secret, then delete the file: varlatch values set <ITEM> --from-file <file>
-Removing a tracked file does not remove it from Git history: rotate the secrets it holds.
+A file Git does not ignore may already be committed (git log --all -- <file>): rotate the secrets of one that was.
 See docs/reference/secret-scanning.md and docs/reference/import.md.
 ```
 
@@ -316,36 +316,51 @@ See docs/reference/secret-scanning.md and docs/reference/import.md.
   are not UTF-8 is shown quoted, with each control escaped (`\n`,
   `\u009b`) and each such byte as `\xfe`. Messages that quote a path or
   Git's error are escaped the same way.
-- **Git state.** For each file, the search asks Git, by name only, in the
-  repository that holds it (a nested repository or a linked worktree counts
-  as its own): `tracked by Git` (it is committed: the worst case, since
-  removing it does not remove it from history), `not ignored by Git` (a
-  `git add .` would commit it), `ignored by Git`, or `not in a Git
-  repository`. When Git cannot answer (it is not installed, the repository
-  is not trusted under `safe.directory`, or a directory name is not UTF-8),
-  the line says `Git status unknown` and why.
-- **Git does not read a copy either.** Git's configuration can make it open
-  other files: an `include.path` or `includeIf` file, the
-  `core.excludesFile` (by default `~/.config/git/ignore`), and the
-  repository's `info/exclude`. Before Git runs for a repository, the
-  search finds the repository itself and reads the configuration Git would
-  load (the global files and the repository's own, following includes
-  itself, each file parsed with includes turned off), and checks the name
-  of every file Git would open, through any symbolic links. When one has
-  the name of a secret copy (or the repository's `HEAD` or index links to
-  one), Git is not run for that repository and the line says
-  `Git status unknown: the Git configuration could make Git read other
-  files`, with the file. The system configuration (`/etc/gitconfig`) and
-  configuration passed in environment variables (`GIT_CONFIG_COUNT`,
-  `GIT_CONFIG_PARAMETERS`) are not given to Git, and Git runs only
-  `rev-parse`, `ls-files`, and `check-ignore`, with `core.fsmonitor` off
-  and a 30-second limit.
+- **Git state.** For each file, the search asks Git whether it ignores
+  it, in the repository that holds it (a nested repository or a linked
+  worktree counts as its own): `ignored by Git`, `not ignored by Git` (a
+  `git add .` would commit it, and it may already be committed: check with
+  `git log --all -- <file>`), or `not in a Git repository`. Whether a file
+  is tracked is not reported: answering it would make Git read the index
+  and more. Git runs once per repository, as `git check-ignore
+  --no-index`, which reads no index and no object, with none of your `GIT_`
+  environment variables, without the system or global configuration (the
+  global `core.excludesFile` is passed to it after the check below), with
+  `core.fsmonitor` off, and for at most 30 seconds.
+- **When the Git status is unknown.** Git can be made to open other files,
+  and one of them could be a secret copy. So Git is not run at all for a
+  repository where anything is unusual, and its files say
+  `Git status unknown` with the reason:
+  - its configuration (`.git/config`, or `config.worktree`) includes
+    other files (`include.path` or `includeIf`), sets `core.worktree`, or
+    sets a `core.excludesFile` that is not UTF-8;
+  - the excludes file (`core.excludesFile`, or `~/.config/git/ignore`) is
+    not an absolute path, has the name of a secret copy (directly or
+    through a symbolic link), or is not a regular file;
+  - a file Git opens there (`.git/HEAD`, `.git/config`,
+    `config.worktree`, `info/exclude`, the `.git` file of a linked
+    worktree, or its `commondir`) is a symbolic link, has another name (a
+    hard link), or is not a regular file, or a pointer in it does not lead
+    to a directory;
+  - it uses another object store (`objects/info/alternates`), or is a bare
+    repository;
+  - Git refuses it (for example a repository owned by someone else), does
+    not answer in time, or is not installed; or a directory name on the way
+    is not UTF-8.
+
+  The global configuration (`~/.gitconfig`, `~/.config/git/config`, or
+  `GIT_CONFIG_GLOBAL`) is read only for its `core.excludesFile`, the same
+  way. When it is a link to a file named like a copy, every state is
+  unknown. Its includes are not read; when it has any, `not ignored by Git`
+  cannot be certain and is reported as unknown instead, while
+  `ignored by Git` still holds. `.gitignore` files are read by Git, which
+  never follows a symbolic link for them.
 - **Next steps.** Move a dotenv file in with
   [`varlatch import <file> --delete-source`](import.md), and store a key or
   certificate file as one Secret with `varlatch values set <ITEM>
   --from-file <file>`, then delete the file. Both run in a Varlatch project.
-  Rotate the secrets of a file that was tracked or that you cannot account
-  for.
+  Rotate the secrets of a file that was committed or that you cannot
+  account for.
 
 `--find-files` takes `--json` and no other option: `--staged`, paths to
 scan, `-e`, and the other options of the value scan are refused.
@@ -360,7 +375,7 @@ scan, `-e`, and the other options of the value scan are refused.
   "root": "/home/me/src/web",
   "files": [
     { "path": ".env", "kind": "dotenv", "symlink": false, "git": "ignored" },
-    { "path": "certs/dev.key", "kind": "key", "symlink": false, "git": "tracked" }
+    { "path": "certs/dev.key", "kind": "key", "symlink": false, "git": "not-ignored" }
   ],
   "notSearched": [],
   "entriesChecked": 1830,
@@ -372,7 +387,7 @@ scan, `-e`, and the other options of the value scan are refused.
 that is not UTF-8 is given lossily in `path`, with its exact bytes in
 `pathBase64` (`rootBase64`); use those when present. DEL and C1 controls
 are escaped as `\u007f` to `\u009f`, which is still the same JSON.
-`kind` is `dotenv` or `key`. `git` is one of `tracked`, `not-ignored`, `ignored`,
+`kind` is `dotenv` or `key`. `git` is one of `not-ignored`, `ignored`,
 `no-repository`, and `unknown` (with `gitError`). `notSearched` lists the
 directories not searched, with the reason, and `stopped` is `true` when the
 entry bound was reached.
@@ -387,7 +402,7 @@ entry bound was reached.
 
 These follow the value scan: 1 for findings, 2 for incomplete. A CI job can
 run `varlatch scan --find-files` to fail when such a file is in the
-checkout; in a fresh checkout, the files it finds are normally tracked ones.
+checkout; in a fresh checkout, the files it finds are normally committed ones.
 
 ## Checking shell history for values
 

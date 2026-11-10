@@ -23,16 +23,17 @@ fixes.
   lists the files under a directory (the current one by default) whose
   names look like copies of secrets: `.env`, `.env.*` except
   `.env.example` and `.env.schema`, `*.pem` and `*.key`. For each it says
-  whether Git tracks it, ignores it, or would commit it, and it suggests
-  `varlatch import` to move a dotenv file in. It reads names only and never
-  opens a file, does not follow symbolic links, skips `.git` and
-  `node_modules`, and needs no project, sign-in or server. Git is not run
-  for a repository whose configuration could make Git open such a file (an
-  include or an excludes file with such a name); its state is then
-  unknown. It exits 1 when it finds a file and 2 when part of the tree was
-  not searched. The secret scanning reference also shows how to check a
-  shell history file for values with `varlatch scan <file>`. See
-  [Finding copies of secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
+  whether Git ignores it, and it suggests `varlatch import` to move a
+  dotenv file in. It reads names only and never opens a file, does not
+  follow symbolic links, skips `.git` and `node_modules`, and needs no
+  project, sign-in or server. Git runs only `git check-ignore --no-index`,
+  and not at all for a repository with anything unusual (an include in its
+  configuration, a linked or hard-linked file Git would open, another
+  object store), whose state is then unknown. It exits 1 when it finds a
+  file and 2 when part of the tree was not searched. The secret scanning
+  reference also shows how to check a shell history file for values with
+  `varlatch scan <file>`. See [Finding copies of
+  secrets](docs/reference/secret-scanning.md#finding-copies-of-secrets).
 
 ## 0.20.0 (2026-10-30)
 
