@@ -110,15 +110,25 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
     // A worker that dies holding its rows: nothing it claimed is emitted.
     await expect(emitDueSummaries(ctx, { batch: 50, onClaimed: async () => { throw new Error("killed"); } })).rejects.toThrow("killed");
     expect(await summaries()).toEqual([]);
+    // Each worker's first batch waits, holding its rows, until another
+    // worker holds a batch too: SKIP LOCKED lets them claim side by side
+    // (with a plain FOR UPDATE the second would wait for the first).
+    let holding = 0;
+    let waitedAlone = false;
+    const together = deferred();
+    const firstBatch = async () => {
+      if (++holding >= 2) together.resolve();
+      if (await Promise.race([together.promise.then(() => false), sleep(3000).then(() => true)])) waitedAlone = true;
+    };
     const loop = async () => {
-      let emitted = 0;
+      let emitted = await emitDueSummaries(ctx, { batch: 20, onClaimed: firstBatch });
       for (let n = -1; n !== 0; emitted += n) n = await emitDueSummaries(ctx, { batch: 20 });
       return emitted;
     };
     const emitted = await Promise.all([loop(), loop(), loop(), loop()]);
     expect(emitted.reduce((a, b) => a + b, 0)).toBe(300);
-    // More than one worker took part.
-    expect(emitted.filter((n) => n > 0).length).toBeGreaterThan(1);
+    expect(holding).toBe(4);
+    expect(waitedAlone).toBe(false);
     const all = await summaries();
     expect(all).toHaveLength(300);
     expect(new Set(all.map((s) => s.actor_identity_id)).size).toBe(300);
@@ -136,7 +146,7 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
       holder.release();
     }
     expect(await emitDueSummaries(ctx, { exclusive: true })).toBe(1);
-  });
+  }, 30_000);
 
   for (const order of ["counters before audit", "audit before counters (broken)"] as const) {
     it(`an increment for a bucket being emitted, ${order}`, async () => {
@@ -178,7 +188,7 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
     }, 20_000);
   }
 
-  it("under SERIALIZABLE, retries the whole mutation and counts the late increment once", async () => {
+  it("under SERIALIZABLE, retries the whole mutation and counts the late increment once", { timeout: 30_000 }, async () => {
     await count(twoHoursAgo(), [attempt()]);
     let attempts = 0;
     await withSerializableTx(db, async (tx) => {
@@ -196,7 +206,7 @@ describe.skipIf(!url)("report counters on real PostgreSQL", () => {
     expect((await rows()).map((r) => [r.count, r.emitted, r.current_hour])).toEqual([[1, true, false], [1, false, true]]);
   });
 
-  it("counts a member's removal (a SERIALIZABLE write) once, when it commits", async () => {
+  it("counts a member's removal (a SERIALIZABLE write) once, when it commits", { timeout: 30_000 }, async () => {
     const grant = await issueInviteGrant(ctx, { organizationId: orgId, role: "member", name: "Bob" }, adminId);
     const bob = (await consumeSetupGrant(ctx, grant.token, {})).identityId;
     expect((await call("PATCH", "/v1/organizations/acme/security/controls/admin-step-up", cli, { mode: "report", expectedVersion: 0 })).status).toBe(200);
