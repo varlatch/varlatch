@@ -394,6 +394,15 @@ needs: like a person, it starts with no access.
   varlatch credential revoke <identity-id> <credential-id>
   ```
 
+  To find credentials that may no longer be needed, run
+  `varlatch security report` (`--json` for the whole document). It lists
+  the organization's machine credentials that were never used, have not
+  been used for 30 days, or never expire, each with its identity and when
+  it was last used. It only reports: nothing is revoked or retired for
+  you. It needs `identity.manage`, as `credential list` does. Short-lived
+  credentials from OIDC sign-ins and agent-safe runs expire within an hour
+  and are left out.
+
   To replace a credential, issue the new one, move the program to it, then
   revoke the old one.
 

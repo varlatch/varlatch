@@ -17,6 +17,22 @@ fixes.
   clock. Codes Varlatch does not recognize, the storage provider's message
   and the key are never shown.
 
+### Machine identities
+
+- **See which machine credentials may no longer be needed.** `varlatch
+  security report` (`--json` for the whole document) lists the
+  organization's machine credentials that were never used, have not been
+  used for 30 days, or never expire, grouped by reason, each with its
+  identity, when it was last used, its expiry and who issued it, and a
+  count per reason. Revoked, expired and used-up credentials are not
+  listed, nor are people's credentials or the short-lived credentials of
+  OIDC sign-ins and agent-safe runs. A credential of a machine suspended
+  by the organization's deletion is listed with that state. It only
+  reports: nothing is revoked or retired, and it changes no access. It
+  needs `identity.manage`, as `varlatch credential list` does. API: `GET
+  /v1/organizations/{org}/security/credential-review`, capability
+  `security.credential-review`.
+
 ## 0.20.0 (2026-10-30)
 
 ### Integrations

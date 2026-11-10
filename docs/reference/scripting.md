@@ -30,6 +30,7 @@ human formats do not change either: scripts that parse them keep working.
 | `varlatch identity list --json` | `organization`, `identities`: id, name, kind, retired, lastSeenAt |
 | `varlatch credential list <identity> --json` | `identity`, `credentials`: id, kind, name, createdAt, expiresAt, revokedAt, lastUsedAt |
 | `varlatch credential issue <identity> --name <name> --out <file> --json` | `identity`, `credential`: id, kind, name, expiresAt, maxUses; `out`, the file that holds the token (never the token) |
+| `varlatch security report --json` | `organization`, `credentialReview`: `generatedAt`, `idleDays`, `summary` (reviewed, listed, neverUsed, idle, noExpiry), `items` (id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, `identity` with id, name, kind, state, disabledReason, and `reasons`: never-used, idle, no-expiry; never a token) |
 | `varlatch audit list --json` | `organization`, `events`: the audit events as the API returns them |
 | `varlatch tailnet requirements --json` | `organization`, `requirements`: as the API returns them |
 | `varlatch scan --json` | findings and files not scanned; see [secret scanning](secret-scanning.md) |
