@@ -4050,8 +4050,12 @@ components:
         (ADR-0054 Decision 3). Consumed with the operation, in its
         transaction: a failed operation leaves it usable until it expires,
         a successful one uses it up. APPROVAL_INVALID with details.reason
-        when it does not fit (not found, pending, expired, used, closed, or
-        approved for another operation, target, body or version).
+        when it does not fit (not found, pending, expired, used, closed,
+        approved for another operation, target, body, version or requester,
+        or, for an approval the dashboard asked for, its sign-in session has
+        ended: signed out or expired). A CLI approval is bound to the CLI
+        credential that asked; a dashboard approval to the browser session
+        that asked, through any live bearer of that session.
       schema: { type: string }
     org:
       name: org
