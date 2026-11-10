@@ -440,8 +440,26 @@ export async function denyDeviceSignIn(
 }
 
 /**
+ * The approver first: their identities row FOR KEY SHARE (the approval
+ * references it), then all their passkeys in id order FOR UPDATE (the
+ * assertion advances one passkey's counter, and which one is only known
+ * then). Taken before the sign-in and its challenge, so an approval locks
+ * the person before a passkey, as passkey confirmation and removal do.
+ * Locking the passkey first and referencing the person after deadlocked
+ * with a confirmation that held the person and then referenced the passkey.
+ */
+async function lockApprover(db: Querier, identityId: string): Promise<void> {
+  await db.query("SELECT id FROM identities WHERE id = $1 FOR KEY SHARE", [identityId]);
+  await db.query(
+    `SELECT p.id FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId"
+     WHERE l.identity_id = $1 ORDER BY p.id FOR UPDATE OF p`,
+    [identityId],
+  );
+}
+
+/**
  * Approve with a fresh passkey assertion. In one transaction, under the
- * sign-in's row lock: check it is still pending and unexpired, consume the
+ * approver's locks (lockApprover) and the sign-in's row lock: check it is still pending and unexpired, consume the
  * challenge (only one issued for this sign-in, identity, and session, unused
  * and unexpired), verify the assertion with one of the identity's passkeys,
  * and move the sign-in from pending to approved, again only while pending
@@ -457,6 +475,7 @@ export async function approveDeviceSignIn(
 ): Promise<void> {
   const challenge = assertionChallenge(input.assertion);
   const refusal = await withTx(ctx.db, async (db) => {
+    await lockApprover(db, input.identityId);
     // Decided or expired meanwhile (a concurrent denial wins, say): say so,
     // and leave the challenge and the audit log alone. The row lock orders
     // this approval after any decision in flight.

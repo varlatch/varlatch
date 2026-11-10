@@ -15,9 +15,12 @@ export interface SoftAuthenticator {
   /**
    * An assertion over `challenge` for `origin`, as a browser would post it.
    * The authenticator verifies the user (a PIN or biometric) unless
-   * `userVerified` is false: then only user presence is flagged.
+   * `userVerified` is false: then only user presence is flagged. Each
+   * assertion carries the next signature counter (1, 2, ...), or
+   * `signCount` when given, which leaves the counter as it is: 0 is an
+   * authenticator without a counter, as most synced passkeys are.
    */
-  assert(challenge: string, options?: { origin?: string; rpId?: string; tamper?: boolean; userVerified?: boolean }): Record<string, unknown>;
+  assert(challenge: string, options?: { origin?: string; rpId?: string; tamper?: boolean; userVerified?: boolean; signCount?: number }): Record<string, unknown>;
 }
 
 /** A software authenticator not stored anywhere yet: it can answer a registration ceremony (attestation "none"). */
@@ -65,7 +68,7 @@ export function softAuthenticator(options: { rpId: string; origin: string }): Un
     credentialId,
     coseKey: key,
     assert(challenge, assertOptions = {}) {
-      counter++;
+      const count = assertOptions.signCount ?? ++counter;
       const clientDataJSON = Buffer.from(JSON.stringify({
         type: "webauthn.get",
         challenge,
@@ -73,7 +76,7 @@ export function softAuthenticator(options: { rpId: string; origin: string }): Un
         crossOrigin: false,
       }));
       const signCount = Buffer.alloc(4);
-      signCount.writeUInt32BE(counter);
+      signCount.writeUInt32BE(count);
       const authenticatorData = Buffer.concat([
         createHash("sha256").update(assertOptions.rpId ?? options.rpId).digest(),
         // 0x05: user present and user verified; 0x01: user present only.

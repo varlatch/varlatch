@@ -99,7 +99,7 @@ describe("migration 39", () => {
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash,auth_session_id) VALUES ('crd_web','idn_a','browser','h1','ses_old')");
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_a','cli','h2')");
 
-      expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39]);
+      expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39, 40]);
       // The oldest row of a credential id stays (pk_1 has no date, so it sorts first) and is trusted, like every remaining passkey.
       expect((await db.query("SELECT passkey_id, trust, trusted_via, trusted_at IS NOT NULL AS dated FROM passkey_provenance ORDER BY passkey_id")).rows).toEqual([
         { passkey_id: "pk_1", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },
@@ -177,6 +177,26 @@ describe("migration 39 on an installation without duplicate credential ids", () 
         key.credentialId,
       ]),
     ).rejects.toThrow(/duplicate key/);
+  });
+});
+
+describe("migration 40: a passkey's signature counter only moves forward", () => {
+  it("refuses any write that does not increase a counter above zero, and allows 0 over 0", async () => {
+    const ada = await person("Ada");
+    const key = await ada.key("trusted");
+    const set = (counter: number) => ctx.db.query("UPDATE passkey SET counter = $2 WHERE id = $1", [key.passkeyId, counter]);
+    const counter = async () => (await rows("SELECT counter FROM passkey WHERE id = $1", [key.passkeyId]))[0].counter as number;
+    // An authenticator without a counter reports 0 every time.
+    await set(0);
+    await set(0);
+    await set(1);
+    await set(5);
+    for (const lower of [5, 4, 1, 0]) await expect(set(lower)).rejects.toThrow(/signature counter/);
+    expect(await counter()).toBe(5);
+    // Writes that leave the counter out are not checked: renaming a passkey.
+    await ctx.db.query("UPDATE passkey SET name = 'renamed' WHERE id = $1", [key.passkeyId]);
+    await set(6);
+    expect(await counter()).toBe(6);
   });
 });
 

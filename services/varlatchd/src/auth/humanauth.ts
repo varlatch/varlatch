@@ -329,6 +329,11 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
             return enrolled;
           },
         },
+        // The sign-in verifies the passkey's signature counter, then writes
+        // the new one without a lock. Migration 40's trigger refuses a write
+        // that would not increase it (a concurrent sign-in with the same
+        // passkey wrote a higher one first); Better Auth answers that as a
+        // failed sign-in (400), before it creates a session.
         authentication: {
           afterVerification: ({ verification }) => {
             const state = ceremonies.getStore();
