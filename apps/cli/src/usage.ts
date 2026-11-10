@@ -116,6 +116,9 @@ Usage:
   varlatch move --abandon [--dir <compose-directory>]  # give up an open move: back to the old address
   varlatch admin reenroll (--all | --identity <id>...) [--hours <1-168>] [--dir <compose-directory>]
                                                        # one-time links: a new passkey on an existing identity
+  varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]
+               (the host operator's way back: sets the named security controls to off and closes their open
+                approvals; never touches deletion, passkeys or grants)
   varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
                                                        # read-only installation health on this host
   varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]
@@ -160,6 +163,18 @@ Usage:
   varlatch security report [--json] [--org <organization>] [--server <url>]
                (machine credentials never used, unused for 30 days, or without expiry, with their identity and
                 last use; reporting only: nothing is revoked or retired; needs identity.manage)
+  varlatch security controls [--json] [--org <organization>] [--server <url>]
+               (the organization's security controls: requirement-protection, admin-step-up, passkey-verification,
+                credential-lifetime, each off, report or enforce; enforce is not available yet)
+  varlatch security set <control> <off|report|enforce> [--default-ttl <seconds>] [--max-ttl <seconds>] [--clear-config]
+                        [--approval <id>] [--json] [--org <organization>] [--server <url>]
+               (needs organization.manage and a person's credential; tightening applies at once; loosening, such as
+                report to off or a longer lifetime, needs your approval with a trusted passkey: the CLI prints an
+                address, waits until you approved it in the dashboard, then sends the change again)
+  varlatch --approval <id> <command>...                 # resume a command that needed your approval (step-up),
+               after you approved it: waits for the approval (until it expires), then sends the command with it.
+               In assisted mode the CLI never waits on its own: it prints the address, exits 75, and the command
+               runs again with --approval <id> once the person approved
   varlatch --version                                   # CLI release; refresh it after every upgrade
   varlatch self-update [<version>] [--check [--json]] [--yes [--allow-unverified]] [--repo <owner/repo>]
                                                        # replace this CLI with a release build (checksum, signature)
@@ -168,8 +183,9 @@ Usage:
                    # backup-gated compose upgrade on this host (run where docker-compose.yml lives)
 
 Exit status: 0 success; 1 failure; 64 the command line is wrong; 69 the server cannot be reached or is in
-maintenance; 75 login --wait reached its deadline with the sign-in still pending; 77 not authenticated or denied;
-78 strict startup violation, or assisted mode cannot mask a Secret.
+maintenance; 75 login --wait reached its deadline with the sign-in still pending, or an approval is still pending
+(assisted mode) or expired; 77 not authenticated or denied, or an approval was cancelled, used or does not fit;
+78 strict startup violation, or assisted mode cannot mask a Secret; 130 Ctrl-C stopped the wait for an approval.
 Kept as before: validate 1 invalid, 2 incomplete; scan 1 findings, 2 not everything scanned; types --check 1 stale;
 sync check 1 drift, 2 not everything checked;
 run returns the command's own status once the command has started. agents install --check exits 1 when the files differ.`;
