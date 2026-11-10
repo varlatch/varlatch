@@ -20,8 +20,11 @@
  *   nothing refused them. The oldest row of each credential id (by
  *   "createdAt", then id) stays; every later one moves here with all its
  *   columns, when and why it moved, and which row was kept. A quarantined
- *   passkey can no longer sign in. The kept row has the same credential id,
- *   so the authenticator that holds it still signs in with it.
+ *   passkey can no longer sign in. When the kept row is another person's,
+ *   its owner has lost that passkey (and an authenticator with the same
+ *   public key signs in as the kept row's person); the migrate command lists
+ *   them, and the host operator's `admin reenroll` gives them a new trusted
+ *   passkey.
  * - auth_session_evidence: what the ceremony that created a Better Auth
  *   session proved: whether the authenticator verified the user, and which
  *   passkey asserted (its provenance is read when the evidence is used, so a

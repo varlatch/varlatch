@@ -6,7 +6,7 @@ import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
-import { PASSKEY_CONFIRMATION, credentialEvidence, recordSessionEvidence } from "../src/domain/passkeys.js";
+import { PASSKEY_CONFIRMATION, credentialEvidence, quarantineReport, quarantinedPasskeys, recordSessionEvidence } from "../src/domain/passkeys.js";
 import { buildApp } from "../src/http/app.js";
 import { newId } from "../src/db/ids.js";
 import { PUBLIC_URL, RP, deviceClient } from "./helpers/device-sign-in.js";
@@ -117,6 +117,17 @@ describe("migration 39", () => {
         { id: "pk_9dup", name: null, publicKey: "k9", userId: "bau_a", credentialID: "c1", counter: 7, deviceType: "multiDevice", backedUp: true,
           transports: null, createdAt: new Date("2026-11-02T10:00:00Z"), aaguid: null, reason: "duplicate-credential-id", kept_passkey_id: "pk_1", dated: true },
       ]);
+      // The migrate command's report: same-person copies, with the kept passkey named.
+      const quarantined = await quarantinedPasskeys(db);
+      expect(quarantined.map((q) => [q.passkeyId, q.identityId, q.keptPasskeyId, q.samePerson, q.samePublicKey])).toEqual([
+        ["pk_0dup", "idn_a", "pk_1", true, false],
+        ["pk_9dup", "idn_a", "pk_1", true, false],
+      ]);
+      const report = quarantineReport(quarantined);
+      expect(report[0]).toContain("Migration 39 moved 2 passkey(s) to passkey_quarantine");
+      expect(report[1]).toContain("A [idn_a]: passkey pk_0dup; their passkey pk_1 with the same credential id was kept.");
+      expect(report.at(-1)).toContain("varlatch admin reenroll --identity");
+      expect(quarantineReport([])).toEqual([]);
       // A plain unique index: every passkey's credential id is unique.
       expect((await db.query("SELECT indexdef FROM pg_indexes WHERE indexname = 'passkey_credential_id_unique'")).rows).toEqual([
         { indexdef: 'CREATE UNIQUE INDEX passkey_credential_id_unique ON public.passkey USING btree ("credentialID")' },

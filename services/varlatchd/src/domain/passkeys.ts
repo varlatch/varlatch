@@ -383,3 +383,74 @@ export async function removeOwnPasskey(ctx: AppCtx, input: { identityId: string;
     await db.query("DELETE FROM passkey WHERE id = $1", [input.passkeyId]);
   });
 }
+
+/** A passkey migration 39 moved to passkey_quarantine, with whose it was and whose passkey was kept. */
+export interface QuarantinedPasskey {
+  passkeyId: string;
+  /** The person whose passkey it was; null when their account link is gone. */
+  identityId: string | null;
+  identityName: string | null;
+  keptPasskeyId: string;
+  /** The person whose passkey with the same credential id was kept (null when it was removed since). */
+  keptIdentityId: string | null;
+  /** The kept passkey is the same person's. */
+  samePerson: boolean;
+  /** The kept passkey has the same public key, so the same authenticator signs in with it, as the kept passkey's person. */
+  samePublicKey: boolean;
+  quarantinedAt: string;
+}
+
+/**
+ * Passkeys migration 39 quarantined because an older passkey had the same
+ * credential id. A quarantined passkey no longer signs in. When the kept
+ * passkey is another person's, its owner lost that passkey, and with the
+ * same public key their authenticator would sign in as the other person;
+ * the host operator's `admin reenroll` gives them a new trusted one.
+ */
+export async function quarantinedPasskeys(db: Querier): Promise<QuarantinedPasskey[]> {
+  const res = await db.query(
+    `SELECT q.id, q.quarantined_at, l.identity_id, i.name, q.kept_passkey_id, kl.identity_id AS kept_identity_id,
+            coalesce(k."userId" = q."userId", false) AS same_person,
+            coalesce(k."publicKey" = q."publicKey", false) AS same_public_key
+     FROM passkey_quarantine q
+     LEFT JOIN auth_user_links l ON l.better_auth_user_id = q."userId"
+     LEFT JOIN identities i ON i.id = l.identity_id
+     LEFT JOIN passkey k ON k.id = q.kept_passkey_id
+     LEFT JOIN auth_user_links kl ON kl.better_auth_user_id = k."userId"
+     ORDER BY q.quarantined_at, q.id`,
+  );
+  return (res.rows as {
+    id: string; quarantined_at: Date | string; identity_id: string | null; name: string | null; kept_passkey_id: string;
+    kept_identity_id: string | null; same_person: boolean; same_public_key: boolean;
+  }[]).map((r) => ({
+    passkeyId: r.id,
+    identityId: r.identity_id,
+    identityName: r.name,
+    keptPasskeyId: r.kept_passkey_id,
+    keptIdentityId: r.kept_identity_id,
+    samePerson: r.same_person,
+    samePublicKey: r.same_public_key,
+    quarantinedAt: new Date(r.quarantined_at).toISOString(),
+  }));
+}
+
+/** What the migrate command prints about quarantined passkeys: nothing when there are none. */
+export function quarantineReport(rows: QuarantinedPasskey[]): string[] {
+  if (rows.length === 0) return [];
+  const lines = [
+    `Migration 39 moved ${rows.length} passkey(s) to passkey_quarantine: each shared its credential id with an older passkey. A quarantined passkey no longer signs in.`,
+  ];
+  for (const r of rows) {
+    const who = r.identityId ? `${r.identityName ?? "unnamed"} [${r.identityId}]` : "a person whose account link is gone";
+    lines.push(
+      r.samePerson
+        ? `  ${who}: passkey ${r.passkeyId}; their passkey ${r.keptPasskeyId} with the same credential id was kept.`
+        : `  ${who}: passkey ${r.passkeyId}; the kept passkey ${r.keptPasskeyId} is another person's [${r.keptIdentityId ?? "removed"}].` +
+          (r.samePublicKey ? " With the same public key, this authenticator now signs in as that person." : ""),
+    );
+  }
+  lines.push(
+    "To give someone a new trusted passkey: varlatch admin reenroll --identity <identity id> (varlatchd admin reenroll in the container).",
+  );
+  return lines;
+}

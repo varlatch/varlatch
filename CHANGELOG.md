@@ -124,10 +124,17 @@ fixes.
   400, as the WebAuthn standard asks, also when two registrations of it
   arrive at once. If an installation already has such duplicates, the
   upgrade keeps the oldest passkey of each credential and moves the later
-  copies out of the passkey list into a quarantine table (the upgrade log
-  says how many). A quarantined copy can no longer sign in. In practice
-  nothing changes for its owner: the copy that stays belongs to the same
-  physical security key or device, which keeps signing in with it.
+  copies to a quarantine table, `passkey_quarantine`. A quarantined
+  passkey can no longer sign in. When the passkey that was kept belongs to
+  another person, the person whose passkey was quarantined loses it, and
+  signing in with that authenticator signs in as the other person if it
+  has the same public key. The migration job's output (with Compose,
+  `docker compose logs varlatch-migrate`) lists every quarantined
+  passkey with its person and says whose passkey was kept; the table also
+  records it (`kept_passkey_id`). Whoever runs the server restores access
+  with `varlatch admin reenroll --identity <identity id>`, which sends a
+  link that enrolls a new trusted passkey. See [Passkeys that shared a
+  credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39).
 
 ## 0.20.0 (2026-10-30)
 
