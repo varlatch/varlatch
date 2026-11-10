@@ -120,7 +120,11 @@ export type AssertionRefusal = "unknown-passkey" | "invalid-assertion" | "user-v
  * counter. When `requireUserVerification` is set, an assertion without
  * user verification is refused. Run it inside the transaction that consumes
  * the challenge: the passkey row stays locked until that transaction ends.
- * Returns the reason on refusal; never throws for a bad assertion.
+ * Lock the person's identities row before calling it (device approval
+ * also locks all their passkeys), so a passkey is never locked before its
+ * person: a transaction holding the person and then referencing the
+ * passkey would otherwise deadlock with this one. Returns the reason on
+ * refusal; never throws for a bad assertion.
  */
 export async function verifyAssertion(
   db: Querier,
