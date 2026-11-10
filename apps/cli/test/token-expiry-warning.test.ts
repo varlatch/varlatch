@@ -22,7 +22,10 @@ const dir = mkdtempSync(join(tmpdir(), "varlatch-token-expiry-"));
 const bundle = join(dir, "varlatch.cjs");
 const repo = join(dir, "repo");
 const child = join(dir, "child.cjs");
-const EXPIRES = "2026-11-12T08:00:00.000Z";
+// Relative to the run: the subprocesses compare it with the real clock.
+const EXPIRES = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+/** Always in the past, for the "expired" wording. */
+const EXPIRED = "2026-01-01T00:00:00.000Z";
 let server: http.Server;
 let serverUrl = "";
 /** The header the fake server sends with every response; null for none. */
@@ -149,7 +152,7 @@ describe("VARLATCH_TOKEN expiry warning", () => {
   });
 
   it("is on stderr for a refused request too, and says when the credential already expired", async () => {
-    const past = "2026-01-01T00:00:00.000Z";
+    const past = EXPIRED;
     // The fake server answers GET /v1/organizations with 404.
     const refused = await withHeader(past, () => cli(["org", "list"]));
     expect(refused.code).not.toBe(0);

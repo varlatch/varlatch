@@ -14,7 +14,6 @@ export const EXPIRY_WARNING_DAYS = 14;
  * Days ahead of a machine credential's expiry when Access → Machines marks
  * it: the window in which varlatchd names the expiry in the
  * Varlatch-Credential-Expires header and the CLI warns about VARLATCH_TOKEN.
- * Only credentials that live longer than this are marked.
  */
 export const MACHINE_EXPIRY_WARNING_DAYS = 7;
 
@@ -44,20 +43,17 @@ export function credentialExpiry(
 
 /**
  * A machine credential's expiry, by the rule varlatchd sends
- * Varlatch-Credential-Expires by: null unless the credential lives longer
- * than MACHINE_EXPIRY_WARNING_DAYS (created to expires). A short-lived
- * credential, such as one issued for 5 days, is renewed by design and not
- * worth a warning.
+ * Varlatch-Credential-Expires by: only for kind `service`, whatever its
+ * total lifetime, since nothing renews it but a person. OIDC-exchanged and
+ * agent-run credentials (and a person's cli and browser ones) are renewed
+ * by design: null.
  */
 export function machineCredentialExpiry(
-  expiresAt: string | null | undefined,
-  createdAt: string | null | undefined,
+  credential: { kind: string; expiresAt: string | null | undefined },
   now: number,
 ): CredentialExpiry | null {
-  const expiry = credentialExpiry(expiresAt, now, MACHINE_EXPIRY_WARNING_DAYS);
-  const created = createdAt ? Date.parse(createdAt) : Number.NaN;
-  if (!expiry || Number.isNaN(created)) return null;
-  return Date.parse(expiry.expiresAt) - created > MACHINE_EXPIRY_WARNING_DAYS * 86_400_000 ? expiry : null;
+  if (credential.kind !== "service") return null;
+  return credentialExpiry(credential.expiresAt, now, MACHINE_EXPIRY_WARNING_DAYS);
 }
 
 /** "Token expires in 5 days (Nov 8)"; the caller formats the date and may name the thing. */

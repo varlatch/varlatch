@@ -397,11 +397,11 @@ needs: like a person, it starts with no access.
   To replace a credential, issue the new one, move the program to it, then
   revoke the old one.
 
-  A credential issued with an expiry (`--ttl`) longer than 7 days warns
-  ahead: in its last 7 days, the machine's Credentials panel marks it,
-  every API response to it carries a `Varlatch-Credential-Expires` header,
-  and the CLI, given it in `VARLATCH_TOKEN`, prints a warning on stderr
-  (never on stdout). A credential issued for 7 days or less does not.
+  A credential issued with an expiry (`--ttl`) warns ahead: in its last 7
+  days, however long it was issued for, the machine's Credentials panel
+  marks it, every API response to it carries a `Varlatch-Credential-Expires`
+  header, and the CLI, given it in `VARLATCH_TOKEN`, prints a warning on
+  stderr (never on stdout).
   [Credential expiry warnings](reference/scripting.md#credential-expiry-warnings)
   has the details.
 

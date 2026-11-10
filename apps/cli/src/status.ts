@@ -128,9 +128,10 @@ export function expiryWarning(
 }
 
 /** The warning for a VARLATCH_TOKEN credential, from the expiry the server
-    names in its Varlatch-Credential-Expires header (sent for a credential
-    living longer than 7 days, in its last 7, ADR-0054 Decision 8). Such a credential has no stored metadata and
-    `varlatch login` does not renew it: the remedy is a new credential.
+    names in its Varlatch-Credential-Expires header (sent for a machine's
+    service credential in its last 7 days, ADR-0054 Decision 8). Such a
+    credential has no stored metadata and `varlatch login` does not renew
+    it: the remedy is a new credential.
     Null for a timestamp that does not parse. */
 export function envTokenExpiryWarning(
   server: string,

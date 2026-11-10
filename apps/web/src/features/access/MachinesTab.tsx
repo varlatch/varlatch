@@ -307,9 +307,9 @@ function SignsInWith({ org, identity, now }: { org: string; identity: OrgIdentit
   if (active.length === 0) return <span className="text-muted">No active token</span>;
   const expiries = active.map((c) => c.expiresAt).filter(Boolean) as string[];
   const soonest = expiries.sort()[0];
-  // Marked by the soonest long-lived credential in its last 7 days, as each one is in the list.
+  // Marked by the soonest credential in its last 7 days, as each one is in the list.
   const marked = active
-    .map((c) => machineCredentialExpiry(c.expiresAt, c.createdAt, now))
+    .map((c) => machineCredentialExpiry(c, now))
     .filter((e): e is CredentialExpiry => e !== null && e.state !== "later")
     .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))[0];
   return (
@@ -449,15 +449,14 @@ function MonoRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * A live service credential that lives longer than 7 days and expires
- * within the next 7, or has expired, is marked: requests with it carry the
+ * A live service credential that expires within 7 days, or has expired, is
+ * marked, however long it was issued for: requests with it carry the
  * Varlatch-Credential-Expires header and the CLI warns about it in
- * VARLATCH_TOKEN. Short-lived credentials (a TTL of 7 days or less, and
- * session, agent-run and OIDC credentials) are renewed by design.
+ * VARLATCH_TOKEN. Agent-run and OIDC credentials are renewed by design.
  */
 export function MachineCredentialExpiry({ credential, now }: { credential: IdentityCredential; now: number }) {
-  if (credential.revokedAt || credential.kind !== "service") return null;
-  const expiry = machineCredentialExpiry(credential.expiresAt, credential.createdAt, now);
+  if (credential.revokedAt) return null;
+  const expiry = machineCredentialExpiry(credential, now);
   if (!expiry || expiry.state === "later") return null;
   return (
     <span className="block" data-testid={`credential-expiry-${credential.id}`} title={formatDateTime(expiry.expiresAt)}>

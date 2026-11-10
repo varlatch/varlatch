@@ -9,10 +9,11 @@ import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
  * ADR-0054 Decision 8: every /v1 response to a request authenticated by a
- * credential that lives longer than 7 days and expires within the next 7
- * carries Varlatch-Credential-Expires, refusals and handler-built responses
- * included. Credentials without an expiry, expiring later, or short-lived
- * by design (a lifetime of 7 days or less) get none, and neither does an
+ * machine credential (kind service) that expires within 7 days carries
+ * Varlatch-Credential-Expires, refusals and handler-built responses
+ * included, whatever the credential's total lifetime. Credentials without an
+ * expiry or expiring later get none, nor do human (cli, browser),
+ * OIDC-exchanged and agent-run credentials, renewed by design, nor an
  * unauthenticated or refused request.
  */
 
@@ -50,7 +51,7 @@ async function call(method: string, path: string, token?: string, body?: unknown
   });
 }
 
-type Kind = "service" | "agent-run" | "cli" | "browser";
+type Kind = "service" | "agent-run" | "cli" | "browser" | "oidc";
 
 /**
  * A credential of the runner (or `identityId`) that expires in `leftMs`,
@@ -79,8 +80,12 @@ async function header(token: string): Promise<string | null> {
   return res.headers.get(CREDENTIAL_EXPIRES_HEADER);
 }
 
+async function adminId(): Promise<string> {
+  return ((await (await call("GET", "/v1/me", adminToken)).json()) as { identity: { id: string } }).identity.id;
+}
+
 describe("Varlatch-Credential-Expires", () => {
-  it("names the expiry of a 30-day credential with 3 days left, as an ISO 8601 UTC timestamp", async () => {
+  it("names the expiry of a 30-day machine credential with 3 days left, as an ISO 8601 UTC timestamp", async () => {
     const soon = await credential(3 * DAY, 30 * DAY);
     const res = await call("GET", "/v1/me", soon.token);
     expect(res.status).toBe(200);
@@ -91,22 +96,27 @@ describe("Varlatch-Credential-Expires", () => {
     expect(me.credential.expiresAt).toBe(soon.expiresAt);
   });
 
-  it("is absent for a credential without expiry or one that expires later", async () => {
+  it("names it for a short-lived machine credential too: nothing renews it but a person", async () => {
+    const fiveDays = await credential(2 * DAY, 5 * DAY);
+    expect(await header(fiveDays.token)).toBe(fiveDays.expiresAt);
+    const oneDay = await credential(60 * 60 * 1000, DAY);
+    expect(await header(oneDay.token)).toBe(oneDay.expiresAt);
+  });
+
+  it("is absent for a machine credential without expiry or one that expires later", async () => {
     expect(await header((await credential(null)).token)).toBeNull();
     expect(await header((await credential(30 * DAY, 365 * DAY)).token)).toBeNull();
     expect(await header((await credential(8 * DAY, 30 * DAY)).token)).toBeNull();
   });
 
-  it("is absent for short-lived credentials, however close their expiry", async () => {
-    // A 1-day service credential with an hour left: a TTL a person chose short.
-    expect(await header((await credential(60 * 60 * 1000, DAY)).token)).toBeNull();
-    // Exactly 7 days of lifetime is still short-lived.
-    expect(await header((await credential(DAY, 7 * DAY)).token)).toBeNull();
-    // Renewed by their own flows: a CLI sign-in, a dashboard session, an agent run.
-    const adminId = ((await (await call("GET", "/v1/me", adminToken)).json()) as { identity: { id: string } }).identity.id;
-    expect(await header((await credential(2 * 60 * 60 * 1000, DAY, "cli", adminId)).token)).toBeNull();
-    expect(await header((await credential(10 * 60 * 1000, 15 * 60 * 1000, "browser", adminId)).token)).toBeNull();
-    expect(await header((await credential(10 * 60 * 1000, 60 * 60 * 1000, "agent-run")).token)).toBeNull();
+  it("is absent for human, OIDC-exchanged and agent-run credentials, however close their expiry", async () => {
+    const admin = await adminId();
+    // A person's CLI sign-in and dashboard session.
+    expect(await header((await credential(2 * 60 * 60 * 1000, DAY, "cli", admin)).token)).toBeNull();
+    expect(await header((await credential(10 * 60 * 1000, 15 * 60 * 1000, "browser", admin)).token)).toBeNull();
+    // A machine's OIDC exchange and an agent run, even issued for longer.
+    expect(await header((await credential(10 * 60 * 1000, 60 * 60 * 1000, "oidc")).token)).toBeNull();
+    expect(await header((await credential(2 * DAY, 30 * DAY, "agent-run")).token)).toBeNull();
   });
 
   it("is absent from unauthenticated and refused requests", async () => {
@@ -121,43 +131,49 @@ describe("Varlatch-Credential-Expires", () => {
     expect(invalid.headers.has(CREDENTIAL_EXPIRES_HEADER)).toBe(false);
   });
 
-  it("is on error responses to an authenticated credential", async () => {
+  it("is on error responses to an authenticated machine credential", async () => {
     const soon = await credential(2 * DAY);
     // Refused by a handler: the runner has no Grant on this organization's projects.
     const missing = await call("GET", "/v1/organizations/acme/projects/nope/environments", soon.token);
     expect(missing.status).toBeGreaterThanOrEqual(400);
     expect(missing.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(soon.expiresAt);
-    // Refused by the bearer middleware itself, after authentication: an
-    // agent-run credential cannot write. (Long-lived only to reach the header.)
-    const agentRun = await credential(2 * DAY, 30 * DAY, "agent-run");
+    // Refused by the bearer middleware after authentication (an agent-run
+    // credential cannot write): no header, as for any agent-run credential.
+    const agentRun = await credential(60 * 60 * 1000, 2 * 60 * 60 * 1000, "agent-run");
     const write = await call("POST", "/v1/organizations", agentRun.token, { name: "Other", slug: "other" });
     expect(write.status).toBe(403);
-    expect(write.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(agentRun.expiresAt);
+    expect(write.headers.has(CREDENTIAL_EXPIRES_HEADER)).toBe(false);
   });
 
   it("is on responses a handler builds itself, such as the NDJSON audit export", async () => {
-    const adminId = ((await (await call("GET", "/v1/me", adminToken)).json()) as { identity: { id: string } }).identity.id;
-    const { token } = await credential(3 * DAY, 90 * DAY, "service", adminId);
+    const grant = await call("POST", "/v1/organizations/acme/grants", adminToken, {
+      subjectIdentityId: runnerId,
+      scope: { kind: "organization" },
+      actions: ["audit.read"],
+    });
+    expect(grant.status).toBe(201);
+    const { token, expiresAt } = await credential(3 * DAY);
     const res = await call("GET", "/v1/organizations/acme/audit-events/export", token);
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/x-ndjson");
-    expect(res.headers.has(CREDENTIAL_EXPIRES_HEADER)).toBe(true);
+    expect(res.headers.get(CREDENTIAL_EXPIRES_HEADER)).toBe(expiresAt);
     await res.text();
   });
 
-  it("needs a lifetime over 7 days and uses an inclusive 7-day window", () => {
+  it("applies to kind service of a non-human identity, within an inclusive 7-day window", () => {
     const now = Date.parse("2026-11-10T12:00:00Z");
-    const longAgo = new Date(now - 60 * DAY);
-    expect(credentialExpiresNotice(null, longAgo, now)).toBeNull();
-    expect(credentialExpiresNotice("garbage", longAgo, now)).toBeNull();
-    expect(credentialExpiresNotice(new Date(now + DAY), null, now)).toBeNull();
-    expect(credentialExpiresNotice(new Date(now + 7 * DAY), longAgo, now)).toBe("2026-11-17T12:00:00.000Z");
-    expect(credentialExpiresNotice(new Date(now + 7 * DAY + 1), longAgo, now)).toBeNull();
-    expect(credentialExpiresNotice("2026-11-11T13:00:00+01:00", longAgo, now)).toBe("2026-11-11T12:00:00.000Z");
-    // Lifetime: more than 7 days, not 7 days or less.
-    expect(credentialExpiresNotice(new Date(now + DAY), new Date(now + DAY - 7 * DAY), now)).toBeNull();
-    expect(credentialExpiresNotice(new Date(now + DAY), new Date(now + DAY - 7 * DAY - 1), now)).toBe("2026-11-11T12:00:00.000Z");
+    const svc = (expires_at: string | Date | null) => ({ kind: "service" as const, expires_at });
+    expect(credentialExpiresNotice(svc(null), "service", now)).toBeNull();
+    expect(credentialExpiresNotice(svc("garbage"), "service", now)).toBeNull();
+    expect(credentialExpiresNotice(svc(new Date(now + 7 * DAY)), "workload", now)).toBe("2026-11-17T12:00:00.000Z");
+    expect(credentialExpiresNotice(svc(new Date(now + 7 * DAY + 1)), "service", now)).toBeNull();
+    expect(credentialExpiresNotice(svc("2026-11-11T13:00:00+01:00"), "broker", now)).toBe("2026-11-11T12:00:00.000Z");
     // Already past (expiry checked at authentication, a race): still named.
-    expect(credentialExpiresNotice(new Date(now - 1000), longAgo, now)).toBe("2026-11-10T11:59:59.000Z");
+    expect(credentialExpiresNotice(svc(new Date(now - 1000)), "service", now)).toBe("2026-11-10T11:59:59.000Z");
+    // Never for a human identity, nor for kinds renewed by design.
+    expect(credentialExpiresNotice(svc(new Date(now + DAY)), "human", now)).toBeNull();
+    for (const kind of ["cli", "browser", "oidc", "agent-run"] as const) {
+      expect(credentialExpiresNotice({ kind, expires_at: new Date(now + DAY) }, "service", now)).toBeNull();
+    }
   });
 });

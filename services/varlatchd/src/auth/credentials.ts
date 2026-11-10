@@ -27,7 +27,7 @@ const PREFIX: Record<CredentialKind, string> = {
 
 /**
  * ADR-0054 Decision 8: every /v1 response to a request authenticated by a
- * long-lived credential in the last days before its expiry names the expiry
+ * machine credential in the last days before its expiry names the expiry
  * in this header, so a client holding a credential it did not sign in for
  * (a machine's VARLATCH_TOKEN) can warn before requests start failing.
  */
@@ -36,25 +36,22 @@ export const CREDENTIAL_EXPIRY_WARNING_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * The header's value, an ISO 8601 UTC timestamp, or null. Only for a
- * credential whose whole lifetime (created to expires) is longer than the
- * 7-day window, once it is inside that window (or past it, in the race
- * between authentication and the response). Short-lived credentials
- * (browser sessions, CLI sign-ins, OIDC exchanges, agent runs, any short
- * TTL a person chose) are renewed by design: every response to them would
- * carry it, and a warning on every run is noise.
+ * machine credential, kind `service` held by a non-human identity, that
+ * expires within 7 days (or already has, in the race between authentication
+ * and the response), whatever its total lifetime: nothing renews it, so a
+ * person must, even one issued for a few days. Human credentials (browser,
+ * cli) and OIDC-exchanged and agent-run credentials are renewed by design
+ * and never get it.
  */
 export function credentialExpiresNotice(
-  expiresAt: string | Date | null | undefined,
-  createdAt: string | Date | null | undefined,
+  credential: { kind: CredentialKind; expires_at: string | Date | null | undefined },
+  identityKind: IdentityRow["kind"],
   now: number = Date.now(),
 ): string | null {
-  if (!expiresAt || !createdAt) return null;
-  const at = new Date(expiresAt);
+  if (credential.kind !== "service" || identityKind === "human" || !credential.expires_at) return null;
+  const at = new Date(credential.expires_at);
   const expires = at.getTime();
-  const created = new Date(createdAt).getTime();
-  if (Number.isNaN(expires) || Number.isNaN(created)) return null;
-  if (expires - created <= CREDENTIAL_EXPIRY_WARNING_MS) return null;
-  if (expires - now > CREDENTIAL_EXPIRY_WARNING_MS) return null;
+  if (Number.isNaN(expires) || expires - now > CREDENTIAL_EXPIRY_WARNING_MS) return null;
   return at.toISOString();
 }
 
@@ -75,8 +72,6 @@ export interface CredentialRow {
   revoked_at: string | null;
   max_uses: number | null;
   use_count: number;
-  /** When it was issued; authentication reads it for the expiry header (ADR-0054 Decision 8). */
-  created_at?: string | Date;
   /** The Better Auth session a browser bearer was minted from (migration 0025). */
   auth_session_id?: string | null;
 }
@@ -192,7 +187,7 @@ export async function authenticateBearer(
 ): Promise<AuthResult> {
   const digest = hashToken(token);
   const res = await db.query(
-    `SELECT c.id, c.identity_id, c.kind, c.name, c.created_at, c.expires_at, c.revoked_at, c.token_hash,
+    `SELECT c.id, c.identity_id, c.kind, c.name, c.expires_at, c.revoked_at, c.token_hash,
             c.max_uses, c.use_count, c.auth_session_id,
             i.kind AS identity_kind, i.name AS identity_name, i.disabled,
             i.installation_admin, i.organization_id
@@ -255,7 +250,6 @@ export async function authenticateBearer(
       identity_id: row.identity_id,
       kind: row.kind,
       name: row.name,
-      ...(row.created_at ? { created_at: row.created_at } : {}),
       expires_at: row.expires_at,
       revoked_at: row.revoked_at,
       max_uses: row.max_uses,
