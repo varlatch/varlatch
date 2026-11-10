@@ -101,7 +101,10 @@ What holds:
   included, it does not exist. Only you can approve it, from a dashboard
   session.
 - **It covers exactly one request**: the same sign-in, the same change and
-  the same version of the control. Anything else is refused with
+  the same version of the control. For the CLI, the sign-in is the CLI
+  credential that asked; for the dashboard, the browser session that
+  asked, even if the dashboard renewed its access token meanwhile. Another
+  session or another CLI sign-in cannot use it. Anything else is refused with
   `APPROVAL_INVALID`, and the change is not made. If the control changed
   meanwhile, ask again.
 - **It expires** 2 minutes after the dashboard asked for it, or 10 minutes
