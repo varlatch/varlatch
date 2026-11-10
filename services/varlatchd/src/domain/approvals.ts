@@ -586,6 +586,10 @@ export async function approveApproval(
 ): Promise<ApprovalView> {
   const challenge = assertionChallenge(input.assertion);
   const outcome = await withTx(ctx.db, async (db) => {
+    // The person's row first, as passkey confirmation and removal take it:
+    // verifying advances a passkey's counter, and a removal holds that
+    // passkey while it consumes an approval, so both go in one order.
+    await db.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [input.identityId]);
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     if (stateOf(intent) !== "pending") throw approvalInvalid(unusableReason(intent), input.approvalId);
     const bound = challenge
