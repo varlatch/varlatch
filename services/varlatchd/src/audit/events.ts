@@ -36,6 +36,7 @@ export const AUDIT_EVENT_TYPES = [
   "authentication.device_denied",
   "authentication.device_requested",
   "authentication.failed",
+  "authentication.passkey_confirmed",
   "authentication.passkey_enrollment_started",
   "authorization.denied",
   "bootstrap.completed",

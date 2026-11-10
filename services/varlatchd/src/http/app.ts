@@ -148,6 +148,7 @@ import {
   pollDeviceSignIn,
   requestDeviceSignIn,
 } from "../domain/device-sign-in.js";
+import { confirmPasskey, issueConfirmationChallenge, listOwnPasskeys, removeOwnPasskey } from "../domain/passkeys.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -1011,10 +1012,65 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       metadata: { exchangedFromCredentialId: principal.credentialId, ttlSeconds },
       // The CLI's own User-Agent: this request comes from the CLI, not the browser.
       client: clientLabel(c.req.header("User-Agent")),
+      // The browser session the handoff came from, and so its sign-in
+      // evidence (ADR-0054 Decision 6).
+      authSessionId: principal.authSessionId ?? null,
     });
     });
     c.header("Cache-Control", "no-store");
     return c.json({ id: issued.credentialId, token: issued.token, expiresAt }, 201);
+  });
+
+  // ---- My passkeys (ADR-0054 Decision 4, capability account.passkeys):
+  // each with its provenance, trusted or unconfirmed. Reading is open to
+  // any credential of the person; confirming and removing take the
+  // dashboard's session bearer of a human, as Better Auth's own passkey
+  // endpoints took the session cookie. Nothing here depends on a Security
+  // Control yet: removal behaves as Better Auth's native removal did.
+  const passkeyOwner = (c: Context) => {
+    const principal = c.get("principal") as Principal;
+    if (principal.identity.kind !== "human" || principal.credentialKind !== "browser" || !principal.authSessionId) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person signed in to the dashboard may change their passkeys");
+    }
+    return { identityId: principal.identity.id, authSessionId: principal.authSessionId };
+  };
+  const passkeyRp = () => {
+    if (!options.publicUrl) throw new DomainError("RESOURCE_NOT_FOUND", "Passkeys are not available: this server has no public URL");
+    return relyingPartyOf(options.publicUrl);
+  };
+
+  app.get("/v1/me/passkeys", async (c) => {
+    const principal = c.get("principal");
+    const items = principal.identity.kind === "human" ? await listOwnPasskeys(ctx.db, principal.identity.id) : [];
+    return c.json({ items, nextCursor: null });
+  });
+
+  app.delete("/v1/me/passkeys/:passkey", async (c) => {
+    const owner = passkeyOwner(c);
+    await removeOwnPasskey(ctx, { identityId: owner.identityId, passkeyId: routeParam(c, "passkey") });
+    return c.body(null, 204);
+  });
+
+  // A confirmation challenge for one unconfirmed passkey: the options list
+  // the person's trusted passkeys and require user verification.
+  app.post("/v1/me/passkeys/:passkey/confirmation/options", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const owner = passkeyOwner(c);
+    const publicKey = await issueConfirmationChallenge(ctx, passkeyRp(), { ...owner, passkeyId: routeParam(c, "passkey") });
+    return c.json({ publicKey });
+  });
+
+  app.post("/v1/me/passkeys/:passkey/confirmation", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const owner = passkeyOwner(c);
+    const body = parseBody(z.object({ assertion: z.record(z.string(), z.unknown()) }), await c.req.json().catch(() => ({})));
+    const passkey = await confirmPasskey(ctx, passkeyRp(), {
+      ...owner,
+      passkeyId: routeParam(c, "passkey"),
+      assertion: body.assertion,
+      requestId: c.get("requestId"),
+    });
+    return c.json(passkey);
   });
 
   // ---- Device-authorization sign-in (ADR-0043 Decision 2; design notes

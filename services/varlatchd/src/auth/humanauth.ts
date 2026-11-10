@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { AsyncLocalStorage } from "node:async_hooks";
 import { hkdfSync } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware, isAPIError } from "better-auth/api";
 import pg from "pg";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { consumeSetupGrant, peekSetupGrant } from "../domain/bootstrap.js";
 import { DomainError } from "../domain/errors.js";
 import { recordAuditEvent } from "../audit/events.js";
+import { hashToken } from "./credentials.js";
+import { recordPasskeyProvenance, recordSessionEvidence, type SetupGrantKind } from "../domain/passkeys.js";
 
 /**
  * The HumanAuth boundary (ADR-0008/0009): Better Auth embedded as a library,
@@ -35,6 +38,8 @@ export interface HumanAuth {
    * the session's id (which device sign-in approval challenges bind to).
    */
   sessionFor: (headers: Headers) => Promise<{ identityId: string; sessionId: string } | null>;
+  /** End Better Auth's own connection pool (tests; the daemon keeps it for its lifetime). */
+  close: () => Promise<void>;
 }
 
 function deriveSecret(rootKek: Buffer): string {
@@ -124,6 +129,41 @@ export async function completeEnrollment(
   return { userId };
 }
 
+/**
+ * Better Auth's native passkey removal deletes with the session cookie
+ * alone. It is turned off; the dashboard removes passkeys through DELETE
+ * /v1/me/passkeys/{passkey} (ADR-0054 Decision 4), where a later rule can
+ * ask for an approval.
+ */
+export const DISABLED_AUTH_PATHS = ["/passkey/delete-passkey"] as const;
+
+/**
+ * What one /auth request's WebAuthn ceremony proved, kept in request-local
+ * state (ADR-0054 Decision 6). Better Auth's afterVerification hooks run
+ * before the session or the passkey row exists; the session-creation hook
+ * and the after-hook of the same request read it and write it onto that
+ * session, or that passkey, only. Never looked up by user: two sign-ins of
+ * one person, concurrent or not, each see their own.
+ */
+interface CeremonyState {
+  signIn?: { credentialId: string; userVerified: boolean };
+  registration?: {
+    credentialId: string;
+    userVerified: boolean;
+    /** Set when a setup grant was consumed for this passkey (bootstrap, invitation, recover, reenroll). */
+    setupGrantKind: SetupGrantKind | null;
+  };
+}
+
+const SIGN_IN_PATH = "/passkey/verify-authentication";
+const REGISTRATION_PATH = "/passkey/verify-registration";
+
+async function setupGrantKindOf(ctx: AppCtx, context: string | null | undefined): Promise<SetupGrantKind | null> {
+  if (!context) return null;
+  const res = await ctx.db.query("SELECT kind FROM setup_grants WHERE token_hash = $1", [hashToken(context)]);
+  return (res.rows[0] as { kind: SetupGrantKind } | undefined)?.kind ?? null;
+}
+
 export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
   const { ctx, publicUrl } = deps;
   const url = new URL(publicUrl);
@@ -133,6 +173,11 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
   // during a restore) must not become unhandled 'error' events that kill the
   // process; the pool reconnects on the next query.
   authPool.on("error", () => console.error("Auth PostgreSQL idle connection failed; reconnecting on next query"));
+  const ceremonies = new AsyncLocalStorage<CeremonyState>();
+  // Recording evidence or provenance never fails a sign-in or an
+  // enrollment: what is not recorded counts as unverified, or unconfirmed.
+  const logFailure = (what: string) => (err: unknown) =>
+    console.error(`Could not record ${what}: ${err instanceof Error ? err.message : String(err)}`);
   const auth = betterAuth({
     database: authPool,
     secret: deriveSecret(ctx.rootKek),
@@ -140,6 +185,55 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
     basePath: "/auth",
     trustedOrigins: [url.origin],
     telemetry: { enabled: false },
+    disabledPaths: [...DISABLED_AUTH_PATHS],
+    databaseHooks: {
+      session: {
+        create: {
+          // Runs after the session row is committed (Better Auth defers it
+          // past a surrounding transaction), in the request that created it.
+          after: async (session, endpoint) => {
+            const state = ceremonies.getStore();
+            if (!state) return;
+            const pending = endpoint?.path === SIGN_IN_PATH
+              ? state.signIn
+              : endpoint?.path === REGISTRATION_PATH
+                ? state.registration
+                : undefined;
+            if (!pending) return;
+            // One session per ceremony.
+            if (endpoint?.path === SIGN_IN_PATH) delete state.signIn;
+            await recordSessionEvidence(ctx.db, {
+              sessionId: session.id,
+              betterAuthUserId: session.userId,
+              credentialId: pending.credentialId,
+              userVerified: pending.userVerified,
+              ceremony: endpoint?.path === SIGN_IN_PATH ? "sign-in" : "enrollment",
+            }).catch(logFailure("sign-in evidence"));
+          },
+        },
+      },
+    },
+    hooks: {
+      // disabledPaths compares the request's path; refusing here too covers
+      // any other form of the URL that reaches the native removal endpoint.
+      before: createAuthMiddleware(async (actx) => {
+        if ((DISABLED_AUTH_PATHS as readonly string[]).includes(actx.path)) throw new APIError("NOT_FOUND");
+      }),
+      // A new passkey's provenance, once its row exists (ADR-0054
+      // Decision 4): trusted when this request consumed a setup grant for
+      // it, unconfirmed when a signed-in session added it.
+      after: createAuthMiddleware(async (actx) => {
+        if (actx.path !== REGISTRATION_PATH) return;
+        const returned = actx.context.returned as { id?: unknown; credentialID?: unknown } | undefined;
+        if (!returned || isAPIError(returned) || typeof returned.id !== "string") return;
+        const registration = ceremonies.getStore()?.registration;
+        const setupGrantKind = registration && registration.credentialId === returned.credentialID
+          ? registration.setupGrantKind
+          : null;
+        await recordPasskeyProvenance(ctx.db, returned.id, setupGrantKind ? { setupGrantKind } : { addedBySession: true })
+          .catch(logFailure("passkey provenance"));
+      }),
+    },
     advanced: {
       // Follow the actual scheme, not NODE_ENV: https deployments get Secure
       // cookies; plain-http local/dev does not silently lose its session.
@@ -167,20 +261,45 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
            */
           resolveUser: ({ context }: { context?: string | null | undefined }) =>
             enrollmentUser(ctx, context),
-          afterVerification: ({
-            user,
-            context,
-          }: {
-            user: { id: string };
-            context?: string | null | undefined;
-          }) => completeEnrollment(ctx, user.id, context),
+          afterVerification: async ({ user, context, verification }) => {
+            const info = verification.registrationInfo;
+            if (!info) throw new APIError("BAD_REQUEST", { message: "Registration could not be verified" });
+            // WebAuthn §7.1 step 22: a credential id already registered, for
+            // anyone, is refused, so a credential id names one passkey and
+            // evidence recorded by it is unambiguous.
+            const taken = await ctx.db.query(`SELECT 1 FROM passkey WHERE "credentialID" = $1 LIMIT 1`, [info.credential.id]);
+            if (taken.rows[0]) throw new APIError("BAD_REQUEST", { message: "This passkey is already registered" });
+            const setupGrantKind = user.id.startsWith(PROVISIONAL_PREFIX) ? await setupGrantKindOf(ctx, context) : null;
+            const enrolled = await completeEnrollment(ctx, user.id, context);
+            const state = ceremonies.getStore();
+            if (state) {
+              state.registration = {
+                credentialId: info.credential.id,
+                userVerified: info.userVerified,
+                setupGrantKind: enrolled ? setupGrantKind : null,
+              };
+            }
+            return enrolled;
+          },
+        },
+        authentication: {
+          afterVerification: ({ verification }) => {
+            const state = ceremonies.getStore();
+            if (state) {
+              state.signIn = {
+                credentialId: verification.authenticationInfo.credentialID,
+                userVerified: verification.authenticationInfo.userVerified,
+              };
+            }
+          },
         },
       }),
     ],
   });
 
   return {
-    handler: (request) => auth.handler(request),
+    // Each request gets its own ceremony state (see CeremonyState).
+    handler: (request) => ceremonies.run({}, () => auth.handler(request)),
     sessionFor: async (headers) => {
       const session = await auth.api.getSession({ headers });
       if (!session?.user?.id || !session.session?.id) return null;
@@ -191,5 +310,6 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
       const identityId = (res.rows[0] as { identity_id: string } | undefined)?.identity_id;
       return identityId ? { identityId, sessionId: session.session.id } : null;
     },
+    close: () => authPool.end(),
   };
 }
