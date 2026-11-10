@@ -197,7 +197,7 @@ fixes.
 
 ### Upgrading
 
-- Migration 40 adds the security control and approval tables. Controls
+- Migration 41 adds the security control and approval tables. Controls
   start off; nothing to do.
 
 ## 0.20.0 (2026-10-30)

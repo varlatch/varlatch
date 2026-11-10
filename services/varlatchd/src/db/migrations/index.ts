@@ -40,7 +40,7 @@ import { sql as projectDeletion } from "./0037_project_deletion.js";
 import { sql as organizationDeletion } from "./0038_organization_deletion.js";
 import { sql as passkeyEvidence } from "./0039_passkey_evidence.js";
 import { sql as passkeyCounter } from "./0040_passkey_counter.js";
-import { sql as securityControls } from "./0040_security_controls.js";
+import { sql as securityControls } from "./0041_security_controls.js";
 
 export interface Migration {
   id: number;
