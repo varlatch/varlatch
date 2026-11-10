@@ -8,6 +8,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { completePublicUrlChange, consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant, issueReenrollmentGrants } from "../src/domain/bootstrap.js";
 import { approveDeviceSignIn, findSignInByCode, issueApprovalChallenge, requestDeviceSignIn } from "../src/domain/device-sign-in.js";
 import { lockPeople, lockPerson } from "../src/domain/personlocks.js";
+import { finalizeDeletion } from "../src/domain/orgdeletion.js";
 import { APPROVALS, consumeApproval, createApproval, startApproval, type ApprovalGate, type ApprovalBinding, type Requester } from "../src/domain/approvals.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
 import { changeControl, controlMode, resetControls } from "../src/domain/securitycontrols.js";
@@ -472,6 +473,45 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     expect(grants.map((g) => g.identityId).sort()).toEqual([adminId, "idn_0reenroll", "idn_zreenroll"].sort());
     expect(grants.at(-1)).toMatchObject({ identityId: "idn_0reenroll", installationAdmin: false });
     expect(grants.slice(0, 2).every((g) => g.installationAdmin)).toBe(true);
+  });
+
+  it("Organization deletion takes every person it references in id order before writing", async () => {
+    // A member with an id below the admin's: the admin is an audit reader, inserted first; the member's
+    // removal comes after.
+    await db.query("INSERT INTO identities (id, kind, name) VALUES ('idn_0member', 'human', 'Member')");
+    await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ($1, 'idn_0member', 'member')", [orgId]);
+    expect("idn_0member" < adminId).toBe(true);
+    const scheduled = await call("POST", "/v1/organizations/acme/deletion", cli.token, { afterDays: 1 });
+    expect(scheduled.status, JSON.stringify(scheduled.body)).toBe(201);
+    await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '2 days', run_after = now() - interval '1 minute' WHERE organization_id = $1", [orgId]);
+    // A transaction that locks people in id order, as re-enrollment and the round-4 public-URL change did.
+    const outcome = await whileHeld(
+      (q) => lockPerson(q, "idn_0member", "update"),
+      () => finalizeDeletion(ctx, scheduled.body.id, orgId),
+      (q) => lockPerson(q, adminId, "update"),
+    );
+    // The deletion waited for the member, then ran; never a deadlock (40P01).
+    expect(outcome).toMatchObject({ organizationId: orgId, members: 2 });
+  });
+
+  it("the public-URL change waits for nobody who only references people", async () => {
+    await db.query(`INSERT INTO "user" (id, name, email, "emailVerified", "updatedAt") VALUES ('bau_ks', 'P', 'ks@varlatch.placeholder.invalid', false, now())`);
+    await db.query("INSERT INTO auth_user_links (better_auth_user_id, identity_id) VALUES ('bau_ks', $1)", [adminId]);
+    // A writer holding the person FOR KEY SHARE (a foreign key it inserted) and still open.
+    const held = await db.connect();
+    try {
+      await held.query("BEGIN");
+      await lockPerson(held, adminId, "key share");
+      const done = await Promise.race([
+        completePublicUrlChange(ctx, { from: "https://old.varlatch.test", to: PUBLIC_URL }).then(() => "done"),
+        sleep(2000).then(() => "waiting"),
+      ]);
+      expect(done).toBe("done");
+      await held.query("COMMIT");
+    } finally {
+      await held.query("ROLLBACK").catch(() => undefined);
+      held.release();
+    }
   });
 
   it("holds the per-person challenge cap when starts for different approvals arrive together", async () => {

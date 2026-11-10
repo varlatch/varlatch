@@ -86,6 +86,15 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  * challenges (step 5) after steps 6 and 7; every other writer of those
  * challenges holds the person's row (step 2) first, so they cannot meet.
  *
+ * Several people: a transaction that locks more than one person takes
+ * them in id order. Writes that only reference people (foreign keys) take
+ * FOR KEY SHARE, which is compatible with every lock the multi-person
+ * transactions here take on people (the public-URL change and closing
+ * approvals: KEY SHARE; re-enrollment: NO KEY UPDATE), so such a writer
+ * cannot deadlock with them on a person whatever order it writes in; the
+ * strong person locks (FOR UPDATE) are each on one person, by transactions
+ * that reference nobody else.
+ *
  * Per transaction:
  *   createApproval: 0, then (own short transaction) the sweep of intents
  *     ended a day ago, SKIP LOCKED; then 1 KEY SHARE (when the intent has

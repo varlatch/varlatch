@@ -25,12 +25,19 @@ export async function lockPeople(db: Querier, identityIds: readonly string[], mo
 /**
  * Steps 2 and 3 for every person who has a Better Auth account (the
  * public-URL change, which ends everyone's passkeys, sessions and browser
- * credentials): the people in id order, FOR UPDATE, then all their
+ * credentials): the people in id order, FOR KEY SHARE, then all their
  * passkeys in id order, FOR UPDATE.
+ *
+ * KEY SHARE on the people is enough to wait for every approval, confirmation
+ * and consumption in flight (they hold their person FOR UPDATE), and it is
+ * compatible with the KEY SHARE that any write referencing people through a
+ * foreign key takes: such a writer, whatever order it references several
+ * people in, can never wait for this transaction on a person, nor this one
+ * for it. Re-enrollment's NO KEY UPDATE is compatible with it too.
  */
 export async function lockAllPeopleAndPasskeys(db: Querier): Promise<void> {
   await db.query(
-    `SELECT i.id FROM identities i JOIN auth_user_links l ON l.identity_id = i.id ORDER BY i.id FOR UPDATE OF i`,
+    `SELECT i.id FROM identities i JOIN auth_user_links l ON l.identity_id = i.id ORDER BY i.id FOR KEY SHARE OF i`,
   );
   await db.query(
     `SELECT p.id FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId" ORDER BY p.id FOR UPDATE OF p`,
