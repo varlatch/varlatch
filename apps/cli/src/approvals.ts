@@ -116,13 +116,26 @@ const WAITING = "Waiting for your approval (Ctrl-C stops waiting and cancels it)
 export interface WaitIo {
   /** One line on stderr. */
   err: (line: string) => void;
-  sleep: (ms: number) => Promise<void>;
+  /** Wait `ms`; rejects at once when `signal` aborts. */
+  sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   now: () => number;
 }
 
 export const realWaitIo: WaitIo = {
   err: (line) => console.error(line),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: (ms, signal) =>
+    new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason);
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, ms);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    }),
   now: () => Date.now(),
 };
 
@@ -159,7 +172,7 @@ function ended(approval: Approval): ApprovalError | null {
  * SLOW_DOWN, never past its expiry. Resolves with the approved approval;
  * rejects with an ApprovalError for an expired, used, closed or unknown one.
  */
-export async function waitForApproval(api: Polling, first: Approval, io: WaitIo): Promise<Approval> {
+export async function waitForApproval(api: Polling, first: Approval, io: WaitIo, signal?: AbortSignal): Promise<Approval> {
   let approval = first;
   let interval = Math.max(1, approval.interval || 5);
   const deadline = Date.parse(approval.expiresAt);
@@ -169,10 +182,13 @@ export async function waitForApproval(api: Polling, first: Approval, io: WaitIo)
     if (approval.state === "approved") return approval;
     const left = deadline - io.now();
     if (left <= 0) throw ended({ ...approval, state: "expired" })!;
-    await io.sleep(Math.min(interval * 1000, left));
+    signal?.throwIfAborted();
+    await io.sleep(Math.min(interval * 1000, left), signal);
+    signal?.throwIfAborted();
     try {
-      approval = await api.getApproval(approval.id);
+      approval = await api.getApproval(approval.id, signal ? { signal } : {});
     } catch (err) {
+      signal?.throwIfAborted();
       if (err instanceof VarlatchApiError && err.code === "SLOW_DOWN") {
         const asked = Number(err.details?.interval);
         interval = Number.isFinite(asked) && asked > interval ? asked : interval + 5;
@@ -206,8 +222,12 @@ const processInterrupt = (handler: () => void) => {
 };
 
 /**
- * Wait for the approval with Ctrl-C handled: an interrupt cancels the
- * approval (best effort, a few seconds at most) and exits 130.
+ * Wait for the approval with Ctrl-C handled. An interrupt aborts the wait
+ * at once (the sleep and the poll in flight both see the abort, and the
+ * wait loses a race against the interrupt whatever they do), so a poll
+ * answering "approved" a moment later can never let the request be sent:
+ * this rejects instead. Then it cancels the approval (best effort, a few
+ * seconds at most) and exits 130; a second Ctrl-C exits at once.
  */
 export async function waitInterruptibly(
   api: Pick<VarlatchClient, "getApproval" | "cancelApproval">,
@@ -219,17 +239,38 @@ export async function waitInterruptibly(
 ): Promise<Approval> {
   const io = options.io ?? realWaitIo;
   const exit = options.exit ?? ((code: number) => process.exit(code));
+  const controller = new AbortController();
+  const stopped = new ApprovalError(`Stopped waiting; approval ${approval.id} was cancelled. Nothing was changed.`, EXIT.interrupted);
   let interrupted = false;
+  let interrupt!: (err: ApprovalError) => void;
+  const interruption = new Promise<never>((_, reject) => {
+    interrupt = reject;
+  });
+  interruption.catch(() => undefined);
   const unsubscribe = (options.onInterrupt ?? processInterrupt)(() => {
-    if (interrupted) return;
+    if (interrupted) exit(EXIT.interrupted);
     interrupted = true;
-    io.err(`Stopped waiting. Cancelling approval ${approval.id}; nothing was changed.`);
-    const cancelled = api.cancelApproval(approval.id).catch(() => undefined);
-    void Promise.race([cancelled, new Promise((resolve) => setTimeout(resolve, 3000))]).then(() => exit(130));
+    controller.abort(stopped);
+    interrupt(stopped);
   });
   try {
     for (const line of options.announce ?? []) io.err(line);
-    return await waitForApproval(api, approval, io);
+    const approved = await Promise.race([waitForApproval(api, approval, io, controller.signal), interruption]);
+    if (interrupted) throw stopped;
+    return approved;
+  } catch (err) {
+    if (!interrupted) throw err;
+    io.err(`Stopped waiting. Cancelling approval ${approval.id}; nothing was changed.`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      api.cancelApproval(approval.id).catch(() => undefined),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, 3000);
+      }),
+    ]);
+    clearTimeout(timer);
+    exit(EXIT.interrupted);
+    throw stopped;
   } finally {
     unsubscribe();
   }

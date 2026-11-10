@@ -300,19 +300,20 @@ export class VarlatchClient {
     path: string,
     body?: unknown,
     headers: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<T> {
     const sent = this.approval && method !== "GET" && !(APPROVAL_HEADER in headers)
       ? { ...headers, [APPROVAL_HEADER]: this.approval }
       : headers;
     try {
-      return await this.requestRiding<T>(method, path, body, sent);
+      return await this.requestRiding<T>(method, path, body, sent, signal);
     } catch (err) {
       // A step-up approval (ADR-0054 Decision 3): wait for the person, then
       // repeat the identical request once, carrying the approval.
       const approval = stepUpApproval(err);
       if (!approval || !this.onStepUp || APPROVAL_HEADER in sent) throw err;
       if (!(await this.onStepUp(approval))) throw err;
-      return this.requestRiding<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id });
+      return this.requestRiding<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id }, signal);
     }
   }
 
@@ -321,6 +322,7 @@ export class VarlatchClient {
     path: string,
     body: unknown,
     headers: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<T> {
     // Installation maintenance that must isolate (restore, schema migration)
     // rejects requests before processing them with a retryable 503
@@ -329,7 +331,7 @@ export class VarlatchClient {
     // Bounded, per client: a wedged installation still surfaces as
     // MAINTENANCE, just not instantly, and never as an auth failure.
     for (;;) {
-      const res = await this.requestOnce(method, path, body, headers);
+      const res = await this.requestOnce(method, path, body, headers, signal);
       if (res.status !== 503) {
         this.maintenanceDeadline = null;
         return this.finish<T>(res);
@@ -356,6 +358,7 @@ export class VarlatchClient {
     path: string,
     body?: unknown,
     headers: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<Response> {
     const res = await this.fetchImpl(`${this.server}${path}`, {
       method,
@@ -366,6 +369,7 @@ export class VarlatchClient {
         ...headers,
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(signal ? { signal } : {}),
     });
     this.noticeCredentialExpiry(res);
     return res;
@@ -1485,9 +1489,13 @@ export class VarlatchClient {
     return this.request("DELETE", `/v1/me/credentials/${encodeURIComponent(credentialId)}`);
   }
 
-  /** One of the caller's own step-up approvals (capability security.controls); the CLI polls it while it waits. */
-  getApproval(approvalId: string): Promise<Approval> {
-    return this.request("GET", `/v1/me/approvals/${encodeURIComponent(approvalId)}`);
+  /**
+   * One of the caller's own step-up approvals (capability security.controls);
+   * the CLI polls it while it waits. `signal` aborts the request (the CLI
+   * stops a poll at once on Ctrl-C).
+   */
+  getApproval(approvalId: string, options: { signal?: AbortSignal } = {}): Promise<Approval> {
+    return this.request("GET", `/v1/me/approvals/${encodeURIComponent(approvalId)}`, undefined, {}, options.signal);
   }
 
   /** Start approving: request options for the caller's trusted passkeys, user verification required (dashboard session bearer). */

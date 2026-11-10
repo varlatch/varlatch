@@ -145,19 +145,138 @@ describe("stepUpHandler", () => {
       interrupt();
       await new Promise(() => {});
     };
+    let waited: Promise<unknown> = Promise.resolve();
     const exited = new Promise<number>((resolve) => {
-      void waitInterruptibly(api, approval("pending"), {
+      waited = waitInterruptibly(api, approval("pending"), {
         io,
         onInterrupt: (handler) => {
           interrupt = handler;
           return () => {};
         },
         exit: ((code: number) => resolve(code)) as (code: number) => never,
-      });
+      }).catch((e) => e);
     });
     expect(await exited).toBe(130);
+    expect(await waited).toMatchObject({ exit: 130 });
     expect(api.calls).toEqual(["cancel apr_1"]);
     expect(io.lines).toContain("Stopped waiting. Cancelling approval apr_1; nothing was changed.");
+  });
+});
+
+describe("Ctrl-C with a poll in flight", () => {
+  /**
+   * The poll is in flight when Ctrl-C arrives, answers "approved" right
+   * after, and cancelling takes a while: nothing may go on to send the
+   * request with the approval.
+   */
+  function inFlight() {
+    const events: string[] = [];
+    let answer!: (a: Approval) => void;
+    let seenSignal: AbortSignal | undefined;
+    let finishCancel!: () => void;
+    let interrupt: () => void = () => {};
+    const api = {
+      getApproval: (_id: string, options: { signal?: AbortSignal } = {}) => {
+        seenSignal = options.signal;
+        events.push("poll");
+        return new Promise<Approval>((resolve) => {
+          answer = resolve;
+        });
+      },
+      cancelApproval: async () => {
+        events.push("cancel started");
+        await new Promise<void>((resolve) => {
+          finishCancel = resolve;
+        });
+        events.push("cancel finished");
+        return approval("closed", { closeReason: "cancelled" });
+      },
+    };
+    const io = fakeIo();
+    let exitCode: number | null = null;
+    const options = {
+      io,
+      onInterrupt: (handler: () => void) => {
+        interrupt = handler;
+        return () => {};
+      },
+      exit: ((code: number) => {
+        exitCode = code;
+        events.push(`exit ${code}`);
+      }) as (code: number) => never,
+    };
+    const tick = () => new Promise((r) => setTimeout(r, 5));
+    return {
+      api, io, options, events, tick,
+      get signal() { return seenSignal; },
+      get exitCode() { return exitCode; },
+      interrupt: () => interrupt(),
+      answer: (a: Approval) => answer(a),
+      finishCancel: () => finishCancel(),
+    };
+  }
+
+  it("the step-up handler never resolves true: the poll is aborted and an approved answer after Ctrl-C is ignored", async () => {
+    const t = inFlight();
+    const handler = stepUpHandler(() => t.api, { assisted: false, argv: ["security", "set", "admin-step-up", "off"], ...t.options });
+    const outcome = handler(approval("pending")).then((v) => ({ resolved: v }), (e) => ({ rejected: e }));
+    await t.tick();
+    expect(t.events).toEqual(["poll"]);
+    t.interrupt();
+    expect(t.signal?.aborted).toBe(true);
+    t.answer(approval("approved"));
+    await t.tick();
+    // Cancellation is still running: nothing has resolved, nothing has exited.
+    expect(t.events).toEqual(["poll", "cancel started"]);
+    expect(t.exitCode).toBeNull();
+    t.finishCancel();
+    const result = await outcome;
+    expect(result).toMatchObject({ rejected: { exit: EXIT.interrupted } });
+    expect(t.events).toEqual(["poll", "cancel started", "cancel finished", "exit 130"]);
+    expect(t.io.lines).not.toContain("Approved. Sending the request again with the approval.");
+  });
+
+  it("a resumed command never sends its change once Ctrl-C stopped the wait", async () => {
+    const t = inFlight();
+    const sent: string[] = [];
+    const inner = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    let first = true;
+    const api = {
+      ...t.api,
+      // The resume reads the approval once (pending), then the wait polls.
+      getApproval: (id: string, options: { signal?: AbortSignal } = {}) => {
+        if (first) {
+          first = false;
+          return Promise.resolve(approval("pending"));
+        }
+        return t.api.getApproval(id, options);
+      },
+    };
+    const f = resumingFetch("apr_1", () => api, t.options, inner);
+    const change = f("https://v/v1/x", { method: "PATCH" }).then(() => "sent", (e) => e);
+    await t.tick();
+    t.interrupt();
+    t.answer(approval("approved"));
+    await t.tick();
+    expect(sent).toEqual([]);
+    t.finishCancel();
+    expect(await change).toMatchObject({ exit: EXIT.interrupted });
+    // A later change of the same command is refused too.
+    expect(await f("https://v/v1/y", { method: "POST" }).catch((e) => e)).toMatchObject({ exit: EXIT.interrupted });
+    expect(sent).toEqual([]);
+  });
+
+  it("the real sleep stops at once when the wait is aborted", async () => {
+    const { realWaitIo } = await import("../src/approvals.js");
+    const controller = new AbortController();
+    const started = Date.now();
+    const slept = realWaitIo.sleep(60_000, controller.signal).catch((e) => e);
+    controller.abort(new Error("stop"));
+    expect(await slept).toMatchObject({ message: "stop" });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 
