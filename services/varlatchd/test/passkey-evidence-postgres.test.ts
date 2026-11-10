@@ -183,6 +183,65 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
     expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [key.credentialId])).toHaveLength(1);
   });
 
+  /** Browsers signed in as the bootstrap admin, each ready to post a registration of `credentialId` (options already fetched). */
+  async function racingRegistrations(key: UnregisteredAuthenticator, count: number, credentialId: string) {
+    return Promise.all(Array.from({ length: count }, async () => {
+      const browser = new Browser();
+      await browser.signIn(key, await browser.signInOptions());
+      const options = await browser.request("GET", "/auth/passkey/generate-register-options");
+      expect(options.status).toBe(200);
+      const response = softAuthenticator(RP).attest(options.body.challenge, { credentialId });
+      return () => browser.request("POST", "/auth/passkey/verify-registration", { response, name: "racing key" });
+    }));
+  }
+
+  it("concurrent registrations of one credential id store exactly one passkey; the others are a 400", async () => {
+    const { key } = await bootstrapAdmin();
+    for (let round = 0; round < 3; round++) {
+      const credentialId = softAuthenticator(RP).credentialId;
+      const posts = await racingRegistrations(key, 6, credentialId);
+      const results = await Promise.all(posts.map((post) => post()));
+      expect(results.map((r) => r.status).sort()).toEqual([200, 400, 400, 400, 400, 400]);
+      for (const r of results.filter((r) => r.status === 400)) expect(r.body.message).toBe("This passkey is already registered");
+      expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [credentialId])).toHaveLength(1);
+      expect(await provenance(credentialId)).toMatchObject({ trust: "unconfirmed" });
+    }
+  });
+
+  it("a registration that passes the early check but loses at the insert is a 400, not a server error", async () => {
+    const { key, identityId } = await bootstrapAdmin();
+    const credentialId = softAuthenticator(RP).credentialId;
+    const [post] = await racingRegistrations(key, 1, credentialId);
+    const userId = (await rows("SELECT better_auth_user_id FROM auth_user_links WHERE identity_id = $1", [identityId]))[0].better_auth_user_id;
+    // Another registration of the same credential id, inserted but not committed: the early check cannot see it.
+    const other = await db.connect();
+    try {
+      await other.query("BEGIN");
+      await other.query(
+        `INSERT INTO passkey (id, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp") VALUES ('pk_racer', 'k', $1, $2, 0, 'singleDevice', false)`,
+        [userId, credentialId],
+      );
+      const pending = post!();
+      // Better Auth's insert waits on the unique index for that transaction.
+      let waited = false;
+      for (let i = 0; i < 200 && !waited; i++) {
+        waited = (await rows(
+          "SELECT 1 FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock' AND query ILIKE '%insert into%passkey%'",
+          [database],
+        )).length > 0;
+        if (!waited) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(waited).toBe(true);
+      await other.query("COMMIT");
+      const res = await pending;
+      expect(res.status).toBe(400);
+      expect(res.body.message).toBe("This passkey is already registered");
+    } finally {
+      other.release();
+    }
+    expect(await rows(`SELECT id FROM passkey WHERE "credentialID" = $1`, [credentialId])).toEqual([{ id: "pk_racer" }]);
+  });
+
   it("sign-in writes the evidence onto its own session only, user verification as the authenticator said", async () => {
     const { key, sessionId: enrollmentSession } = await bootstrapAdmin();
     const before = await evidenceOf(enrollmentSession);
@@ -229,6 +288,15 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
     expect((await browser.request("POST", "/auth/sign-out", {})).status).toBe(200);
     expect(await rows(`SELECT id FROM "session" WHERE id = $1`, [sessionId])).toEqual([]);
     expect(await credentialEvidence(db, cli.body.id)).toMatchObject({ source: "session", userVerified: true });
+    // However old that sign-in was: the next sign-in's sweep leaves evidence a live credential links.
+    await db.query("UPDATE auth_session_evidence SET recorded_at = now() - interval '3 days' WHERE session_id = $1", [sessionId]);
+    const later = new Browser();
+    await later.signIn(key, await later.signInOptions());
+    expect(await credentialEvidence(db, cli.body.id)).toMatchObject({ source: "session", userVerified: true });
+    // Revoked, it is swept by the next sign-in.
+    await db.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [cli.body.id]);
+    await later.signIn(key, await later.signInOptions());
+    expect(await evidenceOf(sessionId)).toBeNull();
   });
 
   it("confirms a session-added passkey with a trusted one, from the dashboard", async () => {

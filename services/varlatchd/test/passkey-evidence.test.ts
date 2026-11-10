@@ -6,7 +6,7 @@ import { MIGRATIONS } from "../src/db/migrations/index.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
-import { PASSKEY_CONFIRMATION, credentialEvidence } from "../src/domain/passkeys.js";
+import { PASSKEY_CONFIRMATION, credentialEvidence, recordSessionEvidence } from "../src/domain/passkeys.js";
 import { buildApp } from "../src/http/app.js";
 import { newId } from "../src/db/ids.js";
 import { PUBLIC_URL, RP, deviceClient } from "./helpers/device-sign-in.js";
@@ -91,15 +91,29 @@ describe("migration 39", () => {
       await db.query("INSERT INTO auth_user_links(better_auth_user_id, identity_id) VALUES ('bau_a','idn_a')");
       await db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp")
         VALUES ('pk_1','k','bau_a','c1',0,'singleDevice',false), ('pk_2','k','bau_a','c2',0,'multiDevice',true)`);
+      // Two later rows with an existing credential id, as nothing refused them before this migration.
+      await db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp","createdAt")
+        VALUES ('pk_0dup','k','bau_a','c1',0,'singleDevice',false, now()), ('pk_9dup','k','bau_a','c1',0,'singleDevice',false, now() + interval '1 second')`);
       await db.query(`INSERT INTO "session"(id,"expiresAt",token,"userId") VALUES ('ses_old', now() + interval '1 day', 't', 'bau_a')`);
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash,auth_session_id) VALUES ('crd_web','idn_a','browser','h1','ses_old')");
       await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_a','cli','h2')");
 
       expect((await runMigrations(db)).applied.map((m) => m.id)).toEqual([39]);
+      // The oldest row of a credential id stays trusted (pk_1 has no date, so it sorts first); later duplicates are unconfirmed.
       expect((await db.query("SELECT passkey_id, trust, trusted_via, trusted_at IS NOT NULL AS dated FROM passkey_provenance ORDER BY passkey_id")).rows).toEqual([
+        { passkey_id: "pk_0dup", trust: "unconfirmed", trusted_via: null, dated: false },
         { passkey_id: "pk_1", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },
         { passkey_id: "pk_2", trust: "trusted", trusted_via: "existing-at-upgrade", dated: true },
+        { passkey_id: "pk_9dup", trust: "unconfirmed", trusted_via: null, dated: false },
       ]);
+      // The duplicates stay, outside the unique index; every new row is unique against the indexed ones.
+      expect((await db.query(`SELECT id FROM passkey WHERE "credentialID" = 'c1' ORDER BY id`)).rows).toHaveLength(3);
+      const newPasskey = (id: string, credentialId: string) =>
+        db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp") VALUES ($1,'k','bau_a',$2,0,'singleDevice',false)`, [id, credentialId]);
+      await expect(newPasskey("pk_new1", "c1")).rejects.toThrow(/duplicate key/);
+      await expect(newPasskey("pk_new2", "c2")).rejects.toThrow(/duplicate key/);
+      await newPasskey("pk_new3", "c3");
+      await expect(newPasskey("pk_new4", "c3")).rejects.toThrow(/duplicate key/);
       // No guessed evidence: old sessions and credentials stay unverified.
       expect((await db.query("SELECT * FROM auth_session_evidence")).rows).toEqual([]);
       expect((await db.query("SELECT id, evidence_user_verified, evidence_passkey_id FROM credentials ORDER BY id")).rows).toEqual([
@@ -121,11 +135,24 @@ describe("migration 39", () => {
       await db.query("UPDATE passkey_provenance SET trusted_via = 'confirmed', confirmed_by_passkey_id = 'pk_2' WHERE passkey_id = 'pk_1'");
       // Removing a passkey removes its provenance.
       await db.query("DELETE FROM passkey WHERE id = 'pk_2'");
-      expect((await db.query("SELECT passkey_id FROM passkey_provenance")).rows).toEqual([{ passkey_id: "pk_1" }]);
+      expect((await db.query("SELECT passkey_id FROM passkey_provenance WHERE passkey_id IN ('pk_1', 'pk_2')")).rows).toEqual([{ passkey_id: "pk_1" }]);
       expect((await runMigrations(db)).applied).toEqual([]);
     } finally {
       await db.close();
     }
+  });
+});
+
+describe("migration 39 on an installation without duplicate credential ids", () => {
+  it("makes the credential id unique for every passkey", async () => {
+    const ada = await person("Ada");
+    const key = await ada.key("trusted");
+    await expect(
+      ctx.db.query(`INSERT INTO passkey(id,"publicKey","userId","credentialID",counter,"deviceType","backedUp") VALUES ('pk_copy','k',$1,$2,0,'singleDevice',false)`, [
+        `bau_${ada.id}`,
+        key.credentialId,
+      ]),
+    ).rejects.toThrow(/duplicate key/);
   });
 });
 
@@ -316,6 +343,48 @@ describe("removing a passkey through Varlatch", () => {
     const { token: cli } = await issueCredential(ctx.db, { identityId: ada.id, kind: "cli" });
     expect((await call("DELETE", `/v1/me/passkeys/${key.passkeyId}`, cli)).body.error.code).toBe("PERMISSION_DENIED");
     expect(await rows("SELECT id FROM passkey WHERE id = $1", [key.passkeyId])).toHaveLength(1);
+  });
+});
+
+describe("sweeping session evidence", () => {
+  it("keeps the evidence a live credential links, however old the sign-in; sweeps what nothing can use", async () => {
+    const ada = await person("Ada");
+    const key = await ada.key("trusted");
+    const userId = `bau_${ada.id}`;
+    const evidence = (sessionId: string, age: string) =>
+      ctx.db.query(
+        `INSERT INTO auth_session_evidence (session_id, ceremony, user_verified, passkey_id, recorded_at)
+         VALUES ($1, 'sign-in', true, $2, now() - $3::interval)`,
+        [sessionId, key.passkeyId, age],
+      );
+    const cliFor = (sessionId: string, extra: { expiresAt?: string } = {}) =>
+      issueCredential(ctx.db, { identityId: ada.id, kind: "cli", authSessionId: sessionId, expiresAt: extra.expiresAt ?? new Date(Date.now() + 3_600_000).toISOString() });
+    // A 3-day-old sign-in handed to a fresh CLI credential, then signed out: its session row is gone.
+    await evidence("ses_handed_off", "3 days");
+    const live = await cliFor("ses_handed_off");
+    // Ended sessions nothing live links: no credential, a revoked one, an expired one.
+    await evidence("ses_unlinked", "3 days");
+    await evidence("ses_revoked", "3 days");
+    await ctx.db.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [(await cliFor("ses_revoked")).credentialId]);
+    await evidence("ses_expired", "3 days");
+    await cliFor("ses_expired", { expiresAt: new Date(Date.now() - 60_000).toISOString() });
+    // A session that has not ended, with no credential at all.
+    const openSession = (id: string) =>
+      ctx.db.query(`INSERT INTO "session" (id, "expiresAt", token, "userId") VALUES ($1, now() + interval '1 day', $1, $2)`, [id, userId]);
+    await openSession("ses_open");
+    await evidence("ses_open", "3 days");
+
+    // Another sign-in runs the sweep.
+    await openSession("ses_next");
+    expect(await recordSessionEvidence(ctx.db, { sessionId: "ses_next", betterAuthUserId: userId, credentialId: key.credentialId, userVerified: true, ceremony: "sign-in" })).toBe(true);
+    expect((await rows("SELECT session_id FROM auth_session_evidence ORDER BY session_id")).map((r) => r.session_id)).toEqual(["ses_handed_off", "ses_next", "ses_open"]);
+    expect(await credentialEvidence(ctx.db, live.credentialId)).toMatchObject({ source: "session", userVerified: true, passkeyId: key.passkeyId });
+
+    // Once the CLI credential is revoked, the next sweep removes it.
+    await ctx.db.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [live.credentialId]);
+    await openSession("ses_after");
+    await recordSessionEvidence(ctx.db, { sessionId: "ses_after", betterAuthUserId: userId, credentialId: key.credentialId, userVerified: true, ceremony: "sign-in" });
+    expect((await rows("SELECT session_id FROM auth_session_evidence ORDER BY session_id")).map((r) => r.session_id)).toEqual(["ses_after", "ses_next", "ses_open"]);
   });
 });
 

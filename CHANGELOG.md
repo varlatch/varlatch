@@ -120,8 +120,11 @@ fixes.
   Auth's `/auth/passkey/delete-passkey` did; that endpoint is turned off
   and answers 404. The dashboard still never removes your last passkey.
 - **A passkey that is already registered is refused.** Registering a
-  credential that the server already knows, for anyone, now fails, as the
-  WebAuthn standard asks.
+  credential that the server already knows, for anyone, now fails with a
+  400, as the WebAuthn standard asks, also when two registrations of it
+  arrive at once. If an installation already has such duplicates, the
+  upgrade keeps them, keeps the oldest one trusted and marks the later ones
+  unconfirmed.
 
 ## 0.20.0 (2026-10-30)
 

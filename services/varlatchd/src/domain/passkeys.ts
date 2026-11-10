@@ -37,9 +37,6 @@ export const PASSKEY_CONFIRMATION = {
   windowSeconds: 600,
 } as const;
 
-/** How long evidence of an ended session is kept: past the longest credential that can link it (24 hours). */
-const ENDED_SESSION_EVIDENCE_DAYS = 2;
-
 export type PasskeyTrust = "trusted" | "unconfirmed";
 export type TrustedVia = "existing-at-upgrade" | "setup-grant" | "confirmed";
 export type SetupGrantKind = "bootstrap" | "recover" | "invite" | "reenroll";
@@ -143,8 +140,13 @@ export interface Evidence {
  * session only. The passkey is the one with this credential id of the
  * session's own Better Auth user; with none, or more than one (two rows can
  * share a credential id only from before such registrations were refused),
- * nothing is recorded and the session counts as unverified. Also sweeps the
- * evidence of sessions that ended long enough ago.
+ * nothing is recorded and the session counts as unverified.
+ *
+ * Also sweeps evidence nothing can use any more: a row goes only once its
+ * session has ended (no "session" row) and no live credential (not
+ * revoked, not expired) links that session, so a browser-handoff CLI
+ * credential keeps its evidence for as long as it lives, however old the
+ * sign-in was.
  */
 export async function recordSessionEvidence(
   db: Querier,
@@ -162,9 +164,11 @@ export async function recordSessionEvidence(
   );
   await db.query(
     `DELETE FROM auth_session_evidence e
-     WHERE e.recorded_at < clock_timestamp() - make_interval(days => $1)
-       AND NOT EXISTS (SELECT 1 FROM "session" s WHERE s.id = e.session_id)`,
-    [ENDED_SESSION_EVIDENCE_DAYS],
+     WHERE NOT EXISTS (SELECT 1 FROM "session" s WHERE s.id = e.session_id)
+       AND NOT EXISTS (
+         SELECT 1 FROM credentials c
+         WHERE c.auth_session_id = e.session_id AND c.revoked_at IS NULL
+           AND (c.expires_at IS NULL OR c.expires_at > clock_timestamp()))`,
   );
   return true;
 }

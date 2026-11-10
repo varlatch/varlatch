@@ -155,6 +155,7 @@ interface CeremonyState {
   };
 }
 
+const ALREADY_REGISTERED = "This passkey is already registered";
 const SIGN_IN_PATH = "/passkey/verify-authentication";
 const REGISTRATION_PATH = "/passkey/verify-registration";
 
@@ -225,8 +226,26 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
       after: createAuthMiddleware(async (actx) => {
         if (actx.path !== REGISTRATION_PATH) return;
         const returned = actx.context.returned as { id?: unknown; credentialID?: unknown } | undefined;
-        if (!returned || isAPIError(returned) || typeof returned.id !== "string") return;
         const registration = ceremonies.getStore()?.registration;
+        if (isAPIError(returned)) {
+          // The credential id is unique in the database (migration 39). A
+          // registration that passed the check in afterVerification but lost
+          // the race to a concurrent one fails at Better Auth's insert, which
+          // Better Auth reports as an internal error: say what happened. A
+          // Response of our own, because Better Auth keeps the endpoint's 500
+          // status for anything else an after-hook returns or throws.
+          if (registration && returned.statusCode === 500) {
+            const taken = await ctx.db.query(`SELECT 1 FROM passkey WHERE "credentialID" = $1 LIMIT 1`, [registration.credentialId]);
+            if (taken.rows[0]) {
+              return new Response(JSON.stringify({ code: "PASSKEY_ALREADY_REGISTERED", message: ALREADY_REGISTERED }), {
+                status: 400,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+          }
+          return;
+        }
+        if (!returned || typeof returned.id !== "string") return;
         const setupGrantKind = registration && registration.credentialId === returned.credentialID
           ? registration.setupGrantKind
           : null;
@@ -266,19 +285,16 @@ export function buildHumanAuth(deps: HumanAuthDeps): HumanAuth {
             if (!info) throw new APIError("BAD_REQUEST", { message: "Registration could not be verified" });
             // WebAuthn §7.1 step 22: a credential id already registered, for
             // anyone, is refused, so a credential id names one passkey and
-            // evidence recorded by it is unambiguous.
+            // evidence recorded by it is unambiguous. Checked here so a
+            // setup grant is not used up for a duplicate; the unique index
+            // (migration 39) settles concurrent registrations at the insert.
             const taken = await ctx.db.query(`SELECT 1 FROM passkey WHERE "credentialID" = $1 LIMIT 1`, [info.credential.id]);
-            if (taken.rows[0]) throw new APIError("BAD_REQUEST", { message: "This passkey is already registered" });
+            if (taken.rows[0]) throw new APIError("BAD_REQUEST", { message: ALREADY_REGISTERED });
             const setupGrantKind = user.id.startsWith(PROVISIONAL_PREFIX) ? await setupGrantKindOf(ctx, context) : null;
-            const enrolled = await completeEnrollment(ctx, user.id, context);
             const state = ceremonies.getStore();
-            if (state) {
-              state.registration = {
-                credentialId: info.credential.id,
-                userVerified: info.userVerified,
-                setupGrantKind: enrolled ? setupGrantKind : null,
-              };
-            }
+            if (state) state.registration = { credentialId: info.credential.id, userVerified: info.userVerified, setupGrantKind: null };
+            const enrolled = await completeEnrollment(ctx, user.id, context);
+            if (state?.registration && enrolled) state.registration.setupGrantKind = setupGrantKind;
             return enrolled;
           },
         },

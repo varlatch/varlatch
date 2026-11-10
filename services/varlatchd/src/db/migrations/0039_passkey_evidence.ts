@@ -9,14 +9,24 @@
  *   added by a signed-in session and become trusted through a confirmation
  *   ceremony with a trusted key. A passkey without a row counts as
  *   unconfirmed, so a failure to record never trusts a key. Every passkey
- *   that exists now is trusted (`existing-at-upgrade`).
+ *   that exists now is trusted (`existing-at-upgrade`), except a later
+ *   duplicate of a credential id (below), which is unconfirmed.
+ * - passkey."credentialID" becomes unique, so a credential id names one
+ *   passkey and the evidence a sign-in records is unambiguous; two
+ *   concurrent registrations of one credential id cannot both be stored.
+ *   Duplicates registered before this migration are not deleted: the
+ *   oldest of each credential id (by "createdAt", then id) stays in the
+ *   unique index, and the later ones are left out of it by id (a partial
+ *   index) and recorded as unconfirmed. Every new row is unique against the
+ *   indexed ones.
  * - auth_session_evidence: what the ceremony that created a Better Auth
  *   session proved: whether the authenticator verified the user, and which
  *   passkey asserted (its provenance is read when the evidence is used, so a
  *   key confirmed later counts). Keyed by the session id and written only
  *   for the session that ceremony created. No foreign key to "session": a
  *   CLI credential from the browser handoff keeps its session's evidence
- *   after that session ends; rows of ended sessions are swept later.
+ *   after that session ends. A row is swept once its session has ended and
+ *   no live credential links that session.
  *   Sessions from before this migration have none: unverified.
  * - credentials: a `cli` credential from device sign-in carries the
  *   approval's evidence itself (evidence_user_verified,
@@ -45,7 +55,29 @@ CREATE TABLE passkey_provenance (
 );
 
 INSERT INTO passkey_provenance (passkey_id, trust, trusted_via, trusted_at)
-  SELECT id, 'trusted', 'existing-at-upgrade', now() FROM passkey;
+  SELECT id,
+         CASE WHEN n = 1 THEN 'trusted' ELSE 'unconfirmed' END,
+         CASE WHEN n = 1 THEN 'existing-at-upgrade' END,
+         CASE WHEN n = 1 THEN now() END
+  FROM (SELECT id, row_number() OVER (PARTITION BY "credentialID" ORDER BY "createdAt" NULLS FIRST, id) AS n FROM passkey) ranked;
+
+DO $$
+DECLARE
+  later_duplicates text[];
+BEGIN
+  SELECT coalesce(array_agg(id ORDER BY id), '{}') INTO later_duplicates
+  FROM (SELECT id, row_number() OVER (PARTITION BY "credentialID" ORDER BY "createdAt" NULLS FIRST, id) AS n FROM passkey) ranked
+  WHERE n > 1;
+  IF cardinality(later_duplicates) = 0 THEN
+    CREATE UNIQUE INDEX passkey_credential_id_unique ON passkey ("credentialID");
+  ELSE
+    RAISE NOTICE 'passkeys sharing a credential id with an older one, left out of the unique index and unconfirmed: %', later_duplicates;
+    EXECUTE format(
+      'CREATE UNIQUE INDEX passkey_credential_id_unique ON passkey ("credentialID") WHERE id <> ALL (%L::text[])',
+      later_duplicates
+    );
+  END IF;
+END $$;
 
 CREATE TABLE auth_session_evidence (
   session_id text PRIMARY KEY CHECK (char_length(session_id) BETWEEN 1 AND 200),
@@ -54,12 +86,13 @@ CREATE TABLE auth_session_evidence (
   passkey_id text NOT NULL,
   recorded_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX auth_session_evidence_recorded_at ON auth_session_evidence (recorded_at);
 
 -- 0025's column check, which PostgreSQL named credentials_check (it reads two columns).
 ALTER TABLE credentials DROP CONSTRAINT credentials_check;
 ALTER TABLE credentials ADD CONSTRAINT credentials_auth_session_id_check
   CHECK (auth_session_id IS NULL OR (kind IN ('browser', 'cli') AND char_length(auth_session_id) BETWEEN 1 AND 200));
+-- The evidence sweep looks credentials up by session.
+CREATE INDEX credentials_auth_session_id ON credentials (auth_session_id) WHERE auth_session_id IS NOT NULL;
 ALTER TABLE credentials ADD COLUMN evidence_user_verified boolean;
 ALTER TABLE credentials ADD COLUMN evidence_passkey_id text;
 ALTER TABLE credentials ADD CONSTRAINT credentials_evidence_check CHECK (
