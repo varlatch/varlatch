@@ -32,6 +32,13 @@ export const ERROR_CODES = [
   // Organization deletion (ADR-0051): refused while frozen; gone after.
   "ORGANIZATION_DELETING",
   "ORGANIZATION_DELETED",
+  // Step-up approvals (ADR-0054 Decision 3): the operation needs an
+  // approval with a trusted passkey (details.approval); an approval sent
+  // with an operation that cannot use it (details.reason).
+  "STEP_UP_REQUIRED",
+  "APPROVAL_INVALID",
+  // Security Controls (ADR-0054 Decision 1): a mode this server does not offer yet.
+  "CONTROL_MODE_UNAVAILABLE",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -93,6 +100,7 @@ export const CAPABILITIES = [
   "identity.reach",
   "security.credential-review",
   "account.passkeys",
+  "security.controls",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

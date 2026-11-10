@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 import type {
+  Approval,
+  ApprovalOptions,
+  SecurityControlChange,
+  SecurityControlChangeInput,
+  SecurityControlList,
+  SecurityControlName,
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
@@ -147,7 +153,35 @@ export interface VarlatchClientOptions {
    * came from VARLATCH_TOKEN.
    */
   onCredentialExpires?: (expiresAt: string) => void;
+  /**
+   * Called when the server answers STEP_UP_REQUIRED (ADR-0054 Decision 3):
+   * the operation needs the person's approval with a trusted passkey, and
+   * the server stored a pending approval for exactly this request. The
+   * handler shows `approval.url` and waits (the CLI polls getApproval; the
+   * dashboard shows its approval dialog). Resolve true once it is approved:
+   * the client then repeats the identical request once, with the
+   * Varlatch-Approval header. Resolve false, or throw, to surface the
+   * STEP_UP_REQUIRED error instead. Without a handler the error surfaces.
+   */
+  onStepUp?: (approval: Approval) => Promise<boolean>;
+  /**
+   * An approved approval's id, sent as the Varlatch-Approval header with
+   * every request that is not a GET: for a client that resumes after the
+   * person approved (`varlatch ... --approval <id>`). An operation that
+   * needs no approval ignores it.
+   */
+  approval?: string;
 }
+
+/** The pending approval a STEP_UP_REQUIRED error carries, or null for any other error. */
+export function stepUpApproval(err: unknown): Approval | null {
+  if (!(err instanceof VarlatchApiError) || err.code !== "STEP_UP_REQUIRED") return null;
+  const approval = err.details?.approval as Approval | undefined;
+  return approval && typeof approval.id === "string" ? approval : null;
+}
+
+/** Carries an approved step-up approval's id with the request it approves (ADR-0054 Decision 3). */
+export const APPROVAL_HEADER = "Varlatch-Approval";
 
 /** Names the presenting machine credential's expiry in its last 7 days (server side, ADR-0054 Decision 8). */
 export const CREDENTIAL_EXPIRES_HEADER = "Varlatch-Credential-Expires";
@@ -212,6 +246,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
+export type { Approval, ApprovalChange, ApprovalOptions, CredentialLifetimeConfig, SecurityControl, SecurityControlChange, SecurityControlChangeInput, SecurityControlList, SecurityControlMode, SecurityControlName } from "@varlatch/protocol";
 export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
@@ -241,6 +276,8 @@ export class VarlatchClient {
   private readonly onMaintenance: ((wait: MaintenanceWait) => void) | undefined;
   private readonly userAgent: string | undefined;
   private readonly onCredentialExpires: ((expiresAt: string) => void) | undefined;
+  private readonly onStepUp: ((approval: Approval) => Promise<boolean>) | undefined;
+  private readonly approval: string | undefined;
   /** End of the current maintenance budget; null while the server answers normally. */
   private maintenanceDeadline: number | null = null;
 
@@ -251,6 +288,8 @@ export class VarlatchClient {
     this.onMaintenance = options.onMaintenance;
     this.userAgent = options.userAgent;
     this.onCredentialExpires = options.onCredentialExpires;
+    this.onStepUp = options.onStepUp;
+    this.approval = options.approval;
     // Bind to globalThis: browsers throw "Illegal invocation" when window
     // fetch is called with a foreign `this`.
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -261,6 +300,27 @@ export class VarlatchClient {
     path: string,
     body?: unknown,
     headers: Record<string, string> = {},
+  ): Promise<T> {
+    const sent = this.approval && method !== "GET" && !(APPROVAL_HEADER in headers)
+      ? { ...headers, [APPROVAL_HEADER]: this.approval }
+      : headers;
+    try {
+      return await this.requestRiding<T>(method, path, body, sent);
+    } catch (err) {
+      // A step-up approval (ADR-0054 Decision 3): wait for the person, then
+      // repeat the identical request once, carrying the approval.
+      const approval = stepUpApproval(err);
+      if (!approval || !this.onStepUp || APPROVAL_HEADER in sent) throw err;
+      if (!(await this.onStepUp(approval))) throw err;
+      return this.requestRiding<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id });
+    }
+  }
+
+  private async requestRiding<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
   ): Promise<T> {
     // Installation maintenance that must isolate (restore, schema migration)
     // rejects requests before processing them with a retryable 503
@@ -909,6 +969,28 @@ export class VarlatchClient {
    * without expiry, with identity and last use (identity.manage; capability
    * security.credential-review). Reporting only; never a token.
    */
+  /** The Organization's Security Controls (capability security.controls). */
+  listSecurityControls(org: string): Promise<SecurityControlList> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/controls`);
+  }
+
+  /**
+   * Change one Security Control. Loosening needs a step-up approval: the
+   * server answers STEP_UP_REQUIRED, which onStepUp handles (or the error
+   * surfaces). enforce is refused with CONTROL_MODE_UNAVAILABLE for now.
+   */
+  changeSecurityControl(
+    org: string,
+    control: SecurityControlName,
+    input: SecurityControlChangeInput,
+  ): Promise<SecurityControlChange> {
+    return this.request(
+      "PATCH",
+      `/v1/organizations/${encodeURIComponent(org)}/security/controls/${encodeURIComponent(control)}`,
+      input,
+    );
+  }
+
   credentialReview(org: string): Promise<CredentialReview> {
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/credential-review`);
   }
@@ -1401,6 +1483,26 @@ export class VarlatchClient {
 
   revokeMyCredential(credentialId: string): Promise<void> {
     return this.request("DELETE", `/v1/me/credentials/${encodeURIComponent(credentialId)}`);
+  }
+
+  /** One of the caller's own step-up approvals (capability security.controls); the CLI polls it while it waits. */
+  getApproval(approvalId: string): Promise<Approval> {
+    return this.request("GET", `/v1/me/approvals/${encodeURIComponent(approvalId)}`);
+  }
+
+  /** Start approving: request options for the caller's trusted passkeys, user verification required (dashboard session bearer). */
+  startApproval(approvalId: string): Promise<ApprovalOptions> {
+    return this.request("POST", `/v1/me/approvals/${encodeURIComponent(approvalId)}/options`);
+  }
+
+  /** Approve with an assertion by a trusted passkey over the started challenge (dashboard session bearer). */
+  approveApproval(approvalId: string, assertion: unknown): Promise<Approval> {
+    return this.request("POST", `/v1/me/approvals/${encodeURIComponent(approvalId)}/approve`, { assertion });
+  }
+
+  /** Cancel a pending or approved, unused approval (the dashboard's Deny, the CLI on Ctrl-C). */
+  cancelApproval(approvalId: string): Promise<Approval> {
+    return this.request("POST", `/v1/me/approvals/${encodeURIComponent(approvalId)}/cancel`);
   }
 
   /** The caller's passkeys with their provenance, trusted or unconfirmed (capability account.passkeys). */
