@@ -4,6 +4,8 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import { currentAttribution } from "./attribution.js";
 import { exposureFromEvent, indexExposures } from "./exposure.js";
+import { lockRowsById } from "../db/locks.js";
+import { lockPeople } from "../domain/personlocks.js";
 
 /**
  * Security Audit Events (ADR-0016). Events are written through this module
@@ -197,6 +199,14 @@ export async function recordAuditEvents(db: Querier, events: AuditEventInput[]):
   });
   if (exposures.length === 0 && events.length === 1) return [await insertAuditEvent(db, events[0]!)];
   return withTx(db, async (tx) => {
+    // The index rows reference their Organization and person: lock them in
+    // the lock order (domain/liveness.ts, steps 1 and 2) before the insert,
+    // in the mode its foreign keys take. A writer already holds them (reuse);
+    // this matters when the events are the transaction's only writes.
+    if (exposures.length > 0) {
+      await lockRowsById(tx, "organizations", exposures.map((e) => e.entry.organizationId), "key share");
+      await lockPeople(tx, exposures.map((e) => e.entry.identityId));
+    }
     await indexExposures(tx, exposures);
     const ids: string[] = [];
     for (const event of events) ids.push(await insertAuditEvent(tx, event));

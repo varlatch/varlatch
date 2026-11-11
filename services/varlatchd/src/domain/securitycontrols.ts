@@ -310,17 +310,23 @@ export async function resetControls(
     const reset: ResetOutcome["reset"] = [];
     const events = [];
     const approvalsClosed = await closeOpenApprovals(db, { organizationId: org.id, reason: "reset", controls });
-    for (const control of controls) {
+    // The control rows in key order (lock order, liveness.ts); the results
+    // and the audit events keep the order the controls were named in.
+    const before = new Map<string, Awaited<ReturnType<typeof readControl>>>();
+    for (const control of [...controls].sort()) {
       const current = await readControl(db, org.id, control);
-      let version = current.version;
+      before.set(control, current);
       if (current.mode !== "off") {
-        version = current.version + 1;
         await db.query(
           `UPDATE security_controls SET mode = 'off', version = $3, changed_by = NULL, changed_at = clock_timestamp()
            WHERE organization_id = $1 AND control = $2`,
-          [org.id, control, version],
+          [org.id, control, current.version + 1],
         );
       }
+    }
+    for (const control of controls) {
+      const current = before.get(control)!;
+      const version = current.mode !== "off" ? current.version + 1 : current.version;
       reset.push({ control, from: current.mode, version });
       events.push({ control, current, version });
     }

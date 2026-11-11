@@ -10,7 +10,7 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockPerson, lockPersonPasskeys } from "./personlocks.js";
+import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
 import { lockedQuery } from "../db/locks.js";
 
 /**
@@ -78,6 +78,26 @@ export function formatUserCode(code: string): string {
  * (which also frees their user codes) and delete rows a day after expiry.
  */
 async function sweep(db: Querier): Promise<void> {
+  // The lock order (liveness.ts): every row this changes, each table in key
+  // order, in the strongest mode it needs (a sign-in may be both expired and
+  // deleted, so FOR UPDATE), before the bulk statements; the challenges first,
+  // since deleting a sign-in cascades to its own.
+  const lapsed = "(status IN ('pending', 'approved') AND expires_at <= clock_timestamp()) OR expires_at < clock_timestamp() - interval '1 day'";
+  await lockedQuery(
+    db,
+    { table: "device_sign_in_challenges", mode: "update" },
+    `SELECT id FROM device_sign_in_challenges
+     WHERE expires_at < clock_timestamp() - interval '1 day'
+        OR device_sign_in_id IN (SELECT id FROM device_sign_ins WHERE expires_at < clock_timestamp() - interval '1 day')
+     ORDER BY id FOR UPDATE`,
+  );
+  await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, `SELECT id FROM device_sign_ins WHERE ${lapsed} ORDER BY id FOR UPDATE`);
+  await lockedQuery(
+    db,
+    { table: "device_code_attempt_windows", mode: "update", key: "lock_key" },
+    `SELECT concat_ws('|', scope::text, key::text) AS lock_key FROM device_code_attempt_windows
+     WHERE window_started_at < clock_timestamp() - interval '1 day' ORDER BY scope COLLATE "C", key COLLATE "C" FOR UPDATE`,
+  );
   await db.query("UPDATE device_sign_ins SET status = 'expired' WHERE status IN ('pending', 'approved') AND expires_at <= clock_timestamp()");
   await db.query("DELETE FROM device_sign_ins WHERE expires_at < clock_timestamp() - interval '1 day'");
   await db.query("DELETE FROM device_sign_in_challenges WHERE expires_at < clock_timestamp() - interval '1 day'");
@@ -183,6 +203,15 @@ export async function pollDeviceSignIn(
 ): Promise<PollOutcome> {
   if (!DEVICE_CODE.test(input.deviceCode)) return { kind: "unknown" };
   return withTx(ctx.db, async (db) => {
+    // The lock order (liveness.ts): the approver (step 2), whom the issued
+    // credential references, before the sign-in row (a domain row). An
+    // approval that lands between this read and the row lock leaves its
+    // approver unlocked until the credential's insert; the approval holds
+    // its approver only FOR KEY SHARE, so the two cannot deadlock.
+    const approver = (await db.query("SELECT approved_by_identity_id FROM device_sign_ins WHERE device_code_hash = $1", [
+      sha256(input.deviceCode),
+    ])).rows[0] as { approved_by_identity_id: string | null } | undefined;
+    await lockPeople(db, [approver?.approved_by_identity_id]);
     const locked = (await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, "SELECT id FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE", [
       sha256(input.deviceCode),
     ])).rows[0] as { id: string } | undefined;
