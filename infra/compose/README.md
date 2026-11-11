@@ -256,6 +256,39 @@ custody, the Docker Compose version) are listed but never block.
 is older than the release, the upgrade leaves the release's CLI as
 `varlatch-cli-<version>.cjs` here: use it from then on.
 
+### Outbound destinations after upgrading to 0.21.1
+
+From 0.21.1, varlatchd no longer connects to private, loopback or
+link-local addresses on an Organization's behalf. A webhook receiver, a
+Coolify or Convex instance, or an OIDC issuer on your LAN, a Docker network
+or a tailnet needs an entry in `VARLATCH_OUTBOUND_ALLOW`, with the port when
+it is not 443 (https) or 80 (http). Plain http needs an entry too.
+
+`varlatch upgrade` checks the configured destinations with the new release
+before it starts it, and shows the refused ones with the line to add. It
+does not block the upgrade: refused deliveries wait, nothing is lost, and
+everything catches up once you add the line to `.env` and run
+`docker compose up -d varlatchd`. Run the check yourself at any time:
+
+```sh
+varlatch admin outbound check
+```
+
+On an installation you deploy by hand, run the new image's check against
+your database before switching, with the same environment and secrets as
+varlatchd (adjust the network and image to yours):
+
+```sh
+docker run --rm --network <compose-project>_default \
+  -e VARLATCH_DATABASE_URL=postgres://varlatchd_runtime:<password>@postgres:5432/varlatch \
+  ghcr.io/varlatch/varlatchd:0.21.1 admin outbound check
+```
+
+OIDC issuers whose discovery document or JWKS answers with a redirect stop
+working: bind the final URL instead when it is a valid issuer.
+[Outbound policy](../../docs/reference/outbound-policy.md) has the migration
+guide.
+
 ### Newer releases in the dashboard
 
 The dashboard never upgrades Varlatch, and neither varlatchd nor the browser

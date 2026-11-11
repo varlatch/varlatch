@@ -2846,7 +2846,26 @@ async function main(): Promise<void> {
           }
           break;
         }
-        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll | varlatch admin security reset");
+        if (args[0] === "outbound") {
+          // ADR-0057 Decision 10: the configured destinations against the
+          // outbound policy, run by varlatchd on this host; DNS lookups only.
+          const { OUTBOUND_USAGE, runOutboundCheck } = await import("./outbound.js");
+          const parsed = strictOptions("admin outbound check", args.slice(2), { values: ["--allow", "--org", "--dir"], booleans: ["--json"] }, OUTBOUND_USAGE);
+          if (args[1] !== "check") usageError(OUTBOUND_USAGE);
+          const allow = parsed.values.get("--allow");
+          const org = parsed.values.get("--org");
+          const run = runOutboundCheck(parsed.values.get("--dir") ?? process.cwd(), [
+            ...(allow !== undefined ? ["--allow", allow] : []),
+            ...(org ? ["--org", org] : []),
+            ...(parsed.booleans.has("--json") ? ["--json"] : []),
+          ]);
+          if (run.status === null) fail("docker is not runnable here: run this in the installation's Compose directory, or pass --dir");
+          process.stdout.write(run.stdout);
+          process.stderr.write(run.stderr);
+          process.exitCode = run.status;
+          break;
+        }
+        if (args[0] !== "backup") usageError("Usage: varlatch admin backup create|verify|restore|status | varlatch admin reenroll | varlatch admin security reset | varlatch admin outbound check");
         const { backupCommand } = await import("./backup.js");
         await backupCommand(args.slice(1));
         break;

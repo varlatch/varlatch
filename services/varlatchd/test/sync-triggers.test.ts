@@ -67,6 +67,8 @@ const TRIGGERING = [
   "organization.deletion_cancelled",
   "organization.deletion_scheduled",
   "organization.renamed",
+  // A refused outbound request (ADR-0057): decision deny, and it names no environment.
+  "outbound.refused",
   "project.created",
   "project.deleted",
   "project.renamed",

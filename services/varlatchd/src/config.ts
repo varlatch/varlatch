@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { parseTrustedProxies } from "./http/client-address.js";
+import { OutboundAllowError, parseOutboundAllow, type AllowEntry } from "./net/outbound.js";
 
 /**
  * varlatchd runtime configuration. The root KEK is canonically supplied via a
@@ -46,6 +47,10 @@ const envSchema = z.object({
   // (http/client-address.ts): comma-separated IPs, CIDR ranges, and host
   // names, such as the compose service varlatch-web. Unset: none.
   VARLATCH_TRUSTED_PROXIES: optional(z.string()),
+  // The host operator's exceptions to the outbound policy (ADR-0057):
+  // comma-separated host names, *.suffixes, addresses and CIDR ranges, each
+  // with an optional port. Unset: Organizations reach public https only.
+  VARLATCH_OUTBOUND_ALLOW: optional(z.string()),
 });
 
 export interface VarlatchdConfig {
@@ -69,6 +74,8 @@ export interface VarlatchdConfig {
   sync: { adapters: string[] | null } | null;
   /** VARLATCH_TRUSTED_PROXIES, validated; null when no proxy is trusted. */
   trustedProxies: string | null;
+  /** VARLATCH_OUTBOUND_ALLOW, parsed (ADR-0057); empty when unset. */
+  outboundAllow: AllowEntry[];
   /** Loads and validates the raw 32-byte root KEK. Never log its value. */
   loadRootKek: () => Buffer;
 }
@@ -243,8 +250,15 @@ export function loadConfig(
       throw new ConfigError(err instanceof Error ? err.message : String(err));
     }
   }
+  let outboundAllow: AllowEntry[];
+  try {
+    outboundAllow = parseOutboundAllow(cfg.VARLATCH_OUTBOUND_ALLOW);
+  } catch (err) {
+    throw new ConfigError(err instanceof OutboundAllowError ? err.message : String(err));
+  }
   return {
     trustedProxies,
+    outboundAllow,
     databaseUrl: withPasswordFile(cfg.VARLATCH_DATABASE_URL, cfg.VARLATCH_DATABASE_PASSWORD_FILE),
     port: cfg.VARLATCH_PORT,
     publicUrl: cfg.VARLATCH_PUBLIC_URL,

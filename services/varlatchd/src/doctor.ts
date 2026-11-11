@@ -9,6 +9,8 @@ import { SERVER_VERSION } from "./http/app.js";
 import { evaluateMirror, readMirrorStatus, type MirrorStatus } from "./mirror/status.js";
 import { custodyStatus } from "./domain/custody.js";
 import { readListenerReport, type ListenerReason, type TailnetListenerReport } from "./tailnet/observe.js";
+import { allowListWarnings, OutboundPolicy, type AllowEntry } from "./net/outbound.js";
+import { outboundCheck } from "./net/outbound-check.js";
 
 /**
  * Read-only Installation Health checks that need the Secret Plane's own view
@@ -67,6 +69,10 @@ export interface ServerDoctorInput {
   tailnet?: { browserEndpoint: string | null } | null;
   readListeners?: (dir: string) => TailnetListenerReport | null;
   now?: () => number;
+  /** VARLATCH_OUTBOUND_ALLOW as parsed (ADR-0057); absent, the policy without exceptions. */
+  outboundAllow?: AllowEntry[];
+  /** The policy to check destinations with (tests: a fixed resolver). */
+  outboundPolicy?: OutboundPolicy;
 }
 
 export const FUNCTIONS_FINGERPRINT_FILE = "/opt/varlatch/convex-functions.fingerprint";
@@ -360,6 +366,42 @@ export function checkTailnet(input: ServerDoctorInput): Check[] {
   return checks;
 }
 
+/**
+ * ADR-0057 Decision 8: the allow list as parsed, warnings for entries that
+ * add nothing or open host-only ranges, and how many configured
+ * destinations the policy refuses. Advisory: a refused destination waits
+ * without loss until the host operator allows it.
+ */
+export async function checkOutbound(input: ServerDoctorInput): Promise<Check> {
+  const base = { id: "outbound.policy", title: "Outbound destinations", class: "advisory" as const };
+  const policy = input.outboundPolicy ?? new OutboundPolicy(input.outboundAllow ?? []);
+  const allow = policy.entries.map((e) => e.text);
+  const warnings = allowListWarnings(policy.entries);
+  const listed = `VARLATCH_OUTBOUND_ALLOW: ${allow.length > 0 ? allow.join(",") : "not set"}`;
+  let report: Awaited<ReturnType<typeof outboundCheck>>;
+  try {
+    report = await outboundCheck(input.db, policy);
+  } catch {
+    return { ...base, status: "unknown", detail: `${listed}; configured destinations could not be read` };
+  }
+  const refused = report.destinations.filter((d) => d.verdict === "refused");
+  const problems = [
+    ...(refused.length > 0
+      ? [`${refused.length} configured destination${refused.length === 1 ? " is" : "s are"} refused (${refused.map((d) => `${d.host}:${d.port} ${d.reason}`).join(", ")})`]
+      : []),
+    ...warnings,
+  ];
+  if (problems.length === 0) return { ...base, status: "pass", detail: `${listed}; ${report.destinations.length} configured destinations allowed` };
+  return {
+    ...base,
+    status: "fail",
+    detail: `${listed}; ${problems.join("; ")}`,
+    remedy: report.suggested
+      ? `Set VARLATCH_OUTBOUND_ALLOW=${report.suggested} and restart varlatchd; \`varlatchd admin outbound check\` lists every destination`
+      : "Run `varlatchd admin outbound check` for every destination and what would allow it",
+  };
+}
+
 export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoctorReport> {
   const checks: Check[] = [];
   let gate: ReturnType<typeof activeGate> = null;
@@ -397,6 +439,7 @@ export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoct
   checks.push(checkReleaseLatest(input.stateDir, SERVER_VERSION, (input.now ?? Date.now)()));
   checks.push(await checkCustody(input.db));
   checks.push(...checkTailnet(input));
+  checks.push(await checkOutbound(input));
 
   return {
     facts: {

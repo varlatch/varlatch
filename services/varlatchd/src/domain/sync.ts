@@ -19,7 +19,8 @@ import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
-import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
+import { GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, githubUnreachable, readJwtRefusal } from "./githubjwt.js";
+import { outboundOf, type OutboundPurpose, type OutboundRefusedError } from "../net/outbound.js";
 import {
   APP_REMOVED,
   appCredentialFrom,
@@ -345,6 +346,40 @@ export function mappingWidens(prev: SyncMapping, next: SyncMapping): boolean {
 // ---------------------------------------------------------------------------
 // Platform Connections
 
+/**
+ * The outbound policy's verdict on a Connection's base identity (ADR-0057
+ * Decision 6), for a platform whose base identity is an address (Coolify,
+ * Convex): the refusal, audited, or null. GitHub's host is fixed; its
+ * requests are checked when they connect.
+ */
+async function baseIdentityRefusal(
+  ctx: AppCtx,
+  organizationId: string,
+  baseIdentity: string,
+  purpose: OutboundPurpose,
+  connectionId: string | null,
+  actorIdentityId: string,
+): Promise<OutboundRefusedError | null> {
+  if (!/^https?:\/\//.test(baseIdentity)) return null;
+  const policy = outboundOf(ctx);
+  const refusal = await policy.refusalFor(baseIdentity, purpose);
+  if (!refusal) return null;
+  await policy.recordRefusal(ctx.db, {
+    organizationId,
+    purpose,
+    phase: "configuration",
+    refusal,
+    resource: connectionId ? { connectionId } : {},
+    actorIdentityId,
+  });
+  return refusal;
+}
+
+/** A check or listing the outbound policy refused: unreachable, in its words (ADR-0057 Decision 7). */
+function refusedCheck(refusal: OutboundRefusedError): AccessCheck {
+  return { status: "unreachable", where: "connection", message: refusal.message };
+}
+
 export async function createConnection(
   ctx: AppCtx,
   org: OrgRow,
@@ -360,6 +395,9 @@ export async function createConnection(
   if (input.credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
+  // The outbound policy (ADR-0057 Decision 6), before any transaction.
+  const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_check", null, actorIdentityId);
+  if (refusal) throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
   const id = newId("platformConnection");
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
@@ -407,7 +445,8 @@ export async function createAppConnection(
   input: { installationId: number; name: string },
   actorIdentityId: string,
   allowedAdapters: string[] | null,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
 ): Promise<PlatformConnectionRow> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
@@ -416,7 +455,7 @@ export async function createAppConnection(
   }
   const { app, pem } = await appWithKey(ctx, org);
   const installation = await readInstallation(
-    fetchImpl,
+    fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }),
     { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
     input.installationId,
   );
@@ -501,7 +540,8 @@ export async function rotateGitHubAppKey(
   input: { privateKey: string; expectedVersion: number },
   gate: (target: SyncTargetRow) => Promise<Record<string, unknown> | undefined | void>,
   actorIdentityId: string,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
   now: number = Date.now(),
 ): Promise<KeyRotationOutcome> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
@@ -511,8 +551,8 @@ export async function rotateGitHubAppKey(
   }
   const seen = await getGitHubApp(ctx, org.id);
   const githubAppId = Number(seen.github_app_id);
-  const { res, claims } = await appRequest(fetchImpl, "/app", seen.client_id, input.privateKey, now);
-  if (!res) return { outcome: "failed", ...GITHUB_UNREACHABLE };
+  const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", seen.client_id, input.privateKey, now);
+  if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
   if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
   if (!res.ok) {
     return {
@@ -887,14 +927,20 @@ export async function checkConnectionAccess(
     ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
     : null;
 
-  const credential = await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, fetchImpl);
+  // The outbound policy first (ADR-0057 Decision 6): a refused base identity
+  // is reported in the policy's words, and no credential is sent.
+  const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_check", connectionId, actorIdentityId);
+  const send = fetchImpl ?? outboundOf(ctx).fetch("sync_check", { db: ctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
+  const credential = refusal
+    ? { ok: false as const, check: refusedCheck(refusal) }
+    : await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, send);
   const checked = credential.ok
     ? await adapter.checkAccess({
         baseIdentity,
         destination: destination?.destination ?? {},
         credential: credential.credential,
         credentialKind: resolved.kind,
-        ...(fetchImpl ? { fetchImpl } : {}),
+        fetchImpl: send,
       })
     : credential.check;
   if (resolved.kind === "token" && connectionId && storedVersion !== null && checked.credentialExpiresAt) {
@@ -945,14 +991,19 @@ export async function listConnectionDestinations(
       "This platform has no destinations to list: the Connection's base identity is the destination",
     );
   }
-  const credential = await credentialForUse(resolved, "listing", {}, fetchImpl);
+  // The outbound policy first (ADR-0057 Decision 6), as for a check.
+  const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_listing", connectionId, actorIdentityId);
+  const send = fetchImpl ?? outboundOf(ctx).fetch("sync_listing", { db: ctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
+  const credential = refusal
+    ? { ok: false as const, check: refusedCheck(refusal) }
+    : await credentialForUse(resolved, "listing", {}, send);
   const listing: DestinationListing = credential.ok
     ? await adapter.listDestinations({
         baseIdentity,
         destination: {},
         credential: credential.credential,
         credentialKind: resolved.kind,
-        ...(fetchImpl ? { fetchImpl } : {}),
+        fetchImpl: send,
       })
     : { check: credential.check, items: [], truncated: false };
   if (resolved.kind === "token" && connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
@@ -1026,11 +1077,11 @@ async function credentialForUse(
   resolved: ResolvedCredential,
   use: MintUse,
   destination: Record<string, string>,
-  fetchImpl?: typeof fetch,
+  fetchImpl: typeof fetch,
 ): Promise<{ ok: true; credential: string } | { ok: false; check: AccessCheck }> {
   if (resolved.kind === "token") return { ok: true, credential: resolved.credential };
   if (!resolved.app) return { ok: false, check: APP_REMOVED };
-  const minted = await mintInstallationToken(fetchImpl ?? fetch, resolved.app, use, destination);
+  const minted = await mintInstallationToken(fetchImpl, resolved.app, use, destination);
   return minted.ok ? { ok: true, credential: minted.token } : minted;
 }
 

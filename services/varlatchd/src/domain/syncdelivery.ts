@@ -14,6 +14,7 @@ import { ReferenceExpansionError, expandReferences } from "./references.js";
 import { activeContractOf } from "./contracts.js";
 import { DomainError } from "./errors.js";
 import { envelope, resolveItems } from "./retrieval.js";
+import { outboundOf, outboundRefusalOf, type OutboundRefusedError } from "../net/outbound.js";
 import {
   boundNotes,
   recordCredentialExpiry,
@@ -92,6 +93,7 @@ interface LedgerRow {
 }
 
 export interface SyncRunOptions {
+  /** Test hook; delivery otherwise always uses the outbound policy (ADR-0057). */
   fetchImpl?: typeof fetch | undefined;
   repairIntervalMs?: number | undefined;
   /** Which adapters this Installation allows (VARLATCH_SYNC_ADAPTERS). */
@@ -271,6 +273,22 @@ export async function reconcileTarget(
   const runDeadline = leaseRow.run_deadline as Date | string;
   // The notes of a completed inspection, kept for a run that throws later.
   const inspected: { notes?: TargetNote[] } = {};
+  // Every request of the run goes through the outbound policy (ADR-0057);
+  // a refusal anywhere in it is kept, so the run ends as a refusal rather
+  // than a failure (Decision 7).
+  const refused: { first: OutboundRefusedError | null } = { first: null };
+  const send = opts.fetchImpl ?? outboundOf(ctx).fetch("sync_delivery");
+  const runOpts: SyncRunOptions = {
+    ...opts,
+    fetchImpl: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      try {
+        return await send(input, init);
+      } catch (err) {
+        refused.first ??= outboundRefusalOf(err);
+        throw err;
+      }
+    }) as typeof fetch,
+  };
 
   try {
     // Connection and org facts also post-lease: a re-point that raced the
@@ -323,7 +341,7 @@ export async function reconcileTarget(
 
     let outcome: Awaited<ReturnType<typeof reconcileUnderLease>>;
     try {
-      outcome = await reconcileUnderLease(ctx, target, live, generation, force, opts, inspected, cycleStart);
+      outcome = await reconcileUnderLease(ctx, target, live, generation, force, runOpts, inspected, cycleStart);
     } finally {
       // Whatever the outcome, even a throw (a refused public-key fetch), the
       // platform may have said when the credential expires; recorded only if
@@ -376,6 +394,15 @@ export async function reconcileTarget(
       }
       return;
     }
+    // A request the outbound policy refused, anywhere in the run, makes it a
+    // refusal whatever the outcome says (ADR-0057 Decision 7): a refused
+    // redeploy after successful writes still leaves the run "ok" with the
+    // redeploy owed. Recorded before the repair cycle could close, and the
+    // cycle stays open: the refused work is still due.
+    if (refused.first) {
+      await recordRefusal(ctx, target, refused.first, generation, outcome.notes);
+      return;
+    }
     // The repair cycle closes when its eligible work is done, independent of
     // the Target's health: a flag such as an unresolved reference must not
     // keep a cycle open (and its credited names unverified) for good.
@@ -400,6 +427,13 @@ export async function reconcileTarget(
       await recordFailure(ctx, target, outcome.result, true, generation, outcome.notes, credentialVersion);
     }
   } catch (err) {
+    const refusal = refused.first ?? outboundRefusalOf(err);
+    if (refusal) {
+      await recordRefusal(ctx, target, refusal, generation, inspected.notes).catch((e) =>
+        console.error("sync refusal bookkeeping failed:", e),
+      );
+      return;
+    }
     await recordFailure(
       ctx,
       target,
@@ -1065,7 +1099,7 @@ async function credentialOf(
     if (live.minted_token === undefined) {
       const app = appCredentialFrom(ctx, org, live);
       if (!app) throw new GitHubAppTokenError(APP_REMOVED.message);
-      const minted = await mintInstallationToken(opts.fetchImpl ?? fetch, app, "push", target.destination);
+      const minted = await mintInstallationToken(opts.fetchImpl ?? outboundOf(ctx).fetch("sync_delivery"), app, "push", target.destination);
       if (!minted.ok) throw new GitHubAppTokenError(minted.check.message);
       live.minted_token = minted.token;
     }
@@ -1241,6 +1275,52 @@ async function creditVerified(ctx: AppCtx, targetId: string, generation: number,
   });
 }
 
+/** The prefix of a Target's last_result while the outbound policy refuses its destination (ADR-0057 Decision 7). */
+export const OUTBOUND_REFUSED_RESULT = "outbound_refused";
+
+/**
+ * A run the outbound policy refused (ADR-0057 Decision 7): recorded as
+ * `outbound_refused: <reason>`, never counted toward the failure budget and
+ * never disabling the Target. needs_sync stays on and the next attempt waits
+ * the longest backoff: the allow list only changes with a restart, which
+ * clears it (clearRefusedBackoff). Audited within the rate bound.
+ */
+async function recordRefusal(
+  ctx: AppCtx,
+  target: SyncTargetRow,
+  refusal: OutboundRefusedError,
+  generation: number,
+  notes?: TargetNote[],
+): Promise<void> {
+  const params: unknown[] = [target.id, `${OUTBOUND_REFUSED_RESULT}: ${refusal.reason}`, MAX_BACKOFF_MS, generation];
+  const setNotes = notes !== undefined ? `, last_notes = $${params.push(JSON.stringify(notes))}` : "";
+  await ctx.db.query(
+    `UPDATE sync_targets
+     SET last_result = $2, needs_sync = true, next_attempt_at = now() + ($3 * interval '1 millisecond')${setNotes}
+     WHERE id = $1 AND generation = $4 AND revoked_at IS NULL`,
+    params,
+  );
+  await outboundOf(ctx).recordRefusal(ctx.db, {
+    organizationId: target.organization_id,
+    purpose: "sync_delivery",
+    phase: "connection",
+    refusal,
+    resource: { targetId: target.id, connectionId: target.connection_id },
+  });
+}
+
+/**
+ * At startup, Targets the outbound policy refused are due again at once
+ * (ADR-0057 Decision 7): the allow list changes only with a restart.
+ */
+export async function clearRefusedBackoff(ctx: AppCtx): Promise<void> {
+  await ctx.db.query(
+    `UPDATE sync_targets SET next_attempt_at = NULL
+     WHERE revoked_at IS NULL AND next_attempt_at IS NOT NULL AND last_result LIKE $1`,
+    [`${OUTBOUND_REFUSED_RESULT}:%`],
+  );
+}
+
 async function recordFailure(
   ctx: AppCtx,
   target: SyncTargetRow,
@@ -1342,12 +1422,17 @@ export function startSyncLoop(
   opts: SyncRunOptions & { intervalMs?: number } = {},
 ): () => void {
   let busy = false;
+  let started = false;
   const tick = async () => {
     if (busy) return;
     const leave = ctx.maintenance?.enter();
     if (ctx.maintenance && !leave) return;
     busy = true;
     try {
+      if (!started) {
+        await clearRefusedBackoff(ctx);
+        started = true;
+      }
       await runSyncOnce(ctx, opts);
     } catch (err) {
       console.error("sync loop error:", err);
