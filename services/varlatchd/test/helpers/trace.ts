@@ -95,7 +95,11 @@ export function checkAuditBeforeDecryption(log: TraceLog): { decrypted: string[]
       decrypted.push(e.versionId);
       continue;
     }
-    if (SNAPSHOT_ONLY.test(e.text) && !/INSERT INTO audit_events/.test(e.text)) {
+    // A tagged row lock (db/locks.ts) returns keys only: the audit
+    // transaction takes the Organization and the person before its index
+    // rows reference them (lock order, ADR-0054 amendment E). It reads no
+    // retrieval data.
+    if (SNAPSHOT_ONLY.test(e.text) && !/INSERT INTO audit_events/.test(e.text) && !/\/\* varlatch-lock /.test(e.text)) {
       throw new Error(`read after the snapshot: ${e.text.slice(0, 120)}`);
     }
     if (/^BEGIN/.test(e.text)) pending = [];

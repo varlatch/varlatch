@@ -13,6 +13,7 @@ import { finalizeDeletion, scheduleDeletion } from "../src/domain/orgdeletion.js
 import { createConnection, createTarget, revokeConnection, type SyncTargetRow } from "../src/domain/sync.js";
 import { ledgerSet, recordDrift, recordFailure } from "../src/domain/syncdelivery.js";
 import { applyChangeSet, beginRotation, setValue } from "../src/domain/values.js";
+import { recordAuditEvents } from "../src/audit/events.js";
 import { buildApp } from "../src/http/app.js";
 
 /**
@@ -257,6 +258,37 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       if (res.status !== 200) throw Object.assign(new Error(`status ${res.status}: ${await res.text()}`), { code: String(res.status) });
     };
     expect(await race(/INSERT INTO idempotency_keys/, write, loosening)).toEqual(["ok", "ok"]);
+  });
+
+  it("an audit-only transaction with exposure rows against a loosening control change by the same person", async () => {
+    // The control change, emulated (amendment E, steps 1 and 2): it holds
+    // the Organization FOR UPDATE, the audit transaction starts and waits,
+    // then the control change takes the person FOR UPDATE. Under the old
+    // order the audit transaction's index insert held the person (its
+    // foreign key) while it waited for the Organization.
+    const version = (await db.query("SELECT current_version_id AS v FROM env_values WHERE environment_id = $1 AND item_name = 'API_KEY'", [env.id])).rows[0] as { v: string };
+    const client = await db.connect();
+    let audited: Promise<unknown>;
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [org.id]);
+      audited = recordAuditEvents(db, [{
+        eventType: "value.written",
+        decision: "info",
+        actorIdentityId: identityId,
+        organizationId: org.id,
+        action: "config.value.write",
+        resource: { projectId: project.id, environmentId: env.id, itemName: "API_KEY", versionId: version.v, previousVersionId: null },
+        metadata: { sensitive: true },
+      }]);
+      await waitingOnLock();
+      const control = client.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [identityId]).then(() => client.query("COMMIT"));
+      const outcomes = (await Promise.allSettled([control, audited])).map(outcome);
+      expect(outcomes).toEqual(["ok", "ok"]);
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
   });
 
   describe("the sync workers (App, Connection, Target; the strongest Target lock up front)", () => {
