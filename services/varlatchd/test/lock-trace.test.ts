@@ -321,10 +321,10 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(takeLockViolations()).toEqual([]);
     // Two rows of people changed, neither prelocked: checked, and refused.
     await db.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
-    expect(takeLockViolations().map((v) => v.problems)).toEqual([[
-      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
-      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
-    ]]);
+    // (and, depending on the rows' physical order, taken out of id order)
+    const lone = takeLockViolations();
+    expect(lone).toHaveLength(1);
+    expect(lone[0]!.problems.filter((p) => /^a person's row changed without an explicit FOR UPDATE prelock/.test(p))).toHaveLength(2);
     expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b!" }]);
   });
 
