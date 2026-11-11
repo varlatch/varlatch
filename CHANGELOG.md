@@ -65,14 +65,17 @@ fixes.
   the host. API: `GET /v1/installation/outbound` (capability
   `installation.outbound`).
 - **Each Organization's Security page** lists the webhooks, Connections and
-  OIDC issuers this installation refuses, with the reason and when the
-  first refusal was recorded, and says that private destinations are
-  allowed by the host operator, not in Varlatch. `varlatch security report`
+  OIDC issuers this installation refuses, with the reason and the first
+  refusal recorded in the last 30 days, says how many destinations could
+  not be checked because their names did not resolve, and says that
+  private destinations are allowed by the host operator, not in Varlatch. `varlatch security report`
   shows the same list. Both need `organization.manage`. API:
   `GET /v1/organizations/{org}/security/refused-destinations` (capability
   `security.refused-destinations`). A webhook, Sync Target or Connection
   whose destination is refused now says so with the policy's wording,
-  instead of showing a failure.
+  instead of showing a failure; a Connection says so even when no
+  integration uses it or all are paused. Both pages check when asked,
+  with DNS lookups only, and reuse a check for up to 30 seconds.
 
 ### Upgrading
 

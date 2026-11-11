@@ -411,8 +411,9 @@ every control. See the [threat model](../THREAT-MODEL.md).
   credential id, public key or passkey id. Needs `organization.manage`.
 - `GET /v1/organizations/{org}/security/refused-destinations`: the
   webhooks, Connections and OIDC issuers this installation's outbound
-  policy refuses, with kind, name, host, port, reason and when the first
-  refusal was recorded. Never a resolved address or the host's allow list.
+  policy refuses, with kind, name, host, port, reason and the earliest
+  refusal recorded in the last 30 days, and how many destinations could
+  not be checked. Never a resolved address or the host's allow list.
   Needs `organization.manage`. See
   [Outbound policy](outbound-policy.md).
 

@@ -140,11 +140,16 @@ Admins: the allow list as varlatchd read it at startup, the same warnings,
 every refused destination by Organization (kind, name, host and reason), and
 the suggested line. It is read-only: change the allow list on the host. It
 never shows the resolved addresses. API: `GET /v1/installation/outbound`.
+Both pages check when asked, with DNS lookups only. A check is shared by
+requests that arrive while it runs and reused for up to 30 seconds, and
+varlatchd runs at most 8 lookups at a time for them.
 
 Each Organization's **Security page** lists the Organization's own refused
 destinations for its admins (`organization.manage`): kind, name, host,
-reason, and when the first refusal was recorded in the audit log in the last
-30 days. `varlatch security report` shows the same list. Neither shows the
+reason, and the earliest refusal recorded in the audit log in the last 30
+days (not necessarily the start of one continuous refusal), and how many
+destinations could not be checked because their names did not resolve.
+`varlatch security report` shows the same list. Neither shows the
 allow list or a resolved address. API:
 `GET /v1/organizations/{org}/security/refused-destinations`.
 
