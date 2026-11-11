@@ -160,7 +160,7 @@ import {
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
 import { approvalKeys } from "../domain/approvalKeys.js";
-import { lockPerson, type PersonRef } from "../domain/personlocks.js";
+import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -978,6 +978,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }
     }
     const profile = await withTx(ctx.db, async (db) => {
+      // Step 2 of the lock order (domain/liveness.ts): the person, FOR UPDATE
+      // when their row changes, FOR KEY SHARE (the audit's index) otherwise.
+      await lockPeople(db, [{ id: principal.identity.id, mode: body.name !== undefined ? "update" : "key share" }]);
       if (body.name !== undefined) {
         // identities.name is what org listings and audit provenance show —
         // keep it authoritative alongside the Better Auth display name.
@@ -1561,6 +1564,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const organizationId = routeParam(c, "organization");
     const identityId = routeParam(c, "identity");
     await withTx(ctx.db, async (db) => {
+      // Step 2 (domain/liveness.ts): the remover, whom removed_by references.
+      await lockPeople(db, [principal.identity.id]);
       const res = await db.query(
         `UPDATE audit_tombstone_readers SET removed_at = now(), removed_by = $3
          WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL RETURNING identity_id`,
