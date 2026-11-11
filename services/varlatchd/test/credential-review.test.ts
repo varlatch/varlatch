@@ -65,7 +65,13 @@ type Item = {
 async function review(org = "acme", token = admin.token) {
   const res = await call("GET", REVIEW(org), undefined, token);
   expect(res.status, JSON.stringify(res.body)).toBe(200);
-  return res.body as { generatedAt: string; idleDays: number; summary: Record<string, number>; items: Item[] };
+  return res.body as {
+    generatedAt: string;
+    idleDays: number;
+    summary: Record<string, number>;
+    items: Item[];
+    expiry: { warningDays: number; summary: Record<string, number>; items: (Omit<Item, "reasons"> & { state: string; kind: string })[] };
+  };
 }
 
 const reasonsOf = (items: Item[], credentialId: string) => items.find((i) => i.id === credentialId)?.reasons ?? null;
@@ -201,6 +207,48 @@ describe("credential review", () => {
     const r = await review();
     expect(r.items).toEqual([]);
     expect(r.summary).toEqual({ reviewed: 0, listed: 0, neverUsed: 0, idle: 0, noExpiry: 0 });
+    expect(r.expiry).toEqual({ warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] });
+  });
+
+  it("lists service credentials that expire within 7 days or have expired, soonest first, by the expiry header's rule", async () => {
+    const soon = await machine("soon", { ttlSeconds: 3 * 86400 });
+    const later = await machine("later", { ttlSeconds: 10 * 86400 });
+    const expired = await machine("expired", { ttlSeconds: 3600 });
+    await ctx.db.query("UPDATE credentials SET expires_at = now() - interval '2 days' WHERE id = $1", [expired.credentialId]);
+    const forever = await machine("forever");
+    // Revoked: nothing to do.
+    const revoked = await machine("revoked", { ttlSeconds: 86400 });
+    expect((await call("DELETE", `/v1/organizations/acme/identities/${revoked.id}/credentials/${revoked.credentialId}`)).status).toBe(204);
+    // Renewed by design: agent-run and OIDC credentials, and a person's CLI credential.
+    const inAnHour = new Date(Date.now() + 3600_000).toISOString();
+    const agent = await machine("agent", { kind: "agent" });
+    await issueCredential(ctx.db, { identityId: agent.id, kind: "agent-run", name: "run", expiresAt: inAnHour });
+    const ci = await machine("ci", { kind: "ci" });
+    await issueCredential(ctx.db, { identityId: ci.id, kind: "oidc", name: "exchange", expiresAt: inAnHour });
+    await issueCredential(ctx.db, { identityId: admin.id, kind: "cli", name: "mine", expiresAt: inAnHour });
+    // Another Organization's.
+    await machine("theirs", { org: "other", ttlSeconds: 86400 });
+
+    const r = await review();
+    expect(r.expiry.warningDays).toBe(7);
+    expect(r.expiry.items.map((i) => [i.identity.name, i.state])).toEqual([
+      ["expired", "expired"],
+      ["soon", "soon"],
+    ]);
+    expect(r.expiry.summary).toEqual({ soon: 1, expired: 1 });
+    const item = r.expiry.items[1]!;
+    expect(item).toMatchObject({ id: soon.credentialId, kind: "service", lastUsedAt: null, issuedBy: { id: admin.id, name: "Admin" } });
+    expect(item.identity).toEqual({ id: soon.id, name: "soon", kind: "service", state: "live", disabledReason: null });
+    expect(Object.keys(item).sort()).toEqual(
+      ["createdAt", "expiresAt", "id", "identity", "issuedBy", "kind", "lastUsedAt", "name", "state"],
+    );
+    // The review itself still leaves out expired credentials.
+    expect(r.items.map((i) => i.id)).not.toContain(expired.credentialId);
+    expect(r.expiry.items.map((i) => i.id)).not.toContain(later.credentialId);
+    expect(r.expiry.items.map((i) => i.id)).not.toContain(forever.credentialId);
+    const raw = JSON.stringify(r.expiry);
+    expect(raw).not.toContain(soon.token);
+    expect(raw).not.toMatch(/hash/i);
   });
 
   it("needs identity.manage, like listing an identity's credentials; existence-hiding outside the Organization", async () => {

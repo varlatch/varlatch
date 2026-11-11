@@ -224,6 +224,8 @@ describe("help", () => {
   it("every command has help entries", () => {
     const commands = ["login", "logout", "status", "whoami", "init", "context", "env", "run", "validate", "values", "import", "contract", "types", "sync", "admin", "setup", "adopt", "doctor", "scan", "invite", "tailnet", "audit", "org", "project", "env-create", "env-delete", "identity", "credential", "security", "self-update", "upgrade", "request", "mcp", "agents"];
     for (const command of commands) expect(commandHelp(command), command).not.toBeNull();
+    // Each security subcommand has its own entry.
+    for (const sub of ["status", "report", "controls", "set"]) expect(commandHelp("security"), sub).toContain(`varlatch security ${sub} `);
     expect(commandHelp("nosuch")).toBeNull();
   });
 
@@ -256,6 +258,9 @@ describe("exit statuses", () => {
     ["credential list without an identity", ["credential", "list"]],
     ["an unknown whoami option", ["whoami", "--jsno"]],
     ["whoami with an argument", ["whoami", "me"]],
+    ["an unknown security subcommand", ["security", "bogus"]],
+    ["security status with an argument", ["security", "status", "acme"]],
+    ["an unknown security status option", ["security", "status", "--jsno"]],
   ];
 
   it.each(malformed)("%s: 64 (usage) with a credential, before any request", async (_name, args) => {

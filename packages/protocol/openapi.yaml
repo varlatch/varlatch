@@ -1334,6 +1334,54 @@ paths:
               schema: { $ref: "#/components/schemas/SecurityControlReport" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/me/permissions:
+    get:
+      tags: [organizations]
+      operationId: myOrganizationPermissions
+      summary: >
+        The caller's own organization-level permissions in this Organization
+        (capability organizations.permissions): the caller's role, and which
+        of the organization-scoped actions (organization.read,
+        organization.manage, project.read, project.manage, identity.read,
+        identity.manage, policy.read, policy.manage, audit.read) their role
+        and organization-wide Grants allow. Grants on a project or an
+        environment are not counted; value and environment actions are not
+        listed. The authorization outcome only: no Grant ids or other data.
+        Clients use it to show only what the caller may read. Needs
+        organization.read; existence-hiding. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The caller's permissions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationPermissions" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/security/approval-keys:
+    get:
+      tags: [organizations]
+      operationId: securityApprovalKeys
+      summary: >
+        The approval keys of the Organization's admins (capability
+        security.approval-keys, ADR-0054 Decisions 4 and 11): for each live
+        admin, how many of their passkeys are trusted and how many
+        unconfirmed, when one was last confirmed, and each passkey's name,
+        provenance and dates. Only a trusted passkey can give a step-up
+        approval. Never a passkey's credential id, public key or counter,
+        and no passkey ids. Read-only. Needs organization.manage;
+        existence-hiding. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The admins and their approval keys
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalKeys" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/security/controls/{control}:
     patch:
       tags: [organizations]
@@ -5386,7 +5434,7 @@ components:
         than idleDays days ago. no-expiry: it never expires.
     CredentialReview:
       type: object
-      required: [generatedAt, idleDays, summary, items]
+      required: [generatedAt, idleDays, summary, items, expiry]
       description: >
         Credential review (ADR-0054 Decision 8). Items are ordered by
         identity name, then creation.
@@ -5411,6 +5459,67 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/ReviewedCredential" }
+        expiry: { $ref: "#/components/schemas/CredentialExpiryReview" }
+    CredentialExpiryReview:
+      type: object
+      required: [warningDays, summary, items]
+      description: >
+        Expiry warnings (ADR-0054 Decision 8), by the rule of the
+        Varlatch-Credential-Expires header: service credentials of the
+        Organization's machine identities, not revoked, that expire within
+        warningDays (7) days or have expired. Nothing renews them but a
+        person. OIDC-exchanged and agent-run credentials renew by design and
+        are left out. Soonest expiry first. Absent from servers before
+        0.21.0.
+      properties:
+        warningDays: { type: integer }
+        summary:
+          type: object
+          required: [soon, expired]
+          properties:
+            soon: { type: integer }
+            expired: { type: integer }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ExpiringCredential" }
+    ExpiringCredential:
+      type: object
+      required: [id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, identity, state]
+      description: A credential as in ReviewedCredential, with state instead of reasons.
+      properties:
+        id: { type: string }
+        name: { type: [string, "null"] }
+        kind: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        lastUsedAt: { type: [string, "null"], format: date-time }
+        issuedBy:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, name]
+              properties:
+                id: { type: string }
+                name: { type: string }
+        identity:
+          type: object
+          required: [id, name, kind, state, disabledReason]
+          properties:
+            id: { type: string }
+            name: { type: string }
+            kind:
+              type: string
+              enum: [service, workload, ci, broker, agent]
+            state:
+              type: string
+              enum: [live, disabled, retired]
+            disabledReason:
+              type: [string, "null"]
+              enum: [organization-deletion, null]
+        state:
+          type: string
+          enum: [soon, expired]
+          description: soon expires within warningDays days; expired is past its expiry.
     ReviewedCredential:
       type: object
       required: [id, name, kind, createdAt, expiresAt, lastUsedAt, issuedBy, identity, reasons]
@@ -5868,6 +5977,76 @@ components:
           description: >
             WebAuthn request options (PublicKeyCredentialRequestOptionsJSON),
             userVerification required, allowing only the caller's trusted passkeys.
+
+    OrganizationPermissions:
+      type: object
+      required: [organizationId, role, actions]
+      properties:
+        organizationId: { type: string }
+        role:
+          type: [string, "null"]
+          enum: [admin, member, null]
+          description: The caller's role; null for a machine identity.
+        actions:
+          type: array
+          description: The organization-scoped actions the caller is allowed here.
+          items:
+            type: string
+            enum: [organization.read, organization.manage, project.read, project.manage, identity.read, identity.manage, policy.read, policy.manage, audit.read]
+
+    ApprovalKey:
+      type: object
+      required: [name, trust, trustedVia, createdAt, trustedAt]
+      description: One passkey of an admin, as metadata only.
+      properties:
+        name: { type: [string, "null"] }
+        trust: { type: string, enum: [trusted, unconfirmed] }
+        trustedVia:
+          type: [string, "null"]
+          enum: [existing-at-upgrade, setup-grant, confirmed, null]
+          description: How it became trusted; null while unconfirmed.
+        createdAt: { type: [string, "null"], format: date-time }
+        trustedAt: { type: [string, "null"], format: date-time }
+
+    AdminApprovalKeys:
+      type: object
+      required: [identity, trusted, unconfirmed, lastConfirmedAt, passkeys]
+      properties:
+        identity:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+        trusted: { type: integer, minimum: 0 }
+        unconfirmed: { type: integer, minimum: 0 }
+        lastConfirmedAt:
+          type: [string, "null"]
+          format: date-time
+          description: When one of their passkeys was last confirmed with a trusted one; null when none ever was.
+        passkeys:
+          type: array
+          description: Trusted first, then unconfirmed; oldest first within each.
+          items: { $ref: "#/components/schemas/ApprovalKey" }
+
+    ApprovalKeys:
+      type: object
+      required: [generatedAt, summary, items]
+      properties:
+        generatedAt: { type: string, format: date-time }
+        summary:
+          type: object
+          required: [admins, withTrustedKey, withoutTrustedKey]
+          properties:
+            admins: { type: integer }
+            withTrustedKey: { type: integer }
+            withoutTrustedKey:
+              type: integer
+              description: Admins who cannot approve anything until they have a trusted passkey.
+        items:
+          type: array
+          description: The live admins, by name.
+          items: { $ref: "#/components/schemas/AdminApprovalKeys" }
 
     SecurityControlName:
       type: string

@@ -391,6 +391,11 @@ If none of your passkeys is trusted, you cannot confirm one yourself: ask
 whoever runs the server for a link (`varlatch admin reenroll --identity
 <your identity id>`). The passkey you create with it is trusted.
 
+Organization admins can see on the organization's **Security** page
+whether every admin has a trusted passkey, along with the security
+controls and what each would do ([The Security
+page](reference/security-controls.md#the-security-page)).
+
 ## Connect CI and other machines
 
 Machines never use a person's passkey. Create a machine identity in the

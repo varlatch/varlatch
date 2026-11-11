@@ -584,6 +584,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/me/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own organization-level permissions in this Organization (capability organizations.permissions): the caller's role, and which of the organization-scoped actions (organization.read, organization.manage, project.read, project.manage, identity.read, identity.manage, policy.read, policy.manage, audit.read) their role and organization-wide Grants allow. Grants on a project or an environment are not counted; value and environment actions are not listed. The authorization outcome only: no Grant ids or other data. Clients use it to show only what the caller may read. Needs organization.read; existence-hiding. Never cached. */
+        get: operations["myOrganizationPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/security/approval-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The approval keys of the Organization's admins (capability security.approval-keys, ADR-0054 Decisions 4 and 11): for each live admin, how many of their passkeys are trusted and how many unconfirmed, when one was last confirmed, and each passkey's name, provenance and dates. Only a trusted passkey can give a step-up approval. Never a passkey's credential id, public key or counter, and no passkey ids. Read-only. Needs organization.manage; existence-hiding. Never cached. */
+        get: operations["securityApprovalKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/security/controls/{control}": {
         parameters: {
             query?: never;
@@ -2671,6 +2705,47 @@ export interface components {
                 noExpiry: number;
             };
             items: components["schemas"]["ReviewedCredential"][];
+            expiry: components["schemas"]["CredentialExpiryReview"];
+        };
+        /** @description Expiry warnings (ADR-0054 Decision 8), by the rule of the Varlatch-Credential-Expires header: service credentials of the Organization's machine identities, not revoked, that expire within warningDays (7) days or have expired. Nothing renews them but a person. OIDC-exchanged and agent-run credentials renew by design and are left out. Soonest expiry first. Absent from servers before 0.21.0. */
+        CredentialExpiryReview: {
+            warningDays: number;
+            summary: {
+                soon: number;
+                expired: number;
+            };
+            items: components["schemas"]["ExpiringCredential"][];
+        };
+        /** @description A credential as in ReviewedCredential, with state instead of reasons. */
+        ExpiringCredential: {
+            id: string;
+            name: string | null;
+            kind: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            expiresAt: string | null;
+            /** Format: date-time */
+            lastUsedAt: string | null;
+            issuedBy: null | {
+                id: string;
+                name: string;
+            };
+            identity: {
+                id: string;
+                name: string;
+                /** @enum {string} */
+                kind: "service" | "workload" | "ci" | "broker" | "agent";
+                /** @enum {string} */
+                state: "live" | "disabled" | "retired";
+                /** @enum {string|null} */
+                disabledReason: "organization-deletion" | null;
+            };
+            /**
+             * @description soon expires within warningDays days; expired is past its expiry.
+             * @enum {string}
+             */
+            state: "soon" | "expired";
         };
         ReviewedCredential: {
             id: string;
@@ -2943,6 +3018,58 @@ export interface components {
             publicKey: {
                 [key: string]: unknown;
             };
+        };
+        OrganizationPermissions: {
+            organizationId: string;
+            /**
+             * @description The caller's role; null for a machine identity.
+             * @enum {string|null}
+             */
+            role: "admin" | "member" | null;
+            /** @description The organization-scoped actions the caller is allowed here. */
+            actions: ("organization.read" | "organization.manage" | "project.read" | "project.manage" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read")[];
+        };
+        /** @description One passkey of an admin, as metadata only. */
+        ApprovalKey: {
+            name: string | null;
+            /** @enum {string} */
+            trust: "trusted" | "unconfirmed";
+            /**
+             * @description How it became trusted; null while unconfirmed.
+             * @enum {string|null}
+             */
+            trustedVia: "existing-at-upgrade" | "setup-grant" | "confirmed" | null;
+            /** Format: date-time */
+            createdAt: string | null;
+            /** Format: date-time */
+            trustedAt: string | null;
+        };
+        AdminApprovalKeys: {
+            identity: {
+                id: string;
+                name: string;
+            };
+            trusted: number;
+            unconfirmed: number;
+            /**
+             * Format: date-time
+             * @description When one of their passkeys was last confirmed with a trusted one; null when none ever was.
+             */
+            lastConfirmedAt: string | null;
+            /** @description Trusted first, then unconfirmed; oldest first within each. */
+            passkeys: components["schemas"]["ApprovalKey"][];
+        };
+        ApprovalKeys: {
+            /** Format: date-time */
+            generatedAt: string;
+            summary: {
+                admins: number;
+                withTrustedKey: number;
+                /** @description Admins who cannot approve anything until they have a trusted passkey. */
+                withoutTrustedKey: number;
+            };
+            /** @description The live admins, by name. */
+            items: components["schemas"]["AdminApprovalKeys"][];
         };
         /** @enum {string} */
         SecurityControlName: "requirement-protection" | "admin-step-up" | "passkey-verification" | "credential-lifetime";
@@ -4950,6 +5077,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecurityControlReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    myOrganizationPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's permissions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationPermissions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    securityApprovalKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The admins and their approval keys */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApprovalKeys"];
                 };
             };
             default: components["responses"]["Error"];

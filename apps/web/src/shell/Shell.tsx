@@ -17,6 +17,7 @@ import {
   Search,
   Server,
   Settings,
+  ShieldCheck,
   Sun,
   Users,
 } from "lucide-react";
@@ -64,6 +65,7 @@ const NAV = [
   { to: "access", label: "Access", icon: Users, key: "a" },
   { to: "connections", label: "Connections", icon: Plug, key: "c" },
   { to: "audit", label: "Audit", icon: ScrollText, key: "l" },
+  { to: "security", label: "Security", icon: ShieldCheck, key: "k" },
   { to: "settings", label: "Settings", icon: Settings, key: "s" },
 ] as const;
 

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { CREDENTIAL_EXPIRY_WARNING_MS } from "../auth/credentials.js";
 import type { AppCtx } from "./ctx.js";
 
 /**
@@ -55,6 +56,29 @@ export interface CredentialReview {
   idleDays: number;
   summary: { reviewed: number; listed: number; neverUsed: number; idle: number; noExpiry: number };
   items: ReviewedCredential[];
+  expiry: CredentialExpiryReview;
+}
+
+/** Days ahead of expiry within which a service credential is listed: the Varlatch-Credential-Expires window. */
+export const EXPIRY_WARNING_DAYS = CREDENTIAL_EXPIRY_WARNING_MS / 86_400_000;
+
+export interface ExpiringCredential extends Omit<ReviewedCredential, "reasons"> {
+  /** soon: expires within warningDays days; expired: past its expiry and not revoked. */
+  state: "soon" | "expired";
+}
+
+/**
+ * The expiry warnings (ADR-0054 Decision 8, the rule of the
+ * Varlatch-Credential-Expires header): service credentials of the
+ * Organization's machine identities, not revoked, that expire within
+ * warningDays days or have expired. Nothing renews them but a person, so
+ * they are worth a look; OIDC-exchanged and agent-run credentials renew by
+ * design and are left out. Soonest first.
+ */
+export interface CredentialExpiryReview {
+  warningDays: number;
+  summary: { soon: number; expired: number };
+  items: ExpiringCredential[];
 }
 
 interface Row {
@@ -73,6 +97,21 @@ interface Row {
   suspended_by_deletion: string | null;
   idle: boolean;
   now: string | Date;
+}
+
+interface ExpiringRow extends Omit<Row, "idle"> {
+  expired: boolean;
+}
+
+function identityOf(r: Omit<Row, "idle">): ReviewedCredential["identity"] {
+  const state: IdentityState = !r.disabled ? "live" : r.suspended_by_deletion ? "disabled" : "retired";
+  return {
+    id: r.identity_id,
+    name: r.identity_name,
+    kind: r.identity_kind,
+    state,
+    disabledReason: state === "disabled" ? "organization-deletion" : null,
+  };
 }
 
 const iso = (v: string | Date) => new Date(v).toISOString();
@@ -106,7 +145,6 @@ export async function credentialReview(ctx: AppCtx, organizationId: string): Pro
     if (r.idle) reasons.push("idle");
     if (r.expires_at === null) reasons.push("no-expiry");
     if (reasons.length === 0) continue;
-    const state: IdentityState = !r.disabled ? "live" : r.suspended_by_deletion ? "disabled" : "retired";
     items.push({
       id: r.id,
       name: r.name ?? null,
@@ -115,18 +153,13 @@ export async function credentialReview(ctx: AppCtx, organizationId: string): Pro
       expiresAt: r.expires_at ? iso(r.expires_at) : null,
       lastUsedAt: r.last_used_at ? iso(r.last_used_at) : null,
       issuedBy: r.issued_by ? { id: r.issued_by, name: r.issued_by_name ?? r.issued_by } : null,
-      identity: {
-        id: r.identity_id,
-        name: r.identity_name,
-        kind: r.identity_kind,
-        state,
-        disabledReason: state === "disabled" ? "organization-deletion" : null,
-      },
+      identity: identityOf(r),
       reasons,
     });
   }
   const count = (reason: ReviewReason) => items.filter((i) => i.reasons.includes(reason)).length;
-  const now = rows[0]?.now;
+  const expiring = await expiringCredentials(ctx, organizationId);
+  const now = rows[0]?.now ?? expiring.now;
   return {
     generatedAt: now ? iso(now) : new Date().toISOString(),
     idleDays: IDLE_DAYS,
@@ -138,5 +171,48 @@ export async function credentialReview(ctx: AppCtx, organizationId: string): Pro
       noExpiry: count("no-expiry"),
     },
     items,
+    expiry: expiring.review,
+  };
+}
+
+async function expiringCredentials(ctx: AppCtx, organizationId: string): Promise<{ review: CredentialExpiryReview; now: string | Date | undefined }> {
+  const res = await ctx.db.query(
+    `SELECT c.id, c.name, c.kind, c.created_at, c.expires_at, c.last_used_at,
+            c.issued_by, ib.name AS issued_by_name,
+            i.id AS identity_id, i.name AS identity_name, i.kind AS identity_kind,
+            i.disabled, i.suspended_by_deletion,
+            (c.expires_at <= now()) AS expired,
+            now() AS now
+     FROM credentials c
+     JOIN identities i ON i.id = c.identity_id
+     LEFT JOIN identities ib ON ib.id = c.issued_by
+     WHERE i.organization_id = $1
+       AND i.kind <> 'human'
+       AND c.kind = 'service'
+       AND c.revoked_at IS NULL
+       AND c.expires_at IS NOT NULL
+       AND c.expires_at <= now() + $2::int * interval '1 day'
+     ORDER BY c.expires_at, c.id`,
+    [organizationId, EXPIRY_WARNING_DAYS],
+  );
+  const rows = res.rows as ExpiringRow[];
+  const items: ExpiringCredential[] = rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? null,
+    kind: r.kind,
+    createdAt: iso(r.created_at),
+    expiresAt: r.expires_at ? iso(r.expires_at) : null,
+    lastUsedAt: r.last_used_at ? iso(r.last_used_at) : null,
+    issuedBy: r.issued_by ? { id: r.issued_by, name: r.issued_by_name ?? r.issued_by } : null,
+    identity: identityOf(r),
+    state: r.expired ? "expired" : "soon",
+  }));
+  return {
+    review: {
+      warningDays: EXPIRY_WARNING_DAYS,
+      summary: { soon: items.filter((i) => i.state === "soon").length, expired: items.filter((i) => i.state === "expired").length },
+      items,
+    },
+    now: rows[0]?.now,
   };
 }

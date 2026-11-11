@@ -34,8 +34,8 @@ control nobody has changed is off at version 0.
 
 ## Seeing and changing them
 
-In the dashboard, open the organization's **Settings**, then **Security
-controls**. With the CLI:
+In the dashboard, open the organization's **Security** page (see [The
+Security page](#the-security-page)). With the CLI:
 
 ```sh
 varlatch security controls            # each control, its mode, lifetimes, version, last change
@@ -57,6 +57,85 @@ Who may do what:
 - **Changing** needs `organization.manage` (organization admins have it)
   and a person's sign-in: the dashboard or the CLI. A machine credential
   can never change a control, whatever its grants.
+
+## The Security page
+
+Each organization has a **Security** page in the dashboard, next to
+Settings, at `/o/<organization>/security`. It is the place to decide
+which controls to turn on: try one in `report`, watch what it counts for
+a while, then decide. Every control is off until an admin changes it,
+and `enforce` is shown as coming in a later release.
+
+It has five parts:
+
+- **Controls.** Each control with its mode, what `report` counts and what
+  `enforce` would change, and its counts of the last 30 days per
+  operation, reason and person or machine. The current hour is live; the
+  page refreshes it every minute. Admins change the mode here (and the
+  lifetimes of `credential-lifetime`); turning a control down or off asks
+  for your approval in a dialog (see [Approvals](#approvals)).
+- **Approval keys.** For each admin of the organization, how many of
+  their passkeys are trusted and how many unconfirmed, by name. Only a
+  trusted passkey can approve, so an admin without one cannot turn a
+  control down. Its owner confirms a passkey under **Account**,
+  **Security**; with no trusted passkey left, whoever runs the server can
+  send a link that enrolls one (`varlatch admin reenroll --identity
+  <id>`). No key material is ever shown.
+- **Machine credentials.** The credential review: machine credentials
+  never used, unused for 30 days, or without expiry, and the service
+  credentials that expire within 7 days or have expired. Revoke or replace
+  them in **Access**, **Machines**. Nothing is revoked automatically.
+- **Tailnet Requirements.** How many there are, with a link to their
+  editor (**Access**, **Advanced**) and the mode of
+  `requirement-protection`, which protects them.
+- **Checklist.** A few things worth doing whatever the controls say, each
+  linked to its page in these docs: report mode (this page), trusted
+  passkeys ([Your passkeys](../getting-started.md#your-passkeys)),
+  finding copies of secrets ([`varlatch scan
+  --find-files`](secret-scanning.md#finding-copies-of-secrets)), backups
+  the host cannot erase ([Object
+  Lock](../operations/backup.md#scoping-destination-credentials-per-provider)),
+  and the [threat model](../THREAT-MODEL.md).
+
+Who sees what: every member sees the controls and their modes
+(`organization.read`). The counts and the approval keys need
+`organization.manage`, the credential review `identity.manage`, and the
+requirements `policy.read`; organization admins hold all of them, and a
+grant can give any of them to someone else. The page first asks the
+server which of these you hold (`GET
+/v1/organizations/{org}/me/permissions`) and shows exactly those parts;
+for the rest it names what they need. It never asks for what you cannot
+read, so visiting it records no refusals in the audit log. If that first
+question fails, the page says so and shows nothing it would have to
+guess.
+
+The counts say when they were loaded. If loading them fails, the
+Controls section says so with a way to retry; if a refresh fails, the
+last counts stay, marked as not current. `passkey-verification` counts
+only requests that were allowed and succeeded, and access counts are
+best-effort (see [What report mode counts](#what-report-mode-counts)), so
+its count, zero included, is a lower bound.
+
+The same from the CLI, as text or one JSON document:
+
+```sh
+varlatch security status
+varlatch security status --json
+```
+
+It prints the same parts, grouped and short (the three largest counts
+per control; `--json` has all of them). For machine credentials it gives
+two separate lines: the use and expiry policy (never used, unused for 30
+days, no expiry) and the expiry warnings (expiring within 7 days or
+expired), so a credential that already expired is never hidden behind
+"nothing to review". `varlatch security report` starts with the same two
+lines. Like the page, `security status` asks the server which parts you
+may read first, and does not ask for the others. A part you cannot read, or that
+the server does not offer, is named under "Not shown" (in JSON,
+`unavailable`, with the reason `not-permitted` or `not-supported`), and
+the command still exits 0. It exits 1 only when the server has no
+security controls, and fails on any other error. See [Scripting the
+CLI](scripting.md) for the JSON fields.
 
 ## What report mode counts
 
@@ -320,5 +399,16 @@ every control. See the [threat model](../THREAT-MODEL.md).
 
 - `GET /v1/organizations/{org}/security/control-report?days=<1-30>`:
   what report mode counted (see [How counts appear](#how-counts-appear)).
+- `GET /v1/organizations/{org}/me/permissions`: your role and which
+  organization-level actions (`organization.read`, `organization.manage`,
+  `project.read`, `project.manage`, `identity.read`, `identity.manage`,
+  `policy.read`, `policy.manage`, `audit.read`) your role and
+  organization-wide grants allow here. Readable by every member; it says
+  nothing else. Capability `organizations.permissions`.
+- `GET /v1/organizations/{org}/security/approval-keys`: per admin, the
+  number of trusted and unconfirmed passkeys, when one was last
+  confirmed, and each passkey's name, provenance and dates. Never a
+  credential id, public key or passkey id. Needs `organization.manage`.
 
-The capabilities are `security.controls` and `security.report`.
+The capabilities are `security.controls`, `security.report`,
+`security.approval-keys` and `organizations.permissions`.

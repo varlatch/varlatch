@@ -125,6 +125,15 @@ export type ObservedNode = components["schemas"]["ObservedNode"];
 /** Machine credentials never used, idle, or without expiry (capability security.credential-review). */
 export type CredentialReview = components["schemas"]["CredentialReview"];
 export type ReviewedCredential = components["schemas"]["ReviewedCredential"];
+/** Service credentials expiring within 7 days or expired (part of the credential review). */
+export type CredentialExpiryReview = components["schemas"]["CredentialExpiryReview"];
+export type ExpiringCredential = components["schemas"]["ExpiringCredential"];
+/** The approval keys of an Organization's admins (capability security.approval-keys, ADR-0054 Decision 4). */
+export type ApprovalKeys = components["schemas"]["ApprovalKeys"];
+export type AdminApprovalKeys = components["schemas"]["AdminApprovalKeys"];
+export type ApprovalKey = components["schemas"]["ApprovalKey"];
+/** The caller's own organization-level permissions (capability organizations.permissions). */
+export type OrganizationPermissions = components["schemas"]["OrganizationPermissions"];
 export {
   MAX_TARGETS_PER_ITEM,
   TRANSPORT_OWNED_HEADERS,

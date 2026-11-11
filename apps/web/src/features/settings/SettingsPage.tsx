@@ -17,7 +17,7 @@ import { useCapability, useMeta, useOrgName } from "../projects/hooks";
 import { backupHealth } from "../installation/backupHealth";
 import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../installation/releaseNotice";
 import { OrganizationDeletionCard, deletionKey } from "./OrganizationDeletion";
-import { SecurityControlsCard, securityControlsKey } from "../security-controls/SecurityControlsCard";
+import { securityControlsKey } from "../security-controls/SecurityControlsCard";
 
 /** Organization settings and facts about this installation. */
 
@@ -95,7 +95,7 @@ export function SettingsPage() {
         </nav>
         <div className="min-w-0 space-y-6">
           <OrganizationCard org={org} name={orgQuery.data?.name} slug={orgQuery.data?.slug} id={orgQuery.data?.id} />
-          <SecurityControlsCard org={org} />
+          {hasControls && <SecurityLinkCard org={org} />}
           <ServerCard admin={Boolean(backups.data)} />
           {backups.data && <BackupsSummary data={backups.data} />}
           <AppearanceCard />
@@ -171,6 +171,37 @@ function OrganizationCard({ org, name, slug, id }: { org: string; name: string |
           </span>
         )}
       </Row>
+    </SectionCard>
+  );
+}
+
+/** The controls live on the Security page; Settings points there. */
+function SecurityLinkCard({ org }: { org: string }) {
+  return (
+    <SectionCard
+      id="settings-security"
+      title="Security controls"
+      description="Optional protections for this organization. Each one is off until an admin changes it."
+      className="scroll-mt-6"
+      data-testid="settings-security-controls"
+      actions={
+        <Link
+          to={`/o/${org}/security`}
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-bd px-2.5 text-xs font-medium text-fg hover:bg-hover"
+          data-testid="settings-security-link"
+        >
+          <ShieldCheck size={13} aria-hidden="true" />
+          Open Security
+        </Link>
+      }
+    >
+      <p className="px-5 py-3.5 text-[13px] text-muted">
+        The controls, what each would count or change, the admins&apos; approval keys and the machine credentials to review are on the{" "}
+        <Link to={`/o/${org}/security`} className="text-accent hover:underline">
+          Security page
+        </Link>
+        .
+      </p>
     </SectionCard>
   );
 }
