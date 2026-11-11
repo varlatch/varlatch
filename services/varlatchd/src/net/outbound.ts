@@ -4,6 +4,7 @@ import https from "node:https";
 import { isIP, type LookupFunction } from "node:net";
 import type { Duplex } from "node:stream";
 import type { ConnectionOptions } from "node:tls";
+import { OUTBOUND_POLICY_DOCS, outboundRefusalMessage, type OutboundRefusalReason } from "@varlatch/protocol";
 import { OUTBOUND_REFUSED_CODE } from "@varlatch/sync";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { recordAuditEvent } from "../audit/events.js";
@@ -41,7 +42,8 @@ import { normalizeAddress } from "../http/client-address.js";
 
 export type AddressClass = "never" | "host-only" | "private" | "public";
 
-export type RefusalReason = "private_address" | "host_only_address" | "never_address" | "mixed_answers" | "scheme" | "port";
+/** The same reasons as the API's OutboundRefusalReason. */
+export type RefusalReason = OutboundRefusalReason;
 
 export type OutboundPurpose = "webhook" | "sync_check" | "sync_listing" | "sync_delivery" | "github" | "oidc" | "audit_export";
 
@@ -377,20 +379,15 @@ export function decide(entries: AllowEntry[], destination: Destination, addresse
 // ---------------------------------------------------------------------------
 // Refusals
 
-export const OUTBOUND_DOCS = "https://docs.varlatch.com/reference/outbound-policy/";
+export const OUTBOUND_DOCS = OUTBOUND_POLICY_DOCS;
 
-/** Fixed wording for a refusal: names the class, never the address (ADR-0057 Decision 6). */
+/**
+ * Fixed wording for a refusal: names the class, never the address (ADR-0057
+ * Decision 6). The words live in @varlatch/protocol, so the CLI and the
+ * dashboard say the same thing.
+ */
 export function refusalMessage(reason: RefusalReason): string {
-  const messages: Record<RefusalReason, string> = {
-    private_address:
-      "This address is on a private network, which this installation does not let Organizations reach. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW.",
-    host_only_address: "This address is a loopback or link-local address, which Organizations cannot use.",
-    never_address: "This address is unspecified, multicast or reserved, and can never be used.",
-    mixed_answers: "This name has several addresses and one of them is not allowed.",
-    scheme: "Plain http is allowed only to destinations the host operator allowed. Use https.",
-    port: "The host operator allowed this destination on another port only. The host operator can allow this port with VARLATCH_OUTBOUND_ALLOW.",
-  };
-  return `${messages[reason]} See ${OUTBOUND_DOCS}`;
+  return outboundRefusalMessage(reason);
 }
 
 /** Shared with @varlatch/sync, which reads it to word a refused check (ADR-0057 Decision 7). */
@@ -568,6 +565,15 @@ export class OutboundPolicy {
     return (this.resolver ?? resolverOverride ?? systemResolver)(name);
   }
 
+  /**
+   * Resolve a name with this policy's resolver, for the configured
+   * destinations check (net/outbound-check.ts), which bounds and shares its
+   * lookups. Decides nothing.
+   */
+  lookupName(name: string): Promise<{ address: string; family: 4 | 6 }[]> {
+    return this.resolve(name);
+  }
+
   decide(destination: Destination, addresses: string[]): Verdict {
     return decide(this.entries, destination, addresses);
   }
@@ -575,9 +581,11 @@ export class OutboundPolicy {
   /**
    * The configuration-time check (ADR-0057 Decision 6): parse, resolve and
    * classify, for a friendly error before anything is saved. Never call it
-   * inside a transaction. It decides nothing at connection time.
+   * inside a transaction. It decides nothing at connection time. `lookup`
+   * replaces the resolution (the configured destinations check shares
+   * lookups between rows and requests); the decision is the same.
    */
-  async check(raw: string | URL): Promise<CheckOutcome> {
+  async check(raw: string | URL, lookup?: (name: string) => Promise<{ address: string; family: 4 | 6 }[]>): Promise<CheckOutcome> {
     const url = typeof raw === "string" ? new URL(raw) : raw;
     const destination = destinationOf(url);
     if (!destination) throw new TypeError("Only https and http destinations are checked");
@@ -587,7 +595,7 @@ export class OutboundPolicy {
     }
     let addresses: string[];
     try {
-      addresses = (await this.resolve(destination.host)).map((a) => a.address);
+      addresses = (await (lookup ?? ((name: string) => this.resolve(name)))(destination.host)).map((a) => a.address);
     } catch (err) {
       return { outcome: "unresolved", destination, addresses: [], verdict: null, error: (err as { code?: string }).code ?? "ENOTFOUND" };
     }
