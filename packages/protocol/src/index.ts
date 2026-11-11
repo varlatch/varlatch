@@ -132,6 +132,8 @@ export type ExpiringCredential = components["schemas"]["ExpiringCredential"];
 export type ApprovalKeys = components["schemas"]["ApprovalKeys"];
 export type AdminApprovalKeys = components["schemas"]["AdminApprovalKeys"];
 export type ApprovalKey = components["schemas"]["ApprovalKey"];
+/** The caller's own organization-level permissions (capability organizations.permissions). */
+export type OrganizationPermissions = components["schemas"]["OrganizationPermissions"];
 export {
   MAX_TARGETS_PER_ITEM,
   TRANSPORT_OWNED_HEADERS,

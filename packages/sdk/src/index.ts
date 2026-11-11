@@ -8,6 +8,7 @@ import type {
   SecurityControlName,
   SecurityControlReport,
   ApprovalKeys,
+  OrganizationPermissions,
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
@@ -224,6 +225,8 @@ export interface OrgIdentity {
 export type { CredentialExpiryReview, CredentialReview, ExpiringCredential, ReviewedCredential } from "@varlatch/protocol";
 /** The approval keys of an Organization's admins (capability security.approval-keys, ADR-0054 Decision 4). */
 export type { AdminApprovalKeys, ApprovalKey, ApprovalKeys } from "@varlatch/protocol";
+/** The caller's own organization-level permissions (capability organizations.permissions). */
+export type { OrganizationPermissions } from "@varlatch/protocol";
 
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
@@ -987,6 +990,14 @@ export class VarlatchClient {
   securityControlReport(org: string, opts: { days?: number } = {}): Promise<SecurityControlReport> {
     const query = opts.days === undefined ? "" : `?days=${encodeURIComponent(String(opts.days))}`;
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/control-report${query}`);
+  }
+
+  /**
+   * The caller's own role and organization-level actions in `org`
+   * (organization.read; capability organizations.permissions).
+   */
+  myOrganizationPermissions(org: string): Promise<OrganizationPermissions> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/me/permissions`);
   }
 
   /**

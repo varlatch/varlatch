@@ -193,6 +193,23 @@ import {
 export const SERVER_VERSION = "0.20.0";
 
 import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
+
+/**
+ * The organization-scoped actions GET /v1/organizations/:org/me/permissions
+ * reports. Value and environment actions are left out: they depend on the
+ * project, the environment and, for reads, the tailnet.
+ */
+const ORGANIZATION_PERMISSION_ACTIONS: readonly Action[] = [
+  "organization.read",
+  "organization.manage",
+  "project.read",
+  "project.manage",
+  "identity.read",
+  "identity.manage",
+  "policy.read",
+  "policy.manage",
+  "audit.read",
+];
 import type { WhoisResult } from "../tailnet/whois.js";
 import { tailnetBrowserGate, type TailnetBrowserOptions } from "./tailnet-browser.js";
 import type { TailnetListenerReport } from "../tailnet/observe.js";
@@ -1369,6 +1386,25 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json(serialize.org(org));
+  });
+
+  // The caller's own organization-level permissions here (capability
+  // organizations.permissions): which of the organization-scoped actions
+  // the caller's role and organization-wide Grants allow, so the dashboard
+  // shows what the caller may read without asking for it and collecting
+  // refusals. The authorization outcome only: no Grant ids, no other data.
+  // It needs organization.read, which every member holds.
+  app.get("/v1/organizations/:org/me/permissions", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const role = principal.identity.kind === "human" ? await getOrgRole(ctx, org.id, principal.identity.id) : null;
+    const grants = await loadGrants(ctx, org.id, principal.identity.id);
+    const actions = ORGANIZATION_PERMISSION_ACTIONS.filter(
+      (action) => evaluate({ action, resource: { organizationId: org.id }, orgRole: role, grants, requirements: [], tailnetContext: null }).allowed,
+    );
+    c.header("Cache-Control", "no-store");
+    return c.json({ organizationId: org.id, role, actions });
   });
 
   // Display name only (capability organizations.rename); the slug never

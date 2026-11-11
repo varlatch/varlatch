@@ -1334,6 +1334,31 @@ paths:
               schema: { $ref: "#/components/schemas/SecurityControlReport" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/me/permissions:
+    get:
+      tags: [organizations]
+      operationId: myOrganizationPermissions
+      summary: >
+        The caller's own organization-level permissions in this Organization
+        (capability organizations.permissions): the caller's role, and which
+        of the organization-scoped actions (organization.read,
+        organization.manage, project.read, project.manage, identity.read,
+        identity.manage, policy.read, policy.manage, audit.read) their role
+        and organization-wide Grants allow. Grants on a project or an
+        environment are not counted; value and environment actions are not
+        listed. The authorization outcome only: no Grant ids or other data.
+        Clients use it to show only what the caller may read. Needs
+        organization.read; existence-hiding. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The caller's permissions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OrganizationPermissions" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/security/approval-keys:
     get:
       tags: [organizations]
@@ -5952,6 +5977,22 @@ components:
           description: >
             WebAuthn request options (PublicKeyCredentialRequestOptionsJSON),
             userVerification required, allowing only the caller's trusted passkeys.
+
+    OrganizationPermissions:
+      type: object
+      required: [organizationId, role, actions]
+      properties:
+        organizationId: { type: string }
+        role:
+          type: [string, "null"]
+          enum: [admin, member, null]
+          description: The caller's role; null for a machine identity.
+        actions:
+          type: array
+          description: The organization-scoped actions the caller is allowed here.
+          items:
+            type: string
+            enum: [organization.read, organization.manage, project.read, project.manage, identity.read, identity.manage, policy.read, policy.manage, audit.read]
 
     ApprovalKey:
       type: object

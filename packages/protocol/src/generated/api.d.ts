@@ -584,6 +584,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organizations/{org}/me/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's own organization-level permissions in this Organization (capability organizations.permissions): the caller's role, and which of the organization-scoped actions (organization.read, organization.manage, project.read, project.manage, identity.read, identity.manage, policy.read, policy.manage, audit.read) their role and organization-wide Grants allow. Grants on a project or an environment are not counted; value and environment actions are not listed. The authorization outcome only: no Grant ids or other data. Clients use it to show only what the caller may read. Needs organization.read; existence-hiding. Never cached. */
+        get: operations["myOrganizationPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/security/approval-keys": {
         parameters: {
             query?: never;
@@ -3002,6 +3019,16 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        OrganizationPermissions: {
+            organizationId: string;
+            /**
+             * @description The caller's role; null for a machine identity.
+             * @enum {string|null}
+             */
+            role: "admin" | "member" | null;
+            /** @description The organization-scoped actions the caller is allowed here. */
+            actions: ("organization.read" | "organization.manage" | "project.read" | "project.manage" | "identity.read" | "identity.manage" | "policy.read" | "policy.manage" | "audit.read")[];
+        };
         /** @description One passkey of an admin, as metadata only. */
         ApprovalKey: {
             name: string | null;
@@ -5050,6 +5077,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SecurityControlReport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    myOrganizationPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's permissions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationPermissions"];
                 };
             };
             default: components["responses"]["Error"];
