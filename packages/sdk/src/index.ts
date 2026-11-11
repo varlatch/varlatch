@@ -33,6 +33,9 @@ import type {
   MemberRemoval,
   MemberReview,
   OrganizationDeletion,
+  IncidentFreeze,
+  IncidentFreezeLift,
+  IncidentFreezeState,
   OwnCredential,
   OwnPasskey,
   PasskeyConfirmationOptions,
@@ -255,7 +258,7 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
 
 export type { Approval, ApprovalChange, ApprovalOptions, CredentialLifetimeConfig, SecurityControl, SecurityControlChange, SecurityControlChangeInput, SecurityControlList, SecurityControlMode, SecurityControlName } from "@varlatch/protocol";
 export type { SecurityControlCounts, SecurityControlReport, SecurityReportEntry, SecurityReportReason } from "@varlatch/protocol";
-export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
+export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, IncidentFreeze, IncidentFreezeLift, IncidentFreezeState, ResumingTarget, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
 
 const AUDIT_FILTERS = [
   "decision",
@@ -482,6 +485,34 @@ export class VarlatchClient {
   /** A second admin's approval of this deletion request. */
   approveOrganizationDeletion(org: string, deletionId: string): Promise<OrganizationDeletion> {
     return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/deletion/${encodeURIComponent(deletionId)}/approve`, {});
+  }
+
+  /**
+   * The Organization's open incident freeze, or null, the Sync Targets that
+   * resume pushing when it is lifted, and the last freezes (capability
+   * organizations.incident-freeze, ADR-0055). Readable while frozen.
+   */
+  incidentFreeze(org: string): Promise<IncidentFreezeState> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/incident-freeze`);
+  }
+
+  /**
+   * Freeze the Organization for an incident: every read and write of its
+   * members and machines is refused (ORGANIZATION_FROZEN) except inspection,
+   * audit, recovery and the lift. A person's credential with
+   * organization.manage; no approval.
+   */
+  freezeOrganization(org: string, reason: string): Promise<IncidentFreeze> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/incident-freeze`, { reason });
+  }
+
+  /**
+   * Lift this freeze. Always needs a step-up approval with a trusted
+   * passkey: the server answers STEP_UP_REQUIRED, which onStepUp handles
+   * (or the error surfaces).
+   */
+  liftIncidentFreeze(org: string, freezeId: string): Promise<IncidentFreezeLift> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/incident-freeze/${encodeURIComponent(freezeId)}/lift`, {});
   }
 
   /** Cancel this deletion request; what it suspended comes back. */

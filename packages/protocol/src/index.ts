@@ -33,6 +33,14 @@ export type Invitation = components["schemas"]["Invitation"];
 export type MemberReview = components["schemas"]["MemberReview"];
 export type MemberRemoval = components["schemas"]["MemberRemoval"];
 export type OrganizationDeletion = components["schemas"]["OrganizationDeletion"];
+/** An incident freeze of an Organization (capability organizations.incident-freeze, ADR-0055). */
+export type IncidentFreeze = components["schemas"]["IncidentFreeze"];
+/** A Sync Target that resumes pushing when the freeze is lifted. */
+export type ResumingTarget = components["schemas"]["ResumingTarget"];
+/** GET /v1/organizations/{org}/incident-freeze. */
+export type IncidentFreezeState = operations["getIncidentFreeze"]["responses"]["200"]["content"]["application/json"];
+/** POST /v1/organizations/{org}/incident-freeze/{freeze}/lift. */
+export type IncidentFreezeLift = operations["liftIncidentFreeze"]["responses"]["200"]["content"]["application/json"];
 export type ExposureReport = components["schemas"]["ExposureReport"];
 export type MachineReach = components["schemas"]["MachineReach"];
 export type ReachAction = components["schemas"]["ReachAction"];

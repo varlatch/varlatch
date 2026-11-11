@@ -143,6 +143,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /** The Organization, with its open incident freeze (capability organizations.incident-freeze), or null. Readable while frozen. */
         get: operations["getOrganization"];
         put?: never;
         post?: never;
@@ -856,6 +857,47 @@ export interface paths {
         put?: never;
         /** Cancel this request (capability organizations.delete): any live built-in admin, until the deletion completes. The machine identities and webhooks it suspended come back; Sync Targets stay paused and revoked invitations stay revoked. Audited as organization.deletion_cancelled. */
         post: operations["cancelOrganizationDeletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/incident-freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's open incident freeze, or null, the Sync Targets that resume pushing when it is lifted, and the last freezes (capability organizations.incident-freeze, ADR-0055). Requires organization.read. Readable while frozen. */
+        get: operations["getIncidentFreeze"];
+        put?: never;
+        /**
+         * Freeze the Organization for an incident (capability organizations.incident-freeze, ADR-0055). Needs organization.manage and a person's credential; no approval. Machine credentials never can.
+         * @description Stops all access to the Organization at once, reads included: every request of its members and machines answers ORGANIZATION_FROZEN (HTTP 409, details: freezeId, frozenAt, Retry-After: 300) except reading the Organization, its members, identities, credentials, Grants, policy, Requirements, Security page and lists of Capabilities, Sync Targets, Connections and webhooks; the audit log; operations that only take authority away (revoking credentials, Capabilities, Grants, OIDC bindings and invitations, retiring identities, removing members or demoting admins, pausing Sync Targets, revoking Connections, a new Tailnet Requirement, Security Control changes, cancelling a pending deletion); and the lift. Sync Targets stop pushing and resume on the lift; webhooks keep delivering. Every open approval of the Organization is closed. The reason (1 to 200 characters) is shown to members and never recorded in audit. Audited as organization.frozen. One open freeze at a time (STATE_CHANGED otherwise).
+         */
+        post: operations["freezeOrganization"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/incident-freeze/{freeze}/lift": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lift this freeze (capability organizations.incident-freeze, ADR-0055). Needs organization.manage, a person's credential and, always, a step-up approval with a trusted passkey bound to this freeze: without the Varlatch-Approval header it answers STEP_UP_REQUIRED with the approval to give. Any admin may lift.
+         * @description Lifting undoes nothing done during the freeze. Sync Targets that were not paused or revoked meanwhile resume pushing; the approval's summary and the answer list them. A pending deletion stays pending. Audited as organization.unfrozen (metadata.method approval). The host operator can also lift with varlatchd admin unfreeze.
+         */
+        post: operations["liftIncidentFreeze"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2020,7 +2062,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED" | "STEP_UP_REQUIRED" | "APPROVAL_INVALID" | "CONTROL_MODE_UNAVAILABLE";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED" | "STEP_UP_REQUIRED" | "APPROVAL_INVALID" | "CONTROL_MODE_UNAVAILABLE" | "ORGANIZATION_FROZEN";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -2503,6 +2545,34 @@ export interface components {
             cancelledAt: string | null;
             /** Format: date-time */
             completedAt: string | null;
+        };
+        /** @description An incident freeze of the Organization (ADR-0055). */
+        IncidentFreeze: {
+            id: string;
+            /** Format: date-time */
+            frozenAt: string;
+            frozenBy: {
+                id: string;
+                name: string | null;
+            };
+            /** @description Shown to members; never recorded in audit. */
+            reason: string;
+            /** Format: date-time */
+            liftedAt: string | null;
+            liftedBy: {
+                id: string;
+                name: string | null;
+            } | null;
+            /** @enum {string|null} */
+            liftMethod: "approval" | "operator" | null;
+        };
+        /** @description A Sync Target that resumes pushing when the freeze is lifted. */
+        ResumingTarget: {
+            id: string;
+            projectSlug: string;
+            environmentName: string;
+            platform: string;
+            destination: string;
         };
         MemberRemoval: {
             removalId: string;
@@ -3180,7 +3250,7 @@ export interface components {
              * @description The semantic operation, not the HTTP route.
              * @enum {string}
              */
-            operation: "security_control.change" | "passkey.remove";
+            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze";
             /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
             organization: {
                 id: string;
@@ -3195,7 +3265,7 @@ export interface components {
             /** @enum {string} */
             state: "pending" | "approved" | "consumed" | "expired" | "closed";
             /** @enum {string|null} */
-            closeReason: "cancelled" | "reset" | "organization-deleted" | null;
+            closeReason: "cancelled" | "reset" | "organization-deleted" | "frozen" | null;
             requestedBy: {
                 /** @enum {string} */
                 credentialKind: "browser" | "cli";
@@ -3904,7 +3974,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Organization"];
+                    "application/json": components["schemas"]["Organization"] & {
+                        incidentFreeze: components["schemas"]["IncidentFreeze"] | null;
+                    };
                 };
             };
             default: components["responses"]["Error"];
@@ -5616,6 +5688,96 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationDeletion"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    getIncidentFreeze: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The open freeze, or null */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        freeze: components["schemas"]["IncidentFreeze"] | null;
+                        resumingTargets: components["schemas"]["ResumingTarget"][];
+                        /** @description The last 20 freezes, newest first, the open one included. */
+                        history: components["schemas"]["IncidentFreeze"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    freezeOrganization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Frozen */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentFreeze"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    liftIncidentFreeze: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                freeze: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Lifted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        freeze: components["schemas"]["IncidentFreeze"];
+                        resumingTargets: components["schemas"]["ResumingTarget"][];
+                    };
                 };
             };
             default: components["responses"]["Error"];
