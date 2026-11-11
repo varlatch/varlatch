@@ -565,7 +565,16 @@ const LOCKING_CLAUSE = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b((
  * those named by FOR … OF, or else every item of its query level's FROM.
  * Anything outside the grammar above is refused.
  */
-export function lockingClauses(sql: string): { mode: string; relations: string[]; nested: boolean; skipLocked: boolean; selectList: string }[] {
+export function lockingClauses(sql: string): {
+  mode: string;
+  relations: string[];
+  nested: boolean;
+  depth: number;
+  skipLocked: boolean;
+  selectList: string;
+  lockedName: string;
+  fromCount: number;
+}[] {
   const bare = bareSql(sql);
   const clauses = [...bare.matchAll(LOCKING_CLAUSE)];
   if (clauses.length > 0 && /^\s*WITH\b/i.test(bare)) throw outsideGrammar(sql, "WITH");
@@ -615,8 +624,11 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
       mode: m[1]!.toLowerCase().replace(/\s+/g, " "),
       relations,
       nested: open.length > 0,
+      depth: open.length,
       skipLocked: /SKIP\s+LOCKED/i.test(m[3] ?? ""),
       selectList,
+      lockedName: of ? of[0]! : items[0]!.name,
+      fromCount: items.length,
     };
   });
 }
@@ -667,7 +679,8 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
       // And it writes every row it locks: SKIP LOCKED, and the outer
       // predicate is only <column> IN (the subquery selecting that column)
       // or a USING join on exactly the columns the subquery selects.
-      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause.selectList)) {
+      if (clause.depth !== 1) throw outsideGrammar(sql, "a nested lock deeper than one subquery level");
+      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause)) {
         throw outsideGrammar(sql, "a nested lock outside the sweep shapes (SKIP LOCKED; WHERE <column> IN (subquery), or DELETE … USING (subquery) joined on the columns it selects)");
       }
     } else {
@@ -691,11 +704,27 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
  * or a DELETE … USING (subquery) alias WHERE <target>.<c> = <alias>.<c>
  * AND … over exactly the columns the subquery selects.
  */
-function writesEveryLockedRow(top: string, selectList: string): boolean {
-  const selected = selectList.split(",").map((c) => c.trim().replace(/^\w+\./, "").toLowerCase());
-  const inForm = /^\s*(?:DELETE\s+FROM|UPDATE)\s+\w+(?:\s+(?:AS\s+)?\w+)?(?:\s+SET\s+[\s\S]*?)?\s+WHERE\s+(?:\w+\.)?(\w+)\s+IN\s+\u00a7\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
-  if (inForm) return selected.length === 1 && selected[0] === inForm[1]!.toLowerCase();
-  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+\u00a7\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+function writesEveryLockedRow(top: string, clause: { selectList: string; lockedName: string; fromCount: number }): boolean {
+  // Each selected column is the locked item's: qualified by its name, or
+  // unqualified when the subquery's FROM has that one item.
+  const selected: string[] = [];
+  for (const c of clause.selectList.split(",").map((x) => x.trim())) {
+    const m = /^(?:(\w+)\.)?(\w+)$/.exec(c);
+    if (!m) return false;
+    if (m[1] ? m[1].toLowerCase() !== clause.lockedName : clause.fromCount !== 1) return false;
+    selected.push(m[2]!.toLowerCase());
+  }
+  const inForm = /^\s*(DELETE\s+FROM|UPDATE)\s+(\w+)(?:\s+(?:AS\s+)?(?!SET\b|WHERE\b)(\w+))?(?:\s+SET\s+([\s\S]*?))?\s+WHERE\s+(?:(\w+)\.)?(\w+)\s+IN\s+§\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (inForm) {
+    const [, verb, table, alias, set, qualifier, column] = inForm as unknown as [string, string, string, string | undefined, string | undefined, string | undefined, string];
+    // An UPDATE … FROM joins another table: refused. The IN column is the
+    // target's, named by its alias or table if qualified.
+    if (/^UPDATE$/i.test(verb) && set !== undefined && /\bFROM\b/i.test(set)) return false;
+    if (/^DELETE/i.test(verb) && set !== undefined) return false;
+    if (qualifier && qualifier.toLowerCase() !== (alias ?? table).toLowerCase()) return false;
+    return selected.length === 1 && selected[0] === column.toLowerCase();
+  }
+  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+§\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
   if (!using) return false;
   const [, t, s, where] = using as unknown as [string, string, string, string];
   const joined = new Set<string>();
@@ -737,6 +766,24 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   let label = "";
   /** The open transaction is one the wrapper began around a lone statement. */
   let lone = false;
+  /**
+   * PGlite has one connection, so concurrent flows share it. A lone wrap in
+   * flight is waited for before any BEGIN or another lone wrap, and no lone
+   * wrap starts while a BEGIN is pending or a transaction is open: two
+   * wraps can never share one BEGIN, nor a wrap absorb another flow's.
+   */
+  let loneInFlight: Promise<void> | null = null;
+  let beginsPending = 0;
+  const claimLone = async (): Promise<(() => void) | null> => {
+    while (loneInFlight) await loneInFlight;
+    if (inTx || beginsPending > 0) return null;
+    let release!: () => void;
+    loneInFlight = new Promise<void>((r) => (release = r));
+    return () => {
+      loneInFlight = null;
+      release();
+    };
+  };
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
 
   /**
@@ -763,13 +810,15 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     } catch {
       return; // an aborted transaction: it cannot be read, and it rolls back
     }
-    // A lone statement that takes at most one row lock (an insert's
-    // references aside, a single-row update such as a last-use stamp) never
-    // holds a lock while waiting for another (amendment E): not checked.
+    // A lone statement that takes at most one row lock, its foreign keys'
+    // references counted (a single-row update such as a last-use stamp),
+    // never holds a lock while waiting for another (amendment E): not
+    // checked. The rows it inserts do not count.
     if (lone) {
       // A test's own fixture statement is not production code.
       if (label.startsWith("(test)") && !options.checkTestStatements) return;
-      const acquired = new Set(rows.filter((r) => r.kind !== "insert" && r.kind !== "reference").map((r) => `${r.tbl}\u0000${r.key}`));
+      const inserted = new Set(rows.filter((r) => r.kind === "insert").map((r) => `${r.tbl}\u0000${r.key}`));
+      const acquired = new Set(rows.filter((r) => r.kind !== "insert").map((r) => `${r.tbl}\u0000${r.key}`).filter((k) => !inserted.has(k)));
       if (acquired.size < 2) return;
     }
     const problems = checkTrace(rows);
@@ -789,11 +838,17 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(first)) {
       // Before any await: the stack still shows who began the transaction.
       const began = writerLabel();
-      if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
-      const res = await db.query(text, params);
-      inTx = true;
-      label = began;
-      return res;
+      beginsPending++;
+      try {
+        while (loneInFlight) await loneInFlight;
+        if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
+        const res = await db.query(text, params);
+        inTx = true;
+        label = began;
+        return res;
+      } finally {
+        beginsPending--;
+      }
     }
     if (/^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first)) {
       if (inTx) await check();
@@ -812,24 +867,31 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // locks are checked at COMMIT like any other transaction's.
     if (!inTx && (/^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0)) {
       const began = writerLabel();
-      await db.query(`DELETE FROM ${SCHEMA}.trace`);
-      await db.query("BEGIN");
-      inTx = true;
-      lone = true;
-      label = began;
+      const release = await claimLone();
+      // A transaction opened meanwhile: the statement runs as it always did.
+      if (!release) return statement(text, params);
       try {
-        const res = await statement(text, params);
-        await check();
-        inTx = false;
-        lone = false;
-        await db.query("COMMIT");
-        return res;
-      } catch (err) {
-        if (inTx) await check();
-        inTx = false;
-        lone = false;
-        await db.query("ROLLBACK").catch(() => undefined);
-        throw err;
+        await db.query(`DELETE FROM ${SCHEMA}.trace`);
+        await db.query("BEGIN");
+        inTx = true;
+        lone = true;
+        label = began;
+        try {
+          const res = await statement(text, params);
+          await check();
+          inTx = false;
+          lone = false;
+          await db.query("COMMIT");
+          return res;
+        } catch (err) {
+          if (inTx) await check();
+          inTx = false;
+          lone = false;
+          await db.query("ROLLBACK").catch(() => undefined);
+          throw err;
+        }
+      } finally {
+        release();
       }
     }
     return statement(text, params);

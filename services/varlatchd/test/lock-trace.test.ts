@@ -225,6 +225,16 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     refused(`INSERT INTO organizations (id, slug) SELECT id, id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
     refused(`SELECT id INTO TEMP t FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
     refused(`DECLARE c CURSOR FOR SELECT id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
+    // The sweep's IN column must be the target's, and an UPDATE … FROM writes other rows.
+    refused("UPDATE identities SET name = 'x' FROM organizations o WHERE o.id IN (SELECT id FROM identities WHERE id = 'b' FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities i WHERE o.id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    // The selected column must be the locked item's, not a joined unlocked one's.
+    refused("DELETE FROM identities WHERE id IN (SELECT o.id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */");
+    // Exactly one subquery level.
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities WHERE id = 'a' AND id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED)) /* varlatch-lock identities update - */");
+    // A qualified column of the locked item, or its alias, stays allowed.
+    expect(lockTagOf("DELETE FROM identities t WHERE t.id IN (SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */")?.key).toBe("-");
     // The sweep pattern stays allowed, in both shapes the code uses.
     expect(lockTagOf(
       "DELETE FROM security_control_counters c USING (SELECT organization_id, control FROM security_control_counters k ORDER BY organization_id LIMIT $2 FOR UPDATE SKIP LOCKED) d WHERE c.organization_id = d.organization_id AND c.control = d.control RETURNING 1 /* varlatch-lock security_control_counters update - */",
@@ -326,6 +336,30 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(lone).toHaveLength(1);
     expect(lone[0]!.problems.filter((p) => /^a person's row changed without an explicit FOR UPDATE prelock/.test(p))).toHaveLength(2);
     expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b!" }]);
+    // References count: a lone insert referencing two parents, a lone update
+    // changing a foreign key, each takes two row locks and is checked.
+    await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')");
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual(expect.arrayContaining([expect.stringMatching(/^identity referenced without being locked at step 2 first: identities\[idn_a\]/)]));
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_b', 'b', 'B', '{}'::jsonb)");
+    await db.query("UPDATE identities SET organization_id = 'org_b' WHERE id = 'idn_b'");
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual(expect.arrayContaining([expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/)]));
+  });
+
+  it("serializes lone statements against each other and a transaction on the one PGlite connection", async () => {
+    // Two lone writes and a transaction that fails, all at once: the failed
+    // transaction's write is rolled back alone, and the lone writes stay.
+    const results = await Promise.allSettled([
+      db.query("UPDATE identities SET name = 'a3' WHERE id = 'idn_a'"),
+      withTx(db, async (q) => {
+        await q.query("UPDATE organizations SET name = 'A3' WHERE id = 'org_a'");
+        throw new Error("refused");
+      }),
+      db.query("UPDATE identities SET name = 'b3' WHERE id = 'idn_b'"),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    takeLockViolations();
+    expect((await db.query("SELECT id, name FROM identities ORDER BY id")).rows).toEqual([{ id: "idn_a", name: "a3" }, { id: "idn_b", name: "b3" }]);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
   });
 
   it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {
