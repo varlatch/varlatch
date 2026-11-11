@@ -26,18 +26,18 @@ import type { Querier } from "../../src/db/migrate.js";
  *   {@link checkTrace}); a violation fails the running test (setup file
  *   lock-trace-setup.ts).
  *
- * Gating (VARLATCH_LOCK_ORDER): "all" enforces every transaction; "migrated"
- * (the default while the remaining writers move to the order) enforces the
- * transactions begun by the writers in {@link MIGRATED} and only reports the
- * others (to the file named by VARLATCH_LOCK_TRACE_REPORT, when set);
- * "report" enforces nothing and reports every violation there; "off"
- * installs nothing.
+ * Gating (VARLATCH_LOCK_ORDER): "all" (the default) enforces every
+ * transaction; "migrated" enforces only the transactions begun by the
+ * writers in {@link MIGRATED} (the gate while the writers moved to the
+ * order) and reports the others; "report" enforces nothing and reports
+ * every violation; reports go to the file named by
+ * VARLATCH_LOCK_TRACE_REPORT, when set. "off" installs nothing.
  */
 
 export type LockOrderMode = "off" | "report" | "migrated" | "all";
 
 export function lockOrderMode(): LockOrderMode {
-  const raw = process.env.VARLATCH_LOCK_ORDER ?? "migrated";
+  const raw = process.env.VARLATCH_LOCK_ORDER ?? "all";
   if (raw === "off" || raw === "report" || raw === "migrated" || raw === "all") return raw;
   throw new Error(`VARLATCH_LOCK_ORDER must be off, report, migrated or all, not ${raw}`);
 }
