@@ -148,24 +148,43 @@ export function credentialReviewLines(organization: string, review: CredentialRe
 
 const KIND_WORDS: Record<RefusedDestination["kind"], string> = { webhook: "webhook", coolify: "Coolify", convex: "Convex", "oidc-issuer": "OIDC issuer" };
 
-/** One refused destination: what it is, where it points, why, and since when. */
+/** One refused destination: what it is, where it points, why, and its earliest recorded refusal. */
 function refusedLine(d: RefusedDestination, sinceDays: number, now: number): string {
   const what = `${KIND_WORDS[d.kind]}${d.name ? ` "${d.name}"` : ""} (${d.id})`;
-  const since = d.since ? `first refused ${ago(d.since, now)}` : `no refusal recorded in the last ${sinceDays} days`;
+  // The audit log's earliest refusal in the window, not the start of one continuous refusal.
+  const since = d.since ? `first recorded within the last ${sinceDays} days: ${ago(d.since, now)}` : `no refusal recorded in the last ${sinceDays} days`;
   return `  ${what}  ${d.scheme}://${d.host}:${d.port}  ${OUTBOUND_REFUSAL_LABELS[d.reason]}, ${since}`;
+}
+
+/** Destinations whose names did not resolve: not refused, and not known to be allowed either. */
+function unresolvedLine(unresolved: number, checked: number | undefined): string {
+  const of = checked === undefined ? "" : ` of ${checked}`;
+  return `${unresolved}${of} destination${unresolved === 1 && !of ? "" : "s"} could not be checked: ${unresolved === 1 ? "its name did" : "their names did"} not resolve. They are checked again when they connect.`;
 }
 
 /**
  * The refused destinations part (ADR-0057 Decision 8), after the credential
- * review; nothing when the server cannot say.
+ * review; nothing when the server cannot say. "None refused" is an all-clear
+ * only when every configured destination was checked.
  */
 export function refusedDestinationLines(organization: string, refused: RefusedPart, now: number): string[] {
   if (!refused.shown) {
     return refused.reason === "not-permitted" ? ["", "Refused destinations: not shown, because your access does not include it (needs organization.manage)."] : [];
   }
   const { items, sinceDays } = refused.destinations;
+  const checked = refused.destinations.checked as number | undefined;
+  const unresolved = (refused.destinations.unresolved as number | undefined) ?? 0;
   if (items.length === 0) {
+    if (unresolved > 0) return ["", `Refused destinations for ${organization}: none of those checked.`, `  ${unresolvedLine(unresolved, checked)}`];
+    if (checked === 0) return ["", `Refused destinations for ${organization}: none. The organization has no webhooks, Coolify or Convex connections, or OIDC issuers.`];
     return ["", `Refused destinations for ${organization}: none. This installation connects to every destination the organization configured.`];
   }
-  return ["", `Refused destinations for ${organization} (${items.length})`, ...items.map((d) => refusedLine(d, sinceDays, now)), "", OUTBOUND_HOST_NOTE];
+  return [
+    "",
+    `Refused destinations for ${organization} (${items.length})`,
+    ...items.map((d) => refusedLine(d, sinceDays, now)),
+    ...(unresolved > 0 ? [`  ${unresolvedLine(unresolved, checked)}`] : []),
+    "",
+    OUTBOUND_HOST_NOTE,
+  ];
 }

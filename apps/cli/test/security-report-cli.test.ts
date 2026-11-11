@@ -131,6 +131,8 @@ function fullRefused(): RefusedDestinations {
   return {
     generatedAt: at(0),
     sinceDays: 30,
+    checked: 5,
+    unresolved: 0,
     items: [
       { kind: "coolify", id: "pc_coolify", name: "Production Coolify", scheme: "https", host: "coolify.lan", port: 8443, reason: "private_address", since: at(3) },
       { kind: "webhook", id: "wh_http", name: null, scheme: "http", host: "hooks.example", port: 80, reason: "scheme", since: null },
@@ -248,7 +250,7 @@ describe("varlatch security report: refused destinations", () => {
     const at = lines.indexOf("Refused destinations for acme (2)");
     expect(at).toBeGreaterThan(0);
     expect(lines.slice(at + 1)).toEqual([
-      '  Coolify "Production Coolify" (pc_coolify)  https://coolify.lan:8443  private network address, first refused 3 days ago',
+      '  Coolify "Production Coolify" (pc_coolify)  https://coolify.lan:8443  private network address, first recorded within the last 30 days: 3 days ago',
       "  webhook (wh_http)  http://hooks.example:80  plain http, no refusal recorded in the last 30 days",
       "",
       "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
@@ -265,11 +267,31 @@ describe("varlatch security report: refused destinations", () => {
   });
 
   it("says when nothing is refused", async () => {
-    refused = { generatedAt: at(0), sinceDays: 30, items: [] };
+    refused = { generatedAt: at(0), sinceDays: 30, checked: 3, unresolved: 0, items: [] };
     const r = await cli(["security", "report"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout.trimEnd().split("\n").at(-1)).toBe(
       "Refused destinations for acme: none. This installation connects to every destination the organization configured.",
+    );
+  });
+
+  it("never reads destinations it could not check as allowed", async () => {
+    refused = { generatedAt: at(0), sinceDays: 30, checked: 3, unresolved: 3, items: [] };
+    const none = (await cli(["security", "report"])).stdout.trimEnd().split("\n");
+    expect(none.slice(-2)).toEqual([
+      "Refused destinations for acme: none of those checked.",
+      "  3 of 3 destinations could not be checked: their names did not resolve. They are checked again when they connect.",
+    ]);
+    expect(none.join("\n")).not.toContain("connects to every destination");
+    refused = { ...fullRefused(), unresolved: 1 };
+    const some = (await cli(["security", "report"])).stdout;
+    expect(some).toContain("  1 of 5 destinations could not be checked: its name did not resolve.");
+  });
+
+  it("says when the organization configured nothing to check", async () => {
+    refused = { generatedAt: at(0), sinceDays: 30, checked: 0, unresolved: 0, items: [] };
+    expect((await cli(["security", "report"])).stdout.trimEnd().split("\n").at(-1)).toBe(
+      "Refused destinations for acme: none. The organization has no webhooks, Coolify or Convex connections, or OIDC issuers.",
     );
   });
 
@@ -293,6 +315,8 @@ describe("varlatch security report: refused destinations", () => {
         destinations: {
           generatedAt: at(0),
           sinceDays: 30,
+          checked: reasons.length,
+          unresolved: 0,
           items: reasons.map((reason, i) => ({ kind: "oidc-issuer" as const, id: `ob_${i}`, name: null, scheme: "https" as const, host: "issuer.lan", port: 443, reason, since: null })),
         },
       },
