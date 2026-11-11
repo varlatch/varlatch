@@ -100,9 +100,21 @@ It has five parts:
 Who sees what: every member sees the controls and their modes
 (`organization.read`). The counts and the approval keys need
 `organization.manage`, the credential review `identity.manage`, and the
-requirements `policy.read`; organization admins hold all of them. A
-member sees a note that an admin manages this instead, and the page does
-not ask the server for what they cannot read.
+requirements `policy.read`; organization admins hold all of them, and a
+grant can give any of them to someone else. The page first asks the
+server which of these you hold (`GET
+/v1/organizations/{org}/me/permissions`) and shows exactly those parts;
+for the rest it names what they need. It never asks for what you cannot
+read, so visiting it records no refusals in the audit log. If that first
+question fails, the page says so and shows nothing it would have to
+guess.
+
+The counts say when they were loaded. If loading them fails, the
+Controls section says so with a way to retry; if a refresh fails, the
+last counts stay, marked as not current. `passkey-verification` counts
+only requests that were allowed and succeeded, and access counts are
+best-effort (see [What report mode counts](#what-report-mode-counts)), so
+its count, zero included, is a lower bound.
 
 The same from the CLI, as text or one JSON document:
 
@@ -112,7 +124,13 @@ varlatch security status --json
 ```
 
 It prints the same parts, grouped and short (the three largest counts
-per control; `--json` has all of them). A part you cannot read, or that
+per control; `--json` has all of them). For machine credentials it gives
+two separate lines: the use and expiry policy (never used, unused for 30
+days, no expiry) and the expiry warnings (expiring within 7 days or
+expired), so a credential that already expired is never hidden behind
+"nothing to review". `varlatch security report` starts with the same two
+lines. Like the page, `security status` asks the server which parts you
+may read first, and does not ask for the others. A part you cannot read, or that
 the server does not offer, is named under "Not shown" (in JSON,
 `unavailable`, with the reason `not-permitted` or `not-supported`), and
 the command still exits 0. It exits 1 only when the server has no
@@ -381,10 +399,16 @@ every control. See the [threat model](../THREAT-MODEL.md).
 
 - `GET /v1/organizations/{org}/security/control-report?days=<1-30>`:
   what report mode counted (see [How counts appear](#how-counts-appear)).
+- `GET /v1/organizations/{org}/me/permissions`: your role and which
+  organization-level actions (`organization.read`, `organization.manage`,
+  `project.read`, `project.manage`, `identity.read`, `identity.manage`,
+  `policy.read`, `policy.manage`, `audit.read`) your role and
+  organization-wide grants allow here. Readable by every member; it says
+  nothing else. Capability `organizations.permissions`.
 - `GET /v1/organizations/{org}/security/approval-keys`: per admin, the
   number of trusted and unconfirmed passkeys, when one was last
   confirmed, and each passkey's name, provenance and dates. Never a
   credential id, public key or passkey id. Needs `organization.manage`.
 
-The capabilities are `security.controls`, `security.report` and
-`security.approval-keys`.
+The capabilities are `security.controls`, `security.report`,
+`security.approval-keys` and `organizations.permissions`.

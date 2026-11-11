@@ -166,18 +166,24 @@ fixes.
   review together with service credentials that expire within 7 days or
   have expired (linking to Access, Machines), the number of tailnet
   requirements (linking to their editor), and a short checklist that
-  links each item to its docs page. Members see the controls and a note
-  that an admin manages them; nothing an admin alone may read is asked
-  for. Settings links to the page. `varlatch security status` (`--json`
+  links each item to its docs page. Each part shows when your access
+  allows it (a grant works as well as the admin role), and the page never
+  asks for what you cannot read; a member sees the controls and a note
+  naming what the rest needs. Settings links to the page. `varlatch security status` (`--json`
   for one document) prints the same; a part you cannot read is named,
   not shown, and it exits 0. New API: `GET
   /v1/organizations/{org}/security/approval-keys` (per admin: trusted and
   unconfirmed passkeys with names and dates, never key material or ids;
-  needs `organization.manage`; capability `security.approval-keys`). The
+  needs `organization.manage`; capability `security.approval-keys`) and
+  `GET /v1/organizations/{org}/me/permissions` (your role and the
+  organization-level actions you hold there, readable by every member;
+  capability `organizations.permissions`). The
   credential review (`GET .../security/credential-review` and `varlatch
   security report`) gains `expiry`: the service credentials that expire
   within 7 days or have expired, by the rule of the
-  `Varlatch-Credential-Expires` header. See [The Security
+  `Varlatch-Credential-Expires` header; the text output of `security
+  report` now starts with two lines, the use and expiry policy and the
+  expiry warnings. See [The Security
   page](docs/reference/security-controls.md#the-security-page).
 - **The host operator's way back.** `varlatch admin security reset --org
   <slug> (--control <name>... | --all)` (or `admin security reset` in the
