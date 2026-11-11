@@ -62,6 +62,7 @@ import {
   projectDeletionLines,
   tombstoneExportLine,
 } from "./deletion.js";
+import { FREEZE_EFFECTS, FREEZE_USAGE, FreezeUsageError, INCIDENT_FREEZE_CAPABILITY, freezeReason, frozenLines, liftConfirmationLines, liftedLines } from "./freeze.js";
 import { IDENTITY_ID, MEMBERS_CAPABILITY, MemberError, exposureLines, removalLines, resolveMember, resolvePerson, shellWord } from "./members.js";
 import { MachineError, REACH_CAPABILITY, REACH_USAGE, reachLines, resolveMachine } from "./reach.js";
 import {
@@ -878,6 +879,70 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
   );
   console.log(tombstoneExportLine(organizationId));
   for (const line of deletionLimits("organization")) console.log(line);
+}
+
+/**
+ * ADR-0055: the incident freeze. Freezing names the slug again with
+ * --confirm (in assisted mode too: the agent prints the person's command);
+ * unfreezing asks for the person's approval with a trusted passkey and
+ * waits for it.
+ */
+async function orgFreeze(sub: "freeze" | "unfreeze", args: string[], assisted: AssistedMode): Promise<void> {
+  const parsed = strictOptions(
+    `org ${sub}`,
+    args,
+    sub === "freeze"
+      ? { values: ["--server", "--reason", "--confirm"], positionals: 2 }
+      : { values: ["--server"], booleans: ["--json"], positionals: 2 },
+    FREEZE_USAGE,
+  );
+  const slug = parsed.positionals[1] ?? usageError(FREEZE_USAGE);
+  const known = organizationTarget(parsed, slug, true);
+  const quoted = shellWord(slug);
+  let reason = "";
+  if (sub === "freeze") {
+    try {
+      reason = freezeReason(parsed.values.get("--reason"));
+    } catch (err) {
+      if (err instanceof FreezeUsageError) usageError(`varlatch org freeze: ${err.message}.\n${FREEZE_USAGE}`);
+      throw err;
+    }
+    if (parsed.values.get("--confirm") !== slug) {
+      const command = `varlatch org freeze ${quoted} --reason ${shellWord(reason)} --confirm ${quoted}${known.serverOption}`;
+      const what = `Freezing ${slug} stops all access to it at once, reads included, until someone lifts it with a passkey approval`;
+      if (assisted.on) {
+        fail(
+          `varlatch org freeze: ${what}. That is the human's decision. With their approval, add --confirm ${slug}. ` +
+            `Or the human runs, in their own terminal:\n  ${command}\nNothing was changed.`,
+          EXIT.config,
+        );
+      }
+      usageError(`${what}.\n${FREEZE_EFFECTS.map((l) => `  ${l}`).join("\n")}\nName it again to confirm:\n  ${command}\nNothing was changed.`);
+    }
+  }
+  const api = client(requiredTarget(parsed, slug));
+  const meta = await api.meta();
+  if (!meta.capabilities.includes(INCIDENT_FREEZE_CAPABILITY)) {
+    fail(`This server (${meta.serverVersion ?? "an older release"}) has no incident freeze; upgrade the server. Nothing was changed.`);
+  }
+  if (sub === "freeze") {
+    const freeze = await api.freezeOrganization(slug, reason);
+    for (const line of frozenLines(freeze, slug)) console.log(line);
+    return;
+  }
+  const state = await api.incidentFreeze(slug);
+  if (!state.freeze) {
+    if (parsed.booleans.has("--json")) printJson({ organization: slug, freeze: null });
+    else console.log(`${slug} is not frozen.`);
+    return;
+  }
+  if (!parsed.booleans.has("--json")) for (const line of liftConfirmationLines(state, slug)) console.error(line);
+  const lifted = await api.liftIncidentFreeze(slug, state.freeze.id);
+  if (parsed.booleans.has("--json")) {
+    printJson({ organization: slug, ...lifted });
+    return;
+  }
+  for (const line of liftedLines(lifted, slug)) console.log(line);
 }
 
 async function credentialIssue(args: string[], assisted: AssistedMode): Promise<void> {
@@ -2280,7 +2345,11 @@ async function main(): Promise<void> {
           await orgDeletion(sub, args, assisted);
           return;
         }
-        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create|delete|deletion>");
+        if (sub === "freeze" || sub === "unfreeze") {
+          await orgFreeze(sub, args, assisted);
+          return;
+        }
+        if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>");
         if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
         const server =
           flag(args, "--server") ?? process.env.VARLATCH_SERVER ??
@@ -2305,7 +2374,7 @@ async function main(): Promise<void> {
           console.log(`Organization ${org.slug} created (${org.id}). You are its admin.`);
           return;
         }
-        usageError("Usage: varlatch org <list|create|delete|deletion>");
+        usageError("Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>");
         return;
       }
 

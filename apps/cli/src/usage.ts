@@ -151,6 +151,11 @@ Usage:
   varlatch org delete <slug> --approve <request-id> | --cancel <request-id> [--server <url>]
   varlatch org deletion <slug> [--json] [--server <url>]
                                                        # the open deletion request, if any
+  varlatch org freeze <slug> --reason <text> --confirm <slug> [--server <url>]
+                                                       # incident freeze: stops all access at once, reads
+                                                       # included; no approval needed
+  varlatch org unfreeze <slug> [--json] [--server <url>]
+                                                       # lifts it: prints the approval URL and waits
   varlatch project <create <slug> --org <org> --server <url> [--managed]|list [--json]|rename <slug> <new-name>>
   varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]
                                                        # at once: erases every value of the project
