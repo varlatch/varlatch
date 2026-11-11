@@ -59,6 +59,14 @@ fixes.
 - **`varlatch doctor`** shows the allow list and the number of refused
   destinations as the advisory check "Outbound destinations".
 
+### Dashboard
+
+- **A larger browser tab icon.** The Varlatch mark used to fill about two
+  thirds of its icon, so it looked smaller than other sites' icons,
+  especially in a dark tab bar. The mark now fills most of a rounded tile.
+  The dashboard also serves `/favicon.ico` and a dedicated 16 px icon, so
+  browsers no longer shrink the 32 px icon themselves.
+
 ### Upgrading
 
 - Migration 43 adds a database trigger that revokes a browser session's
