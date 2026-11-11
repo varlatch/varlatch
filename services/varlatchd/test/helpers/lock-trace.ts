@@ -79,12 +79,16 @@ const SCHEMA = "varlatch_lock_trace";
 /** Steps of amendment E, as [step, position within the step]. */
 export function stepOf(table: string): [number, number] {
   switch (table) {
+    case "installation":
+      return [0, 5];
     case "organizations":
       return [1, 0];
     case "organization_deletions":
       return [1, 1];
     case "identities":
       return [2, 0];
+    case "idempotency_keys":
+      return [2, 5];
     case "passkey":
       return [3, 0];
     case "approval_intents":
@@ -241,7 +245,9 @@ const cmpStep = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1
  * - a step going backwards: a first acquisition of a row not held yet at
  *   an earlier step (or, at step 10, an earlier type) than a first
  *   acquisition before it;
- * - rows of one table first acquired out of ascending key order.
+ * - rows of one table first acquired out of ascending key order;
+ * - a person's row changed without an explicit FOR UPDATE prelock on it
+ *   first (step 2; PostgreSQL's implicit lock of the update does not count).
  * A later entry for a row already held, in the same or a weaker mode, is
  * reuse and passes. Rows the transaction inserted are held from the start
  * and never order against anything.
@@ -250,6 +256,7 @@ export function checkTrace(rows: TraceRow[]): string[] {
   const problems: string[] = [];
   const held = new Map<string, number>();
   const lastKey = new Map<string, string>();
+  const prelocked = new Set<string>();
   let maxStep: [number, number] | null = null;
   let maxAt = "";
   const show = (r: TraceRow) => `${r.tbl}[${r.key}] ${r.mode} (${r.kind}, #${r.seq})`;
@@ -259,7 +266,12 @@ export function checkTrace(rows: TraceRow[]): string[] {
     const strength = STRENGTH[r.mode] ?? 0;
     if (r.kind === "insert") {
       held.set(id, STRENGTH.insert!);
+      if (r.tbl === "identities") prelocked.add(r.key);
       continue;
+    }
+    if (r.tbl === "identities" && r.kind === "explicit" && r.mode === "update") prelocked.add(r.key);
+    if (r.tbl === "identities" && r.kind === "write" && !prelocked.has(r.key)) {
+      problems.push(`a person's row changed without an explicit FOR UPDATE prelock at step 2: ${show(r)}`);
     }
     if (r.tbl === "identities" && r.kind === "reference" && before === undefined) {
       problems.push(`identity referenced without being locked at step 2 first: ${show(r)}`);

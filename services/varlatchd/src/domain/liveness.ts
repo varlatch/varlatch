@@ -12,6 +12,7 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  * the one place it is written down; the other files refer here.
  *
  *   0. createApproval's per-person advisory lock (only it takes one).
+ * 0.5. The installation row (bootstrap's installation update included).
  *   1. The Organization row, then its open deletion request.
  *   2. People: every identity row the transaction will lock or reference,
  *      in id order, in one step, each in the mode it needs (lockPeople).
@@ -19,9 +20,17 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  *      (created_by, identity_id, owner_identity_id, actor_identity_id,
  *      subject_identity_id, a Capability's broker and agent, issued_by)
  *      and a row of the exposure or integration index. FOR UPDATE for the
- *      person whose approval is consumed; the mode of the write for a
- *      person whose row changes; FOR KEY SHARE for a person only
- *      referenced.
+ *      person whose approval is consumed, or whose row changes (an
+ *      explicit prelock: PostgreSQL's implicit FOR NO KEY UPDATE of an
+ *      update that changes no key column does not replace it); FOR KEY
+ *      SHARE for a person only referenced.
+ * 2.5. Idempotency-Key claims, after the Organization and all people are
+ *      held in their strongest modes, before passkeys and domain rows. The
+ *      claim keeps its foreign key to the identity. Scope locking is
+ *      separate from the mutation's liveness checks, so a cached replay
+ *      still answers from the stored response. The claim is never deferred
+ *      until after domain work. (Placed by the review of varlatch#106;
+ *      withIdempotency moves to it in the second part of step 4.1b.)
  *   3. That person's passkeys.
  *   4. Approval intents.
  *   5. Challenges: approval challenges, then passkey-confirmation

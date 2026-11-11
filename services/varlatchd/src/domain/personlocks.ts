@@ -11,17 +11,18 @@ import type { Querier } from "../db/migrate.js";
  */
 
 /**
- * FOR UPDATE: the person whose approval is consumed, or whose row is
- * deleted or has a key changed. FOR NO KEY UPDATE: a person whose row
- * changes otherwise. FOR KEY SHARE: a person only referenced (a foreign key,
- * an index row).
+ * FOR UPDATE: the person whose approval is consumed, or whose row the
+ * transaction changes, in any column (an explicit prelock: the implicit
+ * FOR NO KEY UPDATE of an update that changes no key column does not
+ * replace it). FOR KEY SHARE: a person only referenced (a foreign key, an
+ * index row).
  */
-export type PersonLockMode = "key share" | "no key update" | "update";
+export type PersonLockMode = "key share" | "update";
 
 /** A person to lock: an id alone is taken in the default mode (FOR KEY SHARE); null and undefined are skipped. */
 export type PersonRef = string | { id: string; mode: PersonLockMode } | null | undefined;
 
-const STRENGTH: Record<PersonLockMode, number> = { "key share": 1, "no key update": 2, update: 3 };
+const STRENGTH: Record<PersonLockMode, number> = { "key share": 1, update: 2 };
 
 /**
  * Step 2: all of the transaction's people, in id order, in one step, each

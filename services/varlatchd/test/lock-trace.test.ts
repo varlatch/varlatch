@@ -69,6 +69,37 @@ describe("checkTrace", () => {
     ])).toEqual([expect.stringMatching(/^step went back: env_values/)]);
   });
 
+  it("fails a change of a person's row without an explicit FOR UPDATE prelock", () => {
+    expect(checkTrace([
+      row(1, "identities", "idn_a", "key share"),
+      row(2, "identities", "idn_a", "no key update", "write"),
+    ])).toEqual([
+      expect.stringMatching(/^upgrade: identities\[idn_a\]/),
+      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
+    ]);
+    expect(checkTrace([row(1, "identities", "idn_a", "no key update", "write")]))
+      .toEqual([expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/)]);
+    expect(checkTrace([
+      row(1, "identities", "idn_a", "update"),
+      row(2, "identities", "idn_a", "no key update", "write"),
+    ])).toEqual([]);
+  });
+
+  it("places the installation row at step 0.5 and Idempotency-Key claims at step 2.5", () => {
+    expect(checkTrace([
+      row(1, "installation", "inst_a", "update"),
+      row(2, "organizations", "org_a", "key share"),
+      row(3, "identities", "idn_a", "key share"),
+      row(4, "idempotency_keys", "idn_a|ep|k", "insert", "insert"),
+      row(5, "identities", "idn_a", "key share", "reference"),
+      row(6, "projects", "prj_a", "key share"),
+    ])).toEqual([]);
+    expect(checkTrace([
+      row(1, "organizations", "org_a", "key share"),
+      row(2, "installation", "inst_a", "update"),
+    ])).toEqual([expect.stringMatching(/^step went back: installation/)]);
+  });
+
   it("fails rows of one table out of id order, within a step", () => {
     expect(checkTrace([
       row(1, "environments", "env_b", "share"),
