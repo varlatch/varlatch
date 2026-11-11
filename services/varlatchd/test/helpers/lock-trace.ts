@@ -415,8 +415,10 @@ const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOIN
  * - no quoted identifier anywhere in the FROM clause or the locking clause;
  * - no subquery, LATERAL, function, VALUES or CTE in FROM, and no WITH
  *   (subqueries in WHERE stay allowed: they lock nothing);
- * - the clause is FOR <mode> [OF <item>, …] [NOWAIT | SKIP LOCKED], its OF
- *   targets naming items of that FROM.
+ * - the clause is FOR <mode> [OF <item>] [NOWAIT | SKIP LOCKED] and locks
+ *   exactly one FROM item: OF names one item of that FROM, or the FROM has
+ *   a single item (a self-join or a second locked item could otherwise
+ *   lock rows the trace never records).
  * A query outside this grammar is to be simplified or split, as
  * Organization deletion's environment lock was.
  */
@@ -532,6 +534,11 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
     const ofText = m[2]?.replace(/^\s+OF\s+/i, "");
     if (ofText && /["§]/.test(ofText)) throw outsideGrammar(sql, "a quoted name after OF");
     const of = ofText ? ofText.split(",").map((a) => a.trim().toLowerCase()) : null;
+    // Exactly one locked FROM item, counted as items, not tables: a
+    // self-join locks two rows of one table.
+    if (of ? of.length !== 1 : items.length !== 1) {
+      throw outsideGrammar(sql, of ? "FOR … OF naming more than one item" : "a locking clause without OF over several FROM items");
+    }
     const relations = of
       ? of.map((a) => {
         const item = items.find((x) => x.name === a);
@@ -539,7 +546,7 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
         return item.table;
       })
       : items.map((x) => x.table);
-    return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations: [...new Set(relations)] };
+    return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations };
   });
 }
 
