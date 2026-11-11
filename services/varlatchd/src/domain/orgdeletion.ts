@@ -379,8 +379,19 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       "UPDATE projects SET deleted_at = now() WHERE organization_id = $1 AND deleted_at IS NULL RETURNING id",
       [organizationId],
     );
+    // The same rows, in the same modes, as one statement locking the join
+    // took: the Projects that have environments, then the environments,
+    // each in id order (one relation per tagged lock).
+    await lockedQuery(
+      db,
+      { table: "projects", mode: "update" },
+      `SELECT p.id FROM projects p WHERE p.organization_id = $1
+         AND EXISTS (SELECT 1 FROM environments e WHERE e.project_id = p.id)
+       ORDER BY p.id FOR UPDATE OF p`,
+      [organizationId],
+    );
     const envIds = (
-      (await lockedQuery(db, { table: "environments", mode: "update" }, `SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $1 ORDER BY e.id FOR UPDATE`,
+      (await lockedQuery(db, { table: "environments", mode: "update" }, `SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $1 ORDER BY e.id FOR UPDATE OF e`,
         [organizationId],
       )).rows as { id: string }[]
     ).map((r) => r.id);

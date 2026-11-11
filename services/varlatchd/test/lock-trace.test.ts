@@ -74,8 +74,8 @@ describe("checkTrace", () => {
       row(1, "identities", "idn_a", "key share"),
       row(2, "identities", "idn_a", "no key update", "write"),
     ])).toEqual([
-      expect.stringMatching(/^upgrade: identities\[idn_a\]/),
       expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
+      expect.stringMatching(/^upgrade: identities\[idn_a\]/),
     ]);
     expect(checkTrace([row(1, "identities", "idn_a", "no key update", "write")]))
       .toEqual([expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/)]);
@@ -111,7 +111,8 @@ describe("checkTrace", () => {
 describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () => {
   let db: Awaited<ReturnType<typeof migratedTestDb>>;
   beforeEach(async () => {
-    db = await migratedTestDb();
+    // Every transaction enforced, whoever began it.
+    db = await migratedTestDb({ lockOrder: "all" });
     await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
     await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
   });
@@ -126,8 +127,43 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     await expect(lockedQuery(db, { table: "identities", mode: "share" }, "SELECT id FROM identities FOR UPDATE")).rejects.toThrow(/the tag says share/);
   });
 
+  it("refuses a compound statement that begins or ends a transaction, through exec and query", async () => {
+    await expect(db.exec!(
+      "BEGIN; UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'; COMMIT;",
+    )).rejects.toThrow(/statements of their own/);
+    await expect(db.query("SELECT 1; COMMIT")).rejects.toThrow(/statements of their own/);
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b" }]);
+    expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks the statements of one exec outside a transaction as one transaction", async () => {
+    await db.exec!("UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
+    const violations = takeLockViolations();
+    expect(violations.map((v) => v.problems)).toEqual([[
+      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock at step 2: identities\[idn_b\]/),
+      expect.stringMatching(/^step went back: organizations\[org_a\] no key update \(write/),
+    ]]);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A2" }]);
+  });
+
+  it("refuses a tag that names another relation than the statement locks, and one clause locking several relations", async () => {
+    await expect(db.query("SELECT id FROM identities FOR UPDATE /* varlatch-lock organizations update id */"))
+      .rejects.toThrow(/the tag names organizations, the statement locks identities/);
+    const join = "SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id";
+    await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE`)).rejects.toThrow(/several relations \(identities, organizations\)/);
+    await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE OF i`))
+      .rejects.toThrow(/the tag names organizations, the statement locks identities/);
+    await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${join} FOR UPDATE OF x`)).rejects.toThrow(/OF x names no relation/);
+    // Accepted: FOR … OF the tagged relation's alias; a subquery in WHERE locks nothing.
+    await withTx(db, async (q) => {
+      await lockedQuery(q, { table: "identities", mode: "key share" }, `${join} WHERE o.id = 'org_a' ORDER BY i.id FOR KEY SHARE OF i`);
+      await lockedQuery(q, { table: "identities", mode: "key share" }, "SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR KEY SHARE");
+    });
+    expect(takeLockViolations()).toEqual([]);
+  });
+
   it("records explicit locks, writes and references, and fails the transaction that breaks the order", async () => {
-    // Labelled from this test, so enforced under "all" only: read the trace directly.
+    // Enforced at its COMMIT (lockOrder "all"); the trace is read before it.
     const rows = await withTx(db, async (q) => {
       await lockPeople(q, ["idn_b", { id: "idn_a", mode: "update" }]);
       await q.query("UPDATE identities SET name = 'b2' WHERE id = 'idn_b'");
@@ -142,7 +178,12 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       { tbl: "organizations", key: "org_a", mode: "key share", kind: "reference" },
       { tbl: "identities", key: "idn_a", mode: "key share", kind: "reference" },
     ]);
+    // The transaction itself was enforced at its COMMIT, with the same verdict.
+    const unnumbered = (problems: string[]) => problems.map((p) => p.replace(/#\d+/g, "#"));
+    expect(takeLockViolations().map((v) => unnumbered(v.problems)))
+      .toEqual([unnumbered(checkTrace(rows.map((r, i) => ({ ...(r as TraceRow), seq: i + 1 }))))]);
     expect(checkTrace(rows.map((r, i) => ({ ...(r as TraceRow), seq: i + 1 })))).toEqual([
+      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock at step 2: identities\[idn_b\]/),
       expect.stringMatching(/^upgrade: identities\[idn_b\] no key update/),
       expect.stringMatching(/^step went back: organizations\[org_a\]/),
     ]);

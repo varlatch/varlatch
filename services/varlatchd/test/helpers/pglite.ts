@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { inject } from "vitest";
 import { runMigrations, type Querier } from "../../src/db/migrate.js";
-import { lockOrderMode, lockTraced } from "./lock-trace.js";
+import { lockOrderMode, lockTraced, type LockOrderMode } from "./lock-trace.js";
 import { asQuerier } from "./pglite-snapshots.js";
 
 type TestDb = Querier & { close: () => Promise<void> };
@@ -17,8 +17,8 @@ export function testDb(): Promise<TestDb> {
  * An in-memory Postgres already migrated to the current schema, under the
  * lock-order check (lock-trace.ts) unless VARLATCH_LOCK_ORDER=off.
  */
-export async function migratedTestDb(): Promise<TestDb> {
-  const mode = lockOrderMode();
+export async function migratedTestDb(options: { lockOrder?: LockOrderMode } = {}): Promise<TestDb> {
+  const mode = options.lockOrder ?? lockOrderMode();
   const db = await load(mode === "off" ? "migrated" : "traced");
   // A no-op unless a migration was added since the snapshot (watch mode).
   await runMigrations(db);

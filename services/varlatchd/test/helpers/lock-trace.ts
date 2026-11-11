@@ -310,21 +310,118 @@ export function takeLockViolations(): LockViolation[] {
   return enforced.splice(0, enforced.length);
 }
 
-const LOCKING = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b/gi;
+const LOCKING = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b(\s+OF\s+[\w"]+(?:\s*,\s*[\w"]+)*)?/gi;
 const MODE_OF: Record<string, string> = { "no-key-update": "no key update", "key-share": "key share", share: "share", update: "update" };
 
-/** The locking clauses of a statement, outside comments and string literals. */
-function lockingClauses(sql: string): string[] {
-  const bare = sql
+/** The statement text without comments, string literals and dollar-quoted bodies. */
+function bareSql(sql: string): string {
+  return sql
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .replace(/--[^\n]*/g, " ")
     .replace(/'(?:[^']|'')*'/g, "''")
     .replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, " ");
-  return [...bare.matchAll(LOCKING)].map((m) => m[1]!.toLowerCase().replace(/\s+/g, " "));
+}
+
+/** The statements of a (possibly compound) SQL text. */
+export function statementsOf(sql: string): string[] {
+  return bareSql(sql).split(";").map((s) => s.trim()).filter(Boolean);
+}
+
+const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\b/i;
+
+const relationName = (name: string) => name.replace(/"/g, "").replace(/^public\./i, "").toLowerCase();
+
+/** Removes every parenthesized group, innermost first: what is left is one query level. */
+function flatten(text: string): string {
+  let out = text;
+  for (let prev = ""; prev !== out; ) {
+    prev = out;
+    out = out.replace(/\([^()]*\)/g, " ");
+  }
+  return out;
+}
+
+const NOT_ALIAS = new Set(["on", "where", "join", "left", "right", "inner", "outer", "full", "cross", "natural", "order", "group", "limit", "for", "using", "set", "having", "union", "window", "offset", "lateral"]);
+
+/**
+ * The locking clauses of a statement and, for each, the relations it locks:
+ * those named by FOR … OF, or else every relation in the FROM and JOIN
+ * items of the query level the clause belongs to (subqueries in its WHERE
+ * are another level, and lock nothing).
+ */
+export function lockingClauses(sql: string): { mode: string; relations: string[] }[] {
+  const bare = bareSql(sql);
+  return [...bare.matchAll(LOCKING)].map((m) => {
+    const at = m.index!;
+    // The innermost parenthesized group around the clause, if any.
+    const open: number[] = [];
+    for (let i = 0; i < at; i++) {
+      if (bare[i] === "(") open.push(i);
+      else if (bare[i] === ")") open.pop();
+    }
+    const start = open.length > 0 ? open[open.length - 1]! + 1 : 0;
+    let end = bare.length;
+    for (let i = at, depth = 0; i < bare.length; i++) {
+      if (bare[i] === "(") depth++;
+      else if (bare[i] === ")") {
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+        depth--;
+      }
+    }
+    const level = flatten(bare.slice(start, end));
+    const aliases = new Map<string, string>();
+    const items: string[] = [];
+    for (const item of level.matchAll(/\b(?:FROM|JOIN)\s+((?:"[^"]+"|\w+)(?:\.(?:"[^"]+"|\w+))?)(?:\s+(?:AS\s+)?(\w+))?/gi)) {
+      const table = relationName(item[1]!);
+      items.push(table);
+      aliases.set(table, table);
+      const alias = item[2]?.toLowerCase();
+      if (alias && !NOT_ALIAS.has(alias)) aliases.set(alias, table);
+    }
+    const of = m[2]?.replace(/^\s+OF\s+/i, "").split(",").map((a) => relationName(a.trim()));
+    const relations = of
+      ? of.map((a) => {
+        const table = aliases.get(a);
+        if (!table) throw new Error(`lock trace: FOR … OF ${a} names no relation of its query: ${sql.slice(0, 200)}`);
+        return table;
+      })
+      : items;
+    return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations: [...new Set(relations)] };
+  });
 }
 
 function tagsOf(sql: string): { table: string; mode: string; key: string }[] {
   return [...sql.matchAll(LOCK_TAG)].map((m) => ({ table: m[1]!, mode: MODE_OF[m[2]!]!, key: m[3]! }));
+}
+
+/**
+ * The tag of a statement that takes row locks, checked against what the
+ * statement locks: one tag, the same mode, and the one relation it names.
+ * A statement that locks rows of several relations, or of a relation the
+ * tag does not name, is refused. Null when the statement locks nothing.
+ */
+export function lockTagOf(sql: string): { table: string; mode: string; key: string } | null {
+  const clauses = lockingClauses(sql);
+  const tags = tagsOf(sql);
+  if (clauses.length === 0) {
+    if (tags.length > 0) throw new Error(`lock trace: a lock tag on a statement without a locking clause: ${sql.slice(0, 160)}`);
+    return null;
+  }
+  if (tags.length !== 1) throw new Error(`lock trace: untagged locking clause (use lockedQuery or a lock helper): ${sql.slice(0, 200)}`);
+  const tag = tags[0]!;
+  for (const clause of clauses) {
+    if (clause.mode !== tag.mode) throw new Error(`lock trace: the tag says ${tag.mode}, the statement locks ${clause.mode}: ${sql.slice(0, 200)}`);
+    if (clause.relations.length !== 1) {
+      throw new Error(`lock trace: one locking clause locks ${clause.relations.length === 0 ? "no relation it names" : `several relations (${clause.relations.join(", ")}); name one with FOR … OF`}: ${sql.slice(0, 200)}`);
+    }
+    if (clause.relations[0] !== tag.table) {
+      throw new Error(`lock trace: the tag names ${tag.table}, the statement locks ${clause.relations[0]}: ${sql.slice(0, 200)}`);
+    }
+  }
+  return tag;
 }
 
 /** The function in src/ that began the transaction, for reports and gating. */
@@ -354,17 +451,18 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   let label = "";
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
 
-  const guard = (sql: string) => {
-    const clauses = lockingClauses(sql);
-    const tags = tagsOf(sql);
-    if (clauses.length === 0) {
-      if (tags.length > 0) throw new Error(`lock trace: a lock tag on a statement without a locking clause: ${sql.slice(0, 160)}`);
-      return null;
+  /**
+   * The statements of a text, refusing a compound one that begins or ends
+   * a transaction: the wrapper sees transaction boundaries only as
+   * statements of their own, so `BEGIN; …; COMMIT` in one call would
+   * escape the check.
+   */
+  const split = (text: string) => {
+    const statements = statementsOf(text);
+    if (statements.length > 1 && statements.some((s) => BOUNDARY.test(s))) {
+      throw new Error(`lock trace: send BEGIN, COMMIT and ROLLBACK as statements of their own, not in a compound statement: ${text.slice(0, 160)}`);
     }
-    if (tags.length !== 1) throw new Error(`lock trace: untagged locking clause (use lockedQuery or a lock helper): ${sql.slice(0, 200)}`);
-    const tag = tags[0]!;
-    if (clauses.some((c) => c !== tag.mode)) throw new Error(`lock trace: the tag says ${tag.mode}, the statement locks ${clauses.join(", ")}: ${sql.slice(0, 200)}`);
-    return tag;
+    return statements;
   };
 
   const check = async () => {
@@ -387,7 +485,8 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   };
 
   const query = async (text: string, params?: unknown[]) => {
-    if (/^\s*(BEGIN|START\s+TRANSACTION)\b/i.test(text)) {
+    const first = split(text)[0] ?? "";
+    if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(first)) {
       // Before any await: the stack still shows who began the transaction.
       const began = writerLabel();
       if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
@@ -396,16 +495,16 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       label = began;
       return res;
     }
-    if (/^\s*(COMMIT|END)\b/i.test(text)) {
+    if (/^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first)) {
       if (inTx) await check();
       inTx = false;
       return db.query(text, params);
     }
-    if (/^\s*ROLLBACK\s*$/i.test(text)) {
+    if (/^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
       inTx = false;
       return db.query(text, params);
     }
-    const tag = guard(text);
+    const tag = lockTagOf(text);
     const res = await db.query(text, params);
     if (tag && tag.key !== "-") {
       const param = /^\$(\d+)$/.exec(tag.key);
@@ -422,9 +521,23 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   };
 
   const exec = async (text: string) => {
-    if (/^\s*(BEGIN|COMMIT|END|ROLLBACK|START\s+TRANSACTION)\b[\s;]*$/i.test(text)) return query(text);
-    if (guard(text)) throw new Error(`lock trace: run tagged locks through query, not exec: ${text.slice(0, 160)}`);
-    return db.exec ? db.exec(text) : db.query(text);
+    const statements = split(text);
+    if (statements.length === 1 && BOUNDARY.test(statements[0]!)) return query(text);
+    if (lockTagOf(text)) throw new Error(`lock trace: run tagged locks through query, not exec: ${text.slice(0, 160)}`);
+    const run = () => (db.exec ? db.exec(text) : db.query(text));
+    if (inTx || statements.length < 2) return run();
+    // Several statements outside a transaction run as one implicit
+    // transaction; run them in an explicit one instead (the same effect),
+    // so its trace is checked at COMMIT like any other.
+    await query("BEGIN");
+    try {
+      const res = await run();
+      await query("COMMIT");
+      return res;
+    } catch (err) {
+      await query("ROLLBACK");
+      throw err;
+    }
   };
 
   return { ...db, query, exec };
