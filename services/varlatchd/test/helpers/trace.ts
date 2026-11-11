@@ -52,15 +52,15 @@ const SNAPSHOT_ONLY =
   /\b(env_values|value_versions|capabilities|grants|roles|groups|group_members|team_projects|requirements|org_members|contract_revisions|projects|environments|organizations)\b/;
 
 /**
- * A tagged lock statement (db/locks.ts) whose select list is exactly its
- * key column (`id` or `alias.id` for key "id"): it returns keys only.
+ * A tagged lock statement (db/locks.ts) keyed by the primary key `id` whose
+ * select list is exactly that column (`id` or `alias.id`): it returns keys
+ * only. A tag naming another column as key is never exempt.
  */
 export function isKeyOnlyLock(sql: string): boolean {
   const tag = /\/\* varlatch-lock \S+ \S+ (\S+) \*\//.exec(sql);
-  if (!tag || !/^\w+$/.test(tag[1]!)) return false;
+  if (tag?.[1] !== "id") return false;
   const select = /^\s*SELECT\s+([\s\S]*?)\s+FROM\b/i.exec(sql);
-  if (!select) return false;
-  return new RegExp(`^(?:\\w+\\.)?${tag[1]}$`).test(select[1]!.trim());
+  return !!select && /^(?:\w+\.)?id$/.test(select[1]!.trim());
 }
 
 function versionsNamed(metadata: string): string[] {

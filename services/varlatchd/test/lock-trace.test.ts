@@ -33,6 +33,10 @@ describe("the retrieval snapshot check and tagged locks", () => {
     expect(after(tagged)).toThrow(/read after the snapshot/);
     expect(isKeyOnlyLock("SELECT deleted_at FROM organizations WHERE id = $1 FOR KEY SHARE /* varlatch-lock organizations key-share $1 */")).toBe(false);
     expect(isKeyOnlyLock("SELECT id, payload FROM value_versions FOR SHARE /* varlatch-lock value_versions share id */")).toBe(false);
+    // A tag naming a data column as its key is not a key-only lock.
+    const payloadKey = "SELECT payload FROM value_versions WHERE id = $1 FOR SHARE /* varlatch-lock value_versions share payload */";
+    expect(isKeyOnlyLock(payloadKey)).toBe(false);
+    expect(after(payloadKey)).toThrow(/read after the snapshot/);
   });
 });
 
@@ -302,6 +306,19 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       await lockedQuery(q, { table: "identities", mode: "key share" }, `${commas} ORDER BY i.id FOR KEY SHARE OF i`);
     });
     expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks a lone statement outside a transaction once it takes more than one row lock", async () => {
+    // One row: it cannot hold a lock while waiting for another.
+    await db.query("UPDATE identities SET name = 'a2' WHERE id = 'idn_a'");
+    expect(takeLockViolations()).toEqual([]);
+    // Two rows of people changed, neither prelocked: checked, and refused.
+    await db.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
+    expect(takeLockViolations().map((v) => v.problems)).toEqual([[
+      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
+      expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/),
+    ]]);
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b!" }]);
   });
 
   it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {

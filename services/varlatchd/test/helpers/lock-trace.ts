@@ -735,6 +735,8 @@ function writerLabel(): string {
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">): Q {
   let inTx = false;
   let label = "";
+  /** The open transaction is one the wrapper began around a lone statement. */
+  let lone = false;
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
 
   /**
@@ -760,6 +762,13 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       await db.query(`DELETE FROM ${SCHEMA}.trace WHERE txid = $1::bigint`, [tx]);
     } catch {
       return; // an aborted transaction: it cannot be read, and it rolls back
+    }
+    // A lone statement that takes at most one row lock (an insert's
+    // references aside, a single-row update such as a last-use stamp) never
+    // holds a lock while waiting for another (amendment E): not checked.
+    if (lone) {
+      const acquired = new Set(rows.filter((r) => r.kind !== "insert" && r.kind !== "reference").map((r) => `${r.tbl}\u0000${r.key}`));
+      if (acquired.size < 2) return;
     }
     const problems = checkTrace(rows);
     // VARLATCH_LOCK_TRACE_LABELS: one line per checked transaction, to see what a run covered.
@@ -796,6 +805,36 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       inTx = false;
       return db.query(text, params);
     }
+    // A lone write or lock outside a transaction runs as one implicit
+    // transaction; run it in an explicit one (the same effect), so its
+    // locks are checked at COMMIT like any other transaction's.
+    if (!inTx && (/^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0)) {
+      const began = writerLabel();
+      await db.query(`DELETE FROM ${SCHEMA}.trace`);
+      await db.query("BEGIN");
+      inTx = true;
+      lone = true;
+      label = began;
+      try {
+        const res = await statement(text, params);
+        await check();
+        inTx = false;
+        lone = false;
+        await db.query("COMMIT");
+        return res;
+      } catch (err) {
+        if (inTx) await check();
+        inTx = false;
+        lone = false;
+        await db.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      }
+    }
+    return statement(text, params);
+  };
+
+  /** One statement inside a transaction: refuses untagged locks, records tagged ones. */
+  const statement = async (text: string, params?: unknown[]) => {
     const tag = lockTagOf(text);
     const res = await db.query(text, params);
     if (tag && tag.key !== "-") {
