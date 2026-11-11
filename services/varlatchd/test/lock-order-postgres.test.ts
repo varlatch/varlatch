@@ -90,6 +90,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
   let project: ProjectRow;
   let env: EnvironmentRow;
   let connectionId: string;
+  let token: string;
   const database = `varlatch_lockorder_e_${process.pid}`;
 
   const waitingOnLock = async () => {
@@ -171,7 +172,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
     pctx = { db: paused.pool, rootKek: ctx.rootKek };
     await ensureInstallation(ctx);
     identityId = (await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, {})).identityId;
-    const token = (await issueCredential(db, { identityId, kind: "cli" })).token;
+    token = (await issueCredential(db, { identityId, kind: "cli" })).token;
     const app = buildApp(ctx);
     const post = async (path: string, body: unknown) => {
       const res = await app.request(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -236,6 +237,26 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       () => createTarget(pctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId),
       () => protectedly((c) => revokeConnection(c, org, connectionId, identityId)),
     )).toEqual(["ok", "ok"]);
+  });
+
+  it("an idempotent value write against a loosening control change by the same person (the claim at step 2.5)", async () => {
+    // The control change, emulated: the Organization FOR UPDATE, then its
+    // requester FOR UPDATE for the consumption (amendment E, steps 1 and 2).
+    const loosening = () =>
+      inTransaction(async (q) => {
+        await q.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [org.id]);
+        await q.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
+      });
+    const papp = buildApp(pctx);
+    const write = async () => {
+      const res = await papp.request(`/v1/organizations/test/projects/api/environments/dev/values/API_KEY`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "k-1" },
+        body: JSON.stringify({ value: "idempotent" }),
+      });
+      if (res.status !== 200) throw Object.assign(new Error(`status ${res.status}: ${await res.text()}`), { code: String(res.status) });
+    };
+    expect(await race(/INSERT INTO idempotency_keys/, write, loosening)).toEqual(["ok", "ok"]);
   });
 
   describe("the sync workers (App, Connection, Target; the strongest Target lock up front)", () => {

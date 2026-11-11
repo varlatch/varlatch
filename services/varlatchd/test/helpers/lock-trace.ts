@@ -76,6 +76,8 @@ export const MIGRATED = new Set<string>([
   "ledgerSet",
   "recordDrift",
   "recordFailure",
+  // http/app.ts: the Idempotency-Key claim (step 2.5)
+  "withIdempotency",
   // orgdeletion.ts
   "scheduleDeletion",
   "approveDeletion",

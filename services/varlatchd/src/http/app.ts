@@ -73,7 +73,7 @@ import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type Webhook
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
-import { lockLiveScope } from "../domain/liveness.js";
+import { lockLiveScope, lockScope } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import { machineReach } from "../domain/reach.js";
 import {
@@ -160,7 +160,7 @@ import {
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
 import { approvalKeys } from "../domain/approvalKeys.js";
-import { lockPerson } from "../domain/personlocks.js";
+import { lockPerson, type PersonRef } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -499,9 +499,17 @@ async function environmentsOut(
   }));
 }
 
-/** Idempotency-Key support (ADR-0018 §8). */
+/**
+ * Idempotency-Key support (ADR-0018 §8). The claim is step 2.5 of the lock
+ * order (domain/liveness.ts): `scope` names the Organization and every
+ * person the mutation takes, in the modes it takes them; they are locked
+ * first, without liveness checks, then the claim, then the mutation, whose
+ * own scope locking finds them held. A replay answers from the stored
+ * response before the mutation runs, whatever the Organization's state now.
+ */
 async function withIdempotency(
   ctx: AppCtx, c: Context, principal: Principal, endpoint: string, body: unknown,
+  scope: { organizationId: string; people: readonly PersonRef[] },
   run: (ctx: AppCtx) => Promise<{ status: number; payload: unknown }>,
 ): Promise<{ status: number; payload: unknown }> {
   const key = c.req.header("Idempotency-Key");
@@ -509,6 +517,7 @@ async function withIdempotency(
   if (key.length > 200) throw new DomainError("VALIDATION_FAILED", "Idempotency-Key exceeds 200 characters");
   const digest = bodyHash(body, ctx.rootKek);
   return withTx(ctx.db, async (db) => {
+    await lockScope(db, { organizationId: scope.organizationId, people: [principal.identity.id, ...scope.people] });
     // INSERT's unique constraint waits for the first owner's transaction.
     // Both the mutation and cached response roll back if either fails.
     const claimed = await db.query(
@@ -1913,7 +1922,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await c.req.json(),
       );
       const endpoint = `PUT values ${env.id}/${c.req.param("item")}`;
-      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => {
         const result = await setValue(ctx, org, project, env, c.req.param("item"), body, principal.identity.id);
         return {
           status: 200,
@@ -2341,7 +2350,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await c.req.json(),
       );
       const endpoint = `POST changes ${env.id}`;
-      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => {
         const result = await applyChangeSet(
           ctx,
           org,
@@ -3153,7 +3162,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const grantId = c.req.param("grant");
     const endpoint = `POST grants ${grantId} replace`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [body.subjectIdentityId] }, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
         await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] });
@@ -3278,7 +3287,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH roles ${c.req.param("role")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateRole(
         ctx,
@@ -3313,7 +3322,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH groups ${c.req.param("group")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateGroup(ctx, org.id, c.req.param("group"), "group", body, principal.identity.id),
     }));
@@ -3357,7 +3366,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH teams ${c.req.param("team")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateGroup(ctx, org.id, c.req.param("team"), "team", body, principal.identity.id),
     }));
@@ -3501,7 +3510,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const requirementId = c.req.param("requirement");
     const endpoint = `PATCH requirements ${requirementId}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) =>
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) =>
       withTx(ctx.db, async (db) => {
         await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
         const res = await lockedQuery(
@@ -3651,7 +3660,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH webhooks ${c.req.param("webhook")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: serializeWebhook(
         await updateWebhook(ctx, org.id, c.req.param("webhook"), body, principal.identity.id),

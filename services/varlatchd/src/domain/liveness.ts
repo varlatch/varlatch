@@ -165,6 +165,28 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
 }
 
 /**
+ * Steps 1 and 2 of the order without the liveness checks: the
+ * Organization row in `organizationMode`, then the people. For what must
+ * come between the people and the writer's own checks: an Idempotency-Key
+ * claim (step 2.5), whose replay answers from the stored response whatever
+ * the Organization's state now. The writer's lockLiveScope afterwards finds
+ * these rows held (reuse) and checks liveness as before.
+ */
+export async function lockScope(
+  db: Querier,
+  scope: { organizationId: string; organizationMode?: LockMode | undefined; people: readonly PersonRef[] },
+): Promise<void> {
+  const orgMode = scope.organizationMode ?? "key share";
+  await lockedQuery(
+    db,
+    { table: "organizations", mode: orgMode, key: "$1" },
+    `SELECT deleted_at FROM organizations WHERE id = $1 ${lockClause(orgMode)}`,
+    [scope.organizationId],
+  );
+  await lockPeople(db, scope.people);
+}
+
+/**
  * The Organization's open deletion request, if any. Read under the
  * Organization row's lock: scheduling takes that row FOR UPDATE, so a
  * writer either finishes before a request is scheduled or sees it.
