@@ -90,6 +90,9 @@ const SCHEMA = "varlatch_lock_trace";
 /** Steps of amendment E, as [step, position within the step]. */
 export function stepOf(table: string): [number, number] {
   switch (table) {
+    case "exposure_backfill":
+      // The backfill worker's mutex (step 0, liveness.ts).
+      return [0, 1];
     case "installation":
       return [0, 5];
     case "organizations":
@@ -672,7 +675,10 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     if (problems.length === 0) return;
     const violation = { label, problems, trace: rows };
     if (mode === "all" || (mode === "migrated" && MIGRATED.has(label))) enforced.push(violation);
-    else if (report) appendFileSync(report, `${JSON.stringify({ file: process.env.VITEST_TEST_FILE ?? null, label, problems })}\n`);
+    else if (report) {
+      const testPath = (globalThis as { expect?: { getState?: () => { testPath?: string; currentTestName?: string } } }).expect?.getState?.();
+      appendFileSync(report, `${JSON.stringify({ file: testPath?.testPath ?? null, test: testPath?.currentTestName ?? null, label, problems, trace: rows })}\n`);
+    }
   };
 
   const query = async (text: string, params?: unknown[]) => {

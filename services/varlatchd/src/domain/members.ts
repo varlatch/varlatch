@@ -432,6 +432,16 @@ export async function removeMember(
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
+    // Step 9 (liveness.ts): the live environments the authority snapshot
+    // (captureAuthority) may reference, in id order, before the membership
+    // rows (step 10).
+    await lockedQuery(
+      db,
+      { table: "environments", mode: "key share" },
+      `SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id
+       WHERE p.organization_id = $1 AND e.deleted_at IS NULL ORDER BY e.id FOR KEY SHARE OF e`,
+      [organizationId],
+    );
     await lockMembershipRows(db, organizationId, [identityId]);
 
     const ended = await endMembership(ctx, db, organizationId, identityId, membership.role, actor.id);
