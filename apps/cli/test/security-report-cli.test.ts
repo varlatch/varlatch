@@ -151,7 +151,9 @@ describe("varlatch security report", () => {
     expect(requests).toEqual(["GET /v1/meta", "GET /v1/organizations/acme/security/credential-review"]);
     const lines = r.stdout.trimEnd().split("\n");
     expect(lines).toEqual([
-      "Credential review for acme: 3 of 5 machine credentials need a look.",
+      "Credential review for acme",
+      "  Use and expiry policy: 3 of 5 machine credentials are never used, unused for 30 days, or without expiry.",
+      "  Expiry warnings: no service credential expires within 7 days or has expired.",
       "",
       "Never used (1)",
       "  crd_deploy  deployer credential  for deployer (idn_deploy, service): last used never, no expiry, created 3 days ago, issued by Ada",
@@ -179,7 +181,9 @@ describe("varlatch security report", () => {
     const r = await cli(["security", "report", "--org", "other", "--server", origin], outside);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toBe(
-      "Credential review for other: none of 0 machine credentials needs a look.\n\n" +
+      "Credential review for other\n" +
+        "  Use and expiry policy: none of 0 machine credentials is unused or without expiry.\n" +
+        "  Expiry warnings: no service credential expires within 7 days or has expired.\n\n" +
         "Reporting only: nothing is revoked or retired automatically.\n",
     );
   });
@@ -231,9 +235,18 @@ describe("credential review format", () => {
         { ...base, id: "crd_soon", name: "deploy", expiresAt: "2026-11-12T00:00:00.000Z", state: "soon" },
       ],
     } as CredentialReview["expiry"];
+    // Nothing in the use policy, yet two expiry warnings: the summary does not say "none needs a look".
+    r.items = [];
+    r.summary = { reviewed: 2, listed: 0, neverUsed: 0, idle: 0, noExpiry: 0 };
     const lines = credentialReviewLines("acme", r, Date.now());
+    expect(lines.slice(0, 3)).toEqual([
+      "Credential review for acme",
+      "  Use and expiry policy: none of 2 machine credentials is unused or without expiry.",
+      "  Expiry warnings: 1 service credential expires within 7 days, 1 has expired.",
+    ]);
+    expect(lines.at(-1)).toContain("To revoke one: varlatch credential revoke");
     const at = lines.indexOf("Expires within 7 days or expired (2)");
-    expect(at).toBeGreaterThan(lines.indexOf("No expiry (2)"));
+    expect(at).toBeGreaterThan(2);
     expect(lines[at + 1]).toMatch(/^ {2}crd_gone {2}old {2}for runner \(idn_runner, workload\): .*expires 2026-11-01T00:00:00.000Z.* \(expired\)$/);
     expect(lines[at + 2]).toMatch(/^ {2}crd_soon {2}deploy {2}for runner .*expires 2026-11-12T00:00:00.000Z/);
   });
@@ -243,7 +256,7 @@ describe("credential review format", () => {
     r.items = [{ ...r.items[0]!, identity: { ...r.items[0]!.identity, state: "retired" } }];
     r.summary = { reviewed: 1, listed: 1, neverUsed: 1, idle: 0, noExpiry: 1 };
     const lines = credentialReviewLines("acme", r, Date.now());
-    expect(lines[0]).toBe("Credential review for acme: 1 of 1 machine credential needs a look.");
+    expect(lines[1]).toBe("  Use and expiry policy: 1 of 1 machine credential is never used, unused for 30 days, or without expiry.");
     expect(lines).toContain(
       "  crd_deploy  deployer credential  for deployer (idn_deploy, service, retired): last used never, no expiry, created 3 days ago, issued by Ada",
     );

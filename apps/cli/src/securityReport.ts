@@ -67,15 +67,36 @@ function credentialLine(c: ReviewedCredential, now: number): string {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** The human format: a summary line, then one group per reason; a credential can appear in several. */
+/**
+ * The use and expiry policy summary: never used, idle, or without expiry.
+ * Expired credentials are not part of it; the expiry warnings are counted
+ * on their own line, so neither line can contradict the other.
+ */
+export function usagePolicyLine(review: CredentialReview): string {
+  const { summary } = review;
+  const of = `of ${plural(summary.reviewed, "machine credential", "machine credentials")}`;
+  return summary.listed === 0
+    ? `Use and expiry policy: none ${of} is unused or without expiry.`
+    : `Use and expiry policy: ${summary.listed} ${of} ${summary.listed === 1 ? "is" : "are"} never used, unused for ${review.idleDays} days, or without expiry.`;
+}
+
+/** The expiry warnings, counted on their own. */
+export function expiryLine(expiry: CredentialReview["expiry"]): string {
+  const { soon, expired } = expiry.summary;
+  if (soon === 0 && expired === 0) return `Expiry warnings: no service credential expires within ${expiry.warningDays} days or has expired.`;
+  const parts = [
+    ...(soon > 0 ? [`${plural(soon, "service credential expires", "service credentials expire")} within ${expiry.warningDays} days`] : []),
+    ...(expired > 0 ? [`${plural(expired, "has", "have")} expired`] : []),
+  ];
+  return `Expiry warnings: ${parts.join(", ")}.`;
+}
+
+/** The human format: summary lines, then one group per reason; a credential can appear in several. */
 export function credentialReviewLines(organization: string, review: CredentialReview, now: number): string[] {
   const { summary } = review;
-  const lines = [
-    summary.listed === 0
-      ? `Credential review for ${organization}: none of ${plural(summary.reviewed, "machine credential", "machine credentials")} needs a look.`
-      : `Credential review for ${organization}: ${summary.listed} of ${plural(summary.reviewed, "machine credential", "machine credentials")} ` +
-        `${summary.listed === 1 ? "needs" : "need"} a look.`,
-  ];
+  // Servers before 0.21.0 send no expiry warnings.
+  const expiry = review.expiry as CredentialReview["expiry"] | undefined;
+  const lines = [`Credential review for ${organization}`, `  ${usagePolicyLine(review)}`, ...(expiry ? [`  ${expiryLine(expiry)}`] : [])];
   const groups: { reason: ReviewedCredential["reasons"][number]; title: string }[] = [
     { reason: "never-used", title: "Never used" },
     { reason: "idle", title: `Unused for ${review.idleDays} days or more` },
@@ -86,18 +107,17 @@ export function credentialReviewLines(organization: string, review: CredentialRe
     if (items.length === 0) continue;
     lines.push("", `${title} (${items.length})`, ...items.map((c) => credentialLine(c, now)));
   }
-  // Servers before 0.21.0 send no expiry warnings.
-  const expiring = review.expiry?.items ?? [];
-  if (expiring.length > 0) {
+  const expiring = expiry?.items ?? [];
+  if (expiry && expiring.length > 0) {
     lines.push(
       "",
-      `Expires within ${review.expiry.warningDays} days or expired (${expiring.length})`,
+      `Expires within ${expiry.warningDays} days or expired (${expiring.length})`,
       ...expiring.map((c) => `${credentialLine({ ...c, reasons: [] }, now)}${c.state === "expired" ? " (expired)" : ""}`),
     );
   }
   lines.push(
     "",
-    summary.listed === 0
+    summary.listed === 0 && expiring.length === 0
       ? "Reporting only: nothing is revoked or retired automatically."
       : "Reporting only: nothing is revoked or retired automatically. To revoke one: " +
           "varlatch credential revoke <identity-id> <credential-id>",

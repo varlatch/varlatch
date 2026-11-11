@@ -10,7 +10,7 @@ import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ApprovalKeys, CredentialReview, SecurityControl, SecurityControlReport } from "@varlatch/protocol";
 import { EXIT } from "../src/exitCodes.js";
-import { CHECKLIST, until } from "../src/securityStatus.js";
+import { CHECKLIST, CONTROL_EXPLANATIONS, securityStatusLines, until, type SecurityStatus } from "../src/securityStatus.js";
 import { commandHelp } from "../src/usage.js";
 
 /**
@@ -30,6 +30,7 @@ let server: http.Server;
 let origin = "";
 let capabilities: string[] = [];
 let refused: Set<string>;
+let held: string[] = [];
 let requests: string[] = [];
 
 const control = (name: SecurityControl["control"], over: Partial<SecurityControl> = {}): SecurityControl => ({
@@ -163,6 +164,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   const path = url.split("?")[0]!;
   if (refused.has(path)) return json(403, { error: { code: "PERMISSION_DENIED", message: "Not allowed", requestId: "req_1" } });
   if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.21.0", capabilities });
+  if (url === "/v1/organizations/acme/me/permissions") return json(200, { organizationId: "org_acme", role: "member", actions: held });
   if (url === "/v1/organizations/acme/security/controls") return json(200, { items: CONTROLS, availableModes: ["off", "report"] });
   if (url === "/v1/organizations/acme/security/control-report?days=30") return json(200, report());
   if (url === "/v1/organizations/acme/security/approval-keys") return json(200, KEYS);
@@ -205,9 +207,14 @@ beforeEach(() => {
 
 interface Result {
   code: number | null;
+  /** The signal that ended the CLI, if one did: printed with a failed exit-code assertion. */
+  signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
 }
+
+/** The CLI's exit, with what killed it if a signal did, for assertion messages. */
+const why = (r: Result) => `${r.signal ? `killed by ${r.signal}; ` : ""}stderr: ${r.stderr}`;
 
 function cli(args: string[], cwd = repo): Promise<Result> {
   return new Promise((resolve) => {
@@ -221,14 +228,14 @@ function cli(args: string[], cwd = repo): Promise<Result> {
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-    child.on("close", (code) => resolve({ code, stdout, stderr }));
+    child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
 }
 
 describe("varlatch security status", () => {
   it("prints every part, grouped and short, for an admin, and exits 0", async () => {
     const r = await cli(["security", "status"]);
-    expect(r.code, r.stderr).toBe(0);
+    expect(r.code, why(r)).toBe(0);
     expect(r.stderr).toBe("");
     expect(requests).toEqual([
       "GET /v1/meta",
@@ -252,7 +259,8 @@ describe("varlatch security status", () => {
     expect(out).toContain("  Ada  2 trusted, 1 unconfirmed\n");
     expect(out).toContain("  Zoe  0 trusted, 1 unconfirmed: cannot approve anything yet\n");
     expect(out).toContain("varlatch admin reenroll --identity <id>");
-    expect(out).toContain("  2 of 4 machine credentials need a look: 1 never used, 0 unused for 30 days, 2 without expiry.\n");
+    expect(out).toContain("  Use and expiry policy: 2 of 4 machine credentials are never used, unused for 30 days, or without expiry.\n");
+    expect(out).toContain("  Expiry warnings: 1 service credential expires within 7 days.\n");
     expect(out).toMatch(/ {2}crd_deploy {2}deploy {2}for deployer: expires in 3 days \(/);
     expect(out).toContain("  1 requirement. requirement-protection is off.\n");
     expect(out).toContain("Checklist\n");
@@ -263,7 +271,7 @@ describe("varlatch security status", () => {
 
   it("--json prints one versioned document with every part", async () => {
     const r = await cli(["security", "status", "--json"]);
-    expect(r.code, r.stderr).toBe(0);
+    expect(r.code, why(r)).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(Object.keys(doc)).toEqual([
       "version", "organization", "enforceAvailable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable",
@@ -279,6 +287,9 @@ describe("varlatch security status", () => {
     expect(step.counts.entries).toHaveLength(4);
     expect(step.explanation.report).toContain("without an approval");
     expect(step.explanation.enforce).toContain("approval with a trusted passkey");
+    const passkey = doc.controls.items[2];
+    expect(passkey.explanation.report).toContain("Only requests that were allowed and succeeded count");
+    expect(passkey.explanation.report).toContain("best-effort");
     expect(doc.approvalKeys).toEqual(KEYS);
     expect(doc.credentialReview.expiry.items[0].id).toBe("crd_deploy");
     expect(doc.requirements).toEqual({ count: 1, protectedBy: "requirement-protection", items: REQUIREMENTS });
@@ -293,7 +304,7 @@ describe("varlatch security status", () => {
       "/v1/organizations/acme/requirements",
     ]);
     const r = await cli(["security", "status", "--json"]);
-    expect(r.code, r.stderr).toBe(0);
+    expect(r.code, why(r)).toBe(0);
     // The approval keys need what the counts need: not asked again.
     expect(requests).not.toContain("GET /v1/organizations/acme/security/approval-keys");
     const doc = JSON.parse(r.stdout);
@@ -307,7 +318,7 @@ describe("varlatch security status", () => {
     expect(doc.controls.items.every((c: { counts: unknown }) => c.counts === null)).toBe(true);
 
     const text = await cli(["security", "status"]);
-    expect(text.code).toBe(0);
+    expect(text.code, why(text)).toBe(0);
     expect(text.stdout).toContain("  admin-step-up           report\n");
     expect(text.stdout).not.toContain("Approval keys");
     expect(text.stdout).toContain("Not shown\n  counts of the controls: needs organization.manage. An organization admin manages this.\n");
@@ -315,10 +326,36 @@ describe("varlatch security status", () => {
     expect(text.stdout).toContain("  Tailnet Requirements: needs policy.read.");
   });
 
+  it("asks only for what the caller's own permissions allow, where the server reports them", async () => {
+    capabilities = [...capabilities, "organizations.permissions"];
+    held = ["organization.read", "project.read", "identity.manage"];
+    // Anything else would be refused and audited.
+    refused = new Set([
+      "/v1/organizations/acme/security/control-report",
+      "/v1/organizations/acme/security/approval-keys",
+      "/v1/organizations/acme/requirements",
+    ]);
+    const r = await cli(["security", "status", "--json"]);
+    expect(r.code, why(r)).toBe(0);
+    expect(requests).toEqual([
+      "GET /v1/meta",
+      "GET /v1/organizations/acme/me/permissions",
+      "GET /v1/organizations/acme/security/controls",
+      "GET /v1/organizations/acme/security/credential-review",
+    ]);
+    const doc = JSON.parse(r.stdout);
+    expect(doc.unavailable).toEqual([
+      { section: "controlReport", reason: "not-permitted" },
+      { section: "approvalKeys", reason: "not-permitted" },
+      { section: "requirements", reason: "not-permitted" },
+    ]);
+    expect(doc.credentialReview.expiry.items[0].id).toBe("crd_deploy");
+  });
+
   it("names the parts an older server cannot give", async () => {
     capabilities = ["security.controls", "security.credential-review"];
     const r = await cli(["security", "status", "--json"]);
-    expect(r.code, r.stderr).toBe(0);
+    expect(r.code, why(r)).toBe(0);
     expect(JSON.parse(r.stdout).unavailable).toEqual([
       { section: "controlReport", reason: "not-supported" },
       { section: "approvalKeys", reason: "not-supported" },
@@ -329,7 +366,7 @@ describe("varlatch security status", () => {
   it("says that every control is off when none was turned on; --org and --server work outside a repository", async () => {
     capabilities = ["security.controls"];
     const r = await cli(["security", "status", "--org", "quiet", "--server", origin], outside);
-    expect(r.code, r.stderr).toBe(0);
+    expect(r.code, why(r)).toBe(0);
     expect(r.stdout).toContain("Every control is off, as it is by default: nothing is counted, refused or changed.\n");
   });
 
@@ -361,6 +398,33 @@ describe("varlatch security status", () => {
 });
 
 describe("status format", () => {
+  it("says beside passkey-verification's counts that access counts are a lower bound, also at zero", () => {
+    const status: SecurityStatus = {
+      organization: "acme",
+      enforceAvailable: false,
+      controls: {
+        availableModes: ["off", "report"],
+        window: { days: 30, since: "2026-10-11T23:00:00.000Z", generatedAt: "2026-11-10T23:00:00.000Z" },
+        items: [
+          {
+            ...control("passkey-verification", { mode: "report", version: 1 }),
+            explanation: CONTROL_EXPLANATIONS["passkey-verification"],
+            counts: { total: 0, currentHour: 0, pending: 0, entries: [] },
+          },
+        ],
+      },
+      approvalKeys: null,
+      credentialReview: null,
+      requirements: null,
+      checklist: CHECKLIST,
+      unavailable: [],
+    };
+    const lines = securityStatusLines(status, Date.now());
+    const at = lines.indexOf("  passkey-verification  report  nothing counted");
+    expect(at).toBeGreaterThan(0);
+    expect(lines[at + 1]).toBe("      only allowed, successful requests count; access counts are best-effort, so this is a lower bound");
+  });
+
   it("says how long until an expiry in whole days", () => {
     const now = Date.parse("2026-11-10T12:00:00.000Z");
     expect(until("2026-11-10T20:00:00.000Z", now)).toBe("within a day");

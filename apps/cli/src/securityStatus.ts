@@ -13,7 +13,7 @@ import {
 } from "@varlatch/sdk";
 import type { Requirement } from "@varlatch/protocol";
 import { lifetime } from "./securityControls.js";
-import { ago } from "./securityReport.js";
+import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
 
 /**
  * `varlatch security status` (ADR-0054 Decision 11): what the dashboard's
@@ -28,6 +28,8 @@ import { ago } from "./securityReport.js";
  * organization.manage; the credential review identity.manage; Requirements
  * policy.read. A part the caller cannot read, or the server cannot answer,
  * is left out and named in `unavailable`; only the controls are required.
+ * Where the server reports the caller's own permissions
+ * (organizations.permissions), parts they do not hold are not asked for.
  */
 
 export const SECURITY_STATUS_USAGE = "Usage: varlatch security status [--json] [--org <organization>] [--server <url>]";
@@ -49,7 +51,7 @@ export const CONTROL_EXPLANATIONS: Record<SecurityControlName, { report: string;
   },
   "passkey-verification": {
     report:
-      "Counts each request by a person's dashboard or CLI sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face). Machine credentials are never counted.",
+      "Counts requests by a person's dashboard or CLI sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face). Only requests that were allowed and succeeded count, and machine credentials never do. Access counts are best-effort: a busy server can drop some, so a count is a lower bound.",
     enforce: "Such sign-ins would be refused in this organization until the person signs in again with a trusted passkey and a PIN, fingerprint or face.",
   },
   "credential-lifetime": {
@@ -128,7 +130,7 @@ export interface SecurityStatus {
 
 export type SecurityStatusApi = Pick<
   VarlatchClient,
-  "meta" | "listSecurityControls" | "securityControlReport" | "securityApprovalKeys" | "credentialReview" | "listRequirements"
+  "meta" | "myOrganizationPermissions" | "listSecurityControls" | "securityControlReport" | "securityApprovalKeys" | "credentialReview" | "listRequirements"
 >;
 
 /** The server cannot answer at all: it has no Security Controls. */
@@ -152,9 +154,16 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
   const has = (cap: string) => meta.capabilities.includes(cap);
   const unavailable: Unavailable[] = [];
   // Errors other than "not yours to read" fail the whole command.
+  // The caller's own permissions, where the server can say: parts they do not
+  // allow are never asked for, so the command records no refusals.
+  const held = has("organizations.permissions") ? new Set<string>((await api.myOrganizationPermissions(organization)).actions) : null;
   async function part<T>(section: StatusSection, capability: string | null, load: () => Promise<T>): Promise<T | null> {
     if (capability && !has(capability)) {
       unavailable.push({ section, reason: "not-supported" });
+      return null;
+    }
+    if (held && !held.has(NEEDS[section])) {
+      unavailable.push({ section, reason: "not-permitted" });
       return null;
     }
     try {
@@ -255,6 +264,9 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
       );
     }
     lines.push(`  ${c.control.padEnd(width)}  ${c.mode.padEnd(6)}${facts.length ? `  ${facts.join("; ")}` : ""}`);
+    if (c.counts && c.control === "passkey-verification" && c.mode !== "off") {
+      lines.push("      only allowed, successful requests count; access counts are best-effort, so this is a lower bound");
+    }
     for (const e of c.counts?.entries.slice(0, TEXT_ENTRIES) ?? []) lines.push(entryLine(e));
     const more = (c.counts?.entries.length ?? 0) - TEXT_ENTRIES;
     if (more > 0) lines.push(`      and ${plural(more, "more entry", "more entries")} (--json lists all)`);
@@ -284,22 +296,18 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
   const review = s.credentialReview;
   if (review) {
     const { summary } = review;
-    lines.push("", "Machine credentials");
-    lines.push(
-      summary.listed === 0
-        ? `  None of ${plural(summary.reviewed, "machine credential", "machine credentials")} needs a look.`
-        : `  ${summary.listed} of ${plural(summary.reviewed, "machine credential", "machine credentials")} ${summary.listed === 1 ? "needs" : "need"} a look: ` +
-            `${summary.neverUsed} never used, ${summary.idle} unused for ${review.idleDays} days, ${summary.noExpiry} without expiry.`,
-    );
+    lines.push("", "Machine credentials", `  ${usagePolicyLine(review)}`);
     const expiry = review.expiry;
     if (expiry) {
-      if (expiry.items.length === 0) lines.push(`  None expires within ${expiry.warningDays} days.`);
+      lines.push(`  ${expiryLine(expiry)}`);
       for (const c of expiry.items) {
         const when = !c.expiresAt ? "" : c.state === "expired" ? `expired ${ago(c.expiresAt, now)}` : `expires ${until(c.expiresAt, now)} (${c.expiresAt})`;
         lines.push(`  ${c.id}  ${c.name ?? "unnamed"}  for ${c.identity.name}: ${when}`);
       }
     }
-    if (summary.listed > 0) lines.push("  Details: varlatch security report. Revoke in the dashboard under Access, Machines.");
+    if (review.summary.listed > 0 || (expiry?.items.length ?? 0) > 0) {
+      lines.push("  Details: varlatch security report. Revoke or replace them in the dashboard under Access, Machines.");
+    }
   }
 
   // Requirements.
