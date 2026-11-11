@@ -5,7 +5,7 @@ import { convexAdapter } from "../src/convex.js";
 import { coolifyAdapter } from "../src/coolify.js";
 import { classifyComposeUsage } from "../src/coolifyCompose.js";
 import { githubActionsAdapter, parseTokenExpiration } from "../src/github.js";
-import { getAdapter, canonicalDestinationIdentity } from "../src/index.js";
+import { getAdapter, canonicalDestinationIdentity, OUTBOUND_REFUSED_CODE, policyRefusal } from "../src/index.js";
 import { sealedBox, sealedBoxOpen } from "../src/sealedbox.js";
 import { AdapterError, type AdapterRequest } from "../src/types.js";
 
@@ -1251,6 +1251,23 @@ describe("access checks", () => {
         }),
       );
       expect(noKey).toMatchObject({ status: "failed", where: "destination" });
+    });
+
+    it("words a host's outbound policy refusal in the host's words, never 'could not reach' (ADR-0057)", async () => {
+      // varlatchd's policy fetch rejects with an error carrying this code and its own fixed wording.
+      const refusal = Object.assign(new Error("This address is on a private network, which this installation does not let Organizations reach."), {
+        name: "OutboundRefusedError",
+        code: OUTBOUND_REFUSED_CODE,
+      });
+      for (const req of [github(failing(refusal)), coolify(failing(refusal))]) {
+        const adapter = req.baseIdentity.startsWith("https://") ? coolifyAdapter : githubActionsAdapter;
+        const result = await adapter.checkAccess(req);
+        expect(result).toMatchObject({ status: "unreachable", message: refusal.message });
+      }
+      // Also when the refusal is the cause of fetch's own TypeError.
+      const wrapped = new TypeError("fetch failed", { cause: refusal });
+      expect((await coolifyAdapter.checkAccess(coolify(failing(wrapped)))).message).toBe(refusal.message);
+      expect(policyRefusal(new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") }))).toBeNull();
     });
 
     it("never throws and never repeats what the platform said", async () => {

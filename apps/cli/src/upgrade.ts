@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import type { GateVerdict } from "./doctor.js";
 import { parseDotenv } from "./dotenv.js";
 import { EXIT } from "./exitCodes.js";
+import { outboundAdvisory, runOutboundCheck, type OutboundCheckRun } from "./outbound.js";
 import { createInterface } from "node:readline/promises";
 
 /**
@@ -52,6 +53,8 @@ export interface UpgradeOptions {
   gate?: (dir: string) => Promise<GateRun>;
   /** Records a release check (tests); defaults to the running varlatchd's control. */
   recordCheck?: (dir: string, input: ReleaseCheckInput) => Promise<void>;
+  /** The outbound check from the new image (tests); defaults to `docker compose run` of varlatchd. */
+  outboundCheck?: (dir: string) => OutboundCheckRun;
 }
 
 export interface GateRun {
@@ -530,6 +533,12 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
   console.log(`\nApplied release set (previous files kept as *${previousSuffix}).`);
 
   compose(opts.dir, ["--profile", "deploy", "pull"], "Image pull");
+  // ADR-0057 Decision 10: the new image checks the configured destinations
+  // against its outbound policy before it starts, on the database as it is.
+  // Advisory only: it never blocks and asks for nothing; refused deliveries
+  // wait without loss until the host operator allows them.
+  const advisory = outboundAdvisory((opts.outboundCheck ?? ((dir: string) => runOutboundCheck(dir, ["--json"], "run")))(opts.dir));
+  if (advisory) console.log(`\n${advisory.join("\n")}\n`);
   compose(opts.dir, ["up", "-d", "--remove-orphans"], "Stack start");
   console.log("\nWaiting for varlatchd to become healthy (varlatch-migrate gates it)...");
   await waitForHealthy(opts.dir, "varlatchd", 180_000);
@@ -556,6 +565,7 @@ export async function runUpgrade(opts: UpgradeOptions): Promise<void> {
     renameSync(pendingPath, currentManifestPath);
 
     console.log(`\nUpgraded to ${target.version}: every upgrade gate check passed.`);
+    if (advisory) console.log(`\n${advisory.join("\n")}`);
     console.log("Keep the pre-upgrade backups until you accept the release.");
     console.log(`Recovery archive: ${archive}. Use its BEK and matching Root KEK with a compatible release.`);
     console.log("Never run old binaries on a forward-migrated schema.");

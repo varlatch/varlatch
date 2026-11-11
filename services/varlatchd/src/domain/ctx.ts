@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Querier } from "../db/migrate.js";
+import type { OutboundPolicy } from "../net/outbound.js";
 
 /** Dependencies threaded through domain operations. */
 export interface AppCtx {
@@ -12,4 +13,10 @@ export interface AppCtx {
    * own acquisition timeout. Absent: counts use `db`.
    */
   accessCountDb?: Querier;
+  /**
+   * The outbound policy (ADR-0057), built from VARLATCH_OUTBOUND_ALLOW at
+   * startup. Absent: the policy without exceptions (outboundOf), never a
+   * plain fetch.
+   */
+  outbound?: OutboundPolicy;
 }

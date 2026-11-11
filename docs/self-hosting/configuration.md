@@ -146,6 +146,7 @@ recorded one, and a `publicUrl` edited into the file.
 | `VARLATCH_TAILNET_BROWSER_ORIGINS` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | no | no |
 | `VARLATCH_TRUSTED_PROXIES` | [Client addresses](#client-addresses) | no | no |
 | `VARLATCH_SYNC`, `VARLATCH_SYNC_ADAPTERS` | [Sync Targets](#sync-targets) | no | no |
+| `VARLATCH_OUTBOUND_ALLOW` | [Outbound destinations](#outbound-destinations) | no | no |
 
 A default below is what the Compose files use when the variable is unset
 or empty.
@@ -560,6 +561,30 @@ must not reach out from, or when your policy forbids it.
 A comma-separated list of the platforms Sync Targets may use. varlatchd
 refuses to connect another platform and delivers only through the listed
 adapters. Set it to allow only the platforms you use.
+
+## Outbound destinations
+
+### `VARLATCH_OUTBOUND_ALLOW`
+
+- **Read by:** `varlatchd` only, at startup. Compose never passes it to
+  Convex or the dashboard.
+- **Default:** empty: Organizations reach public https destinations only.
+- **Setup:** does not write it.
+
+The private destinations Organizations may reach: webhook receivers,
+Coolify and Convex instances, and OIDC issuers on your LAN, a Docker
+network or a tailnet. Entries are separated by commas: host names
+(`coolify.lan`), subdomain wildcards (`*.private.example.com`), addresses
+and CIDR ranges (`10.0.0.0/8`), each with an optional port
+(`convex.lan:3210`, `10.0.0.5:*`). An entry without a port allows only 443
+for https and 80 for http. Loopback, link-local and cloud metadata addresses
+open only through a CIDR entry inside their range, such as
+`127.0.0.1/32:*`. An invalid entry stops varlatchd from starting.
+
+`varlatch admin outbound check` lists every configured destination with
+its verdict and suggests the value. [Outbound policy](../reference/outbound-policy.md)
+explains the classes, the entries and the migration from earlier releases.
+After a change, recreate varlatchd: `docker compose up -d varlatchd`.
 
 ## Logs
 

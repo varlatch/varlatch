@@ -98,6 +98,11 @@ services:
       # address: the dashboard's nginx here; each ingress overlay adds its
       # TLS proxy. Your own reverse proxy in front: add its name or address.
       VARLATCH_TRUSTED_PROXIES: ${VARLATCH_TRUSTED_PROXIES:-varlatch-web}
+      # Private destinations Organizations may reach (webhooks, Coolify,
+      # Convex, OIDC issuers): host names, *.suffixes, addresses and CIDR
+      # ranges, each with an optional port, comma-separated. Unset: public
+      # https only. Set on the host only; varlatchd reads it at startup.
+      VARLATCH_OUTBOUND_ALLOW: ${VARLATCH_OUTBOUND_ALLOW:-}
     volumes:
       - varlatch-state:/var/lib/varlatch
       - ./backups:/backups

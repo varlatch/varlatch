@@ -160,6 +160,14 @@ The host connects out to:
 - **The platforms of Sync Targets** (GitHub Actions, Coolify, Convex), when
   someone configures one. `VARLATCH_SYNC=off` turns delivery off:
   [Sync Targets](configuration.md#sync-targets).
+- **What Organizations configure:** audit webhook receivers, Coolify and
+  Convex instances, GitHub, and OIDC issuers. varlatchd sends these
+  requests to public addresses over https only, unless you allow a private
+  destination with
+  [`VARLATCH_OUTBOUND_ALLOW`](configuration.md#varlatch_outbound_allow).
+  Loopback, link-local and cloud metadata addresses stay closed unless you
+  name them. [Outbound policy](../reference/outbound-policy.md) has the
+  details.
 
 The Compose file turns off the Convex backend's usage beacon.
 

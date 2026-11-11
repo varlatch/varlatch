@@ -81,6 +81,7 @@ export const AUDIT_EVENT_TYPES = [
   "organization.deletion_cancelled",
   "organization.deletion_scheduled",
   "organization.renamed",
+  "outbound.refused",
   "project.created",
   "project.deleted",
   "project.renamed",

@@ -65,6 +65,7 @@ export default defineConfig({
           label: "Security",
           items: [
             { label: "Security controls", slug: "reference/security-controls" },
+            { label: "Outbound policy", slug: "reference/outbound-policy" },
             { label: "Threat model", slug: "threat-model" },
           ],
         },

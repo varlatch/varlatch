@@ -39,6 +39,7 @@ import {
 } from "./crypto/escrow.js";
 import { buildApp, SERVER_VERSION } from "./http/app.js";
 import { buildHumanAuth } from "./auth/humanauth.js";
+import { OutboundPolicy, allowListWarnings } from "./net/outbound.js";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -49,6 +50,7 @@ import { fileURLToPath } from "node:url";
  *   varlatchd admin recover ...          — break-glass recovery grant (host exec)
  *   varlatchd admin doctor [--wait s]    — read-only Installation Health checks (JSON)
  *   varlatchd admin security reset --org <org> (--control <name>... | --all): Security Controls to off (ADR-0054)
+ *   varlatchd admin outbound check [--allow <value>] [--org <org>] [--json]: destinations vs the outbound policy (ADR-0057)
  *   varlatchd admin kek verify [--file]  — verify a KEK candidate against the canary
  *   varlatchd admin kek export --out     — passphrase-wrapped KEK escrow blob
  *   varlatchd admin kek restore --in --out — decrypt an escrow blob back to a KEK file
@@ -63,6 +65,8 @@ function fail(message: string): never {
   console.error(message);
   process.exit(1);
 }
+
+const OUTBOUND_USAGE = "Usage: varlatchd admin outbound check [--allow <value>] [--org <org>] [--json]";
 
 function arg(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -107,7 +111,13 @@ async function serveCommand(): Promise<void> {
     max: ACCESS_COUNTS.concurrency,
     connectionTimeoutMillis: ACCESS_COUNTS.acquireTimeoutMs,
   });
-  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb };
+  // The outbound policy (ADR-0057): VARLATCH_OUTBOUND_ALLOW, read once here.
+  const outbound = new OutboundPolicy(config.outboundAllow);
+  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound };
+  if (config.outboundAllow.length > 0) {
+    console.log(`outbound allow list: ${config.outboundAllow.map((e) => e.text).join(", ")}`);
+  }
+  for (const warning of allowListWarnings(config.outboundAllow)) console.warn(`varlatchd: VARLATCH_OUTBOUND_ALLOW: ${warning}`);
 
   const interruptedCapture = maintenance.gate;
   if (interruptedCapture?.kind === "capture") maintenance.finishCapture(interruptedCapture.id);
@@ -368,6 +378,31 @@ async function adminCommand(rest: string[]): Promise<void> {
     return;
   }
 
+  if (sub === "outbound") {
+    // Read-only (ADR-0057 Decision 10): every configured destination with
+    // the outbound policy's verdict, and the allow list that would open the
+    // refused ones. DNS lookups only; no lease, no KEK, no write. Reads only
+    // tables of migrations 0010, 0011 and 0016, so a new image can run it
+    // against the previous release's database before an upgrade.
+    if (rest[1] !== "check") fail(OUTBOUND_USAGE);
+    const { outboundCheck, outboundCheckLines } = await import("./net/outbound-check.js");
+    const { OutboundAllowError, parseOutboundAllow } = await import("./net/outbound.js");
+    const config = loadConfig(process.env, { requireKek: false, listeners: false });
+    const candidate = arg("--allow");
+    let entries = config.outboundAllow;
+    if (candidate !== undefined) {
+      try { entries = parseOutboundAllow(candidate); } catch (err) { fail(err instanceof OutboundAllowError ? err.message : String(err)); }
+    }
+    const db = createPgQuerier(config.databaseUrl);
+    try {
+      const report = await outboundCheck(db, new OutboundPolicy(entries), { org: arg("--org") ?? null });
+      if (has("--json")) console.log(JSON.stringify(report));
+      else for (const line of outboundCheckLines(report)) console.log(line);
+      process.exitCode = report.exitCode;
+    } finally { await db.end(); }
+    return;
+  }
+
   if (sub === "doctor") {
     // Read-only Installation Health (ADR-0035 D8): no operator lease and no
     // maintenance refusal — it must report, not block, an active backup, and
@@ -389,6 +424,7 @@ async function adminCommand(rest: string[]): Promise<void> {
         tailnet: config.tailscale
           ? { browserEndpoint: config.tailscale.browser ? `https://${config.tailscale.browser.host}:${config.tailscale.browser.port}` : null }
           : null,
+        outboundAllow: config.outboundAllow,
       });
       rootKek?.fill(0);
       console.log(JSON.stringify(report));
@@ -401,7 +437,7 @@ async function adminCommand(rest: string[]): Promise<void> {
   const config = loadConfig(process.env, { requireKek: false });
   const db = createPgQuerier(config.databaseUrl);
   const release = await operatorLease(db);
-  const makeCtx = (): AppCtx => ({ db, rootKek: config.loadRootKek() });
+  const makeCtx = (): AppCtx => ({ db, rootKek: config.loadRootKek(), outbound: new OutboundPolicy(config.outboundAllow) });
   try {
     if (activeGate(stateDir())) throw new Error("Installation is in maintenance; ordinary admin operations are blocked");
     switch (sub) {
@@ -533,7 +569,7 @@ async function adminCommand(rest: string[]): Promise<void> {
       }
       default:
         fail(
-          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | custody attest|status | security reset | " +
+          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | outbound check | custody attest|status | security reset | " +
             "kek verify|export|restore|split|combine>",
         );
     }

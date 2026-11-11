@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createSign } from "node:crypto";
 import type { AccessCheck } from "@varlatch/sync";
+import { outboundRefusalOf, type OutboundRefusedError } from "../net/outbound.js";
 
 /**
  * The App's own requests to GitHub (ADR-0047 Decision 3): a JWT signed with
@@ -77,7 +78,7 @@ export async function appRequest(
   privateKeyPem: string,
   now: number = Date.now(),
   init: { method?: string; body?: string } = {},
-): Promise<{ res: Response | undefined; claims: JwtClaims }> {
+): Promise<{ res: Response | undefined; claims: JwtClaims; refusal: OutboundRefusedError | null }> {
   const { jwt, claims } = signAppJwt(issuer, privateKeyPem, now);
   try {
     const res = await fetchImpl(`${GITHUB_API}${path}`, {
@@ -87,9 +88,9 @@ export async function appRequest(
       redirect: "error",
       signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
-    return { res, claims };
-  } catch {
-    return { res: undefined, claims };
+    return { res, claims, refusal: null };
+  } catch (err) {
+    return { res: undefined, claims, refusal: outboundRefusalOf(err) };
   }
 }
 
@@ -98,6 +99,15 @@ export const GITHUB_UNREACHABLE: AccessCheck = {
   where: "connection",
   message: "Varlatch could not reach api.github.com. Check that this server can reach it, then try again.",
 };
+
+/**
+ * No answer from GitHub: unreachable, in the outbound policy's words when
+ * the policy refused it (api.github.com resolving to a non-public address
+ * on this host, ADR-0057 Decision 7).
+ */
+export function githubUnreachable(refusal: OutboundRefusedError | null | undefined): AccessCheck {
+  return refusal ? { ...GITHUB_UNREACHABLE, message: refusal.message } : GITHUB_UNREACHABLE;
+}
 
 export const NOT_GITHUB = (httpStatus: number): AccessCheck => ({
   status: "failed",

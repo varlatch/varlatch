@@ -3,7 +3,7 @@ import type { AccessCheck } from "@varlatch/sync";
 import type { Envelope } from "../crypto/aead.js";
 import { decryptGitHubAppKey } from "../crypto/hierarchy.js";
 import type { AppCtx } from "./ctx.js";
-import { GITHUB_API, GITHUB_HEADERS, GITHUB_TIMEOUT_MS, GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, readJwtRefusal } from "./githubjwt.js";
+import { GITHUB_API, GITHUB_HEADERS, GITHUB_TIMEOUT_MS, GITHUB_UNREACHABLE, NOT_GITHUB, appRequest, githubUnreachable, readJwtRefusal } from "./githubjwt.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 
 /**
@@ -92,11 +92,12 @@ export async function mintInstallationToken(
   destination: Record<string, string> = {},
   now: number = Date.now(),
 ): Promise<Minted> {
-  const { res, claims } = await appRequest(fetchImpl, `/app/installations/${cred.installationId}/access_tokens`, cred.clientId, cred.privateKeyPem, now, {
+  const { res, claims, refusal } = await appRequest(fetchImpl, `/app/installations/${cred.installationId}/access_tokens`, cred.clientId, cred.privateKeyPem, now, {
     method: "POST",
     body: JSON.stringify(narrowing(use, destination)),
   });
   if (!res) {
+    if (refusal) return { ok: false, check: githubUnreachable(refusal) };
     return { ok: false, check: { ...GITHUB_UNREACHABLE, message: "Varlatch could not reach api.github.com to issue a token for the App. Check that this server can reach it, then try again." } };
   }
   if (res.status === 401) return { ok: false, check: readJwtRefusal(res, claims) };
@@ -234,8 +235,8 @@ export async function readInstallation(
   installationId: number,
   now: number = Date.now(),
 ): Promise<{ ok: true; account: { login: string; type: "organization" | "user" }; suspended: boolean } | { ok: false; check: AccessCheck }> {
-  const { res, claims } = await appRequest(fetchImpl, `/app/installations/${installationId}`, app.clientId, app.privateKeyPem, now);
-  if (!res) return { ok: false, check: GITHUB_UNREACHABLE };
+  const { res, claims, refusal } = await appRequest(fetchImpl, `/app/installations/${installationId}`, app.clientId, app.privateKeyPem, now);
+  if (!res) return { ok: false, check: githubUnreachable(refusal) };
   if (res.status === 401) return { ok: false, check: readJwtRefusal(res, claims) };
   if (res.status === 404) {
     return { ok: false, check: { status: "not-found", where: "connection", httpStatus: 404, message: `Installation ${installationId} is not an installation of this GitHub App.` } };

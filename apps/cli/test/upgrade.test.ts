@@ -191,3 +191,40 @@ it("refuses before any change when the release requires a variable the installat
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+it("shows the new image's outbound check as an advisory finding, without blocking (ADR-0057)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-upgrade-outbound-"));
+  const bin = join(dir, "bin"), release = join(dir, "release");
+  mkdirSync(bin); mkdirSync(release);
+  const manifest = (version: string) => JSON.stringify({ schemaVersion: 1, version, apiMajor: 1, migrationVersion: 18, supportedPostgresMajor: 17, supportedRestoreSources: [{ version: "0.6.0", migrationVersion: 18 }], images: {} });
+  writeFileSync(join(dir, "varlatch-release.json"), manifest("0.6.0"));
+  writeFileSync(join(dir, "docker-compose.yml"), "old compose");
+  writeFileSync(join(release, "varlatch-release.json"), manifest("0.7.0"));
+  writeFileSync(join(release, "docker-compose.release.yml"), "new compose");
+  writeFileSync(join(release, "convex-supervisor.cjs"), "// supervisor");
+  writeFileSync(join(bin, "docker"), `#!/bin/sh
+if [ "$2" = "ps" ]; then echo '{"Health":"healthy"}'; fi
+exit 0
+`, { mode: 0o700 });
+  vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+  vi.spyOn(backup, "createBackup").mockResolvedValue(join(dir, "verified.vltbak"));
+  vi.spyOn(backup, "verifyBackup").mockResolvedValue({} as Manifest);
+  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const report = { destinations: [{ organization: "acme", kind: "coolify", id: "pc_1", host: "coolify.lan", port: 443, verdict: "refused", reason: "private_address" }], suggested: "coolify.lan", apart: [] };
+  const outboundCheck = vi.fn(() => ({ status: 1, stdout: JSON.stringify(report), stderr: "" }));
+  try {
+    await runUpgrade({
+      dir, repo: "test/repo", version: "0.7.0", yes: true, skipDbBackup: false, kekBackupVerified: false, checkOnly: false,
+      releaseDir: release, outboundCheck, gate: async () => ({ verdict: { pass: true, blocking: [], advisory: [], outsideGate: [] }, cli: null }),
+    });
+    expect(outboundCheck).toHaveBeenCalledWith(dir);
+    const printed = log.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(printed).toContain("VARLATCH_OUTBOUND_ALLOW=coolify.lan");
+    expect(printed).toContain("Upgraded to 0.7.0");
+    expect(JSON.parse(readFileSync(join(dir, "varlatch-release.json"), "utf8")).version).toBe("0.7.0");
+  } finally {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

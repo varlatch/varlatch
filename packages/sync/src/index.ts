@@ -12,7 +12,7 @@ export type {
   DestinationListing,
   DestinationOption,
 } from "./access.js";
-export { MAX_DESTINATIONS } from "./access.js";
+export { MAX_DESTINATIONS, OUTBOUND_REFUSED_CODE, policyRefusal } from "./access.js";
 export { githubActionsAdapter } from "./github.js";
 export { coolifyAdapter } from "./coolify.js";
 export { convexAdapter } from "./convex.js";
