@@ -12,10 +12,17 @@ import { Badge, Mono, SectionCard } from "../../components/ui";
 
 export { refusedDestinationsKey };
 
+/** How often an open page asks again: longer than the server's 30-second reuse of a check. */
+export const REFUSED_REFETCH_MS = 60_000;
+
 /**
  * The refused destinations, for pages other than Security (the Connections
  * page): asked only where the server has them and the caller holds
- * organization.manage, so nobody collects a refusal for it.
+ * organization.manage, so nobody collects a refusal for it. Pages invalidate
+ * it on the same changes as their own data; it is also asked again every
+ * minute while the page is visible (the server reuses a check for up to 30
+ * seconds), so a destination the host operator allowed stops showing as
+ * refused without a reload.
  */
 export function useRefusedDestinations(org: string) {
   const { api } = useSession();
@@ -27,7 +34,14 @@ export function useRefusedDestinations(org: string) {
     enabled: supported && reportsPermissions,
   });
   const canManage = permissions.data?.actions.includes("organization.manage") ?? false;
-  return useQuery({ queryKey: refusedDestinationsKey(org), queryFn: () => api.refusedDestinations(org), enabled: supported && canManage, retry: false });
+  return useQuery({
+    queryKey: refusedDestinationsKey(org),
+    queryFn: () => api.refusedDestinations(org),
+    enabled: supported && canManage,
+    retry: false,
+    refetchInterval: REFUSED_REFETCH_MS,
+    refetchIntervalInBackground: false,
+  });
 }
 
 /**

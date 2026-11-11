@@ -271,37 +271,39 @@ export function connectionHealth(targets: SyncTarget[], current?: OutboundRefusa
       at: refusedTarget?.lastAttemptAt,
     };
   }
+  // A refusal only a paused Target recorded stays next to the live Targets' status.
+  const withRefusal = (health: ConnectionHealth): ConnectionHealth => (refusal ? { ...health, refusal } : health);
   const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
-  if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt, refusal };
+  if (rejected) return withRefusal({ tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt });
   const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0);
   if (failing.length > 0) {
-    return {
+    return withRefusal({
       tone: "error",
       label: `${failing.length} target${failing.length === 1 ? "" : "s"} failing`,
       credentialRejected: false,
       at: failing[0]!.lastAttemptAt,
-    };
+    });
   }
   const redeploys = live.filter((t) => redeployError(t.lastResult));
   if (redeploys.length > 0) {
-    return {
+    return withRefusal({
       tone: "warn",
       label: `${redeploys.length} redeploy${redeploys.length === 1 ? "" : "s"} failed`,
       credentialRejected: false,
       at: redeploys[0]!.lastAttemptAt,
-    };
+    });
   }
   const holding = live.filter((t) => heldSummary(t));
   if (holding.length > 0) {
-    return {
+    return withRefusal({
       tone: "warn",
       label: `${holding.length} target${holding.length === 1 ? "" : "s"} holding values`,
       credentialRejected: false,
       at: holding[0]!.lastAttemptAt,
-    };
+    });
   }
-  if (live.every((t) => !t.lastAttemptAt)) return { tone: "live", label: "Waiting for first push", credentialRejected: false };
-  return { tone: "ok", label: "Healthy", credentialRejected: false };
+  if (live.every((t) => !t.lastAttemptAt)) return withRefusal({ tone: "live", label: "Waiting for first push", credentialRejected: false });
+  return withRefusal({ tone: "ok", label: "Healthy", credentialRejected: false });
 }
 
 /**

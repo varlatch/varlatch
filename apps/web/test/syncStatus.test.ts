@@ -222,4 +222,18 @@ describe("a destination this installation refuses (ADR-0057)", () => {
     expect(connectionHealth([target({ failureCount: 2, lastResult: "401 Unauthorized" })], "private_address").label).toBe("Refused by this installation");
     expect(connectionHealth([target({ lastResult: "converged" })], null).label).toBe("Healthy");
   });
+
+  it("keeps a paused Target's recorded refusal next to a healthy active Target's status", () => {
+    const h = connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" }), target({ lastResult: "converged" })]);
+    expect(h).toMatchObject({ tone: "ok", label: "Healthy" });
+    expect(h.refusal).toContain("This address is on a private network");
+    expect(h.refusalInLabel).toBeFalsy();
+    // And next to a failing one.
+    const failing = connectionHealth([
+      target({ state: "paused", lastResult: "outbound_refused: scheme" }),
+      target({ failureCount: 1, lastResult: "TypeError: fetch failed" }),
+    ]);
+    expect(failing.label).toBe("1 target failing");
+    expect(failing.refusal).toContain("Plain http");
+  });
 });

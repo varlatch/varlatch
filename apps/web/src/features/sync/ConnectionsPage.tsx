@@ -24,6 +24,7 @@ import { connectionHealth, refetchWhileRunning, targetDestination } from "./stat
 import { PlatformTile } from "./TargetCard";
 import { useOrgEnvironments, type EnvironmentRef } from "./useOrgEnvironments";
 import { useRefusedDestinations } from "../security-controls/RefusedDestinationsCard";
+import { refusedDestinationsKey } from "../security-controls/keys";
 
 /**
  * Platform connections: one credential per platform account or instance.
@@ -36,7 +37,7 @@ export function ConnectionsPage() {
   const { api } = useSession();
   const qc = useQueryClient();
   const orgName = useOrgName(org);
-  useOrgRealtime(org, ["sync"], [connectionsKey(org), keys.orgSyncTargets(org)]);
+  useOrgRealtime(org, ["sync"], [connectionsKey(org), keys.orgSyncTargets(org), refusedDestinationsKey(org)]);
   const meta = useMeta();
   const syncEnabled = (meta.data?.capabilities ?? []).includes("sync.targets");
   const adapters = (meta.data?.syncAdapters ?? []) as SyncPlatform[];
@@ -55,6 +56,7 @@ export function ConnectionsPage() {
     void qc.invalidateQueries({ queryKey: connectionsKey(org) });
     void qc.invalidateQueries({ queryKey: keys.orgSyncTargets(org) });
     void qc.invalidateQueries({ queryKey: ["sync-targets", org] });
+    void qc.invalidateQueries({ queryKey: refusedDestinationsKey(org) });
   };
 
   const [params, setParams] = useSearchParams();
