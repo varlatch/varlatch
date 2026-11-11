@@ -306,7 +306,8 @@ describe.skipIf(!url)("signing out revokes browser bearers on real PostgreSQL", 
         // The sign-out's delete: the session, then (trigger) the bearer, then its audit line, not yet committed.
         await other.query(`DELETE FROM "session" WHERE id = $1`, [browser.sessionId]);
         const changing = change({ require: (tx, b) => consumeApproval(tx, ctx.rootKek, requester, approvalId, b) });
-        expect(await waitingOnLock("%from \"session\"%for key share%")).toBe(true);
+        // The consumption's session lock, quoted or not.
+        expect(await waitingOnLock("%from %session%for key share of s%")).toBe(true);
         await other.query("COMMIT");
         expect(await changing).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "session-ended" } });
       } finally {
