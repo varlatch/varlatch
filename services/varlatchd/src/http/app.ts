@@ -672,8 +672,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const live = (await lockedQuery(
           db,
           { table: "session", mode: "key share", key: "$1" },
-          `SELECT s."expiresAt" AS expires_at FROM "session" s JOIN auth_user_links l ON l.better_auth_user_id = s."userId"
-           WHERE s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
+          `SELECT s."expiresAt" AS expires_at FROM session s, auth_user_links l
+           WHERE l.better_auth_user_id = s."userId" AND s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
            FOR KEY SHARE OF s`,
           [session.sessionId, identityId],
         )).rows[0] as { expires_at: string | Date } | undefined;

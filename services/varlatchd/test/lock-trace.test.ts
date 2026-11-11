@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { lockedQuery } from "../src/db/locks.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
-import { checkTrace, lockOrderMode, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkTrace, lockOrderMode, lockTagOf, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /** The lock-order check itself (ADR-0054 amendment E): the rules, then the trace it reads. */
@@ -117,6 +117,39 @@ describe("scanSql", () => {
     expect(statementsOf("DO $x$ BEGIN; END $x$; SELECT $1::text")).toEqual(["DO ''", "SELECT $1::text"]);
     expect(statementsOf("SELECT 1 -- ; COMMIT\n; COMMIT")).toEqual(["SELECT 1", "COMMIT"]);
     expect(scanSql("SELECT '/* varlatch-lock identities update id */' FOR UPDATE").comments).toEqual([]);
+  });
+});
+
+describe("the grammar a locking statement may use (refused rather than parsed outside it)", () => {
+  const tag = (table: string) => ` /* varlatch-lock ${table} update id */`;
+  const refused = (sql: string) => expect(() => lockTagOf(sql), sql).toThrow(/outside the allowed grammar/);
+
+  it("refuses quoted identifiers in FROM or after OF", () => {
+    // Codex: a quoted keyword alias used to cut the FROM clause short and hide the JOIN.
+    refused(`SELECT "where".id FROM identities "where" JOIN organizations o ON o.id = "where".organization_id FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id FROM "identities" FOR UPDATE${tag("identities")}`);
+    refused(`SELECT i.id FROM identities i JOIN organizations o ON o.id = i."organization_id" FOR UPDATE OF i${tag("identities")}`);
+    refused(`SELECT i.id FROM identities i FOR UPDATE OF "i"${tag("identities")}`);
+  });
+
+  it("refuses subqueries, LATERAL, functions, VALUES, ONLY and CTEs in FROM", () => {
+    // Codex: a LATERAL subquery's alias read as a base relation, while PostgreSQL locks organizations.
+    refused(`SELECT id FROM LATERAL (SELECT id FROM organizations) identities FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id FROM LATERAL (SELECT id FROM organizations) identities FOR UPDATE OF identities${tag("identities")}`);
+    refused(`SELECT id FROM (SELECT id FROM organizations) identities FOR UPDATE${tag("identities")}`);
+    refused(`SELECT i.id FROM identities i JOIN (SELECT id FROM organizations) o ON o.id = i.organization_id FOR UPDATE OF i${tag("identities")}`);
+    refused(`SELECT id FROM unnest($1::text[]) identities(id) FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id FROM (VALUES ('a')) identities(id) FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id FROM ONLY identities FOR UPDATE${tag("identities")}`);
+    refused(`WITH x AS (SELECT id FROM organizations) SELECT id FROM identities FOR UPDATE${tag("identities")}`);
+    refused(`SELECT i.id FROM identities i RIGHT JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i${tag("identities")}`);
+  });
+
+  it("accepts the grammar the code uses", () => {
+    expect(lockTagOf(`SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR UPDATE${tag("identities")}`)?.table).toBe("identities");
+    expect(lockTagOf(`SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id WHERE o.id = $1 FOR UPDATE OF i${tag("identities")}`)?.table).toBe("identities");
+    expect(lockTagOf(`SELECT p.id FROM passkey p LEFT JOIN passkey_provenance pp ON pp.passkey_id = p.id, auth_user_links l WHERE l.better_auth_user_id = p."userId" FOR UPDATE OF p /* varlatch-lock passkey update id */`)?.table).toBe("passkey");
+    expect(lockTagOf(`SELECT id FROM public.sync_targets WHERE id = ANY($1) ORDER BY id FOR UPDATE SKIP LOCKED /* varlatch-lock sync_targets update id */`)?.table).toBe("sync_targets");
   });
 });
 
