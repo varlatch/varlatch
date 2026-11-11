@@ -9,8 +9,11 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { createEnvironment, getEnvironment, type EnvironmentRow } from "../src/domain/environments.js";
 import { getOrganization, type OrgRow } from "../src/domain/orgs.js";
 import { deleteProject, getProject, type ProjectRow } from "../src/domain/projects.js";
-import { createConnection, createTarget, revokeConnection } from "../src/domain/sync.js";
+import { finalizeDeletion, scheduleDeletion } from "../src/domain/orgdeletion.js";
+import { createConnection, createTarget, revokeConnection, type SyncTargetRow } from "../src/domain/sync.js";
+import { ledgerSet, recordDrift, recordFailure } from "../src/domain/syncdelivery.js";
 import { applyChangeSet, beginRotation, setValue } from "../src/domain/values.js";
+import { recordAuditEvents } from "../src/audit/events.js";
 import { buildApp } from "../src/http/app.js";
 
 /**
@@ -88,6 +91,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
   let project: ProjectRow;
   let env: EnvironmentRow;
   let connectionId: string;
+  let token: string;
   const database = `varlatch_lockorder_e_${process.pid}`;
 
   const waitingOnLock = async () => {
@@ -169,7 +173,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
     pctx = { db: paused.pool, rootKek: ctx.rootKek };
     await ensureInstallation(ctx);
     identityId = (await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, {})).identityId;
-    const token = (await issueCredential(db, { identityId, kind: "cli" })).token;
+    token = (await issueCredential(db, { identityId, kind: "cli" })).token;
     const app = buildApp(ctx);
     const post = async (path: string, body: unknown) => {
       const res = await app.request(path, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -234,6 +238,105 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       () => createTarget(pctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId),
       () => protectedly((c) => revokeConnection(c, org, connectionId, identityId)),
     )).toEqual(["ok", "ok"]);
+  });
+
+  it("an idempotent value write against a loosening control change by the same person (the claim at step 2.5)", async () => {
+    // The control change, emulated: the Organization FOR UPDATE, then its
+    // requester FOR UPDATE for the consumption (amendment E, steps 1 and 2).
+    const loosening = () =>
+      inTransaction(async (q) => {
+        await q.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [org.id]);
+        await q.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
+      });
+    const papp = buildApp(pctx);
+    const write = async () => {
+      const res = await papp.request(`/v1/organizations/test/projects/api/environments/dev/values/API_KEY`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "k-1" },
+        body: JSON.stringify({ value: "idempotent" }),
+      });
+      if (res.status !== 200) throw Object.assign(new Error(`status ${res.status}: ${await res.text()}`), { code: String(res.status) });
+    };
+    expect(await race(/INSERT INTO idempotency_keys/, write, loosening)).toEqual(["ok", "ok"]);
+  });
+
+  it("an audit-only transaction with exposure rows against a loosening control change by the same person", async () => {
+    // The control change, emulated (amendment E, steps 1 and 2): it holds
+    // the Organization FOR UPDATE, the audit transaction starts and waits,
+    // then the control change takes the person FOR UPDATE; both finish.
+    // Not a deadlock under the old order either: the index insert's foreign
+    // keys happen to take the Organization before the person (constraint
+    // order). The audit transaction now takes both explicitly, in the lock
+    // order, instead of relying on that.
+    // A version the index has no row for yet, so the index write inserts
+    // one (and its foreign keys take the Organization and the person).
+    const version = { v: `ver_${"a".repeat(26)}` };
+    const client = await db.connect();
+    let audited: Promise<unknown>;
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT id FROM organizations WHERE id = $1 FOR UPDATE", [org.id]);
+      audited = recordAuditEvents(db, [{
+        eventType: "value.written",
+        decision: "info",
+        actorIdentityId: identityId,
+        organizationId: org.id,
+        action: "config.value.write",
+        resource: { projectId: project.id, environmentId: env.id, itemName: "API_KEY", versionId: version.v, previousVersionId: null },
+        metadata: { sensitive: true },
+      }]);
+      await waitingOnLock();
+      const control = client.query("SELECT id FROM identities WHERE id = $1 FOR UPDATE", [identityId]).then(() => client.query("COMMIT"));
+      const outcomes = (await Promise.allSettled([control, audited])).map(outcome);
+      expect(outcomes).toEqual(["ok", "ok"]);
+    } finally {
+      await client.query("ROLLBACK").catch(() => undefined);
+      client.release();
+    }
+  });
+
+  describe("the sync workers (App, Connection, Target; the strongest Target lock up front)", () => {
+    let target: SyncTargetRow;
+    const generation = async () =>
+      Number(((await db.query("SELECT generation FROM sync_targets WHERE id = $1", [target.id])).rows[0] as { generation: string | number }).generation);
+    const TARGET_LOCK = /FROM sync_targets WHERE id = \$1 FOR (SHARE|NO KEY UPDATE)/;
+    beforeEach(async () => {
+      target = await createTarget(ctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId);
+      // Fixture: a Target that wants redeploys, so a redeploy debt updates it.
+      await db.query("UPDATE sync_targets SET redeploy = true WHERE id = $1", [target.id]);
+    });
+
+    it("recordFailure, holding the Connection, against Organization deletion's finalization", async () => {
+      const deletion = await scheduleDeletion(ctx, org.id, { id: identityId, kind: "human" }, { afterDays: 1 });
+      await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute' WHERE id = $1", [deletion.id]);
+      expect(await race(
+        /FROM platform_connections WHERE id = \$1 FOR SHARE/,
+        () => recordFailure(pctx, target, "boom", true, undefined, undefined, 1),
+        () => finalizeDeletion(ctx, deletion.id, org.id),
+      )).toEqual(["ok", "ok"]);
+      expect((await db.query("SELECT revoked_at IS NOT NULL AS revoked FROM sync_targets WHERE id = $1", [target.id])).rows).toEqual([{ revoked: true }]);
+    });
+
+    it("ledgerSet with a redeploy owed, twice on one Target", async () => {
+      const gen = await generation();
+      expect(await race(
+        TARGET_LOCK,
+        () => ledgerSet(pctx, target.id, gen, "A", "written", "fp-a", null, true),
+        () => ledgerSet(ctx, target.id, gen, "B", "written", "fp-b", null, true),
+      )).toEqual(["ok", "ok"]);
+      expect((await db.query("SELECT redeploy_owed::int AS owed FROM sync_targets WHERE id = $1", [target.id])).rows).toEqual([{ owed: 2 }]);
+    });
+
+    it("recordDrift, twice on one Target", async () => {
+      const gen = await generation();
+      expect(await race(
+        TARGET_LOCK,
+        () => recordDrift(pctx, target, gen, ["A"], { count: 1 }),
+        () => recordDrift(ctx, target, gen, ["B"], { count: 1 }),
+      )).toEqual(["ok", "ok"]);
+      const row = (await db.query("SELECT last_drift_event_id FROM sync_targets WHERE id = $1", [target.id])).rows[0] as { last_drift_event_id: string };
+      expect((await db.query("SELECT event_type FROM audit_events WHERE id = $1", [row.last_drift_event_id])).rows).toEqual([{ event_type: "sync.drift_detected" }]);
+    });
   });
 
   describe("a protected Project deletion against a writer in that Project by the same person", () => {

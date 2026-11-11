@@ -81,7 +81,7 @@ export async function revokeInvitation(
   actorIdentityId: string,
 ): Promise<InvitationRow> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const res = await lockedQuery(
       db,
       { table: "setup_grants", mode: "update" },

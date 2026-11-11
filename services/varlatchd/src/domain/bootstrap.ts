@@ -7,7 +7,7 @@ import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
-import { lockAllPeopleAndPasskeys } from "./personlocks.js";
+import { lockAllPeopleAndPasskeys, lockPeople } from "./personlocks.js";
 import { DomainError } from "./errors.js";
 import { pinLiveMembership } from "./orgs.js";
 import { lockLiveScope } from "./liveness.js";
@@ -176,6 +176,10 @@ export async function issueRecoveryGrant(
   return withTx(ctx.db, async (db) => {
     let subjectId: string | null = null;
     if (input.mode === "identity") {
+      // Step 2 of the lock order (liveness.ts): the subject, FOR UPDATE when
+      // --enable may change its row, FOR KEY SHARE (the grant references it)
+      // otherwise.
+      await lockPeople(db, [{ id: input.identityId, mode: input.enable ? "update" : "key share" }]);
       const res = await db.query(
         "SELECT id, disabled, installation_admin FROM identities WHERE id = $1",
         [input.identityId],
@@ -237,7 +241,7 @@ export async function issueInviteGrant(
   actorIdentityId: string,
 ): Promise<{ id: string; token: string; expiresAt: string }> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: input.organizationId });
+    await lockLiveScope(db, { organizationId: input.organizationId, people: [actorIdentityId] });
     // A person issues invitations through a live membership, pinned so a
     // concurrent removal revokes this invitation with their others
     // (ADR-0052 Decision 2). A machine has no membership to pin.
@@ -504,19 +508,28 @@ export async function consumeSetupGrant(
   onConsumed?: (db: Querier, identityId: string, grantId: string) => Promise<void>,
 ): Promise<{ identityId: string; kind: SetupGrantKind; grantId: string }> {
   const result = await withTx(ctx.db, async (db) => {
-    // An invitation's Organization comes first in the writer protocol
-    // (ADR-0051): read which one it is, lock it live, then lock the grant.
+    // The lock order (liveness.ts), from what the grant says (its kind,
+    // Organization and subject never change): a bootstrap's installation
+    // row (step 0.5), which it updates; an invitation's Organization
+    // (step 1, the writer protocol of ADR-0051), live; the subject a
+    // re-enrollment or recovery link names (step 2); then the grant.
     // A deleted Organization's invitation is refused like a dead one.
-    const target = (await db.query("SELECT invite_organization_id FROM setup_grants WHERE token_hash = $1", [hashToken(token)])).rows[0] as
-      | { invite_organization_id: string | null }
-      | undefined;
+    const target = (await db.query(
+      "SELECT kind, invite_organization_id, subject_identity_id FROM setup_grants WHERE token_hash = $1",
+      [hashToken(token)],
+    )).rows[0] as { kind: SetupGrantKind; invite_organization_id: string | null; subject_identity_id: string | null } | undefined;
+    if (target?.kind === "bootstrap") {
+      await lockedQuery(db, { table: "installation", mode: "no key update" }, "SELECT id FROM installation ORDER BY id FOR NO KEY UPDATE");
+    }
     if (target?.invite_organization_id) {
       try {
-        await lockLiveScope(db, { organizationId: target.invite_organization_id });
+        await lockLiveScope(db, { organizationId: target.invite_organization_id, people: [target.subject_identity_id] });
       } catch (err) {
         if (err instanceof DomainError) return null;
         throw err;
       }
+    } else if (target) {
+      await lockPeople(db, [target.subject_identity_id]);
     }
     const res = await lockedQuery(db, { table: "setup_grants", mode: "update" }, "SELECT * FROM setup_grants WHERE token_hash = $1 FOR UPDATE", [
       hashToken(token),

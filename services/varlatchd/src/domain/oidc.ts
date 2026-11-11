@@ -94,7 +94,7 @@ export async function createOidcBinding(
     throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, identityId] });
     const id = newId("oidcBinding");
     const res = await db.query(
       `INSERT INTO oidc_bindings (id, identity_id, organization_id, issuer, audience, subject, claims, created_by)
@@ -148,7 +148,7 @@ export async function revokeOidcBinding(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const res = await db.query(
       `UPDATE oidc_bindings SET revoked_at = now()
        WHERE id = $1 AND organization_id = $2 AND identity_id = $3 AND revoked_at IS NULL
@@ -264,7 +264,7 @@ export async function exchangeOidcToken(
   // Issued under a live, locked Organization (ADR-0051): verification
   // took time, and the Organization may have changed meanwhile.
   const issued = await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: binding.organization_id });
+    await lockLiveScope(db, { organizationId: binding.organization_id, people: [binding.identity_id] });
     return issueCredential(db, {
       identityId: binding.identity_id,
       kind: "oidc",

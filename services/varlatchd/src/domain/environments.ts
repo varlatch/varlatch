@@ -62,7 +62,7 @@ export async function createEnvironment(
 
     if (input.parentEnvironmentId) {
       const parent = await getEnvironment(ctx, projectId, input.parentEnvironmentId, db);
-      await lockLiveScope(db, { organizationId, projectId, environmentIds: [parent.id] });
+      await lockLiveScope(db, { organizationId, people: [], projectId, environmentIds: [parent.id] });
       if (parent.parent_environment_id !== null) {
         throw new DomainError(
           "VALIDATION_FAILED",
