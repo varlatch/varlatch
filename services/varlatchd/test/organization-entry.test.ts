@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
+import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
+import { freezeOrganization } from "../src/domain/freeze.js";
+import type { FreezeException } from "../src/domain/liveness.js";
 import { buildApp, type BuildAppOptions } from "../src/http/app.js";
 import { resolveOrganization } from "../src/http/organization.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -112,6 +114,136 @@ const LOOKUP_EXCEPTIONS: { file: string; line: string; reason: string }[] = [
   },
 ];
 
+/**
+ * Every /v1/organizations/:org route and the exception it runs under while
+ * the Organization is frozen for an incident (ADR-0055 Decisions 3 and 4);
+ * null: refused for the Organization's members and machines. A route
+ * missing here, or naming another exception when it resolves its
+ * Organization, fails.
+ */
+const DURING_FREEZE: Record<string, FreezeException | null> = {
+  "GET /v1/organizations/:org": "inspection",
+  "GET /v1/organizations/:org/me/permissions": "inspection",
+  "PATCH /v1/organizations/:org": null,
+  "GET /v1/organizations/:org/deletion": "inspection",
+  "POST /v1/organizations/:org/deletion": null,
+  "POST /v1/organizations/:org/deletion/:deletion/approve": null,
+  "POST /v1/organizations/:org/deletion/:deletion/cancel": "recovery",
+  "GET /v1/organizations/:org/incident-freeze": "inspection",
+  "POST /v1/organizations/:org/incident-freeze": "freeze",
+  "POST /v1/organizations/:org/incident-freeze/:freeze/lift": "freeze",
+  "GET /v1/organizations/:org/config-items": null,
+  "GET /v1/organizations/:org/projects": null,
+  "POST /v1/organizations/:org/projects": null,
+  "GET /v1/organizations/:org/projects/:project": null,
+  "PATCH /v1/organizations/:org/projects/:project": null,
+  "DELETE /v1/organizations/:org/projects/:project": null,
+  "GET /v1/organizations/:org/projects/:project/environments": null,
+  "POST /v1/organizations/:org/projects/:project/environments": null,
+  "GET /v1/organizations/:org/projects/:project/environments/:environment": null,
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate": null,
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item": null,
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete": null,
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities": null,
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities": "inspection",
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability": "recovery",
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes": null,
+  "GET /v1/organizations/:org/projects/:project/contract": null,
+  "POST /v1/organizations/:org/projects/:project/contract/revisions": null,
+  "GET /v1/organizations/:org/projects/:project/contract/revisions/:revision": null,
+  "POST /v1/organizations/:org/projects/:project/contract/revisions/:revision/activate": null,
+  "GET /v1/organizations/:org/identities": "inspection",
+  "POST /v1/organizations/:org/identities": null,
+  "POST /v1/organizations/:org/identities/:identity/credentials": null,
+  "DELETE /v1/organizations/:org/identities/:identity/credentials/:credential": "recovery",
+  "GET /v1/organizations/:org/identities/:identity/credentials": "inspection",
+  "GET /v1/organizations/:org/security/credential-review": "inspection",
+  "POST /v1/organizations/:org/identities/:identity/retire": "recovery",
+  "POST /v1/organizations/:org/identities/:identity/reactivate": null,
+  "GET /v1/organizations/:org/security/controls": "inspection",
+  "GET /v1/organizations/:org/security/control-report": "inspection",
+  "GET /v1/organizations/:org/security/approval-keys": "inspection",
+  "PATCH /v1/organizations/:org/security/controls/:control": "recovery",
+  "GET /v1/organizations/:org/identities/:identity/reach": "inspection",
+  "PATCH /v1/organizations/:org/identities/:identity": null,
+  "POST /v1/organizations/:org/identities/:identity/oidc-bindings": null,
+  "GET /v1/organizations/:org/identities/:identity/oidc-bindings": "inspection",
+  "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding": "recovery",
+  "GET /v1/organizations/:org/members/:member/review": "inspection",
+  "DELETE /v1/organizations/:org/members/:member": "recovery",
+  "PATCH /v1/organizations/:org/members/:member": "recovery",
+  "GET /v1/organizations/:org/members/:member/exposure": "inspection",
+  "POST /v1/organizations/:org/members/:member/exposure/confirmations": null,
+  "POST /v1/organizations/:org/invitations": null,
+  "GET /v1/organizations/:org/invitations": "inspection",
+  "DELETE /v1/organizations/:org/invitations/:invitation": "recovery",
+  "GET /v1/organizations/:org/grants": "inspection",
+  "POST /v1/organizations/:org/grants": null,
+  "DELETE /v1/organizations/:org/grants/:grant": "recovery",
+  "POST /v1/organizations/:org/grants/:grant/replace": null,
+  "GET /v1/organizations/:org/roles": "inspection",
+  "POST /v1/organizations/:org/roles": null,
+  "PATCH /v1/organizations/:org/roles/:role": null,
+  "DELETE /v1/organizations/:org/roles/:role": null,
+  "GET /v1/organizations/:org/groups": "inspection",
+  "POST /v1/organizations/:org/groups": null,
+  "PATCH /v1/organizations/:org/groups/:group": null,
+  "DELETE /v1/organizations/:org/groups/:group": null,
+  "GET /v1/organizations/:org/groups/:group/members": "inspection",
+  "POST /v1/organizations/:org/groups/:group/members": null,
+  "DELETE /v1/organizations/:org/groups/:group/members/:identity": null,
+  "GET /v1/organizations/:org/teams": "inspection",
+  "POST /v1/organizations/:org/teams": null,
+  "PATCH /v1/organizations/:org/teams/:team": null,
+  "DELETE /v1/organizations/:org/teams/:team": null,
+  "GET /v1/organizations/:org/teams/:team/members": "inspection",
+  "POST /v1/organizations/:org/teams/:team/members": null,
+  "DELETE /v1/organizations/:org/teams/:team/members/:identity": null,
+  "GET /v1/organizations/:org/teams/:team/projects": "inspection",
+  "POST /v1/organizations/:org/teams/:team/projects": null,
+  "DELETE /v1/organizations/:org/teams/:team/projects/:project": null,
+  "GET /v1/organizations/:org/requirements": "inspection",
+  "POST /v1/organizations/:org/requirements": "recovery",
+  "PATCH /v1/organizations/:org/requirements/:requirement": null,
+  "DELETE /v1/organizations/:org/requirements/:requirement": null,
+  "POST /v1/organizations/:org/webhooks": null,
+  "GET /v1/organizations/:org/webhooks": "inspection",
+  "PATCH /v1/organizations/:org/webhooks/:webhook": null,
+  "DELETE /v1/organizations/:org/webhooks/:webhook": null,
+  "GET /v1/organizations/:org/platform-connections": "inspection",
+  "POST /v1/organizations/:org/platform-connections": null,
+  "POST /v1/organizations/:org/platform-connections/check": null,
+  "POST /v1/organizations/:org/platform-connections/destinations": null,
+  "GET /v1/organizations/:org/platform-connections/:connection": null,
+  "POST /v1/organizations/:org/platform-connections/:connection/credential": null,
+  "DELETE /v1/organizations/:org/platform-connections/:connection": "recovery",
+  "GET /v1/organizations/:org/github-app": null,
+  "POST /v1/organizations/:org/github-app/registrations": null,
+  "POST /v1/organizations/:org/github-app/registrations/complete": null,
+  "POST /v1/organizations/:org/github-app/import": null,
+  "POST /v1/organizations/:org/github-app/key": null,
+  "DELETE /v1/organizations/:org/github-app": null,
+  "GET /v1/organizations/:org/github-app/installations": null,
+  "GET /v1/organizations/:org/sync-targets": "inspection",
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets": "inspection",
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets": null,
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target": null,
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push": null,
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause": "recovery",
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume": null,
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target": null,
+  "GET /v1/organizations/:org/audit-events": "audit",
+  "GET /v1/organizations/:org/audit-events/export": "audit",
+};
+
 const LOOKUP = /\bgetOrganization\b|\blistOrganizationsFor\b|\b(?:FROM|JOIN)\s+organizations\b/;
 
 describe("Organization lookups in src/http/", () => {
@@ -193,7 +325,9 @@ describe("every /v1/organizations/:org route", () => {
       expect(new Set(others)).toEqual(NOT_ENTERING);
       expect(entering.length).toBeGreaterThan(100);
 
+      expect(new Set(entering.map((r) => `${r.method} ${r.path}`))).toEqual(new Set(Object.keys(DURING_FREEZE)));
       const skipped: string[] = [];
+      const misnamed: string[] = [];
       for (const route of entering) {
         // Only :org is real: the resolver runs before anything below it
         // is looked up, so the other parameters need not exist.
@@ -206,8 +340,11 @@ describe("every /v1/organizations/:org route", () => {
           }),
         );
         if (slugs.length !== 1 || slugs[0] !== "acme") skipped.push(`${route.method} ${route.path}: ${slugs.join(", ")}`);
+        const named = (resolver.mock.calls[0]?.[2] as { duringIncidentFreeze?: FreezeException } | undefined)?.duringIncidentFreeze ?? null;
+        if (named !== DURING_FREEZE[`${route.method} ${route.path}`]) misnamed.push(`${route.method} ${route.path}: ${named}`);
       }
       expect(skipped).toEqual([]);
+      expect(misnamed).toEqual([]);
     });
   }
 
@@ -229,5 +366,53 @@ describe("every /v1/organizations/:org route", () => {
     });
     // Unknown Organizations are still not found, before any check could run.
     expect(await send("GET", "/v1/organizations/nope/projects")).toEqual({ status: 404, slugs: ["(not found)"] });
+  });
+});
+
+describe("every /v1/organizations/:org route while the Organization is frozen (ADR-0055)", () => {
+  /** The status and error code of every entering route for one token. */
+  async function answers(app: ReturnType<typeof buildApp>, bearer: string) {
+    const out = new Map<string, { status: number; code: string | null }>();
+    for (const route of app.routes.filter((r) => r.method !== "ALL" && (r.path === ORG_ROUTES || r.path.startsWith(`${ORG_ROUTES}/`)))) {
+      const path = route.path.replace(":org", "acme").replace(/:[a-z]+/gi, "x");
+      const res = await app.request(path, {
+        method: route.method,
+        headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+        ...(route.method === "GET" ? {} : { body: "{}" }),
+      });
+      const body = (await res.json().catch(() => null)) as { error?: { code: string } } | null;
+      out.set(`${route.method} ${route.path}`, { status: res.status, code: body?.error?.code ?? null });
+    }
+    return out;
+  }
+
+  it("refuses a member and a machine of the Organization on each route without an exception, allows each exempt one; an outsider gets the usual answer", async () => {
+    const app = buildApp(ctx);
+    const send = (path: string, body: unknown, bearer = token) =>
+      app.request(path, { method: "POST", headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const bot = (await (await send("/v1/organizations/acme/identities", { name: "bot", kind: "service" })).json()) as { id: string; credential: string };
+    expect((await send("/v1/organizations/acme/grants", { subjectIdentityId: bot.id, scope: { kind: "organization" }, actions: ["organization.read", "config.metadata.read"] })).status).toBe(201);
+    const other = (await (await send("/v1/organizations", { name: "Beta", slug: "beta" })).json()) as { id: string };
+    const adminId = ((await ctx.db.query("SELECT identity_id FROM credentials WHERE kind = 'cli'")).rows[0] as { identity_id: string }).identity_id;
+    const outsiderId = (await consumeSetupGrant(ctx, (await issueInviteGrant(ctx, { organizationId: other.id, role: "member", name: "Outsider" }, adminId)).token, {})).identityId;
+    const outsider = (await issueCredential(ctx.db, { identityId: outsiderId, kind: "cli" })).token;
+    const acme = ((await ctx.db.query("SELECT id FROM organizations WHERE slug = 'acme'")).rows[0] as { id: string }).id;
+
+    const outsiderBefore = await answers(app, outsider);
+    await freezeOrganization(ctx, {
+      organizationId: acme, actor: { id: adminId, kind: "human" }, credentialKind: "cli", reason: "drill", requestId: "req_test", authorizeIn: async () => undefined,
+    });
+
+    for (const [who, bearer] of [["member", token], ["machine", bot.credential]] as const) {
+      const wrong: string[] = [];
+      for (const [route, answer] of await answers(app, bearer)) {
+        const frozenAnswer = answer.code === "ORGANIZATION_FROZEN";
+        if (frozenAnswer !== (DURING_FREEZE[route] === null)) wrong.push(`${route}: ${answer.status} ${answer.code}`);
+      }
+      expect(wrong, who).toEqual([]);
+    }
+    const outsiderDuring = await answers(app, outsider);
+    expect([...outsiderDuring].filter(([route, a]) => a.status !== outsiderBefore.get(route)?.status || a.code !== outsiderBefore.get(route)?.code)).toEqual([]);
+    expect([...outsiderDuring.values()].some((a) => a.code === "ORGANIZATION_FROZEN")).toBe(false);
   });
 });

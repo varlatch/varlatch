@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createSign, generateKeyPairSync } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { clearJwksCache } from "../src/auth/oidc.js";
@@ -597,5 +599,56 @@ describe("lock order (ADR-0054 amendment E)", () => {
     } finally {
       await db.query("ROLLBACK");
     }
+  });
+});
+
+describe("the freeze checks in src/ (ADR-0055 Decision 4)", () => {
+  /**
+   * Every caller of refuseIfFrozen and of refuseIfIncidentFrozen, by file
+   * and enclosing function. A caller of the deletion check outside
+   * lockLiveScope runs the incident check on the next line; a new caller of
+   * either fails until it is listed here.
+   */
+  const CALLERS = [
+    "domain/capabilities.ts captureExercise: incident",
+    "domain/githubapps.ts completeRegistration: deletion, incident",
+    "domain/githubapps.ts importGitHubApp: deletion, incident",
+    "domain/githubapps.ts listAppInstallations: deletion, incident",
+    "domain/githubapps.ts startRegistration: deletion, incident",
+    "domain/liveness.ts lockLiveScope: deletion, incident",
+    "domain/retrieval.ts captureState: incident",
+    "domain/sync.ts checkConnectionAccess: deletion, incident",
+    "domain/sync.ts createAppConnection: deletion, incident",
+    "domain/sync.ts createConnection: deletion, incident",
+    "domain/sync.ts listConnectionDestinations: deletion, incident",
+    "domain/sync.ts replaceConnectionCredential: deletion, incident",
+    "domain/sync.ts rotateGitHubAppKey: deletion, incident",
+    "domain/webhooks.ts createWebhook: deletion, incident",
+  ];
+
+  it("lists every caller of either, and the incident check follows each deletion check", () => {
+    const root = fileURLToPath(new URL("../src/", import.meta.url));
+    const found = new Map<string, Set<string>>();
+    const unpaired: string[] = [];
+    for (const dir of ["domain", "http", "auth", "audit", "mirror"]) {
+      for (const file of readdirSync(`${root}${dir}`).filter((f) => f.endsWith(".ts")).sort()) {
+        const lines = readFileSync(`${root}${dir}/${file}`, "utf8").split("\n");
+        let fn = "(top level)";
+        lines.forEach((line, i) => {
+          const decl = /^(?:export )?(?:async )?function (\w+)/.exec(line);
+          if (decl) fn = decl[1]!;
+          const kinds = [
+            ...(/\brefuseIfFrozen\(/.test(line) && !/function refuseIfFrozen/.test(line) ? ["deletion"] : []),
+            ...(/\brefuseIfIncidentFrozen\(/.test(line) && !/function refuseIfIncidentFrozen/.test(line) ? ["incident"] : []),
+          ];
+          if (kinds.length === 0) return;
+          const key = `${dir}/${file} ${fn}`;
+          for (const k of kinds) (found.get(key) ?? found.set(key, new Set()).get(key)!).add(k);
+          if (kinds.includes("deletion") && !/refuseIfIncidentFrozen\(/.test(lines[i + 1] ?? "")) unpaired.push(`${key}:${i + 1}`);
+        });
+      }
+    }
+    expect([...found].map(([key, kinds]) => `${key}: ${[...kinds].sort().join(", ")}`).sort()).toEqual(CALLERS);
+    expect(unpaired).toEqual([]);
   });
 });
