@@ -70,7 +70,7 @@ export interface paths {
         };
         /**
          * Installation Admin only, the host's outbound allow list and the destinations it refuses
-         * @description VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the warnings `varlatchd admin doctor` gives, and every live destination an Organization configured that the outbound policy refuses (ADR-0057 Decision 8), by Organization, with the allow list value that would allow the refused names. Read-only: the allow list is set on the host, never through the API. The same check as `varlatchd admin outbound check`, run when asked: DNS lookups only, never a request to a destination. Never a resolved address, a path, a query or a credential. Requires capability `installation.outbound`.
+         * @description VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the warnings `varlatchd admin doctor` gives, and every live destination an Organization configured that the outbound policy refuses (ADR-0057 Decision 8), by Organization, with the allow list value that would allow the refused names. Read-only: the allow list is set on the host, never through the API. The same check as `varlatchd admin outbound check`, run when asked: DNS lookups only, never a request to a destination; shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential. Requires capability `installation.outbound`.
          */
         get: operations["getInstallationOutbound"];
         put?: never;
@@ -628,7 +628,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The Organization's configured destinations that this installation's outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and OIDC issuers, each with its kind, name, host, port and reason, and since when refusals of it are recorded. Checked when asked, with DNS lookups only. Private destinations are allowed by the host operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the API. Nothing waiting is lost: deliveries catch up once the host allows the destination. Never a resolved address, a path, a query or a credential, and never the host's allow list. Needs organization.manage; existence-hiding. Never cached. */
+        /** The Organization's configured destinations that this installation's outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and OIDC issuers, each with its kind, name, host, port and reason, and since when refusals of it are recorded. Checked when asked, with DNS lookups only. Private destinations are allowed by the host operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the API. Nothing waiting is lost: deliveries catch up once the host allows the destination. `unresolved` counts destinations whose names did not resolve, which could not be checked. A check is shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential, and never the host's allow list. Needs organization.manage; existence-hiding. Never cached. */
         get: operations["refusedDestinations"];
         put?: never;
         post?: never;
@@ -3129,13 +3129,20 @@ export interface components {
             reason: components["schemas"]["OutboundRefusalReason"];
             /**
              * Format: date-time
-             * @description The first refusal of this destination recorded in the audit log (outbound.refused) within the last `sinceDays` days; null when none is recorded, for example a Connection no Target has used yet.
+             * @description The earliest refusal of this destination recorded in the audit log (outbound.refused) within the last `sinceDays` days; not necessarily the start of one continuous refusal. Null when none is recorded there, for example a Connection no Target has used yet.
              */
             since: string | null;
         };
         RefusedDestinations: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the check ran. A check is reused for up to 30 seconds.
+             */
             generatedAt: string;
+            /** @description How many destinations the Organization configured and the check looked at. */
+            checked: number;
+            /** @description How many of them could not be checked because their names did not resolve. They are not refusals; the policy decides when they connect. Zero refused with some unresolved is not "all allowed". */
+            unresolved: number;
             /** @description How far back `since` looks in the audit log. */
             sinceDays: number;
             items: components["schemas"]["RefusedDestination"][];
@@ -3158,8 +3165,13 @@ export interface components {
             notSuggested?: string | null;
         };
         InstallationOutbound: {
-            /** Format: date-time */
+            /**
+             * Format: date-time
+             * @description When the check ran. A check is reused for up to 30 seconds.
+             */
             generatedAt: string;
+            /** @description How many configured destinations the check looked at, in every Organization. */
+            checked: number;
             /** @description VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set. */
             allow: string[];
             /** @description Entries that add nothing or open host-only ranges, as `varlatchd admin doctor` words them. */

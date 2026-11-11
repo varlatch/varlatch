@@ -5,6 +5,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { buildApp } from "../src/http/app.js";
+import { LOOKUP_SLOTS, SCAN_TTL_MS, sharedOutboundCheck } from "../src/net/outbound-check.js";
 import { OutboundPolicy, OutboundRefusedError, type Resolver } from "../src/net/outbound.js";
 import { PUBLIC_URL } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -31,7 +32,12 @@ const ANSWERS: Record<string, string[]> = {
   "metadata.lan": ["169.254.169.254"],
   "other.lan": ["10.9.9.9"],
 };
+/** Every lookup made, and a gate tests can hold shut to make requests overlap. */
+let lookups: string[] = [];
+let gate: Promise<void> | null = null;
 const resolve: Resolver = async (name) => {
+  lookups.push(name);
+  if (gate) await gate;
   const list = ANSWERS[name];
   if (!list) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${name}`), { code: "ENOTFOUND" });
   return list.map((address) => ({ address, family: 4 as const }));
@@ -95,6 +101,8 @@ function boot(allow: string) {
 }
 
 beforeEach(async () => {
+  lookups = [];
+  gate = null;
   const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
@@ -144,6 +152,7 @@ describe("an Organization's refused destinations", () => {
     expect(res.status, res.text).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(res.body.sinceDays).toBe(30);
+    expect(res.body).toMatchObject({ checked: 4, unresolved: 0 });
     expect(res.body.items).toEqual([
       {
         kind: "webhook",
@@ -243,5 +252,100 @@ describe("the installation's outbound policy", () => {
     const res = await call(PATH, zoe.cli);
     expect(res.status).toBe(403);
     expect(res.text).not.toContain("hooks.lan");
+  });
+});
+
+describe("destinations that could not be checked", () => {
+  it("are counted, so no refusal is not read as every destination allowed", async () => {
+    await ctx.db.query("UPDATE webhooks SET url = 'https://gone.example/hook' WHERE organization_id = $1", [acme]);
+    await ctx.db.query("UPDATE platform_connections SET base_identity = 'https://gone.example' WHERE id = 'pc_coolify'");
+    const res = await call("/v1/organizations/acme/security/refused-destinations", admin.cli);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ items: [], checked: 4, unresolved: 4 });
+    const inst = await call("/v1/installation/outbound", admin.cli);
+    expect(inst.body).toMatchObject({ checked: 7, unresolved: 4 });
+  });
+
+  it("counts none when the Organization configured nothing", async () => {
+    await ctx.db.query("UPDATE webhooks SET revoked_at = now() WHERE organization_id = $1", [acme]);
+    await ctx.db.query("UPDATE platform_connections SET revoked_at = now() WHERE organization_id = $1", [acme]);
+    const res = await call("/v1/organizations/acme/security/refused-destinations", admin.cli);
+    expect(res.body).toMatchObject({ items: [], checked: 0, unresolved: 0 });
+  });
+});
+
+describe("the DNS work behind the pages", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 100));
+
+  it("resolves each name once per scan, however many destinations use it", async () => {
+    const res = await call("/v1/installation/outbound", admin.cli);
+    expect(res.status).toBe(200);
+    // sink.example (two webhooks) and other.lan (a webhook and a Connection) once each.
+    expect([...lookups].sort()).toEqual(["coolify.private", "hooks.lan", "metadata.lan", "other.lan", "sink.example"]);
+  });
+
+  it("shares one scan between overlapping requests, and its lookups with an overlapping scan of an Organization", async () => {
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    const pending = [
+      call("/v1/installation/outbound", admin.cli),
+      call("/v1/installation/outbound", admin.cli),
+      call("/v1/organizations/acme/security/refused-destinations", admin.cli),
+      call("/v1/organizations/acme/security/refused-destinations", admin.cli),
+    ];
+    await settle();
+    open();
+    const answers = await Promise.all(pending);
+    for (const a of answers) expect(a.status).toBe(200);
+    expect(answers[0]!.body).toEqual(answers[1]!.body);
+    expect(answers[2]!.body.items).toEqual(answers[3]!.body.items);
+    expect([...lookups].sort()).toEqual(["coolify.private", "hooks.lan", "metadata.lan", "other.lan", "sink.example"]);
+  });
+
+  it("reuses a finished scan for a short while; a restart's new policy checks again", async () => {
+    await call("/v1/installation/outbound", admin.cli);
+    const first = lookups.length;
+    const again = await call("/v1/installation/outbound", admin.cli);
+    expect(again.status).toBe(200);
+    expect(lookups).toHaveLength(first);
+    boot("");
+    await call("/v1/installation/outbound", admin.cli);
+    expect(lookups).toHaveLength(2 * first);
+  });
+
+  it("checks again once the reuse window is over, and keeps no failed scan", async () => {
+    let clock = 1_000_000;
+    const policy = ctx.outbound!;
+    await sharedOutboundCheck(ctx.db, policy, {}, () => clock);
+    clock += SCAN_TTL_MS - 1;
+    await sharedOutboundCheck(ctx.db, policy, {}, () => clock);
+    expect(lookups).toHaveLength(5);
+    clock += 2;
+    await sharedOutboundCheck(ctx.db, policy, {}, () => clock);
+    expect(lookups).toHaveLength(10);
+    const broken = { query: async () => Promise.reject(new Error("database gone")) };
+    const other = new OutboundPolicy("", { resolve, log: () => {} });
+    await expect(sharedOutboundCheck(broken, other, {}, () => clock)).rejects.toThrow("database gone");
+    await expect(sharedOutboundCheck(ctx.db, other, {}, () => clock)).resolves.toMatchObject({ checkedAt: expect.any(String) });
+  });
+
+  it("never runs more than a fixed number of lookups at once in the process", async () => {
+    for (let i = 0; i < 20; i++) {
+      ANSWERS[`host${i}.example`] = ["93.184.215.14"];
+      await webhook(`wh_many_${i}`, "org_beta", `https://host${i}.example/x`);
+    }
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    const pending = Promise.all([
+      call("/v1/installation/outbound", admin.cli),
+      call("/v1/organizations/acme/security/refused-destinations", admin.cli),
+    ]);
+    await settle();
+    expect(lookups).toHaveLength(LOOKUP_SLOTS);
+    open();
+    const [inst] = await pending;
+    expect(inst!.body.checked).toBe(27);
+    expect(new Set(lookups).size).toBe(lookups.length);
+    expect(lookups).toHaveLength(25);
   });
 });

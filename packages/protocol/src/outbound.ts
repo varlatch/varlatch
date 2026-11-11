@@ -43,7 +43,8 @@ export const OUTBOUND_REFUSAL_LABELS: Record<OutboundRefusalReason, string> = {
 
 /** For a stored refusal without a reason (a webhook's last_status). */
 export const OUTBOUND_REFUSED_GENERIC =
-  "This installation's outbound policy refuses this destination, so deliveries wait. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW.";
+  "This installation's outbound policy refuses this destination, so deliveries wait. " +
+  "Depending on the address, the host operator may be able to allow it with VARLATCH_OUTBOUND_ALLOW; some addresses can never be used.";
 
 /** The sentence for a refusal state on an item: its reason's, or the generic one. */
 export function outboundRefusalText(reason: OutboundRefusalReason | "unknown"): string {
@@ -53,7 +54,7 @@ export function outboundRefusalText(reason: OutboundRefusalReason | "unknown"): 
 /** Where private destinations are allowed: on the host, never in Varlatch. */
 export const OUTBOUND_HOST_NOTE =
   "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
-  "Nothing waiting is lost: it is delivered once the host operator allows the destination and restarts varlatchd.";
+  "Nothing waiting is lost: once the host operator allows a destination and restarts varlatchd, what waited for it is delivered.";
 
 export function isOutboundRefusalReason(value: unknown): value is OutboundRefusalReason {
   return typeof value === "string" && (OUTBOUND_REFUSAL_REASONS as readonly string[]).includes(value);

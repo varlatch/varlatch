@@ -91,7 +91,8 @@ paths:
         allow the refused names. Read-only: the allow list is set on the
         host, never through the API. The same check as `varlatchd admin
         outbound check`, run when asked: DNS lookups only, never a request
-        to a destination. Never a resolved address, a path, a query or a
+        to a destination; shared by concurrent requests and reused for up
+        to 30 seconds. Never a resolved address, a path, a query or a
         credential. Requires capability `installation.outbound`.
       responses:
         "200":
@@ -1396,8 +1397,11 @@ paths:
         DNS lookups only. Private destinations are allowed by the host
         operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the
         API. Nothing waiting is lost: deliveries catch up once the host
-        allows the destination. Never a resolved address, a path, a query
-        or a credential, and never the host's allow list. Needs
+        allows the destination. `unresolved` counts destinations whose
+        names did not resolve, which could not be checked. A check is
+        shared by concurrent requests and reused for up to 30 seconds. Never
+        a resolved address, a path, a query or a credential, and never the
+        host's allow list. Needs
         organization.manage; existence-hiding. Never cached.
       parameters:
         - $ref: "#/components/parameters/org"
@@ -6133,15 +6137,28 @@ components:
           type: [string, "null"]
           format: date-time
           description: >
-            The first refusal of this destination recorded in the audit log
-            (outbound.refused) within the last `sinceDays` days; null when
-            none is recorded, for example a Connection no Target has used yet.
+            The earliest refusal of this destination recorded in the audit
+            log (outbound.refused) within the last `sinceDays` days; not
+            necessarily the start of one continuous refusal. Null when none
+            is recorded there, for example a Connection no Target has used yet.
 
     RefusedDestinations:
       type: object
-      required: [generatedAt, sinceDays, items]
+      required: [generatedAt, sinceDays, checked, unresolved, items]
       properties:
-        generatedAt: { type: string, format: date-time }
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the check ran. A check is reused for up to 30 seconds.
+        checked:
+          type: integer
+          description: How many destinations the Organization configured and the check looked at.
+        unresolved:
+          type: integer
+          description: >
+            How many of them could not be checked because their names did
+            not resolve. They are not refusals; the policy decides when they
+            connect. Zero refused with some unresolved is not "all allowed".
         sinceDays:
           type: integer
           description: How far back `since` looks in the audit log.
@@ -6176,9 +6193,15 @@ components:
 
     InstallationOutbound:
       type: object
-      required: [generatedAt, allow, warnings, refused, suggested, unresolved]
+      required: [generatedAt, allow, warnings, checked, refused, suggested, unresolved]
       properties:
-        generatedAt: { type: string, format: date-time }
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the check ran. A check is reused for up to 30 seconds.
+        checked:
+          type: integer
+          description: How many configured destinations the check looked at, in every Organization.
         allow:
           type: array
           description: VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set.

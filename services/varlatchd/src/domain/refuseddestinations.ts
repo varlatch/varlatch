@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { InstallationOutbound, RefusedDestinations } from "@varlatch/protocol";
-import { outboundCheck, refusedDestinations } from "../net/outbound-check.js";
+import { refusedDestinations, sharedOutboundCheck } from "../net/outbound-check.js";
 import { allowListWarnings, outboundOf } from "../net/outbound.js";
 import type { AppCtx } from "./ctx.js";
 
@@ -12,7 +12,10 @@ import type { AppCtx } from "./ctx.js";
  *
  * Both run the check `varlatchd admin outbound check` and doctor run
  * (net/outbound-check.ts) with the policy varlatchd started with: DNS
- * lookups only, never a request to a destination. What they return never
+ * lookups only, never a request to a destination. Their scans are shared
+ * while running and reused for SCAN_TTL_MS, and every lookup in the
+ * process takes one of a fixed number of slots, so loading the pages
+ * repeatedly does not multiply the DNS work. What they return never
  * holds a resolved address, a path, a query or a credential: the check
  * reads only a webhook URL's or Connection's host and port, and the
  * addresses it resolved stay here.
@@ -30,8 +33,9 @@ const iso = (v: Date | string): string => (v instanceof Date ? v : new Date(v)).
  * list: that is the host's.
  */
 export async function organizationRefusedDestinations(ctx: AppCtx, organizationId: string): Promise<RefusedDestinations> {
-  const report = await outboundCheck(ctx.db, outboundOf(ctx), { org: organizationId });
+  const report = await sharedOutboundCheck(ctx.db, outboundOf(ctx), { org: organizationId });
   // The check's filter also matches a slug; only this Organization's rows, whatever a slug says.
+  const own = report.destinations.filter((d) => d.organizationId === organizationId);
   const refused = refusedDestinations(report).filter((d) => d.organizationId === organizationId);
   const since = new Map<string, string>();
   if (refused.length > 0) {
@@ -50,8 +54,10 @@ export async function organizationRefusedDestinations(ctx: AppCtx, organizationI
     for (const r of rows) since.set(`${r.object_id}|${r.host}|${r.port}`, iso(r.since));
   }
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: report.checkedAt,
     sinceDays: REFUSED_SINCE_DAYS,
+    checked: own.length,
+    unresolved: own.filter((d) => d.verdict === "unresolved").length,
     items: refused.map((d) => ({
       kind: d.kind,
       id: d.id,
@@ -72,7 +78,7 @@ export async function organizationRefusedDestinations(ctx: AppCtx, organizationI
  */
 export async function installationOutbound(ctx: AppCtx): Promise<InstallationOutbound> {
   const policy = outboundOf(ctx);
-  const report = await outboundCheck(ctx.db, policy);
+  const report = await sharedOutboundCheck(ctx.db, policy);
   // By Organization; within one, in the check's order (webhooks, Connections, issuers).
   const refused = refusedDestinations(report).sort((a, b) => (a.organization < b.organization ? -1 : a.organization > b.organization ? 1 : 0));
   const ids = [...new Set(refused.map((d) => d.organizationId))];
@@ -84,8 +90,9 @@ export async function installationOutbound(ctx: AppCtx): Promise<InstallationOut
         ),
   );
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: report.checkedAt,
     allow: report.allow,
+    checked: report.destinations.length,
     warnings: allowListWarnings(policy.entries),
     refused: refused.map((d) => {
       const org = orgs.get(d.organizationId);

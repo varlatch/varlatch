@@ -565,6 +565,15 @@ export class OutboundPolicy {
     return (this.resolver ?? resolverOverride ?? systemResolver)(name);
   }
 
+  /**
+   * Resolve a name with this policy's resolver, for the configured
+   * destinations check (net/outbound-check.ts), which bounds and shares its
+   * lookups. Decides nothing.
+   */
+  lookupName(name: string): Promise<{ address: string; family: 4 | 6 }[]> {
+    return this.resolve(name);
+  }
+
   decide(destination: Destination, addresses: string[]): Verdict {
     return decide(this.entries, destination, addresses);
   }
@@ -572,9 +581,11 @@ export class OutboundPolicy {
   /**
    * The configuration-time check (ADR-0057 Decision 6): parse, resolve and
    * classify, for a friendly error before anything is saved. Never call it
-   * inside a transaction. It decides nothing at connection time.
+   * inside a transaction. It decides nothing at connection time. `lookup`
+   * replaces the resolution (the configured destinations check shares
+   * lookups between rows and requests); the decision is the same.
    */
-  async check(raw: string | URL): Promise<CheckOutcome> {
+  async check(raw: string | URL, lookup?: (name: string) => Promise<{ address: string; family: 4 | 6 }[]>): Promise<CheckOutcome> {
     const url = typeof raw === "string" ? new URL(raw) : raw;
     const destination = destinationOf(url);
     if (!destination) throw new TypeError("Only https and http destinations are checked");
@@ -584,7 +595,7 @@ export class OutboundPolicy {
     }
     let addresses: string[];
     try {
-      addresses = (await this.resolve(destination.host)).map((a) => a.address);
+      addresses = (await (lookup ?? ((name: string) => this.resolve(name)))(destination.host)).map((a) => a.address);
     } catch (err) {
       return { outcome: "unresolved", destination, addresses: [], verdict: null, error: (err as { code?: string }).code ?? "ENOTFOUND" };
     }
