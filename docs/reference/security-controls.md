@@ -409,6 +409,14 @@ every control. See the [threat model](../THREAT-MODEL.md).
   number of trusted and unconfirmed passkeys, when one was last
   confirmed, and each passkey's name, provenance and dates. Never a
   credential id, public key or passkey id. Needs `organization.manage`.
+- `GET /v1/organizations/{org}/security/refused-destinations`: the
+  webhooks, Connections and OIDC issuers this installation's outbound
+  policy refuses, with kind, name, host, port, reason and the earliest
+  refusal recorded in the last 30 days, and how many destinations could
+  not be checked. Never a resolved address or the host's allow list.
+  Needs `organization.manage`. See
+  [Outbound policy](outbound-policy.md).
 
 The capabilities are `security.controls`, `security.report`,
-`security.approval-keys` and `organizations.permissions`.
+`security.approval-keys`, `security.refused-destinations` and
+`organizations.permissions`.

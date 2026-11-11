@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
 import {
+  outboundRefusal,
   refetchWhileRunning,
   connectionHealth,
   isCredentialError,
@@ -165,5 +166,74 @@ describe("connectionHealth", () => {
   it("recognizes credential errors", () => {
     expect(isCredentialError("Bad credentials")).toBe(true);
     expect(isCredentialError("fetch failed")).toBe(false);
+  });
+});
+
+describe("a destination this installation refuses (ADR-0057)", () => {
+  it("says so on the Target, with the policy's wording, without counting a failure or offering a fix", () => {
+    const s = targetStatus(target({ lastResult: "outbound_refused: private_address", needsSync: true }));
+    expect(s).toMatchObject({ tone: "warn", label: "Destination refused", detail: "waiting for the host operator" });
+    expect(s.error).toContain("This address is on a private network");
+    expect(s.error).toContain("VARLATCH_OUTBOUND_ALLOW");
+    expect(s.fix).toBeUndefined();
+    // Even after earlier failures: the refusal is what holds it now.
+    expect(targetStatus(target({ failureCount: 2, lastResult: "outbound_refused: scheme" })).error).toContain("Plain http");
+  });
+
+  it("keeps a paused Target paused", () => {
+    expect(targetStatus(target({ state: "paused", lastResult: "outbound_refused: private_address" })).label).toBe("Paused");
+  });
+
+  it("words every reason, and a refusal without one", () => {
+    expect(outboundRefusal("outbound_refused: host_only_address")).toContain("loopback or link-local");
+    expect(outboundRefusal("outbound_refused: port")).toContain("another port");
+    expect(outboundRefusal("outbound_refused")).toContain("outbound policy refuses this destination");
+    // Without a reason, no promise that it can be allowed.
+    expect(outboundRefusal("outbound_refused")).toContain("may be able to allow");
+    expect(outboundRefusal("outbound_refused")).toContain("some addresses can never be used");
+    expect(outboundRefusal("ok")).toBeUndefined();
+    expect(outboundRefusal(null)).toBeUndefined();
+  });
+
+  it("marks the Connection, with the wording", () => {
+    const h = connectionHealth([target({ lastResult: "converged" }), target({ lastResult: "outbound_refused: private_address" })]);
+    expect(h).toMatchObject({ tone: "warn", label: "Refused by this installation", credentialRejected: false });
+    expect(h.refusal).toContain("This address is on a private network");
+    // A paused Target keeps its label; its recorded refusal is shown next to it.
+    const paused = connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" })]);
+    expect(paused).toMatchObject({ label: "All targets paused" });
+    expect(paused.refusal).toContain("private network");
+    expect(paused.refusalInLabel).toBeFalsy();
+  });
+
+  it("shows the installation's current refusal of the Connection whatever its Targets do", () => {
+    const unused = connectionHealth([], "host_only_address");
+    expect(unused).toMatchObject({ tone: "muted", label: "Not used yet" });
+    expect(unused.refusal).toContain("loopback or link-local");
+    expect(connectionHealth([target({ state: "paused" })], "private_address")).toMatchObject({ label: "All targets paused" });
+    expect(connectionHealth([target({ state: "paused" })], "private_address").refusal).toContain("private network");
+    // A Target that has not run since the refusal began still shows it.
+    expect(connectionHealth([target({ lastResult: "converged" })], "private_address")).toMatchObject({
+      tone: "warn",
+      label: "Refused by this installation",
+      refusalInLabel: true,
+    });
+    // Before an older credential error.
+    expect(connectionHealth([target({ failureCount: 2, lastResult: "401 Unauthorized" })], "private_address").label).toBe("Refused by this installation");
+    expect(connectionHealth([target({ lastResult: "converged" })], null).label).toBe("Healthy");
+  });
+
+  it("keeps a paused Target's recorded refusal next to a healthy active Target's status", () => {
+    const h = connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" }), target({ lastResult: "converged" })]);
+    expect(h).toMatchObject({ tone: "ok", label: "Healthy" });
+    expect(h.refusal).toContain("This address is on a private network");
+    expect(h.refusalInLabel).toBeFalsy();
+    // And next to a failing one.
+    const failing = connectionHealth([
+      target({ state: "paused", lastResult: "outbound_refused: scheme" }),
+      target({ failureCount: 1, lastResult: "TypeError: fetch failed" }),
+    ]);
+    expect(failing.label).toBe("1 target failing");
+    expect(failing.refusal).toContain("Plain http");
   });
 });
