@@ -415,5 +415,7 @@ describe("every /v1/organizations/:org route while the Organization is frozen (A
     const outsiderDuring = await answers(app, outsider);
     expect([...outsiderDuring].filter(([route, a]) => a.status !== outsiderBefore.get(route)?.status || a.code !== outsiderBefore.get(route)?.code)).toEqual([]);
     expect([...outsiderDuring.values()].some((a) => a.code === "ORGANIZATION_FROZEN")).toBe(false);
-  });
+    // Four passes over every route, each request's transactions checked
+    // by the lock trace: about 6 s on PGlite, over the 5 s default.
+  }, 30_000);
 });
