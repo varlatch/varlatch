@@ -263,10 +263,14 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
   it("an audit-only transaction with exposure rows against a loosening control change by the same person", async () => {
     // The control change, emulated (amendment E, steps 1 and 2): it holds
     // the Organization FOR UPDATE, the audit transaction starts and waits,
-    // then the control change takes the person FOR UPDATE. Under the old
-    // order the audit transaction's index insert held the person (its
-    // foreign key) while it waited for the Organization.
-    const version = (await db.query("SELECT current_version_id AS v FROM env_values WHERE environment_id = $1 AND item_name = 'API_KEY'", [env.id])).rows[0] as { v: string };
+    // then the control change takes the person FOR UPDATE; both finish.
+    // Not a deadlock under the old order either: the index insert's foreign
+    // keys happen to take the Organization before the person (constraint
+    // order). The audit transaction now takes both explicitly, in the lock
+    // order, instead of relying on that.
+    // A version the index has no row for yet, so the index write inserts
+    // one (and its foreign keys take the Organization and the person).
+    const version = { v: `ver_${"a".repeat(26)}` };
     const client = await db.connect();
     let audited: Promise<unknown>;
     try {
