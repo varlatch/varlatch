@@ -135,6 +135,19 @@ refused but a name did not resolve.
 destinations", with warnings for entries that open host-only ranges or add
 nothing.
 
+In the dashboard, **Installation, Outbound** shows the same for Installation
+Admins: the allow list as varlatchd read it at startup, the same warnings,
+every refused destination by Organization (kind, name, host and reason), and
+the suggested line. It is read-only: change the allow list on the host. It
+never shows the resolved addresses. API: `GET /v1/installation/outbound`.
+
+Each Organization's **Security page** lists the Organization's own refused
+destinations for its admins (`organization.manage`): kind, name, host,
+reason, and when the first refusal was recorded in the audit log in the last
+30 days. `varlatch security report` shows the same list. Neither shows the
+allow list or a resolved address. API:
+`GET /v1/organizations/{org}/security/refused-destinations`.
+
 ## When a destination is refused
 
 A refusal never loses anything:
@@ -147,10 +160,13 @@ A refusal never loses anything:
   not resolve is saved; the policy decides when it is used.
 - **Connection checks and destination listings** report the destination as
   unreachable, with the same message.
-- **Webhooks** keep their position. The webhook shows `outbound_refused`,
+- **Webhooks** keep their position. The webhook shows that this
+  installation refuses its destination (`outbound_refused` in the API),
   and its events are delivered once the host operator allows the
   destination and restarts varlatchd.
-- **Sync Targets** show `outbound_refused: <reason>`. A refusal does not
+- **Sync Targets** show that their destination is refused, with the reason
+  (`outbound_refused: <reason>` in the API), and so does their Connection.
+  A refusal does not
   count toward the failures that disable a Target, and the Target keeps
   waiting. After a restart with the destination allowed, it is retried at
   once.
