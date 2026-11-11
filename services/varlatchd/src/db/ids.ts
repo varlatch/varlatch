@@ -32,6 +32,7 @@ const PREFIXES = {
   githubApp: "gha",
   membershipRemoval: "mrm",
   organizationDeletion: "odl",
+  organizationFreeze: "ofz",
   passkeyConfirmationChallenge: "pcc",
   approvalIntent: "apr",
   approvalIntentChallenge: "apc",

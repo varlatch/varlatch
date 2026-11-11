@@ -10,7 +10,8 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { listOwnPasskeys } from "./passkeys.js";
-import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
+import { openFreeze, organizationFrozen } from "./liveness.js";
+import { lockPeople, lockPerson, lockPersonPasskeys, type PersonRef } from "./personlocks.js";
 
 /**
  * Step-up approvals (ADR-0054 Decision 3): a fresh WebAuthn assertion, with
@@ -105,6 +106,12 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *     otherwise), then consumption's 4, 6, 7, then 11.
  *   Operator reset and Organization deletion (closeOpenApprovals): 1
  *     UPDATE, the open intents' people 2 KEY SHARE in id order, 4, then 11.
+ *   The incident freeze (freeze.ts, ADR-0055 Decision 9): freezing and the
+ *     operator's lift as closeOpenApprovals above (the freezer among the
+ *     people at 2), then 11 (the freeze row, the audit); a lift with an
+ *     approval as a Security Control change: 1 UPDATE, 2 UPDATE,
+ *     consumption's 4, 6, 7, then 11. createApproval reads the freeze
+ *     under its step 1 KEY SHARE.
  *   Passkey removal: 2 UPDATE, 3 (the target), consumption's 4, 6, 7 when
  *     restricted, then 11.
  *   Passkey confirmation: issuing 2, 3 (the target), 5; confirming 2, 3
@@ -146,8 +153,16 @@ export const APPROVALS = {
   retentionSeconds: 86_400,
 } as const;
 
-export const APPROVAL_OPERATIONS = ["security_control.change", "passkey.remove"] as const;
+export const APPROVAL_OPERATIONS = ["security_control.change", "passkey.remove", "organization.unfreeze"] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
+
+/**
+ * The Organization-bound operations an intent may be created for while the
+ * Organization is frozen for an incident (ADR-0055 Decision 3): the lift,
+ * and the operations under `recovery` that ask for an approval. Account
+ * intents (passkey.remove) are not Organization-bound and are unaffected.
+ */
+export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set(["organization.unfreeze", "security_control.change"]);
 
 export interface ApprovalChange {
   field: string;
@@ -195,7 +210,7 @@ export interface ApprovalView {
   organization: { id: string; slug: string; name: string } | null;
   summary: ApprovalSummary;
   state: "pending" | "approved" | "consumed" | "expired" | "closed";
-  closeReason: "cancelled" | "reset" | "organization-deleted" | null;
+  closeReason: "cancelled" | "reset" | "organization-deleted" | "frozen" | null;
   requestedBy: { credentialKind: "browser" | "cli"; client: string | null };
   url: string | null;
   interval: number;
@@ -365,6 +380,13 @@ export async function createApproval(
         binding.organizationId,
       ])).rows[0];
       if (!org) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
+      // The incident freeze (ADR-0055 Decision 3), read under the step 1
+      // lock just taken: a freeze commits under the row FOR UPDATE, so this
+      // intent is either created before it (and closed by it) or refused.
+      if (!OPERATIONS_DURING_FREEZE.has(binding.operation)) {
+        const frozen = await openFreeze(db, binding.organizationId);
+        if (frozen) throw organizationFrozen(frozen, binding.organizationId);
+      }
     }
     await lockPerson(db, requester.identityId, "key share");
     const open = (await db.query(
@@ -821,24 +843,37 @@ export async function cancelApproval(
 
 /**
  * Close every open intent the filter selects, with a reason: the host
- * operator's reset (the reset controls' intents) and Organization
- * deletion (all of the Organization's). Returns how many it closed.
+ * operator's reset (the reset controls' intents), Organization deletion
+ * (all of the Organization's), the incident freeze (all of the
+ * Organization's) and the operator's lift (its open organization.unfreeze
+ * intents). Returns how many it closed.
+ *
+ * `people`: the transaction's other people (the freezer), locked in the
+ * same step 2 as the intents' people, in id order, each in its mode.
  */
 export async function closeOpenApprovals(
   db: Querier,
-  input: { organizationId: string; reason: "reset" | "organization-deleted"; controls?: readonly string[] },
+  input: {
+    organizationId: string;
+    reason: "reset" | "organization-deleted" | "frozen";
+    controls?: readonly string[];
+    operations?: readonly ApprovalOperation[];
+    people?: readonly PersonRef[];
+  },
 ): Promise<number> {
   // Lock order 1 (the caller holds the Organization FOR UPDATE, so no new
   // intent of it can be created meanwhile), then the open intents' people
   // in id order (2), then the intents in id order (4): a start, an approval
   // or a consumption in flight holds its person and finishes first.
   const filter = `organization_id = $1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()
-       AND ($2::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($2::text[])))`;
+       AND ($2::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($2::text[])))
+       AND ($3::text[] IS NULL OR operation = ANY($3::text[]))`;
   const controls = input.controls ? [...input.controls] : null;
-  const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, [input.organizationId, controls]))
+  const operations = input.operations ? [...input.operations] : null;
+  const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, [input.organizationId, controls, operations]))
     .rows as { identity_id: string }[];
-  await lockPeople(db, people.map((p) => p.identity_id), "key share");
-  const intents = (await lockedQuery(db, { table: "approval_intents", mode: "update" }, `SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls]))
+  await lockPeople(db, [...(input.people ?? []), ...people.map((p) => p.identity_id)], "key share");
+  const intents = (await lockedQuery(db, { table: "approval_intents", mode: "update" }, `SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls, operations]))
     .rows as { id: string }[];
   if (intents.length === 0) return 0;
   const res = await db.query(

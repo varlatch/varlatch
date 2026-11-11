@@ -87,6 +87,26 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  * Scope resolved before the transaction (the route's) is a hint only: a
  * request that resolved a live Environment, or unwrapped the Organization
  * KEK, is refused here if the Environment was deleted meanwhile.
+ *
+ * THE INCIDENT FREEZE (ADR-0055). lockLiveScope reads the open freeze
+ * after the Organization row and its deletion request, before the people
+ * and the Project, and refuses unless the caller names one exception
+ * (duringIncidentFreeze). No new lock: the freeze row (organization_freezes)
+ * is written only under the Organization row FOR UPDATE, so a writer
+ * holding it FOR KEY SHARE either committed before a freeze or sees it.
+ * The freeze row itself sits in step 11, with security_controls, before
+ * the audit insert. Per transaction (ADR-0055 Decision 9, in this order's
+ * numbering; that ADR wrote "8" for what is step 11 here):
+ *   freezing: 1 UPDATE, then closeOpenApprovals' people with the freezer
+ *     (2, KEY SHARE, id order) and intents (4), then 11 (the freeze row,
+ *     the audit last);
+ *   lifting with an approval: 1 UPDATE, 2 UPDATE (the requester, whose
+ *     approval is consumed), consumption's 4, 6 and 7, then 11;
+ *   the operator's lift: 1 UPDATE, closeOpenApprovals' 2 (KEY SHARE) and
+ *     4, then 11;
+ *   createApproval reads the freeze under its step 1 KEY SHARE; deletion
+ *   scheduling, approval and cancel under their step 1 UPDATE; the
+ *   deletion worker after its SKIP LOCKED claim of steps 1.
  */
 
 export type LockMode = "key share" | "no key update" | "update";
@@ -100,6 +120,12 @@ export interface LiveScope {
    * the deletion are.
    */
   allowFrozen?: boolean | undefined;
+  /**
+   * The one exception under which the write may run while the Organization
+   * is frozen for an incident (ADR-0055 Decision 3). allowFrozen does not
+   * skip the incident check: it only concerns a pending deletion.
+   */
+  duringIncidentFreeze?: FreezeException | undefined;
   /**
    * Step 2: every identity the transaction will lock or reference (the
    * actor, an owner, a subject, a broker or agent, a creator), locked in
@@ -132,6 +158,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   const orgRow = org.rows[0] as { deleted_at: string | null } | undefined;
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
+  await refuseIfIncidentFrozen(db, scope.organizationId, scope.duringIncidentFreeze);
 
   if (scope.people) await lockPeople(db, scope.people);
 
@@ -191,4 +218,83 @@ export async function refuseIfFrozen(db: Querier, organizationId: string): Promi
     `This Organization is being deleted: it may be deleted from ${runAfter}. Only reading, and approving or cancelling the deletion, are possible. Nothing was changed.`,
     { deletionId: open.id, runAfter },
   );
+}
+
+/**
+ * The named exceptions to the incident freeze (ADR-0055 Decision 3). While
+ * frozen, everything in the Organization is refused, for everyone, reads
+ * included, except an operation under one of these:
+ *
+ * - `freeze`: freezing and lifting, and every step from signed out to a
+ *   lift (sign-in, the browser bearer, Approval Intents for the lift);
+ * - `audit`: recording audit events, reading and exporting the audit log,
+ *   webhook delivery;
+ * - `inspection`: metadata a responder reads to find what to revoke, never
+ *   a value or anything value-derived;
+ * - `recovery`: operations that only take authority away, and the control
+ *   changes a responder makes before lifting.
+ *
+ * An exception changes no authorization: each operation still needs its own
+ * action and any approval.
+ */
+export type FreezeException = "freeze" | "audit" | "inspection" | "recovery";
+
+export const FREEZE_EXCEPTIONS: readonly FreezeException[] = ["freeze", "audit", "inspection", "recovery"];
+
+export interface OpenFreeze {
+  id: string;
+  frozen_at: string | Date;
+}
+
+/**
+ * The Organization's open incident freeze, if any. Read without a lock,
+ * under the Organization row's lock the caller holds (at least FOR KEY
+ * SHARE): a freeze is written only under that row FOR UPDATE.
+ */
+export async function openFreeze(db: Querier, organizationId: string): Promise<OpenFreeze | null> {
+  const res = await db.query(
+    "SELECT id, frozen_at FROM organization_freezes WHERE organization_id = $1 AND lifted_at IS NULL",
+    [organizationId],
+  );
+  return (res.rows[0] as OpenFreeze | undefined) ?? null;
+}
+
+/**
+ * The refusal of an operation while the Organization is frozen for an
+ * incident: ORGANIZATION_FROZEN with the freeze id and time. It also
+ * carries the Organization (not in the response), so the HTTP layer can
+ * audit the refusal once, after any transaction or snapshot it came from
+ * ended (ADR-0055 Decision 8).
+ */
+export class OrganizationFrozenError extends DomainError {
+  constructor(
+    readonly freezeId: string,
+    readonly frozenAt: string,
+    readonly organizationId: string,
+  ) {
+    super(
+      "ORGANIZATION_FROZEN",
+      `This Organization is frozen for an incident since ${frozenAt}. Nothing was read, changed or sent. An Organization Admin can lift the freeze with a passkey approval.`,
+      { freezeId, frozenAt },
+    );
+  }
+}
+
+export function organizationFrozen(freeze: OpenFreeze, organizationId: string): OrganizationFrozenError {
+  return new OrganizationFrozenError(freeze.id, new Date(freeze.frozen_at).toISOString(), organizationId);
+}
+
+/**
+ * Refuses unless the Organization is not frozen for an incident, or the
+ * caller names the exception it runs under (ADR-0055 Decision 1). Every
+ * caller of refuseIfFrozen calls this next to it; lockLiveScope always does.
+ */
+export async function refuseIfIncidentFrozen(
+  db: Querier,
+  organizationId: string,
+  exception?: FreezeException | undefined,
+): Promise<void> {
+  if (exception !== undefined) return;
+  const open = await openFreeze(db, organizationId);
+  if (open) throw organizationFrozen(open, organizationId);
 }
