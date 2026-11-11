@@ -264,11 +264,11 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
   it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {
     // A refusal after the locks (a version conflict, an approval needed) rolls back.
     await expect(withTx(db, async (q) => {
-      await q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
       await lockPeople(q, ["idn_a"]);
+      await q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
       throw new Error("refused");
     })).rejects.toThrow("refused");
-    expect(takeLockViolations().map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: identities\[idn_a\]/)]]);
+    expect(takeLockViolations().map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: organizations\[org_a\]/)]]);
     // An aborted transaction cannot be read: nothing is reported, nothing breaks.
     await expect(withTx(db, async (q) => {
       await lockPeople(q, ["idn_b"]);
