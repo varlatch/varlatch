@@ -383,6 +383,9 @@ for example after a lost passkey.
 It also means that whoever controls the host or the deployment can bypass
 every control. See the [threat model](../THREAT-MODEL.md).
 
+The reset never lifts an [incident freeze](incident-freeze.md); it says
+when the organization is still frozen.
+
 ## API
 
 - `GET /v1/organizations/{org}/security/controls`: the controls and
