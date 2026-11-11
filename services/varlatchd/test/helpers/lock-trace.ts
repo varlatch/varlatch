@@ -238,6 +238,34 @@ END $trace$;
 CREATE TRIGGER varlatch_lock_trace AFTER INSERT OR UPDATE OR DELETE ON public.${ident(t.name)}
   FOR EACH ROW EXECUTE FUNCTION ${fn}();`);
   }
+  await mirrorPlpgsqlLocks(db);
+}
+
+/**
+ * Explicit locks taken inside PL/pgSQL never pass the wrapper. The one such
+ * lock (migration 43: deleting a session locks its live browser credentials
+ * FOR UPDATE in id order, then revokes them) is mirrored here: a statement
+ * trigger that fires just before migration 43's (trigger names fire in
+ * order) records the same rows, in the same order and mode.
+ */
+async function mirrorPlpgsqlLocks(db: Querier): Promise<void> {
+  const present = ((await db.query("SELECT to_regproc('public.revoke_browser_credentials_of_ended_sessions') IS NOT NULL AS present")).rows[0] as { present: boolean }).present;
+  if (!present) return;
+  const run = async (sql: string) => (db.exec ? db.exec(sql) : db.query(sql));
+  await run(`
+CREATE FUNCTION ${SCHEMA}.session_end_credentials() RETURNS trigger LANGUAGE plpgsql AS $mirror$
+BEGIN
+  INSERT INTO ${SCHEMA}.trace
+  SELECT txid_current(), nextval('${SCHEMA}.seq'), 'credentials', c.id, 'update', 'explicit'
+    FROM (SELECT c.id FROM public.credentials c
+           WHERE c.auth_session_id IN (SELECT e.id FROM ended e)
+             AND c.kind = 'browser' AND c.revoked_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at > now())
+           ORDER BY c.id) c;
+  RETURN NULL;
+END $mirror$;
+CREATE TRIGGER a_varlatch_lock_trace_session_end AFTER DELETE ON public."session"
+  REFERENCING OLD TABLE AS ended FOR EACH STATEMENT EXECUTE FUNCTION ${SCHEMA}.session_end_credentials();`);
 }
 
 // ---------------------------------------------------------------------------
