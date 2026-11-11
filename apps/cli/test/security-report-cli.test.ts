@@ -254,7 +254,7 @@ describe("varlatch security report: refused destinations", () => {
       "  webhook (wh_http)  http://hooks.example:80  plain http, no refusal recorded in the last 30 days",
       "",
       "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
-        "Nothing waiting is lost: it is delivered once the host operator allows the destination and restarts varlatchd.",
+        "Nothing waiting is lost: once the host operator allows a destination and restarts varlatchd, what waited for it is delivered.",
     ]);
     // The credential review comes first, unchanged.
     expect(lines[0]).toBe("Credential review for acme");

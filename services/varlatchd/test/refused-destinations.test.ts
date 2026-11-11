@@ -35,9 +35,16 @@ const ANSWERS: Record<string, string[]> = {
 /** Every lookup made, and a gate tests can hold shut to make requests overlap. */
 let lookups: string[] = [];
 let gate: Promise<void> | null = null;
+let running = 0;
+let peak = 0;
 const resolve: Resolver = async (name) => {
   lookups.push(name);
-  if (gate) await gate;
+  peak = Math.max(peak, ++running);
+  try {
+    if (gate) await gate;
+  } finally {
+    running--;
+  }
   const list = ANSWERS[name];
   if (!list) throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${name}`), { code: "ENOTFOUND" });
   return list.map((address) => ({ address, family: 4 as const }));
@@ -103,6 +110,7 @@ function boot(allow: string) {
 beforeEach(async () => {
   lookups = [];
   gate = null;
+  peak = 0;
   const db = await migratedTestDb();
   ctx = { db, rootKek: generateKey(), close: db.close };
   await ensureInstallation(ctx);
@@ -345,7 +353,8 @@ describe("the DNS work behind the pages", () => {
     open();
     const [inst] = await pending;
     expect(inst!.body.checked).toBe(27);
-    expect(new Set(lookups).size).toBe(lookups.length);
-    expect(lookups).toHaveLength(25);
+    expect(new Set(lookups).size).toBe(25);
+    // Never more at once, also after the gate opened and the queue drained.
+    expect(peak).toBe(LOOKUP_SLOTS);
   });
 });
