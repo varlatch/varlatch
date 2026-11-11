@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { lockedQuery } from "../src/db/locks.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
-import { checkTrace, lockOrderMode, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkTrace, lockOrderMode, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /** The lock-order check itself (ADR-0054 amendment E): the rules, then the trace it reads. */
@@ -108,6 +108,18 @@ describe("checkTrace", () => {
   });
 });
 
+describe("scanSql", () => {
+  it("reads statements the way PostgreSQL does: strings, identifiers, dollar quotes and comments", () => {
+    expect(statementsOf("SELECT '--'; BEGIN; UPDATE t SET a = 1; COMMIT;")).toEqual(["SELECT ''", "BEGIN", "UPDATE t SET a = 1", "COMMIT"]);
+    expect(statementsOf("SELECT 'it''s; here' /* a; /* nested; */ b; */ FROM t")).toHaveLength(1);
+    expect(statementsOf("SELECT E'\\'; BEGIN'; COMMIT")).toEqual(["SELECT ''", "COMMIT"]);
+    expect(statementsOf('SELECT "a;b" FROM t; COMMIT')).toEqual(['SELECT "a_b" FROM t', "COMMIT"]);
+    expect(statementsOf("DO $x$ BEGIN; END $x$; SELECT $1::text")).toEqual(["DO ''", "SELECT $1::text"]);
+    expect(statementsOf("SELECT 1 -- ; COMMIT\n; COMMIT")).toEqual(["SELECT 1", "COMMIT"]);
+    expect(scanSql("SELECT '/* varlatch-lock identities update id */' FOR UPDATE").comments).toEqual([]);
+  });
+});
+
 describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () => {
   let db: Awaited<ReturnType<typeof migratedTestDb>>;
   beforeEach(async () => {
@@ -132,6 +144,11 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       "BEGIN; UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'; COMMIT;",
     )).rejects.toThrow(/statements of their own/);
     await expect(db.query("SELECT 1; COMMIT")).rejects.toThrow(/statements of their own/);
+    // A comment marker inside a string literal does not hide the rest.
+    await expect(db.exec!(
+      "SELECT '--'; BEGIN; UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'; COMMIT;",
+    )).rejects.toThrow(/statements of their own/);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
     expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b" }]);
     expect(takeLockViolations()).toEqual([]);
   });
@@ -154,10 +171,19 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE OF i`))
       .rejects.toThrow(/the tag names organizations, the statement locks identities/);
     await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${join} FOR UPDATE OF x`)).rejects.toThrow(/OF x names no relation/);
+    // Comma-separated FROM items lock every relation, as a join does.
+    const commas = "SELECT i.id FROM identities i, organizations o WHERE o.id = i.organization_id";
+    await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${commas} FOR UPDATE`)).rejects.toThrow(/several relations \(identities, organizations\)/);
+    await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${commas} FOR UPDATE OF o`))
+      .rejects.toThrow(/the tag names identities, the statement locks organizations/);
+    // A tag inside a string literal is not a tag.
+    await expect(db.query("SELECT id, '/* varlatch-lock identities update id */' AS t FROM identities FOR UPDATE"))
+      .rejects.toThrow(/untagged locking clause/);
     // Accepted: FOR … OF the tagged relation's alias; a subquery in WHERE locks nothing.
     await withTx(db, async (q) => {
       await lockedQuery(q, { table: "identities", mode: "key share" }, `${join} WHERE o.id = 'org_a' ORDER BY i.id FOR KEY SHARE OF i`);
       await lockedQuery(q, { table: "identities", mode: "key share" }, "SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR KEY SHARE");
+      await lockedQuery(q, { table: "identities", mode: "key share" }, `${commas} ORDER BY i.id FOR KEY SHARE OF i`);
     });
     expect(takeLockViolations()).toEqual([]);
   });
