@@ -119,6 +119,10 @@ Usage:
   varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]
                (the host operator's way back: sets the named security controls to off and closes their open
                 approvals; never touches deletion, passkeys or grants)
+  varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]
+               (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,
+                with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;
+                exit 0 all allowed, 1 something refused, 2 something not resolved)
   varlatch doctor [--dir <compose-directory>] [--json] [--wait <s>] [--gate]
                                                        # read-only installation health on this host
   varlatch scan (--staged | <path>...) [-e <env>] [--json] [--baseline <file>] [--write-baseline]

@@ -96,9 +96,28 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The code of the error a host's outbound policy raises when it refuses a
+ * destination (varlatchd, ADR-0057). Its message is the host's own fixed
+ * wording, which names the address class and never the address.
+ */
+export const OUTBOUND_REFUSED_CODE = "VARLATCH_OUTBOUND_REFUSED";
+
+/** The outbound policy's refusal behind an error, through its causes; null when there is none. */
+export function policyRefusal(err: unknown): { message: string } | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current; depth++) {
+    const candidate = current as { code?: unknown; message?: unknown; cause?: unknown };
+    if (candidate.code === OUTBOUND_REFUSED_CODE && typeof candidate.message === "string") return { message: candidate.message };
+    current = candidate.cause;
+  }
+  return null;
+}
+
 /** Node's fetch reports the transport problem on the cause of its TypeError. */
-function transportProblem(err: unknown): "timeout" | "redirect" | "dns" | "refused" | "tls" | null {
+function transportProblem(err: unknown): "timeout" | "redirect" | "dns" | "refused" | "tls" | "policy" | null {
   if (!(err instanceof AdapterError)) return null;
+  if (policyRefusal(err)) return "policy";
   if (err.message === "TimeoutError") return "timeout";
   const cause = (err.cause as { cause?: { code?: unknown; message?: unknown } } | undefined)?.cause;
   const code = typeof cause?.code === "string" ? cause.code : "";
@@ -109,9 +128,14 @@ function transportProblem(err: unknown): "timeout" | "redirect" | "dns" | "refus
   return null;
 }
 
-/** The request never got an answer: DNS, TLS, a refused redirect, a timeout. */
+/**
+ * The request never got an answer: DNS, TLS, a refused redirect, a timeout,
+ * or the host's outbound policy (in the host's words, never "could not reach").
+ */
 export function unreachable(host: string, err: unknown, where: AccessCheckWhere): AccessCheck {
   const problem = transportProblem(err);
+  const refusal = problem === "policy" ? policyRefusal(err) : null;
+  if (refusal) return { status: "unreachable", where, message: refusal.message };
   const messages = {
     timeout: `${host} did not answer in time. Try again in a moment.`,
     redirect: `${host} answered with a redirect, which Varlatch does not follow. Enter the address it leads to, or let Varlatch past a sign-in page in front of it.`,
@@ -122,7 +146,7 @@ export function unreachable(host: string, err: unknown, where: AccessCheckWhere)
   return {
     status: "unreachable",
     where,
-    message: problem
+    message: problem && problem !== "policy"
       ? messages[problem]
       : `Varlatch could not reach ${host}. Check the address, and that this server can reach it.`,
   };

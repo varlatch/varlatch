@@ -7,6 +7,7 @@ import {
   verifyOidcToken,
   type OidcClaims,
 } from "../auth/oidc.js";
+import { outboundOf, outboundRefusalOf } from "../net/outbound.js";
 import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
@@ -76,6 +77,21 @@ export async function createOidcBinding(
   // OIDC issuers are https, no query/fragment (OIDC Core §2).
   if (issuer.protocol !== "https:" || issuer.search || issuer.hash) {
     throw new DomainError("VALIDATION_FAILED", "Issuer must be a plain https URL");
+  }
+  // The outbound policy (ADR-0057 Decision 6), before any transaction. Its
+  // jwks_uri is unknown until discovery, so it is checked at exchange time.
+  const policy = outboundOf(ctx);
+  const refusal = await policy.refusalFor(issuer, "oidc");
+  if (refusal) {
+    await policy.recordRefusal(ctx.db, {
+      organizationId,
+      purpose: "oidc",
+      phase: "configuration",
+      refusal,
+      resource: { identityId },
+      actorIdentityId,
+    });
+    throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
   }
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId });
@@ -170,6 +186,7 @@ export async function exchangeOidcToken(
     organization: string;
     ttlSeconds?: number | undefined;
     requestId?: string | undefined;
+    /** Test hook; the exchange otherwise always uses the outbound policy (ADR-0057). */
     fetchImpl?: typeof fetch | undefined;
   },
 ): Promise<{ credentialId: string; token: string; expiresAt: string; identityId: string }> {
@@ -202,8 +219,24 @@ export async function exchangeOidcToken(
 
   let claims: OidcClaims;
   try {
-    claims = await verifyOidcToken(token, bindings[0]!.issuer, opts.fetchImpl ?? fetch);
+    claims = await verifyOidcToken(token, bindings[0]!.issuer, opts.fetchImpl ?? outboundOf(ctx).fetch("oidc"));
   } catch (err) {
+    // A refused discovery or JWKS fetch is audited for the binding's
+    // Organization (ADR-0057 Decision 8, rate bound); the caller sees the
+    // generic failure, so existence stays hidden.
+    const refusal = outboundRefusalOf(err);
+    if (refusal) {
+      await outboundOf(ctx)
+        .recordRefusal(ctx.db, {
+          organizationId: bindings[0]!.organization_id,
+          purpose: "oidc",
+          phase: "connection",
+          refusal,
+          resource: { oidcBindingId: bindings[0]!.id },
+          requestId: opts.requestId ?? null,
+        })
+        .catch((e: unknown) => console.error("outbound refusal audit failed:", e));
+    }
     return reject(
       ctx,
       err instanceof OidcVerificationError ? err.message : "verification-error",

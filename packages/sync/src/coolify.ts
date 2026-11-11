@@ -27,7 +27,9 @@ import { classifyComposeUsage, coolifyOwnsName } from "./coolifyCompose.js";
 
 /**
  * Coolify adapter. Base identity is the instance origin — the admin's choice
- * of host is the trust decision (ADR-0031 §8); the adapter additionally
+ * of host is the trust decision about where the Organization's Values go
+ * (ADR-0031 §8), never about the host's network: in varlatchd every request
+ * goes through the outbound policy (ADR-0057). The adapter additionally
  * requires https, follows no redirects, and pins the configured host.
  * Coolify tokens are inherently instance-wide, so the Connection is the
  * truthful scoping unit. Env values can be read back, so the repair pass may

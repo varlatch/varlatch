@@ -17,11 +17,13 @@ import {
   GITHUB_HEADERS,
   GITHUB_TIMEOUT_MS,
   GITHUB_UNREACHABLE,
+  githubUnreachable,
   NOT_GITHUB,
   appRequest,
   readJwtRefusal,
 } from "./githubjwt.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
+import { outboundOf } from "../net/outbound.js";
 
 /**
  * GitHub App registration (ADR-0047 Decision 1, with its 2026-10-09
@@ -216,7 +218,8 @@ export async function completeRegistration(
   org: OrgRow,
   input: { state: string; code: string },
   actorIdentityId: string,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
 ): Promise<RegistrationOutcome> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
@@ -245,7 +248,7 @@ export async function completeRegistration(
 
   let res: Response;
   try {
-    res = await fetchImpl(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
+    res = await (fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }))(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
       method: "POST",
       headers: GITHUB_HEADERS,
       redirect: "error",
@@ -408,7 +411,8 @@ export async function importGitHubApp(
   org: OrgRow,
   input: { appId: number; privateKey: string },
   actorIdentityId: string,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
   now: number = Date.now(),
 ): Promise<ImportOutcome> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
@@ -419,8 +423,8 @@ export async function importGitHubApp(
   if (await liveApp(ctx.db, org.id)) {
     throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before importing another.");
   }
-  const { res, claims } = await appRequest(fetchImpl, "/app", String(input.appId), input.privateKey, now);
-  if (!res) return { outcome: "failed", ...GITHUB_UNREACHABLE };
+  const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", String(input.appId), input.privateKey, now);
+  if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
   if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
   if (!res.ok) {
     return {
@@ -529,12 +533,13 @@ export async function listAppInstallations(
   ctx: AppCtx,
   org: OrgRow,
   actorIdentityId: string,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; GitHub is otherwise reached through the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
   now: number = Date.now(),
 ): Promise<InstallationListing> {
   await refuseIfFrozen(ctx.db, org.id);
   const { app, pem } = await appWithKey(ctx, org);
-  const listing = await readInstallations(fetchImpl, Number(app.github_app_id), app.client_id, pem, now);
+  const listing = await readInstallations(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), Number(app.github_app_id), app.client_id, pem, now);
   await recordAuditEvent(ctx.db, {
     eventType: "sync.github_app_installations_listed",
     decision: "info",
@@ -556,8 +561,8 @@ async function readInstallations(fetchImpl: typeof fetch, githubAppId: number, c
   const failed = (check: AccessCheck): InstallationListing => ({ check, items: [], truncated: false });
   const items: AppInstallation[] = [];
   for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
-    const { res, claims } = await appRequest(fetchImpl, `/app/installations?per_page=100&page=${page}`, clientId, pem, now);
-    if (!res) return failed(GITHUB_UNREACHABLE);
+    const { res, claims, refusal } = await appRequest(fetchImpl, `/app/installations?per_page=100&page=${page}`, clientId, pem, now);
+    if (!res) return failed(githubUnreachable(refusal));
     if (res.status === 401) return failed(readJwtRefusal(res, claims));
     if (!res.ok) {
       return failed({ status: "failed", where: "connection", httpStatus: res.status, message: `GitHub refused to list the App's installations (HTTP ${res.status}).` });

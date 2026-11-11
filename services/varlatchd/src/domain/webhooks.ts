@@ -11,6 +11,7 @@ import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
+import { outboundOf, outboundRefusalOf } from "../net/outbound.js";
 
 /**
  * Audit webhooks: an organization registers an HTTPS endpoint and receives
@@ -45,17 +46,10 @@ export function signWebhookBody(secret: string, timestampSeconds: number, body: 
   return createHmac("sha256", secret).update(`${timestampSeconds}.${body}`, "utf8").digest("hex");
 }
 
-export async function createWebhook(
-  ctx: AppCtx,
-  org: OrgRow,
-  input: { url: string; eventTypes?: string[] | undefined },
-  actorIdentityId: string,
-): Promise<{ webhook: WebhookRow; secret: string }> {
-  // No stored credential or external call while the Organization is being deleted (ADR-0051).
-  await refuseIfFrozen(ctx.db, org.id);
+function validateWebhookUrl(url: string): void {
   let parsed: URL;
   try {
-    parsed = new URL(input.url);
+    parsed = new URL(url);
   } catch {
     throw new DomainError("VALIDATION_FAILED", "Invalid webhook URL");
   }
@@ -65,6 +59,45 @@ export async function createWebhook(
   if (parsed.username || parsed.password) {
     throw new DomainError("VALIDATION_FAILED", "Webhook URL must not contain userinfo credentials");
   }
+}
+
+/**
+ * Refuse a webhook URL the outbound policy refuses (ADR-0057 Decision 6),
+ * audited, with wording that names the class, never the address. A name
+ * that does not resolve is saved: delivery decides later.
+ */
+async function refuseOutboundWebhook(
+  ctx: AppCtx,
+  organizationId: string,
+  url: string,
+  webhookId: string | null,
+  actorIdentityId: string,
+): Promise<void> {
+  const policy = outboundOf(ctx);
+  const refusal = await policy.refusalFor(url, "webhook");
+  if (!refusal) return;
+  await policy.recordRefusal(ctx.db, {
+    organizationId,
+    purpose: "webhook",
+    phase: "configuration",
+    refusal,
+    resource: webhookId ? { webhookId } : {},
+    actorIdentityId,
+  });
+  throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
+}
+
+export async function createWebhook(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: { url: string; eventTypes?: string[] | undefined },
+  actorIdentityId: string,
+): Promise<{ webhook: WebhookRow; secret: string }> {
+  // No stored credential or external call while the Organization is being deleted (ADR-0051).
+  await refuseIfFrozen(ctx.db, org.id);
+  validateWebhookUrl(input.url);
+  // The outbound policy (ADR-0057 Decision 6), before any transaction.
+  await refuseOutboundWebhook(ctx, org.id, input.url, null, actorIdentityId);
   const id = newId("webhook");
   // The verification secret is returned exactly once and rests encrypted
   // under the org KEK — it must be recoverable to sign future deliveries,
@@ -133,17 +166,12 @@ export async function updateWebhook(
   actorIdentityId: string,
 ): Promise<WebhookRow> {
   if (patch.url !== undefined) {
-    let parsed: URL;
-    try {
-      parsed = new URL(patch.url);
-    } catch {
-      throw new DomainError("VALIDATION_FAILED", "Invalid webhook URL");
-    }
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-      throw new DomainError("VALIDATION_FAILED", "Webhook URL must be http(s)");
-    }
-    if (parsed.username || parsed.password) {
-      throw new DomainError("VALIDATION_FAILED", "Webhook URL must not contain userinfo credentials");
+    validateWebhookUrl(patch.url);
+    // The outbound policy (ADR-0057 Decision 6), before any transaction, for
+    // a URL that changes: a filter change keeps working on a refused URL.
+    const stored = await ctx.db.query("SELECT url FROM webhooks WHERE id = $1 AND organization_id = $2", [webhookId, organizationId]);
+    if ((stored.rows[0] as { url: string } | undefined)?.url !== patch.url) {
+      await refuseOutboundWebhook(ctx, organizationId, patch.url, webhookId, actorIdentityId);
     }
   }
   return withTx(ctx.db, async (db) => {
@@ -227,8 +255,10 @@ export async function revokeWebhook(
  */
 export async function deliverWebhooksOnce(
   ctx: AppCtx,
-  fetchImpl: typeof fetch = fetch,
+  /** Test hook; delivery otherwise always uses the outbound policy (ADR-0057). */
+  fetchImpl?: typeof fetch,
 ): Promise<void> {
+  const send = fetchImpl ?? outboundOf(ctx).fetch("webhook");
   const hooks = await ctx.db.query(
     `SELECT w.id, w.organization_id, w.url, w.event_types, w.secret_envelope,
             w.cursor_occurred_at, w.cursor_event_id, w.cursor_order, o.wrapped_org_kek
@@ -237,7 +267,7 @@ export async function deliverWebhooksOnce(
   );
   for (const raw of hooks.rows as Record<string, unknown>[]) {
     try {
-      await deliverOne(ctx, raw, fetchImpl);
+      await deliverOne(ctx, raw, send);
     } catch (err) {
       console.error(`webhook delivery failed (${String(raw.id)}):`, err);
     }
@@ -336,7 +366,15 @@ async function deliverOne(
     ok = res.ok;
     status = String(res.status);
   } catch (err) {
-    status = err instanceof Error ? err.name : "error";
+    const refusal = outboundRefusalOf(err);
+    status = refusal ? "outbound_refused" : err instanceof Error ? err.name : "error";
+    // Refused by the outbound policy (ADR-0057 Decision 7): the cursor stays,
+    // and the events go out once the host operator allows the destination.
+    if (refusal) {
+      await outboundOf(ctx)
+        .recordRefusal(ctx.db, { organizationId, purpose: "webhook", phase: "connection", refusal, resource: { webhookId } })
+        .catch((e: unknown) => console.error("outbound refusal audit failed:", e));
+    }
   }
 
   if (ok) {

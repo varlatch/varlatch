@@ -8,7 +8,11 @@ import type { AccessCheck, DestinationListing } from "./access.js";
  * template" adapter — that would be a first-class exfiltration primitive.
  * The allowlist constrains HOW we talk, not WHOM the admin trusts: for
  * adapters with a user-supplied base URL the admin's choice of host is the
- * trust decision, made explicit by the disclosure gate and audit.
+ * trust decision about where the Organization's Values go, made explicit by
+ * the disclosure gate and audit. It is not a decision about the host's
+ * network: in varlatchd, `fetchImpl` is always the outbound policy's fetch
+ * (ADR-0057), which refuses private and internal addresses unless the host
+ * operator allowed them. The CLI's `sync push` uses a plain fetch.
  */
 
 export const PLATFORMS = ["github-actions", "coolify", "convex"] as const;
@@ -57,6 +61,10 @@ export interface AdapterRequest {
    * Connection's.
    */
   credentialKind?: "token" | "github-app";
+  /**
+   * The fetch every request goes through. varlatchd always passes its
+   * outbound policy's (ADR-0057); absent, the global fetch (the CLI).
+   */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   /**
