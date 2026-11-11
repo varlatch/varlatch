@@ -92,35 +92,51 @@ async function liveDestinations(db: Querier, org: string | null): Promise<Row[]>
   return rows;
 }
 
+async function checkRow(policy: OutboundPolicy, row: Row): Promise<CheckedDestination | null> {
+  let url: URL;
+  try {
+    url = new URL(row.url);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const checked = await policy.check(url);
+  const { destination } = checked;
+  const base = {
+    organization: row.organization,
+    organizationId: row.organization_id,
+    kind: row.kind,
+    id: row.id,
+    name: row.name,
+    scheme: destination.scheme === "http:" ? ("http" as const) : ("https" as const),
+    host: destination.host,
+    port: destination.port,
+    addresses: checked.addresses,
+  };
+  if (checked.outcome === "unresolved") return { ...base, verdict: "unresolved", error: checked.error ?? "ENOTFOUND" };
+  if (checked.verdict?.allowed) {
+    return checked.verdict.via === "public" ? { ...base, verdict: "public" } : { ...base, verdict: "allowed", entries: checked.verdict.entries };
+  }
+  if (checked.verdict) return { ...base, verdict: "refused", reason: checked.verdict.reason };
+  return null;
+}
+
+/** How many names the check resolves at once; the report keeps the rows' order. */
+const LOOKUPS_AT_ONCE = 8;
+
 /** Run the check: DNS lookups and the policy's decision, nothing else. */
 export async function outboundCheck(db: Querier, policy: OutboundPolicy, opts: { org?: string | null } = {}): Promise<OutboundCheckReport> {
-  const destinations: CheckedDestination[] = [];
-  for (const row of await liveDestinations(db, opts.org ?? null)) {
-    let url: URL;
-    try {
-      url = new URL(row.url);
-    } catch {
-      continue;
+  const rows = await liveDestinations(db, opts.org ?? null);
+  const checkedRows: (CheckedDestination | null)[] = new Array(rows.length).fill(null);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < rows.length) {
+      const index = next++;
+      checkedRows[index] = await checkRow(policy, rows[index] as Row);
     }
-    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
-    const checked = await policy.check(url);
-    const { destination } = checked;
-    const base = {
-      organization: row.organization,
-      organizationId: row.organization_id,
-      kind: row.kind,
-      id: row.id,
-      name: row.name,
-      scheme: destination.scheme === "http:" ? ("http" as const) : ("https" as const),
-      host: destination.host,
-      port: destination.port,
-      addresses: checked.addresses,
-    };
-    if (checked.outcome === "unresolved") destinations.push({ ...base, verdict: "unresolved", error: checked.error ?? "ENOTFOUND" });
-    else if (checked.verdict?.allowed) {
-      destinations.push(checked.verdict.via === "public" ? { ...base, verdict: "public" } : { ...base, verdict: "allowed", entries: checked.verdict.entries });
-    } else if (checked.verdict) destinations.push({ ...base, verdict: "refused", reason: checked.verdict.reason });
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(LOOKUPS_AT_ONCE, rows.length) }, worker));
+  const destinations = checkedRows.filter((d): d is CheckedDestination => d !== null);
 
   const suggestions = new Set<string>();
   const apart: OutboundCheckReport["apart"] = [];
@@ -169,6 +185,48 @@ export async function outboundCheck(db: Querier, policy: OutboundPolicy, opts: {
     apart,
     exitCode: refused ? 1 : unresolved ? 2 : 0,
   };
+}
+
+/**
+ * A refused destination as the dashboard, the API and the CLI show it
+ * (ADR-0057 Decision 8): who configured it, what it is and why it is
+ * refused. Never the resolved addresses: those are for the operator's
+ * terminal and log only.
+ */
+export interface RefusedDestinationView {
+  organizationId: string;
+  organization: string;
+  kind: DestinationKind;
+  id: string;
+  name: string | null;
+  scheme: "https" | "http";
+  host: string;
+  port: number;
+  reason: RefusalReason;
+  /** Why the suggested allow list value leaves it out; null when it covers it. */
+  notSuggested: string | null;
+}
+
+/** The report's refused destinations, without resolved addresses. */
+export function refusedDestinations(report: OutboundCheckReport): RefusedDestinationView[] {
+  return report.destinations.flatMap((d) =>
+    d.verdict === "refused" && d.reason
+      ? [
+          {
+            organizationId: d.organizationId,
+            organization: d.organization,
+            kind: d.kind,
+            id: d.id,
+            name: d.name,
+            scheme: d.scheme,
+            host: d.host,
+            port: d.port,
+            reason: d.reason,
+            notSuggested: report.apart.find((a) => a.kind === d.kind && a.id === d.id)?.why ?? null,
+          },
+        ]
+      : [],
+  );
 }
 
 const KIND_LABEL: Record<DestinationKind, string> = { webhook: "webhook", coolify: "Coolify", convex: "Convex", "oidc-issuer": "OIDC issuer" };

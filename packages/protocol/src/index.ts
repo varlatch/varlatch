@@ -134,6 +134,24 @@ export type AdminApprovalKeys = components["schemas"]["AdminApprovalKeys"];
 export type ApprovalKey = components["schemas"]["ApprovalKey"];
 /** The caller's own organization-level permissions (capability organizations.permissions). */
 export type OrganizationPermissions = components["schemas"]["OrganizationPermissions"];
+/** An Organization's destinations the outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8). */
+export type RefusedDestinations = components["schemas"]["RefusedDestinations"];
+export type RefusedDestination = components["schemas"]["RefusedDestination"];
+export type OutboundDestinationKind = components["schemas"]["OutboundDestinationKind"];
+/** The host's outbound allow list and every refused destination (capability installation.outbound). */
+export type InstallationOutbound = components["schemas"]["InstallationOutbound"];
+export type InstallationRefusedDestination = components["schemas"]["InstallationRefusedDestination"];
+export {
+  OUTBOUND_HOST_NOTE,
+  OUTBOUND_POLICY_DOCS,
+  OUTBOUND_REFUSAL_LABELS,
+  OUTBOUND_REFUSAL_MESSAGES,
+  OUTBOUND_REFUSAL_REASONS,
+  isOutboundRefusalReason,
+  outboundRefusalMessage,
+  outboundRefusalOfStatus,
+  type OutboundRefusalReason,
+} from "./outbound.js";
 export {
   MAX_TARGETS_PER_ITEM,
   TRANSPORT_OWNED_HEADERS,
