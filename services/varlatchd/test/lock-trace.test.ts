@@ -11,6 +11,19 @@ import { migratedTestDb } from "./helpers/pglite.js";
 const row = (seq: number, tbl: string, key: string, mode: string, kind: TraceRow["kind"] = "explicit"): TraceRow => ({ seq, tbl, key, mode, kind });
 
 describe("checkTrace", () => {
+  it("fails an approval consumed without its person held FOR UPDATE first", () => {
+    expect(checkTrace([
+      row(1, "identities", "idn_a", "key share"),
+      row(2, "approval_intents", "apr_a", "no key update", "write"),
+      row(3, "identities", "idn_a", "update", "consume"),
+    ])).toEqual([expect.stringMatching(/^an approval consumed without its person locked FOR UPDATE/)]);
+    expect(checkTrace([
+      row(1, "identities", "idn_a", "update"),
+      row(2, "approval_intents", "apr_a", "no key update", "write"),
+      row(3, "identities", "idn_a", "update", "consume"),
+    ])).toEqual([]);
+  });
+
   it("passes the order: Organization, people, Project, environment, value, audit, and reuse of a held person", () => {
     expect(checkTrace([
       row(1, "organizations", "org_a", "key share"),
@@ -156,6 +169,22 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     expect(lockTagOf(`${selfJoin} FOR UPDATE OF a${tag("identities")}`)?.table).toBe("identities");
   });
 
+  it("refuses a second locking clause, and a locking clause in a subquery whose keys would not be its own", () => {
+    // The reviewer's probe (#106 at 2fb2680).
+    refused(`SELECT a.id FROM identities a JOIN identities b ON b.id = a.organization_id FOR UPDATE OF a FOR UPDATE OF b${tag("identities")}`);
+    refused(`SELECT a.id FROM identities a, identities b WHERE b.id = $2 AND a.id = $1 FOR UPDATE OF a FOR UPDATE OF b${tag("identities")}`);
+    refused(`SELECT id FROM identities WHERE id = $1 AND EXISTS (SELECT 1 FROM identities x WHERE x.id = $2 FOR UPDATE) FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id FROM identities WHERE id IN (SELECT id FROM identities WHERE organization_id = $1 FOR UPDATE)${tag("identities")}`);
+    refused(`SELECT id FROM projects WHERE organization_id IN (SELECT id FROM organizations WHERE id = $1 FOR UPDATE)${tag("organizations")}`);
+    refused(`SELECT p.id FROM projects p WHERE p.id = $1 AND EXISTS (SELECT 1 FROM environments e WHERE e.project_id = p.id FOR UPDATE)${tag("environments")}`);
+    refused(`SELECT a.id FROM identities a JOIN identities b ON true FOR UPDATE OF a, b${tag("identities")}`);
+    // A nested lock even in a DELETE needs key "-", and a top-level one needs recorded keys.
+    refused(`DELETE FROM identities WHERE id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED)${tag("identities")}`);
+    refused("SELECT id FROM identities FOR UPDATE /* varlatch-lock identities update - */");
+    // The sweep pattern stays allowed.
+    expect(lockTagOf("DELETE FROM identities WHERE id IN (SELECT id FROM identities ORDER BY id FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */")?.key).toBe("-");
+  });
+
   it("accepts the grammar the code uses", () => {
     expect(lockTagOf(`SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR UPDATE${tag("identities")}`)?.table).toBe("identities");
     expect(lockTagOf(`SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id WHERE o.id = $1 FOR UPDATE OF i${tag("identities")}`)?.table).toBe("identities");
@@ -229,6 +258,22 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       await lockedQuery(q, { table: "identities", mode: "key share" }, "SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR KEY SHARE");
       await lockedQuery(q, { table: "identities", mode: "key share" }, `${commas} ORDER BY i.id FOR KEY SHARE OF i`);
     });
+    expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {
+    // A refusal after the locks (a version conflict, an approval needed) rolls back.
+    await expect(withTx(db, async (q) => {
+      await q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
+      await lockPeople(q, ["idn_a"]);
+      throw new Error("refused");
+    })).rejects.toThrow("refused");
+    expect(takeLockViolations().map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: identities\[idn_a\]/)]]);
+    // An aborted transaction cannot be read: nothing is reported, nothing breaks.
+    await expect(withTx(db, async (q) => {
+      await lockPeople(q, ["idn_b"]);
+      await q.query("SELECT 1/0");
+    })).rejects.toThrow(/division by zero/);
     expect(takeLockViolations()).toEqual([]);
   });
 
