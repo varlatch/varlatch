@@ -78,6 +78,31 @@ paths:
         "403":
           description: Installation Admin authority required
 
+  /installation/outbound:
+    get:
+      tags: [meta]
+      operationId: getInstallationOutbound
+      summary: Installation Admin only, the host's outbound allow list and the destinations it refuses
+      description: >
+        VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the
+        warnings `varlatchd admin doctor` gives, and every live destination
+        an Organization configured that the outbound policy refuses (ADR-0057
+        Decision 8), by Organization, with the allow list value that would
+        allow the refused names. Read-only: the allow list is set on the
+        host, never through the API. The same check as `varlatchd admin
+        outbound check`, run when asked: DNS lookups only, never a request
+        to a destination; shared by concurrent requests and reused for up
+        to 30 seconds. Never a resolved address, a path, a query or a
+        credential. Requires capability `installation.outbound`.
+      responses:
+        "200":
+          description: The allow list and the refused destinations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InstallationOutbound" }
+        "403":
+          description: Installation Admin authority required
+
   /meta:
     get:
       tags: [meta]
@@ -1357,6 +1382,35 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationPermissions" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/security/refused-destinations:
+    get:
+      tags: [organizations]
+      operationId: refusedDestinations
+      summary: >
+        The Organization's configured destinations that this installation's
+        outbound policy refuses (capability security.refused-destinations,
+        ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and
+        OIDC issuers, each with its kind, name, host, port and reason, and
+        since when refusals of it are recorded. Checked when asked, with
+        DNS lookups only. Private destinations are allowed by the host
+        operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the
+        API. Nothing waiting is lost: deliveries catch up once the host
+        allows the destination. `unresolved` counts destinations whose
+        names did not resolve, which could not be checked. A check is
+        shared by concurrent requests and reused for up to 30 seconds. Never
+        a resolved address, a path, a query or a credential, and never the
+        host's allow list. Needs
+        organization.manage; existence-hiding. Never cached.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The refused destinations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RefusedDestinations" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/approval-keys:
@@ -6047,6 +6101,125 @@ components:
           type: array
           description: The live admins, by name.
           items: { $ref: "#/components/schemas/AdminApprovalKeys" }
+
+    OutboundRefusalReason:
+      type: string
+      enum: [private_address, host_only_address, never_address, mixed_answers, scheme, port]
+      description: >
+        Why the outbound policy refuses a destination (ADR-0057): a private
+        network address; a loopback, link-local or metadata address; an
+        unspecified, multicast or reserved address; a name with several
+        addresses of which one is refused; plain http without an allow list
+        entry; or an allowed destination on another port.
+
+    OutboundDestinationKind:
+      type: string
+      enum: [webhook, coolify, convex, oidc-issuer]
+
+    RefusedDestination:
+      type: object
+      required: [kind, id, name, scheme, host, port, reason, since]
+      properties:
+        kind: { $ref: "#/components/schemas/OutboundDestinationKind" }
+        id:
+          type: string
+          description: The webhook's, Connection's or OIDC binding's id.
+        name:
+          type: [string, "null"]
+          description: The Connection's name; null for a webhook or an OIDC issuer.
+        scheme: { type: string, enum: [https, http] }
+        host:
+          type: string
+          description: The configured host name or literal address; never a resolved address.
+        port: { type: integer }
+        reason: { $ref: "#/components/schemas/OutboundRefusalReason" }
+        since:
+          type: [string, "null"]
+          format: date-time
+          description: >
+            The earliest refusal of this destination recorded in the audit
+            log (outbound.refused) within the last `sinceDays` days; not
+            necessarily the start of one continuous refusal. Null when none
+            is recorded there, for example a Connection no Target has used yet.
+
+    RefusedDestinations:
+      type: object
+      required: [generatedAt, sinceDays, checked, unresolved, items]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the check ran. A check is reused for up to 30 seconds.
+        checked:
+          type: integer
+          description: How many destinations the Organization configured and the check looked at.
+        unresolved:
+          type: integer
+          description: >
+            How many of them could not be checked because their names did
+            not resolve. They are not refusals; the policy decides when they
+            connect. Zero refused with some unresolved is not "all allowed".
+        sinceDays:
+          type: integer
+          description: How far back `since` looks in the audit log.
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RefusedDestination" }
+
+    InstallationRefusedDestination:
+      type: object
+      required: [organization, kind, id, name, scheme, host, port, reason]
+      properties:
+        organization:
+          type: object
+          required: [id, slug, name]
+          properties:
+            id: { type: string }
+            slug: { type: string }
+            name: { type: string }
+        kind: { $ref: "#/components/schemas/OutboundDestinationKind" }
+        id: { type: string }
+        name: { type: [string, "null"] }
+        scheme: { type: string, enum: [https, http] }
+        host: { type: string }
+        port: { type: integer }
+        reason: { $ref: "#/components/schemas/OutboundRefusalReason" }
+        notSuggested:
+          type: [string, "null"]
+          description: >
+            Why the suggested allow list value leaves it out (a literal
+            address, or a name that resolves to a loopback, link-local,
+            metadata or reserved address); null when the suggestion covers it.
+
+    InstallationOutbound:
+      type: object
+      required: [generatedAt, allow, warnings, checked, refused, suggested, unresolved]
+      properties:
+        generatedAt:
+          type: string
+          format: date-time
+          description: When the check ran. A check is reused for up to 30 seconds.
+        checked:
+          type: integer
+          description: How many configured destinations the check looked at, in every Organization.
+        allow:
+          type: array
+          description: VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set.
+          items: { type: string }
+        warnings:
+          type: array
+          description: Entries that add nothing or open host-only ranges, as `varlatchd admin doctor` words them.
+          items: { type: string }
+        refused:
+          type: array
+          description: Every refused destination, by Organization.
+          items: { $ref: "#/components/schemas/InstallationRefusedDestination" }
+        suggested:
+          type: [string, "null"]
+          description: The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help.
+        unresolved:
+          type: integer
+          description: Destinations whose names did not resolve; not refusals, checked again when they connect.
 
     SecurityControlName:
       type: string

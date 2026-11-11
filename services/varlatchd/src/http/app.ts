@@ -189,6 +189,7 @@ import {
   type PendingAccessReport,
   type WouldBlock,
 } from "../domain/securityreport.js";
+import { installationOutbound, organizationRefusedDestinations } from "../domain/refuseddestinations.js";
 
 export const SERVER_VERSION = "0.21.0";
 
@@ -832,6 +833,17 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.get("/v1/installation/release", (c) => {
     if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
     return c.json(installationRelease(ctx.maintenance?.dir ?? null, SERVER_VERSION));
+  });
+
+  // Installation Admins: the host's outbound allow list as parsed, with
+  // doctor's warnings, and every destination an Organization configured
+  // that the outbound policy refuses, with the value that would allow the
+  // refused names (ADR-0057 Decision 8). Read-only: the allow list is set
+  // on the host. DNS lookups only; never a resolved address.
+  app.get("/v1/installation/outbound", async (c) => {
+    if (!c.get("principal").identity.installation_admin) throw new DomainError("PERMISSION_DENIED", "Installation Admin required");
+    c.header("Cache-Control", "no-store");
+    return c.json(await installationOutbound(ctx));
   });
 
   // ---- Application Plane token exchange (ADR-0018 §6): a Secret Plane
@@ -2687,6 +2699,20 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
     c.header("Cache-Control", "no-store");
     return c.json(await approvalKeys(ctx.db, org.id));
+  });
+
+  // The Organization's destinations the outbound policy refuses (ADR-0057
+  // Decision 8; capability security.refused-destinations): kind, name,
+  // host, reason and since when. Webhooks and Connections are managed with
+  // organization.manage-level authority and their refusals are what an admin
+  // acts on, so it needs organization.manage, as the control report does.
+  // Never the host's allow list or a resolved address.
+  app.get("/v1/organizations/:org/security/refused-destinations", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await organizationRefusedDestinations(ctx, org.id));
   });
 
   app.patch("/v1/organizations/:org/security/controls/:control", async (c) => {

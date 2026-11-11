@@ -61,6 +61,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/installation/outbound": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Installation Admin only, the host's outbound allow list and the destinations it refuses
+         * @description VARLATCH_OUTBOUND_ALLOW as varlatchd parsed it at startup, with the warnings `varlatchd admin doctor` gives, and every live destination an Organization configured that the outbound policy refuses (ADR-0057 Decision 8), by Organization, with the allow list value that would allow the refused names. Read-only: the allow list is set on the host, never through the API. The same check as `varlatchd admin outbound check`, run when asked: DNS lookups only, never a request to a destination; shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential. Requires capability `installation.outbound`.
+         */
+        get: operations["getInstallationOutbound"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/meta": {
         parameters: {
             query?: never;
@@ -593,6 +613,23 @@ export interface paths {
         };
         /** The caller's own organization-level permissions in this Organization (capability organizations.permissions): the caller's role, and which of the organization-scoped actions (organization.read, organization.manage, project.read, project.manage, identity.read, identity.manage, policy.read, policy.manage, audit.read) their role and organization-wide Grants allow. Grants on a project or an environment are not counted; value and environment actions are not listed. The authorization outcome only: no Grant ids or other data. Clients use it to show only what the caller may read. Needs organization.read; existence-hiding. Never cached. */
         get: operations["myOrganizationPermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/security/refused-destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's configured destinations that this installation's outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8): webhooks, Coolify and Convex Connections and OIDC issuers, each with its kind, name, host, port and reason, and since when refusals of it are recorded. Checked when asked, with DNS lookups only. Private destinations are allowed by the host operator (VARLATCH_OUTBOUND_ALLOW on the host), never through the API. Nothing waiting is lost: deliveries catch up once the host allows the destination. `unresolved` counts destinations whose names did not resolve, which could not be checked. A check is shared by concurrent requests and reused for up to 30 seconds. Never a resolved address, a path, a query or a credential, and never the host's allow list. Needs organization.manage; existence-hiding. Never cached. */
+        get: operations["refusedDestinations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3071,6 +3108,81 @@ export interface components {
             /** @description The live admins, by name. */
             items: components["schemas"]["AdminApprovalKeys"][];
         };
+        /**
+         * @description Why the outbound policy refuses a destination (ADR-0057): a private network address; a loopback, link-local or metadata address; an unspecified, multicast or reserved address; a name with several addresses of which one is refused; plain http without an allow list entry; or an allowed destination on another port.
+         * @enum {string}
+         */
+        OutboundRefusalReason: "private_address" | "host_only_address" | "never_address" | "mixed_answers" | "scheme" | "port";
+        /** @enum {string} */
+        OutboundDestinationKind: "webhook" | "coolify" | "convex" | "oidc-issuer";
+        RefusedDestination: {
+            kind: components["schemas"]["OutboundDestinationKind"];
+            /** @description The webhook's, Connection's or OIDC binding's id. */
+            id: string;
+            /** @description The Connection's name; null for a webhook or an OIDC issuer. */
+            name: string | null;
+            /** @enum {string} */
+            scheme: "https" | "http";
+            /** @description The configured host name or literal address; never a resolved address. */
+            host: string;
+            port: number;
+            reason: components["schemas"]["OutboundRefusalReason"];
+            /**
+             * Format: date-time
+             * @description The earliest refusal of this destination recorded in the audit log (outbound.refused) within the last `sinceDays` days; not necessarily the start of one continuous refusal. Null when none is recorded there, for example a Connection no Target has used yet.
+             */
+            since: string | null;
+        };
+        RefusedDestinations: {
+            /**
+             * Format: date-time
+             * @description When the check ran. A check is reused for up to 30 seconds.
+             */
+            generatedAt: string;
+            /** @description How many destinations the Organization configured and the check looked at. */
+            checked: number;
+            /** @description How many of them could not be checked because their names did not resolve. They are not refusals; the policy decides when they connect. Zero refused with some unresolved is not "all allowed". */
+            unresolved: number;
+            /** @description How far back `since` looks in the audit log. */
+            sinceDays: number;
+            items: components["schemas"]["RefusedDestination"][];
+        };
+        InstallationRefusedDestination: {
+            organization: {
+                id: string;
+                slug: string;
+                name: string;
+            };
+            kind: components["schemas"]["OutboundDestinationKind"];
+            id: string;
+            name: string | null;
+            /** @enum {string} */
+            scheme: "https" | "http";
+            host: string;
+            port: number;
+            reason: components["schemas"]["OutboundRefusalReason"];
+            /** @description Why the suggested allow list value leaves it out (a literal address, or a name that resolves to a loopback, link-local, metadata or reserved address); null when the suggestion covers it. */
+            notSuggested?: string | null;
+        };
+        InstallationOutbound: {
+            /**
+             * Format: date-time
+             * @description When the check ran. A check is reused for up to 30 seconds.
+             */
+            generatedAt: string;
+            /** @description How many configured destinations the check looked at, in every Organization. */
+            checked: number;
+            /** @description VARLATCH_OUTBOUND_ALLOW as parsed at startup, one entry each; empty when it is not set. */
+            allow: string[];
+            /** @description Entries that add nothing or open host-only ranges, as `varlatchd admin doctor` words them. */
+            warnings: string[];
+            /** @description Every refused destination, by Organization. */
+            refused: components["schemas"]["InstallationRefusedDestination"][];
+            /** @description The VARLATCH_OUTBOUND_ALLOW value that would allow the refused names (the current entries plus new ones); null when none would help. */
+            suggested: string | null;
+            /** @description Destinations whose names did not resolve; not refusals, checked again when they connect. */
+            unresolved: number;
+        };
         /** @enum {string} */
         SecurityControlName: "requirement-protection" | "admin-step-up" | "passkey-verification" | "credential-lifetime";
         /**
@@ -3738,6 +3850,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstallationRelease"];
+                };
+            };
+            /** @description Installation Admin authority required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getInstallationOutbound: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The allow list and the refused destinations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstallationOutbound"];
                 };
             };
             /** @description Installation Admin authority required */
@@ -5101,6 +5240,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationPermissions"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    refusedDestinations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The refused destinations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefusedDestinations"];
                 };
             };
             default: components["responses"]["Error"];

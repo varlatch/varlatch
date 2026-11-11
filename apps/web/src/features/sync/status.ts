@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PlatformConnection, SyncTarget, SyncTargetNote } from "@varlatch/protocol";
+import {
+  outboundRefusalOfStatus,
+  outboundRefusalText,
+  type OutboundRefusalReason,
+  type PlatformConnection,
+  type SyncTarget,
+  type SyncTargetNote,
+} from "@varlatch/protocol";
 import { platformMeta } from "./platform-meta";
 
 /**
@@ -82,6 +89,17 @@ export function redeployError(result: string | null | undefined): string | undef
 }
 
 /**
+ * The outbound policy's wording when this installation refuses a Target's
+ * destination (ADR-0057 Decision 7): varlatchd records "outbound_refused:
+ * <reason>", counts no failure and keeps the run owed until the host
+ * operator allows it. Undefined otherwise.
+ */
+export function outboundRefusal(result: string | null | undefined): string | undefined {
+  const reason = outboundRefusalOfStatus(result);
+  return reason ? outboundRefusalText(reason) : undefined;
+}
+
+/**
  * A refetch interval for a list of Targets: every 2 s while one of them can
  * still send. Nothing announces the end of a run (a fenced or out-of-budget
  * run records no event), so "Pushing" and "Pausing" are kept current by
@@ -115,6 +133,12 @@ export function targetStatus(t: SyncTarget): TargetStatus {
   }
   if (reaffirm) {
     return { tone: "warn", label: "Needs re-affirmation", detail: "a mapped item became a secret", fix: "reaffirm", at: t.lastAttemptAt };
+  }
+  // Refused by this installation's outbound policy: nothing failed and
+  // nothing is lost, it waits for the host operator (ADR-0057 Decision 7).
+  const refused = outboundRefusal(t.lastResult);
+  if (refused) {
+    return { tone: "warn", label: "Destination refused", detail: "waiting for the host operator", error: refused, at: t.lastAttemptAt };
   }
   // Every failed run counts in failureCount; a successful one resets it and
   // records "ok" (values written) or "converged" (nothing to change).
@@ -213,45 +237,73 @@ export interface ConnectionHealth {
   label: string;
   /** Set when the platform rejected the credential. */
   credentialRejected: boolean;
+  /** The outbound policy's wording, when this installation refuses the connection's host. */
+  refusal?: string | undefined;
+  /** Whether the label already says so; otherwise the refusal is shown next to it (paused, unused). */
+  refusalInLabel?: boolean | undefined;
   at?: string | null | undefined;
 }
 
-/** A connection is as healthy as the targets that use it. */
-export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
+/**
+ * A connection is as healthy as the targets that use it, except for the
+ * outbound policy (ADR-0057 Decision 8): `current` is this installation's
+ * refusal of the connection's host as the check found it now (the
+ * Organization's refused destinations), shown whatever the targets are
+ * doing, paused or unused included. Without it, a target's recorded
+ * refusal, paused ones included, stands in.
+ */
+export function connectionHealth(targets: SyncTarget[], current?: OutboundRefusalReason | null): ConnectionHealth {
   const live = targets.filter((t) => t.state !== "paused");
-  if (targets.length === 0) return { tone: "muted", label: "Not used yet", credentialRejected: false };
-  if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false };
+  const recorded = targets.map((t) => outboundRefusalOfStatus(t.lastResult)).find((r) => r !== null) ?? null;
+  const reason = current ?? recorded;
+  const refusal = reason ? outboundRefusalText(reason) : undefined;
+  if (targets.length === 0) return { tone: "muted", label: "Not used yet", credentialRejected: false, refusal };
+  if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false, refusal };
+  // Refused: nothing reaches the platform, so an older credential error is not the news.
+  const refusedTarget = live.find((t) => outboundRefusalOfStatus(t.lastResult));
+  if (current || refusedTarget) {
+    return {
+      tone: "warn",
+      label: "Refused by this installation",
+      credentialRejected: false,
+      refusal,
+      refusalInLabel: true,
+      at: refusedTarget?.lastAttemptAt,
+    };
+  }
+  // A refusal only a paused Target recorded stays next to the live Targets' status.
+  const withRefusal = (health: ConnectionHealth): ConnectionHealth => (refusal ? { ...health, refusal } : health);
   const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
-  if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt };
+  if (rejected) return withRefusal({ tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt });
   const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0);
   if (failing.length > 0) {
-    return {
+    return withRefusal({
       tone: "error",
       label: `${failing.length} target${failing.length === 1 ? "" : "s"} failing`,
       credentialRejected: false,
       at: failing[0]!.lastAttemptAt,
-    };
+    });
   }
   const redeploys = live.filter((t) => redeployError(t.lastResult));
   if (redeploys.length > 0) {
-    return {
+    return withRefusal({
       tone: "warn",
       label: `${redeploys.length} redeploy${redeploys.length === 1 ? "" : "s"} failed`,
       credentialRejected: false,
       at: redeploys[0]!.lastAttemptAt,
-    };
+    });
   }
   const holding = live.filter((t) => heldSummary(t));
   if (holding.length > 0) {
-    return {
+    return withRefusal({
       tone: "warn",
       label: `${holding.length} target${holding.length === 1 ? "" : "s"} holding values`,
       credentialRejected: false,
       at: holding[0]!.lastAttemptAt,
-    };
+    });
   }
-  if (live.every((t) => !t.lastAttemptAt)) return { tone: "live", label: "Waiting for first push", credentialRejected: false };
-  return { tone: "ok", label: "Healthy", credentialRejected: false };
+  if (live.every((t) => !t.lastAttemptAt)) return withRefusal({ tone: "live", label: "Waiting for first push", credentialRejected: false });
+  return withRefusal({ tone: "ok", label: "Healthy", credentialRejected: false });
 }
 
 /**
