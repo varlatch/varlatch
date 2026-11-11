@@ -142,6 +142,12 @@ export const AUDIT_EVENT_TYPES = [
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
 export interface AuditEventInput {
+  /**
+   * The event's id, when the caller needs it before the insert (a row that
+   * points at the event is written first, and the audit insert comes last
+   * in the lock order). Generated otherwise.
+   */
+  id?: string | undefined;
   eventType: AuditEventType;
   decision: AuditDecision;
   actorIdentityId?: string | null;
@@ -199,7 +205,7 @@ export async function recordAuditEvents(db: Querier, events: AuditEventInput[]):
 }
 
 async function insertAuditEvent(db: Querier, event: AuditEventInput): Promise<string> {
-  const id = newId("auditEvent");
+  const id = event.id ?? newId("auditEvent");
   // Only the request's own identity is attributed to its credential: an
   // event about someone else, or with no actor, keeps what the caller gave.
   const acting = currentAttribution();

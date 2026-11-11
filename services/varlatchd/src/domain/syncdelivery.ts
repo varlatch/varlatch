@@ -27,6 +27,7 @@ import {
   type TargetNote,
 } from "./sync.js";
 import { lockedQuery } from "../db/locks.js";
+import { newId } from "../db/ids.js";
 
 /**
  * Sync Target reconciliation (ADR-0031 §3-7): converge each destination to
@@ -1164,9 +1165,12 @@ export async function ledgerSet(
   oweRedeploy = false,
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE",
-      [targetId],
-    );
+    // The Target in the strongest mode this transaction needs, from the
+    // start (lock order, liveness.ts): FOR NO KEY UPDATE when it records a
+    // redeploy debt on the Target, FOR SHARE otherwise. Never upgraded.
+    const res = oweRedeploy
+      ? await lockedQuery(db, { table: "sync_targets", mode: "no key update", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR NO KEY UPDATE", [targetId])
+      : await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await db.query(
@@ -1200,10 +1204,21 @@ async function recordDrift(
   metadata: Record<string, string | number>,
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [target.id]);
+    // The lock order (liveness.ts): the Target FOR NO KEY UPDATE from the
+    // start, since it is updated below; the event's id generated first, so
+    // the Target can point at it before the audit insert, which comes last.
+    const res = await lockedQuery(db, { table: "sync_targets", mode: "no key update", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR NO KEY UPDATE", [target.id]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
-    const eventId = await recordAuditEvent(db, {
+    const eventId = newId("auditEvent");
+    await db.query(
+      `UPDATE sync_targets
+       SET last_drift_at = now(), last_drift_count = $2, last_drift_names = $3, last_drift_event_id = $4
+       WHERE id = $1`,
+      [target.id, names.length, JSON.stringify(names.slice(0, 50)), eventId],
+    );
+    await recordAuditEvent(db, {
+      id: eventId,
       eventType: "sync.drift_detected",
       decision: "info",
       organizationId: target.organization_id,
@@ -1211,12 +1226,6 @@ async function recordDrift(
       resource: { targetId: target.id, environmentId: target.environment_id },
       metadata,
     });
-    await db.query(
-      `UPDATE sync_targets
-       SET last_drift_at = now(), last_drift_count = $2, last_drift_names = $3, last_drift_event_id = $4
-       WHERE id = $1`,
-      [target.id, names.length, JSON.stringify(names.slice(0, 50)), eventId],
-    );
     return true;
   });
 }
