@@ -94,4 +94,10 @@ describe('authenticated installation archives', () => {
     expect(EMBEDDED_RELEASE.migrationVersion).toBeGreaterThanOrEqual(27);
     expect(compatible(published, EMBEDDED_RELEASE)).toBe(true);
   });
+  it('restores archives of the published 0.21.0 (migration 42) after a later migration', () => {
+    // The release.json v0.21.0 shipped with; a new migration must keep its archives restorable.
+    const published = { ...EMBEDDED_RELEASE, version: '0.21.0', migrationVersion: 42, supportedRestoreSources: [] };
+    expect(EMBEDDED_RELEASE.migrationVersion).toBeGreaterThanOrEqual(42);
+    expect(compatible(published, EMBEDDED_RELEASE)).toBe(true);
+  });
 });

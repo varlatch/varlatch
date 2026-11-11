@@ -17,8 +17,10 @@ fixes.
   covers signing out, ending one or all of your other sessions, a session
   that expired, and the end of every session when the installation moves
   to another address. Each token ended this way is recorded in the audit
-  log as a revoked credential, with the reason `session-ended`. A token
-  is also never issued for longer than the session it comes from has left.
+  log as a revoked credential, with the reason `session-ended`, or
+  `public-url-changed` when the installation moves to another address. A
+  token is also never issued for longer than the session it comes from has
+  left.
 - **`varlatch login` keeps working after you sign out of the browser.** The
   CLI sign-in that the browser hands over is its own credential, for 12
   hours by default, as before: signing out of the browser does not end
