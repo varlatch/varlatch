@@ -25,7 +25,8 @@ CLI to moving your `.env` files in: [Set up with a coding agent](set-up-with-an-
   name pointing at the host, a Tailscale network, or your own reverse
   proxy. [Run an installation](#run-an-installation) explains the choice, and
   [Host requirements](self-hosting/requirements.md) lists memory, disk,
-  and ports.
+  and ports. To try Varlatch first, your own Linux machine with Docker is
+  enough: [Try it on your own machine](#try-it-on-your-own-machine).
 - **For each person:** Node.js 22, 24 or 26 with its current security
   fixes for the CLI ([Node.js version](#nodejs-version)), and a browser that
   supports passkeys. Varlatch has no passwords: you sign in with a passkey
@@ -158,7 +159,7 @@ will reach Varlatch:
 |---|---|---|
 | **public** | `https://vault.example.com`, with a certificate a bundled Caddy obtains | the name resolving to this host in public DNS, and ports 80 and 443 reachable from the internet |
 | **tailnet** | `https://<machine>.<tailnet>.ts.net`, for members of your tailnet only | a Tailscale auth key, and MagicDNS and HTTPS certificates enabled in the Tailscale admin console |
-| **external** | whatever your reverse proxy serves; also for a LAN-only installation | a proxy forwarding to `127.0.0.1:8787`, WebSocket upgrades included |
+| **external** | whatever your reverse proxy serves; also for a LAN-only installation, or `http://localhost:8787` to try Varlatch on your own machine | a proxy forwarding to `127.0.0.1:8787`, WebSocket upgrades included; nothing for `http://localhost:8787` |
 
 Choose carefully: the address is where passkeys are registered, so changing
 it later means everyone registers their passkey again.
@@ -183,6 +184,23 @@ Next, schedule backups: [Backup and recovery](operations/backup.md) covers
 where they go and how to test a restore. The
 [deployment guide](../infra/compose/README.md) covers every setup option,
 running on Coolify, and upgrades.
+
+### Try it on your own machine
+
+To try Varlatch before you choose a server, run the installation on your
+own Linux machine, with Docker, and reach it at `http://localhost:8787`.
+Browsers allow passkeys on `http://localhost`, so you need no domain, no
+certificate, and no proxy. In `varlatch setup`, choose **external**, and
+enter `http://localhost:8787` as the address.
+
+Every port stays on `127.0.0.1`: nobody else on your network reaches it,
+and nobody but you can join. Setup writes only inside the directory you
+unpacked; [What Varlatch puts on your machine](#what-varlatch-puts-on-your-machine)
+lists everything, and how to remove it.
+
+An installation keeps the address it was set up with, and every passkey is
+registered for that address. To move on to a real server later, set up a
+new installation there, rather than moving this one.
 
 ## Set up a project
 
@@ -533,6 +551,78 @@ they are: rotate those at their provider. A GitHub App stays installed on
 GitHub until you uninstall or delete it there. After an organization is
 deleted, the people who could read its audit log export it with
 `varlatch audit export --deleted-org <organization-id>`.
+
+## What Varlatch puts on your machine
+
+Varlatch installs no system packages, services, or scheduled jobs, and
+needs no root. You install Node.js for the CLI and Docker for an
+installation yourself. Here is everything else, and how to remove it.
+
+**The CLI,** on every machine that uses it:
+
+- The CLI itself: `~/.local/bin/varlatch`, or wherever you put it
+  ([Get the CLI](#get-the-cli)). On Windows,
+  `%LOCALAPPDATA%\Programs\Varlatch`, which is also on your user `PATH`.
+- Your sign-in: `credentials.json`, and `pending-sign-ins.json` while a
+  sign-in with a code waits, in `~/.config/varlatch` (or
+  `$XDG_CONFIG_HOME/varlatch`, or `VARLATCH_CONFIG_DIR`). On Windows, the
+  same files are in `.config\varlatch` in your user profile.
+
+To remove it, sign out with `varlatch logout`, which also revokes the
+credential on the server, then delete the CLI and the directory:
+
+```sh
+varlatch logout
+rm ~/.local/bin/varlatch
+rm -r ~/.config/varlatch
+```
+
+**In a repository,** only what you ask for, and all of it shows in
+`git status`:
+
+- `varlatch init` writes `varlatch.toml`, and the files coding agents read:
+  `AGENTS.md`, the skill in `.agents/skills/varlatch/` and
+  `.claude/skills/varlatch/`, and the files a few agents need besides
+  ([Coding agents](reference/coding-agents.md)). `--no-agent-files` skips
+  those. `varlatch agents install --remove` removes them again, and
+  `--scope user` does the same for the copies in your home directory.
+- `varlatch agents install --guardrails` adds hooks to your agents'
+  settings in the repository.
+- `varlatch scan --install-hook` adds a pre-commit hook in `.git/hooks`.
+
+**An installation,** on its host:
+
+- The directory you unpacked the bundle in. Setup writes only there: the
+  keys and passwords in `secrets/`, the recovery key copy in `recovery/` if
+  you chose a passphrase-protected file, `backups/`, `.env`, and
+  `varlatch-install.json`.
+- A Docker Compose project named `varlatch`: its containers, a network,
+  the volumes that hold the data (`postgres-data`, `convex-data`,
+  `varlatch-state`, and with the public or tailnet address, Caddy's or
+  Tailscale's state), and the images it pulled.
+- Ports on `127.0.0.1` only, by default 8787, 8686 and 3210. With the
+  public address, Caddy also listens on ports 80 and 443 on every
+  interface.
+
+To remove an installation, run this in its directory, then delete the
+directory. It erases every value the installation stores and every key on
+this host: only a [backup](operations/backup.md), with the recovery keys
+you kept off this host, brings any of it back.
+
+```sh
+docker compose down --volumes --rmi all
+cd .. && rm -r varlatch-$V
+```
+
+`.env` tells Docker Compose which files the installation uses, so this
+removes the containers and volumes of every address type. `--rmi all`
+also removes the images, including shared ones such as `postgres`: leave
+it out to keep them. Outside this machine, remove what you set up for it
+by hand: the DNS record of a public address, or the machine in the
+Tailscale admin console for a tailnet address.
+
+**Your passkey** stays where you created it, on your device, in your
+password manager, or on your security key. Delete it there.
 
 ## Where to go next
 
