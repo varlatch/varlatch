@@ -42,6 +42,7 @@ import { sql as passkeyEvidence } from "./0039_passkey_evidence.js";
 import { sql as passkeyCounter } from "./0040_passkey_counter.js";
 import { sql as securityControls } from "./0041_security_controls.js";
 import { sql as securityReportCounters } from "./0042_security_report_counters.js";
+import { sql as sessionEndRevokesBrowserCredentials } from "./0043_session_end_revokes_browser_credentials.js";
 
 export interface Migration {
   id: number;
@@ -93,4 +94,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 40, name: "passkey_counter", sql: passkeyCounter },
   { id: 41, name: "security_controls", sql: securityControls },
   { id: 42, name: "security_report_counters", sql: securityReportCounters },
+  { id: 43, name: "session_end_revokes_browser_credentials", sql: sessionEndRevokesBrowserCredentials },
 ];

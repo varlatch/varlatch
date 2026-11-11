@@ -146,7 +146,11 @@ describe("credentials carry the label", () => {
     await ensureInstallation(ctx);
     const grant = await issueBootstrapGrant(ctx);
     adminId = (await consumeSetupGrant(ctx, grant.token, { adminName: "Jeremy" })).identityId;
-    // The session exchange needs human authentication; a stub session stands in for Better Auth.
+    // The session exchange needs human authentication; a stub session stands in for Better Auth,
+    // over a session row of its own (the exchange holds that row while it issues the bearer).
+    await db.query(`INSERT INTO "user" (id, name, email) VALUES ('bau_1', 'Jeremy', 'bau_1@varlatch.placeholder.invalid')`);
+    await db.query("INSERT INTO auth_user_links (better_auth_user_id, identity_id) VALUES ('bau_1', $1)", [adminId]);
+    await db.query(`INSERT INTO "session" (id, "expiresAt", token, "userId") VALUES ('session-1', now() + interval '7 days', 'token-1', 'bau_1')`);
     const humanAuth: HumanAuth = {
       handler: async () => new Response(null, { status: 404 }),
       sessionFor: async () => ({ identityId: adminId, sessionId: "session-1" }),

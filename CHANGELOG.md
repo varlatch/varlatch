@@ -5,6 +5,32 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased (0.21.1)
+
+### Sign-in
+
+- **Signing out of the dashboard ends its access at once.** The dashboard
+  uses a short-lived access token (up to 15 minutes) that it gets from
+  your browser session. Signing out ended the session, but a token taken
+  from it kept working until it expired. Now, when a browser session ends,
+  every dashboard token taken from it stops working immediately. This
+  covers signing out, ending one or all of your other sessions, a session
+  that expired, and the end of every session when the installation moves
+  to another address. Each token ended this way is recorded in the audit
+  log as a revoked credential, with the reason `session-ended`. A token
+  is also never issued for longer than the session it comes from has left.
+- **`varlatch login` keeps working after you sign out of the browser.** The
+  CLI sign-in that the browser hands over is its own credential, for 12
+  hours by default, as before: signing out of the browser does not end
+  it. End it with `varlatch logout`, or under your account's Active
+  sessions in the dashboard. Machine credentials and CLI sign-ins approved
+  with a code are not affected either.
+
+### Upgrading
+
+- Migration 43 adds a database trigger that revokes a browser session's
+  dashboard tokens when the session ends. Nothing to do.
+
 ## 0.21.0 (2026-11-11)
 
 ### Backups
