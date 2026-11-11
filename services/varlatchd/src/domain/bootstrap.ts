@@ -176,6 +176,10 @@ export async function issueRecoveryGrant(
   return withTx(ctx.db, async (db) => {
     let subjectId: string | null = null;
     if (input.mode === "identity") {
+      // Step 2 of the lock order (liveness.ts): the subject, FOR UPDATE when
+      // --enable may change its row, FOR KEY SHARE (the grant references it)
+      // otherwise.
+      await lockPeople(db, [{ id: input.identityId, mode: input.enable ? "update" : "key share" }]);
       const res = await db.query(
         "SELECT id, disabled, installation_admin FROM identities WHERE id = $1",
         [input.identityId],
