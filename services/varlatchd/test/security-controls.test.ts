@@ -349,12 +349,14 @@ describe("loosening needs an approval", () => {
 
   it("refuses a dashboard approval once its session ended: signed out, or expired", async () => {
     const control = async () => (await controlOf("admin-step-up")).mode;
-    // Signed out: Better Auth deletes the session; the bearer the dashboard held stays valid otherwise.
+    // Signed out: Better Auth deletes the session, which revokes the bearers minted from it (migration 43),
+    // so the dashboard's bearer can no longer even make the request.
     const signedOut = await stepUp(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 });
     expect((await approve(admin, signedOut.id)).status).toBe(200);
     await ctx.db.query(`DELETE FROM "session" WHERE id = $1`, [`session-${admin.id}`]);
     const afterSignOut = await set(admin.web, "admin-step-up", { mode: "off", expectedVersion: 1 }, signedOut.id);
-    expect(afterSignOut.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "session-ended", approvalId: signedOut.id } });
+    expect(afterSignOut.status).toBe(401);
+    expect(afterSignOut.body.error).toMatchObject({ code: "INVALID_CREDENTIAL" });
     expect(await control()).toBe("report");
     expect((await call("GET", `/v1/me/approvals/${signedOut.id}`, admin.cli)).body.state).toBe("approved");
     // Expired: the session row is still there, past its expiry.

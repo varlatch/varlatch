@@ -7,6 +7,27 @@ fixes.
 
 ## Unreleased (0.21.1)
 
+### Sign-in
+
+- **Signing out of the dashboard ends its access at once.** The dashboard
+  uses a short-lived access token (up to 15 minutes) that it gets from
+  your browser session. Signing out ended the session, but a token taken
+  from it kept working until it expired. Now, when a browser session ends,
+  every dashboard token taken from it stops working immediately. This
+  covers signing out, ending one or all of your other sessions, a session
+  that expired, and the end of every session when the installation moves
+  to another address. Each token ended this way is recorded in the audit
+  log as a revoked credential, with the reason `session-ended`, or
+  `public-url-changed` when the installation moves to another address. A
+  token is also never issued for longer than the session it comes from has
+  left.
+- **`varlatch login` keeps working after you sign out of the browser.** The
+  CLI sign-in that the browser hands over is its own credential, for 12
+  hours by default, as before: signing out of the browser does not end
+  it. End it with `varlatch logout`, or under your account's Active
+  sessions in the dashboard. Machine credentials and CLI sign-ins approved
+  with a code are not affected either.
+
 ### Security
 
 - **Outbound requests now refuse private and internal addresses unless the
@@ -40,7 +61,10 @@ fixes.
 
 ### Upgrading
 
-No database migration. varlatchd no longer connects to private, loopback
+- Migration 43 adds a database trigger that revokes a browser session's
+  dashboard tokens when the session ends. Nothing to do.
+
+Outbound destinations: varlatchd no longer connects to private, loopback
 or link-local addresses on an Organization's behalf:
 
 - A webhook receiver, Coolify, Convex or OIDC issuer on a private network

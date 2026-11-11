@@ -659,16 +659,35 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         throw new DomainError("AUTHENTICATION_REQUIRED", "No authenticated session");
       }
       const { identityId } = session;
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-      const issued = await issueCredential(ctx.db, {
-        identityId,
-        kind: "browser",
-        name: "dashboard session bearer",
-        expiresAt,
-        actorIdentityId: identityId,
-        client: clientLabel(c.req.header("User-Agent")),
-        // Binds device sign-in approval challenges to this session.
-        authSessionId: session.sessionId,
+      const { issued, expiresAt } = await withTx(ctx.db, async (db) => {
+        // The bearer ends with its session: deleting the session row
+        // revokes it (migration 43). The session is held FOR KEY SHARE
+        // while the bearer is issued, so a sign-out in flight either
+        // committed first (no row: refused here) or waits and then revokes
+        // this bearer too. Lock order of domain/approvals.ts: the person
+        // (2), whom the credential's foreign key references, then the
+        // session (6), then the credential (7).
+        await lockPerson(db, identityId, "key share");
+        const live = (await db.query(
+          `SELECT s."expiresAt" AS expires_at FROM "session" s JOIN auth_user_links l ON l.better_auth_user_id = s."userId"
+           WHERE s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
+           FOR KEY SHARE OF s`,
+          [session.sessionId, identityId],
+        )).rows[0] as { expires_at: string | Date } | undefined;
+        if (!live) throw new DomainError("AUTHENTICATION_REQUIRED", "No authenticated session");
+        // Never past the session's own expiry.
+        const expiresAt = new Date(Math.min(Date.now() + 15 * 60 * 1000, new Date(live.expires_at).getTime())).toISOString();
+        const issued = await issueCredential(db, {
+          identityId,
+          kind: "browser",
+          name: "dashboard session bearer",
+          expiresAt,
+          actorIdentityId: identityId,
+          client: clientLabel(c.req.header("User-Agent")),
+          // Binds device sign-in approval challenges to this session.
+          authSessionId: session.sessionId,
+        });
+        return { issued, expiresAt };
       });
       return c.json({ token: issued.token, identityId, expiresAt });
     });
