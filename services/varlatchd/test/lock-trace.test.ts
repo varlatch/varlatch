@@ -145,6 +145,17 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     refused(`SELECT i.id FROM identities i RIGHT JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i${tag("identities")}`);
   });
 
+  it("refuses a clause that locks more than one FROM item, a self-join included", () => {
+    // Codex: a self-join locked two rows of one table while the trace recorded one.
+    const selfJoin = "SELECT a.id FROM identities a JOIN identities b ON b.id <> a.id WHERE a.id = 'idn_b' AND b.id = 'idn_a'";
+    refused(`${selfJoin} FOR UPDATE OF a, b${tag("identities")}`);
+    refused(`${selfJoin} FOR UPDATE${tag("identities")}`);
+    refused(`SELECT a.id FROM identities a, identities b WHERE b.id <> a.id FOR UPDATE${tag("identities")}`);
+    refused(`SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i, o${tag("identities")}`);
+    // One locked item of a self-join is fine: only its rows are locked.
+    expect(lockTagOf(`${selfJoin} FOR UPDATE OF a${tag("identities")}`)?.table).toBe("identities");
+  });
+
   it("accepts the grammar the code uses", () => {
     expect(lockTagOf(`SELECT id FROM identities WHERE organization_id IN (SELECT id FROM organizations) ORDER BY id FOR UPDATE${tag("identities")}`)?.table).toBe("identities");
     expect(lockTagOf(`SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id WHERE o.id = $1 FOR UPDATE OF i${tag("identities")}`)?.table).toBe("identities");
@@ -200,13 +211,13 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     await expect(db.query("SELECT id FROM identities FOR UPDATE /* varlatch-lock organizations update id */"))
       .rejects.toThrow(/the tag names organizations, the statement locks identities/);
     const join = "SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id";
-    await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE`)).rejects.toThrow(/several relations \(identities, organizations\)/);
+    await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE`)).rejects.toThrow(/without OF over several FROM items/);
     await expect(lockedQuery(db, { table: "organizations", mode: "update" }, `${join} FOR UPDATE OF i`))
       .rejects.toThrow(/the tag names organizations, the statement locks identities/);
     await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${join} FOR UPDATE OF x`)).rejects.toThrow(/OF x names no relation/);
     // Comma-separated FROM items lock every relation, as a join does.
     const commas = "SELECT i.id FROM identities i, organizations o WHERE o.id = i.organization_id";
-    await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${commas} FOR UPDATE`)).rejects.toThrow(/several relations \(identities, organizations\)/);
+    await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${commas} FOR UPDATE`)).rejects.toThrow(/without OF over several FROM items/);
     await expect(lockedQuery(db, { table: "identities", mode: "update" }, `${commas} FOR UPDATE OF o`))
       .rejects.toThrow(/the tag names identities, the statement locks organizations/);
     // A tag inside a string literal is not a tag.
