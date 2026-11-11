@@ -137,7 +137,9 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
 
-  await lockPeople(db, scope.people);
+  // Required by the type, so every writer in src names its people; a caller
+  // outside the typechecked code (a test emulating a writer) may pass none.
+  await lockPeople(db, scope.people ?? []);
 
   if (scope.projectId !== undefined) {
     const projectMode = scope.projectMode ?? "key share";
@@ -187,7 +189,7 @@ export async function lockScope(
     `SELECT deleted_at FROM organizations WHERE id = $1 ${lockClause(orgMode)}`,
     [scope.organizationId],
   );
-  await lockPeople(db, scope.people);
+  await lockPeople(db, scope.people ?? []);
 }
 
 /**
