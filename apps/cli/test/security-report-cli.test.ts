@@ -8,9 +8,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { CredentialReview } from "@varlatch/protocol";
+import type { CredentialReview, RefusedDestinations } from "@varlatch/protocol";
 import { EXIT } from "../src/exitCodes.js";
-import { ago, credentialReviewLines } from "../src/securityReport.js";
+import { ago, credentialReviewLines, refusedDestinationLines } from "../src/securityReport.js";
 import { commandHelp } from "../src/usage.js";
 
 /**
@@ -29,6 +29,7 @@ let server: http.Server;
 let origin = "";
 let capabilities: string[] = [];
 let review: CredentialReview;
+let refused: RefusedDestinations | "forbidden";
 let requests: string[] = [];
 
 const at = (daysAgo: number) => new Date(Date.now() - daysAgo * DAY).toISOString();
@@ -86,6 +87,10 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   };
   if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.20.1", capabilities });
   if (url === "/v1/organizations/acme/security/credential-review") return json(200, review);
+  if (url === "/v1/organizations/acme/security/refused-destinations") {
+    if (refused === "forbidden") return json(403, { error: { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_2" } });
+    return json(200, refused);
+  }
   if (url === "/v1/organizations/other/security/credential-review") {
     return json(200, { ...fullReview(), summary: { reviewed: 0, listed: 0, neverUsed: 0, idle: 0, noExpiry: 0 }, items: [] });
   }
@@ -119,7 +124,19 @@ beforeEach(() => {
   requests = [];
   capabilities = ["security.credential-review"];
   review = fullReview();
+  refused = fullRefused();
 });
+
+function fullRefused(): RefusedDestinations {
+  return {
+    generatedAt: at(0),
+    sinceDays: 30,
+    items: [
+      { kind: "coolify", id: "pc_coolify", name: "Production Coolify", scheme: "https", host: "coolify.lan", port: 8443, reason: "private_address", since: at(3) },
+      { kind: "webhook", id: "wh_http", name: null, scheme: "http", host: "hooks.example", port: 80, reason: "scheme", since: null },
+    ],
+  };
+}
 
 interface Result {
   code: number | null;
@@ -211,6 +228,85 @@ describe("varlatch security report", () => {
 
   it("has a help entry", () => {
     expect(commandHelp("security")).toContain("varlatch security report [--json]");
+  });
+});
+
+describe("varlatch security report: refused destinations", () => {
+  beforeEach(() => {
+    capabilities = ["security.credential-review", "security.refused-destinations"];
+  });
+
+  it("lists the organization's refused destinations after the review, with why and since when, and where they are allowed", async () => {
+    const r = await cli(["security", "report"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(requests).toEqual([
+      "GET /v1/meta",
+      "GET /v1/organizations/acme/security/credential-review",
+      "GET /v1/organizations/acme/security/refused-destinations",
+    ]);
+    const lines = r.stdout.trimEnd().split("\n");
+    const at = lines.indexOf("Refused destinations for acme (2)");
+    expect(at).toBeGreaterThan(0);
+    expect(lines.slice(at + 1)).toEqual([
+      '  Coolify "Production Coolify" (pc_coolify)  https://coolify.lan:8443  private network address, first refused 3 days ago',
+      "  webhook (wh_http)  http://hooks.example:80  plain http, no refusal recorded in the last 30 days",
+      "",
+      "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
+        "Nothing waiting is lost: it is delivered once the host operator allows the destination and restarts varlatchd.",
+    ]);
+    // The credential review comes first, unchanged.
+    expect(lines[0]).toBe("Credential review for acme");
+  });
+
+  it("--json adds them to the document", async () => {
+    const r = await cli(["security", "report", "--json"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual({ version: expect.any(Number), organization: "acme", credentialReview: review, refusedDestinations: refused });
+  });
+
+  it("says when nothing is refused", async () => {
+    refused = { generatedAt: at(0), sinceDays: 30, items: [] };
+    const r = await cli(["security", "report"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.trimEnd().split("\n").at(-1)).toBe(
+      "Refused destinations for acme: none. This installation connects to every destination the organization configured.",
+    );
+  });
+
+  it("says the part is not shown, and still exits 0, without organization.manage", async () => {
+    refused = "forbidden";
+    const r = await cli(["security", "report"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.trimEnd().split("\n").at(-1)).toBe(
+      "Refused destinations: not shown, because your access does not include it (needs organization.manage).",
+    );
+    const json = JSON.parse((await cli(["security", "report", "--json"])).stdout);
+    expect(json.refusedDestinations).toBeNull();
+  });
+
+  it("formats each reason in words", () => {
+    const reasons = ["private_address", "host_only_address", "never_address", "mixed_answers", "scheme", "port"] as const;
+    const lines = refusedDestinationLines(
+      "acme",
+      {
+        shown: true,
+        destinations: {
+          generatedAt: at(0),
+          sinceDays: 30,
+          items: reasons.map((reason, i) => ({ kind: "oidc-issuer" as const, id: `ob_${i}`, name: null, scheme: "https" as const, host: "issuer.lan", port: 443, reason, since: null })),
+        },
+      },
+      Date.now(),
+    );
+    expect(lines.slice(2, 8).map((l) => l.split("  ")[3]?.split(",")[0])).toEqual([
+      "private network address",
+      "loopback or link-local address",
+      "reserved address",
+      "one of its addresses is not allowed",
+      "plain http",
+      "port not allowed",
+    ]);
+    expect(refusedDestinationLines("acme", { shown: false, reason: "not-supported" }, Date.now())).toEqual([]);
   });
 });
 

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { CredentialReview, ReviewedCredential, VarlatchClient } from "@varlatch/sdk";
+import { OUTBOUND_HOST_NOTE, OUTBOUND_REFUSAL_LABELS } from "@varlatch/protocol";
+import { VarlatchApiError, type CredentialReview, type RefusedDestination, type RefusedDestinations, type ReviewedCredential, type VarlatchClient } from "@varlatch/sdk";
 
 /**
  * `varlatch security report` (ADR-0054 Decision 8): visibility only, never a
@@ -9,6 +10,12 @@ import type { CredentialReview, ReviewedCredential, VarlatchClient } from "@varl
  * use, and the service credentials that expire within 7 days or have
  * expired. Nothing is revoked or retired automatically; acting on it stays a
  * human decision (ADR-0034).
+ *
+ * Where the server can say (capability security.refused-destinations), it
+ * also lists the organization's destinations this installation's outbound
+ * policy refuses (ADR-0057 Decision 8): webhooks, Connections and OIDC
+ * issuers, with why and since when. That part needs organization.manage;
+ * without it, the report says it is not shown.
  */
 
 export const CREDENTIAL_REVIEW_CAPABILITY = "security.credential-review";
@@ -20,10 +27,17 @@ export class CredentialReviewUnsupportedError extends Error {
   override name = "CredentialReviewUnsupportedError";
 }
 
-export type CredentialReviewApi = Pick<VarlatchClient, "meta" | "credentialReview">;
+export const REFUSED_DESTINATIONS_CAPABILITY = "security.refused-destinations";
 
-/** Ask the server, after checking that it can answer (ADR-0018 §3: capabilities, not versions). */
-export async function fetchCredentialReview(api: CredentialReviewApi, organization: string): Promise<CredentialReview> {
+/** The refused destinations, or why they are not part of the report. */
+export type RefusedPart =
+  | { shown: true; destinations: RefusedDestinations }
+  | { shown: false; reason: "not-supported" | "not-permitted" };
+
+export type SecurityReportApi = Pick<VarlatchClient, "meta" | "credentialReview" | "refusedDestinations">;
+
+/** The whole report: the credential review, and the refused destinations where the server and the caller's access allow. */
+export async function fetchSecurityReport(api: SecurityReportApi, organization: string): Promise<{ review: CredentialReview; refused: RefusedPart }> {
   const meta = await api.meta();
   if (!meta.capabilities.includes(CREDENTIAL_REVIEW_CAPABILITY)) {
     throw new CredentialReviewUnsupportedError(
@@ -32,7 +46,14 @@ export async function fetchCredentialReview(api: CredentialReviewApi, organizati
         "varlatch credential list <identity-id> shows one identity's credentials with their last use.",
     );
   }
-  return api.credentialReview(organization);
+  const review = await api.credentialReview(organization);
+  if (!meta.capabilities.includes(REFUSED_DESTINATIONS_CAPABILITY)) return { review, refused: { shown: false, reason: "not-supported" } };
+  try {
+    return { review, refused: { shown: true, destinations: await api.refusedDestinations(organization) } };
+  } catch (err) {
+    if (err instanceof VarlatchApiError && (err.status === 403 || err.status === 404)) return { review, refused: { shown: false, reason: "not-permitted" } };
+    throw err;
+  }
 }
 
 /** "3 days ago", "5 hours ago", "just now": coarse on purpose, last use is about a minute granular. */
@@ -123,4 +144,28 @@ export function credentialReviewLines(organization: string, review: CredentialRe
           "varlatch credential revoke <identity-id> <credential-id>",
   );
   return lines;
+}
+
+const KIND_WORDS: Record<RefusedDestination["kind"], string> = { webhook: "webhook", coolify: "Coolify", convex: "Convex", "oidc-issuer": "OIDC issuer" };
+
+/** One refused destination: what it is, where it points, why, and since when. */
+function refusedLine(d: RefusedDestination, sinceDays: number, now: number): string {
+  const what = `${KIND_WORDS[d.kind]}${d.name ? ` "${d.name}"` : ""} (${d.id})`;
+  const since = d.since ? `first refused ${ago(d.since, now)}` : `no refusal recorded in the last ${sinceDays} days`;
+  return `  ${what}  ${d.scheme}://${d.host}:${d.port}  ${OUTBOUND_REFUSAL_LABELS[d.reason]}, ${since}`;
+}
+
+/**
+ * The refused destinations part (ADR-0057 Decision 8), after the credential
+ * review; nothing when the server cannot say.
+ */
+export function refusedDestinationLines(organization: string, refused: RefusedPart, now: number): string[] {
+  if (!refused.shown) {
+    return refused.reason === "not-permitted" ? ["", "Refused destinations: not shown, because your access does not include it (needs organization.manage)."] : [];
+  }
+  const { items, sinceDays } = refused.destinations;
+  if (items.length === 0) {
+    return ["", `Refused destinations for ${organization}: none. This installation connects to every destination the organization configured.`];
+  }
+  return ["", `Refused destinations for ${organization} (${items.length})`, ...items.map((d) => refusedLine(d, sinceDays, now)), "", OUTBOUND_HOST_NOTE];
 }
