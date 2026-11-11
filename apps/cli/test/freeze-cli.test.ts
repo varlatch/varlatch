@@ -31,6 +31,8 @@ let origin = "";
 let capabilities: string[] = [];
 let requests: { method: string; url: string; body: unknown; approval: string | null }[] = [];
 let frozen = true;
+/** Whether the caller may list the Sync Targets (config.sync.manage). */
+let listsTargets = true;
 
 const FREEZE = {
   id: "ofz_1",
@@ -79,11 +81,11 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.22.0", capabilities });
     if (url === `${ORG}/incident-freeze` && req.method === "POST") return json(201, { ...FREEZE, reason: (JSON.parse(raw) as { reason: string }).reason });
     if (url === `${ORG}/incident-freeze` && req.method === "GET") {
-      return json(200, { freeze: frozen ? FREEZE : null, resumingTargets: frozen ? [TARGET] : [], history: [] });
+      return json(200, { freeze: frozen ? FREEZE : null, resumingTargets: listsTargets ? (frozen ? [TARGET] : []) : null, history: [] });
     }
     if (url === `${ORG}/incident-freeze/ofz_1/lift` && req.method === "POST") {
       if (!header) return error(403, "STEP_UP_REQUIRED", "This needs your approval with a trusted passkey", { approval: approval("pending") });
-      return json(200, { freeze: { ...FREEZE, liftedAt: "2026-11-11T11:00:00.000Z", liftedBy: FREEZE.frozenBy, liftMethod: "approval" }, resumingTargets: [TARGET] });
+      return json(200, { freeze: { ...FREEZE, liftedAt: "2026-11-11T11:00:00.000Z", liftedBy: FREEZE.frozenBy, liftMethod: "approval" }, resumingTargets: listsTargets ? [TARGET] : null });
     }
     if (url === "/v1/me/approvals/apr_1" && req.method === "GET") return json(200, approval("approved"));
     if (url === `${ORG}/deletion` && req.method === "GET") {
@@ -117,6 +119,7 @@ beforeEach(() => {
   requests = [];
   capabilities = ["organizations.incident-freeze", "organizations.delete"];
   frozen = true;
+  listsTargets = true;
 });
 
 function cli(args: string[], env: Record<string, string> = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
@@ -195,6 +198,16 @@ describe("varlatch org unfreeze", () => {
       [`${ORG}/incident-freeze/ofz_1/lift`, "apr_1"],
     ]);
     expect(r.stdout).toContain("Freeze of acme lifted at 2026-11-11T11:00:00.000Z [ofz_1].");
+  });
+
+  it("does not name the Sync Targets to a caller who may not list them", async () => {
+    listsTargets = false;
+    const r = await cli(["org", "unfreeze", "acme", "--server", origin]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stderr).toContain("Sync Targets that were not paused or revoked resume pushing (listing them needs config.sync.manage).");
+    expect(r.stderr).not.toContain("snt_1");
+    expect(r.stdout).toContain("Freeze of acme lifted");
+    expect(r.stdout).not.toContain("snt_1");
   });
 
   it("in assisted mode stops at the approval with exit 75", async () => {

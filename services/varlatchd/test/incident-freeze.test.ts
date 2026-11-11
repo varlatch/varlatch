@@ -341,7 +341,7 @@ describe("refusals", () => {
     const member = await invite("Member", "member");
     await ok("POST", `${ORG}/grants`, admin.cli, { subjectIdentityId: member.id, scope: { kind: "organization" }, actions: ["config.value.read", "config.metadata.read"] });
     const outsider = await invite("Outsider", "member", (await ok("POST", "/v1/organizations", admin.cli, { name: "Beta", slug: "beta" })).id);
-    const outsiderBefore = await call("GET", `${ORG}/projects`, outsider.cli);
+    const outsiderBefore = await call("GET", `${ORG}/projects/api/contract`, outsider.cli);
     const id = await frozen();
 
     const read = await call("GET", `${E}/effective-configuration`, member.cli);
@@ -350,14 +350,14 @@ describe("refusals", () => {
     expect(read.body.error.details).toEqual({ freezeId: id, frozenAt: expect.any(String) });
     expect(read.body.error.message).toMatch(/^This Organization is frozen for an incident since .+\. Nothing was read, changed or sent\. An Organization Admin can lift the freeze with a passkey approval\.$/);
     expectFrozen(await call("PUT", `${E}/values/PORT`, admin.cli, { value: "1" }));
-    expectFrozen(await call("GET", `${ORG}/projects`, admin.cli));
+    expectFrozen(await call("GET", `${ORG}/projects/api/contract`, admin.cli));
 
     const refusals = await frozenRefusals();
     expect(refusals).toHaveLength(3);
     expect(refusals[0]).toMatchObject({ actor: member.id, org: orgId, resource: { freezeId: id }, metadata: { reason: "organization_frozen", freezeId: id, method: "GET" } });
     expect(refusals[0]!.credential).not.toBeNull();
 
-    const outsiderDuring = await call("GET", `${ORG}/projects`, outsider.cli);
+    const outsiderDuring = await call("GET", `${ORG}/projects/api/contract`, outsider.cli);
     expect(outsiderDuring.status).toBe(outsiderBefore.status);
     expect(outsiderDuring.body.error.code).toBe(outsiderBefore.body.error.code);
     expect(await frozenRefusals()).toHaveLength(3);

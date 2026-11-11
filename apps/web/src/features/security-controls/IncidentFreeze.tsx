@@ -50,13 +50,24 @@ export const FREEZE_CONSEQUENCES = [
 
 /**
  * The organization pages that work while frozen: their reads and actions
- * are inspection, audit or recovery. Every other page shows only the banner.
+ * are inspection, audit or recovery. Connections shows its frozen view
+ * (the lists and revocation, without the GitHub App and the changes the
+ * freeze refuses); the GitHub App's registration callback below it does
+ * not work. Every other page shows only the banner.
  */
 const PAGES_WHILE_FROZEN = ["security", "access", "audit", "settings"];
+const EXACT_PAGES_WHILE_FROZEN = ["connections"];
 
 export function pageWorksWhileFrozen(pathname: string, org: string): boolean {
-  const rest = pathname.replace(new RegExp(`^/o/${org.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/?`), "");
-  return PAGES_WHILE_FROZEN.includes(rest.split("/")[0] ?? "");
+  const prefix = `/o/${org}`;
+  if (!pathname.startsWith(prefix)) return false;
+  const rest = pathname.slice(prefix.length).replace(/^\/+|\/+$/g, "");
+  return PAGES_WHILE_FROZEN.includes(rest.split("/")[0] ?? "") || EXACT_PAGES_WHILE_FROZEN.includes(rest);
+}
+
+/** Whether the organization is frozen for an incident now (false while unknown). */
+export function useFrozen(org: string | undefined): boolean {
+  return Boolean(useIncidentFreeze(org).data?.freeze);
 }
 
 function FreezeBanner({ org, freeze, onlyBanner }: { org: string; freeze: IncidentFreeze; onlyBanner: boolean }) {
@@ -126,12 +137,13 @@ export function IncidentFreezeCard({ org, admin }: { org: string; admin: boolean
   });
   const lift = useMutation({
     mutationFn: (freezeId: string) => api.liftIncidentFreeze(org, freezeId),
-    onSuccess: (r) => done("Freeze lifted", r.resumingTargets.length > 0 ? `${r.resumingTargets.length} Sync Targets resume pushing.` : undefined),
+    onSuccess: (r) => done("Freeze lifted", r.resumingTargets && r.resumingTargets.length > 0 ? `${r.resumingTargets.length} Sync Targets resume pushing.` : undefined),
     onError: (err) => toast.error("Could not lift the freeze", { description: errorMessage(err) }),
   });
   if (!supported) return null;
   const freeze = state.data?.freeze ?? null;
-  const targets = state.data?.resumingTargets ?? [];
+  // null: the caller may not read the Sync Targets (config.sync.manage).
+  const targets = state.data?.resumingTargets ?? null;
 
   const askFreeze = async () => {
     if (!trimmed || trimmed.length > 200) return;
@@ -150,9 +162,11 @@ export function IncidentFreezeCard({ org, admin }: { org: string; admin: boolean
       title: `Lift the freeze of ${org}?`,
       description: "Lifting undoes nothing done during the freeze: revoked credentials and grants stay revoked. It needs your approval with a trusted passkey.",
       consequences:
-        targets.length === 0
-          ? [{ text: "No Sync Target resumes pushing." }]
-          : targets.map((t) => ({ text: `Sync Target ${t.projectSlug}/${t.environmentName} (${t.platform}, ${t.destination}) resumes pushing.` })),
+        targets === null
+          ? [{ text: "Sync Targets that were not paused or revoked resume pushing." }]
+          : targets.length === 0
+            ? [{ text: "No Sync Target resumes pushing." }]
+            : targets.map((t) => ({ text: `Sync Target ${t.projectSlug}/${t.environmentName} (${t.platform}, ${t.destination}) resumes pushing.` })),
       confirmLabel: "Lift freeze",
     });
     if (ok) lift.mutate(f.id);
@@ -187,7 +201,11 @@ export function IncidentFreezeCard({ org, admin }: { org: string; admin: boolean
           >
             <p>Reason: {freeze.reason}</p>
             <p className="text-muted">
-              {targets.length === 0 ? "No Sync Target resumes pushing when it is lifted." : `${targets.length} Sync Targets resume pushing when it is lifted.`}
+              {targets === null
+                ? "Sync Targets that were not paused or revoked resume pushing when it is lifted."
+                : targets.length === 0
+                  ? "No Sync Target resumes pushing when it is lifted."
+                  : `${targets.length} Sync Targets resume pushing when it is lifted.`}
             </p>
             <p className="text-muted">Freeze {freeze.id}</p>
           </Callout>

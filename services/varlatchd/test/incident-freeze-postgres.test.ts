@@ -199,7 +199,7 @@ describe.skipIf(!url)("the incident freeze on real PostgreSQL", () => {
     expect((await browser.request("POST", "/auth/varlatch-token")).status).toBe(401);
     await browser.signIn(key);
     let bearer = await browser.bearer();
-    expect((await call("GET", "/v1/organizations/acme/projects", bearer)).body.error.code).toBe("ORGANIZATION_FROZEN");
+    expect((await call("GET", "/v1/organizations/acme/projects/api/environments/dev/effective-configuration", bearer)).body.error.code).toBe("ORGANIZATION_FROZEN");
     // The bearer runs out; the dashboard renews it from the session, while frozen.
     await db.query("UPDATE credentials SET expires_at = now() - interval '1 second' WHERE kind = 'browser' AND identity_id = $1", [identityId]);
     expect((await call("GET", "/v1/organizations/acme/incident-freeze", bearer)).status).toBe(401);

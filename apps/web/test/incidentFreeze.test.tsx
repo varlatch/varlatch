@@ -88,6 +88,18 @@ describe("the Security page's section", () => {
     expect(fake.toasts).toEqual(["Organization frozen"]);
   });
 
+  it("does not name the Sync Targets to a caller who may not list them", async () => {
+    open = FREEZE;
+    fake.api.incidentFreeze = async () => ({ freeze: open, resumingTargets: null, history: [] });
+    await mount(<IncidentFreezeCard org="acme" admin />);
+    expect(text(all("incident-freeze-open")[0]!)).toContain("Sync Targets that were not paused or revoked resume pushing when it is lifted.");
+    fake.confirm.mockResolvedValue(false);
+    await act(async () => all("lift-freeze")[0]!.props.onClick());
+    const asked = fake.confirm.mock.calls[0]![0] as { consequences: { text: string }[] };
+    expect(asked.consequences.map((c) => c.text)).toEqual(["Sync Targets that were not paused or revoked resume pushing."]);
+    expect(fake.api.liftIncidentFreeze).not.toHaveBeenCalled();
+  });
+
   it("offers nothing to a member", async () => {
     await mount(<IncidentFreezeCard org="acme" admin={false} />);
     expect(all("freeze-org")).toEqual([]);
@@ -131,7 +143,12 @@ describe("the banner", () => {
   });
 
   it("knows which pages work while frozen", () => {
-    for (const p of ["/o/acme/security", "/o/acme/access", "/o/acme/audit", "/o/acme/settings"]) expect(pageWorksWhileFrozen(p, "acme"), p).toBe(true);
-    for (const p of ["/o/acme/projects", "/o/acme/p/api", "/o/acme/connections", "/o/acme"]) expect(pageWorksWhileFrozen(p, "acme"), p).toBe(false);
+    for (const p of ["/o/acme/security", "/o/acme/access", "/o/acme/audit", "/o/acme/settings", "/o/acme/connections"]) {
+      expect(pageWorksWhileFrozen(p, "acme"), p).toBe(true);
+    }
+    // The GitHub App's registration callback is refused while frozen.
+    for (const p of ["/o/acme/projects", "/o/acme/p/api", "/o/acme/connections/github-app", "/o/acme", "/o/acmex/security"]) {
+      expect(pageWorksWhileFrozen(p, "acme"), p).toBe(false);
+    }
   });
 });
