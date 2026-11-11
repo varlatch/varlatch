@@ -580,8 +580,8 @@ export async function consumeApproval(
     const session = (await lockedQuery(
       db,
       { table: "session", mode: "key share", key: "$1" },
-      `SELECT 1 FROM "session" s JOIN auth_user_links l ON l.better_auth_user_id = s."userId"
-       WHERE s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
+      `SELECT 1 FROM session s, auth_user_links l
+       WHERE l.better_auth_user_id = s."userId" AND s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
        FOR KEY SHARE OF s`,
       [consumed.auth_session_id, requester.identityId],
     )).rows[0];

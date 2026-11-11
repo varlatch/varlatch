@@ -79,7 +79,7 @@ export async function lockAllPeopleAndPasskeys(db: Querier): Promise<void> {
   await lockedQuery(
     db,
     { table: "passkey", mode: "update" },
-    `SELECT p.id FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId" ORDER BY p.id FOR UPDATE OF p`,
+    `SELECT p.id FROM passkey p, auth_user_links l WHERE l.better_auth_user_id = p."userId" ORDER BY p.id FOR UPDATE OF p`,
   );
 }
 
@@ -93,8 +93,8 @@ export async function lockPersonPasskeys(db: Querier, identityId: string): Promi
   await lockedQuery(
     db,
     { table: "passkey", mode: "update" },
-    `SELECT p.id FROM passkey p JOIN auth_user_links l ON l.better_auth_user_id = p."userId"
-     WHERE l.identity_id = $1 ORDER BY p.id FOR UPDATE OF p`,
+    `SELECT p.id FROM passkey p, auth_user_links l
+     WHERE l.better_auth_user_id = p."userId" AND l.identity_id = $1 ORDER BY p.id FOR UPDATE OF p`,
     [identityId],
   );
 }

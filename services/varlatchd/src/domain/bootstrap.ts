@@ -411,7 +411,7 @@ export async function completePublicUrlChange(
     // confirmation that holds a person and takes their passkeys in id order.
     await lockAllPeopleAndPasskeys(db);
     const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
-    await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM "session" ORDER BY id FOR UPDATE`);
+    await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM session ORDER BY id FOR UPDATE`);
     // The dashboard's bearer tokens were minted from those sessions. CLI,
     // agent, and machine credentials hold no address and keep working.
     // Revoked before the sessions are deleted: deleting a session revokes
