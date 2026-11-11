@@ -732,7 +732,7 @@ function writerLabel(): string {
  * untagged locking clauses, records tagged ones, and checks each
  * transaction at COMMIT.
  */
-export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">): Q {
+export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
   let inTx = false;
   let label = "";
   /** The open transaction is one the wrapper began around a lone statement. */
@@ -767,6 +767,8 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // references aside, a single-row update such as a last-use stamp) never
     // holds a lock while waiting for another (amendment E): not checked.
     if (lone) {
+      // A test's own fixture statement is not production code.
+      if (label.startsWith("(test)") && !options.checkTestStatements) return;
       const acquired = new Set(rows.filter((r) => r.kind !== "insert" && r.kind !== "reference").map((r) => `${r.tbl}\u0000${r.key}`));
       if (acquired.size < 2) return;
     }

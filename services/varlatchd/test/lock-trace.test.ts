@@ -309,6 +309,13 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
   });
 
   it("checks a lone statement outside a transaction once it takes more than one row lock", async () => {
+    // Statements this test issues itself count as production's here (a
+    // test's own fixture statements are otherwise not checked).
+    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
+    await db.close();
+    db = own;
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
     // One row: it cannot hold a lock while waiting for another.
     await db.query("UPDATE identities SET name = 'a2' WHERE id = 'idn_a'");
     expect(takeLockViolations()).toEqual([]);
