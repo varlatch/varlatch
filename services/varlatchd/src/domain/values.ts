@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { CONFIG_ITEM_NAME_PATTERN, isReservedItemName, semanticsFor, semanticsVersionOf } from "@varlatch/contract";
-import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
+import { recordAuditEvent, recordAuditEvents, type AuditEventInput } from "../audit/events.js";
 import { encryptValue } from "../crypto/hierarchy.js";
 import { newId } from "../db/ids.js";
+import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import {
@@ -25,6 +26,7 @@ import type { ProjectRow } from "./projects.js";
 import type { CallerView } from "./manifest.js";
 import { auditThenDecrypt, type CapturedState, type ResolvedItem } from "./retrieval.js";
 import { countWouldBlockInLiveOrganization, type WouldBlock } from "./securityreport.js";
+import { lockedQuery, lockRowsById } from "../db/locks.js";
 
 interface ValueRow {
   id: string;
@@ -62,6 +64,22 @@ export interface SetValueResult {
   sensitive: boolean;
 }
 
+/**
+ * The Environment's value rows for these names, locked FOR NO KEY UPDATE in
+ * id order (lock order step 10): the mode their update takes, so a new
+ * version's foreign key to its value row (FOR KEY SHARE) and the update
+ * after it never upgrade a lock. The caller holds the Environment
+ * FOR NO KEY UPDATE, so no other writer of these rows is in flight.
+ */
+async function lockValueRows(db: Querier, environmentId: string, itemNames: string[]): Promise<ValueRow[]> {
+  return (await lockedQuery(
+    db,
+    { table: "env_values", mode: "no key update" },
+    "SELECT * FROM env_values WHERE environment_id = $1 AND item_name = ANY($2) ORDER BY id FOR NO KEY UPDATE",
+    [environmentId, itemNames],
+  )).rows as ValueRow[];
+}
+
 export async function setValue(
   ctx: AppCtx,
   org: OrgRow,
@@ -78,16 +96,19 @@ export async function setValue(
   const sensitive = sensitivityOf(contract, itemName);
 
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the Organization, Project and
-    // Environment, live, in order; the Environment exclusively among its
-    // writers, so the version comparison below runs after earlier ones commit.
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
-    let row = (
-      await db.query(
-        "SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2",
-        [env.id, itemName],
-      )
-    ).rows[0] as ValueRow | undefined;
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // Organization, the actor (value_versions.created_by, the exposure
+    // index), the Project and the Environment, live, in order; the
+    // Environment exclusively among its writers, so the version comparison
+    // below runs after earlier ones commit.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "no key update",
+    });
+    let row = (await lockValueRows(db, env.id, [itemName]))[0];
     if (!row) {
       const id = newId("value");
       await db.query(
@@ -167,10 +188,18 @@ export async function deleteValue(
 ): Promise<void> {
   assertNotExpired(env);
   await withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the Organization, Project and
-    // Environment, live, in order; the Environment exclusively among its
-    // writers, so the version comparison below runs after earlier ones commit.
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // Organization, the actor (value_versions.created_by, the exposure
+    // index), the Project and the Environment, live, in order; the
+    // Environment exclusively among its writers, so the version comparison
+    // below runs after earlier ones commit.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "no key update",
+    });
     const res = await db.query(
       `UPDATE env_values
        SET deleted_at = now(), current_version_id = NULL,
@@ -227,16 +256,19 @@ export async function beginRotation(
   );
 
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the Organization, Project and
-    // Environment, live, in order; the Environment exclusively among its
-    // writers, so the version comparison below runs after earlier ones commit.
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
-    const row = (
-      await db.query("SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2", [
-        env.id,
-        itemName,
-      ])
-    ).rows[0] as ValueRow | undefined;
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // Organization, the actor (value_versions.created_by, the exposure
+    // index), the Project and the Environment, live, in order; the
+    // Environment exclusively among its writers, so the version comparison
+    // below runs after earlier ones commit.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "no key update",
+    });
+    const row = (await lockValueRows(db, env.id, [itemName]))[0];
     if (!row || row.deleted_at || !row.current_version_id) {
       throw new DomainError("RESOURCE_NOT_FOUND", "No current value to rotate");
     }
@@ -321,10 +353,18 @@ export async function completeRotation(
 ): Promise<RotationResult> {
   assertNotExpired(env);
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the Organization, Project and
-    // Environment, live, in order; the Environment exclusively among its
-    // writers, so the version comparison below runs after earlier ones commit.
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // Organization, the actor (value_versions.created_by, the exposure
+    // index), the Project and the Environment, live, in order; the
+    // Environment exclusively among its writers, so the version comparison
+    // below runs after earlier ones commit.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "no key update",
+    });
     const row = (
       await db.query("SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2", [
         env.id,
@@ -768,20 +808,26 @@ export async function applyChangeSet(
   const changeSetId = newId("version").replace("ver_", "cs_");
 
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the Organization, Project and
-    // Environment, live, in order; the Environment exclusively among its
-    // writers, so the version comparison below runs after earlier ones commit.
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id], environmentMode: "no key update" });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // Organization, the actor (value_versions.created_by, the exposure
+    // index), the Project and the Environment, live, in order; the
+    // Environment exclusively among its writers, so the version comparison
+    // below runs after earlier ones commit.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "no key update",
+    });
     // Phase 1: load current rows and validate every guard before mutating.
+    // The existing value rows are locked here, in id order, in the mode
+    // their update takes (lock order step 10).
+    const existing = new Map((await lockValueRows(db, env.id, changes.map((c) => c.item))).map((r) => [r.item_name, r]));
     const rows = new Map<string, ValueRow | undefined>();
     const conflicts: { item: string; currentVersionId: string | null }[] = [];
     for (const change of changes) {
-      const row = (
-        await db.query(
-          "SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2",
-          [env.id, change.item],
-        )
-      ).rows[0] as ValueRow | undefined;
+      const row = existing.get(change.item);
       rows.set(change.item, row);
       const current = row?.deleted_at ? null : (row?.current_version_id ?? null);
       if (change.expectedVersionId !== undefined && current !== change.expectedVersionId) {
@@ -801,8 +847,23 @@ export async function applyChangeSet(
       );
     }
 
-    // Phase 2: apply all.
+    // The versions the new ones supersede, referenced by
+    // previous_version_id, in id order before any of them is written.
+    await lockRowsById(
+      db,
+      "value_versions",
+      changes.flatMap((c) => {
+        const row = rows.get(c.item);
+        return c.op === "set" && row && !row.deleted_at && row.current_version_id ? [row.current_version_id] : [];
+      }),
+      "key share",
+    );
+
+    // Phase 2: apply all. The audit events are inserted once, after every
+    // value row (lock order step 11: an audit insert holds the audit
+    // counter until commit).
     const results: ChangeSetResult["results"] = [];
+    const events: AuditEventInput[] = [];
     for (const change of changes) {
       let row = rows.get(change.item);
       if (change.op === "set") {
@@ -828,7 +889,7 @@ export async function applyChangeSet(
            WHERE id = $2`,
           [versionId, row.id],
         );
-        await recordAuditEvent(db, {
+        events.push({
           eventType: "value.written",
           decision: "info",
           actorIdentityId,
@@ -853,7 +914,7 @@ export async function applyChangeSet(
            WHERE id = $1`,
           [(row as ValueRow).id],
         );
-        await recordAuditEvent(db, {
+        events.push({
           eventType: "value.deleted",
           decision: "info",
           actorIdentityId,
@@ -866,6 +927,7 @@ export async function applyChangeSet(
         results.push({ item: change.item, op: "delete", versionId: null });
       }
     }
+    await recordAuditEvents(db, events);
     return { changeSetId, results };
   });
 }

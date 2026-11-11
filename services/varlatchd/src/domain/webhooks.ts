@@ -11,6 +11,7 @@ import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Audit webhooks: an organization registers an HTTPS endpoint and receives
@@ -148,7 +149,9 @@ export async function updateWebhook(
   }
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId });
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "webhooks", mode: "update" },
       `SELECT id, organization_id, url, event_types, created_at, revoked_at, failure_count, last_attempt_at, last_status, version, updated_at
        FROM webhooks WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [webhookId, organizationId],

@@ -230,6 +230,7 @@ import {
   updateGroup,
   updateRole,
 } from "../domain/policy.js";
+import { lockedQuery } from "../db/locks.js";
 
 type Vars = {
   requestId: string;
@@ -1051,7 +1052,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const ttlSeconds = body.ttlSeconds ?? 43_200;
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
     const issued = await withTx(ctx.db, async (db) => {
-      // The lock order of domain/approvals.ts: the person (2) before the
+      // The lock order (domain/liveness.ts): the person (2) before the
       // browser credential (7), since the new credential's foreign key takes
       // the person after this update holds the old one.
       await lockPerson(db, principal.identity.id, "key share");
@@ -2517,7 +2518,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // deleted, and an Agent still enabled, in the issuing transaction.
     const issued = await withTx(ctx.db, async (db) => {
       await lockLiveScope(db, { organizationId: org.id });
-      const live = await db.query("SELECT 1 FROM identities WHERE id = $1 AND NOT disabled FOR SHARE", [agent.id]);
+      const live = await lockedQuery(db, { table: "identities", mode: "share", key: "$1" }, "SELECT 1 FROM identities WHERE id = $1 AND NOT disabled FOR SHARE", [agent.id]);
       if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
       return issueCredential(db, {
         identityId: agent.id,
@@ -3138,7 +3139,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
-        const existing = await db.query(
+        const existing = await lockedQuery(
+          db,
+          { table: "grants", mode: "update" },
           `SELECT id, revoked_at,
                   (subject_identity_id IS NOT DISTINCT FROM $3 AND subject_group_id IS NOT DISTINCT FROM $4
                    AND scope = $5::jsonb AND actions IS NOT DISTINCT FROM $6::text[] AND role_id IS NOT DISTINCT FROM $7) AS same
@@ -3480,7 +3483,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) =>
       withTx(ctx.db, async (db) => {
         await lockLiveScope(db, { organizationId: org.id });
-        const res = await db.query(
+        const res = await lockedQuery(
+          db,
+          { table: "requirements", mode: "update" },
           "SELECT id, kind, target, config, created_at, version, updated_at FROM requirements WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE",
           [requirementId, org.id],
         );

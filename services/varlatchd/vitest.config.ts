@@ -10,6 +10,8 @@ const maxWorkers = Math.max(1, Math.min(availableParallelism() - 1, Math.floor(f
 export default defineConfig({
   test: {
     globalSetup: ["test/helpers/pglite-snapshots.ts"],
+    // Fails a test whose transactions broke the lock order (lock-trace.ts).
+    setupFiles: ["test/helpers/lock-trace-setup.ts"],
     maxWorkers,
   },
 });

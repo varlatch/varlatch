@@ -7,6 +7,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { credentialEvidence } from "./passkeys.js";
 import { SECURITY_CONTROLS, type ControlMode, type LifetimeConfig, type SecurityControlName } from "./securitycontrols.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Report counters (ADR-0054 Decisions 5 and 9). A Security Control in
@@ -43,7 +44,7 @@ import { SECURITY_CONTROLS, type ControlMode, type LifetimeConfig, type Security
  * the lists below, the hour, a count and two times. Never a request body,
  * a URL, a token, a hash or a value, and no target.
  *
- * LOCK ORDER (approvals.ts, step 8). A transaction that counts does all its
+ * LOCK ORDER (liveness.ts, step 11). A transaction that counts does all its
  * counter upserts after its own domain rows and before the exposure and
  * integration indexes and its first audit insert, and when it counts
  * several, in key order (countWouldBlock sorts them). The summary worker
@@ -259,7 +260,7 @@ export async function countWouldBlockInLiveOrganization(
   opts: { at?: Date | undefined } = {},
 ): Promise<boolean> {
   if (attempts.length === 0) return false;
-  const live = await db.query("SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [organizationId]);
+  const live = await lockedQuery(db, { table: "organizations", mode: "key share", key: "$1" }, "SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [organizationId]);
   if (!live.rows[0]) return false;
   await countWouldBlock(db, organizationId, attempts, opts);
   return true;
@@ -424,7 +425,7 @@ export async function countWouldBlockAfter(
     return await withTx(ctx.accessCountDb ?? ctx.db, async (db) => {
       await db.query(`SET LOCAL lock_timeout = '${ACCESS_COUNTS.lockTimeoutMs}ms'`);
       await db.query(`SET LOCAL statement_timeout = '${ACCESS_COUNTS.statementTimeoutMs}ms'`);
-      const live = await db.query("SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [report.organizationId]);
+      const live = await lockedQuery(db, { table: "organizations", mode: "key share", key: "$1" }, "SELECT 1 FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [report.organizationId]);
       if (!live.rows[0]) return false;
       const member = await db.query(
         "SELECT 1 FROM org_memberships WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL",
@@ -573,8 +574,12 @@ export async function emitDueSummaries(
       const held = (await db.query("SELECT pg_try_advisory_xact_lock($1) AS held", [SECURITY_REPORT.workerLock])).rows[0] as { held: boolean };
       if (!held.held) return 0;
     }
-    const claimed = (await db.query(
-      `SELECT organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen
+    const claimed = (await lockedQuery(
+      db,
+      { table: "security_control_counters", mode: "update", key: "lock_key" },
+      `SELECT organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour, count, first_seen, last_seen,
+              concat_ws('|', organization_id::text, control::text, config_version::text, operation::text, actor_identity_id::text,
+                        reason::text, bucket_hour::text) AS lock_key
        FROM security_control_counters c
        WHERE emitted_at IS NULL AND bucket_hour <= clock_timestamp() - make_interval(hours => 1, mins => $1)
          -- Never a summary for a deleted Organization (retention deletes its rows).
@@ -625,7 +630,9 @@ export async function emitDueSummaries(
 /** Retention: delete counter rows 35 days after their summary, and any of a deleted Organization, a batch at a time. */
 export async function deleteExpiredCounters(ctx: AppCtx, batch = 1000): Promise<number> {
   return withTx(ctx.db, async (db) => {
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "security_control_counters", mode: "update", key: "-" },
       `DELETE FROM security_control_counters c
        USING (
          SELECT organization_id, control, config_version, operation, actor_identity_id, reason, bucket_hour

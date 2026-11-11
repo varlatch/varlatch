@@ -11,6 +11,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockPerson, lockPersonPasskeys } from "./personlocks.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Device-authorization sign-in (ADR-0043 Decision 2, design notes
@@ -182,7 +183,7 @@ export async function pollDeviceSignIn(
 ): Promise<PollOutcome> {
   if (!DEVICE_CODE.test(input.deviceCode)) return { kind: "unknown" };
   return withTx(ctx.db, async (db) => {
-    const locked = (await db.query("SELECT id FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE", [
+    const locked = (await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, "SELECT id FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE", [
       sha256(input.deviceCode),
     ])).rows[0] as { id: string } | undefined;
     if (!locked) return { kind: "unknown" };
@@ -293,8 +294,10 @@ export async function findSignInByCode(
        ON CONFLICT DO NOTHING`,
       keys.flat(),
     );
-    await db.query(
-      `SELECT 1 FROM device_code_attempt_windows
+    await lockedQuery(
+      db,
+      { table: "device_code_attempt_windows", mode: "update", key: "lock_key" },
+      `SELECT concat_ws('|', scope::text, key::text) AS lock_key FROM device_code_attempt_windows
        WHERE (scope, key) IN (($1, $2), ($3, $4), ($5, $6))
        ORDER BY scope, key FOR UPDATE`,
       keys.flat(),
@@ -379,7 +382,7 @@ export async function issueApprovalChallenge(
   input: { signInId: string; identityId: string; authSessionId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON | null> {
   return withTx(ctx.db, async (db) => {
-    // The person (approvals.ts lock order, step 2) before the challenge's
+    // The person (lock order step 2, liveness.ts) before the challenge's
     // insert references it.
     await lockPerson(db, input.identityId, "key share");
     // Any passkey of the person, user verification preferred, as at sign-in:
@@ -412,7 +415,7 @@ function noLongerPending(): DomainError {
  * concurrent decision, or the wait itself crossing the expiry, ends it).
  */
 async function lockPending(db: Querier, signInId: string): Promise<void> {
-  await db.query("SELECT id FROM device_sign_ins WHERE id = $1 FOR UPDATE", [signInId]);
+  await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, "SELECT id FROM device_sign_ins WHERE id = $1 FOR UPDATE", [signInId]);
   const current = (await db.query(
     "SELECT status = 'pending' AND expires_at > clock_timestamp() AS pending FROM device_sign_ins WHERE id = $1",
     [signInId],
@@ -461,7 +464,7 @@ export async function approveDeviceSignIn(
 ): Promise<void> {
   const challenge = assertionChallenge(input.assertion);
   const refusal = await withTx(ctx.db, async (db) => {
-    // The approver first, in the lock order of approvals.ts: their
+    // The approver first, in the lock order (liveness.ts): their
     // identities row FOR KEY SHARE (2; the approval references it, and
     // collection's credential insert takes the same mode while holding the
     // sign-in row), then all their passkeys in id order FOR UPDATE (3; the
@@ -478,7 +481,9 @@ export async function approveDeviceSignIn(
     // this approval after any decision in flight.
     await lockPending(db, input.signInId);
     const bound = challenge
-      ? ((await db.query(
+      ? ((await lockedQuery(
+          db,
+          { table: "device_sign_in_challenges", mode: "update" },
           `SELECT id FROM device_sign_in_challenges
            WHERE challenge = $1 AND device_sign_in_id = $2 AND identity_id = $3 AND auth_session_id = $4
            FOR UPDATE`,

@@ -4,6 +4,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Invitation management (capability invitations.manage): an organization's
@@ -81,7 +82,9 @@ export async function revokeInvitation(
 ): Promise<InvitationRow> {
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId });
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "setup_grants", mode: "update" },
       `SELECT ${COLUMNS} FROM setup_grants
        WHERE id = $1 AND kind = 'invite' AND invite_organization_id = $2 FOR UPDATE`,
       [invitationId, organizationId],
