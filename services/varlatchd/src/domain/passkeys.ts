@@ -95,9 +95,9 @@ const OWN_PASSKEYS = `
   SELECT p.id, p.name, p."deviceType", p."backedUp", p."createdAt",
          pp.trust, pp.trusted_via, pp.trusted_at, pp.setup_grant_kind, pp.confirmed_by_passkey_id
   FROM passkey p
-  JOIN auth_user_links l ON l.better_auth_user_id = p."userId"
-  LEFT JOIN passkey_provenance pp ON pp.passkey_id = p.id
-  WHERE l.identity_id = $1`;
+  LEFT JOIN passkey_provenance pp ON pp.passkey_id = p.id,
+  auth_user_links l
+  WHERE l.better_auth_user_id = p."userId" AND l.identity_id = $1`;
 
 /** The identity's passkeys with their provenance, oldest first. */
 export async function listOwnPasskeys(db: Querier, identityId: string): Promise<OwnPasskey[]> {

@@ -315,7 +315,6 @@ export function takeLockViolations(): LockViolation[] {
   return enforced.splice(0, enforced.length);
 }
 
-const LOCKING = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b(\s+OF\s+[\w"]+(?:\s*,\s*[\w"]+)*)?/gi;
 const MODE_OF: Record<string, string> = { "no-key-update": "no key update", "key-share": "key share", share: "share", update: "update" };
 
 /**
@@ -411,53 +410,108 @@ export function statementsOf(sql: string): string[] {
 
 const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\b/i;
 
-const relationName = (name: string) => name.replace(/"/g, "").replace(/^public\./i, "").toLowerCase();
+/**
+ * The grammar a statement with a locking clause may use, and nothing else:
+ * the checker refuses rather than parses anything outside it (Codex's
+ * review of #106). At the locking clause's query level:
+ * - FROM is one or more plain base tables, optionally schema-qualified,
+ *   joined by commas or by [INNER | LEFT [OUTER]] JOIN … ON <condition>,
+ *   each with an optional simple, unquoted alias that is not a keyword;
+ * - no quoted identifier anywhere in the FROM clause or the locking clause;
+ * - no subquery, LATERAL, function, VALUES or CTE in FROM, and no WITH
+ *   (subqueries in WHERE stay allowed: they lock nothing);
+ * - the clause is FOR <mode> [OF <item>, …] [NOWAIT | SKIP LOCKED], its OF
+ *   targets naming items of that FROM.
+ * A query outside this grammar is to be simplified or split, as
+ * Organization deletion's environment lock was.
+ */
+const SIMPLE_NAME = /^[a-z_][a-z0-9_]*$/i;
+const TABLE_NAME = /^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?$/i;
+const KEYWORDS = new Set([
+  "all", "and", "any", "as", "by", "cross", "except", "fetch", "for", "from", "full", "group", "having", "in", "inner", "intersect",
+  "is", "join", "lateral", "left", "limit", "natural", "not", "null", "offset", "on", "only", "or", "order", "outer", "returning",
+  "right", "rows", "select", "set", "tablesample", "union", "using", "values", "where", "window", "with",
+]);
+const CLAUSE_END = /\b(?:WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET|FETCH|FOR|WINDOW|UNION|INTERSECT|EXCEPT|RETURNING)\b/i;
+const JOIN = /^(?:INNER\s+|LEFT\s+(?:OUTER\s+)?)?JOIN$/i;
 
-/** Removes every parenthesized group, innermost first: what is left is one query level. */
+function outsideGrammar(sql: string, why: string): Error {
+  return new Error(
+    `lock trace: a locking statement outside the allowed grammar (${why}). Use plain base tables joined by commas or JOIN … ON, ` +
+      `simple unquoted aliases, and FOR … OF those aliases; no quoting, subqueries, LATERAL, functions, VALUES or CTEs in FROM. ` +
+      `Simplify or split the query: ${sql.slice(0, 200)}`,
+  );
+}
+
+/** Replaces every parenthesized group, innermost first, with a marker: what is left is one query level. */
 function flatten(text: string): string {
   let out = text;
   for (let prev = ""; prev !== out; ) {
     prev = out;
-    out = out.replace(/\([^()]*\)/g, " ");
+    out = out.replace(/\([^()]*\)/g, " § ");
   }
   return out;
 }
 
-const CLAUSE_END = /\b(?:WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET|FETCH|FOR\s+(?:NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)|WINDOW|UNION|INTERSECT|EXCEPT|RETURNING)\b/i;
-const ITEM_SEPARATOR = /,|\b(?:(?:LEFT|RIGHT|FULL|INNER|CROSS|NATURAL)\s+)*(?:OUTER\s+)?JOIN\b/i;
-const NOT_ALIAS = new Set(["on", "using", "lateral", "tablesample"]);
-
-/**
- * The FROM items of one query level (parentheses already removed): every
- * comma-separated item and every JOIN, each a relation and its alias.
- */
-function fromItems(level: string): { table: string; alias: string | null }[] {
+/** The FROM items of one flattened query level, under the grammar above. */
+function fromItems(level: string, sql: string): { table: string; name: string }[] {
   const from = /\bFROM\b/i.exec(level);
-  if (!from) return [];
+  if (!from) throw outsideGrammar(sql, "no FROM");
   let text = level.slice(from.index + from[0].length);
   const end = CLAUSE_END.exec(text);
   if (end) text = text.slice(0, end.index);
-  return text
-    .split(new RegExp(ITEM_SEPARATOR.source, "gi"))
-    .map((item) => item.replace(/\s+(?:ON|USING)\b[\s\S]*$/i, "").trim())
-    .filter(Boolean)
-    .map((item) => {
-      const m = /^(?:LATERAL\s+|ONLY\s+)?((?:"[^"]*"|\w+)(?:\.(?:"[^"]*"|\w+))?)(?:\s+(?:AS\s+)?(\w+))?/i.exec(item);
-      if (!m) throw new Error(`lock trace: cannot read the FROM item "${item}"`);
-      const alias = m[2]?.toLowerCase() ?? null;
-      return { table: relationName(m[1]!), alias: alias && !NOT_ALIAS.has(alias) ? alias : null };
-    });
+  if (/["§]/.test(text)) throw outsideGrammar(sql, "a quoted identifier, a subquery or a function in FROM");
+  const tokens = text.replace(/,/g, " , ").trim().split(/\s+/).filter(Boolean);
+  const items: { table: string; name: string }[] = [];
+  let i = 0;
+  const readItem = () => {
+    const table = tokens[i++];
+    if (!table || !TABLE_NAME.test(table) || KEYWORDS.has(table.toLowerCase())) throw outsideGrammar(sql, `FROM item "${table ?? ""}"`);
+    let alias: string | null = null;
+    if (tokens[i]?.toLowerCase() === "as") i++;
+    const next = tokens[i];
+    if (next && next !== "," && !KEYWORDS.has(next.toLowerCase())) {
+      if (!SIMPLE_NAME.test(next)) throw outsideGrammar(sql, `alias "${next}"`);
+      alias = next.toLowerCase();
+      i++;
+    }
+    const relation = table.toLowerCase().replace(/^public\./, "");
+    items.push({ table: relation, name: alias ?? relation });
+  };
+  readItem();
+  while (i < tokens.length) {
+    const t = tokens[i]!;
+    if (t === ",") {
+      i++;
+      readItem();
+      continue;
+    }
+    // [INNER | LEFT [OUTER]] JOIN item ON condition
+    let j = i;
+    while (j < tokens.length && !/^JOIN$/i.test(tokens[j]!) && j - i < 3) j++;
+    if (!JOIN.test(tokens.slice(i, j + 1).join(" "))) throw outsideGrammar(sql, `"${tokens.slice(i, j + 1).join(" ")}" in FROM`);
+    i = j + 1;
+    readItem();
+    if (tokens[i]?.toUpperCase() !== "ON") throw outsideGrammar(sql, "a JOIN without ON");
+    i++;
+    // The condition: everything up to the next item separator.
+    while (i < tokens.length && tokens[i] !== "," && !/^(?:INNER|LEFT|JOIN|RIGHT|FULL|CROSS|NATURAL)$/i.test(tokens[i]!)) i++;
+  }
+  return items;
 }
+
+const LOCKING_CLAUSE = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b((?:\s+OF\s+[^\s,]+(?:\s*,\s*[^\s,]+)*)?)(\s+(?:NOWAIT|SKIP\s+LOCKED))?/gi;
 
 /**
  * The locking clauses of a statement and, for each, the relations it locks:
- * those named by FOR … OF, or else every relation in the FROM and JOIN
- * items of the query level the clause belongs to (subqueries in its WHERE
- * are another level, and lock nothing).
+ * those named by FOR … OF, or else every item of its query level's FROM.
+ * Anything outside the grammar above is refused.
  */
 export function lockingClauses(sql: string): { mode: string; relations: string[] }[] {
   const bare = bareSql(sql);
-  return [...bare.matchAll(LOCKING)].map((m) => {
+  const clauses = [...bare.matchAll(LOCKING_CLAUSE)];
+  if (clauses.length > 0 && /^\s*WITH\b/i.test(bare)) throw outsideGrammar(sql, "WITH");
+  return clauses.map((m) => {
     const at = m.index!;
     // The innermost parenthesized group around the clause, if any.
     const open: number[] = [];
@@ -478,22 +532,18 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
       }
     }
     const level = flatten(bare.slice(start, end));
-    const aliases = new Map<string, string>();
-    const items: string[] = [];
-    for (const item of fromItems(level)) {
-      items.push(item.table);
-      // An aliased item is named by its alias only, as in PostgreSQL.
-      if (item.alias) aliases.set(item.alias, item.table);
-      else aliases.set(item.table, item.table);
-    }
-    const of = m[2]?.replace(/^\s+OF\s+/i, "").split(",").map((a) => relationName(a.trim()));
+    if (/^\s*WITH\b/i.test(level)) throw outsideGrammar(sql, "WITH");
+    const items = fromItems(level, sql);
+    const ofText = m[2]?.replace(/^\s+OF\s+/i, "");
+    if (ofText && /["§]/.test(ofText)) throw outsideGrammar(sql, "a quoted name after OF");
+    const of = ofText ? ofText.split(",").map((a) => a.trim().toLowerCase()) : null;
     const relations = of
       ? of.map((a) => {
-        const table = aliases.get(a);
-        if (!table) throw new Error(`lock trace: FOR … OF ${a} names no relation of its query: ${sql.slice(0, 200)}`);
-        return table;
+        const item = items.find((x) => x.name === a);
+        if (!item) throw new Error(`lock trace: FOR … OF ${a} names no relation of its query: ${sql.slice(0, 200)}`);
+        return item.table;
       })
-      : items;
+      : items.map((x) => x.table);
     return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations: [...new Set(relations)] };
   });
 }
