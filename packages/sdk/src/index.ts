@@ -8,11 +8,13 @@ import type {
   SecurityControlName,
   SecurityControlReport,
   ApprovalKeys,
+  RefusedDestinations,
   OrganizationPermissions,
   AuditCredential,
   AuditEventFilters,
   InstallationBackups,
   InstallationRelease,
+  InstallationOutbound,
   InstallationListeners,
   TailnetDevice,
   TailnetEndpoint,
@@ -230,6 +232,14 @@ export type { CredentialExpiryReview, CredentialReview, ExpiringCredential, Revi
 export type { AdminApprovalKeys, ApprovalKey, ApprovalKeys } from "@varlatch/protocol";
 /** The caller's own organization-level permissions (capability organizations.permissions). */
 export type { OrganizationPermissions } from "@varlatch/protocol";
+/** Refused outbound destinations (capabilities security.refused-destinations and installation.outbound, ADR-0057 Decision 8). */
+export type {
+  InstallationOutbound,
+  InstallationRefusedDestination,
+  OutboundDestinationKind,
+  RefusedDestination,
+  RefusedDestinations,
+} from "@varlatch/protocol";
 
 /** Credential metadata (ADR-0034 §2); never includes token material. */
 export interface IdentityCredential {
@@ -1041,6 +1051,16 @@ export class VarlatchClient {
   }
 
   /**
+   * The Organization's configured destinations this installation's outbound
+   * policy refuses: kind, name, host, reason and since when
+   * (organization.manage; capability security.refused-destinations). Never
+   * the host's allow list or a resolved address.
+   */
+  refusedDestinations(org: string): Promise<RefusedDestinations> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/security/refused-destinations`);
+  }
+
+  /**
    * Change one Security Control. Loosening needs a step-up approval: the
    * server answers STEP_UP_REQUIRED, which onStepUp handles (or the error
    * surfaces). enforce is refused with CONTROL_MODE_UNAVAILABLE for now.
@@ -1516,6 +1536,16 @@ export class VarlatchClient {
    */
   getInstallationRelease(): Promise<InstallationRelease> {
     return this.request("GET", "/v1/installation/release");
+  }
+
+  /**
+   * Installation Admin only: VARLATCH_OUTBOUND_ALLOW as parsed, with
+   * doctor's warnings, and every refused destination by Organization, with
+   * the value that would allow the refused names (capability
+   * installation.outbound). Read-only: the allow list is set on the host.
+   */
+  getInstallationOutbound(): Promise<InstallationOutbound> {
+    return this.request("GET", "/v1/installation/outbound");
   }
 
   /**

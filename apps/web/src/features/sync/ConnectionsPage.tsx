@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, MoreHorizontal, Plug, Plus, ShieldAlert, Trash2 } from "lucide-react";
-import type { PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
+import type { OutboundRefusalReason, PlatformConnection, SyncPlatform, SyncTarget, Tier } from "@varlatch/protocol";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
 import { formatDate, formatDateTime, timeAgo, useNow } from "../../lib/time";
@@ -24,6 +24,8 @@ import { connectionHealth, refetchWhileRunning, targetDestination } from "./stat
 import { PlatformTile } from "./TargetCard";
 import { useOrgEnvironments, type EnvironmentRef } from "./useOrgEnvironments";
 import { useFrozen } from "../security-controls/IncidentFreeze";
+import { useRefusedDestinations } from "../security-controls/RefusedDestinationsCard";
+import { refusedDestinationsKey } from "../security-controls/keys";
 
 /**
  * Platform connections: one credential per platform account or instance.
@@ -36,7 +38,7 @@ export function ConnectionsPage() {
   const { api } = useSession();
   const qc = useQueryClient();
   const orgName = useOrgName(org);
-  useOrgRealtime(org, ["sync"], [connectionsKey(org), keys.orgSyncTargets(org)]);
+  useOrgRealtime(org, ["sync"], [connectionsKey(org), keys.orgSyncTargets(org), refusedDestinationsKey(org)]);
   const meta = useMeta();
   const syncEnabled = (meta.data?.capabilities ?? []).includes("sync.targets");
   const adapters = (meta.data?.syncAdapters ?? []) as SyncPlatform[];
@@ -51,10 +53,15 @@ export function ConnectionsPage() {
   // GitHub App, new connections and credential changes are refused, so they
   // are not offered.
   const frozen = useFrozen(org);
+  // This installation's refusals as checked now (ADR-0057 Decision 8), for admins on a server that has them.
+  const refused = useRefusedDestinations(org);
+  const refusalOf = (id: string) =>
+    refused.data?.items.find((d) => (d.kind === "coolify" || d.kind === "convex") && d.id === id)?.reason ?? null;
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: connectionsKey(org) });
     void qc.invalidateQueries({ queryKey: keys.orgSyncTargets(org) });
     void qc.invalidateQueries({ queryKey: ["sync-targets", org] });
+    void qc.invalidateQueries({ queryKey: refusedDestinationsKey(org) });
   };
 
   const [params, setParams] = useSearchParams();
@@ -165,6 +172,7 @@ export function ConnectionsPage() {
               org={org}
               connection={c}
               targets={allTargets.filter((t) => t.connectionId === c.id)}
+              refusal={refusalOf(c.id)}
               envs={envs.byId}
               onReplace={() => replaceOrRotate(c)}
               onChanged={refresh}
@@ -261,6 +269,7 @@ export function ConnectionCard({
   org,
   connection,
   targets,
+  refusal = null,
   envs,
   onReplace,
   onChanged,
@@ -269,6 +278,8 @@ export function ConnectionCard({
   org: string;
   connection: PlatformConnection;
   targets: SyncTarget[];
+  /** This installation's refusal of the connection's host, as checked now; null when not refused or not known. */
+  refusal?: OutboundRefusalReason | null;
   envs: Map<string, EnvironmentRef>;
   onReplace: () => void;
   onChanged: () => void;
@@ -282,7 +293,7 @@ export function ConnectionCard({
   const meta = platformMeta(connection.platform);
   const viaApp = connection.credentialKind === "github-app";
   const fixLabel = viaApp ? "Rotate the App's key" : "Replace credential";
-  const health = connectionHealth(targets);
+  const health = connectionHealth(targets, refusal);
   const expiry = credentialExpiry(connection.credentialExpiresAt, now);
   const replaceSoon = health.credentialRejected || (expiry !== null && expiry.state !== "later");
   const revoke = useMutation({
@@ -373,6 +384,16 @@ export function ConnectionCard({
           {health.label}
           {health.at && health.tone === "error" && <span className="text-deny/80">· {timeAgo(health.at, now)}</span>}
         </Status>
+        {health.refusal && (
+          <div className="space-y-1" data-testid={`connection-refused-${connection.id}`}>
+            {!health.refusalInLabel && (
+              <Status tone="warn" className="text-sm">
+                Refused by this installation
+              </Status>
+            )}
+            <p className="text-xs text-muted">{health.refusal}</p>
+          </div>
+        )}
         {expiry && (
           <span
             className="block"

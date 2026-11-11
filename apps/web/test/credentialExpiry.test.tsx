@@ -168,6 +168,52 @@ describe("Connections card", () => {
   });
 });
 
+describe("Connections card: a host this installation refuses (ADR-0057)", () => {
+  const paused = {
+    id: "snt_9",
+    organizationId: "org_1",
+    projectId: "prj_1",
+    environmentId: "env_1",
+    connectionId: "pcn_1",
+    destination: { repo: "api" },
+    mapping: { kind: "wildcard" },
+    removeOrphans: false,
+    redeploy: false,
+    state: "paused",
+    disabledReason: null,
+    failureCount: 0,
+    needsSync: true,
+    lastAttemptAt: "2026-10-09T09:00:00Z",
+    lastResult: "converged",
+    lastNotes: null,
+    createdAt: "2026-10-01T09:00:00Z",
+    version: 1,
+    updatedAt: null,
+  } as SyncTarget;
+  const card = (targets: SyncTarget[], refusal: "private_address" | null) => (
+    <ConnectionCard org="acme" connection={connection(null)} targets={targets} refusal={refusal} envs={new Map()} onReplace={() => {}} onChanged={() => {}} />
+  );
+
+  it("says so on a connection no target uses yet", async () => {
+    await mount(card([], "private_address"));
+    const refused = text(byTestId("connection-refused-pcn_1"));
+    expect(refused).toContain("Refused by this installation");
+    expect(refused).toContain("This address is on a private network");
+    expect(text(root.root)).toContain("Not used yet");
+  });
+
+  it("keeps the paused status visible next to it", async () => {
+    await mount(card([paused], "private_address"));
+    expect(text(root.root)).toContain("All targets paused");
+    expect(text(byTestId("connection-refused-pcn_1"))).toContain("Refused by this installation");
+  });
+
+  it("shows nothing when the host is not refused", async () => {
+    await mount(card([paused], null));
+    expect(all("connection-refused-pcn_1")).toHaveLength(0);
+  });
+});
+
 describe("Integration card", () => {
   const target: SyncTarget = {
     id: "snt_1",

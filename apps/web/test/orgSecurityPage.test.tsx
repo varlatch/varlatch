@@ -11,6 +11,7 @@ import {
   type Approval,
   type ApprovalKeys,
   type CredentialReview,
+  type RefusedDestinations,
   type SecurityControl,
   type SecurityControlReport,
 } from "@varlatch/sdk";
@@ -80,7 +81,14 @@ import { OrgSecurityPage } from "../src/features/security-controls/OrgSecurityPa
 import { ApprovalDialogProvider } from "../src/features/security-controls/approval";
 import { CHECKLIST } from "../src/features/security-controls/checklist";
 
-const CAPABILITIES = ["security.controls", "security.report", "security.approval-keys", "security.credential-review", "organizations.permissions"];
+const CAPABILITIES = [
+  "security.controls",
+  "security.report",
+  "security.approval-keys",
+  "security.credential-review",
+  "security.refused-destinations",
+  "organizations.permissions",
+];
 const ADMIN = ["organization.read", "organization.manage", "project.read", "project.manage", "identity.read", "identity.manage", "policy.read", "policy.manage", "audit.read"];
 const MEMBER = ["organization.read", "project.read"];
 
@@ -216,6 +224,25 @@ const EMPTY_REVIEW: CredentialReview = {
   items: [],
   expiry: { warningDays: 7, summary: { soon: 0, expired: 0 }, items: [] },
 };
+const REFUSED: RefusedDestinations = {
+  generatedAt: "2026-11-10T23:00:00.000Z",
+  sinceDays: 30,
+  checked: 4,
+  unresolved: 0,
+  items: [
+    {
+      kind: "coolify",
+      id: "pc_1",
+      name: "Production Coolify",
+      scheme: "https",
+      host: "coolify.lan",
+      port: 8443,
+      reason: "private_address",
+      since: new Date(Date.now() - 3 * 86400_000).toISOString(),
+    },
+    { kind: "webhook", id: "wh_1", name: null, scheme: "http", host: "hooks.example", port: 80, reason: "scheme", since: null },
+  ],
+};
 const REQUIREMENTS = [{ id: "req_1", kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net" }, version: 1, updatedAt: null }];
 
 let root: ReactTestRenderer;
@@ -274,6 +301,7 @@ beforeEach(() => {
     securityControlReport: gated("securityControlReport", "organization.manage", async () => report()),
     securityApprovalKeys: gated("securityApprovalKeys", "organization.manage", async () => KEYS),
     credentialReview: gated("credentialReview", "identity.manage", async () => review()),
+    refusedDestinations: gated("refusedDestinations", "organization.manage", async () => REFUSED),
     listRequirements: gated("listRequirements", "policy.read", async () => ({ items: REQUIREMENTS, nextCursor: null })),
     changeSecurityControl: vi.fn(async (_org: string, name: SecurityControl["control"]) => ({
       control: control(name, { mode: "report", version: 1 }),
@@ -383,6 +411,76 @@ describe("the Security page for an admin", () => {
     expect(byTestId("security-approval-keys")).toHaveLength(0);
     expect(text(one("security-credentials-error"))).toContain("Something broke");
     expect(byTestId("security-controls-section")).toHaveLength(1);
+  });
+});
+
+describe("refused destinations on the Security page (ADR-0057)", () => {
+  it("lists them for an admin: kind, name, host, reason and since when, and where they are allowed", async () => {
+    await mount();
+    expect(fake.api.refusedDestinations).toHaveBeenCalledWith("acme");
+    const card = one("security-refused-destinations");
+    expect(card.props["data-count"]).toBe(2);
+    const coolify = text(one("refused-destination-pc_1"));
+    expect(coolify).toContain("Coolify");
+    expect(coolify).toContain("Production Coolify");
+    expect(coolify).toContain("https://coolify.lan:8443");
+    expect(coolify).toContain("private network address");
+    expect(coolify).toContain("This address is on a private network");
+    expect(text(one("refused-since-pc_1"))).toMatch(/^first recorded within the last 30 days: /);
+    expect(byTestId("refused-destinations-unchecked")).toHaveLength(0);
+    const hook = text(one("refused-destination-wh_1"));
+    expect(hook).toContain("Webhook");
+    expect(hook).toContain("wh_1");
+    expect(hook).toContain("plain http");
+    expect(text(one("refused-since-wh_1"))).toBe("no refusal recorded in the last 30 days");
+    const note = text(one("refused-destinations-note"));
+    expect(note).toContain("Private destinations are allowed by the host operator");
+    expect(note).toContain("not in Varlatch");
+    expect(links()).toContain("https://docs.varlatch.com/reference/outbound-policy/");
+  });
+
+  it("says when nothing is refused", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [] }));
+    await mount();
+    expect(text(one("refused-destinations-none"))).toContain("connects to every destination");
+  });
+
+  it("never reads destinations it could not check as allowed", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [], unresolved: 4 }));
+    await mount();
+    expect(one("refused-destinations-none").props["data-kind"]).toBe("unchecked");
+    expect(text(one("refused-destinations-none"))).not.toContain("connects to every destination");
+    expect(text(one("refused-destinations-unchecked"))).toContain("4 of 4 destinations could not be checked");
+  });
+
+  it("names destinations it could not check next to refused ones", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, unresolved: 1 }));
+    await mount();
+    expect(byTestId("refused-destination-pc_1")).toHaveLength(1);
+    expect(text(one("refused-destinations-unchecked"))).toContain("1 of 4 destinations could not be checked: its name did not resolve");
+  });
+
+  it("says when the organization configured nothing to check", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [], checked: 0 }));
+    await mount();
+    expect(one("refused-destinations-none").props["data-kind"]).toBe("nothing-configured");
+  });
+
+  it("is not asked for without organization.manage, and named in the member note", async () => {
+    fake.me = "idn_eve";
+    fake.actions = MEMBER;
+    await mount();
+    expect(fake.refused).toEqual([]);
+    expect(fake.api.refusedDestinations).not.toHaveBeenCalled();
+    expect(byTestId("security-refused-destinations")).toHaveLength(0);
+    expect(text(one("security-member-note"))).toContain("destinations this installation refuses (needs organization.manage)");
+  });
+
+  it("is not asked of a server without the capability", async () => {
+    fake.api.meta = async () => ({ apiMajor: 1, capabilities: CAPABILITIES.filter((c) => c !== "security.refused-destinations") });
+    await mount();
+    expect(fake.api.refusedDestinations).not.toHaveBeenCalled();
+    expect(byTestId("security-refused-destinations")).toHaveLength(0);
   });
 });
 

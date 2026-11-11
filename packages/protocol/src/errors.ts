@@ -107,6 +107,8 @@ export const CAPABILITIES = [
   "security.report",
   "security.approval-keys",
   "organizations.permissions",
+  "installation.outbound",
+  "security.refused-destinations",
   "organizations.incident-freeze",
 ] as const;
 

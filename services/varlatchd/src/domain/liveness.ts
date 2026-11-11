@@ -11,7 +11,10 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  * ADR-0051 below, Organization deletion and the sync workers alike. This is
  * the one place it is written down; the other files refer here.
  *
- *   0. createApproval's per-person advisory lock (only it takes one).
+ *   0. Advisory locks, each taken first and only by its one kind of
+ *      transaction: createApproval's per-person lock, device sign-in
+ *      requests' lock (requestDeviceSignIn), and the report summary
+ *      worker's (pg_try_advisory_xact_lock).
  * 0.5. The installation row (bootstrap's installation update included).
  *   1. The Organization row, then its open deletion request.
  *   2. People: every identity row the transaction will lock or reference,

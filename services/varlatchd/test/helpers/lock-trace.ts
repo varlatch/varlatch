@@ -214,6 +214,14 @@ export async function installLockTrace(db: Querier): Promise<void> {
     END IF;`);
     }
     const keyChanged = keyCols.length === 0 ? "false" : keyCols.map((c) => `NEW.${ident(c)} IS DISTINCT FROM OLD.${ident(c)}`).join(" OR ");
+    // Consuming an approval (approvals.ts) relies on the caller holding the
+    // intent's person FOR UPDATE: marked here, checked by checkTrace.
+    if (t.name === "approval_intents") {
+      refs.push(`
+    IF TG_OP = 'UPDATE' AND NEW.consumed_at IS NOT NULL AND OLD.consumed_at IS NULL THEN
+      INSERT INTO ${SCHEMA}.trace VALUES (txid_current(), nextval('${SCHEMA}.seq'), 'identities', NEW.identity_id, 'update', 'consume');
+    END IF;`);
+    }
     const fn = `${SCHEMA}.${ident(`t_${t.name}`)}`;
     await run(`
 CREATE FUNCTION ${fn}() RETURNS trigger LANGUAGE plpgsql AS $trace$
@@ -237,7 +245,7 @@ CREATE TRIGGER varlatch_lock_trace AFTER INSERT OR UPDATE OR DELETE ON public.${
 // ---------------------------------------------------------------------------
 // The check
 
-export interface TraceRow { seq: number; tbl: string; key: string; mode: string; kind: "explicit" | "write" | "insert" | "reference" }
+export interface TraceRow { seq: number; tbl: string; key: string; mode: string; kind: "explicit" | "write" | "insert" | "reference" | "consume" }
 
 const STRENGTH: Record<string, number> = { "key share": 1, share: 2, "no key update": 3, update: 4, insert: 5 };
 const cmpStep = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1] - b[1];
@@ -252,7 +260,9 @@ const cmpStep = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1
  *   acquisition before it;
  * - rows of one table first acquired out of ascending key order;
  * - a person's row changed without an explicit FOR UPDATE prelock on it
- *   first (step 2; PostgreSQL's implicit lock of the update does not count).
+ *   first (step 2; PostgreSQL's implicit lock of the update does not count);
+ * - an approval consumed without its person held FOR UPDATE first (the
+ *   caller's step 2: consumeApproval takes no person lock of its own).
  * A later entry for a row already held, in the same or a weaker mode, is
  * reuse and passes. Rows the transaction inserted are held from the start
  * and never order against anything.
@@ -269,6 +279,10 @@ export function checkTrace(rows: TraceRow[]): string[] {
     const id = `${r.tbl}\u0000${r.key}`;
     const before = held.get(id);
     const strength = STRENGTH[r.mode] ?? 0;
+    if (r.kind === "consume") {
+      if (!prelocked.has(r.key)) problems.push(`an approval consumed without its person locked FOR UPDATE at step 2 first: identities[${r.key}] (#${r.seq})`);
+      continue;
+    }
     if (r.kind === "insert") {
       held.set(id, STRENGTH.insert!);
       if (r.tbl === "identities") prelocked.add(r.key);
@@ -419,11 +433,16 @@ const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOIN
  *   each with an optional simple, unquoted alias that is not a keyword;
  * - no quoted identifier anywhere in the FROM clause or the locking clause;
  * - no subquery, LATERAL, function, VALUES or CTE in FROM, and no WITH
- *   (subqueries in WHERE stay allowed: they lock nothing);
- * - the clause is FOR <mode> [OF <item>] [NOWAIT | SKIP LOCKED] and locks
- *   exactly one FROM item: OF names one item of that FROM, or the FROM has
- *   a single item (a self-join or a second locked item could otherwise
- *   lock rows the trace never records).
+ *   (subqueries in WHERE stay allowed as long as they have no locking
+ *   clause of their own);
+ * - one locking clause per statement, FOR <mode> [OF <item>] [NOWAIT |
+ *   SKIP LOCKED], locking exactly one FROM item: OF names one item of that
+ *   FROM, or the FROM has a single item (a self-join or a second locked
+ *   item could otherwise lock rows the trace never records);
+ * - the clause belongs to the top-level SELECT, whose returned keys the
+ *   trace records; inside a subquery only in a DELETE or UPDATE of the
+ *   same table the subquery locks, tagged with key "-" (the sweep shape),
+ *   whose writes record the rows it locked.
  * A query outside this grammar is to be simplified or split, as
  * Organization deletion's environment lock was.
  */
@@ -509,10 +528,13 @@ const LOCKING_CLAUSE = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b((
  * those named by FOR … OF, or else every item of its query level's FROM.
  * Anything outside the grammar above is refused.
  */
-export function lockingClauses(sql: string): { mode: string; relations: string[] }[] {
+export function lockingClauses(sql: string): { mode: string; relations: string[]; nested: boolean; skipLocked: boolean; selectList: string }[] {
   const bare = bareSql(sql);
   const clauses = [...bare.matchAll(LOCKING_CLAUSE)];
   if (clauses.length > 0 && /^\s*WITH\b/i.test(bare)) throw outsideGrammar(sql, "WITH");
+  // One locking clause per statement: two (FOR UPDATE OF a FOR UPDATE OF b,
+  // or one in a subquery beside one at the top) lock more than one item.
+  if (clauses.length > 1) throw outsideGrammar(sql, "more than one locking clause");
   return clauses.map((m) => {
     const at = m.index!;
     // The innermost parenthesized group around the clause, if any.
@@ -551,7 +573,14 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
         return item.table;
       })
       : items.map((x) => x.table);
-    return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations };
+    const selectList = /^\s*SELECT\s+([\s\S]*?)\s+FROM\b/i.exec(level)?.[1]?.trim() ?? "";
+    return {
+      mode: m[1]!.toLowerCase().replace(/\s+/g, " "),
+      relations,
+      nested: open.length > 0,
+      skipLocked: /SKIP\s+LOCKED/i.test(m[3] ?? ""),
+      selectList,
+    };
   });
 }
 
@@ -584,8 +613,64 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
     if (clause.relations[0] !== tag.table) {
       throw new Error(`lock trace: the tag names ${tag.table}, the statement locks ${clause.relations[0]}: ${sql.slice(0, 200)}`);
     }
+    // The keys the trace records are the statement's returned rows, so a
+    // recorded lock must be the top-level SELECT's. A locking clause inside a
+    // subquery is allowed only in a DELETE or UPDATE tagged with key "-",
+    // whose writes record the rows it locked (the sweep patterns).
+    if (clause.nested) {
+      // Only the sweep shape: the DELETE's or UPDATE's target is the very
+      // table the locking subquery locks (and the tag names), as in
+      // DELETE FROM t WHERE id IN (SELECT id FROM t … FOR UPDATE SKIP
+      // LOCKED), so the traced writes are the locked rows.
+      const target = /^\s*(?:UPDATE\s+(?:ONLY\s+)?|DELETE\s+FROM\s+(?:ONLY\s+)?)([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\b/i.exec(bareSql(sql))?.[1];
+      const targetTable = target?.toLowerCase().replace(/^public\./, "");
+      if (tag.key !== "-" || !targetTable || targetTable !== clause.relations[0] || targetTable !== tag.table) {
+        throw outsideGrammar(sql, "a locking clause inside a subquery, other than a DELETE or UPDATE of the same table it locks, tagged with key -");
+      }
+      // And it writes every row it locks: SKIP LOCKED, and the outer
+      // predicate is only <column> IN (the subquery selecting that column)
+      // or a USING join on exactly the columns the subquery selects.
+      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause.selectList)) {
+        throw outsideGrammar(sql, "a nested lock outside the sweep shapes (SKIP LOCKED; WHERE <column> IN (subquery), or DELETE … USING (subquery) joined on the columns it selects)");
+      }
+    } else {
+      if (tag.key === "-") throw outsideGrammar(sql, "a top-level locking clause whose keys are not recorded (key -)");
+      // A recorded lock is a plain SELECT's: its returned rows are the
+      // locked keys. INSERT … SELECT, SELECT … INTO and DECLARE … CURSOR
+      // lock rows they do not return.
+      const top = flatten(bareSql(sql));
+      if (!/^\s*SELECT\b/i.test(top) || /\bINTO\b/i.test(top)) {
+        throw outsideGrammar(sql, "a locking clause outside a plain SELECT (INSERT … SELECT, SELECT … INTO, DECLARE … CURSOR)");
+      }
+    }
   }
   return tag;
+}
+
+/**
+ * Whether a sweep's outer statement (flattened, the subquery as one
+ * marker) writes every row its locking subquery locks: its predicate is
+ * only `<column> IN (subquery)` with the subquery selecting that column,
+ * or a DELETE … USING (subquery) alias WHERE <target>.<c> = <alias>.<c>
+ * AND … over exactly the columns the subquery selects.
+ */
+function writesEveryLockedRow(top: string, selectList: string): boolean {
+  const selected = selectList.split(",").map((c) => c.trim().replace(/^\w+\./, "").toLowerCase());
+  const inForm = /^\s*(?:DELETE\s+FROM|UPDATE)\s+\w+(?:\s+(?:AS\s+)?\w+)?(?:\s+SET\s+[\s\S]*?)?\s+WHERE\s+(?:\w+\.)?(\w+)\s+IN\s+\u00a7\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (inForm) return selected.length === 1 && selected[0] === inForm[1]!.toLowerCase();
+  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+\u00a7\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (!using) return false;
+  const [, t, s, where] = using as unknown as [string, string, string, string];
+  const joined = new Set<string>();
+  for (const part of where.split(/\s+AND\s+/i)) {
+    const eq = /^(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)$/.exec(part.trim());
+    if (!eq) return false;
+    const [, a1, c1, a2, c2] = eq as unknown as [string, string, string, string, string];
+    const aliases = [a1.toLowerCase(), a2.toLowerCase()].sort().join(",");
+    if (aliases !== [t.toLowerCase(), s.toLowerCase()].sort().join(",") || c1.toLowerCase() !== c2.toLowerCase()) return false;
+    joined.add(c1.toLowerCase());
+  }
+  return joined.size === selected.length && selected.every((c) => joined.has(c));
 }
 
 /** The function in src/ that began the transaction, for reports and gating. */
@@ -637,7 +722,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       rows = ((await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace WHERE txid = $1::bigint ORDER BY seq`, [tx])).rows as TraceRow[]);
       await db.query(`DELETE FROM ${SCHEMA}.trace WHERE txid = $1::bigint`, [tx]);
     } catch {
-      return; // an aborted transaction: COMMIT rolls it back
+      return; // an aborted transaction: it cannot be read, and it rolls back
     }
     const problems = checkTrace(rows);
     // VARLATCH_LOCK_TRACE_LABELS: one line per checked transaction, to see what a run covered.
@@ -665,6 +750,9 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       return db.query(text, params);
     }
     if (/^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
+      // A transaction that ends in a refusal took its locks too: check it
+      // before rolling back. An aborted one cannot be read; it is skipped.
+      if (inTx) await check();
       inTx = false;
       return db.query(text, params);
     }

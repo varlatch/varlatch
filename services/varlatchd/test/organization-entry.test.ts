@@ -170,6 +170,7 @@ const DURING_FREEZE: Record<string, FreezeException | null> = {
   "GET /v1/organizations/:org/security/controls": "inspection",
   "GET /v1/organizations/:org/security/control-report": "inspection",
   "GET /v1/organizations/:org/security/approval-keys": "inspection",
+  "GET /v1/organizations/:org/security/refused-destinations": "inspection",
   "PATCH /v1/organizations/:org/security/controls/:control": "recovery",
   "GET /v1/organizations/:org/identities/:identity/reach": "inspection",
   "PATCH /v1/organizations/:org/identities/:identity": null,

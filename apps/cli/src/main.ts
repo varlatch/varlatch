@@ -2774,7 +2774,7 @@ async function main(): Promise<void> {
       }
 
       case "security": {
-        const { CredentialReviewUnsupportedError, SECURITY_USAGE, credentialReviewLines, fetchCredentialReview } = await import("./securityReport.js");
+        const { CredentialReviewUnsupportedError, SECURITY_USAGE, credentialReviewLines, fetchSecurityReport, refusedDestinationLines } = await import("./securityReport.js");
         // The organization and server come from the options, else the repository.
         const securityScope = (sub: string, values: Map<string, string>, usage: string) => {
           let server = values.get("--server") ?? process.env.VARLATCH_SERVER;
@@ -2856,18 +2856,25 @@ async function main(): Promise<void> {
         const parsed = strictOptions(`security ${args[0] ?? ""}`.trim(), args, { values: ["--server", "--org"], booleans: ["--json"], positionals: 1 }, SECURITY_USAGE);
         if (parsed.positionals[0] !== "report") usageError(SECURITY_USAGE);
         const { server, organization } = securityScope("report", parsed.values, SECURITY_USAGE);
-        let review: Awaited<ReturnType<typeof fetchCredentialReview>>;
+        let report: Awaited<ReturnType<typeof fetchSecurityReport>>;
         try {
-          review = await fetchCredentialReview(client({ server }), organization);
+          report = await fetchSecurityReport(client({ server }), organization);
         } catch (err) {
           if (err instanceof CredentialReviewUnsupportedError) fail(err.message);
           throw err;
         }
+        const { review, refused } = report;
         if (parsed.booleans.has("--json")) {
-          printJson({ organization, credentialReview: review });
+          // refusedDestinations: absent when the server cannot say, null when the caller may not read it.
+          printJson({
+            organization,
+            credentialReview: review,
+            ...(refused.shown ? { refusedDestinations: refused.destinations } : refused.reason === "not-permitted" ? { refusedDestinations: null } : {}),
+          });
           return;
         }
-        console.log(credentialReviewLines(organization, review, Date.now()).join("\n"));
+        const now = Date.now();
+        console.log([...credentialReviewLines(organization, review, now), ...refusedDestinationLines(organization, refused, now)].join("\n"));
         return;
       }
 
