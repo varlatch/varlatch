@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React, { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShieldCheck } from "lucide-react";
+import { RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   VarlatchApiError,
   type CredentialLifetimeConfig,
@@ -13,8 +13,8 @@ import {
   type SecurityReportReason,
 } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
-import { timeAgo, useNow } from "../../lib/time";
-import { Badge, Button, Input, SectionCard, Select } from "../../components/ui";
+import { formatTime, timeAgo, useNow } from "../../lib/time";
+import { Badge, Button, Callout, Input, SectionCard, Select, Skeleton } from "../../components/ui";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { approvalOutcomeMessage, durationWords } from "./approval";
@@ -48,7 +48,7 @@ export const CONTROL_TEXT: Record<SecurityControlName, { label: string; report: 
   "passkey-verification": {
     label: "Passkey verification",
     report:
-      "Counts each request by a person's dashboard or CLI sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face). Machine credentials are never counted.",
+      "Counts requests by a person's dashboard or CLI sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face). Only requests that were allowed and succeeded count, and machine credentials never do. Access counts are best-effort: a busy server can drop some, so a count is a lower bound.",
     enforce: "Such sign-ins would be refused in this organization until the person signs in again with a trusted passkey and a PIN, fingerprint or face.",
   },
   "credential-lifetime": {
@@ -124,10 +124,21 @@ export function saveError(err: unknown): string {
   return errorMessage(err);
 }
 
+/** The counts as the page loaded them: data, and whether loading or the last refresh failed. */
+export interface ReportState {
+  data: { days: number; controls: SecurityControlCounts[] } | null;
+  error: unknown;
+  loading: boolean;
+  fetching: boolean;
+  /** When the data was last loaded (ms since the epoch); 0 before. */
+  updatedAt: number;
+  retry: () => void;
+}
+
 /**
  * The controls section. `admin` decides whether the modes can be changed;
- * `report` holds the counts, null while they are unavailable (members, or a
- * server without them).
+ * `report` is the counts' state, null when the caller cannot read them
+ * (or the server has none).
  */
 export function SecurityControlsCard({
   org,
@@ -138,10 +149,11 @@ export function SecurityControlsCard({
   org: string;
   admin: boolean;
   controls: { items: SecurityControl[]; availableModes: SecurityControlMode[] } | undefined;
-  report: { days: number; controls: SecurityControlCounts[] } | null;
+  report: ReportState | null;
 }) {
   const available = controls?.availableModes ?? ["off", "report"];
   const enforceAvailable = available.includes("enforce");
+  const data = report?.data ?? null;
   return (
     <SectionCard
       id="security-controls"
@@ -169,6 +181,7 @@ export function SecurityControlsCard({
           An admin of this organization manages these controls.
         </p>
       )}
+      {report && <ReportStatus report={report} />}
       {(controls?.items ?? []).map((c) => (
         <ControlRow
           key={`${c.control}-${c.version}`}
@@ -176,13 +189,59 @@ export function SecurityControlsCard({
           control={c}
           admin={admin}
           available={available}
-          counts={report ? (report.controls.find((r) => r.control === c.control) ?? null) : null}
-          days={report?.days ?? 30}
+          counts={data ? (data.controls.find((r) => r.control === c.control) ?? null) : null}
+          countsLoading={report !== null && data === null && report.loading}
+          days={data?.days ?? 30}
         />
       ))}
     </SectionCard>
   );
 }
+
+/** Where the counts stand: loading, failed (with retry), or as of when, and whether the last refresh failed. */
+export function ReportStatus({ report }: { report: ReportState }) {
+  const now = useNow();
+  const retry = (
+    <Button size="sm" icon={<RefreshCw size={13} />} loading={report.fetching} onClick={report.retry} data-testid="security-report-retry">
+      Retry
+    </Button>
+  );
+  if (report.data === null && report.loading) {
+    return (
+      <p className="border-b border-bd px-5 py-2.5 text-xs text-muted" data-testid="security-report-status" data-state="loading">
+        Loading what each control counted…
+      </p>
+    );
+  }
+  if (report.data === null && report.error) {
+    return (
+      <div className="border-b border-bd px-5 py-3" data-testid="security-report-status" data-state="failed">
+        <Callout tone="danger" icon={<TriangleAlert size={16} />} role="alert" actions={retry} title="Could not load what each control counted">
+          {errorMessage(report.error)}
+        </Callout>
+      </div>
+    );
+  }
+  if (report.data === null) return null;
+  const asOf = report.updatedAt ? `${formatTime(new Date(report.updatedAt).toISOString())} (${timeAgo(new Date(report.updatedAt).toISOString(), now)})` : "";
+  if (report.error) {
+    return (
+      <div className="border-b border-bd px-5 py-3" data-testid="security-report-status" data-state="stale">
+        <Callout tone="warn" icon={<TriangleAlert size={16} />} role="alert" actions={retry} title={`Counts as of ${asOf}; refreshing them failed`}>
+          The counts below are not current. {errorMessage(report.error)}
+        </Callout>
+      </div>
+    );
+  }
+  return (
+    <p className="border-b border-bd px-5 py-2.5 text-xs text-muted" data-testid="security-report-status" data-state="current">
+      Counts of the last {report.data.days} days, as of {asOf}. The current hour is live and refreshes every minute.
+    </p>
+  );
+}
+
+/** Beside passkey-verification's counts: access counts can be dropped. */
+const BEST_EFFORT = " Access counts are best-effort: a busy server can drop some, so this is a lower bound.";
 
 /** How many entries a control shows before "Show all". */
 const ENTRIES_SHOWN = 5;
@@ -198,6 +257,7 @@ export function ControlCounts({ control, counts, days }: { control: SecurityCont
         {control.mode === "off"
           ? `Nothing counted in the last ${days} days. Set it to report to see what it would do.`
           : `Nothing counted in the last ${days} days.`}
+        {control.control === "passkey-verification" && control.mode !== "off" && BEST_EFFORT}
       </p>
     );
   }
@@ -211,6 +271,11 @@ export function ControlCounts({ control, counts, days }: { control: SecurityCont
           {counts.currentHour} this hour
         </span>
       </p>
+      {control.control === "passkey-verification" && (
+        <p className="border-b border-bd px-3 py-1.5 text-xs text-muted" data-testid="security-control-best-effort">
+          {BEST_EFFORT.trim()}
+        </p>
+      )}
       <table className="w-full text-[13px]">
         <thead>
           <tr className="text-left text-xs text-muted">
@@ -256,6 +321,7 @@ function ControlRow({
   admin,
   available,
   counts,
+  countsLoading,
   days,
 }: {
   org: string;
@@ -263,6 +329,7 @@ function ControlRow({
   admin: boolean;
   available: readonly SecurityControlMode[];
   counts: SecurityControlCounts | null;
+  countsLoading: boolean;
   days: number;
 }) {
   const { api } = useSession();
@@ -354,6 +421,7 @@ function ControlRow({
         )}
       </div>
       {counts && <ControlCounts control={control} counts={counts} days={days} />}
+      {!counts && countsLoading && <Skeleton className="mt-3 h-9 w-full rounded-lg" />}
       {admin && lifetime && (
         <div className="mt-3 flex flex-wrap items-end gap-3 text-[13px]">
           <label className="space-y-1">

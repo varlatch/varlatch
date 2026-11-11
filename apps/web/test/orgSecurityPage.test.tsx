@@ -16,17 +16,22 @@ import {
 } from "@varlatch/sdk";
 
 /**
- * The Organization's Security page (ADR-0054 Decision 11): for an admin,
- * every section from the API (controls with counts, approval keys,
- * credentials with expiry warnings, Tailnet Requirements, checklist); for a
- * member, the controls and a note, with no admin-only request made;
- * loosening through the approval dialog; enforce shown as coming later;
- * empty states; a server without controls.
+ * The Organization's Security page (ADR-0054 Decision 11). The fake API
+ * refuses what the caller's permissions do not allow, as the server does,
+ * and records each refusal. For an admin: every section (controls with
+ * counts, approval keys, credentials with expiry warnings, Tailnet
+ * Requirements, checklist). For a plain member: the controls and a note,
+ * with no refused request. For a member with custom Grants: exactly what
+ * they allow. Also: the permission lookup failing, the counts failing or
+ * going stale, loosening through the approval dialog, enforce shown as
+ * coming later, empty states, a server without controls.
  */
 
 const fake = vi.hoisted(() => ({
   api: {} as Record<string, unknown>,
   me: "idn_ada",
+  actions: [] as string[],
+  refused: [] as string[],
   setStepUpHandler: vi.fn(),
   startAuthentication: vi.fn(),
   toasts: [] as string[],
@@ -73,7 +78,20 @@ import { OrgSecurityPage } from "../src/features/security-controls/OrgSecurityPa
 import { ApprovalDialogProvider } from "../src/features/security-controls/approval";
 import { CHECKLIST } from "../src/features/security-controls/checklist";
 
-const CAPABILITIES = ["security.controls", "security.report", "security.approval-keys", "security.credential-review"];
+const CAPABILITIES = ["security.controls", "security.report", "security.approval-keys", "security.credential-review", "organizations.permissions"];
+const ADMIN = ["organization.read", "organization.manage", "project.read", "project.manage", "identity.read", "identity.manage", "policy.read", "policy.manage", "audit.read"];
+const MEMBER = ["organization.read", "project.read"];
+
+/** An API call the server allows only with `action`; otherwise refused (403) and recorded, as the server audits it. */
+function gated<A extends unknown[], R>(name: string, action: string, fn: (...args: A) => Promise<R>) {
+  return vi.fn(async (...args: A) => {
+    if (!fake.actions.includes(action)) {
+      fake.refused.push(name);
+      throw new VarlatchApiError(403, { code: "PERMISSION_DENIED", message: "Not authorized for this action", requestId: "req_1" });
+    }
+    return fn(...args);
+  });
+}
 const control = (name: SecurityControl["control"], over: Partial<SecurityControl> = {}): SecurityControl => ({
   control: name,
   mode: "off",
@@ -199,8 +217,9 @@ const EMPTY_REVIEW: CredentialReview = {
 const REQUIREMENTS = [{ id: "req_1", kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net" }, version: 1, updatedAt: null }];
 
 let root: ReactTestRenderer;
+let client: QueryClient;
 async function mount(wrap: (page: React.ReactElement) => React.ReactElement = (p) => p) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
     root = create(
       <QueryClientProvider client={client}>
@@ -233,6 +252,8 @@ const links = () => root.root.findAll((n) => n.type === "a").map((a) => a.props.
 
 beforeEach(() => {
   fake.me = "idn_ada";
+  fake.actions = ADMIN;
+  fake.refused = [];
   fake.toasts = [];
   fake.setStepUpHandler.mockReset();
   fake.startAuthentication.mockReset();
@@ -240,12 +261,18 @@ beforeEach(() => {
   fake.api = {
     meta: async () => ({ apiMajor: 1, capabilities: CAPABILITIES }),
     listOrganizations: async () => ({ items: [{ id: "org_acme", slug: "acme", name: "Acme" }] }),
-    listIdentities: async () => ({ items: PEOPLE, nextCursor: null }),
-    listSecurityControls: vi.fn(async () => ({ items: CONTROLS, availableModes: ["off", "report"] })),
-    securityControlReport: vi.fn(async () => report()),
-    securityApprovalKeys: vi.fn(async () => KEYS),
-    credentialReview: vi.fn(async () => review()),
-    listRequirements: vi.fn(async () => ({ items: REQUIREMENTS, nextCursor: null })),
+    // Needs identity.read: the page must not use it to find the caller's role.
+    listIdentities: gated("listIdentities", "identity.read", async () => ({ items: PEOPLE, nextCursor: null })),
+    myOrganizationPermissions: vi.fn(async () => ({
+      organizationId: "org_acme",
+      role: fake.actions.includes("organization.manage") ? "admin" : "member",
+      actions: fake.actions,
+    })),
+    listSecurityControls: gated("listSecurityControls", "organization.read", async () => ({ items: CONTROLS, availableModes: ["off", "report"] })),
+    securityControlReport: gated("securityControlReport", "organization.manage", async () => report()),
+    securityApprovalKeys: gated("securityApprovalKeys", "organization.manage", async () => KEYS),
+    credentialReview: gated("credentialReview", "identity.manage", async () => review()),
+    listRequirements: gated("listRequirements", "policy.read", async () => ({ items: REQUIREMENTS, nextCursor: null })),
     changeSecurityControl: vi.fn(async (_org: string, name: SecurityControl["control"]) => ({
       control: control(name, { mode: "report", version: 1 }),
       changed: true,
@@ -257,7 +284,10 @@ beforeEach(() => {
 describe("the Security page for an admin", () => {
   it("shows every section from the API", async () => {
     await mount();
-    expect(one("security-page").props["data-admin"]).toBe("true");
+    expect(one("security-page").props["data-manage"]).toBe("true");
+    expect(fake.refused).toEqual([]);
+    expect(byTestId("security-member-note")).toHaveLength(0);
+    expect(text(one("security-report-status"))).toContain("Counts of the last 30 days, as of");
     for (const id of ["security-overview", "security-controls-section", "security-approval-keys", "security-credentials", "security-requirements", "security-checklist"]) {
       expect(byTestId(id), id).toHaveLength(1);
     }
@@ -312,11 +342,23 @@ describe("the Security page for an admin", () => {
   });
 
   it("says so when nothing was counted and nothing needs a look", async () => {
-    fake.api.securityControlReport = vi.fn(async () => report({ total: 0, currentHour: 0, pending: 0, entries: [] }));
+    fake.api.securityControlReport = vi.fn(async () => ({
+      ...report({ total: 0, currentHour: 0, pending: 0, entries: [] }),
+      controls: report({ total: 0, currentHour: 0, pending: 0, entries: [] }).controls.map((c) =>
+        c.control === "passkey-verification" ? { ...c, mode: "report" as const } : c,
+      ),
+    }));
+    fake.api.listSecurityControls = vi.fn(async () => ({
+      items: CONTROLS.map((c) => (c.control === "passkey-verification" ? { ...c, mode: "report" as const } : c)),
+      availableModes: ["off", "report"],
+    }));
     fake.api.credentialReview = vi.fn(async () => EMPTY_REVIEW);
     fake.api.listRequirements = vi.fn(async () => ({ items: [], nextCursor: null }));
     await mount();
     expect(text(one("security-control-counts-admin-step-up"))).toBe("Nothing counted in the last 30 days.");
+    // Zero access counts are not a promise: they can be dropped.
+    expect(text(one("security-control-counts-passkey-verification"))).toContain("Access counts are best-effort: a busy server can drop some");
+    expect(text(one("security-control-report-text-passkey-verification"))).toContain("Only requests that were allowed and succeeded count");
     expect(byTestId("security-control-entry")).toHaveLength(0);
     expect(text(one("security-credentials-empty"))).toContain("Nothing to review");
     expect(text(one("security-requirements-count"))).toBe("No Tailnet Requirements yet.");
@@ -343,21 +385,108 @@ describe("the Security page for an admin", () => {
 });
 
 describe("the Security page for a member", () => {
-  it("shows the controls and a note, and asks for nothing an admin alone may read", async () => {
+  it("shows a plain member the controls and a note, and makes no request the server refuses", async () => {
     fake.me = "idn_eve";
+    fake.actions = MEMBER;
     await mount();
-    expect(one("security-page").props["data-admin"]).toBe("false");
+    expect(fake.refused).toEqual([]);
+    expect(one("security-page").props["data-manage"]).toBe("false");
     expect(byTestId("security-controls-section")).toHaveLength(1);
     expect(byTestId("security-control-select-admin-step-up")).toHaveLength(0);
-    expect(text(one("security-member-note"))).toContain("An admin of this organization manages its security");
+    expect(byTestId("security-report-status")).toHaveLength(0);
+    const note = text(one("security-member-note"));
+    expect(note).toContain("An admin of this organization manages its security");
+    expect(note).toContain("what each control counted (needs organization.manage)");
+    expect(note).toContain("machine credentials to review (needs identity.manage)");
+    expect(note).toContain("Tailnet Requirements (needs policy.read)");
     for (const id of ["security-approval-keys", "security-credentials", "security-requirements", "security-control-counts-admin-step-up"]) {
       expect(byTestId(id), id).toHaveLength(0);
     }
     expect(byTestId("security-checklist")).toHaveLength(1);
+    expect(fake.api.listIdentities).not.toHaveBeenCalled();
     expect(fake.api.securityControlReport).not.toHaveBeenCalled();
     expect(fake.api.securityApprovalKeys).not.toHaveBeenCalled();
     expect(fake.api.credentialReview).not.toHaveBeenCalled();
     expect(fake.api.listRequirements).not.toHaveBeenCalled();
+  });
+
+  it("shows a member with custom Grants exactly what they allow", async () => {
+    fake.me = "idn_eve";
+    fake.actions = [...MEMBER, "identity.manage", "policy.read"];
+    await mount();
+    expect(fake.refused).toEqual([]);
+    expect(byTestId("security-credentials")).toHaveLength(1);
+    expect(byTestId("security-requirements")).toHaveLength(1);
+    expect(byTestId("security-approval-keys")).toHaveLength(0);
+    expect(byTestId("security-control-counts-admin-step-up")).toHaveLength(0);
+    expect(byTestId("security-control-select-admin-step-up")).toHaveLength(0);
+    const note = text(one("security-member-note"));
+    expect(note).toContain("needs organization.manage");
+    expect(note).not.toContain("identity.manage");
+    expect(note).not.toContain("policy.read");
+  });
+
+  it("says so when the permission lookup fails, shows nothing it would have to guess, and recovers on retry", async () => {
+    let fail = true;
+    fake.api.myOrganizationPermissions = vi.fn(async () => {
+      if (fail) throw new VarlatchApiError(503, { code: "UNAVAILABLE", message: "The server is busy.", requestId: "req_3" });
+      return { organizationId: "org_acme", role: "admin", actions: ADMIN };
+    });
+    await mount();
+    expect(text(one("security-permissions-error"))).toContain("Could not find out what you may see here");
+    expect(text(one("security-permissions-error"))).toContain("The server is busy.");
+    expect(byTestId("security-controls-section")).toHaveLength(0);
+    expect(byTestId("security-member-note")).toHaveLength(0);
+    expect(fake.api.securityControlReport).not.toHaveBeenCalled();
+    fail = false;
+    await click("security-permissions-retry");
+    expect(byTestId("security-permissions-error")).toHaveLength(0);
+    expect(byTestId("security-approval-keys")).toHaveLength(1);
+  });
+});
+
+describe("the counts of the controls", () => {
+  it("say when they could not be loaded, and load on retry", async () => {
+    let fail = true;
+    fake.api.securityControlReport = vi.fn(async () => {
+      if (fail) throw new VarlatchApiError(500, { code: "INTERNAL", message: "Counting is down.", requestId: "req_4" });
+      return report();
+    });
+    await mount();
+    const status = one("security-report-status");
+    expect(status.props["data-state"]).toBe("failed");
+    expect(text(status)).toContain("Could not load what each control counted");
+    expect(text(status)).toContain("Counting is down.");
+    expect(byTestId("security-control-counts-admin-step-up")).toHaveLength(0);
+    fail = false;
+    await click("security-report-retry");
+    expect(one("security-report-status").props["data-state"]).toBe("current");
+    expect(text(one("security-control-counts-admin-step-up"))).toContain("21 counted");
+  });
+
+  it("say they are not current when a refresh fails, and keep the last counts with their time", async () => {
+    await mount();
+    expect(one("security-report-status").props["data-state"]).toBe("current");
+    fake.api.securityControlReport = vi.fn(async () => {
+      throw new VarlatchApiError(500, { code: "INTERNAL", message: "Counting is down.", requestId: "req_5" });
+    });
+    await act(async () => void (await client.refetchQueries({ queryKey: ["security-control-report", "acme"] })));
+    await settle();
+    const status = one("security-report-status");
+    expect(status.props["data-state"]).toBe("stale");
+    expect(text(status)).toMatch(/Counts as of .+; refreshing them failed/);
+    expect(text(status)).toContain("not current");
+    expect(text(one("security-control-counts-admin-step-up"))).toContain("21 counted");
+  });
+
+  it("show a placeholder while they load, without moving the page", async () => {
+    let release: (r: SecurityControlReport) => void = () => undefined;
+    fake.api.securityControlReport = vi.fn(() => new Promise<SecurityControlReport>((resolve) => (release = resolve)));
+    await mount();
+    expect(one("security-report-status").props["data-state"]).toBe("loading");
+    await act(async () => release(report()));
+    await settle();
+    expect(one("security-report-status").props["data-state"]).toBe("current");
   });
 });
 
@@ -398,7 +527,7 @@ describe("loosening on the Security page", () => {
       calls.push({ method, path, approval: headers[APPROVAL_HEADER] ?? null, body: init.body ? JSON.parse(String(init.body)) : undefined });
       if (path === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "test", semanticsVersions: [], capabilities: CAPABILITIES });
       if (path === "/v1/organizations") return json(200, { items: [{ id: "org_acme", slug: "acme", name: "Acme" }], nextCursor: null });
-      if (path === "/v1/organizations/acme/identities") return json(200, { items: PEOPLE, nextCursor: null });
+      if (path === "/v1/organizations/acme/me/permissions") return json(200, { organizationId: "org_acme", role: "admin", actions: ADMIN });
       if (path === "/v1/organizations/acme/security/controls") return json(200, { items: CONTROLS, availableModes: ["off", "report"] });
       if (path === "/v1/organizations/acme/security/control-report") return json(200, report());
       if (path === "/v1/organizations/acme/security/approval-keys") return json(200, KEYS);

@@ -2,15 +2,14 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, BookOpen, Fingerprint, KeyRound, ListChecks, ShieldCheck, ShieldOff, Wifi } from "lucide-react";
-import type { SecurityControl } from "@varlatch/sdk";
+import { ArrowUpRight, BookOpen, Fingerprint, KeyRound, ListChecks, RefreshCw, ShieldCheck, ShieldOff, TriangleAlert, Wifi } from "lucide-react";
+import type { OrganizationPermissions, SecurityControl } from "@varlatch/sdk";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
-import { Badge, EmptyState, SectionCard, Skeleton, cn } from "../../components/ui";
+import { Badge, Button, Callout, EmptyState, SectionCard, Skeleton, cn } from "../../components/ui";
 import { PageHeader } from "../../components/PageHeader";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability, useOrgName } from "../projects/hooks";
-import { useIdentities } from "../access/shared";
 import { CONTROL_TEXT, SecurityControlsCard, controlReportKey, securityControlsKey } from "./SecurityControlsCard";
 import { ApprovalKeysCard, approvalKeysKey } from "./ApprovalKeysCard";
 import { CredentialsCard, credentialReviewKey } from "./CredentialsCard";
@@ -24,24 +23,38 @@ import { CHECKLIST, SECURITY_PAGE_DOCS } from "./checklist";
  * admin decides which controls to turn on. (The account's own passkeys live
  * on /account/security.)
  *
- * Every member reads the controls (organization.read). The counts and the
- * approval keys need organization.manage, the credential review
- * identity.manage, Requirements policy.read: all of which an admin holds.
- * They are asked for only for an admin, so a member's visit never collects
- * refusals, and a member sees a note instead of errors.
+ * Every member reads the controls (organization.read). The other parts
+ * need what their endpoints need: the counts and the approval keys
+ * organization.manage, the credential review identity.manage, Requirements
+ * policy.read. The page asks the server for the caller's own
+ * organization-level permissions first (GET .../me/permissions, readable by
+ * every member) and requests only what they allow, so a member's visit
+ * collects no refusals and custom Grants work as in the CLI and the API. If
+ * that lookup fails, the page says so instead of guessing.
  */
 
+/** The permission each section needs; null for every member. */
+const NEEDS = {
+  controls: null,
+  "approval-keys": "organization.manage",
+  credentials: "identity.manage",
+  requirements: "policy.read",
+  checklist: null,
+} as const;
+
 const SECTIONS = [
-  { id: "controls", label: "Controls", icon: ShieldCheck, admin: false },
-  { id: "approval-keys", label: "Approval keys", icon: Fingerprint, admin: true },
-  { id: "credentials", label: "Machine credentials", icon: KeyRound, admin: true },
-  { id: "requirements", label: "Tailnet Requirements", icon: Wifi, admin: true },
-  { id: "checklist", label: "Checklist", icon: ListChecks, admin: false },
+  { id: "controls", label: "Controls", icon: ShieldCheck },
+  { id: "approval-keys", label: "Approval keys", icon: Fingerprint },
+  { id: "credentials", label: "Machine credentials", icon: KeyRound },
+  { id: "requirements", label: "Tailnet Requirements", icon: Wifi },
+  { id: "checklist", label: "Checklist", icon: ListChecks },
 ] as const;
+
+export const myPermissionsKey = (org: string) => ["org-permissions", org] as const;
 
 export function OrgSecurityPage() {
   const { org } = useParams() as { org: string };
-  const { api, identityId } = useSession();
+  const { api } = useSession();
   const orgName = useOrgName(org);
   const supported = useCapability("security.controls");
   const hasReport = useCapability("security.report");
@@ -49,28 +62,42 @@ export function OrgSecurityPage() {
   const hasReview = useCapability("security.credential-review");
   useOrgRealtime(
     org,
-    ["security_control", "membership", "identity", "credential", "requirement"],
-    [securityControlsKey(org), controlReportKey(org), approvalKeysKey(org), credentialReviewKey(org), ["requirements", org], ["identities", org]],
+    ["security_control", "membership", "identity", "credential", "requirement", "grant", "role", "group", "team"],
+    [securityControlsKey(org), controlReportKey(org), approvalKeysKey(org), credentialReviewKey(org), ["requirements", org], myPermissionsKey(org)],
   );
-  const identities = useIdentities(org);
-  const admin = (identities.data?.items ?? []).some((i) => i.id === identityId && i.orgRole === "admin" && !i.removedAt);
+  const permissions = useQuery({ queryKey: myPermissionsKey(org), queryFn: () => api.myOrganizationPermissions(org), enabled: supported });
+  const can = (action: OrganizationPermissions["actions"][number]) => permissions.data?.actions.includes(action) ?? false;
+  const canManage = can("organization.manage");
+  const canReview = can("identity.manage");
+  const canPolicy = can("policy.read");
   const controls = useQuery({ queryKey: securityControlsKey(org), queryFn: () => api.listSecurityControls(org), enabled: supported });
   // The current hour is live: refresh while the page is open.
   const report = useQuery({
     queryKey: controlReportKey(org),
     queryFn: () => api.securityControlReport(org, { days: 30 }),
-    enabled: supported && admin && hasReport,
+    enabled: supported && canManage && hasReport,
     refetchInterval: 60_000,
   });
-  const keys = useQuery({ queryKey: approvalKeysKey(org), queryFn: () => api.securityApprovalKeys(org), enabled: supported && admin && hasKeys });
-  const review = useQuery({ queryKey: credentialReviewKey(org), queryFn: () => api.credentialReview(org), enabled: supported && admin && hasReview });
-  const requirements = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org), enabled: supported && admin });
+  const keys = useQuery({ queryKey: approvalKeysKey(org), queryFn: () => api.securityApprovalKeys(org), enabled: supported && canManage && hasKeys });
+  const review = useQuery({ queryKey: credentialReviewKey(org), queryFn: () => api.credentialReview(org), enabled: supported && canReview && hasReview });
+  const requirements = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org), enabled: supported && canPolicy });
 
-  // The whole page waits for the controls and the person's role, so admin sections never pop in.
-  const settled = !controls.isLoading && !identities.isLoading;
-  const sections = SECTIONS.filter(
-    (s) => (admin || !s.admin) && (s.id !== "approval-keys" || hasKeys) && (s.id !== "credentials" || hasReview),
-  );
+  // The whole page waits for the controls and the caller's permissions, so sections never pop in.
+  const settled = !controls.isLoading && !permissions.isLoading;
+  const allowed: Record<(typeof SECTIONS)[number]["id"], boolean> = {
+    controls: true,
+    "approval-keys": canManage && hasKeys,
+    credentials: canReview && hasReview,
+    requirements: canPolicy,
+    checklist: true,
+  };
+  const sections = SECTIONS.filter((s) => allowed[s.id]);
+  // What the caller's access leaves out, said once instead of as errors.
+  const hidden: string[] = [];
+  if (!canManage && hasReport) hidden.push("what each control counted (needs organization.manage)");
+  if (!canManage && hasKeys) hidden.push(`the admins' approval keys (needs ${NEEDS["approval-keys"]})`);
+  if (!canReview && hasReview) hidden.push(`machine credentials to review (needs ${NEEDS.credentials})`);
+  if (!canPolicy) hidden.push(`Tailnet Requirements (needs ${NEEDS.requirements})`);
   const [active, setActive] = useState<string>("controls");
   useEffect(() => {
     if (typeof IntersectionObserver === "undefined") return;
@@ -137,9 +164,24 @@ export function OrgSecurityPage() {
             ))}
           </ul>
         </nav>
-        <div className="min-w-0 space-y-6" data-testid="security-page" data-admin={admin ? "true" : "false"}>
+        <div className="min-w-0 space-y-6" data-testid="security-page" data-manage={canManage ? "true" : "false"}>
           {!settled ? (
             <PageSkeleton />
+          ) : permissions.error ? (
+            <Callout
+              tone="danger"
+              icon={<TriangleAlert size={16} />}
+              role="alert"
+              data-testid="security-permissions-error"
+              title="Could not find out what you may see here"
+              actions={
+                <Button size="sm" icon={<RefreshCw size={13} />} loading={permissions.isFetching} onClick={() => void permissions.refetch()} data-testid="security-permissions-retry">
+                  Retry
+                </Button>
+              }
+            >
+              {errorMessage(permissions.error)} Nothing is shown until this works, so that no part looks missing when it is not.
+            </Callout>
           ) : controls.error ? (
             <SectionCard title="Controls" data-testid="security-controls-error">
               <p className="px-5 py-4 text-[13px] text-deny" role="alert">
@@ -151,32 +193,40 @@ export function OrgSecurityPage() {
               <Overview items={controls.data?.items ?? []} />
               <SecurityControlsCard
                 org={org}
-                admin={admin}
+                admin={canManage}
                 controls={controls.data}
-                report={report.data ? { days: report.data.days, controls: report.data.controls } : null}
+                report={
+                  canManage && hasReport
+                    ? {
+                        data: report.data ? { days: report.data.days, controls: report.data.controls } : null,
+                        error: report.error,
+                        loading: report.isLoading,
+                        fetching: report.isFetching,
+                        updatedAt: report.dataUpdatedAt,
+                        retry: () => void report.refetch(),
+                      }
+                    : null
+                }
               />
-              {admin ? (
-                <>
-                  <Part query={keys} enabled={hasKeys} title="Approval keys" id="approval-keys">
-                    {(data) => <ApprovalKeysCard keys={data} />}
-                  </Part>
-                  <Part query={review} enabled={hasReview} title="Machine credentials" id="credentials">
-                    {(data) => <CredentialsCard org={org} review={data} />}
-                  </Part>
-                  <Part query={requirements} enabled title="Tailnet Requirements" id="requirements">
-                    {(data) => (
-                      <RequirementsCard
-                        org={org}
-                        count={data.items.length}
-                        protection={controls.data?.items.find((c) => c.control === "requirement-protection")?.mode ?? "off"}
-                      />
-                    )}
-                  </Part>
-                </>
-              ) : (
+              <Part query={keys} enabled={allowed["approval-keys"]} title="Approval keys" id="approval-keys">
+                {(data) => <ApprovalKeysCard keys={data} />}
+              </Part>
+              <Part query={review} enabled={allowed.credentials} title="Machine credentials" id="credentials">
+                {(data) => <CredentialsCard org={org} review={data} />}
+              </Part>
+              <Part query={requirements} enabled={allowed.requirements} title="Tailnet Requirements" id="requirements">
+                {(data) => (
+                  <RequirementsCard
+                    org={org}
+                    count={data.items.length}
+                    protection={controls.data?.items.find((c) => c.control === "requirement-protection")?.mode ?? "off"}
+                  />
+                )}
+              </Part>
+              {hidden.length > 0 && (
                 <p className="rounded-xl border border-bd bg-raised px-5 py-4 text-[13px] text-muted" data-testid="security-member-note">
-                  An admin of this organization manages its security. Admins also see here what each control counted, their approval keys,
-                  the machine credentials to review and the Tailnet Requirements.
+                  An admin of this organization manages its security. Not shown, because your access does not include it:{" "}
+                  {hidden.join("; ")}.
                 </p>
               )}
               <ChecklistCard />
