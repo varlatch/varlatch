@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.20.1)
+## 0.21.0 (2026-11-11)
 
 ### Backups
 
@@ -253,10 +253,33 @@ fixes.
 
 ### Upgrading
 
-- Migration 41 adds the security control and approval tables. Controls
-  start off; nothing to do.
-- Migration 42 adds the report counters. Nothing is counted while every
-  control is off; nothing to do.
+Database schema: migration 39 adds passkey provenance (every passkey that
+exists at the upgrade is trusted), sign-in evidence for sessions, CLI
+credentials and device sign-ins, `passkey_quarantine` and a unique index on
+the passkey credential id. If two passkeys shared a credential id, the
+oldest stays and the others move to `passkey_quarantine`; the migrate step
+lists each one with the command that restores access (see
+[Passkeys that shared a credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39)).
+Migration 40 adds a trigger that keeps a passkey's signature counter from
+going backwards. Migration 41 adds the security control and approval
+tables, and migration 42 the report counters (nothing is counted while
+every control is off). Every varlatchd process now runs a loop that writes
+the hourly report summaries.
+
+Every security control starts off, on existing and new installations, and
+`enforce` is not available yet: nothing is refused because of a control.
+What changes regardless: the dashboard removes passkeys through a Varlatch
+route (Better Auth's own delete endpoint is turned off), registering a
+passkey that is already registered is refused, responses to a machine
+credential in its last 7 days carry `Varlatch-Credential-Expires`, and the
+CLI warns about it on stderr.
+
+The new commands (`varlatch security`, `identity reach`, `scan
+--find-files`) and the Security page need this release on the server.
+Upgrade the server before the CLIs that use them.
+
+Backups: archives of 0.20.0 and earlier still restore into this release.
+From 0.19.1 or earlier, read the 0.20.0 notes below as well.
 
 ## 0.20.0 (2026-10-30)
 
