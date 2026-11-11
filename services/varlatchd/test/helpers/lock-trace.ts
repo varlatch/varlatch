@@ -72,6 +72,15 @@ export const MIGRATED = new Set<string>([
   // approvals: the two consuming operations
   "changeControl",
   "removeOwnPasskey",
+  // syncdelivery.ts: the workers
+  "ledgerSet",
+  "recordDrift",
+  "recordFailure",
+  // orgdeletion.ts
+  "scheduleDeletion",
+  "approveDeletion",
+  "cancelDeletion",
+  "finalizeDeletion",
 ]);
 
 const SCHEMA = "varlatch_lock_trace";
