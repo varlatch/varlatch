@@ -13,21 +13,23 @@ import { FullPageLoading } from "../../shell/AuthScreens";
 import { archivePassed, backupHealth } from "./backupHealth";
 import { TailnetTab } from "./TailnetTab";
 import { ReleaseTab } from "./ReleaseTab";
+import { OutboundTab } from "./OutboundTab";
 import { NewerReleaseDot, useInstallationRelease } from "./releaseNotice";
 
 /**
- * Installation settings, for Installation Admins: backups, Tailscale, and
- * releases. The operator changes all three on the host (the API is
+ * Installation settings, for Installation Admins: backups, Tailscale,
+ * releases and the outbound policy. The operator changes all four on the host (the API is
  * read-only by design), so the actions here explain the commands instead of
  * running them. Tabs live in `?tab=` so links can deep-link.
  */
 
-const TABS = ["backups", "tailnet", "release"] as const;
+const TABS = ["backups", "tailnet", "release", "outbound"] as const;
 type TabKey = (typeof TABS)[number];
 const TAB_TEXT: Record<TabKey, { label: string; subtitle: string }> = {
   backups: { label: "Backups", subtitle: "Encrypted archives of this whole installation." },
   tailnet: { label: "Tailnet", subtitle: "Tailscale on this installation, as varlatchd checks it." },
   release: { label: "Release", subtitle: "Whether a newer release exists, as the host last checked." },
+  outbound: { label: "Outbound", subtitle: "Which destinations Organizations may reach, as the host allows them." },
 };
 
 export function InstallationPage() {
@@ -66,6 +68,7 @@ export function InstallationPage() {
               ),
               "data-testid": "installation-tab-release",
             },
+            { key: "outbound", label: "Outbound", "data-testid": "installation-tab-outbound" },
           ]}
         />
       }
@@ -84,11 +87,19 @@ export function InstallationPage() {
       }
     />
   );
-  if (tab === "tailnet" || tab === "release") {
+  if (tab === "tailnet" || tab === "release" || tab === "outbound") {
     return (
       <>
         {header}
-        <div role="tabpanel">{tab === "tailnet" ? <TailnetTab /> : <ReleaseTab admin={admin} checking={backups.isLoading} />}</div>
+        <div role="tabpanel">
+          {tab === "tailnet" ? (
+            <TailnetTab />
+          ) : tab === "release" ? (
+            <ReleaseTab admin={admin} checking={backups.isLoading} />
+          ) : (
+            <OutboundTab admin={admin} checking={backups.isLoading} />
+          )}
+        </div>
       </>
     );
   }

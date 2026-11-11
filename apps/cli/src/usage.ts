@@ -172,7 +172,8 @@ Usage:
   varlatch security report [--json] [--org <organization>] [--server <url>]
                (machine credentials never used, unused for 30 days, or without expiry, with their identity and
                 last use, and service credentials expiring within 7 days or expired; reporting only: nothing is
-                revoked or retired; needs identity.manage)
+                revoked or retired; needs identity.manage. With organization.manage, also the webhooks, connections
+                and OIDC issuers this installation's outbound policy refuses, with why and since when)
   varlatch security controls [--json] [--org <organization>] [--server <url>]
                (the organization's security controls: requirement-protection, admin-step-up, passkey-verification,
                 credential-lifetime, each off, report or enforce; enforce is not available yet)

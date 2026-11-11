@@ -39,7 +39,7 @@ It first asks how people will reach Varlatch (`--ingress`):
 |---|---|---|
 | **public**: a bundled Caddy obtains the HTTPS certificate itself | `https://vault.example.com` (`--public-url`) | the name resolving to this machine in public DNS; ports 80 and 443 reachable from the internet |
 | **tailnet**: the Tailscale sidecar serves HTTPS, tailnet members only | `https://<machine>.<tailnet>.ts.net`, read from the node once it has joined | a Tailscale auth key (`--tailscale-auth-key-file`, used once) and, in the Tailscale admin console, MagicDNS and HTTPS certificates enabled; `--tailnet-machine` picks the machine name (default `varlatch`) |
-| **external**: your own reverse proxy; also for LAN-only installations | whatever your proxy serves (`--public-url`) | a proxy forwarding to `127.0.0.1:8787` (`--port`), including WebSocket upgrades for `/convex/` |
+| **external**: your own reverse proxy; also for LAN-only installations, and for trying Varlatch on your own machine | whatever your proxy serves (`--public-url`); `http://localhost:8787` on your own machine | a proxy forwarding to `127.0.0.1:8787` (`--port`), including WebSocket upgrades for `/convex/`; no proxy for `http://localhost:<port>`, which browsers accept for passkeys without HTTPS |
 
 The public URL is the passkey origin: it never changes on a rerun, and a
 tailnet machine or tailnet renamed later is a domain change (every passkey
@@ -365,6 +365,15 @@ copies can never be verified by the installation. Like `admin backup`, it
 needs Docker access on the host and no Varlatch login. For a Compose project
 started with non-default files or project name, set Compose's own
 `COMPOSE_PROJECT_NAME` / `COMPOSE_FILE` / `COMPOSE_ENV_FILES`.
+
+## Remove an installation
+
+`docker compose down --volumes --rmi all` in the installation's directory,
+then delete the directory. This erases every value and every key on the
+host, so only a backup and the off-host recovery keys bring anything back.
+[What Varlatch puts on your machine](../../docs/getting-started.md#what-varlatch-puts-on-your-machine)
+lists everything setup and the CLI write, and what to remove outside the
+host.
 
 ## Break-glass recovery
 
