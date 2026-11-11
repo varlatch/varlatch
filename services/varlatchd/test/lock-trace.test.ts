@@ -4,11 +4,37 @@ import { lockedQuery } from "../src/db/locks.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
 import { checkTrace, lockOrderMode, lockTagOf, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkAuditBeforeDecryption, isKeyOnlyLock, traceLog } from "./helpers/trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /** The lock-order check itself (ADR-0054 amendment E): the rules, then the trace it reads. */
 
 const row = (seq: number, tbl: string, key: string, mode: string, kind: TraceRow["kind"] = "explicit"): TraceRow => ({ seq, tbl, key, mode, kind });
+
+describe("the retrieval snapshot check and tagged locks", () => {
+  const after = (text: string) => {
+    const log = traceLog();
+    log.entries.push(
+      { kind: "sql", text: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", params: [] },
+      { kind: "sql", text: "COMMIT", params: [] },
+      { kind: "sql", text: "BEGIN", params: [] },
+      { kind: "sql", text, params: [] },
+      { kind: "sql", text: "COMMIT", params: [] },
+    );
+    return () => checkAuditBeforeDecryption(log);
+  };
+
+  it("lets a key-only lock of a snapshot table through, and refuses a tagged read of retrieval data", () => {
+    const keyOnly = "SELECT id FROM organizations WHERE id = ANY($1) ORDER BY id FOR KEY SHARE /* varlatch-lock organizations key-share id */";
+    expect(isKeyOnlyLock(keyOnly)).toBe(true);
+    expect(after(keyOnly)).not.toThrow();
+    const tagged = "SELECT * FROM value_versions WHERE id = ANY($1) ORDER BY id FOR SHARE /* varlatch-lock value_versions share id */";
+    expect(isKeyOnlyLock(tagged)).toBe(false);
+    expect(after(tagged)).toThrow(/read after the snapshot/);
+    expect(isKeyOnlyLock("SELECT deleted_at FROM organizations WHERE id = $1 FOR KEY SHARE /* varlatch-lock organizations key-share $1 */")).toBe(false);
+    expect(isKeyOnlyLock("SELECT id, payload FROM value_versions FOR SHARE /* varlatch-lock value_versions share id */")).toBe(false);
+  });
+});
 
 describe("checkTrace", () => {
   it("fails an approval consumed without its person held FOR UPDATE first", () => {

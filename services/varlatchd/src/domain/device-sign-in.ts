@@ -80,28 +80,48 @@ export function formatUserCode(code: string): string {
 async function sweep(db: Querier): Promise<void> {
   // The lock order (liveness.ts): every row this changes, each table in key
   // order, in the strongest mode it needs (a sign-in may be both expired and
-  // deleted, so FOR UPDATE), before the bulk statements; the challenges first,
-  // since deleting a sign-in cascades to its own.
-  const lapsed = "(status IN ('pending', 'approved') AND expires_at <= clock_timestamp()) OR expires_at < clock_timestamp() - interval '1 day'";
-  await lockedQuery(
+  // deleted, so FOR UPDATE), before the writes; the challenges first, since
+  // deleting a sign-in cascades to its own. One clock reading decides what
+  // lapsed, and the writes change exactly the rows locked: none can cross a
+  // threshold between the lock and the write.
+  const now = ((await db.query("SELECT clock_timestamp() AS now")).rows[0] as { now: Date | string }).now;
+  const challenges = (await lockedQuery(
     db,
     { table: "device_sign_in_challenges", mode: "update" },
     `SELECT id FROM device_sign_in_challenges
-     WHERE expires_at < clock_timestamp() - interval '1 day'
-        OR device_sign_in_id IN (SELECT id FROM device_sign_ins WHERE expires_at < clock_timestamp() - interval '1 day')
+     WHERE expires_at < $1::timestamptz - interval '1 day'
+        OR device_sign_in_id IN (SELECT id FROM device_sign_ins WHERE expires_at < $1::timestamptz - interval '1 day')
      ORDER BY id FOR UPDATE`,
-  );
-  await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, `SELECT id FROM device_sign_ins WHERE ${lapsed} ORDER BY id FOR UPDATE`);
-  await lockedQuery(
+    [now],
+  )).rows as { id: string }[];
+  const signIns = (await lockedQuery(
+    db,
+    { table: "device_sign_ins", mode: "update" },
+    `SELECT id, status IN ('pending', 'approved') AND expires_at <= $1::timestamptz AS lapsed,
+            expires_at < $1::timestamptz - interval '1 day' AS old
+     FROM device_sign_ins
+     WHERE (status IN ('pending', 'approved') AND expires_at <= $1::timestamptz) OR expires_at < $1::timestamptz - interval '1 day'
+     ORDER BY id FOR UPDATE`,
+    [now],
+  )).rows as { id: string; lapsed: boolean; old: boolean }[];
+  const windows = (await lockedQuery(
     db,
     { table: "device_code_attempt_windows", mode: "update", key: "lock_key" },
-    `SELECT concat_ws('|', scope::text, key::text) AS lock_key FROM device_code_attempt_windows
-     WHERE window_started_at < clock_timestamp() - interval '1 day' ORDER BY scope COLLATE "C", key COLLATE "C" FOR UPDATE`,
-  );
-  await db.query("UPDATE device_sign_ins SET status = 'expired' WHERE status IN ('pending', 'approved') AND expires_at <= clock_timestamp()");
-  await db.query("DELETE FROM device_sign_ins WHERE expires_at < clock_timestamp() - interval '1 day'");
-  await db.query("DELETE FROM device_sign_in_challenges WHERE expires_at < clock_timestamp() - interval '1 day'");
-  await db.query("DELETE FROM device_code_attempt_windows WHERE window_started_at < clock_timestamp() - interval '1 day'");
+    `SELECT concat_ws('|', scope::text, key::text) AS lock_key, scope, key FROM device_code_attempt_windows
+     WHERE window_started_at < $1::timestamptz - interval '1 day' ORDER BY scope COLLATE "C", key COLLATE "C" FOR UPDATE`,
+    [now],
+  )).rows as { scope: string; key: string }[];
+  const expiring = signIns.filter((s) => s.lapsed).map((s) => s.id);
+  const removing = signIns.filter((s) => s.old).map((s) => s.id);
+  if (expiring.length > 0) await db.query("UPDATE device_sign_ins SET status = 'expired' WHERE id = ANY($1)", [expiring]);
+  if (removing.length > 0) await db.query("DELETE FROM device_sign_ins WHERE id = ANY($1)", [removing]);
+  if (challenges.length > 0) await db.query("DELETE FROM device_sign_in_challenges WHERE id = ANY($1)", [challenges.map((c) => c.id)]);
+  if (windows.length > 0) {
+    await db.query(
+      "DELETE FROM device_code_attempt_windows WHERE (scope, key) IN (SELECT * FROM unnest($1::text[], $2::text[]))",
+      [windows.map((w) => w.scope), windows.map((w) => w.key)],
+    );
+  }
 }
 
 export interface DeviceSignInRequest {
@@ -202,16 +222,40 @@ export async function pollDeviceSignIn(
   input: { deviceCode: string; userAgent: string | null; requestId: string },
 ): Promise<PollOutcome> {
   if (!DEVICE_CODE.test(input.deviceCode)) return { kind: "unknown" };
+  // An approval that commits between the approver's read and the row lock
+  // leaves its approver unlocked: that attempt rolls back before writing
+  // anything, and the next takes the approver first. An approver never
+  // changes once set, so the second attempt always holds the right one.
+  let approverHint: string | null = null;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await pollOnce(ctx, input, approverHint);
+    } catch (err) {
+      if (!(err instanceof ApproverNotLocked) || attempt >= 2) throw err;
+      approverHint = err.approverId;
+    }
+  }
+}
+
+class ApproverNotLocked extends Error {
+  constructor(readonly approverId: string) {
+    super("the sign-in was approved after its approver was read");
+  }
+}
+
+async function pollOnce(
+  ctx: AppCtx,
+  input: { deviceCode: string; userAgent: string | null; requestId: string },
+  approverHint: string | null,
+): Promise<PollOutcome> {
   return withTx(ctx.db, async (db) => {
     // The lock order (liveness.ts): the approver (step 2), whom the issued
-    // credential references, before the sign-in row (a domain row). An
-    // approval that lands between this read and the row lock leaves its
-    // approver unlocked until the credential's insert; the approval holds
-    // its approver only FOR KEY SHARE, so the two cannot deadlock.
+    // credential references, before the sign-in row (a domain row).
     const approver = (await db.query("SELECT approved_by_identity_id FROM device_sign_ins WHERE device_code_hash = $1", [
       sha256(input.deviceCode),
     ])).rows[0] as { approved_by_identity_id: string | null } | undefined;
-    await lockPeople(db, [approver?.approved_by_identity_id]);
+    const prelocked = approver?.approved_by_identity_id ?? approverHint;
+    await lockPeople(db, [prelocked]);
     const locked = (await lockedQuery(db, { table: "device_sign_ins", mode: "update" }, "SELECT id FROM device_sign_ins WHERE device_code_hash = $1 FOR UPDATE", [
       sha256(input.deviceCode),
     ])).rows[0] as { id: string } | undefined;
@@ -227,6 +271,10 @@ export async function pollDeviceSignIn(
        FROM device_sign_ins WHERE id = $1`,
       [locked.id],
     )).rows[0] as SignInRow;
+    // Approved after the approver was read: retry with the approver first.
+    if (row.approved_by_identity_id !== null && row.approved_by_identity_id !== prelocked) {
+      throw new ApproverNotLocked(row.approved_by_identity_id);
+    }
     if (row.status === "consumed") return { kind: "consumed", credentialId: row.issued_credential_id };
     if (row.status === "denied") return { kind: "denied" };
     if (row.status === "expired") return { kind: "expired" };

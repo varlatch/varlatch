@@ -63,6 +63,48 @@ describe.skipIf(!url)("device sign-in on real PostgreSQL", () => {
     expect(await rows("SELECT id FROM audit_events WHERE event_type = 'authentication.device_collected'")).toHaveLength(1);
   });
 
+  it("a poll that read no approver, then finds the sign-in approved under its lock, retries with the approver locked first", async () => {
+    // ADR-0054 amendment E: the approver (step 2) before the sign-in row.
+    const started = (await client.start()).body;
+    const id = (await rows("SELECT id FROM device_sign_ins WHERE user_code = $1", [started.userCode.replace("-", "")]))[0].id as string;
+    // Another transaction holds the row and approves it; the poll reads
+    // no approver yet, then waits for the row.
+    const other = await db.connect();
+    const statements: string[] = [];
+    const logged = <Q extends { query: (t: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }>(q: Q): Q =>
+      ({ ...q, query: async (t: string, p?: unknown[]) => { statements.push(t); return q.query(t, p); } });
+    const ldb = { ...logged(db), connect: async () => logged(await db.connect()) } as typeof db;
+    const lapp = buildApp({ ...ctx, db: ldb }, { publicUrl: PUBLIC_URL, clientAddress: () => peer });
+    try {
+      await other.query("BEGIN");
+      await other.query("SELECT id FROM device_sign_ins WHERE id = $1 FOR UPDATE", [id]);
+      await other.query(
+        "UPDATE device_sign_ins SET status = 'approved', approved_by_identity_id = $2, decided_at = clock_timestamp() WHERE id = $1",
+        [id, adminId],
+      );
+      const polled = deviceClient(() => lapp).poll(started.deviceCode);
+      for (let i = 0; i < 250; i++) {
+        const waiting = await admin.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1 AND wait_event_type = 'Lock'", [database]);
+        if ((waiting.rows[0] as { n: number }).n > 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await other.query("COMMIT");
+      const answer = await polled;
+      expect(answer.status).toBe(201);
+      expect(await deviceCredentials()).toHaveLength(1);
+    } finally {
+      await other.query("ROLLBACK").catch(() => undefined);
+      other.release();
+    }
+    // The first attempt rolled back before writing; the second locked the
+    // approver before the sign-in row.
+    const signInLocks = statements.flatMap((t, i) => (/FROM device_sign_ins WHERE device_code_hash = \$1 FOR UPDATE/.test(t) ? [i] : []));
+    expect(signInLocks).toHaveLength(2);
+    const between = statements.slice(signInLocks[0]! + 1, signInLocks[1]!);
+    expect(between.some((t) => /^ROLLBACK/.test(t))).toBe(true);
+    expect(between.some((t) => /FROM identities WHERE id = ANY\(\$1\) ORDER BY id FOR KEY SHARE/.test(t))).toBe(true);
+  });
+
   it("a lost collection response: the retry gets CONSUMED with the credential id, and no second credential", async () => {
     const human = await approvingHuman(ctx, "Admin", adminId);
     const started = (await client.start()).body;
