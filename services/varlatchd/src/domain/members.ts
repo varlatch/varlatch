@@ -124,14 +124,19 @@ async function lockOrganization(db: Querier, organizationId: string, people: rea
  * invitations. Taken once for all of them, before the first is ended.
  */
 export async function lockMembershipRows(db: Querier, organizationId: string, identityIds: readonly string[]): Promise<void> {
-  const ids = [...identityIds];
   await lockedQuery(
     db,
     { table: "org_memberships", mode: "no key update", key: "lock_key" },
     `SELECT concat_ws('|', organization_id::text, identity_id::text) AS lock_key FROM org_memberships
      WHERE organization_id = $1 AND identity_id = ANY($2) ORDER BY identity_id COLLATE "C" FOR NO KEY UPDATE`,
-    [organizationId, ids],
+    [organizationId, [...identityIds]],
   );
+  await lockMemberRows(db, organizationId, identityIds);
+}
+
+/** The members' Grants, group links and live invitations, each table in key order. */
+async function lockMemberRows(db: Querier, organizationId: string, identityIds: readonly string[]): Promise<void> {
+  const ids = [...identityIds];
   await lockedQuery(
     db,
     { table: "grants", mode: "no key update" },
@@ -442,7 +447,6 @@ export async function removeMember(
        WHERE p.organization_id = $1 AND e.deleted_at IS NULL ORDER BY e.id FOR KEY SHARE OF e`,
       [organizationId],
     );
-    await lockMembershipRows(db, organizationId, [identityId]);
 
     const ended = await endMembership(ctx, db, organizationId, identityId, membership.role, actor.id);
     const { removalId, removedAt, grants, groups, invitations } = ended;
@@ -512,6 +516,11 @@ export async function endMembership(
      WHERE organization_id = $1 AND identity_id = $2`,
     [organizationId, identityId],
   );
+  // The member's Grants, group links and live invitations in key order
+  // (lock order step 10, liveness.ts) before their bulk updates, at the
+  // point where the removal has always written them. Finalization holds
+  // them already, for all members at once (lockMembershipRows): reuse.
+  await lockMemberRows(db, organizationId, [identityId]);
   const grants = await db.query(
     `UPDATE grants SET revoked_at = now()
      WHERE organization_id = $1 AND subject_identity_id = $2 AND revoked_at IS NULL RETURNING id`,
