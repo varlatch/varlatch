@@ -23,7 +23,7 @@ import {
   readJwtRefusal,
 } from "./githubjwt.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
-import { outboundOf } from "../net/outbound.js";
+import { outboundOf, outboundRefusalOf } from "../net/outbound.js";
 
 /**
  * GitHub App registration (ADR-0047 Decision 1, with its 2026-10-09
@@ -254,14 +254,18 @@ export async function completeRegistration(
       redirect: "error",
       signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
-  } catch {
+  } catch (err) {
     // No answer: GitHub may not have seen the code, so the state is released
     // for another attempt within the hour.
     await ctx.db.query("UPDATE github_app_registrations SET consumed_at = NULL WHERE state_hash = $1", [stateHash]);
+    // Refused by the outbound policy (ADR-0057 Decision 7): its own words.
+    const refusal = outboundRefusalOf(err);
     return {
       outcome: "failed",
       retryable: true,
-      message: "Varlatch could not reach api.github.com to finish the registration. Check that this server can reach it, then try again.",
+      message: refusal
+        ? refusal.message
+        : "Varlatch could not reach api.github.com to finish the registration. Check that this server can reach it, then try again.",
     };
   }
   if (res.status !== 201) {

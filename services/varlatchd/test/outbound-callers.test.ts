@@ -16,7 +16,7 @@ import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../s
 import { clearRefusedBackoff, reconcileTarget, runSyncOnce } from "../src/domain/syncdelivery.js";
 import { deliverWebhooksOnce } from "../src/domain/webhooks.js";
 import { buildApp } from "../src/http/app.js";
-import { OutboundPolicy, type Resolver } from "../src/net/outbound.js";
+import { OutboundPolicy, OutboundRefusedError, type Resolver } from "../src/net/outbound.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /**
@@ -257,7 +257,71 @@ describe("Coolify and Convex Connections", () => {
   });
 });
 
+describe("a refused redeploy after successful writes (Decision 7)", () => {
+  it("is a refusal, not a success: audited within the bound, backed off, needs_sync and the redeploy kept owed, no failure counted", async () => {
+    const values = new Map<string, string>();
+    let refuseRedeploy = true;
+    let redeploys = 0;
+    const refusal = new OutboundRefusedError("private_address", { scheme: "https:", host: "coolify.private", port: 443 }, ["10.0.0.5"]);
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const json = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), { status });
+      if (url.endsWith("/envs") && method === "GET") return json([...values].map(([key, value]) => ({ uuid: key, key, value, is_literal: true })));
+      if (url.endsWith("/envs") && (method === "POST" || method === "PATCH")) {
+        const b = JSON.parse(String(init?.body)) as { key: string; value: string };
+        values.set(b.key, b.value);
+        return json({ uuid: b.key }, method === "POST" ? 201 : 200);
+      }
+      if (method === "POST" && (url.endsWith("/restart") || url.endsWith("/start?force=true"))) {
+        // The policy refuses the redeploy's connection (the name now answers privately).
+        if (refuseRedeploy) throw new TypeError("fetch failed", { cause: refusal });
+        redeploys++;
+        return json({ message: "queued" });
+      }
+      return json({ message: "not found" }, 404);
+    }) as typeof fetch;
+    const connection = await (await post("/v1/organizations/acme/platform-connections", { platform: "coolify", baseIdentity: "https://sink.example", name: "c", credential: "tok" })).json();
+    const target = await (await post(`${ENV_PATH}/sync-targets`, { connectionId: connection.id, destination: { applicationUuid: "app1" }, mapping: { kind: "wildcard" }, redeploy: true })).json();
+    expect(target.id).toBeDefined();
+    const row = async () =>
+      (await ctx.db.query("SELECT state, failure_count, needs_sync, last_result, next_attempt_at, redeploy_owed, redeploy_paid, last_repair_at FROM sync_targets WHERE id = $1", [target.id])).rows[0] as Record<string, unknown>;
+
+    for (let i = 0; i < 12; i++) await reconcileTarget(ctx, target.id, { fetchImpl });
+    expect(values.get("PORT")).toBe("8080");
+    const refused = await row();
+    expect(refused).toMatchObject({ state: "active", failure_count: 0, needs_sync: true, last_result: "outbound_refused: private_address", last_repair_at: null });
+    expect(Number(refused.redeploy_owed)).toBeGreaterThan(Number(refused.redeploy_paid));
+    expect(new Date(refused.next_attempt_at as string).getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
+    const events = (await refusals()).filter((e) => e.metadata.purpose === "sync_delivery");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ resource: { targetId: target.id }, metadata: { phase: "connection", reason: "private_address", host: "coolify.private" } });
+
+    // Allowed again: the owed redeploy is paid and the Target is healthy.
+    refuseRedeploy = false;
+    await clearRefusedBackoff(ctx);
+    await runSyncOnce(ctx, { fetchImpl });
+    expect(redeploys).toBe(1);
+    const paid = await row();
+    expect(paid).toMatchObject({ failure_count: 0, last_result: "converged" });
+    expect(Number(paid.redeploy_paid)).toBe(Number(paid.redeploy_owed));
+  });
+});
+
 describe("GitHub", () => {
+  it("words a refused App registration as the policy does, and releases the state for another attempt", async () => {
+    app = buildApp(ctx, { publicUrl: "https://varlatch.example.com" });
+    const started = await (await post("/v1/organizations/acme/github-app/registrations", { account: { login: "acme-gh", type: "organization" } })).json();
+    const res = await post("/v1/organizations/acme/github-app/registrations/complete", { state: started.state, code: "code-1" });
+    const body = await res.json();
+    expect(body).toMatchObject({ outcome: "failed", retryable: true });
+    expect(body.message).toMatch(/private network/);
+    expect(body.message).not.toMatch(/could not reach/);
+    const registration = (await ctx.db.query("SELECT consumed_at FROM github_app_registrations")).rows[0] as { consumed_at: unknown };
+    expect(registration.consumed_at).toBeNull();
+    expect((await refusals()).at(-1)?.metadata).toMatchObject({ purpose: "github", phase: "connection", host: "api.github.com" });
+  });
+
   it("goes through the policy, and reports a refusal as unreachable in its words", async () => {
     const spy = vi.spyOn(ctx.outbound as OutboundPolicy, "fetch");
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });

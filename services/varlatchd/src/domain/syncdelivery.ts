@@ -394,6 +394,15 @@ export async function reconcileTarget(
       }
       return;
     }
+    // A request the outbound policy refused, anywhere in the run, makes it a
+    // refusal whatever the outcome says (ADR-0057 Decision 7): a refused
+    // redeploy after successful writes still leaves the run "ok" with the
+    // redeploy owed. Recorded before the repair cycle could close, and the
+    // cycle stays open: the refused work is still due.
+    if (refused.first) {
+      await recordRefusal(ctx, target, refused.first, generation, outcome.notes);
+      return;
+    }
     // The repair cycle closes when its eligible work is done, independent of
     // the Target's health: a flag such as an unresolved reference must not
     // keep a cycle open (and its credited names unverified) for good.
@@ -404,9 +413,7 @@ export async function reconcileTarget(
         [target.id, generation],
       );
     }
-    if (!outcome.ok && refused.first) {
-      await recordRefusal(ctx, target, refused.first, generation, outcome.notes);
-    } else if (outcome.ok) {
+    if (outcome.ok) {
       await ctx.db.query(
         `UPDATE sync_targets
          SET failure_count = 0, next_attempt_at = NULL, last_result = $2
