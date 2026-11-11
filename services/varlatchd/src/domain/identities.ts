@@ -214,6 +214,15 @@ export async function retireIdentity(
   await withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });
     await db.query("UPDATE identities SET disabled = true WHERE id = $1", [identityId]);
+    // Step 7 (liveness.ts): every live credential, in id order, in the
+    // mode its revocation takes, before the first revocation's audit
+    // event. They are revoked, and audited, in their usual order.
+    await lockedQuery(
+      db,
+      { table: "credentials", mode: "no key update" },
+      "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+      [identityId],
+    );
     const live = await db.query(
       "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
       [identityId],
