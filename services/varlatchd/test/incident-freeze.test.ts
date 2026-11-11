@@ -652,3 +652,59 @@ describe("the freeze checks in src/ (ADR-0055 Decision 4)", () => {
     expect(unpaired).toEqual([]);
   });
 });
+
+describe("what members see while frozen (review of #109)", () => {
+  async function oneTarget() {
+    const connection = await ok("POST", `${ORG}/platform-connections`, admin.cli, {
+      platform: "coolify", baseIdentity: "https://coolify.example.com", name: "coolify", credential: "coolify-token",
+    });
+    return (await ok("POST", `${E}/sync-targets`, admin.cli, {
+      connectionId: connection.id, destination: { applicationUuid: "app-a" }, mapping: { kind: "wildcard" },
+    })).id as string;
+  }
+
+  it("names the resuming Sync Targets only to callers with config.sync.manage, in the status and the lift", async () => {
+    const target = await oneTarget();
+    const member = await invite("Member", "member");
+    const syncer = await invite("Syncer", "member");
+    await ok("POST", `${ORG}/grants`, admin.cli, { subjectIdentityId: syncer.id, scope: { kind: "organization" }, actions: ["config.sync.manage"] });
+    // organization.manage without config.sync.manage: may lift, may not list the Targets.
+    const manager = await invite("Manager", "member");
+    await ok("POST", `${ORG}/grants`, admin.cli, { subjectIdentityId: manager.id, scope: { kind: "organization" }, actions: ["organization.manage"] });
+    const id = await frozen();
+
+    const seen = await ok("GET", FREEZE, member.cli);
+    expect(seen.freeze.id).toBe(id);
+    expect(seen.resumingTargets).toBeNull();
+    expect((await ok("GET", FREEZE, syncer.cli)).resumingTargets.map((t: { id: string }) => t.id)).toEqual([target]);
+    expect((await ok("GET", FREEZE, admin.cli)).resumingTargets.map((t: { id: string }) => t.id)).toEqual([target]);
+    // Not recorded as a refusal: the status is the member's to read.
+    expect((await events("authorization.denied")).filter((e) => e.actor === member.id)).toEqual([]);
+
+    const asked = await lift(manager.cli, id);
+    expect(asked.body.error.code).toBe("STEP_UP_REQUIRED");
+    expect(asked.body.error.details.approval.summary.changes).toEqual([
+      { field: "freeze", from: "frozen", to: "lifted", loosens: true },
+      { field: "Sync Targets", from: "held", to: "1 resume pushing", loosens: true },
+    ]);
+    const approval = asked.body.error.details.approval.id as string;
+    expect((await approve(manager, approval)).status).toBe(200);
+    const done = await lift(manager.cli, id, approval);
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body.resumingTargets).toBeNull();
+  });
+
+  it("allows Project and environment navigation metadata, never Contracts' documents or values", async () => {
+    const member = await invite("Member", "member");
+    await frozen();
+    for (const token of [admin.cli, member.cli]) {
+      expect((await ok("GET", `${ORG}/projects`, token)).items.map((p: { slug: string }) => p.slug)).toEqual(["api"]);
+      expect((await ok("GET", `${ORG}/projects/api`, token)).slug).toBe("api");
+      expect((await ok("GET", `${ORG}/projects/api/environments`, token)).items.map((e: { name: string }) => e.name)).toEqual(["development"]);
+      expect((await ok("GET", E, token)).name).toBe("development");
+    }
+    expectFrozen(await call("GET", `${ORG}/projects/api/contract`, admin.cli));
+    expectFrozen(await call("GET", `${E}/effective-configuration`, admin.cli));
+    expectFrozen(await call("GET", `${ORG}/config-items?q=DATABASE`, admin.cli));
+  });
+});

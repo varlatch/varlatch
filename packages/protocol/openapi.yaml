@@ -1918,7 +1918,11 @@ paths:
                       - $ref: "#/components/schemas/IncidentFreeze"
                       - type: "null"
                   resumingTargets:
-                    type: array
+                    type: [array, "null"]
+                    description: >
+                      The Sync Targets that resume pushing when the freeze is
+                      lifted; empty when not frozen; null for a caller without
+                      config.sync.manage, which listing the Targets needs.
                     items: { $ref: "#/components/schemas/ResumingTarget" }
                   history:
                     type: array
@@ -2000,7 +2004,8 @@ paths:
                 properties:
                   freeze: { $ref: "#/components/schemas/IncidentFreeze" }
                   resumingTargets:
-                    type: array
+                    type: [array, "null"]
+                    description: Null for a caller without config.sync.manage; the approval's summary then gives their number only.
                     items: { $ref: "#/components/schemas/ResumingTarget" }
         default: { $ref: "#/components/responses/Error" }
 

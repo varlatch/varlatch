@@ -231,7 +231,8 @@ export async function freezeOrganization(
 
 export interface LiftOutcome {
   freeze: FreezeView;
-  resumingTargets: ResumingTarget[];
+  /** null when the requester may not read the Organization's Sync Targets (config.sync.manage). */
+  resumingTargets: ResumingTarget[] | null;
 }
 
 function durationSeconds(from: Date | string, to: Date | string): number {
@@ -269,6 +270,12 @@ export async function liftFreeze(
     credentialKind: string;
     requestId: string;
     authorizeIn: (db: Querier) => Promise<void>;
+    /**
+     * Whether the requester may read the Organization's Sync Targets
+     * (config.sync.manage): the approval's summary and the answer name them
+     * only then, and give their number otherwise.
+     */
+    mayListTargets: boolean;
   },
 ): Promise<LiftOutcome> {
   requirePerson(input.actor, input.credentialKind, "lift");
@@ -288,12 +295,16 @@ export async function liftFreeze(
     const targets = await resumingTargets(db, input.organizationId);
     const changes: ApprovalChange[] = [
       { field: "freeze", from: "frozen", to: "lifted", loosens: true },
-      ...targets.map((t) => ({
-        field: `Sync Target ${t.projectSlug}/${t.environmentName} (${t.platform})`,
-        from: "held",
-        to: "resumes pushing",
-        loosens: true,
-      })),
+      ...(input.mayListTargets
+        ? targets.map((t) => ({
+            field: `Sync Target ${t.projectSlug}/${t.environmentName} (${t.platform})`,
+            from: "held",
+            to: "resumes pushing",
+            loosens: true,
+          }))
+        : targets.length > 0
+          ? [{ field: "Sync Targets", from: "held", to: `${targets.length} resume pushing`, loosens: true }]
+          : []),
     ];
     const approval: UsedApproval = await gate.require(db, {
       operation: "organization.unfreeze",
@@ -330,7 +341,7 @@ export async function liftFreeze(
       },
     });
     const view = (await db.query(`${FREEZES_OF} AND f.id = $2`, [input.organizationId, input.freezeId])).rows[0] as FreezeRow;
-    return { freeze: toView(view), resumingTargets: targets };
+    return { freeze: toView(view), resumingTargets: input.mayListTargets ? targets : null };
   });
 }
 

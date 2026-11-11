@@ -5713,7 +5713,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         freeze: components["schemas"]["IncidentFreeze"] | null;
-                        resumingTargets: components["schemas"]["ResumingTarget"][];
+                        /** @description The Sync Targets that resume pushing when the freeze is lifted; empty when not frozen; null for a caller without config.sync.manage, which listing the Targets needs. */
+                        resumingTargets: components["schemas"]["ResumingTarget"][] | null;
                         /** @description The last 20 freezes, newest first, the open one included. */
                         history: components["schemas"]["IncidentFreeze"][];
                     };
@@ -5776,7 +5777,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         freeze: components["schemas"]["IncidentFreeze"];
-                        resumingTargets: components["schemas"]["ResumingTarget"][];
+                        /** @description Null for a caller without config.sync.manage; the approval's summary then gives their number only. */
+                        resumingTargets: components["schemas"]["ResumingTarget"][] | null;
                     };
                 };
             };

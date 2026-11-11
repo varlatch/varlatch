@@ -54,16 +54,18 @@ export function liftConfirmationLines(state: IncidentFreezeState, slug: string):
   return [
     `${slug} is frozen since ${freeze.frozenAt} by ${freeze.frozenBy.name ?? freeze.frozenBy.id}: ${freeze.reason}`,
     "Lifting undoes nothing done during the freeze: revoked credentials and Grants stay revoked.",
-    ...(state.resumingTargets.length === 0
-      ? ["No Sync Target resumes pushing."]
-      : [`Sync Targets that resume pushing (${state.resumingTargets.length}):`, ...state.resumingTargets.map(targetLine)]),
+    ...(state.resumingTargets === null
+      ? ["Sync Targets that were not paused or revoked resume pushing (listing them needs config.sync.manage)."]
+      : state.resumingTargets.length === 0
+        ? ["No Sync Target resumes pushing."]
+        : [`Sync Targets that resume pushing (${state.resumingTargets.length}):`, ...state.resumingTargets.map(targetLine)]),
   ];
 }
 
 export function liftedLines(result: IncidentFreezeLift, slug: string): string[] {
   return [
     `Freeze of ${slug} lifted at ${result.freeze.liftedAt} [${result.freeze.id}].`,
-    ...(result.resumingTargets.length === 0
+    ...(result.resumingTargets === null || result.resumingTargets.length === 0
       ? []
       : [`Sync Targets resuming (${result.resumingTargets.length}):`, ...result.resumingTargets.map(targetLine)]),
   ];

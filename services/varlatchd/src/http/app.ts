@@ -1516,11 +1516,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const freeze = await currentFreeze(ctx.db, org.id);
+    // The Sync Targets that resume pushing (what the lift's confirmation
+    // lists) name Projects, environments and destinations: only for a caller
+    // who may read the Organization's Targets (config.sync.manage, as GET
+    // .../sync-targets), null for everyone else. Decided without recording a
+    // denial: the status itself is readable under organization.read.
+    const mayListTargets = (await decide(ctx, c, principal, "config.sync.manage", { organizationId: org.id })).allowed;
     c.header("Cache-Control", "no-store");
     return c.json({
       freeze,
-      // What the lift's confirmation lists: the Sync Targets that resume pushing.
-      resumingTargets: freeze ? await resumingTargets(ctx.db, org.id) : [],
+      resumingTargets: mayListTargets ? (freeze ? await resumingTargets(ctx.db, org.id) : []) : null,
       history: await freezeHistory(ctx.db, org.id),
     });
   });
@@ -1547,10 +1552,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c, FREEZE);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    // As in the status: the Targets are named only to a caller who may read them.
+    const mayListTargets = (await decide(ctx, c, principal, "config.sync.manage", { organizationId: org.id })).allowed;
     const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
       liftFreeze(ctx, gate, {
         organizationId: org.id,
         freezeId: routeParam(c, "freeze"),
+        mayListTargets,
         actor: principal.identity,
         credentialKind: principal.credentialKind,
         requestId: c.get("requestId"),
@@ -1830,7 +1838,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Projects
   app.get("/v1/organizations/:org/projects", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "project.read", { organizationId: org.id }, { hideExistence: true });
     const projects = await listProjects(ctx, org.id);
     return c.json({ items: projects.map(serialize.project), nextCursor: null });
@@ -1854,7 +1862,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/projects/:project", async (c) => {
     const principal = c.get("principal");
-    const { org, project } = await projectScope(ctx, c);
+    const { org, project } = await projectScope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "project.read", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
     return c.json(serialize.project(project));
   });
@@ -1883,7 +1891,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Environments
   app.get("/v1/organizations/:org/projects/:project/environments", async (c) => {
     const principal = c.get("principal");
-    const { org, project } = await projectScope(ctx, c);
+    const { org, project } = await projectScope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "project.read", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
     const envs = await listEnvironments(ctx, project.id);
     return c.json({ items: await environmentsOut(ctx, c, principal, org, project, envs), nextCursor: null });
@@ -1916,7 +1924,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/projects/:project/environments/:environment", async (c) => {
     const principal = c.get("principal");
-    const { org, project, env } = await envScope(ctx, c);
+    const { org, project, env } = await envScope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "environment.read", envResource(org, project, env), { hideExistence: true });
     return c.json((await environmentsOut(ctx, c, principal, org, project, [env]))[0]);
   });
