@@ -11,7 +11,7 @@ import { closeOpenApprovals } from "./approvals.js";
 import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
-import { endMembership } from "./members.js";
+import { endMembership, lockMembershipRows } from "./members.js";
 import { lockedQuery } from "../db/locks.js";
 
 /**
@@ -105,7 +105,7 @@ export async function scheduleDeletion(
   }
   return withTx(ctx.db, async (db) => {
     // FOR UPDATE: writers in progress finish first, later ones see the freeze.
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true });
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [] });
     if (await openDeletion(db, organizationId)) {
       throw new DomainError("STATE_CHANGED", "This Organization is already being deleted");
     }
@@ -221,7 +221,7 @@ export async function approveDeletion(
   actor: { id: string; kind: string },
 ): Promise<DeletionView> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true });
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [] });
     const row = await requestRow(db, deletionId, organizationId);
     // Step 2 (liveness.ts), after the request (step 1): the approver, whom
     // approved_by references.
@@ -262,7 +262,7 @@ export async function cancelDeletion(
   return withTx(ctx.db, async (db) => {
     // The Organization row, then the request: the worker's order, so a
     // cancel and a run are serialized.
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true });
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [] });
     await requestRow(db, deletionId, organizationId);
     // Step 2 (liveness.ts): the canceller (cancelled_by), and the machine
     // identities this restores FOR UPDATE, in id order; then the webhooks
@@ -438,36 +438,7 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     ).map((r) => r.id);
     await lockAll("capabilities", "no key update", "SELECT id FROM capabilities WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE", [organizationId]);
     await lockAll("webhooks", "no key update", "SELECT id FROM webhooks WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE", [organizationId]);
-    await lockAll(
-      "org_memberships",
-      "no key update",
-      `SELECT concat_ws('|', organization_id::text, identity_id::text) AS lock_key FROM org_memberships
-       WHERE organization_id = $1 AND identity_id = ANY($2) ORDER BY identity_id COLLATE "C" FOR NO KEY UPDATE`,
-      [organizationId, memberIds],
-      "lock_key",
-    );
-    await lockAll(
-      "grants",
-      "no key update",
-      "SELECT id FROM grants WHERE organization_id = $1 AND subject_identity_id = ANY($2) AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
-      [organizationId, memberIds],
-    );
-    await lockAll(
-      "group_members",
-      "update",
-      `SELECT concat_ws('|', gm.group_id::text, gm.identity_id::text) AS lock_key FROM group_members gm JOIN groups g ON g.id = gm.group_id
-       WHERE g.organization_id = $1 AND gm.identity_id = ANY($2)
-       ORDER BY gm.group_id COLLATE "C", gm.identity_id COLLATE "C" FOR UPDATE OF gm`,
-      [organizationId, memberIds],
-      "lock_key",
-    );
-    await lockAll(
-      "setup_grants",
-      "no key update",
-      `SELECT id FROM setup_grants WHERE kind = 'invite' AND invite_organization_id = $1 AND created_by = ANY($2)
-         AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY id FOR NO KEY UPDATE`,
-      [organizationId, memberIds],
-    );
+    await lockMembershipRows(db, organizationId, memberIds);
     await lockAll("oidc_bindings", "no key update", "SELECT id FROM oidc_bindings WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE", [organizationId]);
 
     if (readers.length > 0) {

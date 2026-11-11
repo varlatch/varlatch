@@ -14,15 +14,17 @@ import type { Querier } from "../db/migrate.js";
  * FOR UPDATE: the person whose approval is consumed, or whose row the
  * transaction changes, in any column (an explicit prelock: the implicit
  * FOR NO KEY UPDATE of an update that changes no key column does not
- * replace it). FOR KEY SHARE: a person only referenced (a foreign key, an
- * index row).
+ * replace it). FOR SHARE: a person whose row must not change until the
+ * transaction ends (an issuance that checks the identity is enabled, so a
+ * disable in flight waits). FOR KEY SHARE: a person only referenced (a
+ * foreign key, an index row).
  */
-export type PersonLockMode = "key share" | "update";
+export type PersonLockMode = "key share" | "share" | "update";
 
 /** A person to lock: an id alone is taken in the default mode (FOR KEY SHARE); null and undefined are skipped. */
 export type PersonRef = string | { id: string; mode: PersonLockMode } | null | undefined;
 
-const STRENGTH: Record<PersonLockMode, number> = { "key share": 1, update: 2 };
+const STRENGTH: Record<PersonLockMode, number> = { "key share": 1, share: 2, update: 3 };
 
 /**
  * Step 2: all of the transaction's people, in id order, in one step, each

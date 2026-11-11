@@ -202,7 +202,7 @@ export async function changeControl(
     throw new DomainError("VALIDATION_FAILED", "config: 0 < defaultTtlSeconds <= maxTtlSeconds");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: input.organizationId, organizationMode: "update" });
+    await lockLiveScope(db, { organizationId: input.organizationId, organizationMode: "update", people: [] });
     await input.authorizeIn(db);
     const current = await readControl(db, input.organizationId, input.control);
     if (current.version !== input.expectedVersion) {
@@ -306,7 +306,7 @@ export async function resetControls(
       [input.organization],
     )).rows[0] as { id: string; slug: string } | undefined;
     if (!org) throw new DomainError("RESOURCE_NOT_FOUND", `No live Organization ${input.organization}`);
-    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true });
+    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true, people: [] });
     const reset: ResetOutcome["reset"] = [];
     const events = [];
     const approvalsClosed = await closeOpenApprovals(db, { organizationId: org.id, reason: "reset", controls });

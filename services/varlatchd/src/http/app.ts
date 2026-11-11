@@ -1038,7 +1038,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // restores. People's credentials belong to the Installation.
     const organizationId = principal.identity.organization_id;
     await withTx(ctx.db, async (db) => {
-      if (organizationId) await lockLiveScope(db, { organizationId });
+      if (organizationId) await lockLiveScope(db, { organizationId, people: [principal.identity.id] });
       const res = await db.query(
         "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
         [c.req.param("credential"), principal.identity.id],
@@ -2538,7 +2538,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // The writer protocol (ADR-0051): a live Organization that is not being
     // deleted, and an Agent still enabled, in the issuing transaction.
     const issued = await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, { id: agent.id, mode: "share" }] });
       const live = await lockedQuery(db, { table: "identities", mode: "share", key: "$1" }, "SELECT 1 FROM identities WHERE id = $1 AND NOT disabled FOR SHARE", [agent.id]);
       if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
       return issueCredential(db, {
@@ -2571,7 +2571,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // The writer protocol (ADR-0051): a live Organization that is not
       // being deleted; a suspended machine keeps its credentials.
       await withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
         await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
       });
       return c.body(null, 204);
@@ -2590,7 +2590,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // The writer protocol (ADR-0051): refused while the Organization is
     // being deleted, so a cancel restores the machine with its credentials.
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
       await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
     });
     return c.body(null, 204);
@@ -3071,7 +3071,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const id = newId("grant");
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] });
       if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
@@ -3122,7 +3122,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
       const res = await db.query(
         "UPDATE grants SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("grant"), org.id],
@@ -3156,7 +3156,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] });
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
@@ -3447,7 +3447,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const id = newId("requirement");
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
       await db.query(
         "INSERT INTO requirements (id, organization_id, kind, target, config, created_by) VALUES ($1,$2,'tailnet',$3,$4,$5)",
         [id, org.id, JSON.stringify(body.target), JSON.stringify(body.selector), principal.identity.id],
@@ -3503,7 +3503,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const endpoint = `PATCH requirements ${requirementId}`;
     const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) =>
       withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
         const res = await lockedQuery(
           db,
           { table: "requirements", mode: "update" },
@@ -3574,7 +3574,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
       const res = await db.query(
         "UPDATE requirements SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("requirement"), org.id],

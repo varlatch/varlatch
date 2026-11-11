@@ -15,7 +15,9 @@ import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import type { PersonRef } from "./personlocks.js";
 import { reportAdminStepUp } from "./securityreport.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Removing a person from an Organization, a member leaving, and role
@@ -108,10 +110,49 @@ async function liveMembership(db: Querier, organizationId: string, identityId: s
  * insert takes, so the two never deadlock; Organization deletion's
  * exclusive lock excludes it.
  */
-async function lockOrganization(db: Querier, organizationId: string): Promise<void> {
+async function lockOrganization(db: Querier, organizationId: string, people: readonly PersonRef[]): Promise<void> {
   // The writer protocol's Organization lock and liveness, freeze included
-  // (ADR-0051): no membership changes while the Organization is being deleted.
-  await lockLiveScope(db, { organizationId });
+  // (ADR-0051): no membership changes while the Organization is being
+  // deleted; then the people (lock order step 2, liveness.ts).
+  await lockLiveScope(db, { organizationId, people });
+}
+
+/**
+ * The rows endMembership changes for these members, each table in key
+ * order, in the mode its update or deletion takes (lock order step 10,
+ * liveness.ts): their memberships, Grants, group links and live
+ * invitations. Taken once for all of them, before the first is ended.
+ */
+export async function lockMembershipRows(db: Querier, organizationId: string, identityIds: readonly string[]): Promise<void> {
+  const ids = [...identityIds];
+  await lockedQuery(
+    db,
+    { table: "org_memberships", mode: "no key update", key: "lock_key" },
+    `SELECT concat_ws('|', organization_id::text, identity_id::text) AS lock_key FROM org_memberships
+     WHERE organization_id = $1 AND identity_id = ANY($2) ORDER BY identity_id COLLATE "C" FOR NO KEY UPDATE`,
+    [organizationId, ids],
+  );
+  await lockedQuery(
+    db,
+    { table: "grants", mode: "no key update" },
+    "SELECT id FROM grants WHERE organization_id = $1 AND subject_identity_id = ANY($2) AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+    [organizationId, ids],
+  );
+  await lockedQuery(
+    db,
+    { table: "group_members", mode: "update", key: "lock_key" },
+    `SELECT concat_ws('|', gm.group_id::text, gm.identity_id::text) AS lock_key FROM group_members gm JOIN groups g ON g.id = gm.group_id
+     WHERE g.organization_id = $1 AND gm.identity_id = ANY($2)
+     ORDER BY gm.group_id COLLATE "C", gm.identity_id COLLATE "C" FOR UPDATE OF gm`,
+    [organizationId, ids],
+  );
+  await lockedQuery(
+    db,
+    { table: "setup_grants", mode: "no key update" },
+    `SELECT id FROM setup_grants WHERE kind = 'invite' AND invite_organization_id = $1 AND created_by = ANY($2)
+       AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > now() ORDER BY id FOR NO KEY UPDATE`,
+    [organizationId, ids],
+  );
 }
 
 /**
@@ -386,11 +427,12 @@ export async function removeMember(
 ): Promise<RemovalResult> {
   const left = actor.id === identityId;
   return withSerializableTx(ctx.db, async (db) => {
-    await lockOrganization(db, organizationId);
+    await lockOrganization(db, organizationId, [actor.id, identityId]);
     if (!left) await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
+    await lockMembershipRows(db, organizationId, [identityId]);
 
     const ended = await endMembership(ctx, db, organizationId, identityId, membership.role, actor.id);
     const { removalId, removedAt, grants, groups, invitations } = ended;
@@ -500,7 +542,7 @@ export async function changeMemberRole(
   actor: Actor,
 ): Promise<{ identityId: string; role: OrgRole; previousRole: OrgRole }> {
   return withSerializableTx(ctx.db, async (db) => {
-    await lockOrganization(db, organizationId);
+    await lockOrganization(db, organizationId, [actor.id]);
     await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");

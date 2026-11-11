@@ -84,7 +84,7 @@ export async function renameOrganization(
     // key-share locks that inserts referencing the Organization take. FOR
     // UPDATE would make such an insert wait behind a rename that waits for
     // the audit counter.
-    await lockLiveScope(db, { organizationId, organizationMode: "no key update" });
+    await lockLiveScope(db, { organizationId, organizationMode: "no key update", people: [actorIdentityId] });
     const prev = await db.query("SELECT slug, name FROM organizations WHERE id = $1", [organizationId]);
     const row = prev.rows[0] as { slug: string; name: string } | undefined;
     if (!row) throw notFound("Organization");

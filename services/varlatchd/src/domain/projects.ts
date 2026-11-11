@@ -32,7 +32,7 @@ export async function createProject(
     throw new DomainError("VALIDATION_FAILED", "Invalid project slug");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const id = newId("project");
     try {
       await db.query(

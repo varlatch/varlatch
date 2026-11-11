@@ -106,7 +106,7 @@ export interface LiveScope {
    * id order after the Organization and before the Project. An id alone is
    * taken FOR KEY SHARE; null and undefined entries are skipped.
    */
-  people?: readonly PersonRef[] | undefined;
+  people: readonly PersonRef[];
   projectId?: string | undefined;
   projectMode?: LockMode | undefined;
   /** Environments of the Project, locked in ascending ID order. */
@@ -133,7 +133,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
 
-  if (scope.people) await lockPeople(db, scope.people);
+  await lockPeople(db, scope.people);
 
   if (scope.projectId !== undefined) {
     const projectMode = scope.projectMode ?? "key share";

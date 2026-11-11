@@ -402,7 +402,7 @@ export async function createConnection(
   const envelope = encryptPlatformCredential(orgKekOf(ctx, org), org.id, id, input.credential);
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
     await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
     await recordIntegrationChange(db, {
@@ -473,7 +473,7 @@ export async function createAppConnection(
   const id = newId("platformConnection");
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [app.id, org.id],
     );
@@ -570,7 +570,7 @@ export async function rotateGitHubAppKey(
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
     )).rows[0] as { id: string; version: number } | undefined;
@@ -626,7 +626,7 @@ export async function rotateGitHubAppKey(
 export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
     )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
@@ -753,7 +753,7 @@ export async function replaceConnectionCredential(
   );
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const res = await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [connectionId, org.id],
@@ -856,7 +856,7 @@ export async function revokeConnection(
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
@@ -1450,7 +1450,7 @@ export async function setTargetState(
 ): Promise<SyncTargetRow | null> {
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [targetId, org.id],
@@ -1580,7 +1580,7 @@ export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): P
   // The Organization lock and the freeze check in the same transaction as
   // the update (ADR-0051): a request that waited behind a scheduling sees it.
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [] });
     const res = await db.query(
       `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
