@@ -568,27 +568,47 @@ installation yourself. Here is everything else, and how to remove it.
   `$XDG_CONFIG_HOME/varlatch`, or `VARLATCH_CONFIG_DIR`). On Windows, the
   same files are in `.config\varlatch` in your user profile.
 
-To remove it, sign out with `varlatch logout`, which also revokes the
-credential on the server, then delete the CLI and the directory:
+To remove it, first sign out of every server. `varlatch logout --all`
+asks each server to revoke your credential, then deletes it locally,
+and prints for each server whether the revocation worked. When it reports
+that a revocation failed, the credential may stay usable until it
+expires: revoke it in the dashboard, under your account, then Sessions,
+or let it expire. Then delete the CLI and the directory:
 
 ```sh
-varlatch logout
+varlatch logout --all
 rm ~/.local/bin/varlatch
 rm -r ~/.config/varlatch
 ```
 
-**In a repository,** only what you ask for, and all of it shows in
-`git status`:
+**In a repository,** only what you ask for:
 
-- `varlatch init` writes `varlatch.toml`, and the files coding agents read:
-  `AGENTS.md`, the skill in `.agents/skills/varlatch/` and
-  `.claude/skills/varlatch/`, and the files a few agents need besides
+- `varlatch init` writes `varlatch.toml`, which you delete by hand, and
+  the files coding agents read: `AGENTS.md`, the skill in
+  `.agents/skills/varlatch/` and `.claude/skills/varlatch/`, and the
+  settings a few agents need besides
   ([Coding agents](reference/coding-agents.md)). `--no-agent-files` skips
-  those. `varlatch agents install --remove` removes them again, and
-  `--scope user` does the same for the copies in your home directory.
-- `varlatch agents install --guardrails` adds hooks to your agents'
-  settings in the repository.
-- `varlatch scan --install-hook` adds a pre-commit hook in `.git/hooks`.
+  those.
+- `varlatch agents install --guardrails` adds hooks and settings for your
+  agents in the repository.
+- `varlatch agents install --remove` takes back the skill, the
+  instructions and the guardrails, and leaves what you wrote in the same
+  files. It lists anything it left in place, such as a setting an agent
+  shares with other tools: remove those by hand if you no longer want
+  them.
+- `varlatch agents install --scope user` installs the skill in your home
+  directory instead, in `~/.agents/skills/varlatch/` and
+  `~/.claude/skills/varlatch/`. `varlatch agents install --remove --scope
+  user` removes it.
+- `varlatch env use <name>` keeps your choice of environment in `.varlatch/`,
+  which ignores itself in Git. Delete the directory to remove it.
+- `varlatch scan --install-hook` writes a pre-commit hook in `.git/hooks`,
+  which `git status` does not show. Delete it with
+  `rm "$(git rev-parse --git-path hooks/pre-commit)"`, after checking that
+  it is the hook Varlatch wrote: Varlatch never replaces a hook it did not
+  write.
+- Files you name in a command, such as generated types or a scan
+  baseline, are yours to keep or delete.
 
 **An installation,** on its host:
 
@@ -598,11 +618,12 @@ rm -r ~/.config/varlatch
   `varlatch-install.json`.
 - A Docker Compose project named `varlatch`: its containers, a network,
   the volumes that hold the data (`postgres-data`, `convex-data`,
-  `varlatch-state`, and with the public or tailnet address, Caddy's or
-  Tailscale's state), and the images it pulled.
-- Ports on `127.0.0.1` only, by default 8787, 8686 and 3210. With the
-  public address, Caddy also listens on ports 80 and 443 on every
-  interface.
+  `varlatch-state`, Caddy's state with the public address, and
+  Tailscale's state when the installation uses Tailscale), and the images
+  it pulled.
+- Ports on `127.0.0.1` only: the address you chose, 8787 by default, and
+  two ports Docker picks at random for varlatchd and the Convex backend. With the public address, Caddy also listens on TCP ports 80 and
+  443 and UDP port 443, on every interface.
 
 To remove an installation, run this in its directory, then delete the
 directory. It erases every value the installation stores and every key on
@@ -618,8 +639,8 @@ cd .. && rm -r varlatch-$V
 removes the containers and volumes of every address type. `--rmi all`
 also removes the images, including shared ones such as `postgres`: leave
 it out to keep them. Outside this machine, remove what you set up for it
-by hand: the DNS record of a public address, or the machine in the
-Tailscale admin console for a tailnet address.
+by hand: the DNS record of a public address, and, when the installation
+used Tailscale, its machine in the Tailscale admin console.
 
 **Your passkey** stays where you created it, on your device, in your
 password manager, or on your security key. Delete it there.
