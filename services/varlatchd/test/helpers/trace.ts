@@ -51,6 +51,18 @@ const SNAPSHOT_BEGIN = /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/;
 const SNAPSHOT_ONLY =
   /\b(env_values|value_versions|capabilities|grants|roles|groups|group_members|team_projects|requirements|org_members|contract_revisions|projects|environments|organizations)\b/;
 
+/**
+ * A tagged lock statement (db/locks.ts) keyed by the primary key `id` whose
+ * select list is exactly that column (`id` or `alias.id`): it returns keys
+ * only. A tag naming another column as key is never exempt.
+ */
+export function isKeyOnlyLock(sql: string): boolean {
+  const tag = /\/\* varlatch-lock \S+ \S+ (\S+) \*\//.exec(sql);
+  if (tag?.[1] !== "id") return false;
+  const select = /^\s*SELECT\s+([\s\S]*?)\s+FROM\b/i.exec(sql);
+  return !!select && /^(?:\w+\.)?id$/.test(select[1]!.trim());
+}
+
 function versionsNamed(metadata: string): string[] {
   let items: string;
   try {
@@ -95,7 +107,12 @@ export function checkAuditBeforeDecryption(log: TraceLog): { decrypted: string[]
       decrypted.push(e.versionId);
       continue;
     }
-    if (SNAPSHOT_ONLY.test(e.text) && !/INSERT INTO audit_events/.test(e.text)) {
+    // A key-only row lock (a tagged lock that selects nothing but its key)
+    // reads no retrieval data: the audit transaction takes the Organization
+    // and the person before its index rows reference them (lock order,
+    // ADR-0054 amendment E). Any other read of a snapshot table is refused,
+    // tagged or not.
+    if (SNAPSHOT_ONLY.test(e.text) && !/INSERT INTO audit_events/.test(e.text) && !isKeyOnlyLock(e.text)) {
       throw new Error(`read after the snapshot: ${e.text.slice(0, 120)}`);
     }
     if (/^BEGIN/.test(e.text)) pending = [];

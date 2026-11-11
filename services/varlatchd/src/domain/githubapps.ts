@@ -144,7 +144,7 @@ export async function startRegistration(
       ? `${GITHUB_WEB}/organizations/${encodeURIComponent(account.login)}/settings/apps/new?state=${state}`
       : `${GITHUB_WEB}/settings/apps/new?state=${state}`;
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     await db.query("DELETE FROM github_app_registrations WHERE expires_at < clock_timestamp() - interval '1 day'");
     if (await liveApp(db, org.id)) {
       throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before registering another.");
@@ -323,7 +323,7 @@ export async function completeRegistration(
   const id = newId("githubApp");
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, conversion.pem);
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const inserted = await db.query(
       `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -478,7 +478,7 @@ export async function importGitHubApp(
   const id = newId("githubApp");
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, input.privateKey);
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     const inserted = await db.query(
       `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)

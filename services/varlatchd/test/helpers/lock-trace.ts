@@ -26,18 +26,18 @@ import type { Querier } from "../../src/db/migrate.js";
  *   {@link checkTrace}); a violation fails the running test (setup file
  *   lock-trace-setup.ts).
  *
- * Gating (VARLATCH_LOCK_ORDER): "all" enforces every transaction; "migrated"
- * (the default while the remaining writers move to the order) enforces the
- * transactions begun by the writers in {@link MIGRATED} and only reports the
- * others (to the file named by VARLATCH_LOCK_TRACE_REPORT, when set);
- * "report" enforces nothing and reports every violation there; "off"
- * installs nothing.
+ * Gating (VARLATCH_LOCK_ORDER): "all" (the default) enforces every
+ * transaction; "migrated" enforces only the transactions begun by the
+ * writers in {@link MIGRATED} (the gate while the writers moved to the
+ * order) and reports the others; "report" enforces nothing and reports
+ * every violation; reports go to the file named by
+ * VARLATCH_LOCK_TRACE_REPORT, when set. "off" installs nothing.
  */
 
 export type LockOrderMode = "off" | "report" | "migrated" | "all";
 
 export function lockOrderMode(): LockOrderMode {
-  const raw = process.env.VARLATCH_LOCK_ORDER ?? "migrated";
+  const raw = process.env.VARLATCH_LOCK_ORDER ?? "all";
   if (raw === "off" || raw === "report" || raw === "migrated" || raw === "all") return raw;
   throw new Error(`VARLATCH_LOCK_ORDER must be off, report, migrated or all, not ${raw}`);
 }
@@ -72,6 +72,17 @@ export const MIGRATED = new Set<string>([
   // approvals: the two consuming operations
   "changeControl",
   "removeOwnPasskey",
+  // syncdelivery.ts: the workers
+  "ledgerSet",
+  "recordDrift",
+  "recordFailure",
+  // http/app.ts: the Idempotency-Key claim (step 2.5)
+  "withIdempotency",
+  // orgdeletion.ts
+  "scheduleDeletion",
+  "approveDeletion",
+  "cancelDeletion",
+  "finalizeDeletion",
   // freeze.ts: the incident freeze (ADR-0055 Decision 9)
   "freezeOrganization",
   "liftFreeze",
@@ -83,6 +94,9 @@ const SCHEMA = "varlatch_lock_trace";
 /** Steps of amendment E, as [step, position within the step]. */
 export function stepOf(table: string): [number, number] {
   switch (table) {
+    case "exposure_backfill":
+      // The backfill worker's mutex (step 0, liveness.ts).
+      return [0, 1];
     case "installation":
       return [0, 5];
     case "organizations":
@@ -240,6 +254,34 @@ END $trace$;
 CREATE TRIGGER varlatch_lock_trace AFTER INSERT OR UPDATE OR DELETE ON public.${ident(t.name)}
   FOR EACH ROW EXECUTE FUNCTION ${fn}();`);
   }
+  await mirrorPlpgsqlLocks(db);
+}
+
+/**
+ * Explicit locks taken inside PL/pgSQL never pass the wrapper. The one such
+ * lock (migration 43: deleting a session locks its live browser credentials
+ * FOR UPDATE in id order, then revokes them) is mirrored here: a statement
+ * trigger that fires just before migration 43's (trigger names fire in
+ * order) records the same rows, in the same order and mode.
+ */
+async function mirrorPlpgsqlLocks(db: Querier): Promise<void> {
+  const present = ((await db.query("SELECT to_regproc('public.revoke_browser_credentials_of_ended_sessions') IS NOT NULL AS present")).rows[0] as { present: boolean }).present;
+  if (!present) return;
+  const run = async (sql: string) => (db.exec ? db.exec(sql) : db.query(sql));
+  await run(`
+CREATE FUNCTION ${SCHEMA}.session_end_credentials() RETURNS trigger LANGUAGE plpgsql AS $mirror$
+BEGIN
+  INSERT INTO ${SCHEMA}.trace
+  SELECT txid_current(), nextval('${SCHEMA}.seq'), 'credentials', c.id, 'update', 'explicit'
+    FROM (SELECT c.id FROM public.credentials c
+           WHERE c.auth_session_id IN (SELECT e.id FROM ended e)
+             AND c.kind = 'browser' AND c.revoked_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at > now())
+           ORDER BY c.id) c;
+  RETURN NULL;
+END $mirror$;
+CREATE TRIGGER a_varlatch_lock_trace_session_end AFTER DELETE ON public."session"
+  REFERENCING OLD TABLE AS ended FOR EACH STATEMENT EXECUTE FUNCTION ${SCHEMA}.session_end_credentials();`);
 }
 
 // ---------------------------------------------------------------------------
@@ -695,9 +737,11 @@ function writerLabel(): string {
  * untagged locking clauses, records tagged ones, and checks each
  * transaction at COMMIT.
  */
-export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">): Q {
+export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
   let inTx = false;
   let label = "";
+  /** The open transaction is one the wrapper began around a lone statement. */
+  let lone = false;
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
 
   /**
@@ -724,13 +768,25 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     } catch {
       return; // an aborted transaction: it cannot be read, and it rolls back
     }
+    // A lone statement that takes at most one row lock (an insert's
+    // references aside, a single-row update such as a last-use stamp) never
+    // holds a lock while waiting for another (amendment E): not checked.
+    if (lone) {
+      // A test's own fixture statement is not production code.
+      if (label.startsWith("(test)") && !options.checkTestStatements) return;
+      const acquired = new Set(rows.filter((r) => r.kind !== "insert" && r.kind !== "reference").map((r) => `${r.tbl}\u0000${r.key}`));
+      if (acquired.size < 2) return;
+    }
     const problems = checkTrace(rows);
     // VARLATCH_LOCK_TRACE_LABELS: one line per checked transaction, to see what a run covered.
     if (process.env.VARLATCH_LOCK_TRACE_LABELS) appendFileSync(process.env.VARLATCH_LOCK_TRACE_LABELS, `${label}\t${problems.length}\n`);
     if (problems.length === 0) return;
     const violation = { label, problems, trace: rows };
     if (mode === "all" || (mode === "migrated" && MIGRATED.has(label))) enforced.push(violation);
-    else if (report) appendFileSync(report, `${JSON.stringify({ file: process.env.VITEST_TEST_FILE ?? null, label, problems })}\n`);
+    else if (report) {
+      const testPath = (globalThis as { expect?: { getState?: () => { testPath?: string; currentTestName?: string } } }).expect?.getState?.();
+      appendFileSync(report, `${JSON.stringify({ file: testPath?.testPath ?? null, test: testPath?.currentTestName ?? null, label, problems, trace: rows })}\n`);
+    }
   };
 
   const query = async (text: string, params?: unknown[]) => {
@@ -756,6 +812,36 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       inTx = false;
       return db.query(text, params);
     }
+    // A lone write or lock outside a transaction runs as one implicit
+    // transaction; run it in an explicit one (the same effect), so its
+    // locks are checked at COMMIT like any other transaction's.
+    if (!inTx && (/^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0)) {
+      const began = writerLabel();
+      await db.query(`DELETE FROM ${SCHEMA}.trace`);
+      await db.query("BEGIN");
+      inTx = true;
+      lone = true;
+      label = began;
+      try {
+        const res = await statement(text, params);
+        await check();
+        inTx = false;
+        lone = false;
+        await db.query("COMMIT");
+        return res;
+      } catch (err) {
+        if (inTx) await check();
+        inTx = false;
+        lone = false;
+        await db.query("ROLLBACK").catch(() => undefined);
+        throw err;
+      }
+    }
+    return statement(text, params);
+  };
+
+  /** One statement inside a transaction: refuses untagged locks, records tagged ones. */
+  const statement = async (text: string, params?: unknown[]) => {
     const tag = lockTagOf(text);
     const res = await db.query(text, params);
     if (tag && tag.key !== "-") {

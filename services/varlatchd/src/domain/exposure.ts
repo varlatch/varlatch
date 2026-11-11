@@ -435,7 +435,7 @@ export async function confirmRevocation(
   actorIdentityId: string,
 ): Promise<{ versionId: string; confirmedAt: string; actorIdentityId: string; created: boolean }> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, identityId] });
     const inserted = await db.query(
       `INSERT INTO exposure_confirmations (organization_id, version_id, identity_id, actor_identity_id)
        VALUES ($1,$2,$3,$4) ON CONFLICT (organization_id, version_id) DO NOTHING

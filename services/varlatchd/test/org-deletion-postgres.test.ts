@@ -173,8 +173,14 @@ describe.skipIf(!url)("organization deletion on real PostgreSQL", () => {
     paused.release();
     expect((await scheduling).status).toBe(201);
     const minted = await minting;
-    expect(minted.status).toBe(409);
-    expect(minted.body.error.code).toBe("ORGANIZATION_DELETING");
+    // Refused either way. Scheduling takes the machine identities FOR
+    // UPDATE at step 2 of the lock order (ADR-0054 amendment E), before
+    // this pause, so the Broker's authentication (its last-seen update)
+    // waits for the scheduling to commit and then finds its Agent
+    // suspended (404); when the Broker gets past that first, its issuance
+    // waits for the Organization row and finds the freeze (409).
+    expect([404, 409]).toContain(minted.status);
+    if (minted.status === 409) expect(minted.body.error.code).toBe("ORGANIZATION_DELETING");
     expect((await db.query("SELECT count(*)::int AS n FROM credentials WHERE kind = 'agent-run'")).rows[0]).toEqual({ n: 0 });
   });
 

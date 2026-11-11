@@ -74,7 +74,7 @@ import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
 import { currentFreeze, freezeHistory, freezeOrganization, frozenOrganizations, liftFreeze, resumingTargets } from "../domain/freeze.js";
-import { lockLiveScope, OrganizationFrozenError } from "../domain/liveness.js";
+import { lockLiveScope, lockScope, OrganizationFrozenError } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import { machineReach } from "../domain/reach.js";
 import {
@@ -161,7 +161,7 @@ import {
 } from "../domain/approvals.js";
 import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
 import { approvalKeys } from "../domain/approvalKeys.js";
-import { lockPerson } from "../domain/personlocks.js";
+import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js";
 import {
   STATUS_BY_CODE,
   authorize,
@@ -518,9 +518,17 @@ async function environmentsOut(
   }));
 }
 
-/** Idempotency-Key support (ADR-0018 §8). */
+/**
+ * Idempotency-Key support (ADR-0018 §8). The claim is step 2.5 of the lock
+ * order (domain/liveness.ts): `scope` names the Organization and every
+ * person the mutation takes, in the modes it takes them; they are locked
+ * first, without liveness checks, then the claim, then the mutation, whose
+ * own scope locking finds them held. A replay answers from the stored
+ * response before the mutation runs, whatever the Organization's state now.
+ */
 async function withIdempotency(
   ctx: AppCtx, c: Context, principal: Principal, endpoint: string, body: unknown,
+  scope: { organizationId: string; people: readonly PersonRef[] },
   run: (ctx: AppCtx) => Promise<{ status: number; payload: unknown }>,
 ): Promise<{ status: number; payload: unknown }> {
   const key = c.req.header("Idempotency-Key");
@@ -528,6 +536,7 @@ async function withIdempotency(
   if (key.length > 200) throw new DomainError("VALIDATION_FAILED", "Idempotency-Key exceeds 200 characters");
   const digest = bodyHash(body, ctx.rootKek);
   return withTx(ctx.db, async (db) => {
+    await lockScope(db, { organizationId: scope.organizationId, people: [principal.identity.id, ...scope.people] });
     // INSERT's unique constraint waits for the first owner's transaction.
     // Both the mutation and cached response roll back if either fails.
     const claimed = await db.query(
@@ -1009,6 +1018,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }
     }
     const profile = await withTx(ctx.db, async (db) => {
+      // Step 2 of the lock order (domain/liveness.ts): the person, FOR UPDATE
+      // when their row changes, FOR KEY SHARE (the audit's index) otherwise.
+      await lockPeople(db, [{ id: principal.identity.id, mode: body.name !== undefined ? "update" : "key share" }]);
       if (body.name !== undefined) {
         // identities.name is what org listings and audit provenance show —
         // keep it authoritative alongside the Better Auth display name.
@@ -1079,7 +1091,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const organizationId = principal.identity.organization_id;
     await withTx(ctx.db, async (db) => {
       // Revoking only takes authority away: recovery while frozen (ADR-0055).
-      if (organizationId) await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery" });
+      if (organizationId) await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
       const res = await db.query(
         "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
         [c.req.param("credential"), principal.identity.id],
@@ -1661,6 +1673,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const organizationId = routeParam(c, "organization");
     const identityId = routeParam(c, "identity");
     await withTx(ctx.db, async (db) => {
+      // Step 2 (domain/liveness.ts): the remover, whom removed_by references.
+      await lockPeople(db, [principal.identity.id]);
       const res = await db.query(
         `UPDATE audit_tombstone_readers SET removed_at = now(), removed_by = $3
          WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL RETURNING identity_id`,
@@ -2022,7 +2036,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await c.req.json(),
       );
       const endpoint = `PUT values ${env.id}/${c.req.param("item")}`;
-      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => {
         const result = await setValue(ctx, org, project, env, c.req.param("item"), body, principal.identity.id);
         return {
           status: 200,
@@ -2450,7 +2464,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await c.req.json(),
       );
       const endpoint = `POST changes ${env.id}`;
-      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+      const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => {
         const result = await applyChangeSet(
           ctx,
           org,
@@ -2647,7 +2661,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // The writer protocol (ADR-0051): a live Organization that is not being
     // deleted, and an Agent still enabled, in the issuing transaction.
     const issued = await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, { id: agent.id, mode: "share" }] });
       const live = await lockedQuery(db, { table: "identities", mode: "share", key: "$1" }, "SELECT 1 FROM identities WHERE id = $1 AND NOT disabled FOR SHARE", [agent.id]);
       if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
       return issueCredential(db, {
@@ -2680,7 +2694,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // The writer protocol (ADR-0051): a live Organization that is not
       // being deleted; a suspended machine keeps its credentials.
       await withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
         await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
       });
       return c.body(null, 204);
@@ -2699,7 +2713,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // The writer protocol (ADR-0051): refused while the Organization is
     // being deleted, so a cancel restores the machine with its credentials.
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
       await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
     });
     return c.body(null, 204);
@@ -3195,7 +3209,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const id = newId("grant");
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] });
       if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
       await db.query(
         `INSERT INTO grants (id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_by)
@@ -3246,7 +3260,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
       const res = await db.query(
         "UPDATE grants SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("grant"), org.id],
@@ -3277,10 +3291,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     requireOneOfEach(body);
     const grantId = c.req.param("grant");
     const endpoint = `POST grants ${grantId} replace`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => {
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [body.subjectIdentityId] }, async (ctx) => {
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] });
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
         if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
@@ -3402,7 +3416,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH roles ${c.req.param("role")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateRole(
         ctx,
@@ -3437,7 +3451,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH groups ${c.req.param("group")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateGroup(ctx, org.id, c.req.param("group"), "group", body, principal.identity.id),
     }));
@@ -3481,7 +3495,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH teams ${c.req.param("team")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: await updateGroup(ctx, org.id, c.req.param("team"), "team", body, principal.identity.id),
     }));
@@ -3572,7 +3586,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const id = newId("requirement");
     await withTx(ctx.db, async (db) => {
       // A new Requirement only restricts: recovery while frozen (ADR-0055).
-      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id] });
       await db.query(
         "INSERT INTO requirements (id, organization_id, kind, target, config, created_by) VALUES ($1,$2,'tailnet',$3,$4,$5)",
         [id, org.id, JSON.stringify(body.target), JSON.stringify(body.selector), principal.identity.id],
@@ -3626,9 +3640,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const requirementId = c.req.param("requirement");
     const endpoint = `PATCH requirements ${requirementId}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) =>
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) =>
       withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id });
+        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
         const res = await lockedQuery(
           db,
           { table: "requirements", mode: "update" },
@@ -3699,7 +3713,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
       const res = await db.query(
         "UPDATE requirements SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("requirement"), org.id],
@@ -3776,7 +3790,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH webhooks ${c.req.param("webhook")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, async (ctx) => ({
+    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
       status: 200,
       payload: serializeWebhook(
         await updateWebhook(ctx, org.id, c.req.param("webhook"), body, principal.identity.id),

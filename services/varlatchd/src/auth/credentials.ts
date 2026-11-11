@@ -4,6 +4,7 @@ import { recordAuditEvent } from "../audit/events.js";
 import { newId } from "../db/ids.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
+import { lockPeople } from "../domain/personlocks.js";
 
 /**
  * Opaque bearer credentials (ADR-0007): high-entropy, server-resolved, stored
@@ -115,6 +116,10 @@ export async function issueCredential(
   const token = generateToken(input.kind);
   const credentialId = newId("credential");
   return withTx(db, async (tx) => {
+    // Step 2 of the lock order (domain/liveness.ts): the identity the
+    // credential is for and its issuer, before the insert references them
+    // (a caller that holds them already reuses its locks).
+    await lockPeople(tx, [input.identityId, input.actorIdentityId]);
     await tx.query(
       `INSERT INTO credentials (id, identity_id, kind, name, token_hash, expires_at, max_uses, client, auth_session_id, issued_by,
                                 evidence_user_verified, evidence_passkey_id)

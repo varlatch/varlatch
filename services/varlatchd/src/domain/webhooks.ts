@@ -107,7 +107,7 @@ export async function createWebhook(
   const secret = `vlt_whsec_${randomBytes(32).toString("base64url")}`;
   const envelope = encryptWebhookSecret(orgKekOf(ctx, org), org.id, id, secret);
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
     await reportAdminStepUp(db, org.id, actorIdentityId, "webhook.create");
     const eventId = await recordAuditEvent(db, {
       eventType: "webhook.created",
@@ -177,7 +177,7 @@ export async function updateWebhook(
     }
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const res = await lockedQuery(
       db,
       { table: "webhooks", mode: "update" },
@@ -233,7 +233,7 @@ export async function revokeWebhook(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const res = await db.query(
       "UPDATE webhooks SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [webhookId, organizationId],

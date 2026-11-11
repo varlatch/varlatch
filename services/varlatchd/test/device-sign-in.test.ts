@@ -404,7 +404,10 @@ describe("persistent attempt limits on code entry", () => {
 
   it("locks a peer after twenty wrong codes from several identities; the same identities from another peer are not locked (control)", async () => {
     const started = (await client.start()).body;
-    const humans = await Promise.all(Array.from({ length: 5 }, (_, i) => approvingHuman(ctx, `H${i}`)));
+    // One after another: on the single PGlite connection, concurrent fixture
+    // setups would share one transaction, which the lock-order check refuses.
+    const humans: Awaited<ReturnType<typeof approvingHuman>>[] = [];
+    for (let i = 0; i < 5; i++) humans.push(await approvingHuman(ctx, `H${i}`));
     for (const h of humans) await wrongCodes(h.token, 4);
     const fresh = await approvingHuman(ctx, "Fresh");
     expect((await client.lookup(fresh.token, started.userCode)).status).toBe(429);
@@ -500,7 +503,10 @@ describe("client addresses behind trusted proxies", () => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...viaProxies(from) },
         body: JSON.stringify({ userCode: "BBBB-BBBB" }),
       })).status;
-    const humans = await Promise.all(Array.from({ length: 5 }, (_, i) => approvingHuman(ctx, `W${i}`)));
+    // One after another: on the single PGlite connection, concurrent fixture
+    // setups would share one transaction, which the lock-order check refuses.
+    const humans: Awaited<ReturnType<typeof approvingHuman>>[] = [];
+    for (let i = 0; i < 5; i++) humans.push(await approvingHuman(ctx, `W${i}`));
     for (const h of humans) for (let i = 0; i < 4; i++) expect(await wrong(h.token, "192.0.2.10")).toBe(404);
     const fresh = await approvingHuman(ctx, "Fresh");
     const lookupFrom = (from: string) =>

@@ -49,7 +49,7 @@ export async function createMachineIdentity(
     throw new DomainError("VALIDATION_FAILED", "Invalid identity name");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
     const id = newId("identity");
     await db.query(
       "INSERT INTO identities (id, kind, name, organization_id) VALUES ($1,$2,$3,$4)",
@@ -130,7 +130,7 @@ export async function issueMachineCredential(
     throw new DomainError("VALIDATION_FAILED", "Invalid credential name");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "share" }] });
     // FOR SHARE serializes with retire's UPDATE: a retirement committed first
     // is seen here, and one committing after this issuance revokes the new
     // credential with the rest, so a reactivation never resurrects it.
@@ -212,8 +212,17 @@ export async function retireIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery" });
+    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId, { id: identityId, mode: "update" }] });
     await db.query("UPDATE identities SET disabled = true WHERE id = $1", [identityId]);
+    // Step 7 (liveness.ts): every live credential, in id order, in the
+    // mode its revocation takes, before the first revocation's audit
+    // event. They are revoked, and audited, in their usual order.
+    await lockedQuery(
+      db,
+      { table: "credentials", mode: "no key update" },
+      "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+      [identityId],
+    );
     const live = await db.query(
       "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
       [identityId],
@@ -246,7 +255,7 @@ export async function reactivateIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });
     // An identity suspended by a deletion request comes back only through
     // that request's cancellation (ADR-0051 Decision 5).
     const suspended = await lockedQuery(db, { table: "identities", mode: "update", key: "$1" }, "SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
@@ -284,7 +293,7 @@ export async function renameIdentity(
     throw new DomainError("VALIDATION_FAILED", "Invalid identity name");
   }
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });
     const prev = await db.query("SELECT name FROM identities WHERE id = $1", [identityId]);
     const previous = (prev.rows[0] as { name: string } | undefined)?.name;
     await db.query("UPDATE identities SET name = $1 WHERE id = $2", [name, identityId]);

@@ -11,10 +11,11 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  * ADR-0051 below, Organization deletion and the sync workers alike. This is
  * the one place it is written down; the other files refer here.
  *
- *   0. Advisory locks, each taken first and only by its one kind of
- *      transaction: createApproval's per-person lock, device sign-in
- *      requests' lock (requestDeviceSignIn), and the report summary
- *      worker's (pg_try_advisory_xact_lock).
+ *   0. Advisory locks and workers' mutexes, each taken first and only by
+ *      its one kind of transaction: createApproval's per-person lock,
+ *      device sign-in requests' lock (requestDeviceSignIn), the report
+ *      summary worker's (pg_try_advisory_xact_lock), and the exposure
+ *      backfill's singleton cursor row (exposure_backfill).
  * 0.5. The installation row (bootstrap's installation update included).
  *   1. The Organization row, then its open deletion request.
  *   2. People: every identity row the transaction will lock or reference,
@@ -135,7 +136,7 @@ export interface LiveScope {
    * id order after the Organization and before the Project. An id alone is
    * taken FOR KEY SHARE; null and undefined entries are skipped.
    */
-  people?: readonly PersonRef[] | undefined;
+  people: readonly PersonRef[];
   projectId?: string | undefined;
   projectMode?: LockMode | undefined;
   /** Environments of the Project, locked in ascending ID order. */
@@ -163,7 +164,9 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
   await refuseIfIncidentFrozen(db, scope.organizationId, scope.duringIncidentFreeze);
 
-  if (scope.people) await lockPeople(db, scope.people);
+  // Required by the type, so every writer in src names its people; a caller
+  // outside the typechecked code (a test emulating a writer) may pass none.
+  await lockPeople(db, scope.people ?? []);
 
   if (scope.projectId !== undefined) {
     const projectMode = scope.projectMode ?? "key share";
@@ -192,6 +195,28 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
       throw new DomainError("RESOURCE_NOT_FOUND", "Environment not found");
     }
   }
+}
+
+/**
+ * Steps 1 and 2 of the order without the liveness checks: the
+ * Organization row in `organizationMode`, then the people. For what must
+ * come between the people and the writer's own checks: an Idempotency-Key
+ * claim (step 2.5), whose replay answers from the stored response whatever
+ * the Organization's state now. The writer's lockLiveScope afterwards finds
+ * these rows held (reuse) and checks liveness as before.
+ */
+export async function lockScope(
+  db: Querier,
+  scope: { organizationId: string; organizationMode?: LockMode | undefined; people: readonly PersonRef[] },
+): Promise<void> {
+  const orgMode = scope.organizationMode ?? "key share";
+  await lockedQuery(
+    db,
+    { table: "organizations", mode: orgMode, key: "$1" },
+    `SELECT deleted_at FROM organizations WHERE id = $1 ${lockClause(orgMode)}`,
+    [scope.organizationId],
+  );
+  await lockPeople(db, scope.people ?? []);
 }
 
 /**

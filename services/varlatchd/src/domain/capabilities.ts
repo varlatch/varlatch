@@ -364,7 +364,7 @@ export async function revokeCapability(
   opts: { actorIdentityId: string; brokerIdentityId?: string | undefined },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [opts.actorIdentityId] });
     const params: unknown[] = [capabilityId, org.id];
     let where = "id = $1 AND organization_id = $2 AND revoked_at IS NULL";
     if (opts.brokerIdentityId) {

@@ -4,11 +4,41 @@ import { lockedQuery } from "../src/db/locks.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
 import { checkTrace, lockOrderMode, lockTagOf, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkAuditBeforeDecryption, isKeyOnlyLock, traceLog } from "./helpers/trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 /** The lock-order check itself (ADR-0054 amendment E): the rules, then the trace it reads. */
 
 const row = (seq: number, tbl: string, key: string, mode: string, kind: TraceRow["kind"] = "explicit"): TraceRow => ({ seq, tbl, key, mode, kind });
+
+describe("the retrieval snapshot check and tagged locks", () => {
+  const after = (text: string) => {
+    const log = traceLog();
+    log.entries.push(
+      { kind: "sql", text: "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY", params: [] },
+      { kind: "sql", text: "COMMIT", params: [] },
+      { kind: "sql", text: "BEGIN", params: [] },
+      { kind: "sql", text, params: [] },
+      { kind: "sql", text: "COMMIT", params: [] },
+    );
+    return () => checkAuditBeforeDecryption(log);
+  };
+
+  it("lets a key-only lock of a snapshot table through, and refuses a tagged read of retrieval data", () => {
+    const keyOnly = "SELECT id FROM organizations WHERE id = ANY($1) ORDER BY id FOR KEY SHARE /* varlatch-lock organizations key-share id */";
+    expect(isKeyOnlyLock(keyOnly)).toBe(true);
+    expect(after(keyOnly)).not.toThrow();
+    const tagged = "SELECT * FROM value_versions WHERE id = ANY($1) ORDER BY id FOR SHARE /* varlatch-lock value_versions share id */";
+    expect(isKeyOnlyLock(tagged)).toBe(false);
+    expect(after(tagged)).toThrow(/read after the snapshot/);
+    expect(isKeyOnlyLock("SELECT deleted_at FROM organizations WHERE id = $1 FOR KEY SHARE /* varlatch-lock organizations key-share $1 */")).toBe(false);
+    expect(isKeyOnlyLock("SELECT id, payload FROM value_versions FOR SHARE /* varlatch-lock value_versions share id */")).toBe(false);
+    // A tag naming a data column as its key is not a key-only lock.
+    const payloadKey = "SELECT payload FROM value_versions WHERE id = $1 FOR SHARE /* varlatch-lock value_versions share payload */";
+    expect(isKeyOnlyLock(payloadKey)).toBe(false);
+    expect(after(payloadKey)).toThrow(/read after the snapshot/);
+  });
+});
 
 describe("checkTrace", () => {
   it("fails an approval consumed without its person held FOR UPDATE first", () => {
@@ -276,6 +306,26 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       await lockedQuery(q, { table: "identities", mode: "key share" }, `${commas} ORDER BY i.id FOR KEY SHARE OF i`);
     });
     expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks a lone statement outside a transaction once it takes more than one row lock", async () => {
+    // Statements this test issues itself count as production's here (a
+    // test's own fixture statements are otherwise not checked).
+    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
+    await db.close();
+    db = own;
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
+    // One row: it cannot hold a lock while waiting for another.
+    await db.query("UPDATE identities SET name = 'a2' WHERE id = 'idn_a'");
+    expect(takeLockViolations()).toEqual([]);
+    // Two rows of people changed, neither prelocked: checked, and refused.
+    await db.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
+    // (and, depending on the rows' physical order, taken out of id order)
+    const lone = takeLockViolations();
+    expect(lone).toHaveLength(1);
+    expect(lone[0]!.problems.filter((p) => /^a person's row changed without an explicit FOR UPDATE prelock/.test(p))).toHaveLength(2);
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b!" }]);
   });
 
   it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {

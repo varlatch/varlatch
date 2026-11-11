@@ -17,12 +17,12 @@ export function testDb(): Promise<TestDb> {
  * An in-memory Postgres already migrated to the current schema, under the
  * lock-order check (lock-trace.ts) unless VARLATCH_LOCK_ORDER=off.
  */
-export async function migratedTestDb(options: { lockOrder?: LockOrderMode } = {}): Promise<TestDb> {
+export async function migratedTestDb(options: { lockOrder?: LockOrderMode; checkTestStatements?: boolean } = {}): Promise<TestDb> {
   const mode = options.lockOrder ?? lockOrderMode();
   const db = await load(mode === "off" ? "migrated" : "traced");
   // A no-op unless a migration was added since the snapshot (watch mode).
   await runMigrations(db);
-  return mode === "off" ? db : lockTraced(db, mode);
+  return mode === "off" ? db : lockTraced(db, mode, { checkTestStatements: options.checkTestStatements ?? false });
 }
 
 // Each instance loads a snapshot taken once per run (pglite-snapshots.ts)

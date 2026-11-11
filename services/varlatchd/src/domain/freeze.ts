@@ -196,6 +196,8 @@ export async function freezeOrganization(
       organizationMode: "update",
       allowFrozen: true,
       duringIncidentFreeze: "freeze",
+      // Step 2 comes later: closeOpenApprovals' people, or the requester.
+      people: [],
     });
     await input.authorizeIn(db);
     if (await openFreeze(db, input.organizationId)) {
@@ -285,6 +287,8 @@ export async function liftFreeze(
       organizationMode: "update",
       allowFrozen: true,
       duringIncidentFreeze: "freeze",
+      // Step 2 comes later: closeOpenApprovals' people, or the requester.
+      people: [],
     });
     await input.authorizeIn(db);
     const freeze = await requireOpenFreeze(db, input.organizationId, input.freezeId);
@@ -370,7 +374,7 @@ export async function operatorUnfreeze(ctx: AppCtx, input: { organization: strin
     if (input.confirm !== org.slug) {
       throw new DomainError("VALIDATION_FAILED", `--confirm must repeat the Organization's slug: ${org.slug}`);
     }
-    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "freeze" });
+    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "freeze", people: [] });
     const open = await openFreeze(db, org.id);
     if (!open) throw new DomainError("STATE_CHANGED", `${org.slug} is not frozen`);
     const freeze = await requireOpenFreeze(db, org.id, open.id);
