@@ -435,8 +435,9 @@ const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOIN
  *   FROM, or the FROM has a single item (a self-join or a second locked
  *   item could otherwise lock rows the trace never records);
  * - the clause belongs to the top-level SELECT, whose returned keys the
- *   trace records; inside a subquery only in a DELETE or UPDATE tagged
- *   with key "-", whose writes record the rows it locked.
+ *   trace records; inside a subquery only in a DELETE or UPDATE of the
+ *   same table the subquery locks, tagged with key "-" (the sweep shape),
+ *   whose writes record the rows it locked.
  * A query outside this grammar is to be simplified or split, as
  * Organization deletion's environment lock was.
  */
@@ -605,9 +606,14 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
     // subquery is allowed only in a DELETE or UPDATE tagged with key "-",
     // whose writes record the rows it locked (the sweep patterns).
     if (clause.nested) {
-      const verb = /^\s*(\w+)/.exec(bareSql(sql))?.[1]?.toUpperCase();
-      if (tag.key !== "-" || (verb !== "DELETE" && verb !== "UPDATE")) {
-        throw outsideGrammar(sql, "a locking clause inside a subquery, outside a DELETE or UPDATE tagged with key -");
+      // Only the sweep shape: the DELETE's or UPDATE's target is the very
+      // table the locking subquery locks (and the tag names), as in
+      // DELETE FROM t WHERE id IN (SELECT id FROM t … FOR UPDATE SKIP
+      // LOCKED), so the traced writes are the locked rows.
+      const target = /^\s*(?:UPDATE\s+(?:ONLY\s+)?|DELETE\s+FROM\s+(?:ONLY\s+)?)([a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?)\b/i.exec(bareSql(sql))?.[1];
+      const targetTable = target?.toLowerCase().replace(/^public\./, "");
+      if (tag.key !== "-" || !targetTable || targetTable !== clause.relations[0] || targetTable !== tag.table) {
+        throw outsideGrammar(sql, "a locking clause inside a subquery, other than a DELETE or UPDATE of the same table it locks, tagged with key -");
       }
     } else if (tag.key === "-") {
       throw outsideGrammar(sql, "a top-level locking clause whose keys are not recorded (key -)");

@@ -181,7 +181,14 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     // A nested lock even in a DELETE needs key "-", and a top-level one needs recorded keys.
     refused(`DELETE FROM identities WHERE id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED)${tag("identities")}`);
     refused("SELECT id FROM identities FOR UPDATE /* varlatch-lock identities update - */");
-    // The sweep pattern stays allowed.
+    // Codex: an UPDATE of another table hid a person lock behind its own write.
+    refused("UPDATE organizations SET name = 'A2' WHERE id = 'org_a' AND EXISTS (SELECT 1 FROM identities WHERE id = 'idn_a' FOR UPDATE) /* varlatch-lock identities update - */");
+    refused("DELETE FROM organizations WHERE id IN (SELECT organization_id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock organizations update - */");
+    // The sweep pattern stays allowed, in both shapes the code uses.
+    expect(lockTagOf(
+      "DELETE FROM security_control_counters c USING (SELECT organization_id FROM security_control_counters k ORDER BY organization_id LIMIT $2 FOR UPDATE SKIP LOCKED) d WHERE c.organization_id = d.organization_id /* varlatch-lock security_control_counters update - */",
+    )?.key).toBe("-");
     expect(lockTagOf("DELETE FROM identities WHERE id IN (SELECT id FROM identities ORDER BY id FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */")?.key).toBe("-");
   });
 
