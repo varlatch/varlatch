@@ -1196,7 +1196,7 @@ export async function ledgerSet(
  * transaction under the same generation guard as the other delivery
  * events. Names only. Returns false when the run was fenced.
  */
-async function recordDrift(
+export async function recordDrift(
   ctx: AppCtx,
   target: SyncTargetRow,
   generation: number,
@@ -1330,7 +1330,7 @@ export async function clearRefusedBackoff(ctx: AppCtx): Promise<void> {
   );
 }
 
-async function recordFailure(
+export async function recordFailure(
   ctx: AppCtx,
   target: SyncTargetRow,
   result: string,

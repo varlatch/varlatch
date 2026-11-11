@@ -9,7 +9,9 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { createEnvironment, getEnvironment, type EnvironmentRow } from "../src/domain/environments.js";
 import { getOrganization, type OrgRow } from "../src/domain/orgs.js";
 import { deleteProject, getProject, type ProjectRow } from "../src/domain/projects.js";
-import { createConnection, createTarget, revokeConnection } from "../src/domain/sync.js";
+import { finalizeDeletion, scheduleDeletion } from "../src/domain/orgdeletion.js";
+import { createConnection, createTarget, revokeConnection, type SyncTargetRow } from "../src/domain/sync.js";
+import { ledgerSet, recordDrift, recordFailure } from "../src/domain/syncdelivery.js";
 import { applyChangeSet, beginRotation, setValue } from "../src/domain/values.js";
 import { buildApp } from "../src/http/app.js";
 
@@ -234,6 +236,50 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       () => createTarget(pctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId),
       () => protectedly((c) => revokeConnection(c, org, connectionId, identityId)),
     )).toEqual(["ok", "ok"]);
+  });
+
+  describe("the sync workers (App, Connection, Target; the strongest Target lock up front)", () => {
+    let target: SyncTargetRow;
+    const generation = async () =>
+      Number(((await db.query("SELECT generation FROM sync_targets WHERE id = $1", [target.id])).rows[0] as { generation: string | number }).generation);
+    const TARGET_LOCK = /FROM sync_targets WHERE id = \$1 FOR (SHARE|NO KEY UPDATE)/;
+    beforeEach(async () => {
+      target = await createTarget(ctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId);
+      // Fixture: a Target that wants redeploys, so a redeploy debt updates it.
+      await db.query("UPDATE sync_targets SET redeploy = true WHERE id = $1", [target.id]);
+    });
+
+    it("recordFailure, holding the Connection, against Organization deletion's finalization", async () => {
+      const deletion = await scheduleDeletion(ctx, org.id, { id: identityId, kind: "human" }, { afterDays: 1 });
+      await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute' WHERE id = $1", [deletion.id]);
+      expect(await race(
+        /FROM platform_connections WHERE id = \$1 FOR SHARE/,
+        () => recordFailure(pctx, target, "boom", true, undefined, undefined, 1),
+        () => finalizeDeletion(ctx, deletion.id, org.id),
+      )).toEqual(["ok", "ok"]);
+      expect((await db.query("SELECT revoked_at IS NOT NULL AS revoked FROM sync_targets WHERE id = $1", [target.id])).rows).toEqual([{ revoked: true }]);
+    });
+
+    it("ledgerSet with a redeploy owed, twice on one Target", async () => {
+      const gen = await generation();
+      expect(await race(
+        TARGET_LOCK,
+        () => ledgerSet(pctx, target.id, gen, "A", "written", "fp-a", null, true),
+        () => ledgerSet(ctx, target.id, gen, "B", "written", "fp-b", null, true),
+      )).toEqual(["ok", "ok"]);
+      expect((await db.query("SELECT redeploy_owed::int AS owed FROM sync_targets WHERE id = $1", [target.id])).rows).toEqual([{ owed: 2 }]);
+    });
+
+    it("recordDrift, twice on one Target", async () => {
+      const gen = await generation();
+      expect(await race(
+        TARGET_LOCK,
+        () => recordDrift(pctx, target, gen, ["A"], { count: 1 }),
+        () => recordDrift(ctx, target, gen, ["B"], { count: 1 }),
+      )).toEqual(["ok", "ok"]);
+      const row = (await db.query("SELECT last_drift_event_id FROM sync_targets WHERE id = $1", [target.id])).rows[0] as { last_drift_event_id: string };
+      expect((await db.query("SELECT event_type FROM audit_events WHERE id = $1", [row.last_drift_event_id])).rows).toEqual([{ event_type: "sync.drift_detected" }]);
+    });
   });
 
   describe("a protected Project deletion against a writer in that Project by the same person", () => {
