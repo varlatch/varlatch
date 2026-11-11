@@ -12,6 +12,7 @@ import { VarlatchApiError, VarlatchClient, type Approval } from "@varlatch/sdk";
 import { apiErrorExit, EXIT } from "../src/exitCodes.js";
 import { FreezeUsageError, freezeReason } from "../src/freeze.js";
 import { retryOnce } from "../src/strictRun.js";
+import { commandHelp } from "../src/usage.js";
 
 /**
  * The incident freeze from the CLI (ADR-0055 Decision 11): `org freeze`
@@ -167,6 +168,12 @@ describe("varlatch org freeze", () => {
     expect(r.code).toBe(EXIT.failure);
     expect(r.stderr).toContain("has no incident freeze");
     expect(changes()).toEqual([]);
+  });
+
+  it("has help entries, the host operator's lift included", () => {
+    expect(commandHelp("org")).toContain("varlatch org freeze <slug> --reason <text> --confirm <slug>");
+    expect(commandHelp("org")).toContain("varlatch org unfreeze <slug>");
+    expect(commandHelp("admin")).toContain("varlatch admin unfreeze --org <slug> --confirm <slug>");
   });
 
   it("checks the reason", () => {

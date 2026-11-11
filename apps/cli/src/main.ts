@@ -2915,6 +2915,27 @@ async function main(): Promise<void> {
           }
           break;
         }
+        if (args[0] === "unfreeze") {
+          // ADR-0055 Decision 2: the host operator's lift of an incident
+          // freeze, run by varlatchd on this host (host-exec authority, like
+          // recovery); the API's lift always needs a passkey approval.
+          const { varlatchd, SetupError } = await import("./setup.js");
+          const usage = "Usage: varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]";
+          const parsed = strictOptions("admin unfreeze", args.slice(1), { values: ["--org", "--confirm", "--dir"], booleans: ["--json"] }, usage);
+          const org = parsed.values.get("--org");
+          const confirm = parsed.values.get("--confirm");
+          if (!org || !confirm) usageError(usage);
+          try {
+            process.stdout.write(varlatchd(parsed.values.get("--dir") ?? process.cwd(), [
+              "admin", "unfreeze", "--org", org, "--confirm", confirm,
+              ...(parsed.booleans.has("--json") ? ["--json"] : []),
+            ]) + "\n");
+          } catch (err) {
+            if (err instanceof SetupError) fail(err.message);
+            throw err;
+          }
+          break;
+        }
         if (args[0] === "outbound") {
           // ADR-0057 Decision 10: the configured destinations against the
           // outbound policy, run by varlatchd on this host; DNS lookups only.
