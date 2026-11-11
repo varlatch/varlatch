@@ -9,6 +9,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
 import type { OrgRole } from "../authz/evaluate.js";
+import { lockPeople } from "./personlocks.js";
 
 export interface OrgRow {
   id: string;
@@ -31,6 +32,10 @@ export async function createOrganization(
     throw new DomainError("VALIDATION_FAILED", "Invalid organization slug");
   }
   return withTx(ctx.db, async (db) => {
+    // The creator at step 2 of the lock order (liveness.ts), before the
+    // membership row references them; the new Organization is the
+    // transaction's own row.
+    await lockPeople(db, [actorIdentityId]);
     const id = newId("organization");
     const { wrapped } = createWrappedOrgKek(ctx.rootKek, id);
     try {
