@@ -5,7 +5,7 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased (0.20.1)
+## 0.21.0 (2026-11-11)
 
 ### Backups
 
@@ -95,8 +95,8 @@ fixes.
   `passkey-verification` (people's access with a verified sign-in by a
   trusted passkey) and `credential-lifetime` (a default and a maximum
   lifetime for machine credentials). Each is `off`, `report` or `enforce`.
-  They start off on new and upgraded installations alike, and with every
-  control off nothing works differently. `report` refuses and changes
+  They start off on new and upgraded installations alike, and a control
+  that is off adds no access restriction. `report` refuses and changes
   nothing: it counts what the control would have done. `enforce` is not
   offered yet: the server refuses it with `CONTROL_MODE_UNAVAILABLE`.
   Organization admins manage them on the organization's Security page, or
@@ -240,23 +240,54 @@ fixes.
   with `varlatch admin reenroll --identity <identity id>`, which sends a
   link that enrolls a new trusted passkey. See [Passkeys that shared a
   credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39).
-- **A passkey's signature counter can no longer go back.** Each use of a
-  passkey that counts its uses must show a higher count than the last,
-  which lets the server notice and refuse a copied authenticator. Two
-  sign-ins with the same passkey at the same moment could both pass, and
+- **Security fix: a passkey's signature counter can no longer go back.**
+  Each use of a passkey that counts its uses must show a higher count than
+  the last, which lets the server notice and refuse a copied authenticator.
+  Two sign-ins with the same passkey at the same moment could both pass, and
   the second to finish could store the lower count, which weakened that
   check. Now the one with the lower count fails as a sign-in with a stale
-  count does, without a session, for browser sign-ins, CLI sign-in
-  approvals and passkey confirmations alike. Passkeys that report no count
-  (always 0, as most passkeys synced by Apple or Google do) work as
-  before, also at the same moment. Migration 40 adds the database check.
+  count does, without a session, for browser sign-ins, CLI sign-in approvals
+  and passkey confirmations alike. Passkeys that report no count (always 0,
+  as most passkeys synced by Apple or Google do) work as before, also at the
+  same moment. Migration 40 adds the database check.
 
 ### Upgrading
 
-- Migration 41 adds the security control and approval tables. Controls
-  start off; nothing to do.
-- Migration 42 adds the report counters. Nothing is counted while every
-  control is off; nothing to do.
+Database schema: migration 39 adds passkey provenance (every passkey that
+exists at the upgrade is trusted), sign-in evidence for sessions, CLI
+credentials and device sign-ins, `passkey_quarantine` and a unique index on
+the passkey credential id. If two passkeys shared a credential id, the
+oldest stays and the others move to `passkey_quarantine`; the migrate step
+lists each one with the command that restores access (see
+[Passkeys that shared a credential](docs/operations/backup.md#passkeys-that-shared-a-credential-migration-39)).
+Migration 40 adds a trigger that keeps a passkey's signature counter from
+going backwards. Migration 41 adds the security control and approval
+tables, and migration 42 the report counters (nothing is counted while
+every control is off). Every varlatchd process now runs a loop that writes
+the hourly report summaries.
+
+Every security control starts off, on existing and new installations, and
+`enforce` is not available yet: a control that is off adds no access
+restriction. What changes regardless:
+
+- every passkey sign-in, device sign-in approval and CLI browser handoff
+  records whether a PIN or biometric was used and which passkey signed in,
+  and a CLI credential from the browser handoff now carries its browser
+  session;
+- the dashboard removes passkeys through a Varlatch route (Better Auth's
+  own delete endpoint is turned off), and registering a passkey that is
+  already registered is refused;
+- responses to a machine credential of kind `service` in its last 7 days
+  carry `Varlatch-Credential-Expires`, and the CLI warns about it on
+  stderr; OIDC, agent-run and people's credentials never get it.
+
+The new server features (`varlatch security`, `identity reach` and the
+Security page) need this release on the server: upgrade the server before
+the CLIs that use them. `varlatch scan --find-files` runs offline and works
+with any server.
+
+Backups: archives of 0.20.0 and earlier still restore into this release.
+From 0.19.1 or earlier, read the 0.20.0 notes below as well.
 
 ## 0.20.0 (2026-10-30)
 

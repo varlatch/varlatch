@@ -213,7 +213,7 @@ describe("varlatch identity reach", () => {
     capabilities = [];
     const r = await cli(["identity", "reach", "idn_svc"]);
     expect(r.code).toBe(EXIT.failure);
-    expect(r.stderr).toContain("needs Varlatch 0.20.1 or later");
+    expect(r.stderr).toContain("needs Varlatch 0.21.0 or later");
     expect(requests.map((q) => q.url)).toEqual(["/v1/meta"]);
   });
 

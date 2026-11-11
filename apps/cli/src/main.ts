@@ -2411,7 +2411,7 @@ async function main(): Promise<void> {
           const api = client(ctx);
           const meta = await api.meta();
           if (!meta.capabilities.includes(REACH_CAPABILITY)) {
-            fail(`This server (${meta.serverVersion ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.20.1 or later.`);
+            fail(`This server (${meta.serverVersion ?? "an older release"}) cannot show a machine's reach; that needs Varlatch 0.21.0 or later.`);
           }
           // An identity ID goes to the server as it is; only a name is
           // resolved, through the identity listing.

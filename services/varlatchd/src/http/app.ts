@@ -190,7 +190,7 @@ import {
   type WouldBlock,
 } from "../domain/securityreport.js";
 
-export const SERVER_VERSION = "0.20.0";
+export const SERVER_VERSION = "0.21.0";
 
 import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 
