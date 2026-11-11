@@ -774,9 +774,26 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
    */
   let loneInFlight: Promise<void> | null = null;
   let beginsPending = 0;
+  /**
+   * Concurrent flows can also share one transaction: a second flow's BEGIN
+   * arrives while the first's is open (PostgreSQL only warns), or its
+   * withTx joins the open one as if nested. The first COMMIT or ROLLBACK
+   * then ends it for all of them, which a pool never does: each flow there
+   * has its own connection and transaction.
+   * - One end at a time (endInFlight): the transaction is checked once, on
+   *   its whole trace, and a second flow's COMMIT never checks the rows
+   *   recorded after the first one's check read and cleared the trace, a
+   *   fragment without the step-2 locks taken before it.
+   * - flowsOpen counts the BEGINs not yet ended by their COMMIT or ROLLBACK.
+   *   While a flow that began a transaction has not ended it, a statement
+   *   outside one is that flow's, left without its transaction by another
+   *   flow's COMMIT: not a lone statement, so not wrapped or checked as one.
+   */
+  let endInFlight: Promise<void> | null = null;
+  let flowsOpen = 0;
   const claimLone = async (): Promise<(() => void) | null> => {
     while (loneInFlight) await loneInFlight;
-    if (inTx || beginsPending > 0) return null;
+    if (inTx || beginsPending > 0 || flowsOpen > 0) return null;
     let release!: () => void;
     loneInFlight = new Promise<void>((r) => (release = r));
     return () => {
@@ -840,27 +857,39 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       const began = writerLabel();
       beginsPending++;
       try {
-        while (loneInFlight) await loneInFlight;
+        while (loneInFlight || endInFlight) await (loneInFlight ?? endInFlight);
         if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
         const res = await db.query(text, params);
         inTx = true;
         label = began;
+        flowsOpen++;
         return res;
       } finally {
         beginsPending--;
       }
     }
-    if (/^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first)) {
-      if (inTx) await check();
-      inTx = false;
-      return db.query(text, params);
-    }
-    if (/^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
-      // A transaction that ends in a refusal took its locks too: check it
-      // before rolling back. An aborted one cannot be read; it is skipped.
-      if (inTx) await check();
-      inTx = false;
-      return db.query(text, params);
+    const commit = /^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first);
+    // A transaction that ends in a refusal took its locks too: check it
+    // before rolling back. An aborted one cannot be read; it is skipped.
+    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
+      while (endInFlight) await endInFlight;
+      let release!: () => void;
+      endInFlight = new Promise<void>((r) => (release = r));
+      try {
+        if (inTx) await check();
+        inTx = false;
+        const res = await db.query(text, params);
+        flowsOpen = Math.max(0, flowsOpen - 1);
+        return res;
+      } catch (err) {
+        // A failed COMMIT ends the transaction too; the ROLLBACK that
+        // withTx sends after it ends the flow.
+        if (!commit) flowsOpen = Math.max(0, flowsOpen - 1);
+        throw err;
+      } finally {
+        endInFlight = null;
+        release();
+      }
     }
     // A lone write or lock outside a transaction runs as one implicit
     // transaction; run it in an explicit one (the same effect), so its
