@@ -9,6 +9,7 @@ describe("deliveryStatus", () => {
     expect(s).toMatchObject({ tone: "warn", label: "Refused by this installation" });
     expect(s.refusal).toContain("outbound policy refuses this destination");
     expect(s.refusal).toContain("VARLATCH_OUTBOUND_ALLOW");
+    expect(s.refusal).toContain("some addresses can never be used");
   });
 
   it("keeps failures and deliveries as they were", () => {

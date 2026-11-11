@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { outboundRefusalOfStatus, outboundRefusalText, type PlatformConnection, type SyncTarget, type SyncTargetNote } from "@varlatch/protocol";
+import {
+  outboundRefusalOfStatus,
+  outboundRefusalText,
+  type OutboundRefusalReason,
+  type PlatformConnection,
+  type SyncTarget,
+  type SyncTargetNote,
+} from "@varlatch/protocol";
 import { platformMeta } from "./platform-meta";
 
 /**
@@ -232,26 +239,40 @@ export interface ConnectionHealth {
   credentialRejected: boolean;
   /** The outbound policy's wording, when this installation refuses the connection's host. */
   refusal?: string | undefined;
+  /** Whether the label already says so; otherwise the refusal is shown next to it (paused, unused). */
+  refusalInLabel?: boolean | undefined;
   at?: string | null | undefined;
 }
 
-/** A connection is as healthy as the targets that use it. */
-export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
+/**
+ * A connection is as healthy as the targets that use it, except for the
+ * outbound policy (ADR-0057 Decision 8): `current` is this installation's
+ * refusal of the connection's host as the check found it now (the
+ * Organization's refused destinations), shown whatever the targets are
+ * doing, paused or unused included. Without it, a target's recorded
+ * refusal, paused ones included, stands in.
+ */
+export function connectionHealth(targets: SyncTarget[], current?: OutboundRefusalReason | null): ConnectionHealth {
   const live = targets.filter((t) => t.state !== "paused");
-  if (targets.length === 0) return { tone: "muted", label: "Not used yet", credentialRejected: false };
-  if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false };
-  const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
-  if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt };
-  const refusedTarget = live.find((t) => outboundRefusal(t.lastResult));
-  if (refusedTarget) {
+  const recorded = targets.map((t) => outboundRefusalOfStatus(t.lastResult)).find((r) => r !== null) ?? null;
+  const reason = current ?? recorded;
+  const refusal = reason ? outboundRefusalText(reason) : undefined;
+  if (targets.length === 0) return { tone: "muted", label: "Not used yet", credentialRejected: false, refusal };
+  if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false, refusal };
+  // Refused: nothing reaches the platform, so an older credential error is not the news.
+  const refusedTarget = live.find((t) => outboundRefusalOfStatus(t.lastResult));
+  if (current || refusedTarget) {
     return {
       tone: "warn",
       label: "Refused by this installation",
       credentialRejected: false,
-      refusal: outboundRefusal(refusedTarget.lastResult),
-      at: refusedTarget.lastAttemptAt,
+      refusal,
+      refusalInLabel: true,
+      at: refusedTarget?.lastAttemptAt,
     };
   }
+  const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
+  if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt, refusal };
   const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0);
   if (failing.length > 0) {
     return {

@@ -63,6 +63,7 @@ const OUTBOUND: InstallationOutbound = {
     },
   ],
   suggested: "sink.example:9999,127.0.0.1/32,hooks.lan,coolify.lan:8443",
+  checked: 6,
   unresolved: 0,
 };
 
@@ -119,11 +120,22 @@ describe("Outbound tab", () => {
   });
 
   it("says when nothing is set and nothing is refused", async () => {
-    await show({ ...OUTBOUND, allow: [], warnings: [], refused: [], suggested: null, unresolved: 2 });
+    await show({ ...OUTBOUND, allow: [], warnings: [], refused: [], suggested: null, unresolved: 0 });
     expect(one("outbound-allow-empty")).toContain("Not set");
     expect(all("outbound-warning")).toHaveLength(0);
-    expect(one("outbound-refused-none")).toContain("apart from 2 whose names did not resolve");
+    expect(one("outbound-refused-none")).toBe("None. Every configured destination is allowed.");
     expect(all("outbound-suggested")).toHaveLength(0);
+    await show({ ...OUTBOUND, refused: [], suggested: null, checked: 0 });
+    expect(one("outbound-refused-none")).toContain("No Organization has configured");
+  });
+
+  it("never reads destinations it could not check as allowed", async () => {
+    await show({ ...OUTBOUND, refused: [], suggested: null, unresolved: 2 });
+    expect(one("outbound-refused-none")).toBe("None of those checked.");
+    expect(one("outbound-unchecked")).toContain("2 of 6 configured destinations could not be checked");
+    await show({ ...OUTBOUND, unresolved: 1 });
+    expect(all("outbound-refused-wh_1")).toHaveLength(1);
+    expect(one("outbound-unchecked")).toContain("1 of 6 configured destinations could not be checked: its name did not resolve");
   });
 });
 

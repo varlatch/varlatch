@@ -225,6 +225,8 @@ const EMPTY_REVIEW: CredentialReview = {
 const REFUSED: RefusedDestinations = {
   generatedAt: "2026-11-10T23:00:00.000Z",
   sinceDays: 30,
+  checked: 4,
+  unresolved: 0,
   items: [
     {
       kind: "coolify",
@@ -422,7 +424,8 @@ describe("refused destinations on the Security page (ADR-0057)", () => {
     expect(coolify).toContain("https://coolify.lan:8443");
     expect(coolify).toContain("private network address");
     expect(coolify).toContain("This address is on a private network");
-    expect(text(one("refused-since-pc_1"))).toMatch(/^first refused /);
+    expect(text(one("refused-since-pc_1"))).toMatch(/^first recorded within the last 30 days: /);
+    expect(byTestId("refused-destinations-unchecked")).toHaveLength(0);
     const hook = text(one("refused-destination-wh_1"));
     expect(hook).toContain("Webhook");
     expect(hook).toContain("wh_1");
@@ -438,6 +441,27 @@ describe("refused destinations on the Security page (ADR-0057)", () => {
     fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [] }));
     await mount();
     expect(text(one("refused-destinations-none"))).toContain("connects to every destination");
+  });
+
+  it("never reads destinations it could not check as allowed", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [], unresolved: 4 }));
+    await mount();
+    expect(one("refused-destinations-none").props["data-kind"]).toBe("unchecked");
+    expect(text(one("refused-destinations-none"))).not.toContain("connects to every destination");
+    expect(text(one("refused-destinations-unchecked"))).toContain("4 of 4 destinations could not be checked");
+  });
+
+  it("names destinations it could not check next to refused ones", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, unresolved: 1 }));
+    await mount();
+    expect(byTestId("refused-destination-pc_1")).toHaveLength(1);
+    expect(text(one("refused-destinations-unchecked"))).toContain("1 of 4 destinations could not be checked: its name did not resolve");
+  });
+
+  it("says when the organization configured nothing to check", async () => {
+    fake.api.refusedDestinations = vi.fn(async () => ({ ...REFUSED, items: [], checked: 0 }));
+    await mount();
+    expect(one("refused-destinations-none").props["data-kind"]).toBe("nothing-configured");
   });
 
   it("is not asked for without organization.manage, and named in the member note", async () => {

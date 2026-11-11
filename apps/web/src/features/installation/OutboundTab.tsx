@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, CircleCheck, Info, TriangleAlert } from "lucide-react";
+import { ArrowUpRight, CircleCheck, CircleHelp, Info, TriangleAlert } from "lucide-react";
 import { OUTBOUND_POLICY_DOCS, OUTBOUND_REFUSAL_LABELS } from "@varlatch/protocol";
 import type { InstallationOutbound, InstallationRefusedDestination } from "@varlatch/sdk";
 import { useSession } from "../../lib/session";
@@ -66,6 +66,11 @@ function byOrganization(refused: InstallationRefusedDestination[]): { organizati
 
 export function OutboundReport({ outbound }: { outbound: InstallationOutbound }) {
   const groups = byOrganization(outbound.refused);
+  const checked = outbound.checked as number | undefined;
+  const unchecked =
+    outbound.unresolved > 0
+      ? `${outbound.unresolved}${checked === undefined ? "" : ` of ${checked}`} configured destination${outbound.unresolved === 1 && checked === undefined ? "" : "s"} could not be checked: ${outbound.unresolved === 1 ? "its name did" : "their names did"} not resolve. They are checked again when they connect, and varlatch admin outbound check on the host names them.`
+      : null;
   return (
     <div className="space-y-6">
       <SectionCard
@@ -108,8 +113,14 @@ export function OutboundReport({ outbound }: { outbound: InstallationOutbound })
       >
         {outbound.refused.length === 0 ? (
           <p className="flex items-center gap-2 px-5 py-4 text-[13px] text-muted" data-testid="outbound-refused-none">
-            <CircleCheck size={15} className="text-accent" aria-hidden="true" />
-            None. Every configured destination is allowed{outbound.unresolved > 0 ? `, apart from ${outbound.unresolved} whose names did not resolve` : ""}.
+            {unchecked ? (
+              "None of those checked."
+            ) : (
+              <>
+                <CircleCheck size={15} className="text-accent" aria-hidden="true" />
+                {checked === 0 ? "None. No Organization has configured a webhook, Coolify or Convex connection, or OIDC issuer." : "None. Every configured destination is allowed."}
+              </>
+            )}
           </p>
         ) : (
           <table className={table.table}>
@@ -145,6 +156,12 @@ export function OutboundReport({ outbound }: { outbound: InstallationOutbound })
               )}
             </tbody>
           </table>
+        )}
+        {unchecked && (
+          <p className="flex items-center gap-2 border-t border-bd px-5 py-2.5 text-[13px] text-warn" data-testid="outbound-unchecked">
+            <CircleHelp size={14} aria-hidden="true" />
+            {unchecked}
+          </p>
         )}
       </SectionCard>
 

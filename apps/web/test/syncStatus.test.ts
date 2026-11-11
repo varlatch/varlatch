@@ -188,6 +188,9 @@ describe("a destination this installation refuses (ADR-0057)", () => {
     expect(outboundRefusal("outbound_refused: host_only_address")).toContain("loopback or link-local");
     expect(outboundRefusal("outbound_refused: port")).toContain("another port");
     expect(outboundRefusal("outbound_refused")).toContain("outbound policy refuses this destination");
+    // Without a reason, no promise that it can be allowed.
+    expect(outboundRefusal("outbound_refused")).toContain("may be able to allow");
+    expect(outboundRefusal("outbound_refused")).toContain("some addresses can never be used");
     expect(outboundRefusal("ok")).toBeUndefined();
     expect(outboundRefusal(null)).toBeUndefined();
   });
@@ -196,6 +199,27 @@ describe("a destination this installation refuses (ADR-0057)", () => {
     const h = connectionHealth([target({ lastResult: "converged" }), target({ lastResult: "outbound_refused: private_address" })]);
     expect(h).toMatchObject({ tone: "warn", label: "Refused by this installation", credentialRejected: false });
     expect(h.refusal).toContain("This address is on a private network");
-    expect(connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" })]).refusal).toBeUndefined();
+    // A paused Target keeps its label; its recorded refusal is shown next to it.
+    const paused = connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" })]);
+    expect(paused).toMatchObject({ label: "All targets paused" });
+    expect(paused.refusal).toContain("private network");
+    expect(paused.refusalInLabel).toBeFalsy();
+  });
+
+  it("shows the installation's current refusal of the Connection whatever its Targets do", () => {
+    const unused = connectionHealth([], "host_only_address");
+    expect(unused).toMatchObject({ tone: "muted", label: "Not used yet" });
+    expect(unused.refusal).toContain("loopback or link-local");
+    expect(connectionHealth([target({ state: "paused" })], "private_address")).toMatchObject({ label: "All targets paused" });
+    expect(connectionHealth([target({ state: "paused" })], "private_address").refusal).toContain("private network");
+    // A Target that has not run since the refusal began still shows it.
+    expect(connectionHealth([target({ lastResult: "converged" })], "private_address")).toMatchObject({
+      tone: "warn",
+      label: "Refused by this installation",
+      refusalInLabel: true,
+    });
+    // Before an older credential error.
+    expect(connectionHealth([target({ failureCount: 2, lastResult: "401 Unauthorized" })], "private_address").label).toBe("Refused by this installation");
+    expect(connectionHealth([target({ lastResult: "converged" })], null).label).toBe("Healthy");
   });
 });

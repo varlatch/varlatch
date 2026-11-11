@@ -13,7 +13,8 @@ import { useCapability, useOrgName } from "../projects/hooks";
 import { CONTROL_TEXT, SecurityControlsCard, controlReportKey, securityControlsKey } from "./SecurityControlsCard";
 import { ApprovalKeysCard, approvalKeysKey } from "./ApprovalKeysCard";
 import { CredentialsCard, credentialReviewKey } from "./CredentialsCard";
-import { RefusedDestinationsCard, refusedDestinationsKey } from "./RefusedDestinationsCard";
+import { RefusedDestinationsCard } from "./RefusedDestinationsCard";
+import { myPermissionsKey, refusedDestinationsKey } from "./keys";
 import { CHECKLIST, SECURITY_PAGE_DOCS } from "./checklist";
 
 /**
@@ -54,7 +55,7 @@ const SECTIONS = [
   { id: "checklist", label: "Checklist", icon: ListChecks },
 ] as const;
 
-export const myPermissionsKey = (org: string) => ["org-permissions", org] as const;
+export { myPermissionsKey };
 
 export function OrgSecurityPage() {
   const { org } = useParams() as { org: string };
