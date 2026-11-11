@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlatformConnection, SyncTarget } from "@varlatch/protocol";
 import {
+  outboundRefusal,
   refetchWhileRunning,
   connectionHealth,
   isCredentialError,
@@ -165,5 +166,36 @@ describe("connectionHealth", () => {
   it("recognizes credential errors", () => {
     expect(isCredentialError("Bad credentials")).toBe(true);
     expect(isCredentialError("fetch failed")).toBe(false);
+  });
+});
+
+describe("a destination this installation refuses (ADR-0057)", () => {
+  it("says so on the Target, with the policy's wording, without counting a failure or offering a fix", () => {
+    const s = targetStatus(target({ lastResult: "outbound_refused: private_address", needsSync: true }));
+    expect(s).toMatchObject({ tone: "warn", label: "Destination refused", detail: "waiting for the host operator" });
+    expect(s.error).toContain("This address is on a private network");
+    expect(s.error).toContain("VARLATCH_OUTBOUND_ALLOW");
+    expect(s.fix).toBeUndefined();
+    // Even after earlier failures: the refusal is what holds it now.
+    expect(targetStatus(target({ failureCount: 2, lastResult: "outbound_refused: scheme" })).error).toContain("Plain http");
+  });
+
+  it("keeps a paused Target paused", () => {
+    expect(targetStatus(target({ state: "paused", lastResult: "outbound_refused: private_address" })).label).toBe("Paused");
+  });
+
+  it("words every reason, and a refusal without one", () => {
+    expect(outboundRefusal("outbound_refused: host_only_address")).toContain("loopback or link-local");
+    expect(outboundRefusal("outbound_refused: port")).toContain("another port");
+    expect(outboundRefusal("outbound_refused")).toContain("outbound policy refuses this destination");
+    expect(outboundRefusal("ok")).toBeUndefined();
+    expect(outboundRefusal(null)).toBeUndefined();
+  });
+
+  it("marks the Connection, with the wording", () => {
+    const h = connectionHealth([target({ lastResult: "converged" }), target({ lastResult: "outbound_refused: private_address" })]);
+    expect(h).toMatchObject({ tone: "warn", label: "Refused by this installation", credentialRejected: false });
+    expect(h.refusal).toContain("This address is on a private network");
+    expect(connectionHealth([target({ state: "paused", lastResult: "outbound_refused: private_address" })]).refusal).toBeUndefined();
   });
 });

@@ -352,6 +352,11 @@ export function ConnectionCard({
           {health.label}
           {health.at && health.tone === "error" && <span className="text-deny/80">· {timeAgo(health.at, now)}</span>}
         </Status>
+        {health.refusal && (
+          <p className="text-xs text-muted" data-testid={`connection-refused-${connection.id}`}>
+            {health.refusal}
+          </p>
+        )}
         {expiry && (
           <span
             className="block"

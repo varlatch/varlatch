@@ -147,8 +147,10 @@ export {
   OUTBOUND_REFUSAL_LABELS,
   OUTBOUND_REFUSAL_MESSAGES,
   OUTBOUND_REFUSAL_REASONS,
+  OUTBOUND_REFUSED_GENERIC,
   isOutboundRefusalReason,
   outboundRefusalMessage,
+  outboundRefusalText,
   outboundRefusalOfStatus,
   type OutboundRefusalReason,
 } from "./outbound.js";

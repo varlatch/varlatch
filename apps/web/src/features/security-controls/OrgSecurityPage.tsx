@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, BookOpen, Fingerprint, KeyRound, ListChecks, RefreshCw, ShieldCheck, ShieldOff, TriangleAlert, Wifi } from "lucide-react";
+import { ArrowUpRight, Ban, BookOpen, Fingerprint, KeyRound, ListChecks, RefreshCw, ShieldCheck, ShieldOff, TriangleAlert, Wifi } from "lucide-react";
 import type { OrganizationPermissions, SecurityControl } from "@varlatch/sdk";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
@@ -13,19 +13,21 @@ import { useCapability, useOrgName } from "../projects/hooks";
 import { CONTROL_TEXT, SecurityControlsCard, controlReportKey, securityControlsKey } from "./SecurityControlsCard";
 import { ApprovalKeysCard, approvalKeysKey } from "./ApprovalKeysCard";
 import { CredentialsCard, credentialReviewKey } from "./CredentialsCard";
+import { RefusedDestinationsCard, refusedDestinationsKey } from "./RefusedDestinationsCard";
 import { CHECKLIST, SECURITY_PAGE_DOCS } from "./checklist";
 
 /**
  * The Organization's Security page (ADR-0054 Decision 11), next to
  * Settings: the controls with what each counts and would change, their
  * counts, the admins' approval keys, the credential review with expiry
- * warnings, the Tailnet Requirements, and a short checklist. It is where an
+ * warnings, the destinations this installation's outbound policy refuses
+ * (ADR-0057 Decision 8), the Tailnet Requirements, and a short checklist. It is where an
  * admin decides which controls to turn on. (The account's own passkeys live
  * on /account/security.)
  *
  * Every member reads the controls (organization.read). The other parts
- * need what their endpoints need: the counts and the approval keys
- * organization.manage, the credential review identity.manage, Requirements
+ * need what their endpoints need: the counts, the approval keys and the
+ * refused destinations organization.manage, the credential review identity.manage, Requirements
  * policy.read. The page asks the server for the caller's own
  * organization-level permissions first (GET .../me/permissions, readable by
  * every member) and requests only what they allow, so a member's visit
@@ -38,6 +40,7 @@ const NEEDS = {
   controls: null,
   "approval-keys": "organization.manage",
   credentials: "identity.manage",
+  "refused-destinations": "organization.manage",
   requirements: "policy.read",
   checklist: null,
 } as const;
@@ -46,6 +49,7 @@ const SECTIONS = [
   { id: "controls", label: "Controls", icon: ShieldCheck },
   { id: "approval-keys", label: "Approval keys", icon: Fingerprint },
   { id: "credentials", label: "Machine credentials", icon: KeyRound },
+  { id: "refused-destinations", label: "Refused destinations", icon: Ban },
   { id: "requirements", label: "Tailnet Requirements", icon: Wifi },
   { id: "checklist", label: "Checklist", icon: ListChecks },
 ] as const;
@@ -60,10 +64,11 @@ export function OrgSecurityPage() {
   const hasReport = useCapability("security.report");
   const hasKeys = useCapability("security.approval-keys");
   const hasReview = useCapability("security.credential-review");
+  const hasRefused = useCapability("security.refused-destinations");
   useOrgRealtime(
     org,
     ["security_control", "membership", "identity", "credential", "requirement", "grant", "role", "group", "team"],
-    [securityControlsKey(org), controlReportKey(org), approvalKeysKey(org), credentialReviewKey(org), ["requirements", org], myPermissionsKey(org)],
+    [securityControlsKey(org), controlReportKey(org), approvalKeysKey(org), credentialReviewKey(org), refusedDestinationsKey(org), ["requirements", org], myPermissionsKey(org)],
   );
   const permissions = useQuery({ queryKey: myPermissionsKey(org), queryFn: () => api.myOrganizationPermissions(org), enabled: supported });
   const can = (action: OrganizationPermissions["actions"][number]) => permissions.data?.actions.includes(action) ?? false;
@@ -80,6 +85,8 @@ export function OrgSecurityPage() {
   });
   const keys = useQuery({ queryKey: approvalKeysKey(org), queryFn: () => api.securityApprovalKeys(org), enabled: supported && canManage && hasKeys });
   const review = useQuery({ queryKey: credentialReviewKey(org), queryFn: () => api.credentialReview(org), enabled: supported && canReview && hasReview });
+  // Checked when asked (DNS lookups on the server), so not refreshed on a timer.
+  const refused = useQuery({ queryKey: refusedDestinationsKey(org), queryFn: () => api.refusedDestinations(org), enabled: supported && canManage && hasRefused });
   const requirements = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org), enabled: supported && canPolicy });
 
   // The whole page waits for the controls and the caller's permissions, so sections never pop in.
@@ -88,6 +95,7 @@ export function OrgSecurityPage() {
     controls: true,
     "approval-keys": canManage && hasKeys,
     credentials: canReview && hasReview,
+    "refused-destinations": canManage && hasRefused,
     requirements: canPolicy,
     checklist: true,
   };
@@ -97,6 +105,7 @@ export function OrgSecurityPage() {
   if (!canManage && hasReport) hidden.push("what each control counted (needs organization.manage)");
   if (!canManage && hasKeys) hidden.push(`the admins' approval keys (needs ${NEEDS["approval-keys"]})`);
   if (!canReview && hasReview) hidden.push(`machine credentials to review (needs ${NEEDS.credentials})`);
+  if (!canManage && hasRefused) hidden.push(`destinations this installation refuses (needs ${NEEDS["refused-destinations"]})`);
   if (!canPolicy) hidden.push(`Tailnet Requirements (needs ${NEEDS.requirements})`);
   const [active, setActive] = useState<string>("controls");
   useEffect(() => {
@@ -111,7 +120,7 @@ export function OrgSecurityPage() {
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [settled, sections.length, keys.data, review.data, requirements.data]);
+  }, [settled, sections.length, keys.data, review.data, refused.data, requirements.data]);
 
   const header = (
     <PageHeader
@@ -213,6 +222,9 @@ export function OrgSecurityPage() {
               </Part>
               <Part query={review} enabled={allowed.credentials} title="Machine credentials" id="credentials">
                 {(data) => <CredentialsCard org={org} review={data} />}
+              </Part>
+              <Part query={refused} enabled={allowed["refused-destinations"]} title="Refused destinations" id="refused-destinations">
+                {(data) => <RefusedDestinationsCard refused={data} />}
               </Part>
               <Part query={requirements} enabled={allowed.requirements} title="Tailnet Requirements" id="requirements">
                 {(data) => (

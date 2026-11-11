@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import type { PlatformConnection, SyncTarget, SyncTargetNote } from "@varlatch/protocol";
+import { outboundRefusalOfStatus, outboundRefusalText, type PlatformConnection, type SyncTarget, type SyncTargetNote } from "@varlatch/protocol";
 import { platformMeta } from "./platform-meta";
 
 /**
@@ -82,6 +82,17 @@ export function redeployError(result: string | null | undefined): string | undef
 }
 
 /**
+ * The outbound policy's wording when this installation refuses a Target's
+ * destination (ADR-0057 Decision 7): varlatchd records "outbound_refused:
+ * <reason>", counts no failure and keeps the run owed until the host
+ * operator allows it. Undefined otherwise.
+ */
+export function outboundRefusal(result: string | null | undefined): string | undefined {
+  const reason = outboundRefusalOfStatus(result);
+  return reason ? outboundRefusalText(reason) : undefined;
+}
+
+/**
  * A refetch interval for a list of Targets: every 2 s while one of them can
  * still send. Nothing announces the end of a run (a fenced or out-of-budget
  * run records no event), so "Pushing" and "Pausing" are kept current by
@@ -115,6 +126,12 @@ export function targetStatus(t: SyncTarget): TargetStatus {
   }
   if (reaffirm) {
     return { tone: "warn", label: "Needs re-affirmation", detail: "a mapped item became a secret", fix: "reaffirm", at: t.lastAttemptAt };
+  }
+  // Refused by this installation's outbound policy: nothing failed and
+  // nothing is lost, it waits for the host operator (ADR-0057 Decision 7).
+  const refused = outboundRefusal(t.lastResult);
+  if (refused) {
+    return { tone: "warn", label: "Destination refused", detail: "waiting for the host operator", error: refused, at: t.lastAttemptAt };
   }
   // Every failed run counts in failureCount; a successful one resets it and
   // records "ok" (values written) or "converged" (nothing to change).
@@ -213,6 +230,8 @@ export interface ConnectionHealth {
   label: string;
   /** Set when the platform rejected the credential. */
   credentialRejected: boolean;
+  /** The outbound policy's wording, when this installation refuses the connection's host. */
+  refusal?: string | undefined;
   at?: string | null | undefined;
 }
 
@@ -223,6 +242,16 @@ export function connectionHealth(targets: SyncTarget[]): ConnectionHealth {
   if (live.length === 0) return { tone: "muted", label: "All targets paused", credentialRejected: false };
   const rejected = live.find((t) => (t.failureCount > 0 || t.state === "disabled") && isCredentialError(t.lastResult));
   if (rejected) return { tone: "error", label: "Credential rejected", credentialRejected: true, at: rejected.lastAttemptAt };
+  const refusedTarget = live.find((t) => outboundRefusal(t.lastResult));
+  if (refusedTarget) {
+    return {
+      tone: "warn",
+      label: "Refused by this installation",
+      credentialRejected: false,
+      refusal: outboundRefusal(refusedTarget.lastResult),
+      at: refusedTarget.lastAttemptAt,
+    };
+  }
   const failing = live.filter((t) => t.state === "disabled" || t.failureCount > 0);
   if (failing.length > 0) {
     return {

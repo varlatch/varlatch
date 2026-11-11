@@ -8,6 +8,7 @@ import { useSession } from "../../lib/session";
 import { timeAgo } from "../../lib/time";
 import { Button, Callout, Field, IconButton, Input, Mono, SectionCard, Status, cn, table } from "../../components/ui";
 import { CopyButton } from "../../components/CodeBlock";
+import { deliveryStatus } from "./webhookStatus";
 import { useConfirm } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 
@@ -190,10 +191,7 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
                     </td>
                     <td className={cn(table.td, "whitespace-nowrap")}>
                       {w.lastAttemptAt ? (
-                        <Status tone={w.failureCount > 0 ? "error" : "ok"}>
-                          {w.failureCount > 0 ? `${w.failureCount} failing` : (w.lastStatus ?? "delivered")}
-                          <span className="text-muted">· {timeAgo(w.lastAttemptAt)}</span>
-                        </Status>
+                        <DeliveryStatus webhook={w} />
                       ) : (
                         <span className="text-[13px] text-muted">No deliveries yet</span>
                       )}
@@ -291,5 +289,22 @@ export function WebhooksSection({ org, orgId, className }: { org: string; orgId:
         </p>
       </details>
     </SectionCard>
+  );
+}
+
+function DeliveryStatus({ webhook }: { webhook: Webhook }) {
+  const status = deliveryStatus(webhook);
+  return (
+    <>
+      <Status tone={status.tone}>
+        {status.label}
+        <span className="text-muted">· {timeAgo(webhook.lastAttemptAt)}</span>
+      </Status>
+      {status.refusal && (
+        <span className="mt-0.5 block max-w-72 whitespace-normal text-xs text-muted" data-testid={`webhook-refused-${webhook.id}`}>
+          {status.refusal}
+        </span>
+      )}
+    </>
   );
 }

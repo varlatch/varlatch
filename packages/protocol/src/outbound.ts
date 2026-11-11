@@ -41,6 +41,15 @@ export const OUTBOUND_REFUSAL_LABELS: Record<OutboundRefusalReason, string> = {
   port: "port not allowed",
 };
 
+/** For a stored refusal without a reason (a webhook's last_status). */
+export const OUTBOUND_REFUSED_GENERIC =
+  "This installation's outbound policy refuses this destination, so deliveries wait. The host operator can allow it with VARLATCH_OUTBOUND_ALLOW.";
+
+/** The sentence for a refusal state on an item: its reason's, or the generic one. */
+export function outboundRefusalText(reason: OutboundRefusalReason | "unknown"): string {
+  return reason === "unknown" ? OUTBOUND_REFUSED_GENERIC : OUTBOUND_REFUSAL_MESSAGES[reason];
+}
+
 /** Where private destinations are allowed: on the host, never in Varlatch. */
 export const OUTBOUND_HOST_NOTE =
   "Private destinations are allowed by the host operator, with VARLATCH_OUTBOUND_ALLOW on the host, not in Varlatch. " +
