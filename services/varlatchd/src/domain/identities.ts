@@ -212,7 +212,7 @@ export async function retireIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId });
+    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery" });
     await db.query("UPDATE identities SET disabled = true WHERE id = $1", [identityId]);
     const live = await db.query(
       "SELECT id FROM credentials WHERE identity_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",

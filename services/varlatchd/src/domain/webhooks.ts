@@ -8,7 +8,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import { lockedQuery } from "../db/locks.js";
@@ -96,6 +96,7 @@ export async function createWebhook(
 ): Promise<{ webhook: WebhookRow; secret: string }> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   validateWebhookUrl(input.url);
   // The outbound policy (ADR-0057 Decision 6), before any transaction.
   await refuseOutboundWebhook(ctx, org.id, input.url, null, actorIdentityId);

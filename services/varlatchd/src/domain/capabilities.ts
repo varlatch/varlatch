@@ -17,7 +17,7 @@ import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, refuseIfIncidentFrozen } from "./liveness.js";
 import type { OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 import {
@@ -364,7 +364,7 @@ export async function revokeCapability(
   opts: { actorIdentityId: string; brokerIdentityId?: string | undefined },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
     const params: unknown[] = [capabilityId, org.id];
     let where = "id = $1 AND organization_id = $2 AND revoked_at IS NULL";
     if (opts.brokerIdentityId) {
@@ -447,6 +447,8 @@ export async function captureExercise(
   tailnetContext: TailnetContext | null,
 ): Promise<CapturedExercise> {
   const { org, project, env } = scope;
+  // The incident freeze, read in the snapshot (ADR-0055 Decision 4).
+  await refuseIfIncidentFrozen(sctx.db, org.id);
   const row = (
     await sctx.db.query(
       "SELECT * FROM capabilities WHERE id = $1 AND organization_id = $2 AND environment_id = $3",

@@ -73,7 +73,8 @@ import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type Webhook
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
-import { lockLiveScope } from "../domain/liveness.js";
+import { currentFreeze, freezeHistory, freezeOrganization, frozenOrganizations, liftFreeze, resumingTargets } from "../domain/freeze.js";
+import { lockLiveScope, OrganizationFrozenError } from "../domain/liveness.js";
 import { confirmRevocation, exposedVersion, memberExposure } from "../domain/exposure.js";
 import { machineReach } from "../domain/reach.js";
 import {
@@ -178,7 +179,14 @@ import {
   routeParam,
   type Principal,
 } from "./support.js";
-import { entryRequester, queueEntryReport, resolveOrganization } from "./organization.js";
+import {
+  auditFrozenRefusal,
+  entryRequester,
+  FROZEN_RETRY_AFTER_SECONDS,
+  queueEntryReport,
+  resolveOrganization,
+  type ResolveOptions,
+} from "./organization.js";
 import {
   passkeyVerificationReports,
   queueAccessCount,
@@ -447,19 +455,29 @@ async function readJson(c: Context): Promise<() => unknown> {
 // resolveOrganization (http/organization.ts), the one place a request's
 // principal enters an Organization; these three helpers only add the
 // Project and Environment below it.
-async function scope(ctx: AppCtx, c: Context) {
-  const org = await resolveOrganization(ctx, c);
+//
+// `during` names the exception under which the route runs while the
+// Organization is frozen for an incident (ADR-0055 Decision 4); a route
+// that names none is refused then. test/organization-entry.test.ts lists
+// every route and its exception.
+const INSPECTION: ResolveOptions = { duringIncidentFreeze: "inspection" };
+const RECOVERY: ResolveOptions = { duringIncidentFreeze: "recovery" };
+const AUDIT: ResolveOptions = { duringIncidentFreeze: "audit" };
+const FREEZE: ResolveOptions = { duringIncidentFreeze: "freeze" };
+
+async function scope(ctx: AppCtx, c: Context, during: ResolveOptions = {}) {
+  const org = await resolveOrganization(ctx, c, during);
   return { org };
 }
 
-async function projectScope(ctx: AppCtx, c: Context) {
-  const org = await resolveOrganization(ctx, c);
+async function projectScope(ctx: AppCtx, c: Context, during: ResolveOptions = {}) {
+  const org = await resolveOrganization(ctx, c, during);
   const project = await getProject(ctx, org.id, routeParam(c, "project"));
   return { org, project };
 }
 
-async function envScope(ctx: AppCtx, c: Context) {
-  const { org, project } = await projectScope(ctx, c);
+async function envScope(ctx: AppCtx, c: Context, during: ResolveOptions = {}) {
+  const { org, project } = await projectScope(ctx, c, during);
   const env = await getEnvironment(ctx, project.id, decodeURIComponent(routeParam(c, "environment")));
   return { org, project, env };
 }
@@ -611,8 +629,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await next();
   });
 
-  app.onError((err, c) => {
+  app.onError(async (err, c) => {
     const reqId = (c.get("requestId") as string) ?? requestId();
+    if (err instanceof OrganizationFrozenError) {
+      // Final for this request: clients back off (ADR-0055 Decision 8). One
+      // audit event per refusal, after the transaction or snapshot ended.
+      c.header("Retry-After", String(FROZEN_RETRY_AFTER_SECONDS));
+      await auditFrozenRefusal(ctx, c, err);
+    }
     if (err instanceof DomainError) {
       return c.json(
         errorBody(err.code, err.message, reqId, err.details),
@@ -850,12 +874,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const orgs = await listOrganizationsFor(ctx, principal.identity.id);
     const issuer = options.issuer ?? "varlatch";
-    const orgIds =
+    const named =
       principal.identity.kind === "human"
         ? orgs.map((o) => o.id)
         : principal.identity.organization_id
           ? [principal.identity.organization_id]
           : [];
+    // An Organization frozen for an incident is left out, for people and
+    // machines (ADR-0055 Decision 4): no browser reads its Mirror while frozen.
+    const frozen = await frozenOrganizations(ctx.db, named);
+    const orgIds = named.filter((id) => !frozen.has(id));
     const reports = await passkeyVerificationReports(ctx.db, entryRequester(principal), orgIds);
     const minted = await mintConvexToken(ctx, issuer, {
       sub: principal.identity.id,
@@ -1038,7 +1066,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // restores. People's credentials belong to the Installation.
     const organizationId = principal.identity.organization_id;
     await withTx(ctx.db, async (db) => {
-      if (organizationId) await lockLiveScope(db, { organizationId });
+      // Revoking only takes authority away: recovery while frozen (ADR-0055).
+      if (organizationId) await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery" });
       const res = await db.query(
         "SELECT id FROM credentials WHERE id = $1 AND identity_id = $2",
         [c.req.param("credential"), principal.identity.id],
@@ -1405,9 +1434,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
-    return c.json(serialize.org(org));
+    // The open incident freeze, if any (ADR-0055 Decision 11): the
+    // dashboard reads it here, since the Convex token leaves a frozen
+    // Organization out.
+    return c.json({ ...serialize.org(org), incidentFreeze: await currentFreeze(ctx.db, org.id) });
   });
 
   // The caller's own organization-level permissions here (capability
@@ -1418,7 +1450,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // It needs organization.read, which every member holds.
   app.get("/v1/organizations/:org/me/permissions", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const role = principal.identity.kind === "human" ? await getOrgRole(ctx, org.id, principal.identity.id) : null;
     const grants = await loadGrants(ctx, org.id, principal.identity.id);
@@ -1445,7 +1477,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // admin, the freeze) run inside each transaction.
   app.get("/v1/organizations/:org/deletion", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json({ deletion: await getDeletion(ctx, org.id) });
   });
@@ -1467,9 +1499,66 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.post("/v1/organizations/:org/deletion/:deletion/cancel", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json(await cancelDeletion(ctx, org.id, routeParam(c, "deletion"), principal.identity));
+  });
+
+  // ---- The incident freeze (ADR-0055; capability
+  // organizations.incident-freeze). Reading it is inspection, for every
+  // member (organization.read). Freezing needs organization.manage and a
+  // person's credential, no approval; lifting needs organization.manage, a
+  // person's credential and, always, a step-up approval for exactly this
+  // freeze (STEP_UP_REQUIRED, then the same request with the
+  // Varlatch-Approval header). The checks run again inside each transaction.
+  app.get("/v1/organizations/:org/incident-freeze", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c, INSPECTION);
+    await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
+    const freeze = await currentFreeze(ctx.db, org.id);
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      freeze,
+      // What the lift's confirmation lists: the Sync Targets that resume pushing.
+      resumingTargets: freeze ? await resumingTargets(ctx.db, org.id) : [],
+      history: await freezeHistory(ctx.db, org.id),
+    });
+  });
+
+  app.post("/v1/organizations/:org/incident-freeze", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c, FREEZE);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    const body = parseBody(z.object({ reason: z.string().max(1000) }).strict(), await c.req.json().catch(() => undefined));
+    const freeze = await freezeOrganization(ctx, {
+      organizationId: org.id,
+      actor: principal.identity,
+      credentialKind: principal.credentialKind,
+      reason: body.reason,
+      requestId: c.get("requestId"),
+      authorizeIn: async (db) => {
+        await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+      },
+    });
+    return c.json(freeze, 201);
+  });
+
+  app.post("/v1/organizations/:org/incident-freeze/:freeze/lift", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c, FREEZE);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      liftFreeze(ctx, gate, {
+        organizationId: org.id,
+        freezeId: routeParam(c, "freeze"),
+        actor: principal.identity,
+        credentialKind: principal.credentialKind,
+        requestId: c.get("requestId"),
+        authorizeIn: async (db) => {
+          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+        },
+      }));
+    return c.json(result);
   });
 
   // The audit-access tombstone (ADR-0016 §6, ADR-0051 Decision 8): a deleted
@@ -2223,7 +2312,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/capabilities",
     async (c) => {
       const principal = c.get("principal");
-      const { org, env } = await envScope(ctx, c);
+      const { org, env } = await envScope(ctx, c, INSPECTION);
       // Brokers see their own; humans with policy.read see all (oversight).
       let brokerFilter: string | undefined;
       if (principal.identity.kind === "broker" && principal.identity.organization_id === org.id) {
@@ -2254,7 +2343,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     "/v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability",
     async (c) => {
       const principal = c.get("principal");
-      const { org } = await envScope(ctx, c);
+      const { org } = await envScope(ctx, c, RECOVERY);
       let brokerFilter: string | undefined;
       if (principal.identity.kind === "broker" && principal.identity.organization_id === org.id) {
         brokerFilter = principal.identity.id;
@@ -2408,7 +2497,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Identities
   app.get("/v1/organizations/:org/identities", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "identity.read", { organizationId: org.id }, { hideExistence: true });
     const identities = await listOrgIdentities(ctx, org.id);
     return c.json({
@@ -2557,7 +2646,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/identities/:identity/credentials/:credential", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     if (principal.identity.kind === "broker") {
       requireBroker(principal, org);
       const agent = await loadAgentIdentity(c, org.id);
@@ -2590,7 +2679,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // The writer protocol (ADR-0051): refused while the Organization is
     // being deleted, so a cancel restores the machine with its credentials.
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
       await revokeCredential(db, c.req.param("credential"), principal.identity.id, { organizationId: org.id });
     });
     return c.body(null, 204);
@@ -2599,7 +2688,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Machine identity lifecycle (ADR-0034; capability identity.lifecycle).
   app.get("/v1/organizations/:org/identities/:identity/credentials", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     // Revocation without enumeration is unusable (ADR-0034 §2). Metadata
     // only — token material is unrecoverable by construction (ADR-0007).
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
@@ -2626,7 +2715,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // shows what credential list shows, so it needs what that needs.
   app.get("/v1/organizations/:org/security/credential-review", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     c.header("Cache-Control", "no-store");
     return c.json(await credentialReview(ctx, org.id));
@@ -2634,7 +2723,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const identity = await loadMachineIdentity(c, org.id);
     await retireIdentity(ctx, org.id, identity.id, principal.identity.id);
@@ -2658,7 +2747,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // then the same request with the Varlatch-Approval header).
   app.get("/v1/organizations/:org/security/controls", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     return c.json({ items: await listControls(ctx.db, org.id), availableModes: [...AVAILABLE_MODES] });
   });
@@ -2671,7 +2760,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // organization.read that lets every member see the modes.
   app.get("/v1/organizations/:org/security/control-report", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
     const raw = c.req.query("days");
     if (raw !== undefined && !/^\d{1,2}$/.test(raw)) throw new DomainError("VALIDATION_FAILED", "days must be an integer in 1..30");
@@ -2686,7 +2775,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // the control report does. Never a credential id or key material.
   app.get("/v1/organizations/:org/security/approval-keys", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
     c.header("Cache-Control", "no-store");
     return c.json(await approvalKeys(ctx.db, org.id));
@@ -2694,7 +2783,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.patch("/v1/organizations/:org/security/controls/:control", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
     if (principal.identity.kind !== "human" || (principal.credentialKind !== "browser" && principal.credentialKind !== "cli")) {
       throw new DomainError("PERMISSION_DENIED", "Only a person can change a security control; machine credentials never can");
@@ -2735,7 +2824,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // it needs both. Read-only: it changes no authorization and issues nothing.
   app.get("/v1/organizations/:org/identities/:identity/reach", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "identity.read", { organizationId: org.id }, { hideExistence: true });
     await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
     c.header("Cache-Control", "no-store");
@@ -2798,7 +2887,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/identities/:identity/oidc-bindings", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const identity = await loadMachineIdentity(c, org.id);
     const bindings = await listOidcBindings(ctx, org.id, identity.id);
@@ -2807,7 +2896,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/identities/:identity/oidc-bindings/:binding", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const identity = await loadMachineIdentity(c, org.id);
     await revokeOidcBinding(ctx, org.id, identity.id, c.req.param("binding"), principal.identity.id);
@@ -2881,7 +2970,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/members/:member/review", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const member = memberParam(c, principal);
     const review = await auditMemberDenial(c, principal, org.id, member, () =>
@@ -2892,7 +2981,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/members/:member", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const member = memberParam(c, principal);
     const removed = await auditMemberDenial(c, principal, org.id, member, () =>
@@ -2903,7 +2992,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.patch("/v1/organizations/:org/members/:member", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(z.object({ role: z.enum(["admin", "member"]) }).strict(), await c.req.json());
     const member = memberParam(c, principal);
@@ -2917,7 +3006,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // members, to anyone with audit.read. Names, versions and states only.
   app.get("/v1/organizations/:org/members/:member/exposure", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
     c.header("Cache-Control", "no-store");
     return c.json(await memberExposure(ctx, org.id, memberParam(c, principal)));
@@ -2978,7 +3067,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // like creation. Metadata only: no token, nothing derived from one.
   app.get("/v1/organizations/:org/invitations", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const status = c.req.query("status") ?? "pending";
     if (status !== "pending" && status !== "all") {
@@ -3002,7 +3091,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/invitations/:invitation", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     await revokeInvitation(ctx, org.id, routeParam(c, "invitation"), principal.identity.id);
     return c.body(null, 204);
@@ -3011,7 +3100,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Grants
   app.get("/v1/organizations/:org/grants", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
     const res = await ctx.db.query(
       "SELECT id, organization_id, subject_identity_id, subject_group_id, scope, actions, role_id, created_at FROM grants WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
@@ -3119,10 +3208,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/grants/:grant", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
       const res = await db.query(
         "UPDATE grants SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
         [c.req.param("grant"), org.id],
@@ -3241,9 +3330,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   // ---- Roles, Groups, Teams (ADR-0028): reusable authorization constructs.
   // All gated by policy.read (list) / policy.manage (mutate), like Grants.
-  const policyRead = async (c: Context) => {
+  const policyRead = async (c: Context, during: ResolveOptions = {}) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, during);
     await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
     return { principal, org };
   };
@@ -3255,7 +3344,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   };
 
   app.get("/v1/organizations/:org/roles", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listRoles(ctx, org.id), nextCursor: null });
   });
   app.post("/v1/organizations/:org/roles", async (c) => {
@@ -3297,7 +3386,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   });
 
   app.get("/v1/organizations/:org/groups", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroups(ctx, org.id, "group"), nextCursor: null });
   });
   app.post("/v1/organizations/:org/groups", async (c) => {
@@ -3325,7 +3414,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.body(null, 204);
   });
   app.get("/v1/organizations/:org/groups/:group/members", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroupMembers(ctx, org.id, c.req.param("group")), nextCursor: null });
   });
   app.post("/v1/organizations/:org/groups/:group/members", async (c) => {
@@ -3341,7 +3430,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   });
 
   app.get("/v1/organizations/:org/teams", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroups(ctx, org.id, "team"), nextCursor: null });
   });
   app.post("/v1/organizations/:org/teams", async (c) => {
@@ -3369,7 +3458,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.body(null, 204);
   });
   app.get("/v1/organizations/:org/teams/:team/members", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listGroupMembers(ctx, org.id, c.req.param("team")), nextCursor: null });
   });
   app.post("/v1/organizations/:org/teams/:team/members", async (c) => {
@@ -3384,7 +3473,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     return c.body(null, 204);
   });
   app.get("/v1/organizations/:org/teams/:team/projects", async (c) => {
-    const { org } = await policyRead(c);
+    const { org } = await policyRead(c, INSPECTION);
     return c.json({ items: await listTeamProjects(ctx, org.id, c.req.param("team")), nextCursor: null });
   });
   app.post("/v1/organizations/:org/teams/:team/projects", async (c) => {
@@ -3402,7 +3491,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Tailnet Requirements (ADR-0014): restrictive policy objects.
   app.get("/v1/organizations/:org/requirements", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "policy.read", { organizationId: org.id }, { hideExistence: true });
     const res = await ctx.db.query(
       "SELECT id, kind, target, config, created_at, version, updated_at FROM requirements WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY created_at, id",
@@ -3424,7 +3513,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.post("/v1/organizations/:org/requirements", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(
       z.object({
@@ -3447,7 +3536,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const id = newId("requirement");
     await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id });
+      // A new Requirement only restricts: recovery while frozen (ADR-0055).
+      await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery" });
       await db.query(
         "INSERT INTO requirements (id, organization_id, kind, target, config, created_by) VALUES ($1,$2,'tailnet',$3,$4,$5)",
         [id, org.id, JSON.stringify(body.target), JSON.stringify(body.selector), principal.identity.id],
@@ -3632,7 +3722,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/webhooks", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
     const hooks = await listWebhooks(ctx, org.id);
     return c.json({ items: hooks.map(serializeWebhook), nextCursor: null });
@@ -3789,7 +3879,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/platform-connections", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const items = await listConnections(ctx, org.id);
     return c.json({ items: items.map(serializeConnection), nextCursor: null });
@@ -3967,7 +4057,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.delete("/v1/organizations/:org/platform-connections/:connection", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     await revokeConnection(ctx, org, c.req.param("connection"), principal.identity.id);
     return c.body(null, 204);
@@ -4119,14 +4209,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/sync-targets", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const items = await listTargets(ctx, { organizationId: org.id });
     return c.json({ items: await serializeTargets(items), nextCursor: null });
   });
 
-  const targetEnvScope = async (c: Context) => {
-    const { org, project, env } = await envScope(ctx, c);
+  const targetEnvScope = async (c: Context, during: ResolveOptions = {}) => {
+    const { org, project, env } = await envScope(ctx, c, during);
     const principal = c.get("principal") as Principal;
     await authorize(ctx, c, principal, "config.sync.manage", envResource(org, project, env), {
       hideExistence: true,
@@ -4137,7 +4227,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.get(
     "/v1/organizations/:org/projects/:project/environments/:environment/sync-targets",
     async (c) => {
-      const { org, env } = await targetEnvScope(c);
+      const { org, env } = await targetEnvScope(c, INSPECTION);
       const items = await listTargets(ctx, { organizationId: org.id, environmentId: env.id });
       return c.json({ items: await serializeTargets(items), nextCursor: null });
     },
@@ -4187,8 +4277,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     },
   );
 
-  const targetScope = async (c: Context) => {
-    const base = await targetEnvScope(c);
+  const targetScope = async (c: Context, during: ResolveOptions = {}) => {
+    const base = await targetEnvScope(c, during);
     const target = await getTarget(ctx, base.org.id, routeParam(c, "target"));
     if (target.environment_id !== base.env.id) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
@@ -4288,7 +4378,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   app.post(
     "/v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause",
     async (c) => {
-      const { org, target, principal } = await targetScope(c);
+      const { org, target, principal } = await targetScope(c, RECOVERY);
       await setTargetState(ctx, org, target.id, "pause", principal.identity.id);
       // ?wait=true holds the answer until no run of the Target can start
       // another request, for at most 30 s (ADR-0050 Decision 6). It polls
@@ -4329,7 +4419,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   // ---- Audit
   app.get("/v1/organizations/:org/audit-events", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, AUDIT);
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
     const limit = Math.max(1, Math.min(Math.floor(Number(c.req.query("limit") ?? 100)) || 100, 500));
     const cursor = c.req.query("cursor");
@@ -4403,7 +4493,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.get("/v1/organizations/:org/audit-events/export", async (c) => {
     const principal = c.get("principal");
-    const { org } = await scope(ctx, c);
+    const { org } = await scope(ctx, c, AUDIT);
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
     // Validated before the stream starts, so a bad filter is an ordinary error response.
     const filters = parseAuditFilters((name) => c.req.queries(name));

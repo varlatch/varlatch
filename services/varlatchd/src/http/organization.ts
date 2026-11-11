@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Context } from "hono";
 import type { Action } from "../authz/evaluate.js";
+import { recordAuditEvent } from "../audit/events.js";
 import type { AppCtx } from "../domain/ctx.js";
-import { getOrganization, type OrgRow } from "../domain/orgs.js";
+import { openFreeze, organizationFrozen, type FreezeException, type OrganizationFrozenError } from "../domain/liveness.js";
+import { getOrganization, getOrgRole, type OrgRow } from "../domain/orgs.js";
 import { passkeyVerificationReports, queueAccessCount, type PendingAccessReport } from "../domain/securityreport.js";
 import { AUTHORIZED_ACTION, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
 
@@ -28,10 +30,21 @@ import { AUTHORIZED_ACTION, ENTRY_REPORT, routeParam, type Principal } from "./s
  * member's removal, the exposure report, machine reach), and stay
  * independent of it.
  */
-export async function resolveOrganization(ctx: AppCtx, c: Context): Promise<OrgRow> {
+export async function resolveOrganization(ctx: AppCtx, c: Context, options: ResolveOptions = {}): Promise<OrgRow> {
   const org = await getOrganization(ctx, routeParam(c, "org"));
-  await organizationEntryChecks(ctx, c, c.get("principal") as Principal | undefined, org);
+  await organizationEntryChecks(ctx, c, c.get("principal") as Principal | undefined, org, options);
   return org;
+}
+
+export interface ResolveOptions {
+  /**
+   * The exception under which this route runs while the Organization is
+   * frozen for an incident (ADR-0055 Decisions 3 and 4). A route that names
+   * none is refused, for the Organization's members and machines, with
+   * ORGANIZATION_FROZEN. test/organization-entry.test.ts lists every route
+   * with its exception.
+   */
+  duringIncidentFreeze?: FreezeException | undefined;
 }
 
 /** The requester as the security report sees it. */
@@ -61,8 +74,15 @@ export function entryRequester(principal: Principal) {
  * Enforcement (a later step) will refuse here, and must not tell an
  * outsider that the Organization exists before any distinct refusal.
  */
-export async function organizationEntryChecks(ctx: AppCtx, c: Context, principal: Principal | undefined, org: OrgRow): Promise<void> {
+export async function organizationEntryChecks(
+  ctx: AppCtx,
+  c: Context,
+  principal: Principal | undefined,
+  org: OrgRow,
+  options: ResolveOptions = {},
+): Promise<void> {
   if (!principal) return;
+  await refuseFrozenEntry(ctx, principal, org, options.duringIncidentFreeze);
   const [pending] = await passkeyVerificationReports(ctx.db, entryRequester(principal), [org.id]);
   if (pending) c.set(ENTRY_REPORT, pending);
 }
@@ -80,4 +100,55 @@ export function queueEntryReport(ctx: AppCtx, c: Context): void {
   if (!pending || c.res.status >= 400) return;
   const action = c.get(AUTHORIZED_ACTION) as Action | undefined;
   queueAccessCount(ctx, pending, action ?? "organization.access");
+}
+
+/**
+ * The incident freeze at entry (ADR-0055 Decision 4): while the
+ * Organization is frozen, a request from a live member or from one of the
+ * Organization's machine identities, on a route that names no exception,
+ * is refused with ORGANIZATION_FROZEN. A principal with no standing in the
+ * Organization passes through to the route's own authorization, which
+ * refuses it as before, with the same existence hiding: an outsider learns
+ * nothing about the freeze. Read in `ctx`, so inside a retrieval snapshot
+ * the freeze is read at the snapshot boundary. The refusal is audited once,
+ * at the request's outcome (auditFrozenRefusal).
+ */
+async function refuseFrozenEntry(ctx: AppCtx, principal: Principal, org: OrgRow, exception: FreezeException | undefined): Promise<void> {
+  if (exception !== undefined) return;
+  const freeze = await openFreeze(ctx.db, org.id);
+  if (!freeze) return;
+  const standing =
+    principal.identity.kind === "human"
+      ? (await getOrgRole(ctx, org.id, principal.identity.id)) !== null
+      : principal.identity.organization_id === org.id;
+  if (standing) throw organizationFrozen(freeze, org.id);
+}
+
+/** Seconds a client should wait before trying an Organization frozen for an incident again. */
+export const FROZEN_RETRY_AFTER_SECONDS = 300;
+
+/**
+ * Record a refusal by the incident freeze (ADR-0055 Decision 8):
+ * `authorization.denied` with reason `organization_frozen` and the freeze
+ * id, attributed to the request's credential. Called once per refused
+ * request, at its outcome, after the transaction or snapshot that refused
+ * it ended, in a short transaction of its own. Never sampled. Best effort:
+ * a failure to record is logged and never changes the answer.
+ */
+export async function auditFrozenRefusal(ctx: AppCtx, c: Context, err: OrganizationFrozenError): Promise<void> {
+  const principal = c.get("principal") as Principal | undefined;
+  try {
+    await recordAuditEvent(ctx.db, {
+      eventType: "authorization.denied",
+      decision: "deny",
+      actorIdentityId: principal?.identity.id ?? null,
+      credentialId: principal?.credentialId ?? null,
+      organizationId: err.organizationId,
+      requestId: c.get("requestId") as string,
+      resource: { freezeId: err.freezeId },
+      metadata: { reason: "organization_frozen", freezeId: err.freezeId, method: c.req.method, route: c.req.routePath },
+    });
+  } catch (e) {
+    console.error("could not audit a refusal by the incident freeze:", e);
+  }
 }

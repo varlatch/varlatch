@@ -103,6 +103,16 @@ export async function currentFreeze(db: Querier, organizationId: string): Promis
   return row ? toView(row) : null;
 }
 
+/** Which of these Organizations are frozen for an incident now. */
+export async function frozenOrganizations(db: Querier, organizationIds: readonly string[]): Promise<Set<string>> {
+  if (organizationIds.length === 0) return new Set();
+  const rows = (await db.query(
+    "SELECT organization_id FROM organization_freezes WHERE organization_id = ANY($1) AND lifted_at IS NULL",
+    [[...organizationIds]],
+  )).rows as { organization_id: string }[];
+  return new Set(rows.map((r) => r.organization_id));
+}
+
 /** The Organization's freezes, newest first: the history. */
 export async function freezeHistory(db: Querier, organizationId: string, limit = 20): Promise<FreezeView[]> {
   const rows = (await db.query(`${FREEZES_OF} ORDER BY f.frozen_at DESC, f.id DESC LIMIT $2`, [organizationId, limit])).rows as FreezeRow[];
@@ -339,13 +349,16 @@ export interface OperatorLiftOutcome {
  * organization.unfreeze intents closed, the freeze lifted with method
  * `operator`, and `organization.unfrozen` audited with no actor.
  */
-export async function operatorUnfreeze(ctx: AppCtx, input: { organization: string }): Promise<OperatorLiftOutcome> {
+export async function operatorUnfreeze(ctx: AppCtx, input: { organization: string; confirm: string }): Promise<OperatorLiftOutcome> {
   return withTx(ctx.db, async (db) => {
     const org = (await db.query(
       "SELECT id, slug FROM organizations WHERE (id = $1 OR slug = $1) AND deleted_at IS NULL",
       [input.organization],
     )).rows[0] as { id: string; slug: string } | undefined;
     if (!org) throw new DomainError("RESOURCE_NOT_FOUND", `No live Organization ${input.organization}`);
+    if (input.confirm !== org.slug) {
+      throw new DomainError("VALIDATION_FAILED", `--confirm must repeat the Organization's slug: ${org.slug}`);
+    }
     await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "freeze" });
     const open = await openFreeze(db, org.id);
     if (!open) throw new DomainError("STATE_CHANGED", `${org.slug} is not frozen`);

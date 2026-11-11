@@ -14,7 +14,7 @@ import { withSerializableTx, withSnapshot } from "../db/tx.js";
 import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, type FreezeException } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 
 /**
@@ -108,10 +108,10 @@ async function liveMembership(db: Querier, organizationId: string, identityId: s
  * insert takes, so the two never deadlock; Organization deletion's
  * exclusive lock excludes it.
  */
-async function lockOrganization(db: Querier, organizationId: string): Promise<void> {
+async function lockOrganization(db: Querier, organizationId: string, duringIncidentFreeze?: FreezeException): Promise<void> {
   // The writer protocol's Organization lock and liveness, freeze included
   // (ADR-0051): no membership changes while the Organization is being deleted.
-  await lockLiveScope(db, { organizationId });
+  await lockLiveScope(db, { organizationId, duringIncidentFreeze });
 }
 
 /**
@@ -386,7 +386,8 @@ export async function removeMember(
 ): Promise<RemovalResult> {
   const left = actor.id === identityId;
   return withSerializableTx(ctx.db, async (db) => {
-    await lockOrganization(db, organizationId);
+    // Removal only takes authority away: recovery while frozen (ADR-0055).
+    await lockOrganization(db, organizationId, "recovery");
     if (!left) await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
@@ -500,7 +501,9 @@ export async function changeMemberRole(
   actor: Actor,
 ): Promise<{ identityId: string; role: OrgRole; previousRole: OrgRole }> {
   return withSerializableTx(ctx.db, async (db) => {
-    await lockOrganization(db, organizationId);
+    // Demotion only takes authority away: recovery while frozen (ADR-0055);
+    // promotion is refused then.
+    await lockOrganization(db, organizationId, role === "member" ? "recovery" : undefined);
     await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");

@@ -47,7 +47,12 @@ const LEASE_TTL_SECONDS = 300; // far above the 10s per-request timeout (§4)
 const RUN_BUDGET_SECONDS = 240;
 /** The send check's one query: the Target's generation, and whether the run is within its deadline. Exported for tests. */
 export const SEND_CHECK_SQL =
-  "SELECT t.generation, (r.deadline > now()) AS within FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2 WHERE t.id = $1";
+  "SELECT t.generation, (r.deadline > now()) AS within, " +
+  // The incident freeze (ADR-0055 Decision 4): a running run stops at its next send check.
+  "EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL) AS frozen " +
+  "FROM sync_targets t LEFT JOIN sync_runs r ON r.target_id = t.id AND r.generation = $2 WHERE t.id = $1";
+/** A Target's Organization is not frozen for an incident (ADR-0055 Decision 4): SQL over sync_targets aliased t. */
+const NOT_FROZEN = "NOT EXISTS (SELECT 1 FROM organization_freezes f WHERE f.organization_id = t.organization_id AND f.lifted_at IS NULL)";
 const BASE_BACKOFF_MS = 30_000;
 const MAX_BACKOFF_MS = 3_600_000;
 const FAILURE_BUDGET = 10;
@@ -215,7 +220,7 @@ export async function runSyncOnce(ctx: AppCtx, opts: SyncRunOptions = {}): Promi
       `SELECT t.id
        FROM sync_targets t
        JOIN organizations o ON o.id = t.organization_id
-       WHERE t.revoked_at IS NULL AND t.state = 'active' AND o.deleted_at IS NULL
+       WHERE t.revoked_at IS NULL AND t.state = 'active' AND o.deleted_at IS NULL AND ${NOT_FROZEN}
          AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= now())
          AND (t.needs_sync OR t.last_repair_at IS NULL
               OR t.last_repair_at < now() - ($1 * interval '1 millisecond'))
@@ -248,11 +253,14 @@ export async function reconcileTarget(
   // run ever holds a lease without a row (ADR-0050 Decision 5).
   const lease = await ctx.db.query(
     `WITH lease AS (
-       UPDATE sync_targets
+       UPDATE sync_targets t
        SET generation = generation + 1, lease_expires_at = now() + ($2 * interval '1 second'),
            needs_sync = false, last_attempt_at = now()
        WHERE id = $1 AND revoked_at IS NULL AND state = 'active'
          AND (lease_expires_at IS NULL OR lease_expires_at < now())
+         -- No lease while the Organization is frozen for an incident
+         -- (ADR-0055): the Target keeps its state, and the lift resumes it.
+         AND ${NOT_FROZEN}
        RETURNING ${TARGET_COLUMNS}, generation
      ), run AS (
        INSERT INTO sync_runs (target_id, generation, deadline)
@@ -362,26 +370,31 @@ export async function reconcileTarget(
       // successor appearing between the check and the update.
       let fenced = true;
       let outOfBudget = false;
+      let frozen = false;
       try {
         // The deadline from the run's row while it exists, else the one this
         // run was given: another process's tick may have removed the row.
         const res = await ctx.db.query(
           `SELECT t.generation,
                   COALESCE((SELECT r.deadline FROM sync_runs r WHERE r.target_id = t.id AND r.generation = $3), $2::timestamptz) <= now()
-                    AS expired
+                    AS expired,
+                  NOT ${NOT_FROZEN} AS frozen
            FROM sync_targets t WHERE t.id = $1`,
           [target.id, runDeadline, generation],
         );
-        const row = res.rows[0] as { generation: string | number; expired: boolean } | undefined;
+        const row = res.rows[0] as { generation: string | number; expired: boolean; frozen: boolean } | undefined;
         fenced = row !== undefined && Number(row.generation) !== generation;
         outOfBudget = row !== undefined && !fenced && row.expired === true;
+        frozen = row !== undefined && !fenced && row.frozen === true;
       } catch {
         fenced = false; // cannot confirm a successor: reschedule, guarded
       }
-      if (outOfBudget) {
+      if (outOfBudget || frozen) {
         // The run used up its budget: a yield, not a failure (ADR-0050
         // Decision 4). What it confirmed stays confirmed; the Target is
-        // picked up again on the next tick.
+        // picked up again on the next tick. A run stopped by an incident
+        // freeze yields the same way, and the Target is picked up again
+        // after the lift (ADR-0055 Decision 4).
         await ctx.db
           .query("UPDATE sync_targets SET needs_sync = true WHERE id = $1 AND generation = $2", [target.id, generation])
           .catch((e) => console.error("sync yield bookkeeping failed:", e));
@@ -1069,8 +1082,8 @@ async function adapterRequest(
           shouldAbort: async (): Promise<boolean> => {
             try {
               const res = await ctx.db.query(SEND_CHECK_SQL, [target.id, generation]);
-              const row = res.rows[0] as { generation: string | number; within: boolean | null } | undefined;
-              return !row || Number(row.generation) !== generation || row.within !== true;
+              const row = res.rows[0] as { generation: string | number; within: boolean | null; frozen: boolean } | undefined;
+              return !row || Number(row.generation) !== generation || row.within !== true || row.frozen !== false;
             } catch {
               return true;
             }

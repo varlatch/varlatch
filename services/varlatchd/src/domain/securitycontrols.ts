@@ -7,7 +7,7 @@ import { closeOpenApprovals } from "./approvals.js";
 import { lockPerson } from "./personlocks.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, openFreeze } from "./liveness.js";
 
 /**
  * Security Controls (ADR-0054 Decisions 1, 2 and 10): per Organization,
@@ -202,7 +202,7 @@ export async function changeControl(
     throw new DomainError("VALIDATION_FAILED", "config: 0 < defaultTtlSeconds <= maxTtlSeconds");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: input.organizationId, organizationMode: "update" });
+    await lockLiveScope(db, { organizationId: input.organizationId, organizationMode: "update", duringIncidentFreeze: "recovery" });
     await input.authorizeIn(db);
     const current = await readControl(db, input.organizationId, input.control);
     if (current.version !== input.expectedVersion) {
@@ -284,6 +284,8 @@ export interface ResetOutcome {
   organization: { id: string; slug: string };
   reset: { control: SecurityControlName; from: ControlMode; version: number }[];
   approvalsClosed: number;
+  /** The reset never lifts an incident freeze (ADR-0055 Decision 2): whether one is still open. */
+  stillFrozen: boolean;
 }
 
 /**
@@ -306,7 +308,8 @@ export async function resetControls(
       [input.organization],
     )).rows[0] as { id: string; slug: string } | undefined;
     if (!org) throw new DomainError("RESOURCE_NOT_FOUND", `No live Organization ${input.organization}`);
-    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true });
+    // A control change is recovery while frozen (ADR-0055); the reset never lifts a freeze.
+    await lockLiveScope(db, { organizationId: org.id, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "recovery" });
     const reset: ResetOutcome["reset"] = [];
     const events = [];
     const approvalsClosed = await closeOpenApprovals(db, { organizationId: org.id, reason: "reset", controls });
@@ -341,7 +344,7 @@ export async function resetControls(
         },
       });
     }
-    return { organization: org, reset, approvalsClosed };
+    return { organization: org, reset, approvalsClosed, stillFrozen: (await openFreeze(db, org.id)) !== null };
   });
 }
 
@@ -379,5 +382,8 @@ export function resetReportLines(outcome: ResetOutcome): string[] {
     ...outcome.reset.map((r) => `  ${r.control}: ${r.from === "off" ? "already off" : `${r.from} -> off (version ${r.version})`}`),
     `Open approvals closed: ${outcome.approvalsClosed}.`,
     "Deletion, suspended identities, passkeys and Grants were not touched. Recorded as security_control.reset.",
+    ...(outcome.stillFrozen
+      ? [`${outcome.organization.slug} is still frozen for an incident: a reset never lifts a freeze. Lift it with an approval, or with varlatchd admin unfreeze.`]
+      : []),
   ];
 }

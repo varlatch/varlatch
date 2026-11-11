@@ -9,7 +9,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { closeOpenApprovals } from "./approvals.js";
 import { lockPeople } from "./personlocks.js";
-import { lockLiveScope, openDeletion } from "./liveness.js";
+import { lockLiveScope, openDeletion, openFreeze } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { endMembership } from "./members.js";
 import { lockedQuery } from "../db/locks.js";
@@ -226,8 +226,10 @@ export async function cancelDeletion(
 ): Promise<DeletionView> {
   return withTx(ctx.db, async (db) => {
     // The Organization row, then the request: the worker's order, so a
-    // cancel and a run are serialized.
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true });
+    // cancel and a run are serialized. Cancelling is recovery while frozen
+    // for an incident (ADR-0055 Decision 7); scheduling and approving are
+    // refused then.
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "recovery" });
     await requestRow(db, deletionId, organizationId);
     await requireLiveAdmin(db, organizationId, actor);
     const updated = await db.query(
@@ -291,6 +293,10 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       )
     ).rows[0] as Record<string, unknown> | undefined;
     if (!request) return null;
+    // An Organization frozen for an incident waits for the lift (ADR-0055
+    // Decision 7): read after the claim, under the Organization row, which
+    // a freeze writes under FOR UPDATE.
+    if (await openFreeze(db, organizationId)) return null;
     if (request.approval_required) {
       if (!request.approved_by) return null;
       // The approver must still be an enabled, live admin when it runs.
