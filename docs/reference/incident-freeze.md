@@ -58,10 +58,12 @@ before: they learn nothing about the freeze.
 - **The audit log.** Every event is still recorded; members with
   `audit.read` can read and export it; webhooks keep delivering it.
 - **Reading what you need to find what to revoke**, never a value: the
-  organization and its freeze; members and invitations; machine identities,
-  their credentials, OIDC bindings and reach; grants, roles, groups, teams
-  and Requirements; Capabilities, Sync Targets, Connections and webhooks as
-  lists; the Security page.
+  organization and its freeze; Projects and environments (names, tiers,
+  which Contract revision is active), never a Contract's items, defaults or
+  values; members and invitations; machine identities, their credentials,
+  OIDC bindings and reach; grants, roles, groups, teams and Requirements;
+  Capabilities, Sync Targets, Connections and webhooks as lists; the
+  Security page.
 - **Taking authority away**: revoking a credential, a Capability, a grant,
   an OIDC binding or an invitation; retiring a machine identity; removing
   a member or making an admin a member; pausing a Sync Target; revoking a
@@ -71,6 +73,12 @@ before: they learn nothing about the freeze.
 
 None of these changes who may do what: each still needs its own
 permission and any approval it asks for.
+
+In the dashboard, every page of a frozen organization shows a banner. The
+Security, Access, Audit, Settings and Connections pages keep working for
+what is still allowed; Connections lists and revokes, without the GitHub
+App, new connections or credential changes. The other pages show only the
+banner.
 
 ## What was already running
 
@@ -120,7 +128,8 @@ freeze: a credential revoked while frozen stays revoked.
 
 - **Dashboard**: the Security page shows who froze the organization, when
   and why, and "Lift freeze". The confirmation lists the Sync Targets that
-  will resume pushing; then approve with your passkey.
+  will resume pushing (to people who may manage Sync Targets; others see
+  that they resume, not which); then approve with your passkey.
 - **CLI**:
 
   ```sh
@@ -177,7 +186,9 @@ credentials that keep trying are evidence.
 ## API
 
 - `GET /v1/organizations/{org}/incident-freeze`: the open freeze or `null`,
-  the Sync Targets that resume on the lift, and the last freezes.
+  the Sync Targets that resume on the lift (`null` without
+  `config.sync.manage`), and the last freezes. Readable with
+  `organization.read`.
 - `POST /v1/organizations/{org}/incident-freeze` with `{ "reason" }`.
 - `POST /v1/organizations/{org}/incident-freeze/{freeze}/lift`: answers
   `403` with `STEP_UP_REQUIRED` and the approval in
