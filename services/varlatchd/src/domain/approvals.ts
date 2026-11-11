@@ -120,6 +120,14 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *     11 (counter rows SKIP LOCKED in key order, then audit).
  *   Organization deletion's finalization deletes the Organization's
  *     counter rows after its domain rows and before its audit.
+ *   Ending a Better Auth session (any DELETE of session rows: sign-out,
+ *     Better Auth's revoke and expiry paths, the public-URL change): 6 by
+ *     the delete, then migration 43's trigger takes the sessions' live
+ *     browser credentials, 7 in id order, then 11 (their audit). (The
+ *     trigger's own comment calls the audit step 8, the numbering before
+ *     amendment E.)
+ *   Issuing a browser bearer (/auth/varlatch-token): 2 KEY SHARE, 6 KEY
+ *     SHARE (the session must still exist), the credential insert, 11.
  */
 
 export const APPROVALS = {
@@ -560,7 +568,7 @@ export async function consumeApproval(
     throw approvalInvalid(sameRequest && row.expected_version !== binding.expectedVersion ? "stale" : "mismatch", approvalId);
   }
   // A dashboard intent needs its Better Auth session alive: it exists (sign
-  // out deletes it, without revoking the browser bearers minted from it),
+  // out deletes it, which also revokes its browser bearers, migration 43),
   // it has not expired, and it is the requesting person's. Taken FOR KEY
   // SHARE, the weakest lock that conflicts with a DELETE: a sign-out in
   // flight either committed first (no row: refused) or waits for this

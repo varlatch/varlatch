@@ -358,6 +358,14 @@ varlatch login --server https://vault.example.com --wait    # after you approved
 `varlatch status` shows where you are signed in and when the credential
 expires.
 
+Signing out of the dashboard ends the browser's access at once: the
+short-lived tokens the dashboard took from that browser session stop
+working immediately, and so do those of a session you end from another
+browser. The CLI sign-in is a credential of its own (12 hours by default,
+`--ttl` to shorten it): signing out of the browser you signed in with does
+not end it. Run `varlatch logout`, or revoke it under your account's
+**Active sessions** in the dashboard.
+
 ## Your passkeys
 
 Your passkeys are listed in the dashboard under your account, then

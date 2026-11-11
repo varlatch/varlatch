@@ -412,12 +412,17 @@ export async function completePublicUrlChange(
     await lockAllPeopleAndPasskeys(db);
     const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
     await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM "session" ORDER BY id FOR UPDATE`);
-    const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
     // The dashboard's bearer tokens were minted from those sessions. CLI,
     // agent, and machine credentials hold no address and keep working.
+    // Revoked before the sessions are deleted: deleting a session revokes
+    // its browser credentials and audits that at once (migration 43), and
+    // here every credential is locked before the first audit insert. So the
+    // delete finds none left to revoke, and each is recorded once, with
+    // this reason.
     const live = `kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`;
     await lockedQuery(db, { table: "credentials", mode: "update" }, `SELECT id FROM credentials WHERE ${live} ORDER BY id FOR UPDATE`);
     const browser = await db.query(`UPDATE credentials SET revoked_at = now() WHERE ${live} RETURNING id, identity_id`);
+    const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
     // One line per credential, as every other revocation path writes.
     for (const c of browser.rows as { id: string; identity_id: string }[]) {
       await recordAuditEvent(db, {
