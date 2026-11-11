@@ -313,13 +313,90 @@ export function takeLockViolations(): LockViolation[] {
 const LOCKING = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b(\s+OF\s+[\w"]+(?:\s*,\s*[\w"]+)*)?/gi;
 const MODE_OF: Record<string, string> = { "no-key-update": "no key update", "key-share": "key share", share: "share", update: "update" };
 
-/** The statement text without comments, string literals and dollar-quoted bodies. */
+/**
+ * A SQL-aware scan of a statement text: comments (line comments and nested block comments)
+ * become a space, and their text is collected (lock tags live there);
+ * string literals ('…' with '' escapes, E'…' with backslash escapes too)
+ * and dollar-quoted bodies become an empty literal; double-quoted
+ * identifiers stay, with any character in them that could read as syntax
+ * replaced. What is left can be split on `;` and searched for keywords.
+ */
+export function scanSql(sql: string): { bare: string; comments: string[] } {
+  let bare = "";
+  const comments: string[] = [];
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i]!;
+    const next = sql[i + 1];
+    if (c === "-" && next === "-") {
+      const end = sql.indexOf("\n", i);
+      comments.push(sql.slice(i, end < 0 ? n : end));
+      i = end < 0 ? n : end;
+      bare += " ";
+    } else if (c === "/" && next === "*") {
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (sql[j] === "/" && sql[j + 1] === "*") {
+          depth++;
+          j += 2;
+        } else if (sql[j] === "*" && sql[j + 1] === "/") {
+          depth--;
+          j += 2;
+        } else j++;
+      }
+      comments.push(sql.slice(i, j));
+      i = j;
+      bare += " ";
+    } else if (c === "'") {
+      // An E'…' string (the E right before the quote, not part of a word) also takes backslash escapes.
+      const escaped = /[eE]/.test(bare.slice(-1)) && !/\w/.test(bare.slice(-2, -1));
+      if (escaped) bare = bare.slice(0, -1);
+      let j = i + 1;
+      while (j < n) {
+        if (escaped && sql[j] === "\\") j += 2;
+        else if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
+        else if (sql[j] === "'") break;
+        else j++;
+      }
+      i = j + 1;
+      bare += "''";
+    } else if (c === '"') {
+      let j = i + 1;
+      let name = "";
+      while (j < n) {
+        if (sql[j] === '"' && sql[j + 1] === '"') {
+          name += "_";
+          j += 2;
+        } else if (sql[j] === '"') break;
+        else {
+          name += /[\w.]/.test(sql[j]!) ? sql[j] : "_";
+          j++;
+        }
+      }
+      i = j + 1;
+      bare += `"${name}"`;
+    } else if (c === "$" && !/\w/.test(bare.slice(-1))) {
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+      if (!tag) {
+        bare += c;
+        i++;
+        continue;
+      }
+      const end = sql.indexOf(tag[0], i + tag[0].length);
+      i = end < 0 ? n : end + tag[0].length;
+      bare += "''";
+    } else {
+      bare += c;
+      i++;
+    }
+  }
+  return { bare, comments };
+}
+
 function bareSql(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--[^\n]*/g, " ")
-    .replace(/'(?:[^']|'')*'/g, "''")
-    .replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, " ");
+  return scanSql(sql).bare;
 }
 
 /** The statements of a (possibly compound) SQL text. */
@@ -341,7 +418,31 @@ function flatten(text: string): string {
   return out;
 }
 
-const NOT_ALIAS = new Set(["on", "where", "join", "left", "right", "inner", "outer", "full", "cross", "natural", "order", "group", "limit", "for", "using", "set", "having", "union", "window", "offset", "lateral"]);
+const CLAUSE_END = /\b(?:WHERE|GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET|FETCH|FOR\s+(?:NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)|WINDOW|UNION|INTERSECT|EXCEPT|RETURNING)\b/i;
+const ITEM_SEPARATOR = /,|\b(?:(?:LEFT|RIGHT|FULL|INNER|CROSS|NATURAL)\s+)*(?:OUTER\s+)?JOIN\b/i;
+const NOT_ALIAS = new Set(["on", "using", "lateral", "tablesample"]);
+
+/**
+ * The FROM items of one query level (parentheses already removed): every
+ * comma-separated item and every JOIN, each a relation and its alias.
+ */
+function fromItems(level: string): { table: string; alias: string | null }[] {
+  const from = /\bFROM\b/i.exec(level);
+  if (!from) return [];
+  let text = level.slice(from.index + from[0].length);
+  const end = CLAUSE_END.exec(text);
+  if (end) text = text.slice(0, end.index);
+  return text
+    .split(new RegExp(ITEM_SEPARATOR.source, "gi"))
+    .map((item) => item.replace(/\s+(?:ON|USING)\b[\s\S]*$/i, "").trim())
+    .filter(Boolean)
+    .map((item) => {
+      const m = /^(?:LATERAL\s+|ONLY\s+)?((?:"[^"]*"|\w+)(?:\.(?:"[^"]*"|\w+))?)(?:\s+(?:AS\s+)?(\w+))?/i.exec(item);
+      if (!m) throw new Error(`lock trace: cannot read the FROM item "${item}"`);
+      const alias = m[2]?.toLowerCase() ?? null;
+      return { table: relationName(m[1]!), alias: alias && !NOT_ALIAS.has(alias) ? alias : null };
+    });
+}
 
 /**
  * The locking clauses of a statement and, for each, the relations it locks:
@@ -374,12 +475,11 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
     const level = flatten(bare.slice(start, end));
     const aliases = new Map<string, string>();
     const items: string[] = [];
-    for (const item of level.matchAll(/\b(?:FROM|JOIN)\s+((?:"[^"]+"|\w+)(?:\.(?:"[^"]+"|\w+))?)(?:\s+(?:AS\s+)?(\w+))?/gi)) {
-      const table = relationName(item[1]!);
-      items.push(table);
-      aliases.set(table, table);
-      const alias = item[2]?.toLowerCase();
-      if (alias && !NOT_ALIAS.has(alias)) aliases.set(alias, table);
+    for (const item of fromItems(level)) {
+      items.push(item.table);
+      // An aliased item is named by its alias only, as in PostgreSQL.
+      if (item.alias) aliases.set(item.alias, item.table);
+      else aliases.set(item.table, item.table);
     }
     const of = m[2]?.replace(/^\s+OF\s+/i, "").split(",").map((a) => relationName(a.trim()));
     const relations = of
@@ -393,8 +493,10 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
   });
 }
 
+/** The lock tags of a statement: only from its comments, never from a string literal. */
 function tagsOf(sql: string): { table: string; mode: string; key: string }[] {
-  return [...sql.matchAll(LOCK_TAG)].map((m) => ({ table: m[1]!, mode: MODE_OF[m[2]!]!, key: m[3]! }));
+  return scanSql(sql).comments.flatMap((comment) =>
+    [...comment.matchAll(LOCK_TAG)].map((m) => ({ table: m[1]!, mode: MODE_OF[m[2]!]!, key: m[3]! })));
 }
 
 /**
