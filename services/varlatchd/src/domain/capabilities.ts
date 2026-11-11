@@ -277,7 +277,10 @@ export async function issueCapability(
   const expiresAt = new Date(Date.now() + input.ttlSeconds * 1000).toISOString();
 
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, projectId: project.id, environmentIds: [env.id] });
+    // The lock order (liveness.ts): the broker (broker_identity_id,
+    // created_by) and the agent at step 2, before the Project and the
+    // Environment.
+    await lockLiveScope(db, { organizationId: org.id, people: [brokerIdentityId, agent.id], projectId: project.id, environmentIds: [env.id] });
     await db.query(
       `INSERT INTO capabilities
          (id, organization_id, broker_identity_id, agent_identity_id, project_id,

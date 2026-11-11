@@ -7,6 +7,7 @@ import {
   type PublicKeyCredentialRequestOptionsJSON,
 } from "@simplewebauthn/server";
 import type { Querier } from "../db/migrate.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * A fresh passkey assertion for one operation (device sign-in approval, a
@@ -147,7 +148,7 @@ export async function verifyAssertion(
   // the counter as committed now, the second is refused like a replay.
   // Better Auth's sign-in, which does not lock, waits for this lock at its
   // update, where migration 40 refuses a counter that does not increase.
-  const locked = (await db.query("SELECT counter FROM passkey WHERE id = $1 FOR UPDATE", [passkey.id])).rows[0] as
+  const locked = (await lockedQuery(db, { table: "passkey", mode: "update", key: "$1" }, "SELECT counter FROM passkey WHERE id = $1 FOR UPDATE", [passkey.id])).rows[0] as
     | { counter: number }
     | undefined;
   // Removed meanwhile.

@@ -24,7 +24,7 @@ import { lockLiveScope } from "./liveness.js";
  *
  * Concurrency: a change locks the Organization row FOR UPDATE and checks
  * the expected version. Every transaction here follows the lock order
- * written down at the top of approvals.ts (Organization, person, intent,
+ * written down at the top of liveness.ts (Organization, person, intent,
  * session, credential, then security_controls and audit). A protected operation takes the Organization row
  * FOR KEY SHARE (lockLiveScope's default for writes) and reads the mode
  * with controlMode inside its own transaction, after that lock, so a
@@ -223,6 +223,11 @@ export async function changeControl(
       return { control: current, changed: false, loosened: false };
     }
     const { changes, loosened } = classifyChange(current, next);
+    // Step 2 of the lock order (liveness.ts), before changed_by's foreign
+    // key references the person: FOR UPDATE when loosening consumes the
+    // person's approval (consumption takes no person lock of its own), FOR
+    // KEY SHARE otherwise.
+    await lockPerson(db, input.actorIdentityId, loosened.length > 0 ? "update" : "key share");
     let approval: UsedApproval | null = null;
     if (loosened.length > 0) {
       const org = (await db.query("SELECT name FROM organizations WHERE id = $1", [input.organizationId])).rows[0] as { name: string };
@@ -241,10 +246,6 @@ export async function changeControl(
           changes,
         },
       });
-    } else {
-      // Lock order 2 (approvals.ts) before changed_by's foreign key takes
-      // the person; consumption took it FOR UPDATE above when loosening.
-      await lockPerson(db, input.actorIdentityId, "key share");
     }
     await db.query(
       `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)

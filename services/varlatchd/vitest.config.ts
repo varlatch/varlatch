@@ -10,8 +10,9 @@ const maxWorkers = Math.max(1, Math.min(availableParallelism() - 1, Math.floor(f
 export default defineConfig({
   test: {
     globalSetup: ["test/helpers/pglite-snapshots.ts"],
-    // No test depends on the machine's DNS for the outbound policy (ADR-0057).
-    setupFiles: ["test/helpers/outbound-resolver.ts"],
+    // No test depends on the machine's DNS for the outbound policy (ADR-0057);
+    // a test whose transactions broke the lock order fails (lock-trace.ts).
+    setupFiles: ["test/helpers/outbound-resolver.ts", "test/helpers/lock-trace-setup.ts"],
     maxWorkers,
   },
 });

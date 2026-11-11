@@ -9,6 +9,7 @@ import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { pinLiveMembership } from "./orgs.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Roles, Groups, and Teams (ADR-0028): the reusable authorization constructs.
@@ -110,7 +111,9 @@ export async function updateRole(
   }
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId });
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "roles", mode: "update" },
       "SELECT id, name, actions, version, updated_at FROM roles WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE",
       [roleId, organizationId],
     );
@@ -252,7 +255,9 @@ export async function updateGroup(
   }
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId });
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "groups", mode: "update" },
       "SELECT id, name, kind, version, updated_at FROM groups WHERE id = $1 AND organization_id = $2 AND kind = $3 AND revoked_at IS NULL FOR UPDATE",
       [groupId, organizationId, kind],
     );
@@ -439,8 +444,9 @@ export async function addTeamProject(
   await requireGroup(ctx, organizationId, teamId, "team");
   await withTx(ctx.db, async (db) => {
     // A live Project of this Organization, locked so its deletion, which
-    // removes Teams' links, cannot miss this one (ADR-0051).
-    await lockLiveScope(db, { organizationId, projectId });
+    // removes Teams' links, cannot miss this one (ADR-0051); the actor at
+    // step 2 of the lock order (liveness.ts), before it.
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId });
     const added = await db.query(
       "INSERT INTO team_projects (team_id, project_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING team_id",
       [teamId, projectId],

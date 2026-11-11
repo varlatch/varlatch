@@ -8,6 +8,7 @@ import type { AppCtx } from "./ctx.js";
 import { lockLiveScope } from "./liveness.js";
 import { DomainError, notFound } from "./errors.js";
 import type { ProjectRow } from "./projects.js";
+import { lockedQuery } from "../db/locks.js";
 
 export interface EnvironmentRow {
   id: string;
@@ -49,9 +50,11 @@ export async function createEnvironment(
   actorIdentityId: string,
 ): Promise<EnvironmentRow> {
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): a live Organization and Project, then
-    // the live parent, before anything is inserted under them.
-    await lockLiveScope(db, { organizationId, projectId });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): a live
+    // Organization, the people the row references (the actor, the owner of
+    // a personal environment), the Project, then the live parent, before
+    // anything is inserted under them.
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, input.ownerIdentityId], projectId });
     const id = newId("environment");
     let tier: Tier;
     let kind: EnvironmentRow["kind"];
@@ -204,7 +207,13 @@ export async function deleteEnvironment(
   await withTx(ctx.db, async (db) => {
     // The Environment exclusively: writers in progress finish first, and
     // later ones (a new derived environment included) find it deleted.
-    await lockLiveScope(db, { organizationId, projectId: project.id, environmentIds: [env.id], environmentMode: "update" });
+    await lockLiveScope(db, {
+      organizationId,
+      people: [actorIdentityId],
+      projectId: project.id,
+      environmentIds: [env.id],
+      environmentMode: "update",
+    });
     const children = await db.query(
       "SELECT name FROM environments WHERE parent_environment_id = $1 AND deleted_at IS NULL",
       [env.id],
@@ -223,6 +232,20 @@ export async function deleteEnvironment(
       [env.id],
     );
     if (res.rows.length === 0) throw notFound("Environment");
+    // Step 10: its values, then its Capabilities, in id order, in the mode
+    // their updates take.
+    await lockedQuery(
+      db,
+      { table: "env_values", mode: "no key update" },
+      "SELECT id FROM env_values WHERE environment_id = $1 AND deleted_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+      [env.id],
+    );
+    await lockedQuery(
+      db,
+      { table: "capabilities", mode: "no key update" },
+      "SELECT id FROM capabilities WHERE environment_id = $1 AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+      [env.id],
+    );
     await db.query(
       "UPDATE env_values SET deleted_at = now(), current_version_id = NULL WHERE environment_id = $1 AND deleted_at IS NULL",
       [env.id],

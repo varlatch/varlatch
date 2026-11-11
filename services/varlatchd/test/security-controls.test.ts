@@ -13,6 +13,17 @@ import {
   type ApprovalBinding,
   type Requester,
 } from "../src/domain/approvals.js";
+
+/**
+ * Consumption as a protected operation does it: its requester locked FOR
+ * UPDATE at step 2 first (domain/liveness.ts); consumeApproval takes no
+ * person lock of its own, and the lock-order check holds it to that.
+ */
+const consumeAsOperation: typeof consumeApproval = async (db, key, requester, approvalId, binding) => {
+  await lockPerson(db, requester.identityId, "update");
+  return consumeApproval(db, key, requester, approvalId, binding);
+};
+import { lockPerson } from "../src/domain/personlocks.js";
 import { classifyChange, parseResetArgs, resetControls, resetReportLines } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
@@ -392,7 +403,7 @@ describe("loosening needs an approval", () => {
     const requester: Requester = {
       identityId: admin.id, identityKind: "human", credentialId: refreshed.credentialId, credentialKind: "browser", authSessionId: `session-${admin.id}`,
     };
-    await expect(withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, {
+    await expect(withTx(ctx.db, (db) => consumeAsOperation(db, ctx.rootKek, requester, approval.id, {
       operation: "security_control.change", organizationId: orgId, target: { control: "admin-step-up" },
       body: { mode: "off", config: null, expectedVersion: 1 }, query: {}, expectedVersion: 1, summary: { title: "", changes: [] },
     }))).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });
@@ -450,16 +461,16 @@ describe("loosening needs an approval", () => {
       summary: { title: "", changes: [] },
     };
     await expect(withTx(ctx.db, async (db) => {
-      expect((await consumeApproval(db, ctx.rootKek, requester, approval.id, binding)).id).toBe(approval.id);
+      expect((await consumeAsOperation(db, ctx.rootKek, requester, approval.id, binding)).id).toBe(approval.id);
       throw new Error("the mutation failed");
     })).rejects.toThrow("the mutation failed");
     expect((await call("GET", `/v1/me/approvals/${approval.id}`, admin.web)).body.state).toBe("approved");
     // Another query, though the same body, does not fit either.
-    await expect(withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, { ...binding, query: { force: "1" } })))
+    await expect(withTx(ctx.db, (db) => consumeAsOperation(db, ctx.rootKek, requester, approval.id, { ...binding, query: { force: "1" } })))
       .rejects.toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
     // Two consumptions of one approval: the second is refused.
-    await withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, binding));
-    await expect(withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, binding)))
+    await withTx(ctx.db, (db) => consumeAsOperation(db, ctx.rootKek, requester, approval.id, binding));
+    await expect(withTx(ctx.db, (db) => consumeAsOperation(db, ctx.rootKek, requester, approval.id, binding)))
       .rejects.toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "consumed" } });
   });
 
@@ -468,7 +479,7 @@ describe("loosening needs an approval", () => {
     expect((await approve(admin, approval.id)).status).toBe(200);
     const requester: Requester = { identityId: admin.id, identityKind: "human", credentialId: admin.cliId, credentialKind: "cli" };
     await ctx.db.query("UPDATE credentials SET revoked_at = now() WHERE id = $1", [admin.cliId]);
-    await expect(withTx(ctx.db, (db) => consumeApproval(db, ctx.rootKek, requester, approval.id, {
+    await expect(withTx(ctx.db, (db) => consumeAsOperation(db, ctx.rootKek, requester, approval.id, {
       operation: "security_control.change", organizationId: orgId, target: { control: "admin-step-up" },
       body: { mode: "off", config: null, expectedVersion: 1 }, query: {}, expectedVersion: 1, summary: { title: "", changes: [] },
     }))).rejects.toMatchObject({ code: "INVALID_CREDENTIAL" });

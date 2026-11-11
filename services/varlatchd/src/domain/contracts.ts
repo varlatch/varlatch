@@ -76,8 +76,9 @@ export async function pushRevision(
   // type exists at it (ADR-0042) runs on the second normalization.
   const pushed = normalizeOrReject(contractInput, { versionUndecided: !pinned });
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): a live Organization and Project.
-    await lockLiveScope(db, { organizationId, projectId });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): a live
+    // Organization, the actor (contract_revisions.created_by), the Project.
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId });
     let contract = pushed;
     if (!pinned) {
       const active = await db.query(
@@ -141,7 +142,7 @@ export async function activateRevision(
     // The Project is updated: locked so from the start (never upgraded), and
     // its active revision read under the lock, not from the route's copy, so
     // two concurrent activations each diff against what they replace.
-    await lockLiveScope(db, { organizationId, projectId: project.id, projectMode: "no key update" });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId: project.id, projectMode: "no key update" });
     const active = (
       (await db.query("SELECT active_contract_revision_id FROM projects WHERE id = $1", [project.id])).rows[0] as {
         active_contract_revision_id: string | null;

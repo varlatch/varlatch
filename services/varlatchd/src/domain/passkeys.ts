@@ -9,6 +9,7 @@ import type { ApprovalGate } from "./approvals.js";
 import { lockPerson, lockPersonPasskeys } from "./personlocks.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * A person's passkeys as approval keys (ADR-0054 Decision 4) and the
@@ -29,7 +30,7 @@ import { DomainError } from "./errors.js";
  *
  * Time is PostgreSQL's live clock, clock_timestamp(), read after the locks
  * are held, as in device sign-in. Confirmation and removal follow the lock
- * order written down at the top of approvals.ts: the person, their
+ * order written down at the top of liveness.ts: the person, their
  * passkeys, an approval intent, challenges, the session, the credential.
  */
 
@@ -94,9 +95,9 @@ const OWN_PASSKEYS = `
   SELECT p.id, p.name, p."deviceType", p."backedUp", p."createdAt",
          pp.trust, pp.trusted_via, pp.trusted_at, pp.setup_grant_kind, pp.confirmed_by_passkey_id
   FROM passkey p
-  JOIN auth_user_links l ON l.better_auth_user_id = p."userId"
-  LEFT JOIN passkey_provenance pp ON pp.passkey_id = p.id
-  WHERE l.identity_id = $1`;
+  LEFT JOIN passkey_provenance pp ON pp.passkey_id = p.id,
+  auth_user_links l
+  WHERE l.better_auth_user_id = p."userId" AND l.identity_id = $1`;
 
 /** The identity's passkeys with their provenance, oldest first. */
 export async function listOwnPasskeys(db: Querier, identityId: string): Promise<OwnPasskey[]> {
@@ -105,7 +106,10 @@ export async function listOwnPasskeys(db: Querier, identityId: string): Promise<
 }
 
 async function ownPasskey(db: Querier, identityId: string, passkeyId: string, lock = false): Promise<OwnPasskey | null> {
-  const res = await db.query(`${OWN_PASSKEYS} AND p.id = $2${lock ? " FOR UPDATE OF p" : ""}`, [identityId, passkeyId]);
+  const sql = `${OWN_PASSKEYS} AND p.id = $2`;
+  const res = lock
+    ? await lockedQuery(db, { table: "passkey", mode: "update" }, `${sql} FOR UPDATE OF p`, [identityId, passkeyId])
+    : await db.query(sql, [identityId, passkeyId]);
   const row = res.rows[0] as PasskeyRow | undefined;
   return row ? toOwnPasskey(row) : null;
 }
@@ -228,7 +232,7 @@ export async function issueConfirmationChallenge(
   input: { identityId: string; authSessionId: string; passkeyId: string },
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
   return withTx(ctx.db, async (db) => {
-    // Lock order (approvals.ts): the person, which serializes this person's
+    // Lock order (liveness.ts): the person, which serializes this person's
     // confirmations, approvals and removals, then the target passkey, before
     // the challenge's insert references both.
     await lockPerson(db, input.identityId, "update");
@@ -289,13 +293,15 @@ export async function confirmPasskey(
 ): Promise<OwnPasskey> {
   const challenge = assertionChallenge(input.assertion);
   const outcome = await withTx(ctx.db, async (db) => {
-    // Lock order (approvals.ts): the person, all of their passkeys (the
+    // Lock order (liveness.ts): the person, all of their passkeys (the
     // assertion advances one's counter, and provenance references the
     // target), then the confirmation challenge.
     await lockPerson(db, input.identityId, "update");
     await lockPersonPasskeys(db, input.identityId);
     const bound = challenge
-      ? ((await db.query(
+      ? ((await lockedQuery(
+          db,
+          { table: "passkey_confirmation_challenges", mode: "update" },
           `SELECT id FROM passkey_confirmation_challenges
            WHERE challenge = $1 AND identity_id = $2 AND auth_session_id = $3 AND target_passkey_id = $4
            FOR UPDATE`,
@@ -401,7 +407,8 @@ export async function removeOwnPasskey(
   input: { identityId: string; passkeyId: string },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    // Lock order (approvals.ts): the person, the target passkey, then
+    // Lock order (liveness.ts): the person (step 2, FOR UPDATE: consumption
+    // takes no person lock of its own), the target passkey, then
     // consumption's intent, session and credential.
     await lockPerson(db, input.identityId, "update");
     const passkey = await ownPasskey(db, input.identityId, input.passkeyId, true);

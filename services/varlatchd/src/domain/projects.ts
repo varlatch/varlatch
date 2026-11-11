@@ -6,6 +6,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
+import { lockedQuery } from "../db/locks.js";
 
 export interface ProjectRow {
   id: string;
@@ -73,7 +74,7 @@ export async function renameProject(
     throw new DomainError("VALIDATION_FAILED", "Invalid project name");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, projectId, projectMode: "no key update" });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId, projectMode: "no key update" });
     const prev = await db.query(
       "SELECT slug, name FROM projects WHERE organization_id = $1 AND id = $2",
       [organizationId, projectId],
@@ -139,9 +140,12 @@ export interface ProjectDeletion {
  * Teams' links to it. Contract Revisions stay with the tombstone, and audit
  * events keep their IDs and names. The audit event comes last.
  *
- * Under the writer protocol: the Organization only checked, the Project
- * exclusively, so writers in progress finish first and later ones find it
- * deleted; then every environment, and every Target, in ID order.
+ * Under the writer protocol, in the lock order (liveness.ts): the
+ * Organization only checked, the actor, the Project exclusively, so writers
+ * in progress finish first and later ones find it deleted; then every
+ * environment; then its values and their versions, its Targets, its
+ * Capabilities and its Team links, each in key order, before any of them
+ * is updated; the audit event last.
  */
 export async function deleteProject(
   ctx: AppCtx,
@@ -150,15 +154,43 @@ export async function deleteProject(
   actorIdentityId: string,
 ): Promise<ProjectDeletion> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, projectId, projectMode: "update" });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId, projectMode: "update" });
     const project = (await db.query("SELECT slug, name FROM projects WHERE id = $1", [projectId])).rows[0] as { slug: string; name: string };
     const envs = (
-      await db.query("SELECT id, deleted_at FROM environments WHERE project_id = $1 ORDER BY id FOR UPDATE", [projectId])
+      await lockedQuery(db, { table: "environments", mode: "update" }, "SELECT id, deleted_at FROM environments WHERE project_id = $1 ORDER BY id FOR UPDATE", [projectId])
     ).rows as { id: string; deleted_at: string | null }[];
     const envIds = envs.map((e) => e.id);
+    // Step 10: values, then Targets, then the other domain rows, each in
+    // key order and in the mode its update or deletion below takes.
+    await lockedQuery(
+      db,
+      { table: "env_values", mode: "no key update" },
+      "SELECT id FROM env_values WHERE environment_id = ANY($1) ORDER BY id FOR NO KEY UPDATE",
+      [envIds],
+    );
+    await lockedQuery(
+      db,
+      { table: "value_versions", mode: "no key update" },
+      `SELECT id FROM value_versions
+       WHERE erased_at IS NULL AND value_id IN (SELECT id FROM env_values WHERE environment_id = ANY($1))
+       ORDER BY id FOR NO KEY UPDATE`,
+      [envIds],
+    );
     const targets = (
-      await db.query("SELECT id FROM sync_targets WHERE project_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [projectId])
+      await lockedQuery(db, { table: "sync_targets", mode: "update" }, "SELECT id FROM sync_targets WHERE project_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [projectId])
     ).rows as { id: string }[];
+    await lockedQuery(
+      db,
+      { table: "capabilities", mode: "no key update" },
+      "SELECT id FROM capabilities WHERE environment_id = ANY($1) AND revoked_at IS NULL ORDER BY id FOR NO KEY UPDATE",
+      [envIds],
+    );
+    await lockedQuery(
+      db,
+      { table: "team_projects", mode: "update", key: "lock_key" },
+      "SELECT concat_ws('|', team_id::text, project_id::text) AS lock_key FROM team_projects WHERE project_id = $1 ORDER BY team_id FOR UPDATE",
+      [projectId],
+    );
 
     // Derived environments first, then roots: an order of updates only.
     await db.query(

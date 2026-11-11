@@ -12,6 +12,7 @@ import { DomainError } from "./errors.js";
 import { pinLiveMembership } from "./orgs.js";
 import { lockLiveScope } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Installation lifecycle, bootstrap, and break-glass (ADR-0010/0019/0020).
@@ -299,13 +300,16 @@ export async function issueReenrollmentGrants(
     throw new DomainError("VALIDATION_FAILED", `Link lifetime must be more than 0 and at most ${REENROLL_TTL_MAX_HOURS} hours`);
   }
   return withTx(ctx.db, async (db) => {
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "identities", mode: "no key update" },
       // FOR NO KEY UPDATE: two issuances for the same person serialize, so
       // at most one link per person stays live. It changes no key, so it
       // does not block the key-share locks of inserts that reference these
       // identities (the exposure backfill takes them in another order).
       // Taken in id order, as every transaction locking several people does
-      // (approvals.ts lock order, step 2); the links are listed admins first.
+      // (the lock order, domain/liveness.ts, step 2); the links are listed
+      // admins first.
       `SELECT id, name, installation_admin, kind, disabled, created_at FROM identities
         WHERE ${input.identityIds === "all" ? "kind = 'human' AND NOT disabled" : "id = ANY($1)"}
         ORDER BY id FOR NO KEY UPDATE`,
@@ -392,7 +396,7 @@ export async function completePublicUrlChange(
     // Once per move: after the first run the recorded address is the new
     // one, so a rerun (or a --from typo) after people re-enrolled at the new
     // address removes nothing.
-    const inst = await db.query("SELECT id, public_url FROM installation LIMIT 1 FOR UPDATE");
+    const inst = await lockedQuery(db, { table: "installation", mode: "update" }, "SELECT id, public_url FROM installation LIMIT 1 FOR UPDATE");
     const recorded = (inst.rows[0] as { public_url: string | null } | undefined)?.public_url ?? null;
     if (recorded === to) {
       throw new DomainError("VALIDATION_FAILED", `The passkeys of ${from} were already removed when the installation moved to ${to}`);
@@ -400,14 +404,14 @@ export async function completePublicUrlChange(
     if (recorded !== null && recorded !== from) {
       throw new DomainError("VALIDATION_FAILED", `The installation last moved to ${recorded}, not ${from}: check --from`);
     }
-    // The lock order of approvals.ts: the people (2) and their passkeys (3)
+    // The lock order (liveness.ts): the people (2) and their passkeys (3)
     // in id order, then the sessions (6) and the browser credentials (7) in
     // id order, before the bulk statements touch them. A bulk DELETE alone
     // locks rows in the order it scans them, against an approval or a
     // confirmation that holds a person and takes their passkeys in id order.
     await lockAllPeopleAndPasskeys(db);
     const passkeys = await db.query(`DELETE FROM "passkey" RETURNING id`);
-    await db.query(`SELECT id FROM "session" ORDER BY id FOR UPDATE`);
+    await lockedQuery(db, { table: "session", mode: "update" }, `SELECT id FROM session ORDER BY id FOR UPDATE`);
     // The dashboard's bearer tokens were minted from those sessions. CLI,
     // agent, and machine credentials hold no address and keep working.
     // Revoked before the sessions are deleted: deleting a session revokes
@@ -416,7 +420,7 @@ export async function completePublicUrlChange(
     // delete finds none left to revoke, and each is recorded once, with
     // this reason.
     const live = `kind = 'browser' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > now())`;
-    await db.query(`SELECT id FROM credentials WHERE ${live} ORDER BY id FOR UPDATE`);
+    await lockedQuery(db, { table: "credentials", mode: "update" }, `SELECT id FROM credentials WHERE ${live} ORDER BY id FOR UPDATE`);
     const browser = await db.query(`UPDATE credentials SET revoked_at = now() WHERE ${live} RETURNING id, identity_id`);
     const sessions = await db.query(`DELETE FROM "session" RETURNING id`);
     // One line per credential, as every other revocation path writes.
@@ -514,7 +518,7 @@ export async function consumeSetupGrant(
         throw err;
       }
     }
-    const res = await db.query("SELECT * FROM setup_grants WHERE token_hash = $1 FOR UPDATE", [
+    const res = await lockedQuery(db, { table: "setup_grants", mode: "update" }, "SELECT * FROM setup_grants WHERE token_hash = $1 FOR UPDATE", [
       hashToken(token),
     ]);
     const grant = res.rows[0] as

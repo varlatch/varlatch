@@ -12,6 +12,7 @@ import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { endMembership } from "./members.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Deleting an Organization (ADR-0051 Decisions 4 to 8): a request with a
@@ -65,7 +66,7 @@ async function requireLiveAdmin(db: Querier, organizationId: string, actor: { id
 
 async function requestRow(db: Querier, deletionId: string, organizationId: string): Promise<Record<string, unknown>> {
   const row = (
-    await db.query("SELECT * FROM organization_deletions WHERE id = $1 AND organization_id = $2 FOR UPDATE", [deletionId, organizationId])
+    await lockedQuery(db, { table: "organization_deletions", mode: "update" }, "SELECT * FROM organization_deletions WHERE id = $1 AND organization_id = $2 FOR UPDATE", [deletionId, organizationId])
   ).rows[0] as Record<string, unknown> | undefined;
   if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Deletion request not found");
   if (row.cancelled_at || row.completed_at) {
@@ -124,8 +125,7 @@ export async function scheduleDeletion(
        VALUES ($1, $2, $3, now() + ($4 * interval '1 day'), $5) RETURNING *`,
       [id, organizationId, actor.id, days, admins > 1],
     );
-    const targets = await db.query(
-      "SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL AND state = 'active' ORDER BY id FOR UPDATE",
+    const targets = await lockedQuery(db, { table: "sync_targets", mode: "update" }, "SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL AND state = 'active' ORDER BY id FOR UPDATE",
       [organizationId],
     );
     const targetIds = (targets.rows as { id: string }[]).map((r) => r.id);
@@ -279,15 +279,13 @@ export interface FinalizeOutcome {
 export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organizationId: string): Promise<FinalizeOutcome | null> {
   return withTx(ctx.db, async (db) => {
     // Claim: the Organization row (another process may hold it), then the request.
-    const org = await db.query(
-      "SELECT id, slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE SKIP LOCKED",
+    const org = await lockedQuery(db, { table: "organizations", mode: "update" }, "SELECT id, slug, name FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR UPDATE SKIP LOCKED",
       [organizationId],
     );
     const orgRow = org.rows[0] as { id: string; slug: string; name: string } | undefined;
     if (!orgRow) return null;
     const request = (
-      await db.query(
-        `SELECT * FROM organization_deletions WHERE id = $1 AND organization_id = $2
+      await lockedQuery(db, { table: "organization_deletions", mode: "update" }, `SELECT * FROM organization_deletions WHERE id = $1 AND organization_id = $2
            AND cancelled_at IS NULL AND completed_at IS NULL AND run_after <= now() FOR UPDATE`,
         [deletionId, organizationId],
       )
@@ -311,7 +309,7 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     // it writes, the requester as their actor, the owners of the open
     // approvals it closes), FOR KEY SHARE in id order, after the
     // Organization and before the first such write: the lock order of
-    // approvals.ts, step 2. Inserting them one by one would take them in
+    // domain/liveness.ts, step 2. Inserting them one by one would take them in
     // whatever order the writes come, against transactions that lock people
     // in id order.
     const referenced = (
@@ -381,9 +379,19 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
       "UPDATE projects SET deleted_at = now() WHERE organization_id = $1 AND deleted_at IS NULL RETURNING id",
       [organizationId],
     );
+    // The same rows, in the same modes, as one statement locking the join
+    // took: the Projects that have environments, then the environments,
+    // each in id order (one relation per tagged lock).
+    await lockedQuery(
+      db,
+      { table: "projects", mode: "update" },
+      `SELECT p.id FROM projects p WHERE p.organization_id = $1
+         AND EXISTS (SELECT 1 FROM environments e WHERE e.project_id = p.id)
+       ORDER BY p.id FOR UPDATE OF p`,
+      [organizationId],
+    );
     const envIds = (
-      (await db.query(
-        `SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $1 ORDER BY e.id FOR UPDATE`,
+      (await lockedQuery(db, { table: "environments", mode: "update" }, `SELECT e.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE p.organization_id = $1 ORDER BY e.id FOR UPDATE OF e`,
         [organizationId],
       )).rows as { id: string }[]
     ).map((r) => r.id);
@@ -404,7 +412,7 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     // rows stay with the Organization's tombstone row, like its other rows.
     await closeOpenApprovals(db, { organizationId, reason: "organization-deleted" });
     const targetIds = (
-      (await db.query("SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [organizationId]))
+      (await lockedQuery(db, { table: "sync_targets", mode: "update" }, "SELECT id FROM sync_targets WHERE organization_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE", [organizationId]))
         .rows as { id: string }[]
     ).map((r) => r.id);
     await db.query(
@@ -429,8 +437,7 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     );
     // Machine identities are retired: credentials revoked, bindings removed.
     const machines = (
-      (await db.query(
-        "SELECT id FROM identities WHERE organization_id = $1 AND kind <> 'human' ORDER BY id FOR UPDATE",
+      (await lockedQuery(db, { table: "identities", mode: "update" }, "SELECT id FROM identities WHERE organization_id = $1 AND kind <> 'human' ORDER BY id FOR UPDATE",
         [organizationId],
       )).rows as { id: string }[]
     ).map((r) => r.id);
@@ -442,7 +449,7 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     await db.query("UPDATE oidc_bindings SET revoked_at = now() WHERE organization_id = $1 AND revoked_at IS NULL", [organizationId]);
 
     // Report counters (ADR-0054 Decision 9) go with the Organization, after
-    // its domain rows and before the audit (lock order, approvals.ts): no
+    // its domain rows and before the audit (lock order, liveness.ts): no
     // increment can come in (they hold this row FOR KEY SHARE first), and
     // nothing is summarized for a deleted Organization.
     await db.query("DELETE FROM security_control_counters WHERE organization_id = $1", [organizationId]);

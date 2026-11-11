@@ -12,6 +12,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
 import { reportAdminStepUp, reportProtectedWrite } from "./securityreport.js";
+import { lockedQuery } from "../db/locks.js";
 
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
@@ -133,7 +134,9 @@ export async function issueMachineCredential(
     // FOR SHARE serializes with retire's UPDATE: a retirement committed first
     // is seen here, and one committing after this issuance revokes the new
     // credential with the rest, so a reactivation never resurrects it.
-    const res = await db.query(
+    const res = await lockedQuery(
+      db,
+      { table: "identities", mode: "share", key: "$1" },
       "SELECT kind, disabled FROM identities WHERE id = $1 AND organization_id = $2 FOR SHARE",
       [identityId, organizationId],
     );
@@ -246,7 +249,7 @@ export async function reactivateIdentity(
     await lockLiveScope(db, { organizationId });
     // An identity suspended by a deletion request comes back only through
     // that request's cancellation (ADR-0051 Decision 5).
-    const suspended = await db.query("SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
+    const suspended = await lockedQuery(db, { table: "identities", mode: "update", key: "$1" }, "SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
     const before = suspended.rows[0] as { suspended_by_deletion: string | null; disabled: boolean } | undefined;
     if (before?.suspended_by_deletion) {
       throw new DomainError("ORGANIZATION_DELETING", "This identity was suspended by the Organization's deletion; cancelling the deletion restores it");

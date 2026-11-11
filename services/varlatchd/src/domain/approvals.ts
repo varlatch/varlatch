@@ -4,6 +4,7 @@ import type { PublicKeyCredentialRequestOptionsJSON } from "@simplewebauthn/serv
 import { recordAuditEvent } from "../audit/events.js";
 import { assertionChallenge, assertionOptions, verifyAssertion, type RelyingParty } from "../auth/approval-assertion.js";
 import { newId } from "../db/ids.js";
+import { lockedQuery } from "../db/locks.js";
 import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
@@ -56,35 +57,15 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  * Time is PostgreSQL's live clock, clock_timestamp(), read after the locks
  * are held, as in device sign-in.
  *
- * LOCK ORDER. Every transaction of approvals, Security Controls
- * (securitycontrols.ts), passkey confirmation and passkey removal
- * (passkeys.ts), and Organization deletion's closing of approvals, takes
- * row locks in this one order. A transaction may skip steps; it never goes
- * back to an earlier one.
- *
- *   0. createApproval's per-person advisory lock (taken first, and only by
- *      it, so nothing waits for it while holding a row).
- *   1. The Organization row: FOR UPDATE to change or reset its controls
- *      (lockLiveScope), FOR KEY SHARE to reference it.
- *   2. The person (identities row); several people in id order.
- *   3. That person's passkeys, in id order.
- *   4. Approval intents; several in id order.
- *   5. Challenges: approval challenges, then passkey-confirmation
- *      challenges.
- *   6. The Better Auth session row.
- *   7. The credential row.
- *   8. Then only rows nothing else orders against: security_controls,
- *      passkey provenance, the deletion of a passkey already held; then
- *      the report counters (securityreport.ts: a protected operation's
- *      counter upserts come after its own domain rows, in key order when
- *      several, and before the exposure and integration indexes); and the
- *      audit insert last (it holds the audit counter until commit).
- *      Counters carry no foreign key, so their upserts lock no row of an
- *      earlier step. The summary worker claims counter rows FOR UPDATE
- *      SKIP LOCKED in key order, never waiting for one, then inserts its
- *      audit events: a transaction that holds the audit counter never
- *      waits for a counter row, so the worker and a counting transaction
- *      cannot deadlock.
+ * LOCK ORDER. Approvals, Security Controls (securitycontrols.ts), passkey
+ * confirmation and removal (passkeys.ts), and Organization deletion's
+ * closing of approvals follow the one lock order of ADR-0054 amendment E,
+ * written down at the top of domain/liveness.ts: 0 createApproval's
+ * advisory lock, 1 the Organization, 2 people (in id order, each in its
+ * mode), 3 passkeys, 4 intents, 5 challenges, 6 the session, 7 the
+ * credential, 8 and 9 the Project and environments, 10 domain rows, 11
+ * security_controls, passkey provenance, report counters, indexes and the
+ * audit insert last.
  *
  * An INSERT or an UPDATE of a foreign key column takes FOR KEY SHARE on the
  * row it references (an intent: its credential, person and Organization; a
@@ -95,14 +76,17 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  * challenges (step 5) after steps 6 and 7; every other writer of those
  * challenges holds the person's row (step 2) first, so they cannot meet.
  *
- * Several people: a transaction that locks more than one person takes
- * them in id order. Writes that only reference people (foreign keys) take
- * FOR KEY SHARE, which is compatible with every lock the multi-person
- * transactions here take on people (the public-URL change and closing
- * approvals: KEY SHARE; re-enrollment: NO KEY UPDATE), so such a writer
- * cannot deadlock with them on a person whatever order it writes in; the
- * strong person locks (FOR UPDATE) are each on one person, by transactions
- * that reference nobody else.
+ * A transaction takes all its people at step 2, in id order, each in the
+ * mode it needs: FOR UPDATE for the person whose approval it consumes.
+ * Consumption itself (consumeApproval) takes no person lock: the operation
+ * took its requester at step 2, before any Project, environment or domain
+ * row, and consumption goes on from step 4.
+ *
+ * Report counters carry no foreign key, so their upserts lock no row of an
+ * earlier step. The summary worker claims counter rows FOR UPDATE SKIP
+ * LOCKED in key order, never waiting for one, then inserts its audit
+ * events: a transaction that holds the audit counter never waits for a
+ * counter row, so the worker and a counting transaction cannot deadlock.
  *
  * Per transaction:
  *   createApproval: 0, then (own short transaction) the sweep of intents
@@ -114,32 +98,36 @@ import { lockPeople, lockPerson, lockPersonPasskeys } from "./personlocks.js";
  *   approveApproval: 2, 3, 4, 5 (the counter update on 3 is already held),
  *     audit on refusal.
  *   cancelApproval: 2, 4.
- *   consumption (consumeApproval, inside the operation): 2, 4, 6 (dashboard
- *     intents), 7, after the operation's own earlier steps.
+ *   consumption (consumeApproval, inside the operation): 4, 6 (dashboard
+ *     intents), 7, after the operation's own steps 1 and 2 (the requester
+ *     FOR UPDATE) and, for a passkey removal, 3.
  *   Security Control change: 1 UPDATE, 2 (UPDATE when consuming, KEY SHARE
- *     otherwise), then consumption's 4, 6, 7, then 8.
+ *     otherwise), then consumption's 4, 6, 7, then 11.
  *   Operator reset and Organization deletion (closeOpenApprovals): 1
- *     UPDATE, the open intents' people 2 KEY SHARE in id order, 4, then 8.
- *   Passkey removal: 2, 3 (the target), consumption's 4, 6, 7 when
- *     restricted, then 8.
+ *     UPDATE, the open intents' people 2 KEY SHARE in id order, 4, then 11.
+ *   Passkey removal: 2 UPDATE, 3 (the target), consumption's 4, 6, 7 when
+ *     restricted, then 11.
  *   Passkey confirmation: issuing 2, 3 (the target), 5; confirming 2, 3
- *     (all), 5, then 8.
+ *     (all), 5, then 11.
  *   A protected operation counting in report mode: 1 KEY SHARE
- *     (lockLiveScope), its own domain rows, then 8 (counters, indexes,
- *     audit). An export's count, in the disclosure's audit transaction
- *     after its snapshot: 1 KEY SHARE (skipped when the Organization was
- *     deleted), then 8. A passkey-verification count after a request: 1
- *     KEY SHARE, then 8 (counters only), with lock and statement timeouts.
+ *     (lockLiveScope), its people, its own domain rows, then 11 (counters,
+ *     indexes, audit). An export's count, in the disclosure's audit
+ *     transaction after its snapshot: 1 KEY SHARE (skipped when the
+ *     Organization was deleted), then 11. A passkey-verification count
+ *     after a request: 1 KEY SHARE, then 11 (counters only), with lock and
+ *     statement timeouts.
  *   The report summary worker: its advisory lock (only it takes it), then
- *     8 (counter rows SKIP LOCKED in key order, then audit).
+ *     11 (counter rows SKIP LOCKED in key order, then audit).
  *   Organization deletion's finalization deletes the Organization's
  *     counter rows after its domain rows and before its audit.
  *   Ending a Better Auth session (any DELETE of session rows: sign-out,
  *     Better Auth's revoke and expiry paths, the public-URL change): 6 by
  *     the delete, then migration 43's trigger takes the sessions' live
- *     browser credentials, 7 in id order, then 8 (their audit).
+ *     browser credentials, 7 in id order, then 11 (their audit). (The
+ *     trigger's own comment calls the audit step 8, the numbering before
+ *     amendment E.)
  *   Issuing a browser bearer (/auth/varlatch-token): 2 KEY SHARE, 6 KEY
- *     SHARE (the session must still exist), the credential insert, 8.
+ *     SHARE (the session must still exist), the credential insert, 11.
  */
 
 export const APPROVALS = {
@@ -323,7 +311,9 @@ const CREATE_LOCK = 7330054;
  * waits while holding anything.
  */
 async function sweep(db: Querier): Promise<void> {
-  await db.query(
+  await lockedQuery(
+    db,
+    { table: "approval_intents", mode: "update", key: "-" },
     `DELETE FROM approval_intents WHERE id IN (
        SELECT id FROM approval_intents WHERE expires_at < clock_timestamp() - make_interval(secs => $1)
        ORDER BY id FOR UPDATE SKIP LOCKED)`,
@@ -371,7 +361,7 @@ export async function createApproval(
     // keys reference the credential, the person and the Organization.
     await db.query("SELECT pg_advisory_xact_lock($1, hashtext($2))", [CREATE_LOCK, requester.identityId]);
     if (binding.organizationId !== null) {
-      const org = (await db.query("SELECT id FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [
+      const org = (await lockedQuery(db, { table: "organizations", mode: "key share" }, "SELECT id FROM organizations WHERE id = $1 AND deleted_at IS NULL FOR KEY SHARE", [
         binding.organizationId,
       ])).rows[0];
       if (!org) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
@@ -534,10 +524,10 @@ export async function consumeApproval(
 ): Promise<UsedApproval> {
   const bodyHash = approvalHash(key, "body", binding.body);
   const queryHash = approvalHash(key, "query", binding.query);
-  // Lock order 2, then 4 (top of this file): the person before the intent,
-  // after whatever the operation already holds (the Organization for a
-  // control change, the person and the passkey for a removal).
-  await lockPerson(db, requester.identityId, "update");
+  // Lock order 4, 6, 7 (domain/liveness.ts). The caller took the
+  // requester FOR UPDATE at step 2, with its other people, before any
+  // Project, environment or domain row: consumption takes no person lock
+  // of its own.
   const consumed = (await db.query(
     `UPDATE approval_intents SET consumed_at = clock_timestamp()
      WHERE id = $1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
@@ -587,9 +577,11 @@ export async function consumeApproval(
   // in the order the public-URL change ends sessions and then revokes
   // credentials.
   if (consumed.auth_session_id !== null) {
-    const session = (await db.query(
-      `SELECT 1 FROM "session" s JOIN auth_user_links l ON l.better_auth_user_id = s."userId"
-       WHERE s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
+    const session = (await lockedQuery(
+      db,
+      { table: "session", mode: "key share", key: "$1" },
+      `SELECT 1 FROM session s, auth_user_links l
+       WHERE l.better_auth_user_id = s."userId" AND s.id = $1 AND l.identity_id = $2 AND s."expiresAt" > clock_timestamp()
        FOR KEY SHARE OF s`,
       [consumed.auth_session_id, requester.identityId],
     )).rows[0];
@@ -599,7 +591,9 @@ export async function consumeApproval(
   // enabled; for a dashboard intent, it is a browser bearer of the intent's
   // session. Taken FOR SHARE, so a revocation in flight waits for this
   // operation to end.
-  const live = (await db.query(
+  const live = (await lockedQuery(
+    db,
+    { table: "credentials", mode: "share", key: "$1" },
     `SELECT 1 FROM credentials c JOIN identities i ON i.id = c.identity_id
      WHERE c.id = $1 AND c.identity_id = $2 AND c.revoked_at IS NULL
        AND (c.expires_at IS NULL OR c.expires_at > clock_timestamp()) AND NOT i.disabled
@@ -622,7 +616,9 @@ export async function getApproval(
   input: { approvalId: string; requester: Requester; publicUrl: string | null | undefined },
 ): Promise<ApprovalView> {
   return withTx(ctx.db, async (db) => {
-    const locked = (await db.query(
+    const locked = (await lockedQuery(
+      db,
+      { table: "approval_intents", mode: "update" },
       "SELECT id FROM approval_intents WHERE id = $1 AND identity_id = $2 FOR UPDATE",
       [input.approvalId, input.requester.identityId],
     )).rows[0];
@@ -655,7 +651,9 @@ export async function getApproval(
 
 /** Lock the person's intent and read it on the live clock, after the lock is held. */
 async function lockIntent(db: Querier, approvalId: string, identityId: string): Promise<IntentRow> {
-  const locked = (await db.query(
+  const locked = (await lockedQuery(
+    db,
+    { table: "approval_intents", mode: "update" },
     "SELECT id FROM approval_intents WHERE id = $1 AND identity_id = $2 FOR UPDATE",
     [approvalId, identityId],
   )).rows[0];
@@ -750,7 +748,9 @@ export async function approveApproval(
     const intent = await lockIntent(db, input.approvalId, input.identityId);
     if (stateOf(intent) !== "pending") throw approvalInvalid(unusableReason(intent), input.approvalId);
     const bound = challenge
-      ? ((await db.query(
+      ? ((await lockedQuery(
+          db,
+          { table: "approval_intent_challenges", mode: "update" },
           `SELECT id FROM approval_intent_challenges
            WHERE challenge = $1 AND intent_id = $2 AND identity_id = $3 AND auth_session_id = $4 FOR UPDATE`,
           [challenge, input.approvalId, input.identityId, input.authSessionId],
@@ -838,7 +838,7 @@ export async function closeOpenApprovals(
   const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, [input.organizationId, controls]))
     .rows as { identity_id: string }[];
   await lockPeople(db, people.map((p) => p.identity_id), "key share");
-  const intents = (await db.query(`SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls]))
+  const intents = (await lockedQuery(db, { table: "approval_intents", mode: "update" }, `SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls]))
     .rows as { id: string }[];
   if (intents.length === 0) return 0;
   const res = await db.query(

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import type { TestProject } from "vitest/node";
 import { runMigrations, type Querier } from "../../src/db/migrate.js";
+import { installLockTrace, lockOrderMode } from "./lock-trace.js";
 
 /**
  * Vitest global setup. Initializing a PGlite cluster costs most of a test's
@@ -21,8 +22,16 @@ export default async function setup(project: TestProject): Promise<() => Promise
   await runMigrations(asQuerier(pg));
   const migrated = join(dir, "migrated.tar");
   await writeFile(migrated, await dump(pg));
+  // The lock-order check's trace (lock-trace.ts): a test-only schema,
+  // installed into a third snapshot that migratedTestDb() loads.
+  let traced = migrated;
+  if (lockOrderMode() !== "off") {
+    await installLockTrace(asQuerier(pg));
+    traced = join(dir, "traced.tar");
+    await writeFile(traced, await dump(pg));
+  }
   await pg.close();
-  project.provide("pgliteSnapshots", { fresh, migrated });
+  project.provide("pgliteSnapshots", { fresh, migrated, traced });
   return () => rm(dir, { recursive: true, force: true });
 }
 
@@ -45,6 +54,6 @@ export function asQuerier(pg: PGlite): Required<Querier> {
 
 declare module "vitest" {
   export interface ProvidedContext {
-    pgliteSnapshots: { fresh: string; migrated: string };
+    pgliteSnapshots: { fresh: string; migrated: string; traced: string };
   }
 }

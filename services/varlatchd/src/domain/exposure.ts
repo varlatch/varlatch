@@ -8,6 +8,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
 import { memberReview, type MemberReview } from "./members.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * The exposure report (ADR-0052 Decisions 6 and 7): what a person received
@@ -59,7 +60,7 @@ const parse = (v: unknown) => (typeof v === "string" ? (JSON.parse(v) as Record<
 export async function backfillExposureOnce(ctx: AppCtx, limits: Partial<BackfillLimits> = {}): Promise<{ done: boolean; events: number }> {
   const { events: maxEvents, items: maxItems, span } = { ...DEFAULT_LIMITS, ...limits };
   return withTx(ctx.db, async (db) => {
-    const state = (await db.query("SELECT cursor::text, until_order::text, finished_at FROM exposure_backfill WHERE singleton FOR UPDATE")).rows[0] as
+    const state = (await lockedQuery(db, { table: "exposure_backfill", mode: "update", key: "singleton" }, "SELECT singleton, cursor::text, until_order::text, finished_at FROM exposure_backfill WHERE singleton FOR UPDATE")).rows[0] as
       | { cursor: string; until_order: string; finished_at: string | null }
       | undefined;
     if (!state || state.finished_at) return { done: true, events: 0 };
@@ -115,7 +116,7 @@ export async function backfillExposureOnce(ctx: AppCtx, limits: Partial<Backfill
     const lockedIds = async (table: "organizations" | "identities", ids: string[]) =>
       ids.length === 0
         ? new Set<string>()
-        : new Set((await db.query(`SELECT id FROM ${table} WHERE id = ANY($1) ORDER BY id FOR KEY SHARE`, [ids])).rows.map((r) => (r as { id: string }).id));
+        : new Set((await lockedQuery(db, { table, mode: "key share" }, `SELECT id FROM ${table} WHERE id = ANY($1) ORDER BY id FOR KEY SHARE`, [ids])).rows.map((r) => (r as { id: string }).id));
     const liveOrgs = await lockedIds("organizations", orgs);
     const livePeople = await lockedIds("identities", people);
     const exists = (e: { entry: { organizationId: string; identityId: string } }) => liveOrgs.has(e.entry.organizationId) && livePeople.has(e.entry.identityId);

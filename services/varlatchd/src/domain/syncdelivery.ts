@@ -26,6 +26,7 @@ import {
   type SyncTargetRow,
   type TargetNote,
 } from "./sync.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Sync Target reconciliation (ADR-0031 §3-7): converge each destination to
@@ -165,8 +166,7 @@ export async function scanSyncTriggers(ctx: AppCtx): Promise<void> {
     // transaction locks them (ADR-0051): a bulk UPDATE would lock them in
     // physical order and could deadlock with a Project's deletion.
     await withTx(ctx.db, async (db) => {
-      const due = await db.query(
-        `SELECT id FROM sync_targets
+      const due = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT id FROM sync_targets
          WHERE revoked_at IS NULL AND NOT needs_sync AND (
            environment_id = ANY($1)
            OR environment_id IN (SELECT id FROM environments WHERE parent_environment_id = ANY($1))
@@ -1144,7 +1144,7 @@ async function recordGuardedEvent(
   event: Parameters<typeof recordAuditEvent>[1],
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
+    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await recordAuditEvent(db, event);
@@ -1164,8 +1164,7 @@ export async function ledgerSet(
   oweRedeploy = false,
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await db.query(
-      "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE",
+    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE",
       [targetId],
     );
     const current = res.rows[0] as { generation: string | number } | undefined;
@@ -1201,7 +1200,7 @@ async function recordDrift(
   metadata: Record<string, string | number>,
 ): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [target.id]);
+    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [target.id]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     const eventId = await recordAuditEvent(db, {
@@ -1265,7 +1264,7 @@ async function payRedeploy(
 /** Repair credit for names a read-back proved current (written and present, or deleted and absent), under the same generation guard as ledgerSet. */
 async function creditVerified(ctx: AppCtx, targetId: string, generation: number, names: string[]): Promise<boolean> {
   return withTx(ctx.db, async (db) => {
-    const res = await db.query("SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
+    const res = await lockedQuery(db, { table: "sync_targets", mode: "share", key: "$1" }, "SELECT generation FROM sync_targets WHERE id = $1 FOR SHARE", [targetId]);
     const current = res.rows[0] as { generation: string | number } | undefined;
     if (!current || Number(current.generation) !== generation) return false;
     await db.query(
@@ -1339,7 +1338,7 @@ async function recordFailure(
     // replacement holds the Connection while it resets the Target, so this
     // waits for it and then sees its version.
     if (credentialVersion !== undefined) {
-      const connection = await db.query("SELECT version FROM platform_connections WHERE id = $1 FOR SHARE", [target.connection_id]);
+      const connection = await lockedQuery(db, { table: "platform_connections", mode: "share", key: "$1" }, "SELECT version FROM platform_connections WHERE id = $1 FOR SHARE", [target.connection_id]);
       const row = connection.rows[0] as { version: number | string } | undefined;
       if (!row || Number(row.version) !== credentialVersion) return;
     }
@@ -1347,8 +1346,7 @@ async function recordFailure(
     const guard = generation !== undefined ? ` AND generation = $${params.push(generation)}` : "";
     // The count as it is now, not as the run's lease read it: a replacement
     // may have reset it since.
-    const locked = await db.query(
-      `SELECT failure_count FROM sync_targets WHERE id = $1 AND revoked_at IS NULL${guard} FOR UPDATE`,
+    const locked = await lockedQuery(db, { table: "sync_targets", mode: "update", key: "$1" }, `SELECT failure_count FROM sync_targets WHERE id = $1 AND revoked_at IS NULL${guard} FOR UPDATE`,
       params,
     );
     const current = locked.rows[0] as { failure_count: number | string } | undefined;

@@ -30,6 +30,7 @@ import {
   type MintUse,
 } from "./githubmint.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
+import { lockedQuery } from "../db/locks.js";
 
 /**
  * Platform Connections and Sync Targets (ADR-0031 §1-2): a Connection
@@ -473,8 +474,7 @@ export async function createAppConnection(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
-    const locked = await db.query(
-      "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+    const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [app.id, org.id],
     );
     if (!locked.rows[0]) {
@@ -571,8 +571,7 @@ export async function rotateGitHubAppKey(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
-    const locked = (await db.query(
-      "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
     )).rows[0] as { id: string; version: number } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
@@ -628,8 +627,7 @@ export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
-    const locked = (await db.query(
-      "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
+    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
     )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
@@ -677,13 +675,11 @@ async function lockAppConnectionsAndTargets(
   db: Querier,
   appRowId: string,
 ): Promise<{ connections: PlatformConnectionRow[]; targets: SyncTargetRow[] }> {
-  const connections = (await db.query(
-    `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
+  const connections = (await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
      WHERE github_app_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE`,
     [appRowId],
   )).rows as PlatformConnectionRow[];
-  const targets = ((await db.query(
-    `SELECT ${TARGET_COLUMNS} FROM sync_targets
+  const targets = ((await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
      WHERE connection_id = ANY($1::text[]) AND revoked_at IS NULL ORDER BY id FOR UPDATE`,
     [connections.map((c) => c.id)],
   )).rows as Record<string, unknown>[]).map(targetRow);
@@ -758,8 +754,7 @@ export async function replaceConnectionCredential(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
-    const res = await db.query(
-      `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
+    const res = await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [connectionId, org.id],
     );
@@ -771,8 +766,7 @@ export async function replaceConnectionCredential(
     }
     // Targets in ascending ID order, as every other transaction locks them
     // (ADR-0051 Decision 1): Project deletion takes the same rows.
-    const targets = await db.query(
-      `SELECT ${TARGET_COLUMNS} FROM sync_targets
+    const targets = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE connection_id = $1 AND revoked_at IS NULL
        ORDER BY id FOR UPDATE`,
       [connectionId],
@@ -875,8 +869,7 @@ export async function revokeConnection(
     // Revoking a Connection disables every referencing Target (ADR-0031 §1).
     // They keep their destination claims: paused, not gone. Locked in
     // ascending ID order first, as every other transaction takes them.
-    const referencing = await db.query(
-      "SELECT id FROM sync_targets WHERE connection_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE",
+    const referencing = await lockedQuery(db, { table: "sync_targets", mode: "update" }, "SELECT id FROM sync_targets WHERE connection_id = $1 AND revoked_at IS NULL ORDER BY id FOR UPDATE",
       [connectionId],
     );
     const disabled = await db.query(
@@ -1206,8 +1199,10 @@ export async function createTarget(
 ): Promise<SyncTargetRow> {
   const id = newId("syncTarget");
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, projectId, environmentIds: [environmentId] });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // live scope first, with the actor (sync_targets.created_by, the
+    // integration index) at step 2, then Apps → Connections → Targets.
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], projectId, environmentIds: [environmentId] });
     // Lock the Connection (and an App Connection's App before it):
     // attachment serializes with credential replacement and key rotation.
     const locked = await lockConnectionsAndApps(db, org.id, [input.connectionId]);
@@ -1301,8 +1296,15 @@ export async function updateTarget(
   actorIdentityId: string,
 ): Promise<SyncTargetRow> {
   return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, projectId: target.project_id, environmentIds: [target.environment_id] });
+    // The writer protocol (ADR-0051) in the lock order (liveness.ts): the
+    // live scope first, with the actor (the integration index) at step 2,
+    // then Apps → Connections → Targets.
+    await lockLiveScope(db, {
+      organizationId: org.id,
+      people: [actorIdentityId],
+      projectId: target.project_id,
+      environmentIds: [target.environment_id],
+    });
     // Lock order: Apps, then Connections, then the Target, as key rotation,
     // credential replacement, and Connection revocation take them, so a
     // Target edit serializes with each instead of deadlocking. The Target's
@@ -1319,8 +1321,7 @@ export async function updateTarget(
     const lockedConnections = await lockConnectionsAndApps(db, org.id, [seenConnectionId, connectionId]);
     const connections = lockedConnections.connections;
 
-    const locked = await db.query(
-      `SELECT ${TARGET_COLUMNS} FROM sync_targets WHERE id = $1 AND revoked_at IS NULL FOR UPDATE`,
+    const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets WHERE id = $1 AND revoked_at IS NULL FOR UPDATE`,
       [target.id],
     );
     const current = locked.rows[0]
@@ -1389,6 +1390,13 @@ export async function updateTarget(
     if (destinationChanged) {
       // The new destination starts with an empty ledger and receives a full
       // write even when every name and value is identical (ADR-0031 §3).
+      await lockedQuery(
+        db,
+        { table: "sync_ledger", mode: "update", key: "lock_key" },
+        `SELECT concat_ws('|', target_id::text, dest_name::text) AS lock_key FROM sync_ledger
+         WHERE target_id = $1 ORDER BY dest_name COLLATE "C" FOR UPDATE`,
+        [current.id],
+      );
       await db.query("DELETE FROM sync_ledger WHERE target_id = $1", [current.id]);
       // Fence any reconciliation still in flight against the OLD
       // destination: bumping the generation invalidates its lease, so its
@@ -1443,8 +1451,7 @@ export async function setTargetState(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     await lockLiveScope(db, { organizationId: org.id });
-    const locked = await db.query(
-      `SELECT ${TARGET_COLUMNS} FROM sync_targets
+    const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [targetId, org.id],
     );
@@ -1621,12 +1628,10 @@ async function lockConnectionsAndApps(
   )).rows as { github_app_id: string }[]).map((r) => r.github_app_id);
   const apps = appIds.length === 0
     ? []
-    : ((await db.query(
-        "SELECT id, removed_at FROM github_apps WHERE id = ANY($1::text[]) AND organization_id = $2 ORDER BY id FOR UPDATE",
+    : ((await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, removed_at FROM github_apps WHERE id = ANY($1::text[]) AND organization_id = $2 ORDER BY id FOR UPDATE",
         [appIds, organizationId],
       )).rows as { id: string; removed_at: string | null }[]);
-  const connections = (await db.query(
-    `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
+  const connections = (await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
      WHERE id = ANY($1::text[]) AND organization_id = $2
      ORDER BY id FOR UPDATE`,
     [ids, organizationId],
