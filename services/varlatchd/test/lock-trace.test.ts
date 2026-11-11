@@ -212,9 +212,18 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     refused("DELETE FROM organizations WHERE id IN (SELECT organization_id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
     expect(() => lockTagOf("DELETE FROM identities WHERE id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock organizations update - */"))
       .toThrow(/the tag names organizations, the statement locks identities/);
+    // A same-table nested lock that locks rows it does not write.
+    refused("UPDATE identities SET name = 'x' WHERE id = 'a' AND EXISTS (SELECT 1 FROM identities WHERE id = 'b' FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities FOR UPDATE) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities WHERE id IN (SELECT organization_id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities i USING (SELECT id, name FROM identities FOR UPDATE SKIP LOCKED) d WHERE i.id = d.id /* varlatch-lock identities update - */");
+    // A top-level lock outside a plain SELECT returns no locked keys.
+    refused(`INSERT INTO organizations (id, slug) SELECT id, id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
+    refused(`SELECT id INTO TEMP t FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
+    refused(`DECLARE c CURSOR FOR SELECT id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
     // The sweep pattern stays allowed, in both shapes the code uses.
     expect(lockTagOf(
-      "DELETE FROM security_control_counters c USING (SELECT organization_id FROM security_control_counters k ORDER BY organization_id LIMIT $2 FOR UPDATE SKIP LOCKED) d WHERE c.organization_id = d.organization_id /* varlatch-lock security_control_counters update - */",
+      "DELETE FROM security_control_counters c USING (SELECT organization_id, control FROM security_control_counters k ORDER BY organization_id LIMIT $2 FOR UPDATE SKIP LOCKED) d WHERE c.organization_id = d.organization_id AND c.control = d.control RETURNING 1 /* varlatch-lock security_control_counters update - */",
     )?.key).toBe("-");
     expect(lockTagOf("DELETE FROM identities WHERE id IN (SELECT id FROM identities ORDER BY id FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */")?.key).toBe("-");
   });

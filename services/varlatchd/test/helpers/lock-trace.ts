@@ -565,7 +565,7 @@ const LOCKING_CLAUSE = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b((
  * those named by FOR … OF, or else every item of its query level's FROM.
  * Anything outside the grammar above is refused.
  */
-export function lockingClauses(sql: string): { mode: string; relations: string[]; nested: boolean }[] {
+export function lockingClauses(sql: string): { mode: string; relations: string[]; nested: boolean; skipLocked: boolean; selectList: string }[] {
   const bare = bareSql(sql);
   const clauses = [...bare.matchAll(LOCKING_CLAUSE)];
   if (clauses.length > 0 && /^\s*WITH\b/i.test(bare)) throw outsideGrammar(sql, "WITH");
@@ -610,7 +610,14 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
         return item.table;
       })
       : items.map((x) => x.table);
-    return { mode: m[1]!.toLowerCase().replace(/\s+/g, " "), relations, nested: open.length > 0 };
+    const selectList = /^\s*SELECT\s+([\s\S]*?)\s+FROM\b/i.exec(level)?.[1]?.trim() ?? "";
+    return {
+      mode: m[1]!.toLowerCase().replace(/\s+/g, " "),
+      relations,
+      nested: open.length > 0,
+      skipLocked: /SKIP\s+LOCKED/i.test(m[3] ?? ""),
+      selectList,
+    };
   });
 }
 
@@ -657,11 +664,50 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
       if (tag.key !== "-" || !targetTable || targetTable !== clause.relations[0] || targetTable !== tag.table) {
         throw outsideGrammar(sql, "a locking clause inside a subquery, other than a DELETE or UPDATE of the same table it locks, tagged with key -");
       }
-    } else if (tag.key === "-") {
-      throw outsideGrammar(sql, "a top-level locking clause whose keys are not recorded (key -)");
+      // And it writes every row it locks: SKIP LOCKED, and the outer
+      // predicate is only <column> IN (the subquery selecting that column)
+      // or a USING join on exactly the columns the subquery selects.
+      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause.selectList)) {
+        throw outsideGrammar(sql, "a nested lock outside the sweep shapes (SKIP LOCKED; WHERE <column> IN (subquery), or DELETE … USING (subquery) joined on the columns it selects)");
+      }
+    } else {
+      if (tag.key === "-") throw outsideGrammar(sql, "a top-level locking clause whose keys are not recorded (key -)");
+      // A recorded lock is a plain SELECT's: its returned rows are the
+      // locked keys. INSERT … SELECT, SELECT … INTO and DECLARE … CURSOR
+      // lock rows they do not return.
+      const top = flatten(bareSql(sql));
+      if (!/^\s*SELECT\b/i.test(top) || /\bINTO\b/i.test(top)) {
+        throw outsideGrammar(sql, "a locking clause outside a plain SELECT (INSERT … SELECT, SELECT … INTO, DECLARE … CURSOR)");
+      }
     }
   }
   return tag;
+}
+
+/**
+ * Whether a sweep's outer statement (flattened, the subquery as one
+ * marker) writes every row its locking subquery locks: its predicate is
+ * only `<column> IN (subquery)` with the subquery selecting that column,
+ * or a DELETE … USING (subquery) alias WHERE <target>.<c> = <alias>.<c>
+ * AND … over exactly the columns the subquery selects.
+ */
+function writesEveryLockedRow(top: string, selectList: string): boolean {
+  const selected = selectList.split(",").map((c) => c.trim().replace(/^\w+\./, "").toLowerCase());
+  const inForm = /^\s*(?:DELETE\s+FROM|UPDATE)\s+\w+(?:\s+(?:AS\s+)?\w+)?(?:\s+SET\s+[\s\S]*?)?\s+WHERE\s+(?:\w+\.)?(\w+)\s+IN\s+\u00a7\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (inForm) return selected.length === 1 && selected[0] === inForm[1]!.toLowerCase();
+  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+\u00a7\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (!using) return false;
+  const [, t, s, where] = using as unknown as [string, string, string, string];
+  const joined = new Set<string>();
+  for (const part of where.split(/\s+AND\s+/i)) {
+    const eq = /^(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)$/.exec(part.trim());
+    if (!eq) return false;
+    const [, a1, c1, a2, c2] = eq as unknown as [string, string, string, string, string];
+    const aliases = [a1.toLowerCase(), a2.toLowerCase()].sort().join(",");
+    if (aliases !== [t.toLowerCase(), s.toLowerCase()].sort().join(",") || c1.toLowerCase() !== c2.toLowerCase()) return false;
+    joined.add(c1.toLowerCase());
+  }
+  return joined.size === selected.length && selected.every((c) => joined.has(c));
 }
 
 /** The function in src/ that began the transaction, for reports and gating. */
