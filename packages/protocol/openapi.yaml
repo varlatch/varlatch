@@ -1172,7 +1172,16 @@ paths:
     post:
       tags: [identities]
       operationId: createServiceIdentity
-      summary: Create a machine identity (starts with zero Grants)
+      summary: >
+        Create a machine identity (starts with zero Grants). A service,
+        workload or broker identity gets its first credential. While the
+        Organization enforces credential-lifetime (capability
+        security.enforce.credential-lifetime, ADR-0054), that credential
+        gets the Organization's defaultTtlSeconds when no
+        credentialTtlSeconds is given, and a credentialTtlSeconds above its
+        maxTtlSeconds is refused with CREDENTIAL_LIFETIME_EXCEEDED before
+        anything is created. A ci or agent identity gets no credential and
+        is never affected.
       parameters: [{ $ref: "#/components/parameters/org" }]
       requestBody:
         required: true
@@ -1192,7 +1201,9 @@ paths:
                   maximum: 315360000
                   description: >
                     Optional wall-clock lifetime for the issued service
-                    credential. Absent means no expiry (revocation only).
+                    credential. Absent means no expiry (revocation only),
+                    or the Organization's default lifetime while it
+                    enforces credential-lifetime.
                 credentialMaxUses:
                   type: integer
                   minimum: 1
@@ -1256,7 +1267,13 @@ paths:
         (capability identity.credentials.issue): another credential for a
         program sharing the identity, the first one after reactivation, or
         the new half of a rotation. Human, ci, agent, retired, and other
-        organizations' identities are existence-hidden.
+        organizations' identities are existence-hidden. While the
+        Organization enforces credential-lifetime (capability
+        security.enforce.credential-lifetime, ADR-0054), a service credential
+        without ttlSeconds gets the Organization's defaultTtlSeconds, and a
+        ttlSeconds above its maxTtlSeconds is refused with
+        CREDENTIAL_LIFETIME_EXCEEDED; nothing is issued. Agent-run
+        credentials keep their own cap and are not affected.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: identity
@@ -2501,7 +2518,8 @@ paths:
         Varlatch-Approval header) while the person holds a live membership in
         an Organization with any Security Control at enforce (ADR-0054
         Decision 4); a control can be enforced from servers that offer
-        security.enforce.requirement-protection. Removing an unconfirmed
+        security.enforce.<control> (requirement-protection,
+        credential-lifetime). Removing an unconfirmed
         passkey never needs an approval.
       parameters:
         - { name: passkey, in: path, required: true, schema: { type: string } }
@@ -4606,6 +4624,7 @@ components:
         - STEP_UP_REQUIRED
         - APPROVAL_INVALID
         - CONTROL_MODE_UNAVAILABLE
+        - CREDENTIAL_LIFETIME_EXCEEDED
         - ORGANIZATION_FROZEN
 
     NextCursor:
@@ -5588,7 +5607,10 @@ components:
             credentialExpiresAt:
               type: [string, "null"]
               format: date-time
-              description: Expiry of the issued credential when credentialTtlSeconds was given.
+              description: >
+                Expiry of the issued credential: from credentialTtlSeconds,
+                or from the Organization's default lifetime while it
+                enforces credential-lifetime; null for no expiry.
 
     InvitationStatus:
       type: string
@@ -5845,7 +5867,11 @@ components:
           type: integer
           minimum: 1
           maximum: 315360000
-          description: Optional wall-clock lifetime. Absent means no expiry (revocation only).
+          description: >
+            Optional wall-clock lifetime. Absent means no expiry (revocation
+            only), or the Organization's default lifetime while it enforces
+            credential-lifetime; above its maximum the request is refused
+            with CREDENTIAL_LIFETIME_EXCEEDED.
         maxUses:
           type: integer
           minimum: 1
@@ -5867,7 +5893,9 @@ components:
         expiresAt:
           type: [string, "null"]
           format: date-time
-          description: Null when no ttlSeconds was given.
+          description: >
+            Null when no ttlSeconds was given and the Organization does not
+            enforce credential-lifetime.
         maxUses:
           type: [integer, "null"]
           description: Null when no use budget was given.

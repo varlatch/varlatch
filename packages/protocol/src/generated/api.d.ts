@@ -528,7 +528,7 @@ export interface paths {
         };
         get: operations["listIdentities"];
         put?: never;
-        /** Create a machine identity (starts with zero Grants) */
+        /** Create a machine identity (starts with zero Grants). A service, workload or broker identity gets its first credential. While the Organization enforces credential-lifetime (capability security.enforce.credential-lifetime, ADR-0054), that credential gets the Organization's defaultTtlSeconds when no credentialTtlSeconds is given, and a credentialTtlSeconds above its maxTtlSeconds is refused with CREDENTIAL_LIFETIME_EXCEEDED before anything is created. A ci or agent identity gets no credential and is never affected. */
         post: operations["createServiceIdentity"];
         delete?: never;
         options?: never;
@@ -546,7 +546,7 @@ export interface paths {
         /** List a machine identity's credentials — metadata only (capability identity.lifecycle, ADR-0034). Token material is unrecoverable by construction and never returned. Requires identity.manage; existence-hiding. */
         get: operations["listIdentityCredentials"];
         put?: never;
-        /** Issue a credential for a machine identity. Two disjoint paths, chosen by the caller's kind; the token is returned exactly once. An in-org Broker mints a short-lived read-only agent-run credential for an Agent Identity (capability credentials.agent, ADR-0023); requests authenticated with one are refused for every non-read operation at the HTTP layer, and a Broker reaches no other identity. Any other principal with identity.manage issues a service credential for an in-org service, workload, or broker identity that is not retired (capability identity.credentials.issue): another credential for a program sharing the identity, the first one after reactivation, or the new half of a rotation. Human, ci, agent, retired, and other organizations' identities are existence-hidden. */
+        /** Issue a credential for a machine identity. Two disjoint paths, chosen by the caller's kind; the token is returned exactly once. An in-org Broker mints a short-lived read-only agent-run credential for an Agent Identity (capability credentials.agent, ADR-0023); requests authenticated with one are refused for every non-read operation at the HTTP layer, and a Broker reaches no other identity. Any other principal with identity.manage issues a service credential for an in-org service, workload, or broker identity that is not retired (capability identity.credentials.issue): another credential for a program sharing the identity, the first one after reactivation, or the new half of a rotation. Human, ci, agent, retired, and other organizations' identities are existence-hidden. While the Organization enforces credential-lifetime (capability security.enforce.credential-lifetime, ADR-0054), a service credential without ttlSeconds gets the Organization's defaultTtlSeconds, and a ttlSeconds above its maxTtlSeconds is refused with CREDENTIAL_LIFETIME_EXCEEDED; nothing is issued. Agent-run credentials keep their own cap and are not affected. */
         post: operations["issueIdentityCredential"];
         delete?: never;
         options?: never;
@@ -1197,7 +1197,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Removing a trusted passkey needs a step-up approval (operation passkey.remove, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header) while the person holds a live membership in an Organization with any Security Control at enforce (ADR-0054 Decision 4); a control can be enforced from servers that offer security.enforce.requirement-protection. Removing an unconfirmed passkey never needs an approval. */
+        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Removing a trusted passkey needs a step-up approval (operation passkey.remove, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header) while the person holds a live membership in an Organization with any Security Control at enforce (ADR-0054 Decision 4); a control can be enforced from servers that offer security.enforce.<control> (requirement-protection, credential-lifetime). Removing an unconfirmed passkey never needs an approval. */
         delete: operations["removeMyPasskey"];
         options?: never;
         head?: never;
@@ -2100,7 +2100,7 @@ export interface components {
             };
         };
         /** @enum {string} */
-        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED" | "STEP_UP_REQUIRED" | "APPROVAL_INVALID" | "CONTROL_MODE_UNAVAILABLE" | "ORGANIZATION_FROZEN";
+        ErrorCode: "AUTHENTICATION_REQUIRED" | "INVALID_CREDENTIAL" | "PERMISSION_DENIED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "VERSION_CONFLICT" | "ROTATION_IN_PROGRESS" | "IDEMPOTENCY_CONFLICT" | "CONTRACT_INVALID" | "CONTRACT_DRIFT" | "CONTRACT_MAPPING_UNRESOLVED" | "ENVIRONMENT_EXPIRED" | "TAILNET_CONTEXT_REQUIRED" | "TAILNET_CONTEXT_UNAVAILABLE" | "RATE_LIMITED" | "MAINTENANCE" | "INTERNAL" | "STATE_CHANGED" | "AUTHORIZATION_PENDING" | "SLOW_DOWN" | "ACCESS_DENIED" | "EXPIRED" | "CONSUMED" | "ORGANIZATION_DELETING" | "ORGANIZATION_DELETED" | "STEP_UP_REQUIRED" | "APPROVAL_INVALID" | "CONTROL_MODE_UNAVAILABLE" | "CREDENTIAL_LIFETIME_EXCEEDED" | "ORGANIZATION_FROZEN";
         /** @description Opaque; null when no further pages exist. */
         NextCursor: string | null;
         Slug: string;
@@ -2727,7 +2727,7 @@ export interface components {
             credential?: string | null;
             /**
              * Format: date-time
-             * @description Expiry of the issued credential when credentialTtlSeconds was given.
+             * @description Expiry of the issued credential: from credentialTtlSeconds, or from the Organization's default lifetime while it enforces credential-lifetime; null for no expiry.
              */
             credentialExpiresAt?: string | null;
         };
@@ -2900,7 +2900,7 @@ export interface components {
         MachineCredentialRequest: {
             /** @description Shown in the credential listing, such as the program that uses it. */
             name: string;
-            /** @description Optional wall-clock lifetime. Absent means no expiry (revocation only). */
+            /** @description Optional wall-clock lifetime. Absent means no expiry (revocation only), or the Organization's default lifetime while it enforces credential-lifetime; above its maximum the request is refused with CREDENTIAL_LIFETIME_EXCEEDED. */
             ttlSeconds?: number;
             /** @description Optional use budget; each authenticated request consumes one use. 1 yields a one-shot token. Absent means unlimited. */
             maxUses?: number;
@@ -2914,7 +2914,7 @@ export interface components {
             token: string;
             /**
              * Format: date-time
-             * @description Null when no ttlSeconds was given.
+             * @description Null when no ttlSeconds was given and the Organization does not enforce credential-lifetime.
              */
             expiresAt: string | null;
             /** @description Null when no use budget was given. */
@@ -5140,7 +5140,7 @@ export interface operations {
                     name: string;
                     /** @enum {string} */
                     kind: "service" | "workload" | "ci" | "broker" | "agent";
-                    /** @description Optional wall-clock lifetime for the issued service credential. Absent means no expiry (revocation only). */
+                    /** @description Optional wall-clock lifetime for the issued service credential. Absent means no expiry (revocation only), or the Organization's default lifetime while it enforces credential-lifetime. */
                     credentialTtlSeconds?: number;
                     /** @description Optional use budget for the issued service credential; each authenticated request consumes one use and the credential stops authenticating once spent. 1 yields a one-shot token. Absent means unlimited. */
                     credentialMaxUses?: number;

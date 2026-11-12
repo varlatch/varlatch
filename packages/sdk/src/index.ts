@@ -909,6 +909,13 @@ export class VarlatchClient {
     );
   }
 
+  /**
+   * Create a machine identity; a service, workload or broker identity gets
+   * its first credential, returned once. While the Organization enforces
+   * credential-lifetime, that credential gets its default lifetime when no
+   * credentialTtlSeconds is given, and one above its maximum is refused with
+   * CREDENTIAL_LIFETIME_EXCEEDED.
+   */
   createIdentity(
     org: string,
     input: {
@@ -1013,7 +1020,10 @@ export class VarlatchClient {
   /**
    * Issue another service credential for an in-org service, workload, or
    * broker identity (identity.manage; capability identity.credentials.issue).
-   * The token is in the response only: it is never retrievable again.
+   * The token is in the response only: it is never retrievable again. While
+   * the Organization enforces credential-lifetime, a request without
+   * ttlSeconds gets its default lifetime, and one above its maximum is
+   * refused with CREDENTIAL_LIFETIME_EXCEEDED.
    */
   issueMachineCredential(
     org: string,

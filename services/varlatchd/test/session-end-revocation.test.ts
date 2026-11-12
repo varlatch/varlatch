@@ -6,6 +6,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { completePublicUrlChange, consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 import { createMachineIdentity } from "../src/domain/identities.js";
+import { personGate } from "./helpers/gates.js";
 import { createOrganization } from "../src/domain/orgs.js";
 import { buildApp } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
@@ -56,7 +57,7 @@ describe("ending a session revokes its browser credentials (migration 43)", () =
     const handoff = await issueCredential(ctx.db, { identityId: personId, kind: "cli", authSessionId: "ses_a" });
     const cli = await issueCredential(ctx.db, { identityId: personId, kind: "cli" });
     const org = await createOrganization(ctx, { slug: "acme", name: "Acme" }, personId);
-    const machine = await createMachineIdentity(ctx, org.id, { name: "prod-api", kind: "service" }, personId);
+    const machine = await createMachineIdentity(ctx, personGate(personId), org.id, { name: "prod-api", kind: "service" });
     const service = await issueCredential(ctx.db, { identityId: machine.identity.id, kind: "service" });
     const before = (await revocations()).length;
 

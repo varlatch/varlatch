@@ -11,8 +11,10 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
-import { reportAdminStepUp, reportProtectedWrite } from "./securityreport.js";
+import { reportAdminStepUp } from "./securityreport.js";
 import { lockedQuery } from "../db/locks.js";
+import type { ProtectedGate } from "./approvals.js";
+import { prepareProtectedOperation, type PreparedOperation } from "./protected.js";
 
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
@@ -24,14 +26,41 @@ export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 export const SERVICE_CREDENTIAL_KINDS: ReadonlySet<string> = new Set<MachineKind>(["service", "workload", "broker"]);
 
 /**
+ * What a machine credential issued now expires at: `ttlSeconds` from now,
+ * or never (revocation only) without one.
+ */
+function expiryOf(ttlSeconds: number | undefined): string | null {
+  return ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null;
+}
+
+/** Audit metadata for a credential whose lifetime credential-lifetime chose (the request gave none). */
+const lifetimeMetadata = (prepared: PreparedOperation) => (prepared.ttlDefaulted ? { lifetimeDefaulted: true } : {});
+
+/**
+ * Admin-step-up's approval for identity.create and credential.issue is
+ * ADR-0054 step 4.5; until it ships that control cannot be enforced
+ * (ENFORCEABLE_CONTROLS), so nothing asks these operations for a binding.
+ */
+function notYetBound(operation: string): never {
+  throw new Error(`${operation}: approvals for admin-step-up are not built yet (ADR-0054 step 4.5)`);
+}
+
+/**
  * Machine identities belong to exactly one organization and start with zero
  * Grants (ADR-0015 §9). Service/workload identities receive an opaque
  * credential exactly once at creation. Agents get none by default (ADR-0022
  * §8): the agent-safe flow never hands the child a reusable /v1 credential —
  * the Agent Identity exists to own Grants that Capability exercises evaluate.
+ *
+ * A protected operation (ADR-0054): admin-step-up's identity.create, and
+ * credential-lifetime's when a credential is issued. Under
+ * credential-lifetime at enforce, the credential gets the Organization's
+ * default lifetime when none was asked for, and one above its maximum is
+ * refused before anything is created (prepareProtectedOperation).
  */
 export async function createMachineIdentity(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   input: {
     name: string;
@@ -39,7 +68,6 @@ export async function createMachineIdentity(
     credentialTtlSeconds?: number | undefined;
     credentialMaxUses?: number | undefined;
   },
-  actorIdentityId: string,
 ): Promise<{
   identity: IdentityRow;
   credential: string | null;
@@ -48,8 +76,20 @@ export async function createMachineIdentity(
   if (!input.name || input.name.length > 200) {
     throw new DomainError("VALIDATION_FAILED", "Invalid identity name");
   }
+  const actorIdentityId = gate.requester.identityId;
+  const issues = SERVICE_CREDENTIAL_KINDS.has(input.kind);
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actorIdentityId] },
+      checks: [
+        { control: "admin-step-up", operation: "identity.create" },
+        // ci and agent identities get no credential: nothing to bound.
+        ...(issues
+          ? [{ control: "credential-lifetime" as const, operation: "identity.create" as const, ttlSeconds: input.credentialTtlSeconds }]
+          : []),
+      ],
+      binding: async () => notYetBound("identity.create"),
+    });
     const id = newId("identity");
     await db.query(
       "INSERT INTO identities (id, kind, name, organization_id) VALUES ($1,$2,$3,$4)",
@@ -57,16 +97,7 @@ export async function createMachineIdentity(
     );
     // Report mode (ADR-0054 Decision 9), before the first audit insert:
     // admin-step-up, and credential-lifetime when a credential is issued.
-    await reportProtectedWrite(db, {
-      organizationId,
-      actorIdentityId,
-      checks: [
-        { control: "admin-step-up", operation: "identity.create" },
-        ...(SERVICE_CREDENTIAL_KINDS.has(input.kind)
-          ? [{ control: "credential-lifetime" as const, operation: "identity.create" as const, ttlSeconds: input.credentialTtlSeconds }]
-          : []),
-      ],
-    });
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "identity.created",
       decision: "info",
@@ -79,12 +110,8 @@ export async function createMachineIdentity(
     let credential: string | null = null;
     let credentialExpiresAt: string | null = null;
     // CI identities are expected to federate (ADR-0007); no static token by default.
-    if (SERVICE_CREDENTIAL_KINDS.has(input.kind)) {
-      if (input.credentialTtlSeconds) {
-        credentialExpiresAt = new Date(
-          Date.now() + input.credentialTtlSeconds * 1000,
-        ).toISOString();
-      }
+    if (issues) {
+      credentialExpiresAt = expiryOf(prepared.effectiveTtlSeconds);
       const issued = await issueCredential(db, {
         identityId: id,
         kind: "service",
@@ -93,6 +120,7 @@ export async function createMachineIdentity(
         maxUses: input.credentialMaxUses,
         actorIdentityId,
         organizationId,
+        metadata: lifetimeMetadata(prepared),
       });
       credential = issued.token;
     }
@@ -117,20 +145,33 @@ export async function createMachineIdentity(
  * reactivated identity waits for (ADR-0034 §3), the new half of a rotation
  * (mint new, then revoke old), and how several programs sharing one
  * identity's Grants each get a named, separately revocable credential.
- * Limits and default as at creation: no TTL means no expiry (revocation only).
+ * Limits and default as at creation: no TTL means no expiry (revocation
+ * only), unless the Organization enforces credential-lifetime, whose default
+ * then applies; a TTL above its maximum is refused before anything else
+ * here (prepareProtectedOperation). The route answers not-found for an
+ * unknown identity first; a direct caller gets the TTL refusal, which says
+ * nothing about the identity.
  */
 export async function issueMachineCredential(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
   input: { name: string; ttlSeconds?: number | undefined; maxUses?: number | undefined },
-  actorIdentityId: string,
 ): Promise<{ credentialId: string; token: string; expiresAt: string | null; maxUses: number | null }> {
   if (!input.name || input.name.length > 200) {
     throw new DomainError("VALIDATION_FAILED", "Invalid credential name");
   }
+  const actorIdentityId = gate.requester.identityId;
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "share" }] });
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actorIdentityId, { id: identityId, mode: "share" }] },
+      checks: [
+        { control: "admin-step-up", operation: "credential.issue" },
+        { control: "credential-lifetime", operation: "credential.issue", ttlSeconds: input.ttlSeconds },
+      ],
+      binding: async () => notYetBound("credential.issue"),
+    });
     // FOR SHARE serializes with retire's UPDATE: a retirement committed first
     // is seen here, and one committing after this issuance revokes the new
     // credential with the rest, so a reactivation never resurrects it.
@@ -144,19 +185,10 @@ export async function issueMachineCredential(
     if (!row || !SERVICE_CREDENTIAL_KINDS.has(row.kind) || row.disabled) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
     }
-    const expiresAt = input.ttlSeconds
-      ? new Date(Date.now() + input.ttlSeconds * 1000).toISOString()
-      : null;
+    const expiresAt = expiryOf(prepared.effectiveTtlSeconds);
     const maxUses = input.maxUses ?? null;
     // Report mode (ADR-0054 Decision 9), before issueCredential's audit insert.
-    await reportProtectedWrite(db, {
-      organizationId,
-      actorIdentityId,
-      checks: [
-        { control: "admin-step-up", operation: "credential.issue" },
-        { control: "credential-lifetime", operation: "credential.issue", ttlSeconds: input.ttlSeconds },
-      ],
-    });
+    await prepared.count(db);
     const issued = await issueCredential(db, {
       identityId,
       kind: "service",
@@ -166,7 +198,7 @@ export async function issueMachineCredential(
       actorIdentityId,
       organizationId,
       // Identifiers only (ADR-0016 §8); null records "no expiry" and "unlimited".
-      metadata: { name: input.name, expiresAt, maxUses },
+      metadata: { name: input.name, expiresAt, maxUses, ...lifetimeMetadata(prepared) },
     });
     return { credentialId: issued.credentialId, token: issued.token, expiresAt, maxUses };
   });

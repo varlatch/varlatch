@@ -46,6 +46,7 @@ import { expiryText, expiryTone, machineCredentialExpiry, type CredentialExpiry 
 import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
 import { MachineReachPanel, reachKey } from "./MachineReach";
+import { lifetimeError, lifetimeHint, useEnforcedLifetime } from "./credentialLifetime";
 
 /**
  * Machines: non-human identities and how each signs in. Token kinds show
@@ -597,7 +598,10 @@ function IssueCredentialDialog({
   const { api } = useSession();
   const [name, setName] = useState("");
   const [ttlSeconds, setTtlSeconds] = useState("");
-  const ttlValid = ttlSeconds === "" || /^[1-9][0-9]*$/.test(ttlSeconds);
+  // credential-lifetime (ADR-0054): its default and maximum while enforced.
+  const enforced = useEnforcedLifetime(org);
+  const ttlError = lifetimeError(ttlSeconds, enforced);
+  const ttlValid = ttlError === undefined;
   const issue = useMutation({
     mutationFn: () =>
       api.issueMachineCredential(org, identity.id, { name: name.trim(), ...(ttlSeconds ? { ttlSeconds: Number(ttlSeconds) } : {}) }),
@@ -636,7 +640,7 @@ function IssueCredentialDialog({
         <Field label="Name">
           <Input data-autofocus data-testid="issue-credential-name" className="w-full" maxLength={200} placeholder="backup job" value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <Field label="Token lifetime (seconds)" hint="Empty: no expiry, revocation only." error={!ttlValid ? "Whole seconds, at least 1." : undefined}>
+        <Field label="Token lifetime (seconds)" hint={lifetimeHint(enforced)} error={ttlError}>
           <Input data-testid="issue-credential-ttl" mono className="w-full" placeholder="7776000" value={ttlSeconds} invalid={!ttlValid} onChange={(e) => setTtlSeconds(e.target.value.trim())} />
         </Field>
         {issue.error && <p className="text-sm text-deny">{errorMessage(issue.error)}</p>}
@@ -726,7 +730,10 @@ function NewMachineDialog({
   const [ttlSeconds, setTtlSeconds] = useState("");
   const [maxUses, setMaxUses] = useState("");
   const issues = TOKEN_KINDS.includes(kind);
-  const ttlValid = ttlSeconds === "" || /^[1-9][0-9]*$/.test(ttlSeconds);
+  // credential-lifetime (ADR-0054): its default and maximum while enforced.
+  const enforced = useEnforcedLifetime(org);
+  const ttlError = issues ? lifetimeError(ttlSeconds, enforced) : undefined;
+  const ttlValid = ttlError === undefined;
   const usesValid = maxUses === "" || /^[1-9][0-9]*$/.test(maxUses);
   const create = useMutation({
     mutationFn: () =>
@@ -816,7 +823,7 @@ function NewMachineDialog({
         </Field>
         {issues && (
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Token lifetime (seconds)" hint="Empty: no expiry, revocation only." error={!ttlValid ? "Whole seconds, at least 1." : undefined}>
+            <Field label="Token lifetime (seconds)" hint={lifetimeHint(enforced)} error={ttlError}>
               <Input data-testid="machine-ttl" mono className="w-full" placeholder="7776000" value={ttlSeconds} invalid={!ttlValid} onChange={(e) => setTtlSeconds(e.target.value.trim())} />
             </Field>
             <Field label="Use budget (requests)" hint="Empty: unlimited. 1 makes a one-shot token." error={!usesValid ? "A whole number, at least 1." : undefined}>

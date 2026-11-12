@@ -21,6 +21,13 @@ import type { ControlMode, LifetimeConfig, SecurityControlName } from "./securit
  *   then the applicable controls, read under that lock: a control change
  *      takes the row FOR UPDATE, so the operation either commits before it
  *      or sees the new mode (Decision 2);
+ *   then credential-lifetime, for an operation that issues a machine
+ *      credential: at `enforce`, a TTL above the maximum is refused
+ *      (CREDENTIAL_LIFETIME_EXCEEDED) and a request without one gets the
+ *      default, which the operation uses as its effective TTL. The refusal
+ *      does not depend on an approval, so it comes before any is asked for
+ *      (amendment A); when an approval is asked for, it binds the effective
+ *      TTL (the binding catalogue's `effectiveTtlSeconds`);
  *   then, only when a control at `enforce` asks for an approval, the exact
  *      binding (the operation's callback): its validation and every other
  *      refusal that does not depend on the approval come first (amendment
@@ -95,7 +102,7 @@ export interface ProtectedOperationInput {
    * again under its row lock. Null when the request changes nothing,
    * which needs no approval.
    */
-  binding: (db: Querier) => Promise<ApprovalBinding | null>;
+  binding: (db: Querier, decided: { effectiveTtlSeconds: number | undefined }) => Promise<ApprovalBinding | null>;
   /**
    * Rechecks the requester's authorization for the operation in this
    * transaction, after an approval was consumed ("the person still holds
@@ -115,9 +122,12 @@ export interface PreparedOperation {
    * The issuance TTL credential-lifetime makes of the requested one (for
    * the credential-lifetime check; undefined when there is none, or none
    * was requested and none applies). Report mode changes nothing, so this
-   * is the requested TTL unless the control is at `enforce`.
+   * is the requested TTL unless the control is at `enforce`, where a
+   * request without one gets the default.
    */
   effectiveTtlSeconds: number | undefined;
+  /** Whether effectiveTtlSeconds is credential-lifetime's default, for a request that gave none. */
+  ttlDefaulted: boolean;
   /**
    * Count the report entries in this transaction: call it once the
    * operation changed something, after its domain rows and before its
@@ -134,6 +144,35 @@ export function machineCannotApprove(operation: string): DomainError {
     `${operation} needs a person's approval with a passkey under this organization's security controls, which a machine credential cannot give`,
     { reason: "machine-credential" },
   );
+}
+
+/**
+ * credential-lifetime at `enforce` refusing a machine credential's TTL
+ * above the Organization's maximum. Nothing was issued.
+ */
+export function credentialLifetimeExceeded(requestedTtlSeconds: number, maxTtlSeconds: number): DomainError {
+  return new DomainError(
+    "CREDENTIAL_LIFETIME_EXCEEDED",
+    `This organization's credential-lifetime control allows machine credentials of at most ${maxTtlSeconds} seconds, ` +
+      `not ${requestedTtlSeconds}: ask for a shorter lifetime, or none to get the organization's default. Nothing was issued`,
+    { control: "credential-lifetime", requestedTtlSeconds, maxTtlSeconds },
+  );
+}
+
+/**
+ * The gate of an operation that cannot carry an approval: one run outside
+ * an HTTP request (a host command, a test). It never consumes one, so an
+ * operation that a control at `enforce` would ask an approval for throws
+ * ApprovalNeeded, which nothing turns into an intent.
+ */
+export function noApprovalGate(requester: ProtectedGate["requester"]): ProtectedGate {
+  return {
+    requester,
+    approvalId: null,
+    require: async (_db, binding) => {
+      throw new ApprovalNeeded(binding);
+    },
+  };
 }
 
 const isPersonCredential = (r: ProtectedGate["requester"]) =>
@@ -167,6 +206,7 @@ export async function prepareProtectedOperation(
   let needsApproval = false;
   const reports: WouldBlock[] = [];
   let effectiveTtlSeconds: number | undefined;
+  let ttlDefaulted = false;
   let approvalReason: ReportReason | undefined;
   for (const check of input.checks) {
     const control = controls.get(check.control);
@@ -176,10 +216,15 @@ export async function prepareProtectedOperation(
       if (control.mode === "report") {
         const reason = lifetimeReason(control.config, check.ttlSeconds);
         if (reason) reports.push({ control: check.control, configVersion: control.version, operation: check.operation, actorIdentityId: requester.identityId, reason });
-      } else if (control.mode === "enforce" && check.ttlSeconds === undefined && control.config) {
-        // The default for a credential issued without a TTL. Refusing one
-        // above the maximum is the credential-lifetime pull request's.
-        effectiveTtlSeconds = control.config.defaultTtlSeconds;
+      } else if (control.mode === "enforce" && control.config) {
+        // A refusal that does not depend on an approval: before one is
+        // asked for, and before the people are locked (amendment A).
+        if (check.ttlSeconds === undefined) {
+          effectiveTtlSeconds = control.config.defaultTtlSeconds;
+          ttlDefaulted = true;
+        } else if (check.ttlSeconds > control.config.maxTtlSeconds) {
+          throw credentialLifetimeExceeded(check.ttlSeconds, control.config.maxTtlSeconds);
+        }
       }
       continue;
     }
@@ -196,7 +241,7 @@ export async function prepareProtectedOperation(
 
   let binding: ApprovalBinding | null = null;
   if (needsApproval) {
-    binding = await input.binding(db);
+    binding = await input.binding(db, { effectiveTtlSeconds });
     if (binding !== null) {
       if (!isPersonCredential(requester)) throw machineCannotApprove(binding.operation);
       if (gate.approvalId === null) throw new ApprovalNeeded(binding);
@@ -221,6 +266,7 @@ export async function prepareProtectedOperation(
     binding,
     reports,
     effectiveTtlSeconds,
+    ttlDefaulted,
     count: (tx) => countWouldBlock(tx, scope.organizationId, reports),
   };
 }

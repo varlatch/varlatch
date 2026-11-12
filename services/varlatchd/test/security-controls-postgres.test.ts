@@ -224,6 +224,70 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     });
   });
 
+  describe("credential-lifetime enforced (ADR-0054 step 4.3)", () => {
+    const IDENTITIES = "/v1/organizations/acme/identities";
+    const LIFETIMES = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
+
+    it("an issuance that starts during the change to enforce waits for it, then gets the default", async () => {
+      const machine = await call("POST", IDENTITIES, cli.token, { name: "m", kind: "service" });
+      expect(machine.body.credentialExpiresAt).toBeNull();
+      const locked = deferred();
+      const release = deferred();
+      const change = changeControl(ctx, noApproval, {
+        organizationId: orgId,
+        control: "credential-lifetime",
+        mode: "enforce",
+        config: LIFETIMES,
+        expectedVersion: 0,
+        actorIdentityId: adminId,
+        requestId: "req_test",
+        authorizeIn: async () => {
+          locked.resolve();
+          await release.promise;
+        },
+      });
+      await locked.promise;
+      let finished = false;
+      const issued = call("POST", `${IDENTITIES}/${machine.body.id}/credentials`, cli.token, { name: "during" })
+        .then((r) => { finished = true; return r; });
+      const refused = call("POST", `${IDENTITIES}/${machine.body.id}/credentials`, cli.token, { name: "long", ttlSeconds: LIFETIMES.maxTtlSeconds + 1 });
+      await sleep(300);
+      expect(finished).toBe(false);
+      release.resolve();
+      expect((await change).control.mode).toBe("enforce");
+      const answer = await issued;
+      expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+      const left = (Date.parse(answer.body.expiresAt) - Date.now()) / 1000;
+      expect(left).toBeGreaterThan(LIFETIMES.defaultTtlSeconds - 60);
+      expect(left).toBeLessThanOrEqual(LIFETIMES.defaultTtlSeconds);
+      expect((await refused).body.error.code).toBe("CREDENTIAL_LIFETIME_EXCEEDED");
+    });
+
+    it("issuances racing with lifetime changes never deadlock, and each follows the state it committed under", async () => {
+      expect((await call("PATCH", "/v1/organizations/acme/security/controls/credential-lifetime", cli.token, { mode: "enforce", config: LIFETIMES, expectedVersion: 0 })).status).toBe(200);
+      const machine = await call("POST", IDENTITIES, cli.token, { name: "m", kind: "service" });
+      const shorter = { defaultTtlSeconds: 600, maxTtlSeconds: 7200 };
+      const [tightened, ...answers] = await Promise.all([
+        call("PATCH", "/v1/organizations/acme/security/controls/credential-lifetime", cli.token, { config: shorter, expectedVersion: 1 }),
+        ...Array.from({ length: 6 }, (_, i) =>
+          i % 2 === 0
+            ? call("POST", `${IDENTITIES}/${machine.body.id}/credentials`, cli.token, { name: `c${i}` })
+            : call("POST", IDENTITIES, cli.token, { name: `m${i}`, kind: "service", credentialTtlSeconds: 43_200 })),
+      ]);
+      expect(tightened.status).toBe(200);
+      for (const a of answers) {
+        // Committed before the change (the old default, or 12 hours under the
+        // old maximum), or after it (the new default, or refused above the new one).
+        if (a.status === 422) {
+          expect(a.body.error.code).toBe("CREDENTIAL_LIFETIME_EXCEEDED");
+          continue;
+        }
+        expect(a.status, JSON.stringify(a.body)).toBe(201);
+        expect(a.body.expiresAt ?? a.body.credentialExpiresAt).not.toBeNull();
+      }
+    });
+  });
+
   /** A browser bearer of the admin for one Better Auth session. */
   const browser = async (sessionId: string) =>
     (await issueCredential(db, {
