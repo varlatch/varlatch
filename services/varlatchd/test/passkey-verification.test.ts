@@ -12,7 +12,7 @@ import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { changedTables, offRun, sweeper, type OffRecord } from "./helpers/route-sweep.js";
+import { changedTables, githubOnPrivateAddress, insertGitHubApp, offRun, sweeper, type OffRecord } from "./helpers/route-sweep.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 import { uncheckedOrganizations } from "../src/domain/requestaccess.js";
@@ -422,6 +422,26 @@ describe("where it decides", () => {
     expect(await passkeyDenials()).toEqual([]);
     // Metadata only: the request goes on, and is refused for the sign-in.
     expectRefused(await call("GET", `${E}/effective-configuration`, admin));
+  });
+
+  it("keeps a refused GitHub call's record when the App Connection fails, with every control off, and makes no call under enforce", async () => {
+    await insertGitHubApp(ctx, "acme", adminId);
+    const resolver = githubOnPrivateAddress();
+    try {
+      const refusals = async () => (await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'outbound.refused'"))[0].n as number;
+      const body = { credentialKind: "github-app", installationId: 4244, name: "Actions" };
+      const failed = await call("POST", `${ORG}/platform-connections`, admin, body);
+      expect(failed.status, JSON.stringify(failed.body)).toBe(422);
+      // As before the effect had a transaction: the refusal stays recorded,
+      // though the Connection's transaction rolled back.
+      expect(await refusals()).toBe(1);
+      expect(await rows("SELECT count(*)::int AS n FROM platform_connections")).toEqual([{ n: 0 }]);
+      await setMode("enforce");
+      expectRefused(await call("POST", `${ORG}/platform-connections`, admin, body));
+      expect(await refusals()).toBe(1);
+    } finally {
+      resolver.restore();
+    }
   });
 
   it("refuses before any approval is asked for: a refused sign-in creates no approval intent (requirement-protection)", async () => {

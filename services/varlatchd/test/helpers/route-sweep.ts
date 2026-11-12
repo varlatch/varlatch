@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { expect, inject } from "vitest";
 import { issueCredential } from "../../src/auth/credentials.js";
+import { encryptGitHubAppKey } from "../../src/crypto/hierarchy.js";
+import { getOrganization, orgKekOf } from "../../src/domain/orgs.js";
+import { setOutboundResolverForTests } from "../../src/net/outbound.js";
 import type { AppCtx } from "../../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../../src/domain/bootstrap.js";
 import { accessCountsSettled } from "../../src/domain/securityreport.js";
@@ -10,7 +14,46 @@ import { buildApp } from "../../src/http/app.js";
 import { PUBLIC_URL, RP } from "./device-sign-in.js";
 import { lockOrderMode, lockTraced } from "./lock-trace.js";
 import { asQuerier } from "./pglite-snapshots.js";
+import { TEST_PUBLIC_ADDRESS } from "./outbound-resolver.js";
 import { registerSoftPasskey } from "./soft-authenticator.js";
+
+/**
+ * An existing GitHub App of the Organization, written as registration
+ * leaves it (its private key wrapped under the Organization's KEK), with no
+ * call to GitHub.
+ */
+export async function insertGitHubApp(ctx: AppCtx, organization: string, createdBy: string): Promise<string> {
+  const org = await getOrganization(ctx, organization);
+  const id = `gha_${randomUUID().replaceAll("-", "").slice(0, 26)}`;
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, pem);
+  await ctx.db.query(
+    `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
+     VALUES ($1,$2,4242,'acme-varlatch','Iv1.fixture','acme',4243,'Organization',$3,$4)`,
+    [id, org.id, JSON.stringify(envelope), createdBy],
+  );
+  return id;
+}
+
+/**
+ * The test resolver with api.github.com on a private address, which the
+ * outbound policy refuses: a call to GitHub is refused, and recorded,
+ * without the network. `restore` puts the setup file's resolver back.
+ */
+export function githubOnPrivateAddress(): { restore: () => void } {
+  setOutboundResolverForTests(async (name) => {
+    if (name === "api.github.com") return [{ address: "10.20.30.40", family: 4 }];
+    if (name === "localhost") return [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }];
+    return [{ address: TEST_PUBLIC_ADDRESS, family: 4 }];
+  });
+  return {
+    restore: () =>
+      setOutboundResolverForTests(async (name) =>
+        name === "localhost" ? [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] : [{ address: TEST_PUBLIC_ADDRESS, family: 4 }],
+      ),
+  };
+}
 
 /**
  * Every /v1/organizations/:org route with existing fixtures, then with each
@@ -84,6 +127,9 @@ export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: F
   const webhook = await post("POST", `${o}/webhooks`, { url: "https://hooks.example.com/varlatch" });
   const invitation = await post("POST", `${o}/invitations`, { name: "Eve", role: "member" });
   const binding = await post("POST", `${o}/identities/${bot.id}/oidc-bindings`, { issuer: "https://token.example.com", audience: "varlatch", subject: "repo:acme/api" });
+  // An existing GitHub App: its routes and App Connections reach GitHub,
+  // which the sweep's resolver puts on a refused address.
+  const githubApp = await insertGitHubApp(fctx, "acme", adminIdentity);
   const data = await pg.dumpDataDir("none");
   await pg.close();
   return {
@@ -93,7 +139,7 @@ export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: F
       org: "acme", project: "api", environment: "production", item: "DB_PASS", revision: revision.id,
       identity: bot.id, credential: botCredential, member: bob, invitation: invitation.id, grant: grant.id,
       role: role.id, group: group.id, team: team.id, requirement: requirement.id, webhook: webhook.id,
-      binding: binding.id, control: "requirement-protection", projectId: project.id,
+      binding: binding.id, control: "requirement-protection", projectId: project.id, githubApp,
     },
   };
 }
@@ -142,6 +188,8 @@ export function bodyOf(route: string, f: Fixtures): unknown {
     [`POST ${R}/webhooks`]: { url: "https://hooks.example.com/second" },
     [`PATCH ${R}/webhooks/:webhook`]: { expectedVersion: 1, eventTypes: null },
     [`PATCH ${R}/security/controls/:control`]: { mode: "report", expectedVersion: 0 },
+    // An App Connection: GitHub is asked for the installation, and refused.
+    [`POST ${R}/platform-connections`]: { credentialKind: "github-app", installationId: 4244, name: "Actions" },
   };
   return bodies[route] ?? {};
 }
@@ -213,6 +261,7 @@ const R = "/v1/organizations/:org";
 
 /** The sweep over a fixture database: one route variant at a time, the blocked admin's requests. */
 export async function sweeper(rootKek: Buffer): Promise<Sweeper> {
+  const resolver = githubOnPrivateAddress();
   const { data, f, tokens } = await buildFixtures(rootKek);
   let current = await fixtureDb(data);
   let sctx: AppCtx = { db: current.db, rootKek };
@@ -265,7 +314,10 @@ export async function sweeper(rootKek: Buffer): Promise<Sweeper> {
       sctx = { db: current.db, rootKek };
       sapp = buildApp(sctx, { publicUrl: PUBLIC_URL });
     },
-    close: () => current.pg.close(),
+    close: async () => {
+      resolver.restore();
+      await current.pg.close();
+    },
   };
 }
 
