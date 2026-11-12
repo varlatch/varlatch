@@ -48,8 +48,16 @@ export interface LocalState {
 
 export type EnvironmentSource = "flag" | "env-var" | "local-selection" | "committed-default";
 
+/**
+ * Where a command's server came from (ADR-0058 Decision 1). `default` and
+ * `only-credential` happen only outside a repository: a repository always
+ * names its own server.
+ */
+export type ServerSource = "flag" | "env-var" | "local-override" | "repository" | "default" | "only-credential";
+
 export interface ResolvedContext {
   server: string;
+  serverSource: ServerSource;
   organization: string;
   project: string;
   environment: string;
@@ -165,23 +173,75 @@ export function resolveContext(options: ResolveOptions): ResolvedContext {
     );
   }
 
-  const server =
-    options.server ?? env.VARLATCH_SERVER ?? local.serverOverride ?? repo.server;
-  if (!server) {
+  const named = repositoryServer(options, env, local, repo);
+  if (!named) {
+    // A repository never falls back to the remembered default: logging in
+    // somewhere else must not move where its values go (ADR-0058 Decision 1).
+    const fallback = defaultServer(env);
     throw new ContextError(
       "No server configured. Pass --server, set VARLATCH_SERVER, or commit " +
-        `"server" in ${REPO_CONFIG_FILE}.`,
+        `"server" in ${REPO_CONFIG_FILE}` +
+        (fallback ? `, for example: server = "${fallback}"` : "") +
+        ".",
     );
   }
 
   return {
-    server,
+    server: named.server,
+    serverSource: named.source,
     organization: repo.organization,
     project: repo.project,
     environment,
     environmentSource,
     repoRoot,
   };
+}
+
+function repositoryServer(
+  options: { server?: string },
+  env: NodeJS.ProcessEnv,
+  local: LocalState,
+  repo: RepoConfig,
+): { server: string; source: ServerSource } | null {
+  if (options.server) return { server: options.server, source: "flag" };
+  if (env.VARLATCH_SERVER) return { server: env.VARLATCH_SERVER, source: "env-var" };
+  if (local.serverOverride) return { server: local.serverOverride, source: "local-override" };
+  if (repo.server) return { server: repo.server, source: "repository" };
+  return null;
+}
+
+export interface ResolvedServer {
+  server: string;
+  source: ServerSource;
+}
+
+/**
+ * The server a command talks to, for commands that need no Project
+ * (ADR-0058 Decision 1): --server, VARLATCH_SERVER, then inside a
+ * repository its local override and varlatch.toml, and nothing else;
+ * outside one, the remembered default, then the only stored credential.
+ * Null when none of these names a server. The overrides are read before
+ * any repository file; without one, an unreadable varlatch.toml throws, as
+ * resolveContext does.
+ */
+export function resolveServer(options: {
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  server?: string;
+  /** The servers with a stored credential, when the caller already read them. */
+  stored?: readonly string[];
+}): ResolvedServer | null {
+  const env = options.env ?? process.env;
+  // Explicit overrides first: a malformed varlatch.toml never blocks a command that names its server.
+  if (options.server) return { server: options.server, source: "flag" };
+  if (env.VARLATCH_SERVER) return { server: env.VARLATCH_SERVER, source: "env-var" };
+  const repoRoot = findRepoRoot(options.cwd);
+  if (repoRoot) return repositoryServer(options, env, loadLocalState(repoRoot), loadRepoConfig(repoRoot));
+  const remembered = defaultServer(env);
+  if (remembered) return { server: remembered, source: "default" };
+  const stored = options.stored ?? listCredentials(env).map((c) => c.server);
+  if (stored.length === 1) return { server: stored[0] as string, source: "only-credential" };
+  return null;
 }
 
 // ---- User-level credential store (never in the repo) ----------------------
@@ -305,7 +365,7 @@ export function loadCredential(
   server: string,
   env: NodeJS.ProcessEnv = process.env,
 ): StoredCredential | null {
-  return readCredentialsFile(env)?.servers?.[server.replace(/\/+$/, "")] ?? null;
+  return readCredentialsFile(env)?.servers?.[storedServerKey(server)] ?? null;
 }
 
 export function listCredentials(
@@ -322,7 +382,7 @@ export function saveCredential(
 ): void {
   const parsed = readCredentialsFile(env) ?? { servers: {} };
   parsed.servers ??= {};
-  parsed.servers[server.replace(/\/+$/, "")] = credential;
+  parsed.servers[storedServerKey(server)] = credential;
   writeCredentialsFile(parsed, env);
 }
 
@@ -333,10 +393,76 @@ export function saveToken(server: string, token: string, env: NodeJS.ProcessEnv 
 /** Returns false when there was nothing stored for that server. */
 export function deleteCredential(server: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const parsed = readCredentialsFile(env);
-  const key = server.replace(/\/+$/, "");
+  const key = storedServerKey(server);
   if (!parsed?.servers?.[key]) return false;
   delete parsed.servers[key];
   writeCredentialsFile(parsed, env);
+  // Signing out of the default server forgets it as the default.
+  if (defaultServer(env) === key) setDefaultServer(null, env);
+  return true;
+}
+
+// ---- User-level settings (ADR-0058 Decision 1) ------------------------------
+//
+// settings.json, next to credentials.json: the remembered default server.
+// Read and written only here, atomically and 0600, keeping keys this
+// version does not know. Inside an agent-safe run the operator's file is
+// never read or written, like the credential store.
+
+export function settingsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.VARLATCH_CONFIG_DIR ?? defaultConfigDir(env), "settings.json");
+}
+
+/** The form servers are stored under, in credentials.json and here: the URL without trailing slashes. */
+export function storedServerKey(server: string): string {
+  return server.replace(/\/+$/, "");
+}
+
+function readSettings(env: NodeJS.ProcessEnv): Record<string, unknown> {
+  if (operatorStoreBlocked(env)) return {};
+  const path = settingsPath(env);
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(settings: Record<string, unknown>, env: NodeJS.ProcessEnv): void {
+  if (operatorStoreBlocked(env)) {
+    throw new ContextError(
+      `This command runs inside agent-safe run ${agentRunOf(env)}, which never writes the operator's settings.`,
+    );
+  }
+  const path = settingsPath(env);
+  mkdirSync(dirname(path), { recursive: true });
+  writePrivateFile(path, `${JSON.stringify(settings, null, 2)}\n`);
+}
+
+/** The remembered default server, or null. */
+export function defaultServer(env: NodeJS.ProcessEnv = process.env): string | null {
+  const value = readSettings(env).defaultServer;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/** Remember `server` as the default; null forgets it. Other settings are kept. */
+export function setDefaultServer(server: string | null, env: NodeJS.ProcessEnv = process.env): void {
+  const settings = readSettings(env);
+  if (server === null) delete settings.defaultServer;
+  else settings.defaultServer = storedServerKey(server);
+  writeSettings(settings, env);
+}
+
+/**
+ * After a sign-in stored a credential: make its server the default only
+ * when none is set (ADR-0058 Decision 1). Never replaces one. Returns
+ * whether it set it.
+ */
+export function rememberServerIfUnset(server: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (operatorStoreBlocked(env) || defaultServer(env)) return false;
+  setDefaultServer(server, env);
   return true;
 }
 

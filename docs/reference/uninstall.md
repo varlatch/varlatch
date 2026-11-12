@@ -40,8 +40,9 @@ installation yourself. Here is everything else, and how to remove it.
 - The CLI itself: `~/.local/bin/varlatch`, or wherever you put it
   ([Install the CLI](install-the-cli.md)). On Windows,
   `%LOCALAPPDATA%\Programs\Varlatch`, which is also on your user `PATH`.
-- Your sign-in: `credentials.json`, and `pending-sign-ins.json` while a
-  sign-in with a code waits, in `~/.config/varlatch` (or
+- Your sign-in: `credentials.json`, `settings.json` (your default
+  server), and `pending-sign-ins.json` while a sign-in with a code waits,
+  in `~/.config/varlatch` (or
   `$XDG_CONFIG_HOME/varlatch`, or `VARLATCH_CONFIG_DIR`). On Windows, the
   same files are in `.config\varlatch` in your user profile.
 

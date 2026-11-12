@@ -50,6 +50,9 @@ login` opens your browser, or prints the address to open, and you approve
 with your passkey. On a machine without a browser, sign in with a code
 instead: [Signing in from the CLI](reference/passkeys-and-sessions.md#signing-in-from-the-cli).
 
+You sign in with the address once: later, `varlatch login` alone signs you
+in again when the credential expires (12 hours by default).
+
 `varlatch run` gives the values to your command as environment
 variables. No file of secrets is written to disk. To run against another
 environment, add `-e`, for example `varlatch run -e staging -- npm test`.

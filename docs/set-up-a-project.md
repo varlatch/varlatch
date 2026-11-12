@@ -19,12 +19,16 @@ address to open, and you sign in with your passkey:
 varlatch login --server https://vault.example.com
 ```
 
+The first server you sign in to becomes your default server, so the
+commands below need no `--server` outside a repository
+([The default server](reference/passkeys-and-sessions.md#the-default-server)).
+
 Create an organization and a project, either in the dashboard, which walks
 you through the same steps, or with the CLI:
 
 ```sh
-varlatch org create acme "Acme" --server https://vault.example.com
-varlatch project create api --org acme --server https://vault.example.com
+varlatch org create acme "Acme"
+varlatch project create api --org acme
 ```
 
 A project created with the CLI takes its contract from the repository.
@@ -34,13 +38,14 @@ instead.
 Then, in the repository:
 
 ```sh
-varlatch init --org acme --project api --server https://vault.example.com
+varlatch init --org acme --project api
 varlatch env-create development --tier development
 varlatch env-create production --tier production
 ```
 
-`varlatch init` writes `varlatch.toml`, which names the server, organization,
-project, and default environment (`development`). It holds no credentials:
+`varlatch init` writes `varlatch.toml`, which names the server (your default
+server, unless you pass `--server`), organization, project, and default
+environment (`development`). It holds no credentials:
 commit it, so everyone working on the repository uses the same project. It
 also writes the files coding agents read, described in
 [Coding agents](reference/coding-agents.md); `--no-agent-files` skips them.

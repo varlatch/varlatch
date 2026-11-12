@@ -49,6 +49,8 @@ export interface RepoStatus {
   repoRoot: string;
   tier: string | null;
   tierCachedAt: string | null;
+  /** Where the server came from (ADR-0058 Decision 1); added in 0.22.0, after the fields above. */
+  serverSource: string;
 }
 
 export interface StatusDocument {
@@ -106,6 +108,7 @@ export function repoStatus(ctx: ResolvedContext, local: LocalState): RepoStatus 
     repoRoot: ctx.repoRoot,
     tier: tierApplies ? (local.selectedTier as string) : null,
     tierCachedAt: tierApplies ? (local.tierCachedAt ?? null) : null,
+    serverSource: ctx.serverSource,
   };
 }
 

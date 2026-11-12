@@ -1,21 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ContextError,
   agentRunOf,
+  defaultServer,
   deleteCredential,
   findRepoRoot,
   listCredentials,
   loadCredential,
   loadToken,
+  rememberServerIfUnset,
   resolveContext,
+  resolveServer,
   saveCredential,
   saveLocalState,
   saveToken,
+  setDefaultServer,
+  settingsPath,
 } from "../src/index.js";
+
+// Never the developer's real configuration directory: the missing-server
+// error reads the remembered default from it.
+const ISOLATED = { VARLATCH_CONFIG_DIR: mkdtempSync(join(tmpdir(), "varlatch-ctx-config-")) };
 
 function repo(config: string): string {
   const dir = mkdtempSync(join(tmpdir(), "varlatch-ctx-"));
@@ -33,7 +42,7 @@ default_environment = "development"
 describe("resolveContext precedence (ADR-0017 §7)", () => {
   it("committed default is the floor", () => {
     const dir = repo(BASE);
-    const ctx = resolveContext({ cwd: dir, env: {} });
+    const ctx = resolveContext({ cwd: dir, env: { ...ISOLATED } });
     expect(ctx).toMatchObject({
       server: "https://varlatch.example.com",
       organization: "acme",
@@ -46,7 +55,7 @@ describe("resolveContext precedence (ADR-0017 §7)", () => {
   it("local selection beats committed default", () => {
     const dir = repo(BASE);
     saveLocalState(dir, { selectedEnvironment: "development/jeremy" });
-    const ctx = resolveContext({ cwd: dir, env: {} });
+    const ctx = resolveContext({ cwd: dir, env: { ...ISOLATED } });
     expect(ctx.environment).toBe("development/jeremy");
     expect(ctx.environmentSource).toBe("local-selection");
     // The state directory ignores itself.
@@ -56,11 +65,11 @@ describe("resolveContext precedence (ADR-0017 §7)", () => {
   it("VARLATCH_ENV beats local selection; flag beats everything", () => {
     const dir = repo(BASE);
     saveLocalState(dir, { selectedEnvironment: "development/jeremy" });
-    const viaEnv = resolveContext({ cwd: dir, env: { VARLATCH_ENV: "staging" } });
+    const viaEnv = resolveContext({ cwd: dir, env: { ...ISOLATED, VARLATCH_ENV: "staging" } });
     expect(viaEnv).toMatchObject({ environment: "staging", environmentSource: "env-var" });
     const viaFlag = resolveContext({
       cwd: dir,
-      env: { VARLATCH_ENV: "staging" },
+      env: { ...ISOLATED, VARLATCH_ENV: "staging" },
       environment: "production",
     });
     expect(viaFlag).toMatchObject({ environment: "production", environmentSource: "flag" });
@@ -71,27 +80,27 @@ describe("resolveContext precedence (ADR-0017 §7)", () => {
     const nested = join(dir, "src", "deep");
     mkdirSync(nested, { recursive: true });
     expect(findRepoRoot(nested)).toBe(dir);
-    expect(resolveContext({ cwd: nested, env: {} }).repoRoot).toBe(dir);
+    expect(resolveContext({ cwd: nested, env: { ...ISOLATED } }).repoRoot).toBe(dir);
   });
 
   it("fails precisely when context is incomplete (no prompting, ADR-0017 §9)", () => {
     const noEnv = repo(`organization = "acme"\nproject = "api"\nserver = "https://x"\n`);
-    expect(() => resolveContext({ cwd: noEnv, env: {} })).toThrow(ContextError);
-    expect(() => resolveContext({ cwd: noEnv, env: {} })).toThrow(/No environment selected/);
+    expect(() => resolveContext({ cwd: noEnv, env: { ...ISOLATED } })).toThrow(ContextError);
+    expect(() => resolveContext({ cwd: noEnv, env: { ...ISOLATED } })).toThrow(/No environment selected/);
 
     const noServer = repo(`organization = "acme"\nproject = "api"\ndefault_environment = "dev"\n`);
-    expect(() => resolveContext({ cwd: noServer, env: {} })).toThrow(/No server configured/);
+    expect(() => resolveContext({ cwd: noServer, env: { ...ISOLATED } })).toThrow(/No server configured/);
     // Server override chain works.
-    const ctx = resolveContext({ cwd: noServer, env: { VARLATCH_SERVER: "https://alt" } });
+    const ctx = resolveContext({ cwd: noServer, env: { ...ISOLATED, VARLATCH_SERVER: "https://alt" } });
     expect(ctx.server).toBe("https://alt");
 
     const outside = mkdtempSync(join(tmpdir(), "varlatch-none-"));
-    expect(() => resolveContext({ cwd: outside, env: {} })).toThrow(/No varlatch.toml/);
+    expect(() => resolveContext({ cwd: outside, env: { ...ISOLATED } })).toThrow(/No varlatch.toml/);
   });
 
   it("rejects a config missing organization/project", () => {
     const dir = repo(`server = "https://x"\n`);
-    expect(() => resolveContext({ cwd: dir, env: {} })).toThrow(/organization/);
+    expect(() => resolveContext({ cwd: dir, env: { ...ISOLATED } })).toThrow(/organization/);
   });
 });
 
@@ -187,5 +196,102 @@ describe("credential store", () => {
     expect(deleteCredential("https://a.example/", env)).toBe(true);
     expect(loadToken("https://a.example", env)).toBeNull();
     expect(loadToken("https://b.example", env)).toBe("vlt_b");
+  });
+});
+
+describe("the remembered default server (ADR-0058 Decision 1)", () => {
+  const config = () => ({ VARLATCH_CONFIG_DIR: mkdtempSync(join(tmpdir(), "varlatch-settings-")) });
+  const outside = () => mkdtempSync(join(tmpdir(), "varlatch-outside-"));
+
+  it("outside a repository: flag, variable, default, then the only stored credential", () => {
+    const env = config();
+    const cwd = outside();
+    expect(resolveServer({ cwd, env })).toBeNull();
+    saveToken("https://only.example", "t", env);
+    expect(resolveServer({ cwd, env })).toEqual({ server: "https://only.example", source: "only-credential" });
+    saveToken("https://other.example", "t", env);
+    expect(resolveServer({ cwd, env })).toBeNull();
+    setDefaultServer("https://other.example/", env);
+    expect(defaultServer(env)).toBe("https://other.example");
+    expect(resolveServer({ cwd, env })).toEqual({ server: "https://other.example", source: "default" });
+    expect(resolveServer({ cwd, env: { ...env, VARLATCH_SERVER: "https://var.example" } })).toEqual({ server: "https://var.example", source: "env-var" });
+    expect(resolveServer({ cwd, env: { ...env, VARLATCH_SERVER: "https://var.example" }, server: "https://flag.example" })).toEqual({
+      server: "https://flag.example",
+      source: "flag",
+    });
+  });
+
+  it("a repository never uses the default: a varlatch.toml without a server keeps failing", () => {
+    const env = config();
+    setDefaultServer("https://default.example", env);
+    saveToken("https://default.example", "t", env);
+    const serverless = repo('organization = "acme"\nproject = "api"\ndefault_environment = "development"\n');
+    expect(resolveServer({ cwd: serverless, env })).toBeNull();
+    expect(() => resolveContext({ cwd: serverless, env })).toThrow(/No server configured.*server = "https:\/\/default\.example"/);
+    const named = repo(BASE);
+    expect(resolveServer({ cwd: named, env })).toEqual({ server: "https://varlatch.example.com", source: "repository" });
+    expect(resolveContext({ cwd: named, env }).serverSource).toBe("repository");
+    saveLocalState(named, { serverOverride: "https://override.example" });
+    expect(resolveContext({ cwd: named, env }).serverSource).toBe("local-override");
+    expect(resolveContext({ cwd: named, env: { ...env, VARLATCH_SERVER: "https://var.example" } }).serverSource).toBe("env-var");
+    expect(resolveContext({ cwd: named, env, server: "https://flag.example" }).serverSource).toBe("flag");
+  });
+
+  it("a sign-in sets the default only when none is set, and signing out of it forgets it", () => {
+    const env = config();
+    expect(rememberServerIfUnset("https://a.example", env)).toBe(true);
+    expect(rememberServerIfUnset("https://b.example", env)).toBe(false);
+    expect(defaultServer(env)).toBe("https://a.example");
+    saveToken("https://a.example", "t", env);
+    saveToken("https://b.example", "t", env);
+    expect(deleteCredential("https://b.example", env)).toBe(true);
+    expect(defaultServer(env)).toBe("https://a.example");
+    expect(deleteCredential("https://a.example/", env)).toBe(true);
+    expect(defaultServer(env)).toBeNull();
+  });
+
+  it("keeps settings it does not know, and writes the file for its owner only", () => {
+    const env = config();
+    writeFileSync(join(env.VARLATCH_CONFIG_DIR, "settings.json"), JSON.stringify({ future: { kept: true } }));
+    setDefaultServer("https://a.example", env);
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ future: { kept: true }, defaultServer: "https://a.example" });
+    if (process.platform !== "win32") expect(statSync(settingsPath(env)).mode & 0o777).toBe(0o600);
+    setDefaultServer(null, env);
+    expect(JSON.parse(readFileSync(settingsPath(env), "utf8"))).toEqual({ future: { kept: true } });
+  });
+
+  it("an unreadable settings file means no default", () => {
+    const env = config();
+    writeFileSync(join(env.VARLATCH_CONFIG_DIR, "settings.json"), "{not json");
+    expect(defaultServer(env)).toBeNull();
+  });
+
+  it("inside an agent-safe run the operator's settings are never read or written", () => {
+    const operator = config();
+    setDefaultServer("https://operator.example", operator);
+    // The run points VARLATCH_CONFIG_DIR at its own directory: that one counts, the operator's does not.
+    const run = { ...config(), VARLATCH_AGENT_RUN: "run_1" };
+    expect(defaultServer(run)).toBeNull();
+    // Without its own directory, the default location is blocked.
+    const blocked = { XDG_CONFIG_HOME: join(operator.VARLATCH_CONFIG_DIR, ".."), VARLATCH_AGENT_RUN: "run_1" };
+    expect(defaultServer(blocked)).toBeNull();
+    expect(rememberServerIfUnset("https://agent.example", blocked)).toBe(false);
+    expect(() => setDefaultServer("https://agent.example", blocked)).toThrow(ContextError);
+  });
+
+  it("--server and VARLATCH_SERVER win before a repository's files are read, even a malformed varlatch.toml", () => {
+    const env = config();
+    const broken = repo("this is = not [valid toml");
+    expect(resolveServer({ cwd: broken, env, server: "https://flag.example" })).toEqual({ server: "https://flag.example", source: "flag" });
+    expect(resolveServer({ cwd: broken, env: { ...env, VARLATCH_SERVER: "https://var.example" } })).toEqual({ server: "https://var.example", source: "env-var" });
+    expect(() => resolveServer({ cwd: broken, env })).toThrow(ContextError);
+  });
+
+  it("inside a repository without a server, never the only stored credential", () => {
+    const env = config();
+    saveToken("https://only.example", "t", env);
+    const serverless = repo('organization = "acme"\nproject = "api"\n');
+    expect(resolveServer({ cwd: serverless, env })).toBeNull();
+    expect(resolveServer({ cwd: serverless, env, stored: ["https://only.example"] })).toBeNull();
   });
 });
