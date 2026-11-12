@@ -173,6 +173,12 @@ describe("scanSql", () => {
       "SELECT $é$'$é$ AS s, id FROM identities FOR UPDATE",
       // A $ inside a name, which could otherwise open a false dollar quote.
       "SELECT id AS foo$$$ FROM identities FOR UPDATE",
+      // A non-ASCII name character, which PostgreSQL reads as part of the name.
+      "SELECT id AS é$$$ FROM identities FOR UPDATE",
+      "SELECT 1 AS é$$$; COMMIT",
+      // Backslashes escape in ordinary strings once this is off.
+      "SET standard_conforming_strings = off",
+      "SELECT set_config('standard_conforming_strings', 'off', false)",
     ]) {
       expect(() => scanSql(sql), JSON.stringify(sql)).toThrow(/outside what the checker reads/);
     }

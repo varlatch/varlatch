@@ -384,6 +384,12 @@ const MODE_OF: Record<string, string> = { "no-key-update": "no key update", "key
  * replaced. What is left can be split on `;` and searched for keywords.
  */
 export function scanSql(sql: string): { bare: string; comments: string[] } {
+  // Ordinary strings are read with standard_conforming_strings on, the
+  // default; turning it off makes a backslash escape there. Any statement
+  // naming the setting is refused, wherever the name appears.
+  if (/standard_conforming_strings/i.test(sql)) {
+    throw new Error(`lock trace: changing standard_conforming_strings is outside what the checker reads: ${sql.slice(0, 200)}`);
+  }
   let bare = "";
   const comments: string[] = [];
   let i = 0;
@@ -468,6 +474,12 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       i = end < 0 ? n : end + tag[0].length;
       bare += "''";
     } else {
+      // PostgreSQL reads a non-ASCII character outside a literal, a quoted
+      // name or a comment as part of a name (high-bit bytes); the scanner
+      // would not, and could then open a false dollar quote (é$$). Refused.
+      if (c.charCodeAt(0) > 0x7f) {
+        throw new Error(`lock trace: a non-ASCII character outside a literal, quoted name or comment is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
       bare += c;
       i++;
     }
