@@ -116,14 +116,16 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     expect((await call("PUT", `${E}/values/DB_PASS`, cli, { value: "hunter2-hunter2" })).status).toBe(200);
     orgId = (await one<{ id: string }>("SELECT id FROM organizations WHERE slug = 'acme'")).id;
     bobId = (await consumeSetupGrant(ctx, (await issueInviteGrant(ctx, { organizationId: orgId, role: "member", name: "Bob" }, adminId)).token, {})).identityId;
-  });
+    // A new database, every migration and the fixtures: over the default
+    // hook timeout when the machine is busy.
+  }, 30_000);
 
   afterEach(async () => {
     await accessCountsSettled();
     await db.end();
     await admin.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`);
     await admin.end();
-  });
+  }, 30_000);
 
   const enforce = async () => {
     const res = await call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 });
