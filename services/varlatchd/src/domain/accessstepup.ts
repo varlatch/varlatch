@@ -3,7 +3,7 @@ import type { Querier } from "../db/migrate.js";
 import { canonicalJson, type ApprovalBinding, type ApprovalChange, type ApprovalOperation } from "./approvals.js";
 import { DomainError } from "./errors.js";
 import type { AdminStepUpOperation } from "./securityreport.js";
-import { labelWithId, quoted, unnamed, visible } from "./approvallabels.js";
+import { labelWithId, list, quoted, quotedList, unnamed } from "./approvallabels.js";
 
 /**
  * admin-step-up for the access structure (ADR-0054 Decision 5, step 4.6):
@@ -213,7 +213,7 @@ function describeScope(d: GrantDeclaration, n: Names): string {
     case "environments": {
       const project = n.projects.get(s.projectId) ?? unnamed("project", s.projectId);
       if (s.selector.kind === "tier") return `the ${s.selector.tier} environments of ${project}`;
-      return `environments ${set(s.selector.environmentIds.map((id) => n.environments.get(id) ?? id)).join(", ")}`;
+      return `environments ${list(set(s.selector.environmentIds.map((id) => n.environments.get(id) ?? unnamed("environment", id))))}`;
     }
     case "team":
       return `the projects of ${n.groups.get(s.teamId)?.label ?? unnamed("team", s.teamId)}`;
@@ -222,7 +222,7 @@ function describeScope(d: GrantDeclaration, n: Names): string {
 
 function describePermission(d: GrantDeclaration, n: Names): string {
   if (d.roleId) return n.roles.get(d.roleId) ?? unnamed("role", d.roleId);
-  return set(d.actions ?? []).map(visible).join(", ");
+  return `actions ${quotedList(set(d.actions ?? []))}`;
 }
 
 const describeGrant = (d: GrantDeclaration, n: Names) => ({
@@ -344,8 +344,8 @@ export function roleCreateBinding(org: { id: string }, input: { name: string; ac
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Create role ${quoted(input.name)}: ${actions.map(visible).join(", ")}`,
-      changes: [added("name", quoted(input.name)), added("actions", actions.map(visible).join(", "))],
+      title: `Create role ${quoted(input.name)} with actions ${quotedList(actions)}`,
+      changes: [added("name", quoted(input.name)), added("actions", quotedList(actions))],
     },
   };
 }
@@ -368,8 +368,8 @@ export async function roleUpdateBinding(
   const lost = set([...before].filter((a) => !after.has(a)));
   const changes: ApprovalChange[] = [];
   if (next.name !== current.name) changes.push({ field: "name", from: quoted(current.name), to: quoted(next.name), loosens: false });
-  if (gained.length > 0) changes.push({ field: "actionsAdded", from: null, to: gained.map(visible).join(", "), loosens: true });
-  if (lost.length > 0) changes.push({ field: "actionsRemoved", from: lost.map(visible).join(", "), to: null, loosens: false });
+  if (gained.length > 0) changes.push({ field: "actionsAdded", from: null, to: quotedList(gained), loosens: true });
+  if (lost.length > 0) changes.push({ field: "actionsRemoved", from: quotedList(lost), to: null, loosens: false });
   return {
     operation: "role.update",
     organizationId: org.id,

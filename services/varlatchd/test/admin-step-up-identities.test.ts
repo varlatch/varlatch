@@ -305,18 +305,18 @@ describe("under enforce", () => {
     const binding = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/web:*", { claims: { ref: "refs/heads/main", environment: "prod" } })));
     expect(binding).toMatchObject({ operation: "oidc_binding.create" });
     expect(binding.summary).toEqual({
-      title: `Let tokens from ${ISSUER} with subject repo:acme/web:* act as "deploy" (${f.ci})`,
+      title: `Let tokens from "${ISSUER}" with subject "repo:acme/web:*" act as "deploy" (${f.ci})`,
       changes: [
-        { field: "issuer", from: null, to: ISSUER, loosens: false },
-        { field: "audience", from: null, to: "varlatch", loosens: false },
-        { field: "subject", from: null, to: "repo:acme/web:*", loosens: false },
-        { field: "claims", from: null, to: "environment=prod, ref=refs/heads/main", loosens: false },
+        { field: "issuer", from: null, to: `"${ISSUER}"`, loosens: false },
+        { field: "audience", from: null, to: '"varlatch"', loosens: false },
+        { field: "subject", from: null, to: '"repo:acme/web:*"', loosens: false },
+        { field: "claims", from: null, to: '{"environment": "prod", "ref": "refs/heads/main"}', loosens: false },
       ],
     });
     const unbinding = stepUp(await removeBinding(admin.web, f.ci, f.binding));
     expect(unbinding).toMatchObject({
       operation: "oidc_binding.delete",
-      summary: { title: `Remove the OIDC binding ${f.binding} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience varlatch) from "deploy" (${f.ci})`, changes: [] },
+      summary: { title: `Remove the OIDC binding ${f.binding} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "varlatch") from "deploy" (${f.ci})`, changes: [] },
     });
 
     expect(await machinesNamed("billing")).toBe(0);
@@ -457,8 +457,16 @@ describe("under enforce", () => {
     expect(other.status).toBe(201);
     const first = stepUp(await removeBinding(admin.cli, f.ci, f.binding)).summary.title;
     const second = stepUp(await removeBinding(admin.cli, f.ci, other.body.id)).summary.title;
-    expect(first).toBe(`Remove the OIDC binding ${f.binding} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience varlatch) from "deploy" (${f.ci})`);
-    expect(second).toBe(`Remove the OIDC binding ${other.body.id} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience other) from "deploy" (${f.ci})`);
+    expect(first).toBe(`Remove the OIDC binding ${f.binding} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "varlatch") from "deploy" (${f.ci})`);
+    expect(second).toBe(`Remove the OIDC binding ${other.body.id} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "other") from "deploy" (${f.ci})`);
+  });
+
+  it("oidc_binding.create writes claims as a map: two claims never read like one claim holding a comma", async () => {
+    // Codex's scenario.
+    const two = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/x:*", { claims: { ref: "main", repo: "acme/api" } }))).summary;
+    const one = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/x:*", { claims: { ref: "main, repo=acme/api" } }))).summary;
+    expect(two.changes.at(-1)).toEqual({ field: "claims", from: null, to: '{"ref": "main", "repo": "acme/api"}', loosens: false });
+    expect(one.changes.at(-1)).toEqual({ field: "claims", from: null, to: '{"ref": "main, repo=acme/api"}', loosens: false });
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {

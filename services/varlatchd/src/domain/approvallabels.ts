@@ -10,9 +10,18 @@
  * followed by the id the approval binds, whether or not another row shares
  * the name. A collision lookup could miss a case; this has none to miss.
  *
- * Shared by every summary of step 4: identitystepup.ts (4.5),
- * accessstepup.ts (4.6), and the people (4.7) and integration (4.8)
- * operations. Keep this name and location.
+ * The rule, by construction: a summary holds no free text (from the
+ * database or the request) that is not quoted. Names, action names, an
+ * OIDC issuer, audience, subject and claims, Tailnet selector parts, tags,
+ * URLs and slugs all go through quoted(); lists through quotedList() or
+ * list(); maps through quotedMap(). Every existing item is named with
+ * labelWithId(). Only the summary's own words, numbers, ids the server
+ * resolved, and validated enum values (an identity kind, a tier) are
+ * written bare: their sets are fixed and hold no delimiter.
+ *
+ * Shared by every summary of step 4: requirementprotection.ts (4.2),
+ * identitystepup.ts (4.5), accessstepup.ts (4.6), and the people (4.7)
+ * and integration (4.8) operations. Keep these names and this location.
  */
 
 /**
@@ -39,15 +48,6 @@ export function quoted(name: string): string {
 }
 
 /**
- * Free text a summary writes unquoted (action names, an OIDC issuer,
- * audience, subject or claim): a backslash doubled, then every invisible
- * character written as `\u{XXXX}`, as in quoted().
- */
-export function visible(text: string): string {
-  return escapeInvisible(text.replace(/\\/g, "\\\\"));
-}
-
-/**
  * A named item with its bound id: `"Bob" (idn_…)`, after an optional kind
  * (`role "reader" (rol_…)`). The quotes make the id suffix impossible to
  * fake from inside a name: a name's own quotes and parentheses stay inside
@@ -57,7 +57,32 @@ export function labelWithId(kind: string | null, name: string, id: string): stri
   return `${kind ? `${kind} ` : ""}${quoted(name)} (${id})`;
 }
 
-/** An id the summary could not name (no row of this Organization has it): the id alone, which never looks like a quoted name. */
+/**
+ * An id the summary could not name: no row of this Organization has it, so
+ * it came from the request and is free text. Written quoted, after words
+ * that say so, so it never reads like a name or a known id.
+ */
 export function unnamed(kind: string | null, id: string): string {
-  return `${kind ? `${kind} ` : ""}${id}`;
+  return `${kind ? `${kind} ` : ""}with unknown id ${quoted(id)}`;
+}
+
+/**
+ * A list as a summary writes it: items already rendered (quoted values, or
+ * labelWithId labels), in brackets, separated by ", ". Each item is
+ * delimited by its own quotes, so a comma or bracket inside a value never
+ * reads as a separator.
+ */
+export function list(items: readonly string[]): string {
+  return `[${items.join(", ")}]`;
+}
+
+/** A list of free-text values: `["config.value.read", "project.read"]`. */
+export function quotedList(values: readonly string[]): string {
+  return list(values.map(quoted));
+}
+
+/** A map of free-text keys and values, keys in sorted order: `{"ref": "main", "repo": "acme/api"}`. */
+export function quotedMap(map: Readonly<Record<string, string>>): string {
+  const keys = Object.keys(map).sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+  return `{${keys.map((k) => `${quoted(k)}: ${quoted(map[k]!)}`).join(", ")}}`;
 }

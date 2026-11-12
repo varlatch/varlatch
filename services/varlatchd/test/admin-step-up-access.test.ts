@@ -5,7 +5,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import { withSerializableTx, withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { grantReplaceBinding, roleCreateBinding } from "../src/domain/accessstepup.js";
-import { labelWithId, quoted, visible } from "../src/domain/approvallabels.js";
+import { labelWithId, list, quoted, quotedList, quotedMap, unnamed } from "../src/domain/approvallabels.js";
 import type { Querier } from "../src/db/migrate.js";
 import { withApproval, type Requester } from "../src/domain/approvals.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
@@ -363,15 +363,15 @@ describe("under enforce", () => {
       return asked;
     };
     const grantsBefore = await liveGrants();
-    const envs = [named("api/qa1", f.qa1), named("api/qa2", f.qa2)].sort().join(", ");
+    const envs = `[${[named("api/qa1", f.qa1), named("api/qa2", f.qa2)].sort().join(", ")}]`;
     const g = await shown(await createGrant(admin.cli, { subjectIdentityId: f.svc, scope: { kind: "environments", projectId: f.project, selector: { kind: "environments", environmentIds: [f.qa2, f.qa1] } }, actions: ["project.read", "config.value.read"] }));
     expect(g).toMatchObject({ operation: "grant.create", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(g.summary).toEqual({
-      title: `Grant config.value.read, project.read on environments ${envs} to ${named("api-svc", f.svc)}`,
+      title: `Grant actions ["config.value.read", "project.read"] on environments ${envs} to ${named("api-svc", f.svc)}`,
       changes: [
         { field: "subject", from: null, to: named("api-svc", f.svc), loosens: false },
         { field: "scope", from: null, to: `environments ${envs}`, loosens: false },
-        { field: "permission", from: null, to: "config.value.read, project.read", loosens: false },
+        { field: "permission", from: null, to: 'actions ["config.value.read", "project.read"]', loosens: false },
       ],
     });
     const r = await shown(await replaceGrant(admin.web, f.grant, { subjectGroupId: f.team, scope: { kind: "team", teamId: f.team }, roleId: f.role }));
@@ -386,18 +386,18 @@ describe("under enforce", () => {
     expect((await shown(await revokeGrant(admin.cli, f.grant))).summary).toEqual({ title: `Revoke the Grant ${f.grant} of role ${named("reader", f.role)} on project ${named("api", f.project)} to group ${named("oncall", f.group)}`, changes: [] });
 
     expect((await shown(await createRole(admin.cli, { name: "writer", actions: ["project.read", "config.value.write"] }))).summary).toEqual({
-      title: 'Create role "writer": config.value.write, project.read',
+      title: 'Create role "writer" with actions ["config.value.write", "project.read"]',
       changes: [
         { field: "name", from: null, to: '"writer"', loosens: false },
-        { field: "actions", from: null, to: "config.value.write, project.read", loosens: false },
+        { field: "actions", from: null, to: '["config.value.write", "project.read"]', loosens: false },
       ],
     });
     expect((await shown(await updateRole(admin.cli, f.role, { expectedVersion: 1, name: "readers", actions: ["project.read", "config.value.write"] }))).summary).toEqual({
       title: `Change role ${named("reader", f.role)}, which 1 Grant uses`,
       changes: [
         { field: "name", from: '"reader"', to: '"readers"', loosens: false },
-        { field: "actionsAdded", from: null, to: "config.value.write", loosens: true },
-        { field: "actionsRemoved", from: "config.value.read", to: null, loosens: false },
+        { field: "actionsAdded", from: null, to: '["config.value.write"]', loosens: true },
+        { field: "actionsRemoved", from: '["config.value.read"]', to: null, loosens: false },
       ],
     });
     expect((await shown(await deleteRole(admin.cli, f.role))).summary).toEqual({ title: `Delete role ${named("reader", f.role)}`, changes: [] });
@@ -664,13 +664,13 @@ describe("under enforce", () => {
     const api = `project ${named("api", f.project)}`;
     const decl = (subjectIdentityId: string) => ({ subjectIdentityId, scope: { kind: "project", projectId: f.project }, actions: ["project.read"] });
     const toPerson = stepUp(await createGrant(admin.cli, decl(f.bob.id)));
-    expect(toPerson.summary.title).toBe(`Grant project.read on ${api} to ${person}`);
+    expect(toPerson.summary.title).toBe(`Grant actions ["project.read"] on ${api} to ${person}`);
     await approve(admin, toPerson.id);
     const grant = (await createGrant(admin.cli, decl(f.bob.id), toPerson.id)).body;
     // The same scope and permission, the other Bob: the subject change is listed, with both ids.
     const swap = stepUp(await replaceGrant(admin.cli, grant.id, decl(machine.id)));
     expect(swap.summary).toEqual({
-      title: `Change the Grant ${grant.id} of project.read on ${api} to ${person}`,
+      title: `Change the Grant ${grant.id} of actions ["project.read"] on ${api} to ${person}`,
       changes: [{ field: "subject", from: person, to: robotBob, loosens: false }],
     });
     // Memberships name the Bob they mean.
@@ -698,12 +698,26 @@ describe("under enforce", () => {
     ]);
   });
 
+  it("an action list never reads like another: one action with a comma is not two actions", async () => {
+    // Codex's scenario, for role creation, a role edit and a Grant.
+    const one = stepUp(await createRole(admin.cli, { name: "x", actions: ["config.value.read, project.read"] })).summary;
+    const two = stepUp(await createRole(admin.cli, { name: "x", actions: ["config.value.read", "project.read"] })).summary;
+    expect(one.title).toBe('Create role "x" with actions ["config.value.read, project.read"]');
+    expect(two.title).toBe('Create role "x" with actions ["config.value.read", "project.read"]');
+    const edited = stepUp(await updateRole(admin.cli, f.role, { expectedVersion: 1, actions: ["config.value.read", "project.read", "a, b"] })).summary;
+    expect(edited.changes).toEqual([{ field: "actionsAdded", from: null, to: '["a, b"]', loosens: true }]);
+    const grantOne = stepUp(await createGrant(admin.cli, { subjectIdentityId: f.svc, scope: { kind: "organization" }, actions: ["config.value.read, project.read"] })).summary;
+    const grantTwo = stepUp(await createGrant(admin.cli, { subjectIdentityId: f.svc, scope: { kind: "organization" }, actions: ["config.value.read", "project.read"] })).summary;
+    expect(grantOne.title).not.toBe(grantTwo.title);
+    expect(grantOne.changes[2]).toEqual({ field: "permission", from: null, to: 'actions ["config.value.read, project.read"]', loosens: false });
+  });
+
   it("invisible characters are written out: a zero-width space, a bidi override, a zero-width joiner", async () => {
     // Two roles created as "reader" and "reader" plus U+200B, with the same actions: neither has an id yet.
     const plain = stepUp(await createRole(admin.cli, { name: "reader2", actions: ["project.read"] })).summary;
     const zwsp = stepUp(await createRole(admin.cli, { name: "reader2\u200b", actions: ["project.read"] })).summary;
-    expect(plain.title).toBe('Create role "reader2": project.read');
-    expect(zwsp.title).toBe('Create role "reader2\\u{200B}": project.read');
+    expect(plain.title).toBe('Create role "reader2" with actions ["project.read"]');
+    expect(zwsp.title).toBe('Create role "reader2\\u{200B}" with actions ["project.read"]');
     expect(zwsp.changes[0]).toEqual({ field: "name", from: null, to: '"reader2\\u{200B}"', loosens: false });
     // A bidi override cannot reorder what the approver reads.
     expect(stepUp(await createGroup("groups", admin.cli, "ops\u202Eevil")).summary.title).toBe('Create group "ops\\u{202E}evil"');
@@ -714,7 +728,7 @@ describe("under enforce", () => {
       changes: [{ field: "name", from: '"platform"', to: '"plat\\u{200D}form"', loosens: false }],
     });
     // Action names are free text: written out too.
-    expect(stepUp(await createRole(admin.cli, { name: "w", actions: ["project.read\u2060"] })).summary.title).toBe('Create role "w": project.read\\u{2060}');
+    expect(stepUp(await createRole(admin.cli, { name: "w", actions: ["project.read\u2060"] })).summary.title).toBe('Create role "w" with actions ["project.read\\u{2060}"]');
   });
 
   it("never hides an environment or a Project moved to a reused slug", async () => {
@@ -736,8 +750,8 @@ describe("under enforce", () => {
     expect(moved.summary.changes).toEqual([
       {
         field: "scope",
-        from: `environments ${named("api/prod", prodA)}`,
-        to: `environments ${[named("api/prod", prodB), named("api/staging", stagingB)].sort().join(", ")}`,
+        from: `environments [${named("api/prod", prodA)}]`,
+        to: `environments [${[named("api/prod", prodB), named("api/staging", stagingB)].sort().join(", ")}]`,
         loosens: false,
       },
     ]);
@@ -763,7 +777,7 @@ describe("under enforce", () => {
     const envs = (environmentIds: string[]) => ({ ...old, scope: { kind: "environments" as const, projectId: "prj_a", selector: { kind: "environments" as const, environmentIds } } });
     const scope = await grantReplaceBinding(db, { id: orgId }, { ...envs(["env_a", "env_b"]), id: "grt_old", revoked: false }, envs(["env_a", "env_c"]));
     expect(scope.summary.changes).toEqual([
-      { field: "scope", from: 'environments "Bob" (env_a), "Bob" (env_b)', to: 'environments "Bob" (env_a), "Bob" (env_c)', loosens: false },
+      { field: "scope", from: 'environments ["Bob" (env_a), "Bob" (env_b)]', to: 'environments ["Bob" (env_a), "Bob" (env_c)]', loosens: false },
     ]);
   });
 
@@ -780,10 +794,21 @@ describe("under enforce", () => {
     expect(quoted("reader\u200b")).toBe('"reader\\u{200B}"');
     expect(quoted("a\u202eb\u00a0c\ufeff\u180e\ufe0f\u3164\u007f")).toBe('"a\\u{202E}b\\u{00A0}c\\u{FEFF}\\u{180E}\\u{FE0F}\\u{3164}\\u{007F}"');
     expect(quoted("plain words, one space")).toBe('"plain words, one space"');
+    // Lists and maps: a delimiter, a quote, a bracket or a brace inside a value stays inside its quotes.
+    expect(quotedList(["a, b"])).toBe('["a, b"]');
+    expect(quotedList(["a", "b"])).toBe('["a", "b"]');
+    expect(quotedList(['a", "b'])).toBe('["a\\", \\"b"]');
+    expect(quotedList(["]", "["])).toBe('["]", "["]');
+    expect(quotedList([])).toBe("[]");
+    expect(list([labelWithId(null, "x], [y", "env_1")])).toBe('["x], [y" (env_1)]');
+    expect(quotedMap({ ref: "main", repo: "acme/api" })).toBe('{"ref": "main", "repo": "acme/api"}');
+    expect(quotedMap({ ref: "main, repo=acme/api" })).toBe('{"ref": "main, repo=acme/api"}');
+    expect(quotedMap({ repo: "x", "a}": "{b", 'q"': '"' })).toBe('{"a}": "{b", "q\\"": "\\"", "repo": "x"}');
+    expect(quotedMap({})).toBe("{}");
+    // An id no row has came from the request: quoted, and said to be unknown.
+    expect(unnamed("environment", "env_x, env_y")).toBe('environment with unknown id "env_x, env_y"');
     // A typed escape stays apart from a real invisible character.
     expect(quoted("reader\\u{200B}")).not.toBe(quoted("reader\u200b"));
-    expect(visible("a\\u{200B}")).not.toBe(visible("a\u200b"));
-    expect(visible("project.read\u200d")).toBe("project.read\\u{200D}");
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {

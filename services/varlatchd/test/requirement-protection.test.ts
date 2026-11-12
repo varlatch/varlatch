@@ -255,13 +255,13 @@ describe("under enforce", () => {
     const editing = stepUp(await edit(admin.cli, r.id, tags(1, ["tag:ci", "tag:prod"])));
     expect(editing).toMatchObject({ operation: "requirement.update", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(editing.summary).toEqual({
-      title: "Change the Tailnet Requirement on the staging tier",
-      changes: [{ field: "selector", from: "tailnet example.ts.net: tags tag:ci", to: "tailnet example.ts.net: tags tag:ci, tag:prod", loosens: true }],
+      title: `Change the Tailnet Requirement ${r.id} on the staging tier`,
+      changes: [{ field: "selector", from: 'tailnet "example.ts.net": tags ["tag:ci"]', to: 'tailnet "example.ts.net": tags ["tag:ci", "tag:prod"]', loosens: true }],
     });
     const revoking = stepUp(await revoke(admin.cli, r.id));
     expect(revoking).toMatchObject({ operation: "requirement.revoke", organization: { id: orgId } });
     expect(revoking.summary.title).toBe(
-      "Remove the Tailnet Requirement on the staging tier (tailnet example.ts.net: tags tag:ci). What it constrained is no longer constrained",
+      `Remove the Tailnet Requirement ${r.id} on the staging tier (tailnet "example.ts.net": tags ["tag:ci"]). What it constrained is no longer constrained`,
     );
     expect(await versionOf(r.id)).toEqual({ version: 1, revoked_at: null });
     expect(await events("requirement.updated")).toEqual([]);
@@ -274,10 +274,28 @@ describe("under enforce", () => {
     const r = await requirement("staging", ["tag:ci", "tag:prod"]);
     const narrower = stepUp(await edit(admin.cli, r.id, tags(1, ["tag:ci"])));
     expect(narrower.summary.changes).toEqual([
-      { field: "selector", from: "tailnet example.ts.net: tags tag:ci, tag:prod", to: "tailnet example.ts.net: tags tag:ci", loosens: false },
+      { field: "selector", from: 'tailnet "example.ts.net": tags ["tag:ci", "tag:prod"]', to: 'tailnet "example.ts.net": tags ["tag:ci"]', loosens: false },
     ]);
     const moved = stepUp(await edit(admin.cli, r.id, { expectedVersion: 1, target: { kind: "tier", tier: "production" } }));
     expect(moved.summary.changes).toEqual([{ field: "target", from: "the staging tier", to: "the production tier", loosens: true }]);
+  });
+
+  it("names the Requirement by its id: two alike in target and selector read apart; selector parts are quoted", async () => {
+    const a = await requirement();
+    const b = await requirement();
+    const revokeA = stepUp(await revoke(admin.cli, a.id)).summary.title;
+    const revokeB = stepUp(await revoke(admin.cli, b.id)).summary.title;
+    expect(revokeA).toContain(`Requirement ${a.id} on`);
+    expect(revokeB).toContain(`Requirement ${b.id} on`);
+    expect(revokeA).not.toBe(revokeB);
+    const editA = stepUp(await edit(admin.cli, a.id, tags(1, ["tag:ci", "tag:prod"]))).summary;
+    const editB = stepUp(await edit(admin.cli, b.id, tags(1, ["tag:ci", "tag:prod"]))).summary;
+    expect(editA.title).toBe(`Change the Tailnet Requirement ${a.id} on the staging tier`);
+    expect(editB.title).toBe(`Change the Tailnet Requirement ${b.id} on the staging tier`);
+    // A tag holding a comma is one tag, not two.
+    const r = await requirement("production", ["tag:a"]);
+    const comma = stepUp(await edit(admin.cli, r.id, tags(1, ["tag:a, tag:b"]))).summary;
+    expect(comma.changes).toEqual([{ field: "selector", from: 'tailnet "example.ts.net": tags ["tag:a"]', to: 'tailnet "example.ts.net": tags ["tag:a, tag:b"]', loosens: true }]);
   });
 
   it("runs the whole flow: approve, repeat with the header, used once, recorded with the approval", async () => {
