@@ -13,7 +13,15 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
-import { reportAdminStepUp } from "./securityreport.js";
+import type { ProtectedGate } from "./approvals.js";
+import type { ProtectedOptions } from "./identities.js";
+import {
+  oidcBindingCreateBinding,
+  oidcBindingDeleteBinding,
+  readMachineIdentity,
+  readOidcBinding,
+} from "./identitystepup.js";
+import { approvalMetadata, prepareProtectedOperation } from "./protected.js";
 
 /**
  * OIDC machine authentication (ADR-0007 foresaw CI federation): an admin
@@ -56,8 +64,16 @@ function audienceMatches(aud: OidcClaims["aud"], expected: string): boolean {
   return Array.isArray(aud) ? aud.includes(expected) : aud === expected;
 }
 
+/**
+ * A protected operation (ADR-0054): admin-step-up's oidc_binding.create.
+ * Under enforce it needs the requester's approval, bound to the identity
+ * and the binding's issuer, audience, subject and claims
+ * (identitystepup.ts). The issuer's validation and the outbound policy
+ * refuse first, before any approval is asked for.
+ */
 export async function createOidcBinding(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
   input: {
@@ -66,8 +82,9 @@ export async function createOidcBinding(
     subject: string;
     claims?: Record<string, string> | undefined;
   },
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<OidcBindingRow> {
+  const actorIdentityId = gate.requester.identityId;
   let issuer: URL;
   try {
     issuer = new URL(input.issuer);
@@ -94,7 +111,16 @@ export async function createOidcBinding(
     throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, identityId] });
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actorIdentityId, identityId] },
+      checks: [{ control: "admin-step-up", operation: "oidc_binding.create" }],
+      binding: async (db) => {
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        if (!identity) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+        return oidcBindingCreateBinding({ id: organizationId }, identity, input);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     const id = newId("oidcBinding");
     const res = await db.query(
       `INSERT INTO oidc_bindings (id, identity_id, organization_id, issuer, audience, subject, claims, created_by)
@@ -111,7 +137,8 @@ export async function createOidcBinding(
         actorIdentityId,
       ],
     );
-    await reportAdminStepUp(db, organizationId, actorIdentityId, "oidc_binding.create");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "oidc_binding.created",
       decision: "info",
@@ -119,7 +146,7 @@ export async function createOidcBinding(
       organizationId,
       action: "identity.manage",
       resource: { identityId, oidcBindingId: id },
-      metadata: { issuer: input.issuer, audience: input.audience, subject: input.subject },
+      metadata: { issuer: input.issuer, audience: input.audience, subject: input.subject, ...approvalMetadata(prepared.approval) },
     });
     return res.rows[0] as OidcBindingRow;
   });
@@ -140,15 +167,34 @@ export async function listOidcBindings(
   return res.rows as OidcBindingRow[];
 }
 
+/**
+ * A protected operation (ADR-0054): admin-step-up's oidc_binding.delete.
+ * Under enforce it needs the requester's approval, bound to the identity
+ * and the binding (identitystepup.ts). A revoked binding never comes back,
+ * so its id pins it: no version. It stays a recovery operation during an
+ * incident freeze (ADR-0055), where its approval may still be asked for.
+ */
 export async function revokeOidcBinding(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
   bindingId: string,
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<void> {
+  const actorIdentityId = gate.requester.identityId;
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId] },
+      checks: [{ control: "admin-step-up", operation: "oidc_binding.delete" }],
+      binding: async (db) => {
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        const binding = identity ? await readOidcBinding(db, organizationId, identityId, bindingId) : null;
+        if (!identity || !binding) throw new DomainError("RESOURCE_NOT_FOUND", "Binding not found");
+        return oidcBindingDeleteBinding({ id: organizationId }, identity, binding);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     const res = await db.query(
       `UPDATE oidc_bindings SET revoked_at = now()
        WHERE id = $1 AND organization_id = $2 AND identity_id = $3 AND revoked_at IS NULL
@@ -156,7 +202,8 @@ export async function revokeOidcBinding(
       [bindingId, organizationId, identityId],
     );
     if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Binding not found");
-    await reportAdminStepUp(db, organizationId, actorIdentityId, "oidc_binding.delete");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "oidc_binding.revoked",
       decision: "info",
@@ -164,6 +211,7 @@ export async function revokeOidcBinding(
       organizationId,
       action: "identity.manage",
       resource: { identityId, oidcBindingId: bindingId },
+      ...(prepared.approval ? { metadata: approvalMetadata(prepared.approval) } : {}),
     });
   });
 }

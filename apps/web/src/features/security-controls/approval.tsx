@@ -28,6 +28,15 @@ const FIELD_LABELS: Record<string, string> = {
   // A Tailnet Requirement (requirement-protection).
   target: "Applies to",
   selector: "Devices allowed",
+  // Machine identities, credentials and OIDC bindings (admin-step-up).
+  name: "Name",
+  kind: "Kind",
+  credentialExpiry: "Credential expires",
+  credentialUses: "Credential uses",
+  issuer: "Issuer",
+  audience: "Audience",
+  subject: "Subject",
+  claims: "Required claims",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */

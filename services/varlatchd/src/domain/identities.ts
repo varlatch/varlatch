@@ -11,10 +11,16 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
-import { reportAdminStepUp } from "./securityreport.js";
 import { lockedQuery } from "../db/locks.js";
+import type { Querier } from "../db/migrate.js";
 import type { ProtectedGate } from "./approvals.js";
-import { prepareProtectedOperation, type PreparedOperation } from "./protected.js";
+import { approvalMetadata, prepareProtectedOperation, type PreparedOperation } from "./protected.js";
+import {
+  credentialIssueBinding,
+  identityCreateBinding,
+  identityReactivateBinding,
+  readMachineIdentity,
+} from "./identitystepup.js";
 
 export type MachineKind = "service" | "workload" | "ci" | "broker" | "agent";
 
@@ -37,12 +43,12 @@ function expiryOf(ttlSeconds: number | undefined): string | null {
 const lifetimeMetadata = (prepared: PreparedOperation) => (prepared.ttlDefaulted ? { lifetimeDefaulted: true } : {});
 
 /**
- * Admin-step-up's approval for identity.create and credential.issue is
- * ADR-0054 step 4.5; until it ships that control cannot be enforced
- * (ENFORCEABLE_CONTROLS), so nothing asks these operations for a binding.
+ * What a protected operation here takes besides its input: the requester's
+ * authorization, rechecked in the operation's transaction once an approval
+ * was consumed ("the person still holds the action", ADR-0054 Decision 3).
  */
-function notYetBound(operation: string): never {
-  throw new Error(`${operation}: approvals for admin-step-up are not built yet (ADR-0054 step 4.5)`);
+export interface ProtectedOptions {
+  authorizeIn?: ((db: Querier) => Promise<void>) | undefined;
 }
 
 /**
@@ -56,7 +62,10 @@ function notYetBound(operation: string): never {
  * credential-lifetime's when a credential is issued. Under
  * credential-lifetime at enforce, the credential gets the Organization's
  * default lifetime when none was asked for, and one above its maximum is
- * refused before anything is created (prepareProtectedOperation).
+ * refused before anything is created (prepareProtectedOperation). Under
+ * admin-step-up at enforce, it needs the requester's approval, bound to the
+ * Organization and the request with the lifetime credential-lifetime
+ * decided (identitystepup.ts); one approval covers both controls.
  */
 export async function createMachineIdentity(
   ctx: AppCtx,
@@ -68,6 +77,7 @@ export async function createMachineIdentity(
     credentialTtlSeconds?: number | undefined;
     credentialMaxUses?: number | undefined;
   },
+  options: ProtectedOptions = {},
 ): Promise<{
   identity: IdentityRow;
   credential: string | null;
@@ -88,7 +98,8 @@ export async function createMachineIdentity(
           ? [{ control: "credential-lifetime" as const, operation: "identity.create" as const, ttlSeconds: input.credentialTtlSeconds }]
           : []),
       ],
-      binding: async () => notYetBound("identity.create"),
+      binding: async (_db, decided) => identityCreateBinding({ id: organizationId }, input, issues, decided.effectiveTtlSeconds),
+      authorizeIn: options.authorizeIn,
     });
     const id = newId("identity");
     await db.query(
@@ -105,7 +116,7 @@ export async function createMachineIdentity(
       organizationId,
       action: "identity.manage",
       resource: { identityId: id },
-      metadata: { kind: input.kind },
+      metadata: { kind: input.kind, ...approvalMetadata(prepared.approval) },
     });
     let credential: string | null = null;
     let credentialExpiresAt: string | null = null;
@@ -158,6 +169,7 @@ export async function issueMachineCredential(
   organizationId: string,
   identityId: string,
   input: { name: string; ttlSeconds?: number | undefined; maxUses?: number | undefined },
+  options: ProtectedOptions = {},
 ): Promise<{ credentialId: string; token: string; expiresAt: string | null; maxUses: number | null }> {
   if (!input.name || input.name.length > 200) {
     throw new DomainError("VALIDATION_FAILED", "Invalid credential name");
@@ -170,7 +182,16 @@ export async function issueMachineCredential(
         { control: "admin-step-up", operation: "credential.issue" },
         { control: "credential-lifetime", operation: "credential.issue", ttlSeconds: input.ttlSeconds },
       ],
-      binding: async () => notYetBound("credential.issue"),
+      binding: async (db, decided) => {
+        // Refusals first (amendment A), read without a lock: the identity
+        // is checked again, live and of a service kind, FOR SHARE below.
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        if (!identity || !SERVICE_CREDENTIAL_KINDS.has(identity.kind) || identity.disabled) {
+          throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+        }
+        return credentialIssueBinding({ id: organizationId }, identity, input, decided.effectiveTtlSeconds);
+      },
+      authorizeIn: options.authorizeIn,
     });
     // FOR SHARE serializes with retire's UPDATE: a retirement committed first
     // is seen here, and one committing after this issuance revokes the new
@@ -198,7 +219,7 @@ export async function issueMachineCredential(
       actorIdentityId,
       organizationId,
       // Identifiers only (ADR-0016 §8); null records "no expiry" and "unlimited".
-      metadata: { name: input.name, expiresAt, maxUses, ...lifetimeMetadata(prepared) },
+      metadata: { name: input.name, expiresAt, maxUses, ...lifetimeMetadata(prepared), ...approvalMetadata(prepared.approval) },
     });
     return { credentialId: issued.credentialId, token: issued.token, expiresAt, maxUses };
   });
@@ -276,28 +297,60 @@ export async function retireIdentity(
   });
 }
 
+const suspendedByDeletion = () =>
+  new DomainError("ORGANIZATION_DELETING", "This identity was suspended by the Organization's deletion; cancelling the deletion restores it");
+
 /**
  * Reactivation clears the flag only: a reactivated identity has zero working
  * credentials until an admin deliberately issues one (ADR-0034 §3).
+ *
+ * A protected operation (ADR-0054): admin-step-up's identity.reactivate.
+ * Under enforce, reactivating a disabled identity needs the requester's
+ * approval, bound to the identity (identitystepup.ts). Reactivating an
+ * enabled one changes nothing and needs none; an identity suspended by a
+ * deletion is refused before any approval is asked for. Both are decided
+ * again under the identity's row lock: an identity retired between the
+ * unlocked read and the lock is refused (STATE_CHANGED), never reactivated
+ * without the approval it then needs.
  */
 export async function reactivateIdentity(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   identityId: string,
-  actorIdentityId: string,
+  options: ProtectedOptions = {},
 ): Promise<void> {
+  const actorIdentityId = gate.requester.identityId;
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });
+    let boundEnabled = false;
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] },
+      checks: [{ control: "admin-step-up", operation: "identity.reactivate" }],
+      binding: async (db) => {
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        if (!identity) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+        if (identity.suspendedByDeletion) throw suspendedByDeletion();
+        if (!identity.disabled) {
+          boundEnabled = true;
+          return null;
+        }
+        return identityReactivateBinding({ id: organizationId }, identity);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     // An identity suspended by a deletion request comes back only through
     // that request's cancellation (ADR-0051 Decision 5).
     const suspended = await lockedQuery(db, { table: "identities", mode: "update", key: "$1" }, "SELECT suspended_by_deletion, disabled FROM identities WHERE id = $1 FOR UPDATE", [identityId]);
     const before = suspended.rows[0] as { suspended_by_deletion: string | null; disabled: boolean } | undefined;
-    if (before?.suspended_by_deletion) {
-      throw new DomainError("ORGANIZATION_DELETING", "This identity was suspended by the Organization's deletion; cancelling the deletion restores it");
+    if (before?.suspended_by_deletion) throw suspendedByDeletion();
+    // Enabled when the approval was decided, disabled now (retired since):
+    // this reactivation would need an approval it was not asked for.
+    if (boundEnabled && before?.disabled) {
+      throw new DomainError("STATE_CHANGED", "The identity was retired while it was being reactivated; nothing changed. Reactivate it again");
     }
     await db.query("UPDATE identities SET disabled = false WHERE id = $1", [identityId]);
     // Report mode counts only a reactivation of a disabled identity; an enabled one stays as it was.
-    if (before?.disabled) await reportAdminStepUp(db, organizationId, actorIdentityId, "identity.reactivate");
+    if (before?.disabled) await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "identity.reactivated",
       decision: "info",
@@ -305,6 +358,7 @@ export async function reactivateIdentity(
       organizationId,
       action: "identity.manage",
       resource: { identityId },
+      ...(prepared.approval ? { metadata: approvalMetadata(prepared.approval) } : {}),
     });
   });
 }

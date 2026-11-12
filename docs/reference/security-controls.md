@@ -537,6 +537,28 @@ nobody can approve, whoever runs the server can turn the control off:
 credential-lifetime`. Credentials issued while it was enforced keep the
 expiry they got; issue new ones if needed.
 
+## Admin step-up
+
+`admin-step-up` cannot be enforced yet: the server refuses `enforce` with
+`CONTROL_MODE_UNAVAILABLE` until every operation it covers asks for an
+approval. Its guarantee is described here when it can be turned on.
+
+The approvals for machine identities are built. Once the control is
+enforced, each of these needs your approval for exactly that request, and
+a machine credential that tries one is refused:
+
+| Operation | What the approval covers |
+| --- | --- |
+| `identity.create` | The name and kind, the credential lifetime and use budget asked for, and the lifetime the credential gets (with `credential-lifetime` enforced, its default when none was asked for). One approval covers both controls. |
+| `credential.issue` | The machine, the credential's name, the lifetime and use budget asked for, and the lifetime it gets. |
+| `identity.reactivate` | The machine. Reactivating a machine that is already active changes nothing and needs no approval. |
+| `oidc_binding.create` | The machine, the issuer, audience and subject, and the required claims (none and `{}` are the same). |
+| `oidc_binding.delete` | The machine and the binding. During an incident freeze, removing a binding is still allowed and still asks. |
+
+An agent-run credential minted by a broker, retiring or renaming a machine,
+and revoking a credential never ask. Report mode already counts all five
+operations.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an

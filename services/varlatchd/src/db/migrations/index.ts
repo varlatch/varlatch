@@ -45,6 +45,7 @@ import { sql as securityReportCounters } from "./0042_security_report_counters.j
 import { sql as sessionEndRevokesBrowserCredentials } from "./0043_session_end_revokes_browser_credentials.js";
 import { sql as incidentFreeze } from "./0044_incident_freeze.js";
 import { sql as requirementProtection } from "./0045_requirement_protection.js";
+import { sql as adminStepUpIdentities } from "./0046_admin_step_up_identities.js";
 
 export interface Migration {
   id: number;
@@ -99,4 +100,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 43, name: "session_end_revokes_browser_credentials", sql: sessionEndRevokesBrowserCredentials },
   { id: 44, name: "incident_freeze", sql: incidentFreeze },
   { id: 45, name: "requirement_protection", sql: requirementProtection },
+  { id: 46, name: "admin_step_up_identities", sql: adminStepUpIdentities },
 ];

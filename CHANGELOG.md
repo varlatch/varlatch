@@ -59,6 +59,14 @@ fixes.
   one, like any loosening. The `credential.issued` audit event says
   `lifetimeDefaulted` when the default was applied. See [Credential
   lifetime](docs/reference/security-controls.md#credential-lifetime).
+- **Admin step-up: approvals for machine identities are built.**
+  Creating a machine identity, issuing a credential, reactivating an
+  identity, and adding or removing an OIDC binding will each need the
+  approval of the person asking, for exactly that request, once
+  `admin-step-up` can be enforced; a machine credential will be refused.
+  It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
+  changes now, and with every control off nothing changes at all. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection` or
   `credential-lifetime`). Removing an unconfirmed passkey
