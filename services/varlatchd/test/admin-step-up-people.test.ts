@@ -296,22 +296,22 @@ describe("under enforce", () => {
     const inv = stepUp(await inviteAs(admin.cli, "Zoe", "admin"));
     expect(inv).toMatchObject({ operation: "member.invite_admin", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(inv.summary).toEqual({
-      title: "Invite Zoe as an Organization Admin",
+      title: 'Invite "Zoe" as an Organization Admin',
       changes: [
-        { field: "name", from: null, to: "Zoe", loosens: false },
+        { field: "name", from: null, to: '"Zoe"', loosens: false },
         { field: "role", from: null, to: "admin", loosens: false },
       ],
     });
     const promote = stepUp(await setRole(admin.cli, f.dave.id, "admin"));
     expect(promote).toMatchObject({ operation: "member.promote" });
-    expect(promote.summary).toEqual({ title: "Make Dave an Organization Admin", changes: [{ field: "role", from: "member", to: "admin", loosens: false }] });
+    expect(promote.summary).toEqual({ title: `Make "Dave" (${f.dave.id}) an Organization Admin`, changes: [{ field: "role", from: "member", to: "admin", loosens: false }] });
     const demote = stepUp(await setRole(admin.web, f.carol.id, "member"));
     expect(demote).toMatchObject({ operation: "member.demote" });
-    expect(demote.summary).toEqual({ title: "Make Carol a member instead of an admin", changes: [{ field: "role", from: "admin", to: "member", loosens: false }] });
+    expect(demote.summary).toEqual({ title: `Make "Carol" (${f.carol.id}) a member instead of an admin`, changes: [{ field: "role", from: "admin", to: "member", loosens: false }] });
     const removal = stepUp(await remove(admin.cli, f.bob.id));
     expect(removal).toMatchObject({ operation: "member.remove" });
-    expect(removal.summary).toEqual({ title: "Remove Bob (member) from Acme: 1 direct Grant revoked, 1 group left, 1 invitation revoked", changes: [] });
-    expect(stepUp(await remove(admin.cli, f.carol.id)).summary.title).toBe("Remove Carol (admin) from Acme: 0 direct Grants revoked, 0 groups left, 0 invitations revoked");
+    expect(removal.summary).toEqual({ title: `Remove "Bob" (${f.bob.id}), a member, from organization "Acme" (${orgId}): 1 direct Grant revoked, 1 group left, 1 invitation revoked`, changes: [] });
+    expect(stepUp(await remove(admin.cli, f.carol.id)).summary.title).toBe(`Remove "Carol" (${f.carol.id}), an admin, from organization "Acme" (${orgId}): 0 direct Grants revoked, 0 groups left, 0 invitations revoked`);
 
     expect(await invitations("Zoe")).toBe(0);
     expect(await roleOf(f.dave.id)).toEqual({ role: "member", removed: false });
@@ -319,6 +319,31 @@ describe("under enforce", () => {
     expect(await roleOf(f.bob.id)).toEqual({ role: "member", removed: false });
     // Nothing is counted under enforce.
     expect(await counters()).toBe(0);
+  });
+
+  it("names people apart in their summaries: a shared name, a fake id suffix, an invisible character", async () => {
+    const sam1 = await invite("Sam", "member");
+    const sam2 = await invite("Sam", "member");
+    const fake = await invite(`Sam" (${sam1.id})`, "member");
+    const hidden = await invite("Sam\u200B", "member");
+    const titles: string[] = [];
+    for (const p of [sam1, sam2, fake, hidden]) {
+      const promote = stepUp(await setRole(admin.cli, p.id, "admin"));
+      const removal = stepUp(await remove(admin.cli, p.id));
+      titles.push(promote.summary.title, removal.summary.title);
+      await ctx.db.query("DELETE FROM approval_intents WHERE id = ANY($1)", [[promote.id, removal.id]]);
+    }
+    expect(new Set(titles).size).toBe(titles.length);
+    expect(titles[0]).toBe(`Make "Sam" (${sam1.id}) an Organization Admin`);
+    expect(titles[2]).toBe(`Make "Sam" (${sam2.id}) an Organization Admin`);
+    // The fake suffix stays inside the escaped name, before the real id.
+    expect(titles[4]).toBe(`Make "Sam\\" (${sam1.id})" (${fake.id}) an Organization Admin`);
+    expect(titles[5]).toBe(`Remove "Sam\\" (${sam1.id})" (${fake.id}), a member, from organization "Acme" (${orgId}): 0 direct Grants revoked, 0 groups left, 0 invitations revoked`);
+    // The zero-width space is written out.
+    expect(titles[6]).toBe(`Make "Sam\\u{200B}" (${hidden.id}) an Organization Admin`);
+    // An invitee has no id yet: the quoted name alone, invisible characters written out.
+    const invited = [stepUp(await inviteAs(admin.cli, "Sam", "admin")), stepUp(await inviteAs(admin.cli, "Sam\u200B", "admin"))];
+    expect(invited.map((a) => a.summary.title)).toEqual(['Invite "Sam" as an Organization Admin', 'Invite "Sam\\u{200B}" as an Organization Admin']);
   });
 
   it("needs no approval to invite a member, to leave, or for the same role again", async () => {
@@ -402,7 +427,7 @@ describe("under enforce", () => {
     expect(await roleOf(f.carol.id)).toEqual({ role: "member", removed: false });
     // A fresh approval names her new role.
     const fresh = stepUp(await remove(admin.cli, f.carol.id));
-    expect(fresh.summary.title).toContain("Remove Carol (member) from Acme");
+    expect(fresh.summary.title).toContain(`Remove "Carol" (${f.carol.id}), a member, from organization "Acme" (${orgId})`);
     await approve(admin, fresh.id);
     expect((await remove(admin.cli, f.carol.id, fresh.id)).status).toBe(200);
   });

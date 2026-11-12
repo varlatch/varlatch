@@ -10,6 +10,8 @@ import { withApproval, type ProtectedGate, type Requester } from "../src/domain/
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { lockLiveScope } from "../src/domain/liveness.js";
 import { changeMemberRole, removeMember } from "../src/domain/members.js";
+import { noApprovalGate } from "../src/domain/protected.js";
+import { changeControl } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
@@ -24,7 +26,12 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  *   with its consumption, so its approval stays unconsumed;
  * - a removal that bound the membership's version races a demotion of the
  *   same person: its retry consumes the approval again in the new attempt,
- *   finds it stale, and removes nobody.
+ *   finds it stale, and removes nobody;
+ * - a role change that starts while a control change holds the
+ *   Organization waits for it and runs under the new mode (Decision 2).
+ *   Its SERIALIZABLE snapshot began before the wait, but both write an
+ *   audit event, so the role change fails to serialize and its retry reads
+ *   the new mode.
  */
 const url = process.env.VARLATCH_TEST_DATABASE_URL;
 describe.skipIf(!url)("admin-step-up for people on real PostgreSQL", () => {
@@ -226,5 +233,39 @@ describe.skipIf(!url)("admin-step-up for people on real PostgreSQL", () => {
     expect(await consumedAt(removal)).toBeNull();
     expect(await membership(carol.id)).toEqual({ role: "member", version: before.version + 1, removed: false });
     expect((await db.query("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'membership.removed'")).rows[0]).toEqual({ n: 0 });
+  });
+  it("a role change that starts during a control change waits for it and runs under the new mode, though its snapshot began first", async () => {
+    const dave = await invite("Dave", "member");
+    const locked = deferred();
+    const release = deferred();
+    const change = changeControl(ctx, { require: async () => { throw new Error("no approval expected"); } }, {
+      organizationId: orgId,
+      control: "admin-step-up",
+      mode: "report",
+      expectedVersion: 0,
+      actorIdentityId: owner.id,
+      requestId: "req_test",
+      // Runs after the change holds the Organization FOR UPDATE.
+      authorizeIn: async () => {
+        locked.resolve();
+        await release.promise;
+      },
+    });
+    await locked.promise;
+
+    let finished = false;
+    const promoting = changeMemberRole(ctx, noApprovalGate(requester(owner)), orgId, dave.id, "admin").finally(() => { finished = true; });
+    promoting.catch(() => undefined);
+    await sleep(300);
+    expect(finished).toBe(false);
+
+    release.resolve();
+    expect((await change).control.mode).toBe("report");
+    expect(await promoting).toEqual({ identityId: dave.id, role: "admin", previousRole: "member" });
+    // Counted under report: it saw the mode the control change committed.
+    expect((await db.query(
+      "SELECT operation, reason, count::int AS count FROM security_control_counters WHERE organization_id = $1 AND control = 'admin-step-up'",
+      [orgId],
+    )).rows).toEqual([{ operation: "member.promote", reason: "no-approval", count: 1 }]);
   });
 });

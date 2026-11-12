@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { OrgRole } from "../authz/evaluate.js";
 import type { Querier } from "../db/migrate.js";
+import { labelWithId, quoted } from "./approvallabels.js";
 import type { ApprovalBinding, ApprovalChange } from "./approvals.js";
 
 /**
@@ -25,6 +26,11 @@ import type { ApprovalBinding, ApprovalChange } from "./approvals.js";
  *
  * The last-admin rule refuses before an approval is asked for, and again
  * when it is used (members.ts).
+ *
+ * Summaries follow approvallabels.ts: every person and the Organization
+ * are named by their quoted name and bound id (labelWithId); the
+ * invitee, who has no id yet, by their quoted name. Roles are validated
+ * enum values and counts are numbers: both are written bare.
  */
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -57,9 +63,9 @@ export function inviteAdminBinding(org: { id: string }, input: { name: string })
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Invite ${input.name} as an Organization Admin`,
+      title: `Invite ${quoted(input.name)} as an Organization Admin`,
       changes: [
-        { field: "name", from: null, to: input.name, loosens: false },
+        { field: "name", from: null, to: quoted(input.name), loosens: false },
         { field: "role", from: null, to: "admin", loosens: false },
       ],
     },
@@ -77,7 +83,9 @@ export function memberRoleBinding(org: { id: string }, member: MemberRef, role: 
     query: {},
     expectedVersion: member.version,
     summary: {
-      title: role === "admin" ? `Make ${member.name} an Organization Admin` : `Make ${member.name} a member instead of an admin`,
+      title: role === "admin"
+        ? `Make ${labelWithId(null, member.name, member.identityId)} an Organization Admin`
+        : `Make ${labelWithId(null, member.name, member.identityId)} a member instead of an admin`,
       changes: [change],
     },
   };
@@ -119,7 +127,8 @@ export function memberRemoveBinding(org: { id: string; name: string }, member: M
     expectedVersion: member.version,
     summary: {
       title:
-        `Remove ${member.name} (${member.role}) from ${org.name}: ` +
+        `Remove ${labelWithId(null, member.name, member.identityId)}, ${member.role === "admin" ? "an admin" : "a member"}, ` +
+        `from ${labelWithId("organization", org.name, org.id)}: ` +
         `${plural(counts.grants, "direct Grant")} revoked, ${plural(counts.groups, "group")} left, ${plural(counts.invitations, "invitation")} revoked`,
       changes: [],
     },
