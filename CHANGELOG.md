@@ -67,6 +67,18 @@ fixes.
   It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
   changes now, and with every control off nothing changes at all. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for Grants, roles, groups and teams are
+  built.** Creating, replacing or revoking a Grant; creating, changing or
+  deleting a role, a group or a team; adding or removing their members;
+  and giving a team a project or taking it away will each need the
+  approval of the person asking, for exactly that request, once
+  `admin-step-up` can be enforced; a machine credential will be refused.
+  Revoking a Grant stays possible during an incident freeze and still
+  asks. It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
+  changes now, and with every control off nothing changes at all. In
+  report mode, a Grant replacement or a role edit that only reorders
+  actions is no longer counted. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection` or
   `credential-lifetime`). Removing an unconfirmed passkey

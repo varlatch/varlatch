@@ -225,6 +225,14 @@ describe("words", () => {
     expect(changeValue("credentialExpiry", "after 1 day")).toBe("after 1 day");
     expect(changeValue("credentialExpiry", null)).toBe("none");
   });
+
+  it("names the fields of a Grant's or a role's approval (admin-step-up)", () => {
+    expect(fieldLabel("scope")).toBe("Scope");
+    expect(fieldLabel("permission")).toBe("Permission");
+    expect(fieldLabel("actionsAdded")).toBe("Actions added");
+    expect(fieldLabel("actionsRemoved")).toBe("Actions removed");
+    expect(changeValue("actionsRemoved", null)).toBe("none");
+  });
 });
 
 describe("the inline approval dialog", () => {
