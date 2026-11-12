@@ -85,6 +85,14 @@ yours:
   backend process as a command-line argument, which every user on the host
   can otherwise read in `/proc/<pid>/cmdline`.
 
+If the credentials that deploy or roll back this installation come from
+Varlatch itself, keep a break-glass credential outside it before anyone
+relies on the [incident freeze](../reference/incident-freeze.md): a freeze
+stops every deploy whose credentials Varlatch serves, a rollback of
+Varlatch included. Store it where Varlatch does not serve or push it, scope
+it as narrowly as your platform allows, and rotate it after each use.
+`varlatch admin unfreeze` lifts a freeze from the host.
+
 ## Network
 
 ### The address

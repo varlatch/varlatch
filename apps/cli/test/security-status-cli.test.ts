@@ -170,6 +170,13 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   if (url === "/v1/organizations/acme/security/approval-keys") return json(200, KEYS);
   if (url === "/v1/organizations/acme/security/credential-review") return json(200, review());
   if (url === "/v1/organizations/acme/requirements") return json(200, { items: REQUIREMENTS, nextCursor: null });
+  if (url === "/v1/organizations/acme/incident-freeze") {
+    return json(200, {
+      freeze: { id: "ofz_1", frozenAt: "2026-11-11T10:00:00.000Z", frozenBy: { id: "idn_ada", name: "Ada" }, reason: "A CI token leaked", liftedAt: null, liftedBy: null, liftMethod: null },
+      resumingTargets: [],
+      history: [],
+    });
+  }
   if (url === "/v1/organizations/quiet/security/controls") return json(200, { items: CONTROLS.map((c) => control(c.control)), availableModes: ["off", "report"] });
   if (url === "/v1/organizations/broken/security/controls") return json(200, { items: CONTROLS, availableModes: ["off", "report"] });
   if (url.startsWith("/v1/organizations/broken/")) return json(500, { error: { code: "INTERNAL", message: "boom", requestId: "req_2" } });
@@ -233,6 +240,17 @@ function cli(args: string[], cwd = repo): Promise<Result> {
 }
 
 describe("varlatch security status", () => {
+  it("shows an open incident freeze first (ADR-0055)", async () => {
+    capabilities = [...capabilities, "organizations.incident-freeze"];
+    const r = await cli(["security", "status"]);
+    expect(r.code, why(r)).toBe(0);
+    const lines = r.stdout.split("\n");
+    expect(lines[1]).toBe("FROZEN for an incident since 2026-11-11T10:00:00.000Z by Ada: A CI token leaked");
+    expect(lines[2]).toContain("Lift it: varlatch org unfreeze acme");
+    const doc = JSON.parse((await cli(["security", "status", "--json"])).stdout);
+    expect(doc.incidentFreeze).toMatchObject({ id: "ofz_1", reason: "A CI token leaked" });
+  });
+
   it("prints every part, grouped and short, for an admin, and exits 0", async () => {
     const r = await cli(["security", "status"]);
     expect(r.code, why(r)).toBe(0);
@@ -274,7 +292,7 @@ describe("varlatch security status", () => {
     expect(r.code, why(r)).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(Object.keys(doc)).toEqual([
-      "version", "organization", "enforceAvailable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable",
+      "version", "organization", "enforceAvailable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable", "incidentFreeze",
     ]);
     expect(doc).toMatchObject({ version: expect.any(Number), organization: "acme", enforceAvailable: false, unavailable: [] });
     expect(doc.controls.availableModes).toEqual(["off", "report"]);

@@ -413,6 +413,22 @@ organization's deletion, suspended machine identities, passkeys or grants.
 See [Security controls and
 approvals](../../docs/reference/security-controls.md#the-way-back-the-host-operators-reset).
 
+When an organization is frozen for an incident and nobody can give the
+approval its lift needs, or a deploy must go out now, lift it from the host:
+
+```sh
+docker compose exec varlatchd node dist/cli.js admin unfreeze --org <slug> --confirm <slug>
+# or, with the CLI, in this directory:
+varlatch admin unfreeze --org <slug> --confirm <slug>
+```
+
+It closes the open approvals for a lift and records `organization.unfrozen`
+with no actor. The security reset never lifts a freeze. Before anyone relies
+on the freeze, keep a deploy and rollback credential for this installation
+outside Varlatch: a freeze stops every deploy whose credentials Varlatch
+serves, a rollback of Varlatch itself included. See
+[Incident freeze](../../docs/reference/incident-freeze.md).
+
 ## Optional Tailscale integration
 
 ```sh

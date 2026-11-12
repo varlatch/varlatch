@@ -84,6 +84,10 @@ export const MIGRATED = new Set<string>([
   "approveDeletion",
   "cancelDeletion",
   "finalizeDeletion",
+  // freeze.ts: the incident freeze (ADR-0055 Decision 9)
+  "freezeOrganization",
+  "liftFreeze",
+  "operatorUnfreeze",
 ]);
 
 const SCHEMA = "varlatch_lock_trace";
@@ -131,6 +135,7 @@ export function stepOf(table: string): [number, number] {
       return [10, 3];
     case "security_controls":
     case "passkey_provenance":
+    case "organization_freezes":
       return [11, 0];
     case "security_control_counters":
       return [11, 1];

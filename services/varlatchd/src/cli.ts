@@ -50,6 +50,7 @@ import { fileURLToPath } from "node:url";
  *   varlatchd admin recover ...          — break-glass recovery grant (host exec)
  *   varlatchd admin doctor [--wait s]    — read-only Installation Health checks (JSON)
  *   varlatchd admin security reset --org <org> (--control <name>... | --all): Security Controls to off (ADR-0054)
+ *   varlatchd admin unfreeze --org <slug> --confirm <slug> [--json]: lift an incident freeze (ADR-0055)
  *   varlatchd admin outbound check [--allow <value>] [--org <org>] [--json]: destinations vs the outbound policy (ADR-0057)
  *   varlatchd admin kek verify [--file]  — verify a KEK candidate against the canary
  *   varlatchd admin kek export --out     — passphrase-wrapped KEK escrow blob
@@ -546,6 +547,18 @@ async function adminCommand(rest: string[]): Promise<void> {
         else for (const line of resetReportLines(outcome)) console.log(line);
         break;
       }
+      case "unfreeze": {
+        // The host operator's lift of an incident freeze (ADR-0055 Decision
+        // 2): the way back when nobody can approve. Host only; no API
+        // reaches it. --confirm repeats the slug.
+        const { operatorUnfreeze, parseUnfreezeArgs, unfreezeReportLines } = await import("./domain/freeze.js");
+        const parsed = parseUnfreezeArgs(rest.slice(1));
+        if ("error" in parsed) fail(parsed.error);
+        const outcome = await operatorUnfreeze(makeCtx(), { organization: parsed.organization, confirm: parsed.confirm });
+        if (parsed.json) console.log(JSON.stringify(outcome));
+        else for (const line of unfreezeReportLines(outcome)) console.log(line);
+        break;
+      }
       case "mirror-sync": {
         if (!config.convexUrl) fail("Set VARLATCH_CONVEX_URL to enable mirror sync");
         const { syncAllMirrors } = await import("./mirror/publisher.js");
@@ -569,7 +582,7 @@ async function adminCommand(rest: string[]): Promise<void> {
       }
       default:
         fail(
-          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | outbound check | custody attest|status | security reset | " +
+          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | outbound check | custody attest|status | security reset | unfreeze | " +
             "kek verify|export|restore|split|combine>",
         );
     }

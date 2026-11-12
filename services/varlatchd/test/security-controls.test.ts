@@ -677,6 +677,7 @@ describe("the host operator's reset", () => {
         { control: "credential-lifetime", from: "report", version: 2 },
       ],
       approvalsClosed: 1,
+      stillFrozen: false,
     });
     const controls = (await call("GET", CONTROLS, admin.cli)).body.items;
     expect(controls.map((c: { control: string; mode: string; version: number; changedBy: unknown }) => [c.control, c.mode, c.version, c.changedBy])).toEqual([

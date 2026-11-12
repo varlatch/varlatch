@@ -73,6 +73,8 @@ vi.mock("../src/components/Dialog", () => ({
         </button>
       </div>
     ) : null,
+  // The incident freeze section (ADR-0055) asks before it acts; incidentFreeze.test.tsx covers it.
+  useConfirm: () => async () => false,
 }));
 
 import { OrgSecurityPage } from "../src/features/security-controls/OrgSecurityPage";

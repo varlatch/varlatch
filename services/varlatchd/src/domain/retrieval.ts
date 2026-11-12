@@ -9,6 +9,7 @@ import { getRevision, sensitivityOf, type ContractRevisionRow } from "./contract
 import type { AppCtx } from "./ctx.js";
 import type { EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
+import { refuseIfIncidentFrozen } from "./liveness.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 
@@ -137,6 +138,10 @@ export async function captureState(
   wants: (item: ResolvedItem) => boolean,
 ): Promise<CapturedState> {
   const { org, project, env } = scope;
+  // The incident freeze, read in the snapshot like every other
+  // authorization input (ADR-0055 Decision 4), for a path that resolved
+  // its Organization another way than the entry check.
+  await refuseIfIncidentFrozen(sctx.db, org.id);
   const revision = project.active_contract_revision_id
     ? await getRevision(sctx, project.id, project.active_contract_revision_id)
     : null;

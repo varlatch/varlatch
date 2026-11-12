@@ -23,6 +23,7 @@ import { platformMeta } from "./platform-meta";
 import { connectionHealth, refetchWhileRunning, targetDestination } from "./status";
 import { PlatformTile } from "./TargetCard";
 import { useOrgEnvironments, type EnvironmentRef } from "./useOrgEnvironments";
+import { useFrozen } from "../security-controls/IncidentFreeze";
 import { useRefusedDestinations } from "../security-controls/RefusedDestinationsCard";
 import { refusedDestinationsKey } from "../security-controls/keys";
 
@@ -48,6 +49,10 @@ export function ConnectionsPage() {
     refetchInterval: (query) => refetchWhileRunning(query.state.data),
   });
   const envs = useOrgEnvironments(org);
+  // Frozen for an incident (ADR-0055): the lists and revocation work; the
+  // GitHub App, new connections and credential changes are refused, so they
+  // are not offered.
+  const frozen = useFrozen(org);
   // This installation's refusals as checked now (ADR-0057 Decision 8), for admins on a server that has them.
   const refused = useRefusedDestinations(org);
   const refusalOf = (id: string) =>
@@ -89,7 +94,7 @@ export function ConnectionsPage() {
         badges={list.length > 0 ? <Count className="h-6 min-w-6 text-xs">{list.length}</Count> : undefined}
         subtitle="Credentials for the platforms your environments push to. Stored encrypted, never shown again."
         actions={
-          syncEnabled && (
+          syncEnabled && !frozen && (
             <Button variant="primary" size="lg" data-testid="new-connection" icon={<Plus size={16} />} onClick={() => setCreating("pick")}>
               New connection
             </Button>
@@ -103,7 +108,13 @@ export function ConnectionsPage() {
         </Callout>
       )}
 
-      {syncEnabled && adapters.includes("github-actions") && (
+      {frozen && (
+        <Callout tone="warn" className="mb-4" title="Frozen for an incident" data-testid="connections-frozen">
+          You can review connections and revoke them. New connections, credential changes and the GitHub App wait until the freeze is lifted.
+        </Callout>
+      )}
+
+      {syncEnabled && !frozen && adapters.includes("github-actions") && (
         <GitHubAppPanel
           org={org}
           connections={list}
@@ -128,12 +139,14 @@ export function ConnectionsPage() {
             icon={<Plug size={20} />}
             title={<span data-testid="connections-empty">No connections yet</span>}
             description={
-              syncEnabled
-                ? "Connect GitHub, Coolify or Convex so environments can push their values there."
-                : "Outbound sync is disabled on this installation."
+              frozen
+                ? "This organization has no connections."
+                : syncEnabled
+                  ? "Connect GitHub, Coolify or Convex so environments can push their values there."
+                  : "Outbound sync is disabled on this installation."
             }
             actions={
-              syncEnabled ? (
+              syncEnabled && !frozen ? (
                 <div className="flex gap-2">
                   {adapters.map((a) => (
                     <button
@@ -163,9 +176,10 @@ export function ConnectionsPage() {
               envs={envs.byId}
               onReplace={() => replaceOrRotate(c)}
               onChanged={refresh}
+              frozen={frozen}
             />
           ))}
-          {syncEnabled && (
+          {syncEnabled && !frozen && (
             <button
               type="button"
               onClick={() => setCreating("pick")}
@@ -183,7 +197,7 @@ export function ConnectionsPage() {
         </div>
       )}
 
-      {creating && (
+      {creating && !frozen && (
         <NewConnectionDialog
           org={org}
           adapters={adapters}
@@ -195,7 +209,7 @@ export function ConnectionsPage() {
           }}
         />
       )}
-      {replacingConnection && (
+      {replacingConnection && !frozen && (
         <ReplaceCredentialDialog
           org={org}
           connection={replacingConnection}
@@ -259,6 +273,7 @@ export function ConnectionCard({
   envs,
   onReplace,
   onChanged,
+  frozen = false,
 }: {
   org: string;
   connection: PlatformConnection;
@@ -268,6 +283,8 @@ export function ConnectionCard({
   envs: Map<string, EnvironmentRef>;
   onReplace: () => void;
   onChanged: () => void;
+  /** Frozen for an incident: only revocation is offered. */
+  frozen?: boolean;
 }) {
   const { api } = useSession();
   const confirm = useConfirm();
@@ -339,16 +356,20 @@ export function ConnectionCard({
           label={`Actions for ${connection.name}`}
           buttonClassName="size-8 justify-center border border-bd"
           items={[
-            {
-              label: fixLabel,
-              icon: <KeyRound size={14} />,
-              "data-testid": `replace-credential-${connection.id}`,
-              onSelect: onReplace,
-            },
+            ...(frozen
+              ? []
+              : [
+                  {
+                    label: fixLabel,
+                    icon: <KeyRound size={14} />,
+                    "data-testid": `replace-credential-${connection.id}`,
+                    onSelect: onReplace,
+                  },
+                ]),
             {
               label: "Revoke connection",
               danger: true,
-              separatorBefore: true,
+              separatorBefore: !frozen,
               icon: <Trash2 size={14} />,
               "data-testid": `revoke-connection-${connection.id}`,
               onSelect: () => void askRevoke(),
@@ -384,7 +405,7 @@ export function ConnectionCard({
             </Status>
           </span>
         )}
-        {replaceSoon && (
+        {replaceSoon && !frozen && (
           <div>
             <Button variant="danger" size="sm" onClick={onReplace} data-testid={`fix-connection-${connection.id}`}>
               {fixLabel}

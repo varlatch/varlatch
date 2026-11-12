@@ -205,13 +205,25 @@ paths:
     get:
       tags: [organizations]
       operationId: getOrganization
+      summary: >
+        The Organization, with its open incident freeze (capability
+        organizations.incident-freeze), or null. Readable while frozen.
       parameters: [{ $ref: "#/components/parameters/org" }]
       responses:
         "200":
           description: Organization
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Organization" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Organization"
+                  - type: object
+                    required: [incidentFreeze]
+                    properties:
+                      incidentFreeze:
+                        oneOf:
+                          - $ref: "#/components/schemas/IncidentFreeze"
+                          - type: "null"
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [organizations]
@@ -1933,6 +1945,122 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/incident-freeze:
+    get:
+      tags: [organizations]
+      operationId: getIncidentFreeze
+      summary: >
+        The Organization's open incident freeze, or null, the Sync Targets
+        that resume pushing when it is lifted, and the last freezes
+        (capability organizations.incident-freeze, ADR-0055). Requires
+        organization.read. Readable while frozen.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The open freeze, or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [freeze, resumingTargets, history]
+                properties:
+                  freeze:
+                    oneOf:
+                      - $ref: "#/components/schemas/IncidentFreeze"
+                      - type: "null"
+                  resumingTargets:
+                    type: [array, "null"]
+                    description: >
+                      The Sync Targets that resume pushing when the freeze is
+                      lifted; empty when not frozen; null for a caller without
+                      config.sync.manage, which listing the Targets needs.
+                    items: { $ref: "#/components/schemas/ResumingTarget" }
+                  history:
+                    type: array
+                    description: The last 20 freezes, newest first, the open one included.
+                    items: { $ref: "#/components/schemas/IncidentFreeze" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [organizations]
+      operationId: freezeOrganization
+      summary: >
+        Freeze the Organization for an incident (capability
+        organizations.incident-freeze, ADR-0055). Needs organization.manage
+        and a person's credential; no approval. Machine credentials never can.
+      description: >
+        Stops all access to the Organization at once, reads included: every
+        request of its members and machines answers ORGANIZATION_FROZEN
+        (HTTP 409, details: freezeId, frozenAt, Retry-After: 300) except
+        reading the Organization, its members, identities, credentials,
+        Grants, policy, Requirements, Security page and lists of
+        Capabilities, Sync Targets, Connections and webhooks; the audit log;
+        operations that only take authority away (revoking credentials,
+        Capabilities, Grants, OIDC bindings and invitations, retiring
+        identities, removing members or demoting admins, pausing Sync
+        Targets, revoking Connections, a new Tailnet Requirement, Security
+        Control changes, cancelling a pending deletion); and the lift. Sync
+        Targets stop pushing and resume on the lift; webhooks keep
+        delivering. Every open approval of the Organization is closed. The
+        reason (1 to 200 characters) is shown to members and never recorded
+        in audit. Audited as organization.frozen. One open freeze at a time
+        (STATE_CHANGED otherwise).
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 1, maxLength: 200 }
+      responses:
+        "201":
+          description: Frozen
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncidentFreeze" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/incident-freeze/{freeze}/lift:
+    post:
+      tags: [organizations]
+      operationId: liftIncidentFreeze
+      summary: >
+        Lift this freeze (capability organizations.incident-freeze,
+        ADR-0055). Needs organization.manage, a person's credential and,
+        always, a step-up approval with a trusted passkey bound to this
+        freeze: without the Varlatch-Approval header it answers
+        STEP_UP_REQUIRED with the approval to give. Any admin may lift.
+      description: >
+        Lifting undoes nothing done during the freeze. Sync Targets that
+        were not paused or revoked meanwhile resume pushing; the approval's
+        summary and the answer list them. A pending deletion stays pending.
+        Audited as organization.unfrozen (metadata.method approval). The
+        host operator can also lift with varlatchd admin unfreeze.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - { name: freeze, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
+      responses:
+        "200":
+          description: Lifted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [freeze, resumingTargets]
+                properties:
+                  freeze: { $ref: "#/components/schemas/IncidentFreeze" }
+                  resumingTargets:
+                    type: [array, "null"]
+                    description: Null for a caller without config.sync.manage; the approval's summary then gives their number only.
+                    items: { $ref: "#/components/schemas/ResumingTarget" }
         default: { $ref: "#/components/responses/Error" }
 
   /deleted-organizations/{organization}/audit-events:
@@ -4451,6 +4579,7 @@ components:
         - STEP_UP_REQUIRED
         - APPROVAL_INVALID
         - CONTROL_MODE_UNAVAILABLE
+        - ORGANIZATION_FROZEN
 
     NextCursor:
       type: [string, "null"]
@@ -5206,6 +5335,44 @@ components:
         approvedAt: { type: [string, "null"], format: date-time }
         cancelledAt: { type: [string, "null"], format: date-time }
         completedAt: { type: [string, "null"], format: date-time }
+
+    IncidentFreeze:
+      type: object
+      required: [id, frozenAt, frozenBy, reason, liftedAt, liftedBy, liftMethod]
+      description: An incident freeze of the Organization (ADR-0055).
+      properties:
+        id: { type: string }
+        frozenAt: { type: string, format: date-time }
+        frozenBy:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: [string, "null"] }
+        reason: { type: string, description: Shown to members; never recorded in audit. }
+        liftedAt: { type: [string, "null"], format: date-time }
+        liftedBy:
+          oneOf:
+            - type: object
+              required: [id, name]
+              properties:
+                id: { type: string }
+                name: { type: [string, "null"] }
+            - type: "null"
+        liftMethod:
+          type: [string, "null"]
+          enum: [approval, operator, null]
+
+    ResumingTarget:
+      type: object
+      required: [id, projectSlug, environmentName, platform, destination]
+      description: A Sync Target that resumes pushing when the freeze is lifted.
+      properties:
+        id: { type: string }
+        projectSlug: { type: string }
+        environmentName: { type: string }
+        platform: { type: string }
+        destination: { type: string }
 
     MemberRemoval:
       type: object
@@ -6403,7 +6570,7 @@ components:
         id: { type: string }
         operation:
           type: string
-          enum: [security_control.change, passkey.remove]
+          enum: [security_control.change, passkey.remove, organization.unfreeze]
           description: The semantic operation, not the HTTP route.
         organization:
           description: The Organization it acts in; null for an account operation such as passkey.remove.
@@ -6429,7 +6596,7 @@ components:
           enum: [pending, approved, consumed, expired, closed]
         closeReason:
           type: [string, "null"]
-          enum: [cancelled, reset, organization-deleted, null]
+          enum: [cancelled, reset, organization-deleted, frozen, null]
         requestedBy:
           type: object
           required: [credentialKind, client]
