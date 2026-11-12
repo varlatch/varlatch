@@ -15,7 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, refuseIfFrozen } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
@@ -388,6 +388,7 @@ export async function createConnection(
 ): Promise<PlatformConnectionRow> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   const adapter = canonicalizeOrValidationError(() => getAdapter(input.platform));
   const baseIdentity = canonicalizeOrValidationError(() =>
     adapter.canonicalizeBaseIdentity(input.baseIdentity),
@@ -450,6 +451,7 @@ export async function createAppConnection(
 ): Promise<PlatformConnectionRow> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
     throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
   }
@@ -546,6 +548,7 @@ export async function rotateGitHubAppKey(
 ): Promise<KeyRotationOutcome> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
@@ -742,6 +745,7 @@ export async function replaceConnectionCredential(
 ): Promise<PlatformConnectionRow> {
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   if (input.credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
@@ -856,7 +860,7 @@ export async function revokeConnection(
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
@@ -919,6 +923,7 @@ export async function checkConnectionAccess(
 ): Promise<AccessCheck> {
   // Stored external credentials are not used while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   // No destination fields: the check stops at the base identity.
@@ -983,6 +988,7 @@ export async function listConnectionDestinations(
   fetchImpl?: typeof fetch,
 ): Promise<DestinationListing> {
   await refuseIfFrozen(ctx.db, org.id);
+  await refuseIfIncidentFrozen(ctx.db, org.id);
   const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
   const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
   if (!adapter.listDestinations) {
@@ -1450,7 +1456,8 @@ export async function setTargetState(
 ): Promise<SyncTargetRow | null> {
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    // Pausing only stops pushes: recovery while frozen (ADR-0055); resuming and revoking are not listed.
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: transition === "pause" ? "recovery" : undefined, people: [actorIdentityId] });
     const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [targetId, org.id],

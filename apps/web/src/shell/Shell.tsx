@@ -36,6 +36,7 @@ import { BrandMark } from "./BrandMark";
 import { TAILNET_ONLY_GUIDANCE, isTailnetDenial } from "../lib/tailnet";
 import { NewerReleaseDot, RELEASE_TAB_PATH, useInstallationRelease } from "../features/installation/releaseNotice";
 import { DeletionBanner } from "../features/settings/OrganizationDeletion";
+import { FreezeGate } from "../features/security-controls/IncidentFreeze";
 
 const LAST_ORG_KEY = "varlatch:last-org";
 const SIDEBAR_KEY = "varlatch:sidebar";
@@ -219,7 +220,9 @@ export function Shell() {
       <main className="min-w-0 flex-1">
         <div className="mx-auto w-full max-w-[1480px] px-8 pb-24 pt-3.5">
           <DeletionBanner org={orgParam} />
-          <Outlet />
+          <FreezeGate org={orgParam}>
+            <Outlet />
+          </FreezeGate>
         </div>
       </main>
       <CommandPalette />

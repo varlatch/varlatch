@@ -18,6 +18,9 @@ import { VarlatchApiError } from "@varlatch/sdk";
  * cancelled or closed, was used already, does not fit the request
  * (APPROVAL_INVALID), or STEP_UP_REQUIRED surfaces without a wait; 130
  * when Ctrl-C stopped the wait.
+ *
+ * An Organization frozen for an incident (ADR-0055): 77, final for the
+ * invocation. The CLI never retries it; runners and CI should back off.
  */
 export const EXIT = {
   ok: 0,
@@ -40,6 +43,8 @@ export const EXIT = {
 export function apiErrorExit(err: VarlatchApiError): number {
   // An approval that does not fit, or one the CLI did not wait for (ADR-0054 Decision 3).
   if (err.code === "APPROVAL_INVALID" || err.code === "STEP_UP_REQUIRED") return EXIT.denied;
+  // Frozen for an incident: the server refused, and asking again will not help until it is lifted.
+  if (err.code === "ORGANIZATION_FROZEN") return EXIT.denied;
   // A mode this server does not offer yet: an ordinary failure, not a denial.
   if (err.code === "CONTROL_MODE_UNAVAILABLE") return EXIT.failure;
   if (err.status === 401 || err.status === 403) return EXIT.denied;

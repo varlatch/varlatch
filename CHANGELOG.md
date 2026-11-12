@@ -5,6 +5,39 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
+## Unreleased
+
+### Security
+
+- **Incident freeze: stop all access to an organization at once.** During
+  an incident an admin can freeze an organization from its Security page
+  (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
+  read and write of its members and machine identities is then refused
+  with `ORGANIZATION_FROZEN`, values included, so `varlatch run`, CI jobs
+  and deploys that fetch from it fail. What keeps working: signing in,
+  reading members, machines, credentials, grants and the audit log,
+  revoking access (credentials, grants, Capabilities, OIDC bindings,
+  invitations, members), pausing Sync Targets, adding a Tailnet
+  Requirement, changing security controls and cancelling a pending
+  deletion. Webhooks keep delivering the audit log; Sync Targets stop
+  pushing and resume when the freeze is lifted. Lifting always needs an
+  admin's approval with a trusted passkey (`varlatch org unfreeze <slug>`),
+  or the host operator's `varlatch admin unfreeze --org <slug> --confirm
+  <slug>`. Recorded as `organization.frozen` and `organization.unfrozen`;
+  each refused request is recorded as `authorization.denied` with the
+  reason `organization_frozen`. If your deploy or rollback credentials come
+  from Varlatch, keep a break-glass credential outside it before you rely
+  on the freeze. See [Incident freeze](docs/reference/incident-freeze.md).
+- **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
+  409 with `Retry-After: 300`. The CLI exits with status 77 and never
+  retries it; back off in your own runners too.
+
+### Upgrading
+
+- Migration 44 adds the freeze history. Restoring a backup taken before a
+  freeze brings the organization back unfrozen: freeze it again after the
+  restore.
+
 ## Unreleased (0.21.1)
 
 ### Sign-in

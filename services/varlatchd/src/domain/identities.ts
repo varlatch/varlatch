@@ -212,7 +212,7 @@ export async function retireIdentity(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] });
+    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId, { id: identityId, mode: "update" }] });
     await db.query("UPDATE identities SET disabled = true WHERE id = $1", [identityId]);
     // Step 7 (liveness.ts): every live credential, in id order, in the
     // mode its revocation takes, before the first revocation's audit

@@ -119,6 +119,8 @@ Usage:
   varlatch admin security reset --org <organization> (--control <name>... | --all) [--json] [--dir <compose-directory>]
                (the host operator's way back: sets the named security controls to off and closes their open
                 approvals; never touches deletion, passkeys or grants)
+  varlatch admin unfreeze --org <slug> --confirm <slug> [--json] [--dir <compose-directory>]
+               (the host operator's lift of an incident freeze, when nobody can approve it)
   varlatch admin outbound check [--allow <value>] [--org <organization>] [--json] [--dir <compose-directory>]
                (every configured webhook, Coolify and Convex Connection and OIDC issuer against the outbound policy,
                 with the VARLATCH_OUTBOUND_ALLOW value that would allow the refused ones; DNS lookups only;
@@ -151,6 +153,11 @@ Usage:
   varlatch org delete <slug> --approve <request-id> | --cancel <request-id> [--server <url>]
   varlatch org deletion <slug> [--json] [--server <url>]
                                                        # the open deletion request, if any
+  varlatch org freeze <slug> --reason <text> --confirm <slug> [--server <url>]
+                                                       # incident freeze: stops all access at once, reads
+                                                       # included; no approval needed
+  varlatch org unfreeze <slug> [--json] [--server <url>]
+                                                       # lifts it: prints the approval URL and waits
   varlatch project <create <slug> --org <org> --server <url> [--managed]|list [--json]|rename <slug> <new-name>>
   varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]
                                                        # at once: erases every value of the project

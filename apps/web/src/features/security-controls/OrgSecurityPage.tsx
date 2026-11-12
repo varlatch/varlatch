@@ -16,6 +16,7 @@ import { CredentialsCard, credentialReviewKey } from "./CredentialsCard";
 import { RefusedDestinationsCard } from "./RefusedDestinationsCard";
 import { myPermissionsKey, refusedDestinationsKey } from "./keys";
 import { CHECKLIST, SECURITY_PAGE_DOCS } from "./checklist";
+import { IncidentFreezeCard } from "./IncidentFreeze";
 
 /**
  * The Organization's Security page (ADR-0054 Decision 11), next to
@@ -200,6 +201,7 @@ export function OrgSecurityPage() {
             </SectionCard>
           ) : (
             <>
+              <IncidentFreezeCard org={org} admin={canManage} />
               <Overview items={controls.data?.items ?? []} />
               <SecurityControlsCard
                 org={org}

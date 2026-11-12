@@ -148,7 +148,7 @@ export async function revokeOidcBinding(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
     const res = await db.query(
       `UPDATE oidc_bindings SET revoked_at = now()
        WHERE id = $1 AND organization_id = $2 AND identity_id = $3 AND revoked_at IS NULL

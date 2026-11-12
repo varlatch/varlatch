@@ -39,6 +39,9 @@ export const ERROR_CODES = [
   "APPROVAL_INVALID",
   // Security Controls (ADR-0054 Decision 1): a mode this server does not offer yet.
   "CONTROL_MODE_UNAVAILABLE",
+  // The incident freeze (ADR-0055): refused while the Organization is
+  // frozen (details: freezeId, frozenAt). Final for the request: do not retry.
+  "ORGANIZATION_FROZEN",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -106,6 +109,7 @@ export const CAPABILITIES = [
   "organizations.permissions",
   "installation.outbound",
   "security.refused-destinations",
+  "organizations.incident-freeze",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

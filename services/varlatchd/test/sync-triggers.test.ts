@@ -66,7 +66,11 @@ const TRIGGERING = [
   "organization.deletion_approved",
   "organization.deletion_cancelled",
   "organization.deletion_scheduled",
+  // The incident freeze (ADR-0055 Decision 8): they name no environment,
+  // so they mark no Target; the freeze stops pushes through the lease.
+  "organization.frozen",
   "organization.renamed",
+  "organization.unfrozen",
   // A refused outbound request (ADR-0057): decision deny, and it names no environment.
   "outbound.refused",
   "project.created",

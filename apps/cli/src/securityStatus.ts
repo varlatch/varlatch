@@ -3,6 +3,7 @@ import {
   VarlatchApiError,
   type ApprovalKeys,
   type CredentialReview,
+  type IncidentFreeze,
   type SecurityControl,
   type SecurityControlCounts,
   type SecurityControlList,
@@ -113,6 +114,8 @@ export interface StatusControl extends SecurityControl {
 
 export interface SecurityStatus {
   organization: string;
+  /** The open incident freeze (ADR-0055), or null; null too where the server has none. */
+  incidentFreeze: IncidentFreeze | null;
   /** False while this server does not offer enforce. */
   enforceAvailable: boolean;
   controls: {
@@ -131,7 +134,7 @@ export interface SecurityStatus {
 export type SecurityStatusApi = Pick<
   VarlatchClient,
   "meta" | "myOrganizationPermissions" | "listSecurityControls" | "securityControlReport" | "securityApprovalKeys" | "credentialReview" | "listRequirements"
->;
+> & Partial<Pick<VarlatchClient, "incidentFreeze">>;
 
 /** The server cannot answer at all: it has no Security Controls. */
 export class SecurityStatusUnsupportedError extends Error {
@@ -175,6 +178,8 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
     }
   }
 
+  // Every member reads the freeze (organization.read), as the controls.
+  const incidentFreeze = has("organizations.incident-freeze") && api.incidentFreeze ? (await api.incidentFreeze(organization)).freeze : null;
   const list: SecurityControlList = await api.listSecurityControls(organization);
   const report = await part("controlReport", "security.report", () => api.securityControlReport(organization, { days: 30 }));
   // The approval keys need what the counts need: no second refusal when the counts were refused.
@@ -208,6 +213,7 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
     requirements: requirements ? { count: requirements.items.length, protectedBy: "requirement-protection", items: requirements.items } : null,
     checklist: CHECKLIST,
     unavailable,
+    incidentFreeze,
   };
 }
 
@@ -243,6 +249,13 @@ const NEEDS: Record<StatusSection, string> = {
 /** The human format: grouped and short. */
 export function securityStatusLines(s: SecurityStatus, now: number): string[] {
   const lines: string[] = [`Security for ${s.organization}`];
+  if (s.incidentFreeze) {
+    const f = s.incidentFreeze;
+    lines.push(
+      `FROZEN for an incident since ${f.frozenAt} by ${f.frozenBy.name ?? f.frozenBy.id}: ${f.reason}`,
+      `  Every read and write is refused except inspection, audit and recovery. Lift it: varlatch org unfreeze ${s.organization}`,
+    );
+  }
   const on = s.controls.items.filter((c) => c.mode !== "off");
   lines.push(
     on.length === 0
