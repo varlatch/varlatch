@@ -147,4 +147,12 @@ describe("whoamiServer", () => {
       setDefaultServer(null, config);
     }
   });
+
+  it("a repository without a server never falls back to the only stored server", () => {
+    const serverless = join(dir, "serverless");
+    mkdirSync(serverless);
+    writeFileSync(join(serverless, "varlatch.toml"), 'organization = "acme"\nproject = "web"\n');
+    expect(whoamiServer({ server: undefined, env: config, cwd: serverless, stored: ["https://stored.example"] })).toBeNull();
+    expect(whoamiServer({ server: "https://flag.example", env: config, cwd: serverless, stored: [] })).toBe("https://flag.example");
+  });
 });

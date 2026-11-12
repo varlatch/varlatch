@@ -1360,21 +1360,21 @@ async function main(): Promise<void> {
           targets = stored;
         } else {
           // --server, else the server a command here would use (ADR-0058
-          // Decision 1), else the only stored one.
+          // Decision 1): inside a repository only its own server; outside
+          // one the default, else the only stored credential.
           let here: string | undefined;
           try {
-            here = resolveServer({ cwd: process.cwd() })?.server;
+            here = resolveServer({ cwd: process.cwd(), ...(flag(args, "--server") ? { server: flag(args, "--server") as string } : {}) })?.server;
           } catch (err) {
             if (!(err instanceof ContextError)) throw err;
           }
           const server =
-            flag(args, "--server") ??
             here ??
-            (stored.length === 1
-              ? (stored[0] as (typeof stored)[number]).server
-              : usageError(
-                  `Multiple servers stored (${stored.map((s) => s.server).join(", ")}). Pass --server <url> or --all.`,
-                ));
+            usageError(
+              stored.length > 1
+                ? `Multiple servers stored (${stored.map((s) => s.server).join(", ")}). Pass --server <url> or --all.`
+                : `No server here: pass --server <url> or --all (stored: ${stored.map((s) => s.server).join(", ")}).`,
+            );
           const key = server.replace(/\/+$/, "");
           const match = stored.find((s) => s.server === key) ?? fail(`No stored credential for ${server}`);
           targets = [match];

@@ -129,17 +129,17 @@ function home(): string {
   return h;
 }
 
-function cli(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string } = {}): Promise<Result> {
+function cli(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string; cwd?: string } = {}): Promise<Result> {
   return spawned(args, config, options).done;
 }
 
 /** The CLI as a child process, to signal it mid-flight; `done` settles when it exits. */
-function spawned(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string } = {}) {
+function spawned(args: string[], config: string, options: { env?: Record<string, string>; stdin?: string; cwd?: string } = {}) {
   const started = Date.now();
   let child!: ReturnType<typeof spawn>;
   const done = new Promise<Result>((resolve, reject) => {
     child = spawn(process.execPath, [bundle, ...args], {
-      cwd: dir,
+      cwd: options.cwd ?? dir,
       env: { PATH: process.env.PATH ?? "", HOME: join(dir, "home"), XDG_CONFIG_HOME: config, ...options.env },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -281,6 +281,24 @@ describe("login --wait", () => {
     expect(again.code).toBe(EXIT.ok);
     expect(again.stderr).not.toContain("Default server");
     expect(settings()).toEqual({ defaultServer: "https://chosen.example" });
+  });
+
+  it("inside a repository without a server, logout and whoami never fall back to the only stored credential (ADR-0058)", { timeout: SPAWNS }, async () => {
+    const config = home();
+    mkdirSync(join(config, "varlatch"), { recursive: true });
+    writeFileSync(join(config, "varlatch", "credentials.json"), JSON.stringify({ servers: { "https://unrelated.example": OLD } }));
+    writeFileSync(join(config, "varlatch", "settings.json"), JSON.stringify({ defaultServer: "https://unrelated.example" }));
+    const repo = join(config, "repo");
+    mkdirSync(repo);
+    writeFileSync(join(repo, "varlatch.toml"), 'organization = "acme"\nproject = "api"\n');
+    const out = await cli(["logout"], config, { cwd: repo });
+    expect(out.code).toBe(EXIT.usage);
+    expect(out.stderr).toContain("No server here: pass --server <url> or --all");
+    expect(credentials(config)["https://unrelated.example"]).toBeDefined();
+    expect(JSON.parse(readFileSync(join(config, "varlatch", "settings.json"), "utf8"))).toEqual({ defaultServer: "https://unrelated.example" });
+    const who = await cli(["whoami"], config, { cwd: repo });
+    expect(who.code).toBe(EXIT.usage);
+    expect(who.stderr).toMatch(/varlatch whoami: no server/);
   });
 
   it("keeps the existing credential until the new one is verified and saved; revokes it only after (control)", { timeout: SPAWNS }, async () => {

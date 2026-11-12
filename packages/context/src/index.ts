@@ -220,8 +220,9 @@ export interface ResolvedServer {
  * (ADR-0058 Decision 1): --server, VARLATCH_SERVER, then inside a
  * repository its local override and varlatch.toml, and nothing else;
  * outside one, the remembered default, then the only stored credential.
- * Null when none of these names a server. An unreadable varlatch.toml
- * throws, as resolveContext does.
+ * Null when none of these names a server. The overrides are read before
+ * any repository file; without one, an unreadable varlatch.toml throws, as
+ * resolveContext does.
  */
 export function resolveServer(options: {
   cwd: string;
@@ -231,10 +232,11 @@ export function resolveServer(options: {
   stored?: readonly string[];
 }): ResolvedServer | null {
   const env = options.env ?? process.env;
-  const repoRoot = findRepoRoot(options.cwd);
-  if (repoRoot) return repositoryServer(options, env, loadLocalState(repoRoot), loadRepoConfig(repoRoot));
+  // Explicit overrides first: a malformed varlatch.toml never blocks a command that names its server.
   if (options.server) return { server: options.server, source: "flag" };
   if (env.VARLATCH_SERVER) return { server: env.VARLATCH_SERVER, source: "env-var" };
+  const repoRoot = findRepoRoot(options.cwd);
+  if (repoRoot) return repositoryServer(options, env, loadLocalState(repoRoot), loadRepoConfig(repoRoot));
   const remembered = defaultServer(env);
   if (remembered) return { server: remembered, source: "default" };
   const stored = options.stored ?? listCredentials(env).map((c) => c.server);

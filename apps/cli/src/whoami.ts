@@ -38,8 +38,9 @@ export async function fetchWhoami(api: WhoamiApi): Promise<WhoAmI> {
 /**
  * The server to ask: --server, VARLATCH_SERVER, the repository's server
  * (its local override included); outside a repository the remembered
- * default (ADR-0058 Decision 1); else the only server with a stored
- * credential. Null when none of these names one.
+ * default (ADR-0058 Decision 1), else the only server with a stored
+ * credential. Null when none of these names one, or when the repository's
+ * varlatch.toml cannot be read and nothing overrides it.
  */
 export function whoamiServer(input: {
   server: string | undefined;
@@ -47,15 +48,14 @@ export function whoamiServer(input: {
   cwd: string;
   stored: readonly string[];
 }): string | null {
+  // ADR-0058 Decision 1: inside a repository only its own server; the
+  // default and the only stored credential apply outside one.
   try {
-    const resolved = resolveServer({ cwd: input.cwd, env: input.env, stored: input.stored, ...(input.server ? { server: input.server } : {}) });
-    if (resolved) return resolved.server;
+    return resolveServer({ cwd: input.cwd, env: input.env, stored: input.stored, ...(input.server ? { server: input.server } : {}) })?.server ?? null;
   } catch (err) {
     if (!(err instanceof ContextError)) throw err;
+    return null;
   }
-  const named = input.server ?? input.env.VARLATCH_SERVER;
-  if (named) return named;
-  return input.stored.length === 1 ? (input.stored[0] as string) : null;
 }
 
 function describeDevice(device: TailnetDevice): string {
