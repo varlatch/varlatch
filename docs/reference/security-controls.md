@@ -640,10 +640,14 @@ whether what it asks for exists, and before anything happens:
 - **A read of settings or metadata** decides once it has looked everything
   up, before the answer is sent.
 - **An operation that reaches outside Varlatch** (an access check, a
-  destination listing, GitHub App setup, a webhook or OIDC issuer check)
-  decides after it found the connection or app it uses, before any
-  credential is decrypted or any request sent; the change it then saves
-  decides again.
+  destination listing, GitHub App setup, an App Connection, an App key
+  replacement) decides after it found the connection or app it uses,
+  before any credential is decrypted or any request sent, and keeps its
+  lock on the organization until the call and what it saves are done:
+  changing a security control waits for it, so the call either finishes
+  before the control changed or is refused. The check of a webhook URL,
+  an OIDC issuer or a base identity against the server's outbound policy
+  only looks the name up, and comes before, as before.
 - **A repeated request** with the same `Idempotency-Key` is decided too:
   the stored answer is returned only if the request is allowed now.
 - **Report mode** counts the decision the request's change took under its
