@@ -151,14 +151,6 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
       }
       hideForm();
       if (token) setStep(3);
-      // Invitations only: whether this installation serves the CLI (ADR-0058).
-      let serves = false;
-      if (token) {
-        try {
-          const meta = await fetch("/v1/meta", { headers: { Accept: "application/json" } });
-          serves = meta.ok && ((await meta.json()).capabilities || []).includes("cli.download");
-        } catch { serves = false; }
-      }
       document.getElementById("title").textContent = token ? "You're in" : "Signed in";
       document.getElementById("lead").textContent = token ? "Your passkey is saved on this device." : "Your passkey worked.";
       const login = "varlatch login --server " + location.origin;
@@ -191,8 +183,12 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
         return;
       }
       const verified = el("a", { href: "https://docs.varlatch.com/getting-started/#get-the-cli", target: "_blank", rel: "noreferrer", text: "Install it from its signed release" });
-      const install = [el("div", { class: "section-title", text: "1. Install the CLI" })];
-      if (serves) {
+      // The verified route shows at once; the install line replaces it only
+      // if /v1/meta lists cli.download within a few seconds (ADR-0058). Any
+      // failure, or no answer, leaves the verified route.
+      const installBody = el("div", {}, [el("p", { class: "hint" }, [verified, document.createTextNode(": one file, for Node.js 22 or newer.")])]);
+      const install = [el("div", { class: "section-title", text: "1. Install the CLI" }), installBody];
+      const showInstallLine = () => {
         const lines = {
           posix: "curl -fsSL " + location.origin + "/install.sh | sh",
           windows: "irm " + location.origin + "/install.ps1 | iex",
@@ -211,10 +207,17 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
           tabs.append(b);
         }
         render();
-        install.push(tabs, holder, el("p", { class: "hint" }, [document.createTextNode("It needs Node.js 22 or newer. Or "), verified, document.createTextNode(".")]));
-      } else {
-        install.push(el("p", { class: "hint" }, [verified, document.createTextNode(": one file, for Node.js 22 or newer.")]));
-      }
+        installBody.replaceChildren(tabs, holder, el("p", { class: "hint" }, [document.createTextNode("It needs Node.js 22 or newer. Or "), verified, document.createTextNode(".")]));
+      };
+      (async () => {
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 4000);
+        try {
+          const meta = await fetch("/v1/meta", { headers: { Accept: "application/json" }, signal: abort.signal });
+          const body = meta.ok ? await meta.json() : null;
+          if (body && Array.isArray(body.capabilities) && body.capabilities.includes("cli.download")) showInstallLine();
+        } catch { /* the verified route stays */ } finally { clearTimeout(timer); }
+      })();
       const details = el("details", {}, [el("summary", { text: "Sign in without a browser" }), ...credential]);
       status.replaceChildren(
         ...install,
