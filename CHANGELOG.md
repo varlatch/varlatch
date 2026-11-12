@@ -60,8 +60,8 @@ fixes.
   `lifetimeDefaulted` when the default was applied. See [Credential
   lifetime](docs/reference/security-controls.md#credential-lifetime).
 - **Removing a trusted passkey needs an approval** once you are a member of
-  an organization that enforces a control (`requirement-protection` or
-  `credential-lifetime`). Removing an unconfirmed passkey
+  an organization that enforces a control (`requirement-protection`,
+  `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
   never does. If you lose your trusted passkeys, the host operator's
   `admin reenroll` enrolls a new one, and `admin security reset` turns the
   control off.
@@ -87,8 +87,9 @@ fixes.
 ### Scripts and API
 
 - `GET /v1/meta` lists `security.enforce.<control>` for each control the
-  server can enforce (`security.enforce.requirement-protection` and
-  `security.enforce.credential-lifetime` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
+  server can enforce (`security.enforce.requirement-protection`,
+  `security.enforce.credential-lifetime` and
+  `security.enforce.passkey-verification` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
   gains its own `availableModes`. `varlatch security status --json` gains
   `enforceable`.
 - `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
