@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync } from "node:fs";
 import { LOCK_TAG } from "../../src/db/locks.js";
 import type { Querier } from "../../src/db/migrate.js";
-import { openTxScope } from "../../src/db/tx.js";
+import { openTxScope, shareConnection } from "../../src/db/tx.js";
 
 /**
  * The lock-order completeness check (ADR-0054 amendment E), test-time only:
@@ -748,10 +748,23 @@ function writesEveryLockedRow(top: string, clause: { selectList: string; lockedN
 
 /** The function in src/ that began the transaction, for reports and gating. */
 function writerLabel(): string {
+  return writerAt()();
+}
+
+/**
+ * Captures the stack now (V8 records the frames at construction) and names
+ * the writer only when asked: most statements never need the name.
+ */
+function writerAt(): () => string {
   const limit = Error.stackTraceLimit;
   Error.stackTraceLimit = 60;
-  const stack = new Error().stack ?? "";
+  const at = new Error();
   Error.stackTraceLimit = limit;
+  let label: string | undefined;
+  return () => (label ??= labelOf(at.stack ?? ""));
+}
+
+function labelOf(stack: string): string {
   const lines = stack.split("\n").slice(1);
   for (const line of lines) {
     const m = /at (?:async )?(?:(\S+) \()?(?:file:\/\/)?([^()\s]*\/services\/varlatchd\/src\/([^:()]+)):(\d+)/.exec(line);
@@ -776,13 +789,15 @@ const rawFlow = new AsyncLocalStorage<object>();
  * transaction at its end.
  *
  * The one connection behaves as each flow's own: one transaction at a
- * time, as separate connections that conflict would. withTx nests only
- * within its own async flow (openTxScope), so a concurrent flow's withTx
+ * time, as separate connections that conflict would. The wrapper registers
+ * itself as a shared connection (tx.ts shareConnection), so withTx nests
+ * only within its own async flow (openTxScope): a concurrent flow's withTx
  * sends a BEGIN of its own, and that BEGIN waits until the open
- * transaction has ended, as does any other flow's write or lock. A lone
- * write or lock outside a transaction runs in a wrap of its own, holding
- * the connection the same way. So the trace of a transaction is exactly
- * its own flow's statements, read at its end once they have all finished.
+ * transaction has ended, as does any other flow's statement. A statement
+ * outside a transaction, read or write alike (a SELECT can call a function
+ * that writes), runs in a wrap of its own, holding the connection the same
+ * way. So the trace of a transaction is exactly its own flow's statements,
+ * read at its end once they have all finished.
  */
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
   /** The open transaction: its flow, who began it, and its statements still running. */
@@ -828,10 +843,18 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     return statements;
   };
 
-  /** The open transaction's trace, or null when it is aborted (it cannot be read, and it rolls back). */
+  /**
+   * The open transaction's trace, cleared as it is read; empty when it
+   * wrote nothing (no transaction id), null when it is aborted (it cannot
+   * be read, and it rolls back).
+   */
   const collect = async (): Promise<TraceRow[] | null> => {
     try {
-      return (await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace ORDER BY seq`)).rows as TraceRow[];
+      const rows = (await db.query(
+        `SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace WHERE txid = txid_current_if_assigned() ORDER BY seq`,
+      )).rows as TraceRow[];
+      if (rows.length > 0) await db.query(`DELETE FROM ${SCHEMA}.trace WHERE txid = txid_current_if_assigned()`);
+      return rows;
     } catch {
       return null;
     }
@@ -874,28 +897,29 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   };
 
   /**
-   * A write or lock outside a transaction runs as one implicit
-   * transaction; run it in an explicit one (the same effect), holding the
-   * connection, so its locks are checked like any other transaction's.
+   * A statement outside a transaction runs as one implicit transaction,
+   * holding the connection: the trace then holds only its rows, read and
+   * checked when it has run, as a transaction's are at its end. A failed
+   * statement's rows rolled back with it.
    */
-  const lone = async (text: string, params: unknown[] | undefined, label: string) => {
+  const lone = async (text: string, params: unknown[] | undefined, label: () => string) => {
     while (held) await held;
     hold();
     try {
-      await db.query(`DELETE FROM ${SCHEMA}.trace`);
-      await db.query("BEGIN");
+      let failed: { err: unknown } | undefined;
+      let res: Awaited<ReturnType<typeof statement>> | undefined;
       try {
-        const res = await statement(text, params);
-        const rows = await collect();
-        if (rows) checkLone(rows, label);
-        await db.query("COMMIT");
-        return res;
+        res = await statement(text, params);
       } catch (err) {
-        const rows = await collect();
-        if (rows) checkLone(rows, label);
-        await db.query("ROLLBACK").catch(() => undefined);
-        throw err;
+        failed = { err };
       }
+      const rows = (await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace ORDER BY seq`)).rows as TraceRow[];
+      if (rows.length > 0) {
+        await db.query(`DELETE FROM ${SCHEMA}.trace`);
+        checkLone(rows, label());
+      }
+      if (failed) throw failed.err;
+      return res!;
     } finally {
       releaseHeld();
     }
@@ -919,7 +943,6 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         while (held) await held;
         hold();
         try {
-          await db.query(`DELETE FROM ${SCHEMA}.trace`);
           const res = await db.query(text, params);
           owner = { key: flow, label, ending: false, running: new Set() };
           return res;
@@ -957,13 +980,10 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         releaseHeld();
       }
     }
-    const write = /^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0;
     // Before any await: who runs it, while the stack shows it.
-    const label = write ? writerLabel() : "";
+    const label = writerAt();
     if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
     if (ownedBy(key)) return owned(statement(text, params));
-    // A read takes no lock the trace records: it runs at once.
-    if (!write) return statement(text, params);
     return lone(text, params, label);
   };
 
@@ -992,7 +1012,10 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // One statement: as query runs it (a write outside a transaction is wrapped).
     if (statements.length < 2) return query(text);
     const run = () => (db.exec ? db.exec(text) : db.query(text));
-    if (ownedBy(flowKey())) return owned(run());
+    const key = flowKey();
+    // Behind its own flow's BEGIN: inside that transaction.
+    if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+    if (ownedBy(key)) return owned(run());
     // Several statements outside a transaction run as one implicit
     // transaction; run them in an explicit one instead (the same effect),
     // so its trace is checked at COMMIT like any other.
@@ -1008,5 +1031,6 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
   };
 
   self = { ...db, query, exec };
+  shareConnection(self);
   return self;
 }

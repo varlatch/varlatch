@@ -483,6 +483,45 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(takeLockViolations().flatMap((v) => v.problems)).toEqual([expect.stringMatching(/^step went back: organizations\[org_a\] key share \(explicit/)]);
   });
 
+  it("runs a multi-statement exec sent behind its own flow's BEGIN inside that transaction", async () => {
+    await Promise.all([
+      db.query("BEGIN"),
+      db.exec!("UPDATE identities SET name = 'x' WHERE id = 'idn_a'; UPDATE identities SET name = 'y' WHERE id = 'idn_b'"),
+    ]);
+    await db.query("ROLLBACK");
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "a" }, { name: "b" }]);
+    takeLockViolations();
+  });
+
+  it("checks a SELECT that writes as any other statement, and keeps it out of another flow's transaction", async () => {
+    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
+    await db.close();
+    db = own;
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
+    await db.query("CREATE FUNCTION change_people() RETURNS void LANGUAGE sql AS $$ UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b') $$");
+    await db.query("SELECT change_people()");
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
+    // While another flow's transaction is open, it waits for that one to end.
+    const aOpen = gate();
+    const aMayEnd = gate();
+    const a = withTx(db, async (q) => {
+      await q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
+      aOpen.open();
+      await aMayEnd.opened;
+      throw new Error("refused");
+    });
+    await aOpen.opened;
+    const change = db.query("SELECT change_people()");
+    await turn();
+    aMayEnd.open();
+    await expect(a).rejects.toThrow("refused");
+    await change;
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "a!!" }, { name: "b!!" }]);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+    takeLockViolations();
+  });
+
   it("runs no other statement inside a lone statement's wrap", async () => {
     const { traced, state, close } = await hooked();
     try {
