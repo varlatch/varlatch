@@ -275,16 +275,26 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
             : call("POST", IDENTITIES, cli.token, { name: `m${i}`, kind: "service", credentialTtlSeconds: 43_200 })),
       ]);
       expect(tightened.status).toBe(200);
-      for (const a of answers) {
+      const near = (left: number, ttl: number) => left > ttl - 60 && left <= ttl;
+      answers.forEach((a, i) => {
+        const defaulted = i % 2 === 0;
         // Committed before the change (the old default, or 12 hours under the
         // old maximum), or after it (the new default, or refused above the new one).
         if (a.status === 422) {
+          expect(defaulted, "only the 12-hour requests can exceed a maximum").toBe(false);
           expect(a.body.error.code).toBe("CREDENTIAL_LIFETIME_EXCEEDED");
-          continue;
+          return;
         }
         expect(a.status, JSON.stringify(a.body)).toBe(201);
-        expect(a.body.expiresAt ?? a.body.credentialExpiresAt).not.toBeNull();
-      }
+        const left = (Date.parse(a.body.expiresAt ?? a.body.credentialExpiresAt) - Date.now()) / 1000;
+        const allowed = defaulted ? [LIFETIMES.defaultTtlSeconds, shorter.defaultTtlSeconds] : [43_200];
+        expect(allowed.some((ttl) => near(left, ttl)), `${left}s left, expected one of ${allowed.join(", ")}`).toBe(true);
+      });
+      // After the change, the new maximum holds: 12 hours is refused, the default is the new one.
+      const late = await call("POST", IDENTITIES, cli.token, { name: "late", kind: "service", credentialTtlSeconds: 43_200 });
+      expect(late.body.error.code).toBe("CREDENTIAL_LIFETIME_EXCEEDED");
+      const lateDefault = await call("POST", `${IDENTITIES}/${machine.body.id}/credentials`, cli.token, { name: "late-default" });
+      expect(near((Date.parse(lateDefault.body.expiresAt) - Date.now()) / 1000, shorter.defaultTtlSeconds)).toBe(true);
     });
   });
 

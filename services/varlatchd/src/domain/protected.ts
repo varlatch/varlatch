@@ -222,6 +222,10 @@ export async function prepareProtectedOperation(
         if (check.ttlSeconds === undefined) {
           effectiveTtlSeconds = control.config.defaultTtlSeconds;
           ttlDefaulted = true;
+        } else if (!Number.isInteger(check.ttlSeconds) || check.ttlSeconds <= 0) {
+          // The HTTP routes never send one; a direct caller's 0 would mean
+          // "never expires" (expiryOf), which enforce rules out.
+          throw new DomainError("VALIDATION_FAILED", "A credential's lifetime must be a whole number of seconds above zero");
         } else if (check.ttlSeconds > control.config.maxTtlSeconds) {
           throw credentialLifetimeExceeded(check.ttlSeconds, control.config.maxTtlSeconds);
         }

@@ -4,7 +4,7 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
-import { createMachineIdentity } from "../src/domain/identities.js";
+import { createMachineIdentity, issueMachineCredential } from "../src/domain/identities.js";
 import { ENFORCEABLE_CONTROLS, SECURITY_CONTROLS, resetControls } from "../src/domain/securitycontrols.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
@@ -289,6 +289,14 @@ describe("credential-lifetime at enforce", () => {
     expiresIn(made.credentialExpiresAt, DEFAULT);
     await expect(createMachineIdentity(ctx, personGate(admin.id), orgId, { name: "direct-long", kind: "service", credentialTtlSeconds: MAX + 1 }))
       .rejects.toMatchObject({ code: "CREDENTIAL_LIFETIME_EXCEEDED" });
+    // A direct caller's 0 would mean "never expires": refused, as are a
+    // negative and a fractional lifetime, for both domain functions.
+    for (const ttl of [0, -1, 1.5]) {
+      await expect(createMachineIdentity(ctx, personGate(admin.id), orgId, { name: `direct-${ttl}`, kind: "service", credentialTtlSeconds: ttl }))
+        .rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+      await expect(issueMachineCredential(ctx, personGate(admin.id), orgId, made.identity.id, { name: `c-${ttl}`, ttlSeconds: ttl }))
+        .rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    }
   });
 
   it("leaves people's credentials and agent-run credentials alone", async () => {
