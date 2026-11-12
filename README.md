@@ -138,9 +138,10 @@ to `api.stripe.com` only, and `DATABASE_URL` never reaches the agent at all.
 
 ## Getting started
 
-[Getting started](docs/getting-started.md) goes from nothing to
-`varlatch run`: installing the CLI, running an installation, setting up a
-project, and inviting your team.
+[Getting started](docs/getting-started.md) sends you to the short path for
+where you are: [joining a team](docs/join-a-team.md) you were invited to,
+[setting up a project](docs/set-up-a-project.md), or
+[running an installation](docs/run-an-installation.md).
 
 ### Run your own installation
 
@@ -152,7 +153,7 @@ setup, access, backups, and upgrades.
 
 The CLI is one file attached to every release, `varlatch-cli-<version>.cjs`,
 and needs Node.js 22, 24 or 26 with its current security fixes:
-[Get the CLI](docs/getting-started.md#get-the-cli).
+[Install the CLI](docs/reference/install-the-cli.md).
 
 ```sh
 varlatch login --server https://varlatch.example.com
@@ -198,9 +199,9 @@ placeholder values only. State lives in `.dev/`.
 The same documentation, searchable, is at
 [docs.varlatch.com](https://docs.varlatch.com).
 
-- [`docs/getting-started.md`](docs/getting-started.md): from nothing to
-  `varlatch run`, for whoever runs the installation and for everyone who
-  uses it
+- [`docs/getting-started.md`](docs/getting-started.md): where to start,
+  whether you were invited, are setting up a project, or run the
+  installation
 - [`CHANGELOG.md`](CHANGELOG.md): what changed in each release, and how to
   upgrade
 - [`CONTEXT.md`](CONTEXT.md): the vocabulary, from planes and identities to

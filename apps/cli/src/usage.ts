@@ -19,6 +19,8 @@ Usage:
   varlatch run --allow-unmasked <NAME>... -- <command>  # the human's override, outside assisted mode: shows only
                the named short Secrets; every other known Secret stays masked
   varlatch login --server <url> [--ttl <s>]              # browser passkey sign-in, in a browser on this machine
+               (without --server: the server a command here uses, to sign in again. The first server you sign in
+                to becomes the default for commands outside a repository; see varlatch server)
   varlatch login --server <url> --start [--ttl <s>] [--json]
                (device sign-in: prints an address and a code; approve it with your passkey in a browser on any
                 device, then run --wait. The code lasts 10 minutes)
@@ -29,11 +31,15 @@ Usage:
   varlatch login --server <url> --token <credential>
   varlatch login --server <url> --oidc --org <organization> [--audience <aud>] [--oidc-token <jwt>] [--ttl <s>]
   varlatch logout [--server <url>|--all]                 # revokes server-side, removes locally
+  varlatch server [--json]                               # the server commands here use, and the remembered default
+  varlatch server use <url> [--json]                     # make a server you are signed in to the default
+               (the default applies outside a repository only: a repository's varlatch.toml names its server)
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
   varlatch whoami [--server <url>] [--json]              # who this credential belongs to: identity, organization, credential
                (a person's or a machine's; uses VARLATCH_TOKEN, else the stored credential, as every command does)
   varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
-               (also writes the files coding agents read, as agents install does; --no-agent-files skips them)
+               (writes varlatch.toml with the server: --server, VARLATCH_SERVER, or the default server;
+                also writes the files coding agents read, as agents install does; --no-agent-files skips them)
   varlatch agents guide [setup|run|agent-run|self-hosting|contract]
                (print the skill for coding agents, or one of its references: for any coding agent with a shell)
   varlatch agents install [--scope project|user] [--agent <name>]... [--guardrails] [--mcp] [--check|--remove] [--json]

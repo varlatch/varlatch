@@ -9,7 +9,7 @@ distinct exit statuses, and help that never fails.
 Add `--json` to print one JSON document on stdout instead of the human
 format. Diagnostics stay on stderr, including the warning every command
 but `agents hook` prints first on a Node.js release without its line's
-security fixes ([Node.js version](../getting-started.md#nodejs-version))
+security fixes ([Node.js version](install-the-cli.md#nodejs-version))
 and the [credential expiry warning](#credential-expiry-warnings), so a
 script should not expect stderr to be empty. Every document has
 `"version": 1`; a change that removes or renames a field raises it. The
@@ -19,7 +19,8 @@ human formats do not change either: scripts that parse them keep working.
 | --- | --- |
 | `varlatch status --json` | stored credentials and the repository context; with `--probe`, each valid credential's `identity` (id, name, kind) and `organization` (id, slug, name, or null for a person), where the server can say |
 | `varlatch whoami --json` | `server`, and the caller as the server answers: `identity` (id, name, kind, email), `organization` (null for a person), `credential` (id, name, kind, expiresAt; never the token), `listener`, and on the tailnet listener `tailnet` (the device) |
-| `varlatch context --json` | the resolved context |
+| `varlatch context --json` | the resolved context; `serverSource` says where the server came from: `flag`, `env-var`, `local-override` or `repository` |
+| `varlatch server --json` | `server` and `serverSource` for a command here (outside a repository also `default` or `only-credential`; both null when none resolves), `defaultServer`, `signedIn` |
 | `varlatch env list --json` | `environments`: name, tier, kind, selected |
 | `varlatch values list --json` | `environment`, `items`: name, sensitive, source, rotating (never a value) |
 | `varlatch validate --json` | `environment`, `result` (`valid`, `invalid`, `incomplete`), `complete`, `missing`, `invalid`, `unresolved`, `notEvaluated`, `exitCode` |

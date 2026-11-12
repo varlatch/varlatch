@@ -5,6 +5,7 @@
 import { satteri } from "@astrojs/markdown-satteri";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
+import { movedAnchorsScript } from "./src/moved-anchors.mjs";
 import { repoLinks } from "./src/repo-links.mjs";
 
 export default defineConfig({
@@ -21,12 +22,18 @@ export default defineConfig({
         alt: "",
       },
       favicon: "/brand/favicon-32.png",
-      head: [{ tag: "link", attrs: { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png" } }],
+      head: [
+        { tag: "link", attrs: { rel: "apple-touch-icon", href: "/brand/apple-touch-icon.png" } },
+        { tag: "script", content: movedAnchorsScript() },
+      ],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/varlatch/varlatch" }],
       components: { SocialIcons: "./src/components/SocialIcons.astro" },
       customCss: ["@fontsource-variable/inter", "@fontsource-variable/jetbrains-mono", "./src/styles/theme.css"],
       sidebar: [
-        { label: "Start here", items: ["getting-started", "set-up-with-an-agent", "concepts"] },
+        {
+          label: "Start here",
+          items: ["getting-started", "join-a-team", "set-up-a-project", "run-an-installation", "set-up-with-an-agent", "concepts"],
+        },
         {
           label: "Self-hosting",
           items: [
@@ -60,7 +67,17 @@ export default defineConfig({
             { label: "Secret scanning", slug: "reference/secret-scanning" },
           ],
         },
-        { label: "CLI", items: [{ label: "Scripting the CLI", slug: "reference/scripting" }] },
+        {
+          label: "Using Varlatch",
+          items: [
+            { label: "Install the CLI", slug: "reference/install-the-cli" },
+            { label: "Members and access", slug: "reference/members" },
+            { label: "Passkeys and sessions", slug: "reference/passkeys-and-sessions" },
+            { label: "CI and other machines", slug: "reference/ci-and-machines" },
+            { label: "Scripting the CLI", slug: "reference/scripting" },
+            { label: "Removing Varlatch", slug: "reference/uninstall" },
+          ],
+        },
         {
           label: "Security",
           items: [
