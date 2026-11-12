@@ -1324,8 +1324,11 @@ paths:
         passkey-verification and credential-lifetime with its mode, its
         configuration, its version and who changed it last. A control
         nobody has changed is off at version 0. availableModes lists the
-        modes this server accepts; enforce is not among them yet. Needs
-        organization.read; existence-hiding.
+        modes this server accepts for every control; each item's
+        availableModes, the modes it accepts for that control (enforce only
+        for a control this release can enforce, also advertised as the
+        capability security.enforce.<control>). Needs organization.read;
+        existence-hiding.
       parameters:
         - $ref: "#/components/parameters/org"
       responses:
@@ -1464,9 +1467,12 @@ paths:
         approval URL and expiry); the client repeats the identical request
         with the header once the person approved. Tightening needs none.
         expectedVersion must be the control's current version
-        (VERSION_CONFLICT otherwise). enforce is refused with
-        CONTROL_MODE_UNAVAILABLE. Refused while the Organization is being
-        deleted. Records security_control.changed with metadata.loosened.
+        (VERSION_CONFLICT otherwise). enforce is accepted only for a control
+        this server can enforce (capability security.enforce.<control>; the
+        control's availableModes), and refused with CONTROL_MODE_UNAVAILABLE
+        for the others; setting it is tightening. Refused while the
+        Organization is being deleted. Records security_control.changed with
+        metadata.loosened.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: control
@@ -2494,8 +2500,9 @@ paths:
         passkey.remove, STEP_UP_REQUIRED, then the same request with the
         Varlatch-Approval header) while the person holds a live membership in
         an Organization with any Security Control at enforce (ADR-0054
-        Decision 4). No server offers enforce yet, so today nothing restricts
-        it. Removing an unconfirmed passkey never needs an approval.
+        Decision 4); a control can be enforced from servers that offer
+        security.enforce.requirement-protection. Removing an unconfirmed
+        passkey never needs an approval.
       parameters:
         - { name: passkey, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/approvalHeader"
@@ -3390,11 +3397,20 @@ paths:
       summary: >
         Update a Requirement's target or selector in place (capability
         access.update, ADR-0029). Kind is immutable. Loosening and
-        tightening are equally audited with the old/new diff.
+        tightening are equally audited with the old/new diff. While the
+        Organization enforces requirement-protection (capability
+        security.enforce.requirement-protection, ADR-0054), an edit that
+        changes anything needs the requester's step-up approval (operation
+        requirement.update, bound to the Requirement, its resulting target
+        and selector and expectedVersion): without the Varlatch-Approval
+        header the answer is STEP_UP_REQUIRED, and a machine credential is
+        refused with PERMISSION_DENIED. An edit that changes nothing needs
+        none.
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: requirement, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3416,9 +3432,20 @@ paths:
     delete:
       tags: [grants]
       operationId: deleteRequirement
+      summary: >
+        Revoke a Requirement. While the Organization enforces
+        requirement-protection (capability
+        security.enforce.requirement-protection, ADR-0054), it needs the
+        requester's step-up approval (operation requirement.revoke, bound to
+        the Requirement and the version the server read): without the
+        Varlatch-Approval header the answer is STEP_UP_REQUIRED, and a
+        machine credential is refused with PERMISSION_DENIED. STATE_CHANGED
+        when the Requirement was edited while the revocation ran; nothing is
+        revoked.
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: requirement, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
         default: { $ref: "#/components/responses/Error" }
@@ -6432,6 +6459,14 @@ components:
                 id: { type: string }
                 name: { type: [string, "null"] }
             - type: "null"
+        availableModes:
+          type: array
+          description: >
+            In a list of the controls: the modes this server accepts for this
+            control, enforce included only where this release can enforce
+            it. Absent from older servers, which accept off and report for
+            every control, and from a change's result.
+          items: { $ref: "#/components/schemas/SecurityControlMode" }
 
     SecurityControlList:
       type: object
@@ -6442,7 +6477,7 @@ components:
           items: { $ref: "#/components/schemas/SecurityControl" }
         availableModes:
           type: array
-          description: The modes this server accepts in a change.
+          description: The modes this server accepts for every control; each item's availableModes may add enforce.
           items: { $ref: "#/components/schemas/SecurityControlMode" }
 
     SecurityReportReason:
@@ -6570,7 +6605,7 @@ components:
         id: { type: string }
         operation:
           type: string
-          enum: [security_control.change, passkey.remove, organization.unfreeze]
+          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke]
           description: The semantic operation, not the HTTP route.
         organization:
           description: The Organization it acts in; null for an account operation such as passkey.remove.

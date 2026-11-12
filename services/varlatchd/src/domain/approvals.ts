@@ -116,6 +116,15 @@ import { lockPeople, lockPerson, lockPersonPasskeys, type PersonRef } from "./pe
  *     restricted, then 11.
  *   Passkey confirmation: issuing 2, 3 (the target), 5; confirming 2, 3
  *     (all), 5, then 11.
+ *   A protected operation (prepareProtectedOperation, protected.ts): 1 in
+ *     its scope's mode (the controls read under it), 2 (its people; the
+ *     requester FOR UPDATE when it consumes), 2.5 (an Idempotency-Key claim,
+ *     taken before it with the requester FOR UPDATE whenever the request
+ *     carries an approval), consumption's 4, 6, 7, then 8 and 9 (its
+ *     Project and environments), its domain rows (10), then 11 (counters,
+ *     indexes, audit). A Tailnet Requirement's edit or revocation: 1 KEY
+ *     SHARE, 2, consumption's 4, 6, 7, the Requirement FOR UPDATE (10),
+ *     then 11.
  *   A protected operation counting in report mode: 1 KEY SHARE
  *     (lockLiveScope), its people, its own domain rows, then 11 (counters,
  *     indexes, audit). An export's count, in the disclosure's audit
@@ -153,8 +162,24 @@ export const APPROVALS = {
   retentionSeconds: 86_400,
 } as const;
 
-export const APPROVAL_OPERATIONS = ["security_control.change", "passkey.remove", "organization.unfreeze"] as const;
+export const APPROVAL_OPERATIONS = [
+  "security_control.change",
+  "passkey.remove",
+  "organization.unfreeze",
+  // requirement-protection (ADR-0054 step 4.2).
+  "requirement.update",
+  "requirement.revoke",
+] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
+
+/**
+ * The operations a control at `enforce` asks approvals for, per control:
+ * the host operator's reset of a control closes their open intents with
+ * its own (ADR-0054 Decision 10).
+ */
+export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly ApprovalOperation[]>> = {
+  "requirement-protection": ["requirement.update", "requirement.revoke"],
+};
 
 /**
  * The Organization-bound operations an intent may be created for while the
@@ -230,7 +255,10 @@ export interface UsedApproval {
 
 /**
  * Thrown inside a protected operation's transaction when it needs an
- * approval it was not given. Never leaves withApproval.
+ * approval it was not given. It escapes the whole mutation: every
+ * transaction it passes through rolls back (an Idempotency-Key claim
+ * included), and withSerializableTx does not retry it, since it is not a
+ * serialization failure. Never leaves withApproval.
  */
 export class ApprovalNeeded extends Error {
   override name = "ApprovalNeeded";
@@ -286,6 +314,17 @@ export interface ApprovalGate {
 }
 
 /**
+ * What withApproval hands a protected operation: the gate, and the request
+ * it gates (prepareProtectedOperation, protected.ts, reads both).
+ */
+export interface ProtectedGate extends ApprovalGate {
+  /** The credential that asked, and its person. */
+  readonly requester: Requester;
+  /** The approval the request carries (the Varlatch-Approval header), or null. */
+  readonly approvalId: string | null;
+}
+
+/**
  * Run a protected operation. When it throws ApprovalNeeded (it needs an
  * approval it was not given), store an Approval Intent for the binding and
  * answer STEP_UP_REQUIRED with it; anything else passes through.
@@ -293,9 +332,11 @@ export interface ApprovalGate {
 export async function withApproval<T>(
   ctx: AppCtx,
   input: { requester: Requester; approvalId: string | null; publicUrl: string | null | undefined },
-  run: (gate: ApprovalGate) => Promise<T>,
+  run: (gate: ProtectedGate) => Promise<T>,
 ): Promise<T> {
-  const gate: ApprovalGate = {
+  const gate: ProtectedGate = {
+    requester: input.requester,
+    approvalId: input.approvalId,
     require: async (db, binding) => {
       if (input.approvalId === null) throw new ApprovalNeeded(binding);
       return consumeApproval(db, ctx.rootKek, input.requester, input.approvalId, binding);
@@ -865,15 +906,20 @@ export async function closeOpenApprovals(
   // intent of it can be created meanwhile), then the open intents' people
   // in id order (2), then the intents in id order (4): a start, an approval
   // or a consumption in flight holds its person and finishes first.
+  // `controls`: changes of those controls, and the operations they ask
+  // approvals for (CONTROL_APPROVAL_OPERATIONS).
   const filter = `organization_id = $1 AND consumed_at IS NULL AND closed_at IS NULL AND expires_at > clock_timestamp()
-       AND ($2::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($2::text[])))
+       AND ($2::text[] IS NULL OR (operation = 'security_control.change' AND target ->> 'control' = ANY($2::text[]))
+            OR operation = ANY($4::text[]))
        AND ($3::text[] IS NULL OR operation = ANY($3::text[]))`;
   const controls = input.controls ? [...input.controls] : null;
   const operations = input.operations ? [...input.operations] : null;
-  const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, [input.organizationId, controls, operations]))
+  const gated = (controls ?? []).flatMap((c) => CONTROL_APPROVAL_OPERATIONS[c] ?? []);
+  const params = [input.organizationId, controls, operations, gated];
+  const people = (await db.query(`SELECT DISTINCT identity_id FROM approval_intents WHERE ${filter}`, params))
     .rows as { identity_id: string }[];
   await lockPeople(db, [...(input.people ?? []), ...people.map((p) => p.identity_id)], "key share");
-  const intents = (await lockedQuery(db, { table: "approval_intents", mode: "update" }, `SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, [input.organizationId, controls, operations]))
+  const intents = (await lockedQuery(db, { table: "approval_intents", mode: "update" }, `SELECT id FROM approval_intents WHERE ${filter} ORDER BY id FOR UPDATE`, params))
     .rows as { id: string }[];
   if (intents.length === 0) return 0;
   const res = await db.query(
