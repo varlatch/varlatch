@@ -3,6 +3,7 @@ import type { Querier } from "../db/migrate.js";
 import { canonicalJson, type ApprovalBinding, type ApprovalChange, type ApprovalOperation } from "./approvals.js";
 import { DomainError } from "./errors.js";
 import type { AdminStepUpOperation } from "./securityreport.js";
+import { labelWithId, quoted, unnamed } from "./approvallabels.js";
 
 /**
  * admin-step-up for the access structure (ADR-0054 Decision 5, step 4.6):
@@ -150,24 +151,13 @@ export async function checkGrantSubject(db: Querier, organizationId: string, ide
 }
 
 /**
- * An identity's label (alias `i`, Organization `$2`): its name, with its id
- * when another identity of the Organization (one of its machines, or a
- * person with a membership, past or present) has the same name.
+ * What declarations refer to, in this Organization, as summaries write
+ * them: each with its bound id, always (approvallabels.ts). An id of
+ * nothing here is written alone.
  */
-const IDENTITY_LABEL = `i.name || CASE WHEN EXISTS (
-    SELECT 1 FROM identities o WHERE o.name = i.name AND o.id <> i.id
-      AND (o.organization_id = $2 OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = $2 AND m.identity_id = o.id)))
-  THEN ' (' || i.id || ')' ELSE '' END`;
-
-/** A group's or team's label (alias `g`): its name, with its id when another group or team of the Organization, live or deleted, has the same name. */
-const GROUP_LABEL = `g.name || CASE WHEN EXISTS (
-    SELECT 1 FROM groups o WHERE o.organization_id = g.organization_id AND o.name = g.name AND o.id <> g.id)
-  THEN ' (' || g.id || ')' ELSE '' END`;
-
-/** Names of what declarations refer to, in this Organization; an id of nothing here keeps its id. */
 interface Names {
   identities: Map<string, string>;
-  groups: Map<string, { name: string; kind: GroupKind }>;
+  groups: Map<string, { label: string; kind: GroupKind }>;
   roles: Map<string, string>;
   projects: Map<string, string>;
   environments: Map<string, string>;
@@ -186,69 +176,31 @@ async function namesFor(db: Querier, organizationId: string, decls: readonly Gra
     }
   }
   const q = async (sql: string, list: Set<string>) => (list.size === 0 ? [] : ((await db.query(sql, [[...list], organizationId])).rows as Record<string, string>[]));
-  // Every label is the name people read, followed by the id when another
-  // row of its kind in this Organization shares that name: two people
-  // named Bob, a role or group recreated under an old name, a slug freed by
-  // a deleted Project. A changed subject or scope never reads the same.
   const identities = await q(
-    `SELECT i.id, ${IDENTITY_LABEL} AS label FROM identities i WHERE i.id = ANY($1)
+    `SELECT i.id, i.name FROM identities i WHERE i.id = ANY($1)
        AND (i.organization_id = $2 OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = $2 AND m.identity_id = i.id))`,
     ids.identities,
   );
-  const groups = await q(`SELECT g.id, ${GROUP_LABEL} AS label, g.kind FROM groups g WHERE g.id = ANY($1) AND g.organization_id = $2`, ids.groups);
-  const roles = await q(
-    `SELECT r.id, r.name || CASE WHEN EXISTS (SELECT 1 FROM roles o WHERE o.organization_id = r.organization_id AND o.name = r.name AND o.id <> r.id)
-       THEN ' (' || r.id || ')' ELSE '' END AS label
-     FROM roles r WHERE r.id = ANY($1) AND r.organization_id = $2`,
-    ids.roles,
-  );
-  const projects = await q(
-    `SELECT p.id, p.slug || CASE WHEN EXISTS (SELECT 1 FROM projects o WHERE o.organization_id = p.organization_id AND o.slug = p.slug AND o.id <> p.id)
-       THEN ' (' || p.id || ')' ELSE '' END AS label
-     FROM projects p WHERE p.id = ANY($1) AND p.organization_id = $2`,
-    ids.projects,
-  );
-  // An environment reads as slug/name: shared with any environment, live or
-  // deleted, of any Project of the Organization whose slug is the same
-  // (a slug a deleted Project freed included).
+  const groups = await q("SELECT id, name, kind FROM groups WHERE id = ANY($1) AND organization_id = $2", ids.groups);
+  const roles = await q("SELECT id, name FROM roles WHERE id = ANY($1) AND organization_id = $2", ids.roles);
+  const projects = await q("SELECT id, slug FROM projects WHERE id = ANY($1) AND organization_id = $2", ids.projects);
   const environments = await q(
-    `SELECT e.id, p.slug || '/' || e.name || CASE WHEN EXISTS (
-         SELECT 1 FROM environments o JOIN projects op ON op.id = o.project_id
-         WHERE op.organization_id = p.organization_id AND op.slug = p.slug AND o.name = e.name AND o.id <> e.id)
-       THEN ' (' || e.id || ')' ELSE '' END AS label
-     FROM environments e JOIN projects p ON p.id = e.project_id
+    `SELECT e.id, p.slug || '/' || e.name AS name FROM environments e JOIN projects p ON p.id = e.project_id
      WHERE e.id = ANY($1) AND p.organization_id = $2`,
     ids.environments,
   );
-  const groupLabels = apart(new Map(groups.map((r) => [r.id!, r.label!])));
   return {
-    identities: apart(new Map(identities.map((r) => [r.id!, r.label!]))),
-    groups: new Map(groups.map((r) => [r.id!, { name: groupLabels.get(r.id!)!, kind: r.kind as GroupKind }])),
-    roles: apart(new Map(roles.map((r) => [r.id!, r.label!]))),
-    projects: apart(new Map(projects.map((r) => [r.id!, r.label!]))),
-    environments: apart(new Map(environments.map((r) => [r.id!, r.label!]))),
+    identities: new Map(identities.map((r) => [r.id!, labelWithId(null, r.name!, r.id!)])),
+    groups: new Map(groups.map((r) => [r.id!, { label: labelWithId(r.kind!, r.name!, r.id!), kind: r.kind as GroupKind }])),
+    roles: new Map(roles.map((r) => [r.id!, labelWithId("role", r.name!, r.id!)])),
+    projects: new Map(projects.map((r) => [r.id!, labelWithId("project", r.slug!, r.id!)])),
+    environments: new Map(environments.map((r) => [r.id!, labelWithId(null, r.name!, r.id!)])),
   };
 }
 
-/**
- * The general rule behind the labels, for the ids one summary names (both
- * sides of a replacement together): two different ids never read the
- * same. A label that two of them would share carries each one's id, so no
- * item can move from one row to another under an unchanged label, however
- * much of the rest of the scope stays the same.
- */
-function apart(labels: Map<string, string>): Map<string, string> {
-  const uses = new Map<string, number>();
-  for (const label of labels.values()) uses.set(label, (uses.get(label) ?? 0) + 1);
-  return new Map(
-    [...labels].map(([id, label]) => [id, (uses.get(label) ?? 0) > 1 && !label.endsWith(`(${id})`) ? `${label} (${id})` : label]),
-  );
-}
-
 function describeSubject(d: GrantDeclaration, n: Names): string {
-  if (d.subjectIdentityId) return n.identities.get(d.subjectIdentityId) ?? d.subjectIdentityId;
-  const group = n.groups.get(d.subjectGroupId ?? "");
-  return group ? `${group.kind} ${group.name}` : `group ${d.subjectGroupId}`;
+  if (d.subjectIdentityId) return n.identities.get(d.subjectIdentityId) ?? unnamed("identity", d.subjectIdentityId);
+  return n.groups.get(d.subjectGroupId ?? "")?.label ?? unnamed("group", d.subjectGroupId ?? "");
 }
 
 function describeScope(d: GrantDeclaration, n: Names): string {
@@ -257,19 +209,19 @@ function describeScope(d: GrantDeclaration, n: Names): string {
     case "organization":
       return "the whole organization";
     case "project":
-      return `project ${n.projects.get(s.projectId) ?? s.projectId}`;
+      return n.projects.get(s.projectId) ?? unnamed("project", s.projectId);
     case "environments": {
-      const project = n.projects.get(s.projectId) ?? s.projectId;
-      if (s.selector.kind === "tier") return `the ${s.selector.tier} environments of project ${project}`;
+      const project = n.projects.get(s.projectId) ?? unnamed("project", s.projectId);
+      if (s.selector.kind === "tier") return `the ${s.selector.tier} environments of ${project}`;
       return `environments ${set(s.selector.environmentIds.map((id) => n.environments.get(id) ?? id)).join(", ")}`;
     }
     case "team":
-      return `the projects of team ${n.groups.get(s.teamId)?.name ?? s.teamId}`;
+      return `the projects of ${n.groups.get(s.teamId)?.label ?? unnamed("team", s.teamId)}`;
   }
 }
 
 function describePermission(d: GrantDeclaration, n: Names): string {
-  if (d.roleId) return `role ${n.roles.get(d.roleId) ?? d.roleId}`;
+  if (d.roleId) return n.roles.get(d.roleId) ?? unnamed("role", d.roleId);
   return set(d.actions ?? []).join(", ");
 }
 
@@ -392,8 +344,8 @@ export function roleCreateBinding(org: { id: string }, input: { name: string; ac
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Create role ${input.name}: ${actions.join(", ")}`,
-      changes: [added("name", input.name), added("actions", actions.join(", "))],
+      title: `Create role ${quoted(input.name)}: ${actions.join(", ")}`,
+      changes: [added("name", quoted(input.name)), added("actions", actions.join(", "))],
     },
   };
 }
@@ -415,7 +367,7 @@ export async function roleUpdateBinding(
   const gained = set([...after].filter((a) => !before.has(a)));
   const lost = set([...before].filter((a) => !after.has(a)));
   const changes: ApprovalChange[] = [];
-  if (next.name !== current.name) changes.push({ field: "name", from: current.name, to: next.name, loosens: false });
+  if (next.name !== current.name) changes.push({ field: "name", from: quoted(current.name), to: quoted(next.name), loosens: false });
   if (gained.length > 0) changes.push({ field: "actionsAdded", from: null, to: gained.join(", "), loosens: true });
   if (lost.length > 0) changes.push({ field: "actionsRemoved", from: lost.join(", "), to: null, loosens: false });
   return {
@@ -425,7 +377,7 @@ export async function roleUpdateBinding(
     body: { name: next.name, actions: set(next.actions) },
     query: {},
     expectedVersion,
-    summary: { title: `Change role ${current.name}, which ${plural(grants, "Grant")} use${grants === 1 ? "s" : ""}`, changes },
+    summary: { title: `Change ${labelWithId("role", current.name, current.id)}, which ${plural(grants, "Grant")} use${grants === 1 ? "s" : ""}`, changes },
   };
 }
 
@@ -438,7 +390,7 @@ export function roleDeleteBinding(org: { id: string }, role: RoleRef): ApprovalB
     body: null,
     query: {},
     expectedVersion: role.version,
-    summary: { title: `Delete role ${role.name}`, changes: [] },
+    summary: { title: `Delete ${labelWithId("role", role.name, role.id)}`, changes: [] },
   };
 }
 
@@ -469,7 +421,7 @@ export function groupCreateBinding(org: { id: string }, input: { name: string; k
     body: { kind: input.kind, name: input.name },
     query: {},
     expectedVersion: null,
-    summary: { title: `Create ${input.kind} ${input.name}`, changes: [added("name", input.name)] },
+    summary: { title: `Create ${input.kind} ${quoted(input.name)}`, changes: [added("name", quoted(input.name))] },
   };
 }
 
@@ -483,8 +435,8 @@ export function groupUpdateBinding(org: { id: string }, group: GroupRef, name: s
     query: {},
     expectedVersion,
     summary: {
-      title: `Rename ${group.kind} ${group.name} to ${name}`,
-      changes: [{ field: "name", from: group.name, to: name, loosens: false }],
+      title: `Rename ${labelWithId(group.kind, group.name, group.id)} to ${quoted(name)}`,
+      changes: [{ field: "name", from: quoted(group.name), to: quoted(name), loosens: false }],
     },
   };
 }
@@ -499,11 +451,11 @@ export async function groupDeleteBinding(db: Querier, org: { id: string }, group
     body: null,
     query: {},
     expectedVersion: group.version,
-    summary: { title: `Delete ${group.kind} ${group.name}. Its ${plural(members, "member")} lose${members === 1 ? "s" : ""} what its Grants gave them`, changes: [] },
+    summary: { title: `Delete ${labelWithId(group.kind, group.name, group.id)}. Its ${plural(members, "member")} lose${members === 1 ? "s" : ""} what its Grants gave them`, changes: [] },
   };
 }
 
-/** An identity as a summary names it: `name` is its label, with its id when the name is shared (IDENTITY_LABEL). */
+/** An identity as a summary names it (with labelWithId). */
 export interface PersonRef {
   id: string;
   name: string;
@@ -516,7 +468,7 @@ export interface PersonRef {
  */
 export async function readEligibleMember(db: Querier, organizationId: string, identityId: string): Promise<PersonRef | null> {
   const row = (await db.query(
-    `SELECT i.id, ${IDENTITY_LABEL} AS name FROM identities i
+    `SELECT i.id, i.name FROM identities i
      WHERE i.id = $1 AND NOT i.disabled
        AND ((i.kind <> 'human' AND i.organization_id = $2)
          OR (i.kind = 'human' AND EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = $2 AND m.identity_id = i.id AND m.removed_at IS NULL)))`,
@@ -525,11 +477,9 @@ export async function readEligibleMember(db: Querier, organizationId: string, id
   return row ?? null;
 }
 
-/** An identity's label in the Organization (IDENTITY_LABEL), whatever its state; its id when there is none. */
-export async function readPerson(db: Querier, organizationId: string, identityId: string): Promise<PersonRef> {
-  const row = (await db.query(`SELECT i.id, ${IDENTITY_LABEL} AS name FROM identities i WHERE i.id = $1`, [identityId, organizationId])).rows[0] as
-    | PersonRef
-    | undefined;
+/** An identity's name, whatever its state; its id when there is none. */
+export async function readPerson(db: Querier, identityId: string): Promise<PersonRef> {
+  const row = (await db.query("SELECT id, name FROM identities WHERE id = $1", [identityId])).rows[0] as PersonRef | undefined;
   return row ?? { id: identityId, name: identityId };
 }
 
@@ -547,7 +497,7 @@ export function memberAddBinding(org: { id: string }, group: { id: string; name:
     body: null,
     query: {},
     expectedVersion: null,
-    summary: { title: `Add ${person.name} to ${group.kind} ${group.name}`, changes: [] },
+    summary: { title: `Add ${labelWithId(null, person.name, person.id)} to ${labelWithId(group.kind, group.name, group.id)}`, changes: [] },
   };
 }
 
@@ -560,7 +510,7 @@ export function memberRemoveBinding(org: { id: string }, group: { id: string; na
     body: null,
     query: {},
     expectedVersion: null,
-    summary: { title: `Remove ${person.name} from ${group.kind} ${group.name}`, changes: [] },
+    summary: { title: `Remove ${labelWithId(null, person.name, person.id)} from ${labelWithId(group.kind, group.name, group.id)}`, changes: [] },
   };
 }
 
@@ -572,40 +522,21 @@ export interface ProjectRef {
   slug: string;
 }
 
-/**
- * A Project's label (alias `p`): its name, with its slug when another
- * Project of the Organization, live or deleted, has the same name, and its
- * id when that slug is shared too.
- */
-const PROJECT_LABEL = `p.name || CASE
-    WHEN EXISTS (SELECT 1 FROM projects o WHERE o.organization_id = p.organization_id AND o.slug = p.slug AND o.id <> p.id)
-      THEN ' (' || p.slug || ', ' || p.id || ')'
-    WHEN EXISTS (SELECT 1 FROM projects o WHERE o.organization_id = p.organization_id AND o.name = p.name AND o.id <> p.id)
-      THEN ' (' || p.slug || ')'
-    ELSE '' END`;
-
-/** A live Project of the Organization, read without a lock, `name` its label; null when there is none. */
+/** A live Project of the Organization, read without a lock; null when there is none. */
 export async function readLiveProject(db: Querier, organizationId: string, projectId: string): Promise<ProjectRef | null> {
   const row = (await db.query(
-    `SELECT p.id, ${PROJECT_LABEL} AS name, p.slug FROM projects p WHERE p.id = $1 AND p.organization_id = $2 AND p.deleted_at IS NULL`,
+    "SELECT id, name, slug FROM projects WHERE id = $1 AND organization_id = $2 AND deleted_at IS NULL",
     [projectId, organizationId],
   )).rows[0] as ProjectRef | undefined;
   return row ?? null;
 }
 
-/** A Project of the Organization as a summary names it (its label), whatever its state; its id when there is none. */
+/** A Project of the Organization as a summary names it, whatever its state; its id when there is none. */
 export async function readProjectName(db: Querier, organizationId: string, projectId: string): Promise<ProjectRef> {
-  const row = (await db.query(`SELECT p.id, ${PROJECT_LABEL} AS name, p.slug FROM projects p WHERE p.id = $1 AND p.organization_id = $2`, [
-    projectId,
-    organizationId,
-  ])).rows[0] as ProjectRef | undefined;
+  const row = (await db.query("SELECT id, name, slug FROM projects WHERE id = $1 AND organization_id = $2", [projectId, organizationId])).rows[0] as
+    | ProjectRef
+    | undefined;
   return row ?? { id: projectId, name: projectId, slug: projectId };
-}
-
-/** A group's or team's label (GROUP_LABEL) for a summary. */
-export async function groupLabel(db: Querier, groupId: string, fallback: string): Promise<string> {
-  const row = (await db.query(`SELECT ${GROUP_LABEL} AS label FROM groups g WHERE g.id = $1`, [groupId])).rows[0] as { label: string } | undefined;
-  return row?.label ?? fallback;
 }
 
 /** Whether the team is linked to the project, read without a lock. */
@@ -622,7 +553,7 @@ export function teamProjectAddBinding(org: { id: string }, team: { id: string; n
     body: null,
     query: {},
     expectedVersion: null,
-    summary: { title: `Give team ${team.name} the project ${project.name}`, changes: [] },
+    summary: { title: `Give ${labelWithId("team", team.name, team.id)} the ${labelWithId("project", project.slug, project.id)}`, changes: [] },
   };
 }
 
@@ -635,6 +566,6 @@ export function teamProjectRemoveBinding(org: { id: string }, team: { id: string
     body: null,
     query: {},
     expectedVersion: null,
-    summary: { title: `Take the project ${project.name} from team ${team.name}`, changes: [] },
+    summary: { title: `Take the ${labelWithId("project", project.slug, project.id)} from ${labelWithId("team", team.name, team.id)}`, changes: [] },
   };
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Querier } from "../db/migrate.js";
 import type { ApprovalBinding, ApprovalChange } from "./approvals.js";
+import { labelWithId, quoted } from "./approvallabels.js";
 
 /**
  * admin-step-up for machine identities, their credentials and OIDC
@@ -66,7 +67,7 @@ export function identityCreateBinding(
 ): ApprovalBinding {
   const ttl = issuesCredential ? (effectiveTtlSeconds ?? null) : null;
   const maxUses = issuesCredential ? (input.credentialMaxUses ?? null) : null;
-  const changes = [added("name", input.name), added("kind", input.kind)];
+  const changes = [added("name", quoted(input.name)), added("kind", input.kind)];
   if (issuesCredential) changes.push(added("credentialExpiry", expiryWords(ttl)), added("credentialUses", usesWords(maxUses)));
   return {
     operation: "identity.create",
@@ -83,8 +84,8 @@ export function identityCreateBinding(
     expectedVersion: null,
     summary: {
       title: issuesCredential
-        ? `Create machine identity ${input.name} (${input.kind}), with a credential that ${ttl === null ? "never expires" : `expires ${expiryWords(ttl)}`}`
-        : `Create machine identity ${input.name} (${input.kind}). It gets no credential`,
+        ? `Create machine identity ${quoted(input.name)} (${input.kind}), with a credential that ${ttl === null ? "never expires" : `expires ${expiryWords(ttl)}`}`
+        : `Create machine identity ${quoted(input.name)} (${input.kind}). It gets no credential`,
       changes,
     },
   };
@@ -107,8 +108,8 @@ export function credentialIssueBinding(
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Issue credential ${input.name} for ${identity.name} (${identity.kind}), ${ttl === null ? "never expiring" : `expiring ${expiryWords(ttl)}`}, ${usesWords(maxUses)}`,
-      changes: [added("name", input.name), added("credentialExpiry", expiryWords(ttl)), added("credentialUses", usesWords(maxUses))],
+      title: `Issue credential ${quoted(input.name)} for ${identity.kind} ${labelWithId(null, identity.name, identity.id)}, ${ttl === null ? "never expiring" : `expiring ${expiryWords(ttl)}`}, ${usesWords(maxUses)}`,
+      changes: [added("name", quoted(input.name)), added("credentialExpiry", expiryWords(ttl)), added("credentialUses", usesWords(maxUses))],
     },
   };
 }
@@ -123,7 +124,7 @@ export function identityReactivateBinding(org: { id: string }, identity: Machine
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Reactivate machine identity ${identity.name}. It has no working credential until one is issued`,
+      title: `Reactivate machine identity ${labelWithId(null, identity.name, identity.id)}. It has no working credential until one is issued`,
       changes: [],
     },
   };
@@ -151,7 +152,7 @@ export function oidcBindingCreateBinding(org: { id: string }, identity: MachineI
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Let tokens from ${input.issuer} with subject ${input.subject} act as ${identity.name}`,
+      title: `Let tokens from ${input.issuer} with subject ${input.subject} act as ${labelWithId(null, identity.name, identity.id)}`,
       changes,
     },
   };
@@ -185,7 +186,7 @@ export function oidcBindingDeleteBinding(org: { id: string }, identity: MachineI
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Remove the OIDC binding ${binding.issuer} / ${binding.subject} from ${identity.name}`,
+      title: `Remove the OIDC binding ${binding.issuer} / ${binding.subject} from ${labelWithId(null, identity.name, identity.id)}`,
       changes: [],
     },
   };
