@@ -155,6 +155,8 @@ export async function fingerprint(db: AppCtx["db"]): Promise<Map<string, string>
   const SPECIAL: Record<string, string> = {
     // Changed by every request (last use); what counts is issuance and revocation.
     credentials: "SELECT count(*)::text || '/' || count(revoked_at)::text FROM credentials",
+    // last_seen_at: stamped with a credential's last use, at most once a minute.
+    identities: "SELECT md5(coalesce(string_agg((to_jsonb(x) - 'last_seen_at')::text, ',' ORDER BY x.id), '')) FROM identities x",
     audit_events: "SELECT count(*)::text FROM audit_events WHERE event_type <> 'authorization.denied'",
     // Flipped between the runs; nothing a request changes.
     security_controls: "SELECT count(*)::text || '/' || string_agg(control || ':' || mode, ',' ORDER BY control) FROM security_controls WHERE control <> 'passkey-verification'",
