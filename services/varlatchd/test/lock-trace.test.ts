@@ -4,7 +4,7 @@ import { lockedQuery } from "../src/db/locks.js";
 import type { Querier } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
-import { checkTrace, installLockTrace, lockOrderMode, lockTagOf, lockTraced, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkAccessTrace, checkTrace, installLockTrace, lockOrderMode, lockTagOf, lockTraced, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
 import { checkAuditBeforeDecryption, isKeyOnlyLock, traceLog } from "./helpers/trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
@@ -38,6 +38,48 @@ describe("the retrieval snapshot check and tagged locks", () => {
     const payloadKey = "SELECT payload FROM value_versions WHERE id = $1 FOR SHARE /* varlatch-lock value_versions share payload */";
     expect(isKeyOnlyLock(payloadKey)).toBe(false);
     expect(after(payloadKey)).toThrow(/read after the snapshot/);
+  });
+});
+
+describe("checkAccessTrace (passkey-verification coverage, ADR-0054 Decision 7)", () => {
+  let seq = 0;
+  const at = (tbl: string, key: string, mode: string, kind: TraceRow["kind"]): TraceRow => ({ seq: ++seq, tbl, key, mode, kind });
+  const lock = (org: string) => at("organizations", org, "key share", "explicit");
+  const decided = (org: string) => [at("access", org, "captured", "access"), at("access", org, "checked", "access")];
+  const write = (tbl: string, key: string, org: string | null) => [at(tbl, key, "no key update", "write"), ...(org ? [at(tbl, key, org, "owner")] : [])];
+
+  it("passes writes after their own Organization's lock, capture and checkpoint", () => {
+    expect(checkAccessTrace([lock("org_a"), ...decided("org_a"), ...write("projects", "prj_1", "org_a"), ...write("environments", "env_1", "org_a")])).toEqual([]);
+  });
+
+  it("fails a write to another Organization after one Organization's check (every write is checked, not the first)", () => {
+    const problems = checkAccessTrace([lock("org_a"), ...decided("org_a"), ...write("projects", "prj_1", "org_a"), ...write("projects", "prj_2", "org_b")]);
+    expect(problems.length).toBe(3);
+    expect(problems.every((p) => p.includes("Organization org_b"))).toBe(true);
+  });
+
+  it("fails one Organization's lock paired with another's capture and checkpoint", () => {
+    const a = checkAccessTrace([lock("org_a"), ...decided("org_b"), ...write("projects", "prj_1", "org_a")]);
+    expect(a.map((p) => p.replace(/^.* written /, ""))).toEqual([
+      "before the request's outcome for that Organization was captured",
+      "before the request's checkpoint for that Organization",
+    ]);
+    const b = checkAccessTrace([lock("org_a"), ...decided("org_b"), ...write("projects", "prj_2", "org_b")]);
+    expect(b.map((p) => p.replace(/^.* written /, ""))).toEqual(["before that Organization was locked"]);
+  });
+
+  it("fails a write before the checkpoint even when the checkpoint comes later", () => {
+    expect(checkAccessTrace([lock("org_a"), at("access", "org_a", "captured", "access"), ...write("grants", "grt_1", "org_a"), at("access", "org_a", "checked", "access")]))
+      .toEqual([expect.stringContaining("before the request's checkpoint for that Organization")]);
+  });
+
+  it("skips rows of no Organization, bookkeeping, and an Organization the transaction created", () => {
+    expect(checkAccessTrace([
+      ...write("passkey", "pk_1", null),
+      ...write("audit_events", "1", "org_a"),
+      at("organizations", "org_new", "insert", "insert"),
+      ...write("org_memberships", "org_new|idn_1", "org_new"),
+    ])).toEqual([]);
   });
 });
 
