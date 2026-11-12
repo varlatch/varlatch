@@ -2616,11 +2616,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const { identity, credential, credentialExpiresAt } = await createMachineIdentity(
+    // A protected operation (ADR-0054): credential-lifetime may default or
+    // refuse the credential's TTL. admin-step-up cannot ask for an approval
+    // yet, so the approval header is never read here.
+    const { identity, credential, credentialExpiresAt } = await withApproval(
       ctx,
-      org.id,
-      body,
-      principal.identity.id,
+      { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
+      (gate) => createMachineIdentity(ctx, gate, org.id, body),
     );
     return c.json(
       {
@@ -2676,7 +2678,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const issued = await issueMachineCredential(ctx, org.id, identity.id, body, principal.identity.id);
+    // A protected operation (ADR-0054), like identity creation above.
+    const issued = await withApproval(
+      ctx,
+      { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
+      (gate) => issueMachineCredential(ctx, gate, org.id, identity.id, body),
+    );
     c.header("Cache-Control", "no-store");
     return c.json(
       {

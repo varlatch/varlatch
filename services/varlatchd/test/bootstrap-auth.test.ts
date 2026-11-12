@@ -16,6 +16,7 @@ import {
 import { completeEnrollment, enrollmentUser } from "../src/auth/humanauth.js";
 import { createOrganization } from "../src/domain/orgs.js";
 import { createMachineIdentity } from "../src/domain/identities.js";
+import { personGate } from "./helpers/gates.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
 let ctx: AppCtx & { close: () => Promise<void> };
@@ -145,9 +146,9 @@ describe("machine identities", () => {
     const org = await createOrganization(ctx, { slug: "acme", name: "Acme" }, adminId);
     const { identity, credential } = await createMachineIdentity(
       ctx,
+      personGate(adminId),
       org.id,
       { name: "prod-api", kind: "service" },
-      adminId,
     );
     expect(identity.organization_id).toBe(org.id);
     expect(credential).toMatch(/^vlt_svc_/);
@@ -160,9 +161,9 @@ describe("machine identities", () => {
     const org = await createOrganization(ctx, { slug: "acme", name: "Acme" }, adminId);
     const { credential } = await createMachineIdentity(
       ctx,
+      personGate(adminId),
       org.id,
       { name: "gha", kind: "ci" },
-      adminId,
     );
     expect(credential).toBeNull();
   });

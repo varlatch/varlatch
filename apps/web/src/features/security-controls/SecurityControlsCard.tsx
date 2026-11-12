@@ -127,6 +127,8 @@ export function modesOf(control: SecurityControl, available: readonly SecurityCo
 export const ENFORCE_NOTE: Partial<Record<SecurityControlName, string>> = {
   "requirement-protection":
     "From then on, editing or removing a Tailnet Requirement needs the approval of the person asking, with a trusted passkey, and a machine credential cannot do either. Removing a trusted passkey also needs an approval, for everyone in this organization. Creating a requirement stays free.",
+  "credential-lifetime":
+    "From then on, a machine credential issued without a lifetime gets the default, and one asked for longer than the maximum is refused, for people and machines alike. Existing credentials keep their expiry. Removing a trusted passkey also needs an approval, for everyone in this organization.",
 };
 
 /** The message for a failed save. */

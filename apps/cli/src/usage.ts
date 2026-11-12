@@ -194,7 +194,8 @@ Usage:
                 and OIDC issuers this installation's outbound policy refuses, with why and since when)
   varlatch security controls [--json] [--org <organization>] [--server <url>]
                (the organization's security controls: requirement-protection, admin-step-up, passkey-verification,
-                credential-lifetime, each off, report or enforce; enforce is not available yet)
+                credential-lifetime, each off, report or enforce; enforce only where the server offers it for that
+                control)
   varlatch security set <control> <off|report|enforce> [--default-ttl <seconds>] [--max-ttl <seconds>] [--clear-config]
                         [--approval <id>] [--json] [--org <organization>] [--server <url>]
                (needs organization.manage and a person's credential; tightening applies at once; loosening, such as

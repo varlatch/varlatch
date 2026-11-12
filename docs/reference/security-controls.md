@@ -26,8 +26,9 @@ Each control has a mode:
   an outcome, Varlatch counts it, so you can see what turning it on would
   do before you decide (see [What report mode counts](#what-report-mode-counts)).
 - **`enforce`**: the control applies. **This release offers `enforce`
-  for `requirement-protection` only** (see [Requirement
-  protection](#requirement-protection)). For the other controls the
+  for `requirement-protection` and `credential-lifetime`** (see
+  [Requirement protection](#requirement-protection) and [Credential
+  lifetime](#credential-lifetime)). For the other controls the
   server refuses it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard
   shows it as coming in a later release. A release says which controls it
   can enforce: each control's `availableModes`, and the capability
@@ -47,6 +48,7 @@ varlatch security controls            # each control, its mode, lifetimes, versi
 varlatch security set admin-step-up report
 varlatch security set requirement-protection enforce
 varlatch security set credential-lifetime report --default-ttl 86400 --max-ttl 2592000
+varlatch security set credential-lifetime enforce        # keeps the lifetimes it has
 varlatch security set credential-lifetime report --max-ttl 604800   # keeps the default
 varlatch security set credential-lifetime off --clear-config
 ```
@@ -459,11 +461,87 @@ If you lost your trusted passkeys, nobody else can approve for you:
   <slug> --control requirement-protection`. This also closes the open
   approvals for Requirement changes.
 
+## Credential lifetime
+
+`credential-lifetime` bounds how long machine credentials last. Without
+it, a service credential lasts until someone revokes it unless a
+lifetime is given when it is issued, and nothing stops a lifetime of ten
+years. It has two settings, in seconds: a default lifetime and a maximum
+(`0 < default <= maximum`).
+
+Turn it on from the Security page, or:
+
+```sh
+varlatch security set credential-lifetime report --default-ttl 2592000 --max-ttl 7776000   # see first what it would change
+varlatch security set credential-lifetime enforce
+```
+
+Turning it on, or shortening a lifetime, is tightening: it needs no
+approval. Turning it down (to `report` or `off`), lengthening a lifetime
+or clearing the lifetimes needs your approval, like any loosening.
+
+### What it guarantees
+
+With `credential-lifetime` at `enforce`, for every machine credential
+issued in the organization from then on, both when a service, workload
+or broker identity is created with its first credential and with
+`varlatch credential issue` (or **Issue credential** in the dashboard):
+
+- **A credential asked for without a lifetime gets the default.** The
+  answer's `credentialExpiresAt` or `expiresAt` says when it expires, the
+  CLI says it is the organization's default, and the `credential.issued`
+  audit event carries `lifetimeDefaulted`.
+- **A lifetime above the maximum is refused** with
+  `CREDENTIAL_LIFETIME_EXCEEDED` (HTTP 422, with `requestedTtlSeconds` and
+  `maxTtlSeconds` in `error.details`), and nothing is created or issued.
+  A lifetime equal to the maximum is accepted.
+- **It holds for every caller**: a person, or a machine credential that
+  may manage identities. No approval is involved in issuing.
+- The mode and the lifetimes are read inside the issuance, after the
+  organization is locked: a credential is issued either before a change
+  of the control or under its new settings.
+
+Report mode issues exactly as before and counts `would-default` and
+`would-refuse` separately (see [What report mode counts](#what-report-mode-counts)).
+While the organization is [frozen for an incident](incident-freeze.md),
+issuing is refused with `ORGANIZATION_FROZEN` before the lifetime is
+looked at.
+
+### What it does not do
+
+- **Existing credentials never change.** A credential issued without
+  expiry before the control was enforced keeps working until it is
+  revoked. Find them with `varlatch security report` or the Security
+  page's machine credentials, then replace and revoke them.
+- **It covers machine credentials issued for a lifetime, not everything
+  that signs in.** People's dashboard and CLI sign-ins keep their own
+  limits (12 hours by default, 24 at most, across organizations), and
+  OIDC-exchanged and agent-run credentials keep their own, shorter caps
+  (an hour at most). `ci` and `agent` identities get no credential when
+  they are created, so it does not apply to them.
+- **A use budget is not a lifetime.** `--max-uses` stays optional; the
+  control bounds time only.
+- **A shorter lifetime is not a revocation.** A stolen credential works
+  until it expires or is revoked; the control only makes sure it expires.
+- **Whoever controls the host or the deployment can turn it off** with
+  the [host operator's reset](#the-way-back-the-host-operators-reset).
+- Enforcing it, like any control, makes removing a trusted passkey need an
+  approval (see [Removing a passkey](#removing-a-passkey)).
+
+### The way back
+
+A program that needs a credential longer than the maximum gets one only
+after an admin lengthens the maximum, which needs their approval. If
+nobody can approve, whoever runs the server can turn the control off:
+`varlatch admin security reset --org <slug> --control
+credential-lifetime`. Credentials issued while it was enforced keep the
+expiry they got; issue new ones if needed.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an
 organization with any control at `enforce` (in this release, that means
-`requirement-protection`). Approve it with a trusted passkey, which may be
+`requirement-protection` or `credential-lifetime`). Approve it with a trusted passkey, which may be
 the one you are removing. When none of your organizations enforces a
 control, removing a passkey works as before. Removing an unconfirmed
 passkey never needs one. Better Auth's own passkey removal endpoint is
@@ -538,4 +616,5 @@ when the organization is still frozen.
 The capabilities are `security.controls`, `security.report`,
 `security.approval-keys`, `security.refused-destinations` and
 `organizations.permissions`, and `security.enforce.<control>` for each
-control this server can enforce (`security.enforce.requirement-protection`).
+control this server can enforce (`security.enforce.requirement-protection`,
+`security.enforce.credential-lifetime`).

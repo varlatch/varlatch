@@ -2,6 +2,7 @@
 import { closeSync, constants, fchmodSync, fsyncSync, lstatSync, openSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
+import { lifetime } from "./securityControls.js";
 
 /**
  * `varlatch credential issue` (capability identity.credentials.issue):
@@ -15,6 +16,12 @@ import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
  * the command line, so the command works in assisted mode too (ADR-0043
  * Decision 2). The file is created before the credential is issued, so a
  * path that cannot be written never leaves a live credential nobody holds.
+ *
+ * While the Organization enforces credential-lifetime (ADR-0054), the
+ * server gives a credential asked for without --ttl the Organization's
+ * default lifetime, and refuses a --ttl above its maximum
+ * (CREDENTIAL_LIFETIME_EXCEEDED): said here with the maximum, nothing
+ * issued and the file removed.
  */
 
 export const ISSUE_CAPABILITY = "identity.credentials.issue";
@@ -137,6 +144,14 @@ export async function issueCredentialToFile(api: CredentialIssueApi, opts: Crede
       throw new CredentialIssueError(
         `${PREFIX} ${opts.organization} has no machine identity ${opts.identityId} that can hold a service credential ` +
           `(a service, workload, or broker identity that is not retired). Nothing was issued. (request ${err.requestId})`,
+      );
+    }
+    if (err instanceof VarlatchApiError && err.code === "CREDENTIAL_LIFETIME_EXCEEDED") {
+      const max = Number(err.details?.maxTtlSeconds);
+      const limit = Number.isInteger(max) && max > 0 ? `at most ${lifetime(max)} (--ttl ${max})` : "a shorter lifetime";
+      throw new CredentialIssueError(
+        `${PREFIX} ${opts.organization} enforces credential-lifetime: a machine credential may last ${limit}. ` +
+          `Give a shorter --ttl, or none for the organization's default lifetime. Nothing was issued. (request ${err.requestId})`,
       );
     }
     throw err;
