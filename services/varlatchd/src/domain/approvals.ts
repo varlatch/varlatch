@@ -320,7 +320,7 @@ export interface ApprovalGate {
 export interface ProtectedGate extends ApprovalGate {
   /** The credential that asked, and its person. */
   readonly requester: Requester;
-  /** The approval the request carries (the Varlatch-Approval header), or null. */
+  /** The Varlatch-Approval header as the request sent it (checked only when consumed), or null. */
   readonly approvalId: string | null;
 }
 
@@ -339,7 +339,11 @@ export async function withApproval<T>(
     approvalId: input.approvalId,
     require: async (db, binding) => {
       if (input.approvalId === null) throw new ApprovalNeeded(binding);
-      return consumeApproval(db, ctx.rootKek, input.requester, input.approvalId, binding);
+      // Checked here, when an approval is consumed, not when the request
+      // arrives: a header that cannot be an approval id is not found.
+      const approvalId = parseApprovalId(input.approvalId);
+      if (!approvalId) throw approvalInvalid("not-found", null);
+      return consumeApproval(db, ctx.rootKek, input.requester, approvalId, binding);
     },
   };
   try {

@@ -208,6 +208,18 @@ describe("with every control off", () => {
     const [revoked] = await events("requirement.revoked");
     expect(revoked!.metadata).not.toHaveProperty("approvalId");
   });
+
+  it("ignores a malformed Varlatch-Approval header, as before: edit, revoke and a cached replay", async () => {
+    const r = await requirement();
+    const key = { "Idempotency-Key": "edit-off" };
+    const done = await edit(admin.cli, r.id, tags(1, ["tag:prod"]), "invalid", key);
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const replay = await edit(admin.cli, r.id, tags(1, ["tag:prod"]), "invalid", key);
+    expect(replay).toEqual(done);
+    expect(await versionOf(r.id)).toEqual({ version: 2, revoked_at: null });
+    expect((await revoke(admin.cli, r.id, "invalid")).status).toBe(204);
+    expect(await intents()).toBe(0);
+  });
 });
 
 describe("in report mode", () => {
@@ -344,6 +356,14 @@ describe("under enforce", () => {
       .toEqual({ approved: true, consumed_at: null });
     await ctx.db.query("DROP TRIGGER fail_requirement_update ON requirements");
     expect((await revoke(admin.cli, r.id, removal.id)).status).toBe(204);
+  });
+
+  it("refuses a malformed Varlatch-Approval header once an approval is needed, without asking for one", async () => {
+    const r = await requirement();
+    expect((await edit(admin.cli, r.id, tags(1, ["tag:prod"]), "invalid")).body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "not-found" } });
+    expect((await revoke(admin.cli, r.id, "invalid")).body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "not-found" } });
+    expect(await intents()).toBe(0);
+    expect(await versionOf(r.id)).toEqual({ version: 1, revoked_at: null });
   });
 
   it("asks under an Idempotency-Key without leaving a claim; the approved repeat claims it once", async () => {

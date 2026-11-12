@@ -1199,6 +1199,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     if (!id) throw approvalInvalid("not-found", null);
     return id;
   };
+  /**
+   * The Varlatch-Approval header as sent, checked only when an approval is
+   * consumed (withApproval). For operations a control may or may not protect
+   * (ADR-0054 step 4.2): with their controls off the header is never read, so
+   * a malformed one changes nothing there.
+   */
+  const approvalHeaderOf = (c: Context): string | null => c.req.header(APPROVAL_HEADER) ?? null;
   /** Approving takes the dashboard's session bearer of a person, as confirming a passkey does. */
   const approvalOwner = (c: Context) => {
     const principal = c.get("principal") as Principal;
@@ -3653,7 +3660,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const requirementId = c.req.param("requirement");
     const endpoint = `PATCH requirements ${requirementId}`;
-    const approvalId = approvalOf(c);
+    const approvalId = approvalHeaderOf(c);
     const { status, payload } = await withApproval(ctx, { requester: requesterOf(c), approvalId, publicUrl: options.publicUrl }, (gate) =>
       // The claim (step 2.5) comes after every person in its strongest
       // mode: the requester FOR UPDATE when the request carries an
@@ -3755,7 +3762,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
     const requirementId = c.req.param("requirement");
-    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
       withTx(ctx.db, async (db) => {
         const prepared = await prepareProtectedOperation(db, gate, {
           scope: { organizationId: org.id, people: [principal.identity.id] },
