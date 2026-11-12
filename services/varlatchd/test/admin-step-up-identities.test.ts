@@ -27,8 +27,8 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * that request, as the binding catalogue says, and a machine credential is
  * refused without an intent; the controls compose with credential-lifetime,
  * requirement-protection, the incident freeze and the operator's reset.
- * The race of a reactivation with a retirement runs on real PostgreSQL in
- * security-controls-postgres.test.ts.
+ * The races of a reactivation with a retirement and with another
+ * reactivation run on real PostgreSQL in admin-step-up-postgres.test.ts.
  */
 
 const ORG = "/v1/organizations/acme";
@@ -334,6 +334,16 @@ describe("under enforce", () => {
     expect(made.body.credential).toEqual(expect.any(String));
     const created = (await events("identity.created")).at(-1)!;
     expect(created.metadata).toMatchObject({ kind: "service", approvalId: expect.any(String), approvalUserVerified: true });
+    // The first credential's event names the same approval.
+    const first = (await rows(
+      "SELECT metadata FROM audit_events WHERE event_type = 'credential.issued' AND resource ->> 'identityId' = $1",
+      [made.body.id],
+    )).map((r) => (typeof r.metadata === "string" ? JSON.parse(r.metadata) : r.metadata));
+    expect(first).toEqual([expect.objectContaining({
+      approvalId: created.metadata.approvalId,
+      approvalPasskeyId: created.metadata.approvalPasskeyId,
+      approvalUserVerified: true,
+    })]);
 
     const issued = await issue(admin.cli, f.svc, { name: "job", ttlSeconds: 600 }, await approved(admin, await issue(admin.cli, f.svc, { name: "job", ttlSeconds: 600 })));
     expect(issued.status, JSON.stringify(issued.body)).toBe(201);
@@ -562,6 +572,33 @@ describe("with the other controls", () => {
     expect(expiresIn).toBeLessThanOrEqual(1800);
     const [issued] = (await events("credential.issued")).filter((e) => e.metadata.lifetimeDefaulted);
     expect(issued).toBeDefined();
+  });
+
+  it("credential-lifetime, for credential.issue: an over-long TTL is refused first; the default is what the approval binds", async () => {
+    const svc = (await ok("POST", IDS, admin.cli, { name: "api", kind: "service" }, header(await approved(admin, await createMachine(admin.cli, { name: "api", kind: "service" }))))).id as string;
+    expect((await setMode("credential-lifetime", "enforce", { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 })).status).toBe(200);
+    const before = await intents();
+    expect((await issue(admin.cli, svc, { name: "job", ttlSeconds: 86_401 })).body.error.code).toBe("CREDENTIAL_LIFETIME_EXCEEDED");
+    expect(await intents()).toBe(before);
+
+    const asked = stepUp(await issue(admin.cli, svc, { name: "job" }));
+    expect(asked.summary.title).toBe("Issue credential job for api (service), expiring after 1 hour, unlimited");
+    await approve(admin, asked.id);
+    // An explicit TTL equal to the default is another request.
+    invalid(await issue(admin.cli, svc, { name: "job", ttlSeconds: 3600 }, asked.id), "mismatch");
+    // A new default changes the effective TTL: the approval no longer fits.
+    expect((await setMode("credential-lifetime", "enforce", { defaultTtlSeconds: 1800, maxTtlSeconds: 86_400 })).status).toBe(200);
+    invalid(await issue(admin.cli, svc, { name: "job" }, asked.id), "mismatch");
+    expect(await credentialsOf(svc)).toBe(1);
+
+    // A fresh approval binds the new default, and the credential gets it.
+    const again = await approved(admin, await issue(admin.cli, svc, { name: "job" }));
+    const issued = await issue(admin.cli, svc, { name: "job" }, again);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(201);
+    const expiresIn = (Date.parse(issued.body.expiresAt) - Date.now()) / 1000;
+    expect(expiresIn).toBeGreaterThan(1700);
+    expect(expiresIn).toBeLessThanOrEqual(1800);
+    expect((await events("credential.issued")).at(-1)!.metadata).toMatchObject({ name: "job", lifetimeDefaulted: true, approvalId: again });
   });
 
   it("requirement-protection: each control asks for its own operations; one's approval never fits the other's", async () => {
