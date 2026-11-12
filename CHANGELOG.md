@@ -79,6 +79,18 @@ fixes.
   report mode, a Grant replacement or a role edit that only reorders
   actions is no longer counted. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for people are built.** Inviting someone as
+  an admin, promoting a member, demoting an admin (yourself included) and
+  removing someone will each need the approval of the person asking, for
+  exactly that request, once `admin-step-up` can be enforced; an admin
+  invitation by a machine credential will be refused. Leaving an
+  organization and inviting a member never ask. The last-admin rule
+  still refuses first, before any approval, and again when it is used.
+  Removing someone and demoting an admin stay possible during an incident
+  freeze and still ask. It cannot be enforced yet
+  (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
+  control off nothing changes at all. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection`,
   `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
