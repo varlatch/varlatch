@@ -79,6 +79,9 @@ fixes.
   report mode, a Grant replacement or a role edit that only reorders
   actions is no longer counted. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Dashboard: adding or removing a group or team member, and giving a
+  team a project or taking it away, now show an error when they fail.**
+  They used to fail silently.
 - **Admin step-up: approvals for people are built.** Inviting someone as
   an admin, promoting a member, demoting an admin (yourself included) and
   removing someone will each need the approval of the person asking, for
