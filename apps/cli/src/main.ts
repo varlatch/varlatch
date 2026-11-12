@@ -1241,6 +1241,98 @@ async function main(): Promise<void> {
               `  To see whether an environment is ready: ${cli} validate -e <environment> --json`,
           );
         }
+        // Writes varlatch.toml and, unless --no-agent-files, the files coding agents read.
+        const writeRepository = async (config: { server: string; organization: string; project: string; defaultEnvironment: string }, said: string) => {
+          const lines = [
+            `server = "${config.server}"`,
+            `organization = "${config.organization}"`,
+            `project = "${config.project}"`,
+            `default_environment = "${config.defaultEnvironment}"`,
+            "",
+          ];
+          writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
+          console.log(`Wrote ${REPO_CONFIG_FILE} for ${config.server}${said}. Commit it; it contains no credentials.`);
+          // ADR-0043 Decision 7: the files coding agents read, unless
+          // --no-agent-files. A failure here leaves the project initialized.
+          if (!opts.booleans.has("--no-agent-files")) {
+            const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
+            const { changedTargets, runInstall } = await import("./agents/install.js");
+            try {
+              const result = runInstall({ scope: "project", root: process.cwd(), version: EMBEDDED_RELEASE.version, agents: [], mode: "install" });
+              const targets = changedTargets(result);
+              if (targets.length > 0) {
+                console.log(`Wrote the Varlatch skill and instructions for coding agents: ${targets.join(", ")}. Commit them too.`);
+              }
+              for (const m of result.manual) console.log(`To do by hand: ${m}`);
+              for (const notice of result.notices) console.log(`Note: ${notice}`);
+            } catch (err) {
+              console.error(
+                `varlatch: the files for coding agents were not written (${err instanceof Error ? err.message : String(err)}); ` +
+                  "run varlatch agents install to try again.",
+              );
+            }
+          }
+        };
+        // ADR-0058 Decision 2: guided only on a terminal (both ends), outside
+        // assisted mode, when --org or --project is missing; asks only for
+        // what is missing. Otherwise exactly the flags path below.
+        const guided =
+          !assisted.on && Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY) && (!opts.values.has("--org") || !opts.values.has("--project"));
+        if (guided) {
+          const { guidedInit } = await import("./guidedInit.js");
+          const { terminalPrompter } = await import("./prompt.js");
+          const { validatePublicUrl } = await import("./setup.js");
+          const prompt = terminalPrompter();
+          try {
+            let here: string | undefined;
+            try {
+              here = resolveServer({ cwd: process.cwd(), ...(opts.values.has("--server") ? { server: opts.values.get("--server") as string } : {}) })?.server;
+            } catch (err) {
+              if (!(err instanceof ContextError)) throw err;
+            }
+            const code = await guidedInit({
+              cwd: process.cwd(),
+              prompt,
+              out: (line) => console.log(line),
+              err: (line) => console.error(line),
+              server: here,
+              validateServer: validatePublicUrl,
+              signIn: async (server) => {
+                const existing = loadToken(server);
+                if (existing) {
+                  const api = new VarlatchClient({ onMaintenance: maintenanceNotice, server, token: existing, userAgent: cliUserAgent() });
+                  try {
+                    await api.listOrganizations();
+                    return api;
+                  } catch (err) {
+                    if (!(err instanceof VarlatchApiError && err.status === 401)) throw err;
+                  }
+                }
+                // varlatch login's browser hand-off, printing nothing a server sent (guidedSignIn).
+                const { guidedSignIn } = await import("./guidedInit.js");
+                const client = (token: string) => new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+                await guidedSignIn(server, {
+                  browserLogin,
+                  client,
+                  save: (credential) => {
+                    saveCredential(server, credential);
+                    noteDefaultServer(server, (line) => console.error(line));
+                  },
+                  out: (line) => console.log(line),
+                });
+                return client(loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied));
+              },
+              writeRepository: (config) => writeRepository(config, ""),
+              ...(opts.values.has("--org") ? { organization: opts.values.get("--org") as string } : {}),
+              ...(opts.values.has("--project") ? { project: opts.values.get("--project") as string } : {}),
+              ...(opts.values.has("--default-environment") ? { defaultEnvironment: opts.values.get("--default-environment") as string } : {}),
+            });
+            if (code !== EXIT.ok) process.exit(code);
+          } finally {
+            prompt.close();
+          }
+          return;
+        }
         const org = opts.values.get("--org") ?? usageError(usage);
         const project = opts.values.get("--project") ?? usageError("Provide --project");
         // ADR-0058 Decision 1: varlatch.toml always names its server, so the
@@ -1249,37 +1341,10 @@ async function main(): Promise<void> {
         if (!resolved) {
           usageError(`varlatch init: no server to write in ${REPO_CONFIG_FILE}; pass --server <url>, or sign in first with varlatch login --server <url>\n${usage}`);
         }
-        const server = resolved.server;
-        const defaultEnv = opts.values.get("--default-environment") ?? "development";
-        const lines = [
-          `server = "${server}"`,
-          `organization = "${org}"`,
-          `project = "${project}"`,
-          `default_environment = "${defaultEnv}"`,
-          "",
-        ];
-        writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
-        console.log(`Wrote ${REPO_CONFIG_FILE} for ${server}${resolved.source === "flag" ? "" : ` (${SERVER_SOURCE_WORDS[resolved.source]})`}. Commit it; it contains no credentials.`);
-        // ADR-0043 Decision 7: the files coding agents read, unless
-        // --no-agent-files. A failure here leaves the project initialized.
-        if (!opts.booleans.has("--no-agent-files")) {
-          const { EMBEDDED_RELEASE } = await import("@varlatch/backup");
-          const { changedTargets, runInstall } = await import("./agents/install.js");
-          try {
-            const result = runInstall({ scope: "project", root: process.cwd(), version: EMBEDDED_RELEASE.version, agents: [], mode: "install" });
-            const targets = changedTargets(result);
-            if (targets.length > 0) {
-              console.log(`Wrote the Varlatch skill and instructions for coding agents: ${targets.join(", ")}. Commit them too.`);
-            }
-            for (const m of result.manual) console.log(`To do by hand: ${m}`);
-            for (const notice of result.notices) console.log(`Note: ${notice}`);
-          } catch (err) {
-            console.error(
-              `varlatch: the files for coding agents were not written (${err instanceof Error ? err.message : String(err)}); ` +
-                "run varlatch agents install to try again.",
-            );
-          }
-        }
+        await writeRepository(
+          { server: resolved.server, organization: org, project, defaultEnvironment: opts.values.get("--default-environment") ?? "development" },
+          resolved.source === "flag" ? "" : ` (${SERVER_SOURCE_WORDS[resolved.source]})`,
+        );
         return;
       }
 

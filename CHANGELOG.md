@@ -101,6 +101,17 @@ fixes.
   default; `varlatch server` shows it and `varlatch server use <url>`
   changes it. It is kept in `settings.json`, next to `credentials.json`.
   See [The default server](docs/reference/passkeys-and-sessions.md#the-default-server).
+- **`varlatch init` guides you on a terminal.** Without `--org` or
+  `--project`, it asks for what is missing: the server (signing you in
+  when needed), the organization and project (creating them after asking),
+  the environments when the project has none, and which environment each
+  `.env` file goes to. It shows names, types and Secrets, never a value;
+  asks separately before replacing a value an environment already has
+  (typing the environment's name in production) and before activating the
+  one contract revision it adds for all files; and offers to delete a
+  `.env` file only once all of its values are stored and its items are in
+  the active contract. Off a terminal or in assisted mode it asks nothing
+  and needs both flags, as before. See [Set up a project](docs/set-up-a-project.md#the-quick-way).
 - **`varlatch init` always names the server** in `varlatch.toml`: from
   `--server`, `VARLATCH_SERVER`, your default server, or the only server
   you are signed in to.

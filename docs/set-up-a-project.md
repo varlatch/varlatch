@@ -10,6 +10,38 @@ Varlatch keeps configuration in **organizations**, which contain
 lists the items the application needs, with a type for each and whether it
 is a Secret, and Varlatch checks every environment against it.
 
+## The quick way
+
+In the repository, on a terminal:
+
+```sh
+varlatch init
+```
+
+It asks for what it needs, one step at a time, and prints the command
+each step stands for:
+
+1. The server: your default server, or the address you type. When you
+   are not signed in, it signs you in first.
+2. The organization and the project: one you can see, or a new one it
+   creates after asking.
+3. The environments: when the project has none, it offers `development`
+   and `production`.
+4. It writes `varlatch.toml` and the files coding agents read.
+5. Your `.env` files: for each one, which environment it goes to. It shows
+   the names, types and Secrets it would store, never a value, and asks
+   before replacing a value the environment already has (in a production
+   environment you type its name). It adds the new items to the contract
+   in one revision and asks before activating it.
+6. Last, it offers to delete each `.env` file whose values are all stored.
+   It keeps a file you declined anything from, or one that changed since
+   it was read.
+
+Then [run your application](#run-your-application). The rest of this page
+does the same step by step, as scripts and coding agents do: `varlatch
+init` asks nothing off a terminal or in assisted mode, and needs `--org`
+and `--project` there.
+
 ## Create the project
 
 Sign in from your machine. The CLI opens your browser, or prints the
@@ -22,6 +54,8 @@ varlatch login --server https://vault.example.com
 The first server you sign in to becomes your default server, so the
 commands below need no `--server` outside a repository
 ([The default server](reference/passkeys-and-sessions.md#the-default-server)).
+If you use more than one installation, check which one that is with
+`varlatch server` first, or pass `--server`.
 
 Create an organization and a project, either in the dashboard, which walks
 you through the same steps, or with the CLI:
