@@ -176,6 +176,7 @@ import {
   bodyHash,
   decide,
   recordDenial,
+  refuseBlockedEntry,
   reject,
   type Decision,
   decodeCursor,
@@ -195,8 +196,8 @@ import {
   resolveOrganization,
   type ResolveOptions,
 } from "./organization.js";
+import { enforceWouldRefuseYou, passkeyVerification, verificationGap } from "../domain/passkeyverification.js";
 import {
-  passkeyVerificationReports,
   queueAccessCount,
   reportAdminStepUp,
   reportingControls,
@@ -928,9 +929,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   //
   // Each Organization id in the token is Organization-scoped access for
   // passkey-verification (ADR-0054 Decision 7): evaluated per Organization
-  // before minting, and in report mode counted per Organization after the
-  // response, each in a short transaction of its own. Machine credentials
-  // are exempt.
+  // before minting. In report mode it is counted per Organization after the
+  // response, each in a short transaction of its own; under enforce a
+  // blocked Organization is left out of orgIds, so the person's other
+  // Organizations and account-level signals keep working. A token minted
+  // before the control was enforced stays valid until it expires.
+  // Machine credentials are exempt.
   app.post("/v1/tokens/convex", async (c) => {
     const principal = c.get("principal");
     const orgs = await listOrganizationsFor(ctx, principal.identity.id);
@@ -944,8 +948,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // An Organization frozen for an incident is left out, for people and
     // machines (ADR-0055 Decision 4): no browser reads its Mirror while frozen.
     const frozen = await frozenOrganizations(ctx.db, named);
-    const orgIds = named.filter((id) => !frozen.has(id));
-    const reports = await passkeyVerificationReports(ctx.db, entryRequester(principal), orgIds);
+    const open = named.filter((id) => !frozen.has(id));
+    const { reports, blocked } = await passkeyVerification(ctx.db, entryRequester(principal), open);
+    const orgIds = open.filter((id) => !blocked.has(id));
     const minted = await mintConvexToken(ctx, issuer, {
       sub: principal.identity.id,
       name: principal.identity.name,
@@ -1774,6 +1779,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // Zero visibility: not-found-equivalent (anti-enumeration, ADR-0018 §11).
       throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
     }
+    // Authorized per item below, without decide: passkey-verification
+    // refuses here, after the visibility check (ADR-0054 Decision 7).
+    await refuseBlockedEntry(ctx, c, principal, org.id);
 
     const envRes = await ctx.db.query(
       `SELECT e.id, e.name, e.tier, e.parent_environment_id, e.project_id,
@@ -2905,6 +2913,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }).strict(),
       await c.req.json().catch(() => undefined),
     );
+    // Enforcing passkey-verification from a sign-in it would refuse locks
+    // the person making the change out at once: refused, nothing changed.
+    if (control.data === "passkey-verification" && body.mode === "enforce") {
+      const gap = await verificationGap(ctx.db, principal.credentialId, principal.credentialKind);
+      if (gap) throw enforceWouldRefuseYou(gap);
+    }
     const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
       changeControl(ctx, gate, {
         organizationId: org.id,

@@ -325,5 +325,6 @@ describe("the --approval option and lines", () => {
     expect(apiErrorExit(apiError(409, "APPROVAL_INVALID"))).toBe(EXIT.denied);
     expect(apiErrorExit(apiError(403, "STEP_UP_REQUIRED"))).toBe(EXIT.denied);
     expect(apiErrorExit(apiError(422, "CONTROL_MODE_UNAVAILABLE"))).toBe(EXIT.failure);
+    expect(apiErrorExit(apiError(403, "PASSKEY_VERIFICATION_REQUIRED"))).toBe(EXIT.denied);
   });
 });

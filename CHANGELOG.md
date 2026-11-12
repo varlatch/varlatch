@@ -60,17 +60,36 @@ fixes.
   `lifetimeDefaulted` when the default was applied. See [Credential
   lifetime](docs/reference/security-controls.md#credential-lifetime).
 - **Removing a trusted passkey needs an approval** once you are a member of
-  an organization that enforces a control (`requirement-protection` or
-  `credential-lifetime`). Removing an unconfirmed passkey
+  an organization that enforces a control (`requirement-protection`,
+  `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey
   never does. If you lose your trusted passkeys, the host operator's
   `admin reenroll` enrolls a new one, and `admin security reset` turns the
   control off.
+- **Passkey verification can now be enforced.** With
+  `varlatch security set passkey-verification enforce` (or from the
+  Security page), the organization refuses requests by a person's
+  dashboard or CLI sign-in unless it was made with a trusted passkey that
+  verified them with a PIN, fingerprint or face. It applies to every
+  route of the organization, retrieval, validation and export included;
+  the dashboard's live updates leave the organization out. Machine
+  credentials, other organizations and people outside the organization
+  see no change, and a refusal comes after every other one, so it reveals
+  nothing to outsiders. The dashboard offers to sign in again; the CLI
+  explains how (`varlatch login`) and exits 77. A passkey added from the
+  dashboard counts once it is confirmed. Look at report mode first: it
+  refuses admins too, and sign-ins from before this was recorded count as
+  unverified. Turning it on from a sign-in it would refuse is refused. A
+  person whose passkeys cannot verify them gets back in through the host
+  operator (`admin reenroll`, or `admin security reset --control
+  passkey-verification`). See [Passkey
+  verification](docs/reference/security-controls.md#passkey-verification).
 
 ### Scripts and API
 
 - `GET /v1/meta` lists `security.enforce.<control>` for each control the
-  server can enforce (`security.enforce.requirement-protection` and
-  `security.enforce.credential-lifetime` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
+  server can enforce (`security.enforce.requirement-protection`,
+  `security.enforce.credential-lifetime` and
+  `security.enforce.passkey-verification` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
   gains its own `availableModes`. `varlatch security status --json` gains
   `enforceable`.
 - `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
@@ -85,6 +104,12 @@ fixes.
   `credential-lifetime`. Scripts that create machine credentials without a
   lifetime should read `credentialExpiresAt` or `expiresAt` from the
   answer rather than assume no expiry.
+- New error code `PASSKEY_VERIFICATION_REQUIRED` (HTTP 403, details
+  `control` and `reason`: `no-evidence`, `not-user-verified` or
+  `untrusted-passkey`) from organizations that enforce
+  `passkey-verification`. Repeating the request with the same credential
+  will not help; sign in again. `GET /v1/meta` lists
+  `security.enforce.passkey-verification`.
 
 ### CLI
 
