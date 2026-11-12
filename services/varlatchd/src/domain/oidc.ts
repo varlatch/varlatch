@@ -114,6 +114,9 @@ export async function createOidcBinding(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId, identityId] },
       checks: [{ control: "admin-step-up", operation: "oidc_binding.create" }],
+      preflight: async (db) => {
+        if (!(await readMachineIdentity(db, organizationId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+      },
       binding: async (db) => {
         const identity = await readMachineIdentity(db, organizationId, identityId);
         if (!identity) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
@@ -187,6 +190,12 @@ export async function revokeOidcBinding(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: "oidc_binding.delete" }],
+      preflight: async (db) => {
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        if (!identity || !(await readOidcBinding(db, organizationId, identityId, bindingId))) {
+          throw new DomainError("RESOURCE_NOT_FOUND", "Binding not found");
+        }
+      },
       binding: async (db) => {
         const identity = await readMachineIdentity(db, organizationId, identityId);
         const binding = identity ? await readOidcBinding(db, organizationId, identityId, bindingId) : null;

@@ -7,6 +7,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { pinLiveMembership } from "./orgs.js";
 import { lockedQuery } from "../db/locks.js";
@@ -110,7 +111,7 @@ export async function updateRole(
     throw new DomainError("VALIDATION_FAILED", "A role must grant at least one action");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(
       db,
       { table: "roles", mode: "update" },
@@ -119,6 +120,8 @@ export async function updateRole(
     );
     const row = res.rows[0] as (RoleRow & { updated_at: string | null }) | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     if (row.version !== patch.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Role was modified concurrently; reload and retry");
     }
@@ -168,7 +171,11 @@ export async function deleteRole(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
+    const live = await db.query("SELECT 1 FROM roles WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [roleId, organizationId]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const res = await db.query(
       "UPDATE roles SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [roleId, organizationId],
@@ -254,7 +261,7 @@ export async function updateGroup(
     throw new DomainError("VALIDATION_FAILED", "Invalid group name");
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(
       db,
       { table: "groups", mode: "update" },
@@ -265,6 +272,8 @@ export async function updateGroup(
     if (!row) {
       throw new DomainError("RESOURCE_NOT_FOUND", kind === "team" ? "Team not found" : "Group not found");
     }
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     if (row.version !== patch.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", `${kind === "team" ? "Team" : "Group"} was modified concurrently; reload and retry`);
     }
@@ -303,7 +312,11 @@ export async function deleteGroup(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
+    const live = await db.query("SELECT 1 FROM groups WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [groupId, organizationId]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Group not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const res = await db.query(
       "UPDATE groups SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING kind",
       [groupId, organizationId],
@@ -366,7 +379,7 @@ export async function addGroupMember(
 ): Promise<void> {
   const group = await requireGroup(ctx, organizationId, groupId);
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, identityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, identityId], accessCheck: "deferred" });
     const member = await db.query(
       "SELECT kind FROM identities WHERE id = $1 AND NOT disabled AND (organization_id = $2 OR kind = 'human')",
       [identityId, organizationId],
@@ -377,6 +390,8 @@ export async function addGroupMember(
     if (!kind || (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId)))) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
     }
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const added = await db.query(
       "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING group_id",
       [groupId, identityId],
@@ -403,7 +418,11 @@ export async function removeGroupMember(
 ): Promise<void> {
   const group = await requireGroup(ctx, organizationId, groupId);
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
+    const linked = await db.query("SELECT 1 FROM group_members WHERE group_id = $1 AND identity_id = $2", [groupId, identityId]);
+    if (!linked.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Membership not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const res = await db.query(
       "DELETE FROM group_members WHERE group_id = $1 AND identity_id = $2 RETURNING group_id",
       [groupId, identityId],
@@ -473,7 +492,11 @@ export async function removeTeamProject(
 ): Promise<void> {
   await requireGroup(ctx, organizationId, teamId, "team");
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
+    const linked = await db.query("SELECT 1 FROM team_projects WHERE team_id = $1 AND project_id = $2", [teamId, projectId]);
+    if (!linked.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Team does not own that project");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const res = await db.query(
       "DELETE FROM team_projects WHERE team_id = $1 AND project_id = $2 RETURNING team_id",
       [teamId, projectId],

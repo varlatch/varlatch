@@ -14,6 +14,7 @@ import {
 } from "./contracts.js";
 import { isExpired, rootIdOf, type EnvironmentRow } from "./environments.js";
 import { lockLiveScope } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { DomainError } from "./errors.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import {
@@ -199,7 +200,17 @@ export async function deleteValue(
       projectId: project.id,
       environmentIds: [env.id],
       environmentMode: "no key update",
+      accessCheck: "deferred",
     });
+    // The value is looked up under the Environment lock, so it is still
+    // there for the update below; existence first, then passkey-verification
+    // (ADR-0054 Decision 7), then the deletion.
+    const live = await db.query(
+      "SELECT 1 FROM env_values WHERE environment_id = $1 AND item_name = $2 AND deleted_at IS NULL",
+      [env.id, itemName],
+    );
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Value not found");
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE env_values
        SET deleted_at = now(), current_version_id = NULL,
@@ -267,11 +278,14 @@ export async function beginRotation(
       projectId: project.id,
       environmentIds: [env.id],
       environmentMode: "no key update",
+      accessCheck: "deferred",
     });
     const row = (await lockValueRows(db, env.id, [itemName]))[0];
     if (!row || row.deleted_at || !row.current_version_id) {
       throw new DomainError("RESOURCE_NOT_FOUND", "No current value to rotate");
     }
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const rotating =
       row.retiring_version_id &&
       row.rotation_deadline &&
@@ -364,6 +378,7 @@ export async function completeRotation(
       projectId: project.id,
       environmentIds: [env.id],
       environmentMode: "no key update",
+      accessCheck: "deferred",
     });
     const row = (
       await db.query("SELECT * FROM env_values WHERE environment_id = $1 AND item_name = $2", [
@@ -374,6 +389,8 @@ export async function completeRotation(
     if (!row || row.deleted_at || !row.current_version_id) {
       throw new DomainError("RESOURCE_NOT_FOUND", "No value to complete rotation for");
     }
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const wasRotating = row.retiring_version_id !== null && row.retiring_version_id !== undefined;
     if (wasRotating) {
       await db.query(

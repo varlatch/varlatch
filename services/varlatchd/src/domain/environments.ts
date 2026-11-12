@@ -6,6 +6,7 @@ import { withTx } from "../db/tx.js";
 import { activeContractOf } from "./contracts.js";
 import type { AppCtx } from "./ctx.js";
 import { lockLiveScope } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { DomainError, notFound } from "./errors.js";
 import type { ProjectRow } from "./projects.js";
 import { lockedQuery } from "../db/locks.js";
@@ -54,7 +55,7 @@ export async function createEnvironment(
     // Organization, the people the row references (the actor, the owner of
     // a personal environment), the Project, then the live parent, before
     // anything is inserted under them.
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId, input.ownerIdentityId], projectId });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId, input.ownerIdentityId], projectId, accessCheck: "deferred" });
     const id = newId("environment");
     let tier: Tier;
     let kind: EnvironmentRow["kind"];
@@ -62,6 +63,8 @@ export async function createEnvironment(
 
     if (input.parentEnvironmentId) {
       const parent = await getEnvironment(ctx, projectId, input.parentEnvironmentId, db);
+      // The parent exists and is live (its lock rechecks it); then
+      // passkey-verification (ADR-0054 Decision 7).
       await lockLiveScope(db, { organizationId, people: [], projectId, environmentIds: [parent.id] });
       if (parent.parent_environment_id !== null) {
         throw new DomainError(
@@ -110,6 +113,9 @@ export async function createEnvironment(
     if (input.expiresAt !== undefined && kind !== "preview") {
       throw new DomainError("VALIDATION_FAILED", "Only preview environments may expire");
     }
+    // A root has no parent to look up: passkey-verification now, before the
+    // insert (the derived branch's parent lock ran it already).
+    await requireOrganizationAccess(db, organizationId);
 
     try {
       await db.query(

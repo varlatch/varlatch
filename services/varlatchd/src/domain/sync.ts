@@ -16,6 +16,7 @@ import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
@@ -573,11 +574,13 @@ export async function rotateGitHubAppKey(
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
     )).rows[0] as { id: string; version: number } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     if (locked.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
     }
@@ -629,11 +632,13 @@ export async function rotateGitHubAppKey(
 export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
     )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     // The App the caller confirmed, and no other: another one may have
     // replaced it since (removed, then registered or imported).
     if (locked.id !== appRowId) {
@@ -757,13 +762,15 @@ export async function replaceConnectionCredential(
   );
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [connectionId, org.id],
     );
     const row = res.rows[0] as PlatformConnectionRow | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     if (row.credential_kind === "github-app") throw appHasNoCredential();
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
@@ -860,10 +867,14 @@ export async function revokeConnection(
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId], accessCheck: "deferred" });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
+    const live = await db.query("SELECT 1 FROM platform_connections WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [connectionId, org.id]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now()
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
@@ -1310,6 +1321,7 @@ export async function updateTarget(
       people: [actorIdentityId],
       projectId: target.project_id,
       environmentIds: [target.environment_id],
+      accessCheck: "deferred",
     });
     // Lock order: Apps, then Connections, then the Target, as key rotation,
     // credential replacement, and Connection revocation take them, so a
@@ -1323,6 +1335,8 @@ export async function updateTarget(
     );
     const seenConnectionId = (seen.rows[0] as { connection_id: string } | undefined)?.connection_id;
     if (!seenConnectionId) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const connectionId = patch.connectionId ?? seenConnectionId;
     const lockedConnections = await lockConnectionsAndApps(db, org.id, [seenConnectionId, connectionId]);
     const connections = lockedConnections.connections;
@@ -1457,7 +1471,7 @@ export async function setTargetState(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     // Pausing only stops pushes: recovery while frozen (ADR-0055); resuming and revoking are not listed.
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: transition === "pause" ? "recovery" : undefined, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: transition === "pause" ? "recovery" : undefined, people: [actorIdentityId], accessCheck: "deferred" });
     const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [targetId, org.id],
@@ -1466,6 +1480,8 @@ export async function setTargetState(
       ? targetRow(locked.rows[0] as Record<string, unknown>)
       : undefined;
     if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
 
     let res;
     if (transition === "revoke") {
@@ -1587,7 +1603,11 @@ export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): P
   // The Organization lock and the freeze check in the same transaction as
   // the update (ADR-0051): a request that waited behind a scheduling sees it.
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, people: [] });
+    await lockLiveScope(db, { organizationId: org.id, people: [], accessCheck: "deferred" });
+    const live = await db.query("SELECT 1 FROM sync_targets WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [targetId, org.id]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,

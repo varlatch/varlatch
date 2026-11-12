@@ -9,6 +9,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
 import { lockedQuery } from "../db/locks.js";
@@ -177,7 +178,7 @@ export async function updateWebhook(
     }
   }
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(
       db,
       { table: "webhooks", mode: "update" },
@@ -187,6 +188,8 @@ export async function updateWebhook(
     );
     const row = res.rows[0] as WebhookRow | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Webhook not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     if (row.version !== patch.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Webhook was modified concurrently; reload and retry");
     }
@@ -233,7 +236,11 @@ export async function revokeWebhook(
   actorIdentityId: string,
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], accessCheck: "deferred" });
+    const live = await db.query("SELECT 1 FROM webhooks WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [webhookId, organizationId]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Webhook not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const res = await db.query(
       "UPDATE webhooks SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
       [webhookId, organizationId],

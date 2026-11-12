@@ -18,6 +18,7 @@ import type { AppCtx } from "./ctx.js";
 import { rootIdOf, type EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfIncidentFrozen } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import type { OrgRow } from "./orgs.js";
 import type { ProjectRow } from "./projects.js";
 import {
@@ -364,13 +365,18 @@ export async function revokeCapability(
   opts: { actorIdentityId: string; brokerIdentityId?: string | undefined },
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [opts.actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [opts.actorIdentityId], accessCheck: "deferred" });
     const params: unknown[] = [capabilityId, org.id];
     let where = "id = $1 AND organization_id = $2 AND revoked_at IS NULL";
     if (opts.brokerIdentityId) {
       where += " AND broker_identity_id = $3";
       params.push(opts.brokerIdentityId);
     }
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    if (!(await db.query(`SELECT 1 FROM capabilities WHERE ${where}`, params)).rows[0]) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Capability not found");
+    }
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE capabilities SET revoked_at = now() WHERE ${where} RETURNING id`,
       params,

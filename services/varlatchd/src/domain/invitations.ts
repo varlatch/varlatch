@@ -4,6 +4,7 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { lockedQuery } from "../db/locks.js";
 
 /**
@@ -81,7 +82,7 @@ export async function revokeInvitation(
   actorIdentityId: string,
 ): Promise<InvitationRow> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId, duringIncidentFreeze: "recovery", people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(
       db,
       { table: "setup_grants", mode: "update" },
@@ -91,6 +92,8 @@ export async function revokeInvitation(
     );
     const row = res.rows[0] as InvitationRow | undefined;
     if (!row) throw notFound("Invitation");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     const status = invitationStatus(row);
     if (status !== "pending") {
       throw new DomainError("VERSION_CONFLICT", `Invitation is no longer pending: it is ${status}`, { status });

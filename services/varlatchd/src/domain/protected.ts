@@ -4,6 +4,7 @@ import { DomainError } from "./errors.js";
 import { ApprovalNeeded, type ApprovalBinding, type ProtectedGate, type UsedApproval } from "./approvals.js";
 import { lockLiveScope, type LiveScope } from "./liveness.js";
 import { lockPeople } from "./personlocks.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { countWouldBlock, lifetimeReason, type ProtectedCheck, type ReportReason, type WouldBlock } from "./securityreport.js";
 import type { ControlMode, LifetimeConfig, SecurityControlName } from "./securitycontrols.js";
 
@@ -28,6 +29,12 @@ import type { ControlMode, LifetimeConfig, SecurityControlName } from "./securit
  *      does not depend on an approval, so it comes before any is asked for
  *      (amendment A); when an approval is asked for, it binds the effective
  *      TTL (the binding catalogue's `effectiveTtlSeconds`);
+ *   then the operation's existence preflight (`preflight`: its target
+ *      looked up without a lock, so a missing one keeps its not-found) and
+ *      the request's passkey-verification checkpoint, against the outcome
+ *      captured under the Organization lock (requestaccess.ts): whatever the
+ *      other controls' modes, and before any approval is asked for, so a
+ *      refused sign-in never creates an approval intent;
  *   then, only when a control at `enforce` asks for an approval, the exact
  *      binding (the operation's callback): its validation and every other
  *      refusal that does not depend on the approval come first (amendment
@@ -103,6 +110,15 @@ export interface ProtectedOperationInput {
    * which needs no approval.
    */
   binding: (db: Querier, decided: { effectiveTtlSeconds: number | undefined }) => Promise<ApprovalBinding | null>;
+  /**
+   * The operation's existence checks, run whatever the controls' modes
+   * (the binding runs only when one asks for an approval): its target
+   * looked up without a lock, a missing one refused with its not-found,
+   * before the request's passkey-verification checkpoint. The operation
+   * checks again under its row locks. Absent: the operation's target was
+   * looked up before (the route's), or it has none.
+   */
+  preflight?: ((db: Querier) => Promise<void>) | undefined;
   /**
    * Rechecks the requester's authorization for the operation in this
    * transaction, after an approval was consumed ("the person still holds
@@ -200,6 +216,7 @@ export async function prepareProtectedOperation(
     allowFrozen: scope.allowFrozen,
     duringIncidentFreeze: scope.duringIncidentFreeze,
     people: [],
+    accessCheck: "deferred",
   });
   const controls = await applicableControls(db, scope.organizationId);
 
@@ -242,6 +259,11 @@ export async function prepareProtectedOperation(
       reports.push({ control: check.control, configVersion: control.version, operation: check.operation, actorIdentityId: requester.identityId, reason: approvalReason });
     }
   }
+
+  // The target exists (or the operation answers its not-found), then
+  // passkey-verification decides: before any approval is asked for.
+  await input.preflight?.(db);
+  await requireOrganizationAccess(db, scope.organizationId);
 
   let binding: ApprovalBinding | null = null;
   if (needsApproval) {

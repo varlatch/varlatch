@@ -14,6 +14,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { lockLiveScope } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { DomainError, notFound } from "./errors.js";
 import type { ProjectRow } from "./projects.js";
 
@@ -142,7 +143,7 @@ export async function activateRevision(
     // The Project is updated: locked so from the start (never upgraded), and
     // its active revision read under the lock, not from the route's copy, so
     // two concurrent activations each diff against what they replace.
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId: project.id, projectMode: "no key update" });
+    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId: project.id, projectMode: "no key update", accessCheck: "deferred" });
     const active = (
       (await db.query("SELECT active_contract_revision_id FROM projects WHERE id = $1", [project.id])).rows[0] as {
         active_contract_revision_id: string | null;
@@ -154,6 +155,8 @@ export async function activateRevision(
     );
     const revision = res.rows[0] as ContractRevisionRow | undefined;
     if (!revision) throw notFound("Contract revision");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
 
     let diffSummary: Record<string, string | number | boolean> = { initial: true };
     if (active) {

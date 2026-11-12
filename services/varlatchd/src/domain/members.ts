@@ -15,6 +15,7 @@ import { loadGrants, loadTailnetRequirements } from "../http/support.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, type FreezeException } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import type { PersonRef } from "./personlocks.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { lockedQuery } from "../db/locks.js";
@@ -119,7 +120,7 @@ async function lockOrganization(
   // The writer protocol's Organization lock and liveness, freeze included
   // (ADR-0051): no membership changes while the Organization is being
   // deleted; then the people (lock order step 2, liveness.ts).
-  await lockLiveScope(db, { organizationId, duringIncidentFreeze, people });
+  await lockLiveScope(db, { organizationId, duringIncidentFreeze, people, accessCheck: "deferred" });
 }
 
 /**
@@ -442,6 +443,8 @@ export async function removeMember(
     if (!left) await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
     // Step 9 (liveness.ts): the live environments the authority snapshot
     // (captureAuthority) may reference, in id order, before the membership
@@ -573,6 +576,8 @@ export async function changeMemberRole(
     await requireLiveAdmin(db, organizationId, actor);
     const membership = await liveMembership(db, organizationId, identityId);
     if (!membership) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     if (membership.role === role) return { identityId, role, previousRole: role };
     if (membership.role === "admin") await requireAnotherAdmin(db, organizationId, identityId);
     await db.query(
