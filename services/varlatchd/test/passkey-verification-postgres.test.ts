@@ -6,6 +6,7 @@ import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { getOrganization } from "../src/domain/orgs.js";
+import { EXTERNAL_EFFECT_LIMITS } from "../src/domain/externaleffect.js";
 import { requireOrganizationAccess, withRequester } from "../src/domain/requestaccess.js";
 import { inSnapshot } from "../src/domain/retrieval.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
@@ -60,8 +61,21 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     calls: 0,
     hold: null as Promise<void> | null,
     release: () => undefined as void,
-    fetch: (async () => {
+    /** When set, GitHub's answers for a listing, each after `paceMs`, abortable; the start of each call is noted. */
+    github: null as null | { paceMs: number; starts: number[] },
+    fetch: (async (input: unknown, init?: RequestInit) => {
       platform.calls++;
+      if (platform.github) {
+        platform.github.starts.push(Date.now());
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, platform.github!.paceMs);
+          init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); });
+        });
+        const url = String(input);
+        if (url.includes("/users/")) return new Response(JSON.stringify({ login: "acme-gh", type: "Organization" }), { status: 200 });
+        // A full page every time: the listing would go on for 30 pages.
+        return new Response(JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ name: `repo-${i}`, owner: { login: "acme-gh" }, private: true }))), { status: 200 });
+      }
       if (platform.hold) await platform.hold;
       return new Response("4.0.0", { status: 200 });
     }) as unknown as typeof fetch,
@@ -107,6 +121,7 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     verified = (await issueCredential(db, { identityId: adminId, kind: "browser", expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), authSessionId: "ses_verified" })).token;
     platform.calls = 0;
     platform.hold = null;
+    platform.github = null;
     app = buildApp(ctx, { syncFetch: platform.fetch });
     for (const [path, body] of [
       ["/v1/organizations", { name: "Acme", slug: "acme" }],
@@ -249,6 +264,38 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     expect(platform.calls).toBe(0);
     expect(await n("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'sync.connection_checked'")).toBe(0);
     expect(await passkeyDenials()).toBe(1);
+  }, 30_000);
+
+  it("stops outbound work at the effect's deadline, while the lock still holds; the control change waiting on it commits after, and no call starts later", async () => {
+    const saved = { ...EXTERNAL_EFFECT_LIMITS };
+    // Shortened for the test; the idle cap stays above the deadline, as in production.
+    EXTERNAL_EFFECT_LIMITS.deadlineMs = 400;
+    EXTERNAL_EFFECT_LIMITS.idleMs = 1_000;
+    platform.github = { paceMs: 120, starts: [] };
+    try {
+      const began = Date.now();
+      const listing = call("POST", `${ORG}/platform-connections/destinations`, cli, { platform: "github-actions", baseIdentity: "acme-gh", credential: "tok" });
+      for (let i = 0; i < 400 && platform.github.starts.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+      const change = call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 });
+      await waiters(1);
+      const stopped = await listing;
+      const ended = Date.now();
+      expect(stopped.status, JSON.stringify(stopped.body)).toBe(409);
+      expect(stopped.body.error).toMatchObject({ code: "STATE_CHANGED", details: { reason: "external-effect-deadline" } });
+      expect((await change).status).toBe(200);
+      const starts = [...platform.github.starts];
+      // No call started after the deadline, and the listing never got far.
+      expect(starts.every((t) => t - began <= EXTERNAL_EFFECT_LIMITS.deadlineMs)).toBe(true);
+      expect(starts.length).toBeLessThan(30);
+      // Nothing starts after the effect ended and the change committed.
+      await new Promise((r) => setTimeout(r, 300));
+      expect(platform.github.starts.length).toBe(starts.length);
+      expect(starts.every((t) => t <= ended)).toBe(true);
+      // Nothing of the listing was kept.
+      expect(await n("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'sync.destinations_listed'")).toBe(0);
+    } finally {
+      Object.assign(EXTERNAL_EFFECT_LIMITS, saved);
+    }
   }, 30_000);
 
   it("a SERIALIZABLE writer whose snapshot predates the change runs again and is refused; without the epoch it would commit under the old mode", async () => {
