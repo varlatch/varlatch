@@ -427,6 +427,12 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       }
       i = j + 1;
       bare += "''";
+      // Another quote next, across white space or comments, is a string
+      // continued on a new line (which keeps an E-string's escapes): not
+      // modelled, and never written here, so refused.
+      if (/^(?:\s|--[^\r\n]*|\/\*[\s\S]*?\*\/)*'/.test(sql.slice(i))) {
+        throw new Error(`lock trace: a string literal continued across lines is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
     } else if (c === '"') {
       let j = i + 1;
       let name = "";
@@ -442,12 +448,21 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       }
       i = j + 1;
       bare += `"${name}"`;
-    } else if (c === "$" && !/\w/.test(bare.slice(-1))) {
-      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (!tag) {
+    } else if (c === "$") {
+      // A $ inside a name (foo$$), a parameter ($1), or a dollar quote with an
+      // ASCII tag; any other $ (a tag PostgreSQL also accepts, such as $é$)
+      // is refused rather than guessed at.
+      if (/[\w$]/.test(bare.slice(-1))) {
+        throw new Error(`lock trace: a $ inside a name is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
+      if (/^\$\d/.test(sql.slice(i))) {
         bare += c;
         i++;
         continue;
+      }
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+      if (!tag) {
+        throw new Error(`lock trace: a $ that is neither a parameter nor an ASCII dollar quote is outside what the checker reads: ${sql.slice(0, 200)}`);
       }
       const end = sql.indexOf(tag[0], i + tag[0].length);
       i = end < 0 ? n : end + tag[0].length;

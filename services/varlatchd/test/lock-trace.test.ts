@@ -162,6 +162,23 @@ describe("scanSql", () => {
     expect(statementsOf("SELECT 1 -- ; COMMIT\n; COMMIT")).toEqual(["SELECT 1", "COMMIT"]);
     expect(scanSql("SELECT '/* varlatch-lock identities update id */' FOR UPDATE").comments).toEqual([]);
   });
+
+  it("refuses what it would read differently from PostgreSQL, rather than let it hide a lock", () => {
+    for (const sql of [
+      // A string continued on a new line keeps an E-string's escapes.
+      "SELECT E'a'\n'\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT E'a'\r'\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT E'a' --c\r'\\'foo' AS s, id FROM identities FOR UPDATE",
+      // A dollar-quote tag PostgreSQL accepts but the scanner does not model.
+      "SELECT $é$'$é$ AS s, id FROM identities FOR UPDATE",
+      // A $ inside a name, which could otherwise open a false dollar quote.
+      "SELECT id AS foo$$$ FROM identities FOR UPDATE",
+    ]) {
+      expect(() => scanSql(sql), JSON.stringify(sql)).toThrow(/outside what the checker reads/);
+    }
+    // Still read: parameters, ASCII dollar quotes, adjacent strings on one line joined by an operator.
+    expect(statementsOf("SELECT $1::text, $tag$ x $tag$, 'a' || 'b'")).toEqual(["SELECT $1::text, '', '' || ''"]);
+  });
 });
 
 describe("the grammar a locking statement may use (refused rather than parsed outside it)", () => {
