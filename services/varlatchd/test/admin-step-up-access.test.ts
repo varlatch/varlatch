@@ -363,7 +363,7 @@ describe("under enforce", () => {
       return asked;
     };
     const grantsBefore = await liveGrants();
-    const envs = `[${[named("api/qa1", f.qa1), named("api/qa2", f.qa2)].sort().join(", ")}]`;
+    const envs = `[${[named("api/qa1", f.qa1), named("api/qa2", f.qa2)].sort().join(", ")}] of project "api" (${f.project})`;
     const g = await shown(await createGrant(admin.cli, { subjectIdentityId: f.svc, scope: { kind: "environments", projectId: f.project, selector: { kind: "environments", environmentIds: [f.qa2, f.qa1] } }, actions: ["project.read", "config.value.read"] }));
     expect(g).toMatchObject({ operation: "grant.create", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(g.summary).toEqual({
@@ -750,8 +750,8 @@ describe("under enforce", () => {
     expect(moved.summary.changes).toEqual([
       {
         field: "scope",
-        from: `environments [${named("api/prod", prodA)}]`,
-        to: `environments [${[named("api/prod", prodB), named("api/staging", stagingB)].sort().join(", ")}]`,
+        from: `environments [${named("api/prod", prodA)}] of project "api" (${f.project})`,
+        to: `environments [${[named("api/prod", prodB), named("api/staging", stagingB)].sort().join(", ")}] of project "api" (${projectB})`,
         loosens: false,
       },
     ]);
@@ -777,7 +777,13 @@ describe("under enforce", () => {
     const envs = (environmentIds: string[]) => ({ ...old, scope: { kind: "environments" as const, projectId: "prj_a", selector: { kind: "environments" as const, environmentIds } } });
     const scope = await grantReplaceBinding(db, { id: orgId }, { ...envs(["env_a", "env_b"]), id: "grt_old", revoked: false }, envs(["env_a", "env_c"]));
     expect(scope.summary.changes).toEqual([
-      { field: "scope", from: 'environments ["Bob" (env_a), "Bob" (env_b)]', to: 'environments ["Bob" (env_a), "Bob" (env_c)]', loosens: false },
+      { field: "scope", from: 'environments ["Bob" (env_a), "Bob" (env_b)] of project "Bob" (prj_a)', to: 'environments ["Bob" (env_a), "Bob" (env_c)] of project "Bob" (prj_a)', loosens: false },
+    ]);
+    // The same environments under another Project: the Project is bound, so it is shown.
+    const otherProject = { ...old, scope: { kind: "environments" as const, projectId: "prj_b", selector: { kind: "environments" as const, environmentIds: ["env_a"] } } };
+    const sameEnvs = await grantReplaceBinding(db, { id: orgId }, { ...envs(["env_a"]), id: "grt_old", revoked: false }, otherProject);
+    expect(sameEnvs.summary.changes).toEqual([
+      { field: "scope", from: 'environments ["Bob" (env_a)] of project "Bob" (prj_a)', to: 'environments ["Bob" (env_a)] of project "Bob" (prj_b)', loosens: false },
     ]);
   });
 

@@ -213,7 +213,9 @@ function describeScope(d: GrantDeclaration, n: Names): string {
     case "environments": {
       const project = n.projects.get(s.projectId) ?? unnamed("project", s.projectId);
       if (s.selector.kind === "tier") return `the ${s.selector.tier} environments of ${project}`;
-      return `environments ${list(set(s.selector.environmentIds.map((id) => n.environments.get(id) ?? unnamed("environment", id))))}`;
+      // The Project is bound too: an environment named here may belong to
+      // another Project than the one the Grant names.
+      return `environments ${list(set(s.selector.environmentIds.map((id) => n.environments.get(id) ?? unnamed("environment", id))))} of ${project}`;
     }
     case "team":
       return `the projects of ${n.groups.get(s.teamId)?.label ?? unnamed("team", s.teamId)}`;
