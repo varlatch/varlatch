@@ -34,6 +34,25 @@ export function shareConnection(db: Querier): void {
   shared.add(db);
 }
 
+/** Wrappers of a shared connection, and the connection each wraps (tests only). */
+const aliases = new WeakMap<Querier, Querier>();
+
+/** Whether `db` is a shared connection (tests only). */
+export function isSharedConnection(db: Querier): boolean {
+  return shared.has(db);
+}
+
+/**
+ * Registers `alias`, a wrapper of the shared connection `of` (a test's
+ * statement recorder), as shared too: its transactions are scoped per
+ * flow like the connection's, and the connection sees them as its own
+ * (openTxScope). Tests only.
+ */
+export function shareConnectionAlias(alias: Querier, of: Querier): void {
+  shared.add(alias);
+  aliases.set(alias, of);
+}
+
 /** A transaction open on a shared connection, for the flow that opened it and the work that flow starts. */
 export interface TxScope {
   readonly db: Querier;
@@ -69,7 +88,7 @@ function inAttempt<T>(kind: TxAttempt["kind"], body: () => Promise<T>): Promise<
 
 /** The open transaction this async flow runs in on the shared connection `db`, if any. */
 export function openTxScope(db: Querier): TxScope | undefined {
-  for (let s = scopes.getStore(); s; s = s.outer) if (s.open && s.db === db) return s;
+  for (let s = scopes.getStore(); s; s = s.outer) if (s.open && (s.db === db || aliases.get(s.db) === db)) return s;
   return undefined;
 }
 
