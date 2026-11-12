@@ -439,7 +439,7 @@ export async function groupDeleteBinding(db: Querier, org: { id: string }, group
     body: null,
     query: {},
     expectedVersion: group.version,
-    summary: { title: `Delete ${group.kind} ${group.name}. Its ${plural(members, "member")} lose what its Grants gave them`, changes: [] },
+    summary: { title: `Delete ${group.kind} ${group.name}. Its ${plural(members, "member")} lose${members === 1 ? "s" : ""} what its Grants gave them`, changes: [] },
   };
 }
 
