@@ -78,7 +78,9 @@ function quoted(value: string): string {
 export function installSh(d: CliDownload): string {
   // Only this scheme. curl follows no redirect without -L, and the script
   // accepts nothing but a 200, so a redirect fails the download.
-  const curl = d.loopbackHttp ? "curl -sS --proto '=http'" : "curl -sS --proto '=https' --tlsv1.2";
+  // -q first: no ~/.curlrc, which could turn on redirects (location) or
+  // switch off certificate checks (insecure).
+  const curl = d.loopbackHttp ? "curl -q -sS --proto '=http'" : "curl -q -sS --proto '=https' --tlsv1.2";
   return `#!/bin/sh
 # Installs the Varlatch CLI ${d.version} from ${d.origin} for the current user.
 # Read it first: curl -fsSL ${d.origin}/install.sh
@@ -113,15 +115,27 @@ sha256() {
   fi
 }
 
-# A Homebrew copy is Homebrew's to update.
-for found in \$(command -v -a varlatch 2>/dev/null || command -v varlatch 2>/dev/null || true); do
-  if grep -q 'installed with Homebrew' "\$found" 2>/dev/null; then
-    stop "varlatch is installed with Homebrew at \$found; update it with: brew upgrade varlatch"
+# A Homebrew copy is Homebrew's to update: every varlatch on PATH, and the
+# target, checked. PATH is split on ':' only, never on spaces, and no
+# pattern in it is expanded.
+homebrew() {
+  [ -e "\$1" ] || return 0
+  if grep -q 'installed with Homebrew' "\$1" 2>/dev/null; then
+    stop "varlatch is installed with Homebrew at \$1; update it with: brew upgrade varlatch"
   fi
-  case "\$(readlink "\$found" 2>/dev/null || true)" in
-    */Cellar/*) stop "varlatch is installed with Homebrew at \$found; update it with: brew upgrade varlatch" ;;
+  case "\$(readlink "\$1" 2>/dev/null || true)" in
+    */Cellar/*) stop "varlatch is installed with Homebrew at \$1; update it with: brew upgrade varlatch" ;;
   esac
+}
+homebrew "\$TARGET"
+saved_ifs=\$IFS
+IFS=:
+set -f
+for entry in \$PATH; do
+  [ -n "\$entry" ] && homebrew "\$entry/varlatch"
 done
+set +f
+IFS=\$saved_ifs
 
 if [ -f "\$TARGET" ] && [ "\$(sha256 "\$TARGET")" = "\$SHA256" ]; then
   say "varlatch \$VERSION is already installed at \$TARGET."
@@ -195,7 +209,17 @@ export function installPs1(d: CliDownload): string {
   $Major = [int](& node -p "process.versions.node.split('.')[0]")
   if ($Major -lt 22) { Stop-Install "needs Node.js 22 or newer; this is $(& node --version)" }
 
-  if ((Test-Path $Target) -and ((Get-FileHash -Algorithm SHA256 $Target).Hash -ieq $Sha256)) {
+  $Shim = Join-Path $Dir 'varlatch.cmd'
+  $ShimText = '@node "%~dp0varlatch.cjs" %*'
+  $Installed = (Test-Path $Target) -and ((Get-FileHash -Algorithm SHA256 $Target).Hash -ieq $Sha256)
+  $ShimOk = (Test-Path $Shim) -and ((Get-Content -Raw $Shim).Trim() -eq $ShimText)
+  # Replace a file atomically when it exists ([IO.File]::Replace), move it in
+  # when it does not; the staged file sits in the same directory.
+  function Install-File([string]$Staged, [string]$Destination) {
+    if (Test-Path $Destination) { [IO.File]::Replace($Staged, $Destination, $null) } else { [IO.File]::Move($Staged, $Destination) }
+  }
+
+  if ($Installed -and $ShimOk) {
     Write-Host "varlatch $Version is already installed at $Target."
   } else {
     if ($PSVersionTable.PSVersion.Major -lt 6) {
@@ -203,34 +227,47 @@ export function installPs1(d: CliDownload): string {
     }
     $Temp = Join-Path ([IO.Path]::GetTempPath()) ('varlatch-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $Temp | Out-Null
+    $NextCli = Join-Path $Dir 'varlatch.cjs.new'
+    $NextShim = Join-Path $Dir 'varlatch.cmd.new'
     try {
       $Staged = Join-Path $Temp 'varlatch.cjs'
-      # No redirect is followed: a redirect fails the download.
-      Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri "$Origin/cli/varlatch.cjs" -OutFile $Staged
-      if ((Get-FileHash -Algorithm SHA256 $Staged).Hash -ine $Sha256) { Stop-Install 'the download does not match its SHA-256; nothing was installed' }
-      $Reported = (& node $Staged --version) -join ' '
-      if (-not ($Reported -eq "varlatch $Version" -or $Reported.StartsWith("varlatch $Version "))) {
-        Stop-Install "the downloaded CLI reports '$Reported', not $Version; nothing was installed"
+      if (-not $Installed) {
+        # No redirect is followed: a redirect fails the download.
+        Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri "$Origin/cli/varlatch.cjs" -OutFile $Staged
+        if ((Get-FileHash -Algorithm SHA256 $Staged).Hash -ine $Sha256) { Stop-Install 'the download does not match its SHA-256; nothing was installed' }
+        $Reported = (& node $Staged --version) -join ' '
+        if (-not ($Reported -eq "varlatch $Version" -or $Reported.StartsWith("varlatch $Version "))) {
+          Stop-Install "the downloaded CLI reports '$Reported', not $Version; nothing was installed"
+        }
       }
-      if (Test-Path $Target) {
+      # Everything that would be replaced, asked about once, before any write.
+      $Replacing = @()
+      if ((Test-Path $Target) -and -not $Installed) {
         Write-Host "$Target exists: $((& node $Target --version 2>$null) -join ' ')."
-        try { $Answer = Read-Host "Replace it with varlatch $Version? [y/N]" } catch { Stop-Install 'replacing it needs your answer in an interactive window; nothing was installed' }
+        $Replacing += $Target
+      }
+      if ((Test-Path $Shim) -and -not $ShimOk) {
+        Write-Host "$Shim exists and starts something else: $((Get-Content -Raw $Shim).Trim())"
+        $Replacing += $Shim
+      }
+      if ($Replacing.Count -gt 0) {
+        try { $Answer = Read-Host "Replace $($Replacing -join ' and ')? [y/N]" } catch { Stop-Install 'replacing it needs your answer in an interactive window; nothing was installed' }
         if ($Answer -notmatch '^(y|yes)$') { Stop-Install 'nothing was installed' }
       }
       New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-      $Next = Join-Path $Dir 'varlatch.cjs.new'
-      Copy-Item $Staged $Next -Force
-      Move-Item $Next $Target -Force
-      Write-Host "Installed varlatch $Version at $Target."
+      if (-not $Installed) {
+        Copy-Item $Staged $NextCli -Force
+        Install-File $NextCli $Target
+        Write-Host "Installed varlatch $Version at $Target."
+      }
+      if (-not $ShimOk) {
+        Set-Content -Path $NextShim -Value $ShimText -Encoding Ascii
+        Install-File $NextShim $Shim
+      }
     } finally {
       Remove-Item -Recurse -Force $Temp -ErrorAction SilentlyContinue
+      Remove-Item -Force $NextCli, $NextShim -ErrorAction SilentlyContinue
     }
-  }
-
-  $Shim = Join-Path $Dir 'varlatch.cmd'
-  $ShimText = '@node "%~dp0varlatch.cjs" %*'
-  if (-not (Test-Path $Shim) -or ((Get-Content -Raw $Shim).Trim() -ne $ShimText)) {
-    Set-Content -Path $Shim -Value $ShimText -Encoding Ascii
   }
 
   # The user PATH as stored, never the combined process PATH; added once.

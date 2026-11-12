@@ -24,6 +24,7 @@ const root = mkdtempSync(join(tmpdir(), "varlatch-install-sh-"));
 let server: Server;
 let origin: string;
 let serve: { status: number; body: Buffer; location?: string } = { status: 200, body: CLI };
+let redirected = 0;
 
 // The tools the script uses, linked one by one: a PATH without node, or
 // with another node first, is then exact. Links are only ever executed.
@@ -41,6 +42,10 @@ beforeAll(async () => {
     if (req.url === "/cli/varlatch.cjs") {
       res.writeHead(serve.status, serve.location ? { Location: serve.location } : {});
       res.end(serve.body);
+    } else if (req.url === "/elsewhere.cjs") {
+      redirected++;
+      res.writeHead(200);
+      res.end(CLI);
     } else {
       res.writeHead(404);
       res.end();
@@ -128,6 +133,31 @@ describe("install.sh", () => {
     const r = await install({ home: h, path: [nodeDir, tools] });
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(`could not download ${origin}/cli/varlatch.cjs (HTTP 302; a redirect is never followed)`);
+    expect(existsSync(target(h))).toBe(false);
+  });
+
+  it("ignores ~/.curlrc, so a redirect stays refused even when it says to follow them", async () => {
+    serve = { status: 302, body: Buffer.alloc(0), location: `${origin}/elsewhere.cjs` };
+    redirected = 0;
+    const h = home();
+    writeFileSync(join(h, ".curlrc"), "location\ninsecure\n");
+    const r = await install({ home: h, path: [nodeDir, tools] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("(HTTP 302; a redirect is never followed)");
+    expect(redirected).toBe(0);
+    expect(existsSync(target(h))).toBe(false);
+  });
+
+  it("finds a Homebrew copy in a PATH directory with a space in its name", async () => {
+    serve = { status: 200, body: CLI };
+    const brew = join(root, "Brew Dir");
+    mkdirSync(brew, { recursive: true });
+    writeFileSync(join(brew, "varlatch"), '#!/bin/bash\necho "varlatch: installed with Homebrew; update with: brew upgrade varlatch" >&2\n');
+    chmodSync(join(brew, "varlatch"), 0o755);
+    const h = home();
+    const r = await install({ home: h, path: [nodeDir, tools, brew] });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(`varlatch is installed with Homebrew at ${join(brew, "varlatch")}`);
     expect(existsSync(target(h))).toBe(false);
   });
 

@@ -61,13 +61,13 @@ describe("the scripts", () => {
     expect(sh).toContain("ORIGIN='https://vault.example.com'");
     expect(sh).toContain("VERSION='0.99.0'");
     expect(sh).toContain(`SHA256='${"a".repeat(64)}'`);
-    expect(sh).toContain("curl -sS --proto '=https' --tlsv1.2 -w '%{http_code}'");
+    expect(sh).toContain("curl -q -sS --proto '=https' --tlsv1.2 -w '%{http_code}'");
     expect(sh).toContain('[ "$status" = 200 ]');
     expect(sh).not.toMatch(/curl[^\n]* -L/);
     expect(sh).toContain("Next: varlatch login --server $ORIGIN");
     expect(sh).not.toMatch(/sudo/);
     const local = installSh({ ...download, origin: "http://localhost:8787", loopbackHttp: true });
-    expect(local).toContain("curl -sS --proto '=http' -w '%{http_code}'");
+    expect(local).toContain("curl -q -sS --proto '=http' -w '%{http_code}'");
     const ps1 = installPs1(download);
     expect(ps1).toContain("$Origin = 'https://vault.example.com'");
     expect(ps1).toContain("-MaximumRedirection 0");

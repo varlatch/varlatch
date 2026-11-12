@@ -97,6 +97,13 @@ if (mode === "shellcheck") {
     check(second.status === 0 && second.out.includes(`varlatch ${VERSION} is already installed`), "a rerun changes nothing");
     check((await userPath()).split(";").filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, "a rerun adds no second PATH entry");
 
+    const shim = join(dir, "varlatch.cmd");
+    writeFileSync(shim, "@echo my own launcher\r\n");
+    const shimRefused = await run();
+    check(shimRefused.status !== 0 && shimRefused.out.includes("needs your answer in an interactive window"), "a customized varlatch.cmd is not replaced without an answer");
+    check(readFileSync(shim, "utf8").includes("my own launcher"), "the customized varlatch.cmd is left as it was");
+    writeFileSync(shim, '@node "%~dp0varlatch.cjs" %*\r\n');
+
     writeFileSync(target, "console.log('varlatch 0.1.0 (migration 1)')\n");
     const refused = await run();
     check(refused.status !== 0 && refused.out.includes("replacing it needs your answer in an interactive window"), "a different copy is not replaced without an answer");
@@ -107,6 +114,7 @@ if (mode === "shellcheck") {
     const mismatch = await run();
     check(mismatch.status !== 0 && mismatch.out.includes("does not match its SHA-256"), "a mismatching download fails");
     check(!existsSync(target), "nothing is installed after a mismatch");
+    check(!existsSync(join(dir, "varlatch.cjs.new")) && !existsSync(join(dir, "varlatch.cmd.new")), "no staged file is left behind");
   } finally {
     await pwsh(`[Environment]::SetEnvironmentVariable('Path', '${before.replace(/'/g, "''")}', 'User')`);
     server.close();
