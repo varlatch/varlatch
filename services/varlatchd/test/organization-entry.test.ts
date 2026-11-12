@@ -258,7 +258,7 @@ const LOOKUP = /\bgetOrganization\b|\blistOrganizationsFor\b|\b(?:FROM|JOIN)\s+o
  * uses them.
  */
 const ORGANIZATION_LOCKS: { file: string; count: number; reason: string }[] = [
-  { file: "domain/liveness.ts", count: 3, reason: "lockLiveScope and lockScope capture under the lock; lockedAccessCheckpoint (external operations) decides under it" },
+  { file: "domain/liveness.ts", count: 2, reason: "lockLiveScope and lockScope capture under the lock (withExternalEffect builds on lockLiveScope)" },
   { file: "domain/approvals.ts", count: 1, reason: "createApproval: decides under the lock before an approval intent is created" },
   { file: "domain/orgdeletion.ts", count: 1, reason: "the deletion worker's claim: background work, outside any request" },
   { file: "domain/securityreport.ts", count: 2, reason: "report counters: the access-count worker outside any request, and a protected write's count after its checkpoint" },

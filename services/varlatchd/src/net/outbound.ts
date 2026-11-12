@@ -717,10 +717,11 @@ export class OutboundPolicy {
       const destination = destinationOf(url);
       if (!destination) throw new TypeError(`Outbound requests use https or http, not ${url.protocol}`);
       if (url.username || url.password) throw new TypeError("Outbound request URLs never carry credentials");
-      // A request's outbound call for an Organization comes after its
-      // passkey-verification checkpoint (ADR-0054 Decision 7); reaching
-      // here without one is a coverage gap, checked now.
-      if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`);
+      // A request's outbound call for an Organization runs inside its
+      // external-effect transaction, after the passkey-verification
+      // checkpoint there (ADR-0054 Decision 7, liveness.ts
+      // withExternalEffect); reaching here without one is a coverage gap.
+      if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`, { underLock: true });
       try {
         return (await undiciFetch(url, {
           ...(init as Record<string, unknown>),

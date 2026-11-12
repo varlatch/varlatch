@@ -20,10 +20,11 @@
  *   transaction that writes (lockLiveScope, prepareProtectedOperation,
  *   createApproval, or the writer's own call after a lookup that follows
  *   the lock).
- * - `external`: an operation that decrypts a credential or calls out,
- *   decided after its local lookups by a locked checkpoint before the first
- *   such effect (liveness.ts lockedAccessCheckpoint), and again in the
- *   transaction of any write it then makes.
+ * - `external`: an operation that decrypts or uses a credential, calls out
+ *   or spends a one-use artifact, in one transaction holding the
+ *   Organization row from its checkpoint (after its local lookups) until
+ *   the effect and the write that goes with it are done (liveness.ts
+ *   withExternalEffect). Outbound policy DNS checks are validation, before.
  *
  * test/organization-entry.test.ts fails for a route missing here or listed
  * but gone; test/passkey-verification.test.ts checks at runtime that the
@@ -84,7 +85,7 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "PATCH /v1/organizations/:org/security/controls/:control": "transaction",
   "GET /v1/organizations/:org/identities/:identity/reach": "read",
   "PATCH /v1/organizations/:org/identities/:identity": "transaction",
-  "POST /v1/organizations/:org/identities/:identity/oidc-bindings": "external",
+  "POST /v1/organizations/:org/identities/:identity/oidc-bindings": "transaction",
   "GET /v1/organizations/:org/identities/:identity/oidc-bindings": "read",
   "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding": "transaction",
   "GET /v1/organizations/:org/members/:member/review": "read",
@@ -124,16 +125,16 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "POST /v1/organizations/:org/requirements": "transaction",
   "PATCH /v1/organizations/:org/requirements/:requirement": "transaction",
   "DELETE /v1/organizations/:org/requirements/:requirement": "transaction",
-  "POST /v1/organizations/:org/webhooks": "external",
+  "POST /v1/organizations/:org/webhooks": "transaction",
   "GET /v1/organizations/:org/webhooks": "read",
-  "PATCH /v1/organizations/:org/webhooks/:webhook": "external",
+  "PATCH /v1/organizations/:org/webhooks/:webhook": "transaction",
   "DELETE /v1/organizations/:org/webhooks/:webhook": "transaction",
   "GET /v1/organizations/:org/platform-connections": "read",
   "POST /v1/organizations/:org/platform-connections": "external",
   "POST /v1/organizations/:org/platform-connections/check": "external",
   "POST /v1/organizations/:org/platform-connections/destinations": "external",
   "GET /v1/organizations/:org/platform-connections/:connection": "read",
-  "POST /v1/organizations/:org/platform-connections/:connection/credential": "external",
+  "POST /v1/organizations/:org/platform-connections/:connection/credential": "transaction",
   "DELETE /v1/organizations/:org/platform-connections/:connection": "transaction",
   "GET /v1/organizations/:org/github-app": "read",
   "POST /v1/organizations/:org/github-app/registrations": "transaction",

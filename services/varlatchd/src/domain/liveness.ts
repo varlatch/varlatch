@@ -3,7 +3,8 @@ import { lockClause, lockedQuery } from "../db/locks.js";
 import type { Querier } from "../db/migrate.js";
 import { DomainError } from "./errors.js";
 import { lockPeople, type PersonRef } from "./personlocks.js";
-import { captureOrganizationAccess, currentRequester, requireOrganizationAccess } from "./requestaccess.js";
+import { captureOrganizationAccess, requireOrganizationAccess } from "./requestaccess.js";
+import { withTx } from "../db/tx.js";
 
 /**
  * THE LOCK ORDER (ADR-0054 amendment E). Every transaction that takes row
@@ -249,26 +250,53 @@ export async function lockScope(
 }
 
 /**
- * The locked passkey-verification checkpoint of an operation with an
- * external effect (ADR-0054 Decision 7): after its local existence checks,
- * before its first credential use, decryption or outbound request. The
- * Organization row FOR KEY SHARE first (step 1, nothing after it), which
- * waits for a control change in progress (it holds the row FOR UPDATE);
- * then the outcome, read fresh by a statement of its own, and applied. No
- * lock is held afterwards: no network call holds one (amendment D), and the
- * operation's eventual database mutation checks again under its own lock.
- * Inside a transaction, it is that transaction's capture and checkpoint.
- * Outside a request, nothing.
+ * How long a protected external effect may hold its transaction without a
+ * statement (the outbound call itself): PostgreSQL ends the session after
+ * that, the transaction rolls back and the request fails, changing
+ * nothing. Each call has its own shorter timeout (GITHUB_TIMEOUT_MS, the
+ * adapters' DEFAULT_TIMEOUT_MS: 10 s); this bounds a run of them, such as
+ * a paged listing.
  */
-export async function lockedAccessCheckpoint(db: Querier, organizationId: string): Promise<void> {
-  if (!currentRequester()) return;
-  await lockedQuery(
-    db,
-    { table: "organizations", mode: "key share", key: "$1" },
-    "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE",
-    [organizationId],
-  );
-  await requireOrganizationAccess(db, organizationId, { fresh: true });
+export const EXTERNAL_EFFECT_HOLD_MS = 120_000;
+
+/**
+ * THE EXTERNAL-EFFECT CONTRACT (ADR-0054 Decision 2 for effects;
+ * requestaccess.ts). A protected external effect (decrypting or using a
+ * stored credential, sending a request to a platform or to GitHub, spending
+ * a one-use artifact such as a registration's state and GitHub's code)
+ * runs inside one transaction that holds the Organization row FOR KEY
+ * SHARE (step 1, with the deletion and freeze checks) and the operation's
+ * people (step 2) from the passkey-verification checkpoint until the effect
+ * is done:
+ *
+ * - `fn` looks up what the operation uses (a missing one keeps its
+ *   not-found), calls requireOrganizationAccess(tx, organizationId), then
+ *   makes the effect, and makes any state change that goes with it (a
+ *   claim, a recorded expiry, the final write) in this same transaction,
+ *   so a refusal leaves nothing committed. Later locks follow amendment E.
+ * - A control change takes the Organization row FOR UPDATE: it waits for
+ *   effects in progress, and an effect either completes before the change
+ *   or reads the new mode under its lock.
+ * - The transaction holds a database connection across the outbound call;
+ *   keep it to the effect and what must commit with it. Its idle time is
+ *   capped (EXTERNAL_EFFECT_HOLD_MS).
+ *
+ * Validation that only resolves a configured name (the outbound policy's
+ * DNS check of a webhook URL, an OIDC issuer or a base identity) sends no
+ * credential, changes nothing outside Varlatch and spends nothing: it is
+ * not a protected external effect, and runs before the operation's write
+ * transaction, as today.
+ */
+export async function withExternalEffect<T>(
+  db: Querier,
+  scope: { organizationId: string; people: readonly PersonRef[] },
+  fn: (tx: Querier) => Promise<T>,
+): Promise<T> {
+  return withTx(db, async (tx) => {
+    await tx.query(`SET LOCAL idle_in_transaction_session_timeout = '${EXTERNAL_EFFECT_HOLD_MS}ms'`);
+    await lockLiveScope(tx, { organizationId: scope.organizationId, people: scope.people, accessCheck: "deferred" });
+    return fn(tx);
+  });
 }
 
 /**

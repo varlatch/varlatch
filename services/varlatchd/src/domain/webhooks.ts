@@ -8,7 +8,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockedAccessCheckpoint, lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
@@ -74,12 +74,7 @@ async function refuseOutboundWebhook(
   url: string,
   webhookId: string | null,
   actorIdentityId: string,
-  /** Whether the webhook exists (or is being created): only then is passkey-verification checked first. */
-  exists = true,
 ): Promise<void> {
-  // passkey-verification before the outbound policy's lookups (ADR-0054
-  // Decision 7), once the webhook is known to exist; the write checks again.
-  if (exists) await lockedAccessCheckpoint(ctx.db, organizationId);
   const policy = outboundOf(ctx);
   const refusal = await policy.refusalFor(url, "webhook");
   if (!refusal) return;
@@ -179,7 +174,7 @@ export async function updateWebhook(
     // a URL that changes: a filter change keeps working on a refused URL.
     const stored = await ctx.db.query("SELECT url FROM webhooks WHERE id = $1 AND organization_id = $2", [webhookId, organizationId]);
     if ((stored.rows[0] as { url: string } | undefined)?.url !== patch.url) {
-      await refuseOutboundWebhook(ctx, organizationId, patch.url, webhookId, actorIdentityId, stored.rows[0] !== undefined);
+      await refuseOutboundWebhook(ctx, organizationId, patch.url, webhookId, actorIdentityId);
     }
   }
   return withTx(ctx.db, async (db) => {

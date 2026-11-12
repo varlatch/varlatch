@@ -10,7 +10,8 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockedAccessCheckpoint, lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffect } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import {
   GITHUB_API,
@@ -225,149 +226,156 @@ export async function completeRegistration(
   // No stored credential or external call while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const stateHash = hashToken(input.state);
-  // The registration exists (a missing one keeps its not-found); then
-  // passkey-verification, before the claim and the call to GitHub
-  // (ADR-0054 Decision 7).
-  const registered = await ctx.db.query(
-    "SELECT 1 FROM github_app_registrations WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3",
-    [stateHash, org.id, actorIdentityId],
-  );
-  if (!registered.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this state");
-  await lockedAccessCheckpoint(ctx.db, org.id);
-  // Claim the state: one completion per registration, by the actor who
-  // started it, in this Organization, within the hour.
-  const claimed = await ctx.db.query(
-    `UPDATE github_app_registrations SET consumed_at = clock_timestamp()
-     WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3
-       AND consumed_at IS NULL AND expires_at > clock_timestamp()
-     RETURNING account_login, account_type`,
-    [stateHash, org.id, actorIdentityId],
-  );
-  const claim = claimed.rows[0] as { account_login: string; account_type: GitHubAccountType } | undefined;
-  if (!claim) {
-    const found = (await ctx.db.query(
-      `SELECT consumed_at IS NOT NULL AS consumed FROM github_app_registrations
-       WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3`,
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const stateHash = hashToken(input.state);
+    // The registration exists (a missing one keeps its not-found); then
+    // passkey-verification, before the claim and the call to GitHub
+    // (ADR-0054 Decision 7).
+    const registered = await tctx.db.query(
+      "SELECT 1 FROM github_app_registrations WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3",
       [stateHash, org.id, actorIdentityId],
-    )).rows[0] as { consumed: boolean } | undefined;
-    if (!found) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this state");
-    if (found.consumed) throw new DomainError("CONSUMED", "This GitHub App registration was already completed");
-    throw new DomainError("EXPIRED", "This GitHub App registration expired. Start again.");
-  }
-  const account: GitHubAccount = { login: claim.account_login, type: claim.account_type };
-
-  let res: Response;
-  try {
-    res = await (fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }))(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
-      method: "POST",
-      headers: GITHUB_HEADERS,
-      redirect: "error",
-      signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
-    });
-  } catch (err) {
-    // No answer: GitHub may not have seen the code, so the state is released
-    // for another attempt within the hour.
-    await ctx.db.query("UPDATE github_app_registrations SET consumed_at = NULL WHERE state_hash = $1", [stateHash]);
-    // Refused by the outbound policy (ADR-0057 Decision 7): its own words.
-    const refusal = outboundRefusalOf(err);
-    return {
-      outcome: "failed",
-      retryable: true,
-      message: refusal
-        ? refusal.message
-        : "Varlatch could not reach api.github.com to finish the registration. Check that this server can reach it, then try again.",
-    };
-  }
-  if (res.status !== 201) {
-    return {
-      outcome: "failed",
-      retryable: false,
-      httpStatus: res.status,
-      message: `GitHub did not hand over the App (HTTP ${res.status}): the code may have been used already, or be more than an hour old. If GitHub created the App, delete it on GitHub, then start again.`,
-    };
-  }
-  const conversion = readConversion(await res.json().catch(() => undefined));
-  if (!conversion) {
-    return {
-      outcome: "failed",
-      retryable: false,
-      httpStatus: res.status,
-      message: "The answer from api.github.com was not GitHub's, so Varlatch kept nothing. A proxy between this server and GitHub may be in the way.",
-    };
-  }
-  const created = { githubAppId: conversion.id, slug: conversion.slug, owner: { login: conversion.owner.login, type: conversion.owner.type } };
-  const deleteUrl = githubAppDeleteUrl(conversion.slug, created.owner);
-  const refused = async (db: Querier, reason: "owner-mismatch" | "organization-has-app" | "app-in-use", message: string) => {
-    await recordAuditEvent(db, {
-      eventType: "sync.github_app_registration_refused",
-      decision: "deny",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { organizationId: org.id },
-      metadata: {
-        reason,
-        appId: conversion.id,
-        slug: conversion.slug,
-        owner: conversion.owner.login,
-        ownerType: conversion.owner.type,
-        account: account.login,
-        accountType: account.type,
-      },
-    });
-    return { outcome: "refused" as const, reason, app: created, account, deleteUrl, message };
-  };
-
-  if (!sameAccount(conversion.owner, account)) {
-    return withTx(ctx.db, (db) =>
-      refused(
-        db,
-        "owner-mismatch",
-        `GitHub created the App ${conversion.slug} on ${conversion.owner.login}'s own account, not on ${account.login}, because ${conversion.owner.login} cannot register Apps there. Varlatch did not keep it. ${conversion.owner.login} can delete it on GitHub. An owner or App manager of ${account.login} has to register the App, or register one and import it.`,
-      ),
     );
-  }
-
-  const id = newId("githubApp");
-  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, conversion.pem);
-  return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
-    const inserted = await db.query(
-      `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT DO NOTHING
-       RETURNING ${APP_COLUMNS}`,
-      [id, org.id, conversion.id, conversion.slug, conversion.clientId, conversion.owner.login, conversion.owner.id, conversion.owner.type, JSON.stringify(envelope), actorIdentityId],
+    if (!registered.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this state");
+    await requireOrganizationAccess(tctx.db, org.id);
+    // Claim the state: one completion per registration, by the actor who
+    // started it, in this Organization, within the hour.
+    const claimed = await tctx.db.query(
+      `UPDATE github_app_registrations SET consumed_at = clock_timestamp()
+       WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3
+         AND consumed_at IS NULL AND expires_at > clock_timestamp()
+       RETURNING account_login, account_type`,
+      [stateHash, org.id, actorIdentityId],
     );
-    const app = inserted.rows[0] as GitHubAppRow | undefined;
-    if (!app) {
-      if (await liveApp(db, org.id)) {
-        return refused(
-          db,
-          "organization-has-app",
-          `This Organization got another GitHub App while this one was being created, so Varlatch did not keep ${conversion.slug}. Delete it on GitHub.`,
-        );
-      }
-      return refused(db, "app-in-use", `Another Organization on this Varlatch already uses the App ${conversion.slug}, so Varlatch did not keep it here.`);
+    const claim = claimed.rows[0] as { account_login: string; account_type: GitHubAccountType } | undefined;
+    if (!claim) {
+      const found = (await tctx.db.query(
+        `SELECT consumed_at IS NOT NULL AS consumed FROM github_app_registrations
+         WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3`,
+        [stateHash, org.id, actorIdentityId],
+      )).rows[0] as { consumed: boolean } | undefined;
+      if (!found) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this state");
+      if (found.consumed) throw new DomainError("CONSUMED", "This GitHub App registration was already completed");
+      throw new DomainError("EXPIRED", "This GitHub App registration expired. Start again.");
     }
-    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.register");
-    await recordAuditEvent(db, {
-      eventType: "sync.github_app_registered",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { githubAppId: id },
-      metadata: {
-        via: "manifest",
-        appId: conversion.id,
-        slug: conversion.slug,
-        owner: conversion.owner.login,
-        ownerType: conversion.owner.type,
-      },
+    const account: GitHubAccount = { login: claim.account_login, type: claim.account_type };
+
+    let res: Response;
+    try {
+      res = await (fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }))(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
+        method: "POST",
+        headers: GITHUB_HEADERS,
+        redirect: "error",
+        signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // No answer: GitHub may not have seen the code, so the state is released
+      // for another attempt within the hour.
+      await tctx.db.query("UPDATE github_app_registrations SET consumed_at = NULL WHERE state_hash = $1", [stateHash]);
+      // Refused by the outbound policy (ADR-0057 Decision 7): its own words.
+      const refusal = outboundRefusalOf(err);
+      return {
+        outcome: "failed",
+        retryable: true,
+        message: refusal
+          ? refusal.message
+          : "Varlatch could not reach api.github.com to finish the registration. Check that this server can reach it, then try again.",
+      };
+    }
+    if (res.status !== 201) {
+      return {
+        outcome: "failed",
+        retryable: false,
+        httpStatus: res.status,
+        message: `GitHub did not hand over the App (HTTP ${res.status}): the code may have been used already, or be more than an hour old. If GitHub created the App, delete it on GitHub, then start again.`,
+      };
+    }
+    const conversion = readConversion(await res.json().catch(() => undefined));
+    if (!conversion) {
+      return {
+        outcome: "failed",
+        retryable: false,
+        httpStatus: res.status,
+        message: "The answer from api.github.com was not GitHub's, so Varlatch kept nothing. A proxy between this server and GitHub may be in the way.",
+      };
+    }
+    const created = { githubAppId: conversion.id, slug: conversion.slug, owner: { login: conversion.owner.login, type: conversion.owner.type } };
+    const deleteUrl = githubAppDeleteUrl(conversion.slug, created.owner);
+    const refused = async (db: Querier, reason: "owner-mismatch" | "organization-has-app" | "app-in-use", message: string) => {
+      await recordAuditEvent(db, {
+        eventType: "sync.github_app_registration_refused",
+        decision: "deny",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { organizationId: org.id },
+        metadata: {
+          reason,
+          appId: conversion.id,
+          slug: conversion.slug,
+          owner: conversion.owner.login,
+          ownerType: conversion.owner.type,
+          account: account.login,
+          accountType: account.type,
+        },
+      });
+      return { outcome: "refused" as const, reason, app: created, account, deleteUrl, message };
+    };
+
+    if (!sameAccount(conversion.owner, account)) {
+      return withTx(tctx.db, (db) =>
+        refused(
+          db,
+          "owner-mismatch",
+          `GitHub created the App ${conversion.slug} on ${conversion.owner.login}'s own account, not on ${account.login}, because ${conversion.owner.login} cannot register Apps there. Varlatch did not keep it. ${conversion.owner.login} can delete it on GitHub. An owner or App manager of ${account.login} has to register the App, or register one and import it.`,
+        ),
+      );
+    }
+
+    const id = newId("githubApp");
+    const envelope = encryptGitHubAppKey(orgKekOf(tctx, org), org.id, id, conversion.pem);
+    return withTx(tctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+      const inserted = await db.query(
+        `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT DO NOTHING
+         RETURNING ${APP_COLUMNS}`,
+        [id, org.id, conversion.id, conversion.slug, conversion.clientId, conversion.owner.login, conversion.owner.id, conversion.owner.type, JSON.stringify(envelope), actorIdentityId],
+      );
+      const app = inserted.rows[0] as GitHubAppRow | undefined;
+      if (!app) {
+        if (await liveApp(db, org.id)) {
+          return refused(
+            db,
+            "organization-has-app",
+            `This Organization got another GitHub App while this one was being created, so Varlatch did not keep ${conversion.slug}. Delete it on GitHub.`,
+          );
+        }
+        return refused(db, "app-in-use", `Another Organization on this Varlatch already uses the App ${conversion.slug}, so Varlatch did not keep it here.`);
+      }
+      await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.register");
+      await recordAuditEvent(db, {
+        eventType: "sync.github_app_registered",
+        decision: "info",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { githubAppId: id },
+        metadata: {
+          via: "manifest",
+          appId: conversion.id,
+          slug: conversion.slug,
+          owner: conversion.owner.login,
+          ownerType: conversion.owner.type,
+        },
+      });
+      return { outcome: "registered" as const, app };
     });
-    return { outcome: "registered" as const, app };
   });
 }
 
@@ -405,8 +413,9 @@ export async function appWithKey(ctx: AppCtx, org: OrgRow): Promise<{ app: GitHu
   const row = res.rows[0] as (GitHubAppRow & { key_envelope: Envelope | string }) | undefined;
   if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
   // The App exists; then a request's passkey-verification, before its key
-  // is unwrapped (ADR-0054 Decision 7). Nothing for background work.
-  await lockedAccessCheckpoint(ctx.db, org.id);
+  // is unwrapped (ADR-0054 Decision 7), in the caller's external-effect
+  // transaction. Nothing for background work.
+  await requireOrganizationAccess(ctx.db, org.id);
   const envelope = typeof row.key_envelope === "string" ? (JSON.parse(row.key_envelope) as Envelope) : row.key_envelope;
   const { key_envelope: _key, ...app } = row;
   return { app, pem: decryptGitHubAppKey(orgKekOf(ctx, org), org.id, row.id, envelope) };
@@ -439,95 +448,101 @@ export async function importGitHubApp(
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
-  if (await liveApp(ctx.db, org.id)) {
-    throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before importing another.");
-  }
-  // passkey-verification before GitHub is called (ADR-0054 Decision 7);
-  // the import's transaction checks again.
-  await lockedAccessCheckpoint(ctx.db, org.id);
-  const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", String(input.appId), input.privateKey, now);
-  if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
-  if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
-  if (!res.ok) {
-    return {
-      outcome: "failed",
-      status: "failed",
-      where: "connection",
-      httpStatus: res.status,
-      message: `GitHub did not confirm App ${input.appId} with this key (HTTP ${res.status}).`,
-    };
-  }
-  const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
-  const owner = readAccount(body?.owner);
-  const permissions = body?.permissions as Record<string, unknown> | undefined;
-  if (
-    !body || typeof body !== "object" || Array.isArray(body) || !owner ||
-    !Number.isSafeInteger(body.id) ||
-    typeof body.slug !== "string" || !SLUG_PATTERN.test(body.slug) ||
-    typeof body.client_id !== "string" || body.client_id.length === 0 || body.client_id.length > 100 ||
-    typeof permissions !== "object" || permissions === null || Array.isArray(permissions)
-  ) {
-    return { outcome: "failed", ...NOT_GITHUB(res.status) };
-  }
-  if (body.id !== input.appId) {
-    return { outcome: "failed", ...NOT_GITHUB(res.status) };
-  }
-  const missing = Object.entries(GITHUB_APP_PERMISSIONS)
-    .filter(([name, level]) => !allows(permissions[name], level))
-    .map(([name, level]) => `${name}: ${level}`);
-  if (missing.length > 0) {
-    return {
-      outcome: "failed",
-      status: "permission-missing",
-      where: "connection",
-      httpStatus: res.status,
-      message: `The App ${body.slug} lacks ${missing.join(", ")}. Give it those permissions in its settings on GitHub (and have the installation accept them), then import it again.`,
-    };
-  }
-  const extra = Object.keys(permissions)
-    .filter((name) => !(name in GITHUB_APP_PERMISSIONS))
-    .sort()
-    .map((name) => `${name}:${String(permissions[name])}`);
-  const slug = body.slug;
-  const clientId = body.client_id;
-  const id = newId("githubApp");
-  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, input.privateKey);
-  return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
-    const inserted = await db.query(
-      `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       ON CONFLICT DO NOTHING
-       RETURNING ${APP_COLUMNS}`,
-      [id, org.id, input.appId, slug, clientId, owner.login, owner.id, owner.type, JSON.stringify(envelope), actorIdentityId],
-    );
-    const app = inserted.rows[0] as GitHubAppRow | undefined;
-    if (!app) {
-      throw new DomainError(
-        "STATE_CHANGED",
-        (await liveApp(db, org.id))
-          ? "This Organization already has a GitHub App. Remove it from Varlatch before importing another."
-          : `Another Organization on this Varlatch already uses the App ${slug}.`,
-      );
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    if (await liveApp(tctx.db, org.id)) {
+      throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before importing another.");
     }
-    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.import");
-    await recordAuditEvent(db, {
-      eventType: "sync.github_app_registered",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { githubAppId: id },
-      metadata: {
-        via: "import",
-        appId: input.appId,
-        slug,
-        owner: owner.login,
-        ownerType: owner.type,
-        ...(extra.length > 0 ? { extraPermissions: extra.join(",") } : {}),
-      },
+    // passkey-verification before GitHub is called (ADR-0054 Decision 7).
+    await requireOrganizationAccess(tctx.db, org.id);
+    const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }), "/app", String(input.appId), input.privateKey, now);
+    if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
+    if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
+    if (!res.ok) {
+      return {
+        outcome: "failed",
+        status: "failed",
+        where: "connection",
+        httpStatus: res.status,
+        message: `GitHub did not confirm App ${input.appId} with this key (HTTP ${res.status}).`,
+      };
+    }
+    const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    const owner = readAccount(body?.owner);
+    const permissions = body?.permissions as Record<string, unknown> | undefined;
+    if (
+      !body || typeof body !== "object" || Array.isArray(body) || !owner ||
+      !Number.isSafeInteger(body.id) ||
+      typeof body.slug !== "string" || !SLUG_PATTERN.test(body.slug) ||
+      typeof body.client_id !== "string" || body.client_id.length === 0 || body.client_id.length > 100 ||
+      typeof permissions !== "object" || permissions === null || Array.isArray(permissions)
+    ) {
+      return { outcome: "failed", ...NOT_GITHUB(res.status) };
+    }
+    if (body.id !== input.appId) {
+      return { outcome: "failed", ...NOT_GITHUB(res.status) };
+    }
+    const missing = Object.entries(GITHUB_APP_PERMISSIONS)
+      .filter(([name, level]) => !allows(permissions[name], level))
+      .map(([name, level]) => `${name}: ${level}`);
+    if (missing.length > 0) {
+      return {
+        outcome: "failed",
+        status: "permission-missing",
+        where: "connection",
+        httpStatus: res.status,
+        message: `The App ${body.slug} lacks ${missing.join(", ")}. Give it those permissions in its settings on GitHub (and have the installation accept them), then import it again.`,
+      };
+    }
+    const extra = Object.keys(permissions)
+      .filter((name) => !(name in GITHUB_APP_PERMISSIONS))
+      .sort()
+      .map((name) => `${name}:${String(permissions[name])}`);
+    const slug = body.slug;
+    const clientId = body.client_id;
+    const id = newId("githubApp");
+    const envelope = encryptGitHubAppKey(orgKekOf(tctx, org), org.id, id, input.privateKey);
+    return withTx(tctx.db, async (db) => {
+      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+      const inserted = await db.query(
+        `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT DO NOTHING
+         RETURNING ${APP_COLUMNS}`,
+        [id, org.id, input.appId, slug, clientId, owner.login, owner.id, owner.type, JSON.stringify(envelope), actorIdentityId],
+      );
+      const app = inserted.rows[0] as GitHubAppRow | undefined;
+      if (!app) {
+        throw new DomainError(
+          "STATE_CHANGED",
+          (await liveApp(db, org.id))
+            ? "This Organization already has a GitHub App. Remove it from Varlatch before importing another."
+            : `Another Organization on this Varlatch already uses the App ${slug}.`,
+        );
+      }
+      await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.import");
+      await recordAuditEvent(db, {
+        eventType: "sync.github_app_registered",
+        decision: "info",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { githubAppId: id },
+        metadata: {
+          via: "import",
+          appId: input.appId,
+          slug,
+          owner: owner.login,
+          ownerType: owner.type,
+          ...(extra.length > 0 ? { extraPermissions: extra.join(",") } : {}),
+        },
+      });
+      return { outcome: "registered" as const, app };
     });
-    return { outcome: "registered" as const, app };
   });
 }
 
@@ -561,23 +576,30 @@ export async function listAppInstallations(
 ): Promise<InstallationListing> {
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const { app, pem } = await appWithKey(ctx, org);
-  const listing = await readInstallations(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), Number(app.github_app_id), app.client_id, pem, now);
-  await recordAuditEvent(ctx.db, {
-    eventType: "sync.github_app_installations_listed",
-    decision: "info",
-    actorIdentityId,
-    organizationId: org.id,
-    action: "config.sync.manage",
-    resource: { githubAppId: app.id },
-    metadata: {
-      status: listing.check.status,
-      httpStatus: listing.check.httpStatus ?? null,
-      count: listing.items.length,
-      truncated: listing.truncated,
-    },
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const { app, pem } = await appWithKey(tctx, org);
+    const listing = await readInstallations(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }), Number(app.github_app_id), app.client_id, pem, now);
+    await recordAuditEvent(tctx.db, {
+      eventType: "sync.github_app_installations_listed",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: { githubAppId: app.id },
+      metadata: {
+        status: listing.check.status,
+        httpStatus: listing.check.httpStatus ?? null,
+        count: listing.items.length,
+        truncated: listing.truncated,
+      },
+    });
+    return listing;
   });
-  return listing;
 }
 
 async function readInstallations(fetchImpl: typeof fetch, githubAppId: number, clientId: string, pem: string, now: number): Promise<InstallationListing> {

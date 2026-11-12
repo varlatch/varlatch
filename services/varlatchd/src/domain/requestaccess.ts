@@ -143,12 +143,11 @@ export async function captureOrganizationAccess(db: Querier, organizationId: str
  *   now through `db` if this is the first look in the attempt.
  * - Outside one: the decision this request already took for the
  *   Organization (a write that committed, or a snapshot that ended), never
- *   read again; otherwise, or with `fresh` (an external operation's locked
- *   checkpoint, liveness.ts lockedAccessCheckpoint), read now through `db`.
+ *   read again; otherwise read now through `db`.
  *
  * Outside a request (background work, host commands): nothing.
  */
-export async function requireOrganizationAccess(db: Querier, organizationId: string, options: { fresh?: boolean } = {}): Promise<void> {
+export async function requireOrganizationAccess(db: Querier, organizationId: string): Promise<void> {
   const request = storage.getStore();
   if (!request) return;
   const attempt = currentTxAttempt();
@@ -156,7 +155,7 @@ export async function requireOrganizationAccess(db: Querier, organizationId: str
   if (attempt) {
     await captureOrganizationAccess(db, organizationId);
     outcome = attemptAccess(attempt).captured.get(organizationId)!;
-  } else if (request.decided.has(organizationId) && !options.fresh) {
+  } else if (request.decided.has(organizationId)) {
     return;
   } else {
     outcome = await passkeyVerification(db, request.requester, [organizationId]);
@@ -170,15 +169,30 @@ export async function requireOrganizationAccess(db: Querier, organizationId: str
 }
 
 /**
- * Before a protected effect that its operation's checkpoint must precede
- * (a disclosure audit, a decryption, an outbound call): a request that
- * reaches it with no checkpoint for the Organization is a coverage gap.
- * It is noted for the tests and, failing closed, checked now.
+ * Before a protected effect that its operation's checkpoint must precede:
+ * a request that reaches it with no checkpoint for the Organization is a
+ * coverage gap. It is noted for the tests and, failing closed, checked now.
+ *
+ * - A disclosure audit and decryption after a retrieval's snapshot: the
+ *   snapshot's checkpoint (the request's decision).
+ * - `underLock`, an external effect (liveness.ts withExternalEffect): a
+ *   checkpoint in the transaction it runs in, which holds the Organization
+ *   row until the effect is done.
  */
-export async function assertOrganizationAccessChecked(db: Querier, organizationId: string, effect: string): Promise<void> {
+export async function assertOrganizationAccessChecked(
+  db: Querier,
+  organizationId: string,
+  effect: string,
+  options: { underLock?: boolean } = {},
+): Promise<void> {
   const request = storage.getStore();
-  if (!request || request.decided.has(organizationId)) return;
-  noteCoverageGap(`${effect} in ${organizationId} before its passkey-verification checkpoint`);
+  if (!request) return;
+  const attempt = currentTxAttempt();
+  const checked = options.underLock
+    ? attempt !== undefined && attemptAccess(attempt).checked.has(organizationId)
+    : request.decided.has(organizationId);
+  if (checked) return;
+  noteCoverageGap(`${effect} in ${organizationId} before its passkey-verification checkpoint${options.underLock ? " under the Organization lock" : ""}`);
   await requireOrganizationAccess(db, organizationId);
 }
 
