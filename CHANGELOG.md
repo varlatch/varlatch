@@ -31,12 +31,46 @@ fixes.
 - **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
   409 with `Retry-After: 300`. The CLI exits with status 77 and never
   retries it; back off in your own runners too.
+- **Requirement protection can now be enforced.** With
+  `varlatch security set requirement-protection enforce` (or from the
+  Security page), editing or removing one of the organization's Tailnet
+  Requirements needs the approval of the person asking, with a trusted
+  passkey, for exactly that change. A stolen sign-in or a machine
+  credential with `policy.manage` can then no longer remove a Requirement
+  from off the tailnet; a machine credential is refused outright.
+  Creating a Requirement, and an edit that changes nothing, need no
+  approval. `varlatch tailnet remove` waits for the approval like
+  `varlatch security set`; the dashboard opens the approval dialog. The
+  audit events `requirement.updated` and `requirement.revoked` name the
+  approval used. Every control stays off until an admin turns it on, and
+  the other three controls still refuse `enforce`
+  (`CONTROL_MODE_UNAVAILABLE`). See [Requirement
+  protection](docs/reference/security-controls.md#requirement-protection).
+- **Removing a trusted passkey needs an approval** once you are a member of
+  an organization that enforces a control. Removing an unconfirmed passkey
+  never does. If you lose your trusted passkeys, the host operator's
+  `admin reenroll` enrolls a new one, and `admin security reset` turns the
+  control off.
+
+### Scripts and API
+
+- `GET /v1/meta` lists `security.enforce.<control>` for each control the
+  server can enforce (`security.enforce.requirement-protection` in this
+  release). Each item of `GET /v1/organizations/{org}/security/controls`
+  gains its own `availableModes`. `varlatch security status --json` gains
+  `enforceable`.
+- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
+  answer `403 STEP_UP_REQUIRED`: repeat the request with the
+  `Varlatch-Approval` header once it is approved. A removal whose
+  Requirement changed meanwhile answers `STATE_CHANGED`.
 
 ### Upgrading
 
 - Migration 44 adds the freeze history. Restoring a backup taken before a
   freeze brings the organization back unfrozen: freeze it again after the
   restore.
+- Migration 45 lets approvals cover Tailnet Requirement changes. Nothing
+  changes until an admin enforces `requirement-protection`.
 
 ## Unreleased (0.21.1)
 
