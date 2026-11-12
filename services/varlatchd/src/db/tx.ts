@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Querier } from "./migrate.js";
 
 /** A Querier that can check out a dedicated connection (node-postgres Pool). */
@@ -17,8 +18,56 @@ function isPool(db: Querier): db is PoolQuerier {
  */
 const inTx = new WeakSet<Querier>();
 
+/**
+ * Single connections that concurrent flows share (the test database, under
+ * the lock-order check). On one of these, nesting is per async flow: a
+ * call from inside the open transaction's flow joins it, and another
+ * flow's call is that flow's own transaction, as on a connection of its
+ * own. Every other Querier keeps the identity check above: a dedicated
+ * client, wherever its callers run, is in a transaction while one is open
+ * on it.
+ */
+const shared = new WeakSet<Querier>();
+
+/** Registers a single connection that concurrent flows share (tests only). */
+export function shareConnection(db: Querier): void {
+  shared.add(db);
+}
+
+/** A transaction open on a shared connection, for the flow that opened it and the work that flow starts. */
+export interface TxScope {
+  readonly db: Querier;
+  readonly outer: TxScope | undefined;
+  open: boolean;
+}
+
+const scopes = new AsyncLocalStorage<TxScope>();
+
+/** The open transaction this async flow runs in on the shared connection `db`, if any. */
+export function openTxScope(db: Querier): TxScope | undefined {
+  for (let s = scopes.getStore(); s; s = s.outer) if (s.open && s.db === db) return s;
+  return undefined;
+}
+
+function nested(db: Querier): boolean {
+  return shared.has(db) ? openTxScope(db) !== undefined : inTx.has(db);
+}
+
+/** Runs a transaction's body; on a shared connection, as the flow of a scope that closes when it settles. */
+function scoped<T>(db: Querier, body: () => Promise<T>): Promise<T> {
+  if (!shared.has(db)) return body();
+  const scope: TxScope = { db, outer: scopes.getStore(), open: true };
+  return scopes.run(scope, async () => {
+    try {
+      return await body();
+    } finally {
+      scope.open = false;
+    }
+  });
+}
+
 export async function withTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): Promise<T> {
-  if (inTx.has(db)) return fn(db);
+  if (nested(db)) return fn(db);
   if (isPool(db)) {
     const client = await db.connect();
     try {
@@ -27,18 +76,20 @@ export async function withTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): P
       client.release();
     }
   }
-  await db.query("BEGIN");
-  inTx.add(db);
-  try {
-    const result = await fn(db);
-    await db.query("COMMIT");
-    return result;
-  } catch (err) {
-    await db.query("ROLLBACK");
-    throw err;
-  } finally {
-    inTx.delete(db);
-  }
+  return scoped(db, async () => {
+    await db.query("BEGIN");
+    inTx.add(db);
+    try {
+      const result = await fn(db);
+      await db.query("COMMIT");
+      return result;
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    } finally {
+      inTx.delete(db);
+    }
+  });
 }
 
 /** PostgreSQL's serialization_failure and deadlock_detected: safe to retry whole. */
@@ -71,7 +122,7 @@ export async function withSerializableTx<T>(
   fn: (db: Querier) => Promise<T>,
   opts: { attempts?: number; backoffMs?: number } = {},
 ): Promise<T> {
-  if (inTx.has(db)) throw new Error("A serializable transaction cannot start inside another transaction");
+  if (nested(db)) throw new Error("A serializable transaction cannot start inside another transaction");
   if (isPool(db)) {
     const client = await db.connect();
     try {
@@ -83,21 +134,25 @@ export async function withSerializableTx<T>(
   const attempts = opts.attempts ?? SERIALIZABLE_ATTEMPTS;
   const backoffMs = opts.backoffMs ?? 20;
   for (let attempt = 1; ; attempt++) {
-    await db.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    inTx.add(db);
-    try {
-      const result = await fn(db);
-      await db.query("COMMIT");
-      return result;
-    } catch (err) {
-      // After a failed COMMIT the transaction is already over; ROLLBACK
-      // then only warns, and must not hide the original error.
-      await db.query("ROLLBACK").catch(() => undefined);
-      if (!isSerializationFailure(err)) throw err;
-      if (attempt >= attempts) throw new SerializationRetriesExhausted(attempts);
-    } finally {
-      inTx.delete(db);
-    }
+    const outcome = await scoped(db, async (): Promise<{ result: T } | { err: unknown }> => {
+      await db.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+      inTx.add(db);
+      try {
+        const result = await fn(db);
+        await db.query("COMMIT");
+        return { result };
+      } catch (err) {
+        // After a failed COMMIT the transaction is already over; ROLLBACK
+        // then only warns, and must not hide the original error.
+        await db.query("ROLLBACK").catch(() => undefined);
+        return { err };
+      } finally {
+        inTx.delete(db);
+      }
+    });
+    if ("result" in outcome) return outcome.result;
+    if (!isSerializationFailure(outcome.err)) throw outcome.err;
+    if (attempt >= attempts) throw new SerializationRetriesExhausted(attempts);
     await new Promise((resolve) => setTimeout(resolve, backoffMs * attempt * (0.5 + Math.random())));
   }
 }
@@ -121,18 +176,20 @@ export async function withSnapshot<T>(
       client.release();
     }
   }
-  if (inTx.has(db)) throw new Error("A snapshot cannot start inside a transaction");
-  await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-  inTx.add(db);
-  try {
-    const row = (await db.query("SELECT now() AS now")).rows[0] as { now: Date | string };
-    const result = await fn(db, new Date(row.now));
-    await db.query("COMMIT");
-    return result;
-  } catch (err) {
-    await db.query("ROLLBACK");
-    throw err;
-  } finally {
-    inTx.delete(db);
-  }
+  if (nested(db)) throw new Error("A snapshot cannot start inside a transaction");
+  return scoped(db, async () => {
+    await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    inTx.add(db);
+    try {
+      const row = (await db.query("SELECT now() AS now")).rows[0] as { now: Date | string };
+      const result = await fn(db, new Date(row.now));
+      await db.query("COMMIT");
+      return result;
+    } catch (err) {
+      await db.query("ROLLBACK");
+      throw err;
+    } finally {
+      inTx.delete(db);
+    }
+  });
 }

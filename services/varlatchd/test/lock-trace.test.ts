@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { lockedQuery } from "../src/db/locks.js";
+import type { Querier } from "../src/db/migrate.js";
 import { withTx } from "../src/db/tx.js";
 import { lockPeople } from "../src/domain/personlocks.js";
-import { checkTrace, lockOrderMode, lockTagOf, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
+import { checkTrace, installLockTrace, lockOrderMode, lockTagOf, lockTraced, scanSql, statementsOf, takeLockViolations, type TraceRow } from "./helpers/lock-trace.js";
 import { checkAuditBeforeDecryption, isKeyOnlyLock, traceLog } from "./helpers/trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
@@ -161,6 +162,36 @@ describe("scanSql", () => {
     expect(statementsOf("SELECT 1 -- ; COMMIT\n; COMMIT")).toEqual(["SELECT 1", "COMMIT"]);
     expect(scanSql("SELECT '/* varlatch-lock identities update id */' FOR UPDATE").comments).toEqual([]);
   });
+
+  it("refuses what it would read differently from PostgreSQL, rather than let it hide a lock", () => {
+    for (const sql of [
+      // A string continued on a new line keeps an E-string's escapes.
+      "SELECT E'a'\n'\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT E'a'\r'\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT E'a' --c\r'\\'foo' AS s, id FROM identities FOR UPDATE",
+      // A dollar-quote tag PostgreSQL accepts but the scanner does not model.
+      "SELECT $é$'$é$ AS s, id FROM identities FOR UPDATE",
+      // A $ inside a name, which could otherwise open a false dollar quote.
+      "SELECT id AS foo$$$ FROM identities FOR UPDATE",
+      // A non-ASCII name character, which PostgreSQL reads as part of the name.
+      "SELECT id AS é$$$ FROM identities FOR UPDATE",
+      "SELECT 1 AS é$$$; COMMIT",
+      // Backslashes escape in ordinary strings once this is off.
+      "SET standard_conforming_strings = off",
+      "SELECT set_config('standard_conforming_strings', 'off', false)",
+      // However the setting was turned off, a backslash before a quote in an
+      // ordinary string would then escape it.
+      "SELECT '\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT '\\'foo'; COMMIT",
+      "SELECT 'a\\\\\\'b' FROM t",
+    ]) {
+      expect(() => scanSql(sql), JSON.stringify(sql)).toThrow(/outside what the checker reads/);
+    }
+    // Still read: parameters, ASCII dollar quotes, adjacent strings on one line joined by an operator.
+    expect(statementsOf("SELECT $1::text, $tag$ x $tag$, 'a' || 'b'")).toEqual(["SELECT $1::text, '', '' || ''"]);
+    // A backslash before anything but a quote reads the same either way (a migration's regex: '^a(\\.b)+$').
+    expect(statementsOf("SELECT 'x' ~ '^a(\\.b)+$'")).toHaveLength(1);
+  });
 });
 
 describe("the grammar a locking statement may use (refused rather than parsed outside it)", () => {
@@ -225,6 +256,16 @@ describe("the grammar a locking statement may use (refused rather than parsed ou
     refused(`INSERT INTO organizations (id, slug) SELECT id, id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
     refused(`SELECT id INTO TEMP t FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
     refused(`DECLARE c CURSOR FOR SELECT id FROM identities WHERE id = 'a' FOR UPDATE${tag("identities")}`);
+    // The sweep's IN column must be the target's, and an UPDATE … FROM writes other rows.
+    refused("UPDATE identities SET name = 'x' FROM organizations o WHERE o.id IN (SELECT id FROM identities WHERE id = 'b' FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities i WHERE o.id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED) /* varlatch-lock identities update - */");
+    // The selected column must be the locked item's, not a joined unlocked one's.
+    refused("DELETE FROM identities WHERE id IN (SELECT o.id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */");
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */");
+    // Exactly one subquery level.
+    refused("DELETE FROM identities WHERE id IN (SELECT id FROM identities WHERE id = 'a' AND id IN (SELECT id FROM identities FOR UPDATE SKIP LOCKED)) /* varlatch-lock identities update - */");
+    // A qualified column of the locked item, or its alias, stays allowed.
+    expect(lockTagOf("DELETE FROM identities t WHERE t.id IN (SELECT i.id FROM identities i JOIN organizations o ON o.id = i.organization_id FOR UPDATE OF i SKIP LOCKED) /* varlatch-lock identities update - */")?.key).toBe("-");
     // The sweep pattern stays allowed, in both shapes the code uses.
     expect(lockTagOf(
       "DELETE FROM security_control_counters c USING (SELECT organization_id, control FROM security_control_counters k ORDER BY organization_id LIMIT $2 FOR UPDATE SKIP LOCKED) d WHERE c.organization_id = d.organization_id AND c.control = d.control RETURNING 1 /* varlatch-lock security_control_counters update - */",
@@ -270,6 +311,38 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     )).rejects.toThrow(/statements of their own/);
     expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
     expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b" }]);
+    expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("records the locks of statements sent at once in a transaction in the order PostgreSQL took them", async () => {
+    // The person's lock is sent first and taken first; the Organization's
+    // write comes after it, a step back. Recorded the other way round (the
+    // write's trigger runs before the lock's trace insert), it would pass.
+    await withTx(db, async (q) => {
+      await Promise.all([
+        lockedQuery(q, { table: "identities", mode: "update" }, "SELECT id FROM identities WHERE id = 'idn_a' FOR UPDATE"),
+        q.query("UPDATE organizations SET name = 'A3' WHERE id = 'org_a'"),
+      ]);
+    });
+    const violations = takeLockViolations();
+    expect(violations.map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: organizations\[org_a\]/)]]);
+  });
+
+  it("runs an exec sent with its transaction's COMMIT after that end, in a transaction of its own", async () => {
+    let first: unknown;
+    let after: unknown;
+    await withTx(db, async (q) => {
+      const [locked] = await Promise.all([
+        lockedQuery(q, { table: "identities", mode: "update" }, "SELECT id, txid_current()::text AS t FROM identities WHERE id = 'idn_a' FOR UPDATE"),
+        q.query("COMMIT"),
+        q.exec!("UPDATE organizations SET name = txid_current()::text WHERE id = 'org_a'; SELECT 1"),
+      ]);
+      first = (locked.rows[0] as { t: string }).t;
+    });
+    after = ((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows[0] as { name: string }).name;
+    // Not inside the ending transaction (where the update would have come
+    // after the person's lock, a step back recorded in the wrong order).
+    expect(after).not.toBe(first);
     expect(takeLockViolations()).toEqual([]);
   });
 
@@ -326,6 +399,267 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(lone).toHaveLength(1);
     expect(lone[0]!.problems.filter((p) => /^a person's row changed without an explicit FOR UPDATE prelock/.test(p))).toHaveLength(2);
     expect((await db.query("SELECT name FROM identities WHERE id = 'idn_b'")).rows).toEqual([{ name: "b!" }]);
+    // References count: a lone insert referencing two parents, a lone update
+    // changing a foreign key, each takes two row locks and is checked.
+    await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')");
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual(expect.arrayContaining([expect.stringMatching(/^identity referenced without being locked at step 2 first: identities\[idn_a\]/)]));
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_b', 'b', 'B', '{}'::jsonb)");
+    await db.query("UPDATE identities SET organization_id = 'org_b' WHERE id = 'idn_b'");
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual(expect.arrayContaining([expect.stringMatching(/^a person's row changed without an explicit FOR UPDATE prelock/)]));
+  });
+
+  it("serializes lone statements against each other and a transaction on the one PGlite connection", async () => {
+    // Two lone writes and a transaction that fails, all at once: the failed
+    // transaction's write is rolled back alone, and the lone writes stay.
+    const results = await Promise.allSettled([
+      db.query("UPDATE identities SET name = 'a3' WHERE id = 'idn_a'"),
+      withTx(db, async (q) => {
+        await q.query("UPDATE organizations SET name = 'A3' WHERE id = 'org_a'");
+        throw new Error("refused");
+      }),
+      db.query("UPDATE identities SET name = 'b3' WHERE id = 'idn_b'"),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    takeLockViolations();
+    expect((await db.query("SELECT id, name FROM identities ORDER BY id")).rows).toEqual([{ id: "idn_a", name: "a3" }, { id: "idn_b", name: "b3" }]);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+  });
+
+  // Concurrent flows on the one connection: each gets a transaction of its
+  // own, one at a time, as separate connections that conflict would.
+  const gate = () => {
+    let open!: () => void;
+    const opened = new Promise<void>((r) => (open = r));
+    return { opened, open };
+  };
+  const turn = () => new Promise<void>((r) => setTimeout(r, 5));
+  /** A traced database whose connection calls `hook` when a check reads the trace. */
+  const hooked = async () => {
+    const raw = await migratedTestDb({ lockOrder: "off" });
+    await installLockTrace(raw);
+    const state: { hook?: (() => void) | undefined } = {};
+    const traced = lockTraced({
+      ...raw,
+      query: (text: string, params?: unknown[]) => {
+        const res = raw.query(text, params);
+        if (/^SELECT seq::int AS seq, tbl, key, mode, kind FROM varlatch_lock_trace\.trace/.test(text)) {
+          const hook = state.hook;
+          state.hook = undefined;
+          hook?.();
+        }
+        return res;
+      },
+    }, "all", { checkTestStatements: true });
+    await traced.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await traced.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
+    return { traced, state, close: raw.close };
+  };
+  /** Step 1, the Organization, then step 2, both people: what lockLiveScope takes. */
+  const steps1And2 = async (q: Querier) => {
+    await lockedQuery(q, { table: "organizations", mode: "key share", key: "$1" }, "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE", ["org_a"]);
+    await lockPeople(q, ["idn_a", "idn_b"]);
+  };
+  const personChanged = /^a person's row changed without an explicit FOR UPDATE prelock at step 2: identities\[idn_(a|b)\]/;
+
+  it("gives concurrent withTx flows a transaction each, checked on its own trace", async () => {
+    // The shape of three concurrent credential issues (whoami.test.ts):
+    // each flow's references follow its own step-2 locks.
+    const issue = (id: string) =>
+      withTx(db, async (q) => {
+        await steps1And2(q);
+        await turn();
+        await q.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', $1, 'member')", [id]);
+      });
+    await Promise.all([issue("idn_a"), issue("idn_b")]);
+    expect(takeLockViolations()).toEqual([]);
+    expect((await db.query("SELECT identity_id FROM org_memberships ORDER BY identity_id")).rows).toEqual([{ identity_id: "idn_a" }, { identity_id: "idn_b" }]);
+  });
+
+  it("gives a transaction begun after another flow's prelocks none of them", async () => {
+    // A and B begin (B through withTx: two transactions begun outside
+    // withTx at once are refused); A prelocks both people and commits while
+    // B stays open; C then begins and changes both people without a prelock.
+    const aDone = gate();
+    const bMayEnd = gate();
+    const a = (async () => {
+      await db.query("BEGIN");
+      await lockPeople(db, [{ id: "idn_a", mode: "update" }, { id: "idn_b", mode: "update" }]);
+      await db.query("COMMIT");
+      aDone.open();
+    })();
+    const b = withTx(db, async () => {
+      await bMayEnd.opened;
+    });
+    await aDone.opened;
+    const c = (async () => {
+      await db.query("BEGIN");
+      await db.query("UPDATE identities SET name = 'c' WHERE id IN ('idn_a', 'idn_b')");
+      await db.query("COMMIT");
+    })();
+    await turn();
+    bMayEnd.open();
+    await Promise.all([a, b, c]);
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "c" }, { name: "c" }]);
+  });
+
+  it("runs a statement sent behind its own flow's BEGIN inside that transaction", async () => {
+    await Promise.all([db.query("BEGIN"), db.query("SELECT 1"), db.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'")]);
+    await db.query("ROLLBACK");
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+    expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks a withTx that began while another flow's was open as a whole transaction", async () => {
+    // C's withTx starts while A's is open, and its statements come after
+    // A's COMMIT: one person changed unprelocked, then the Organization.
+    const aLocked = gate();
+    const aMayCommit = gate();
+    const a = withTx(db, async (q) => {
+      await steps1And2(q);
+      aLocked.open();
+      await aMayCommit.opened;
+    });
+    await aLocked.opened;
+    const c = withTx(db, async (q) => {
+      await q.query("SELECT 1");
+      await q.query("UPDATE identities SET name = 'c' WHERE id = 'idn_a'");
+      await q.query("UPDATE organizations SET name = 'C' WHERE id = 'org_a'");
+    });
+    await turn();
+    aMayCommit.open();
+    await Promise.all([a, c]);
+    const problems = takeLockViolations().flatMap((v) => v.problems);
+    expect(problems.filter((p) => personChanged.test(p))).toHaveLength(1);
+    expect(problems.filter((p) => /^step went back: organizations\[org_a\]/.test(p))).toHaveLength(1);
+  });
+
+  it("ends a transaction only after its earlier statements have recorded their locks", async () => {
+    await db.query("BEGIN");
+    await lockPeople(db, ["idn_a"]);
+    await Promise.all([
+      lockedQuery(db, { table: "organizations", mode: "key share", key: "$1" }, "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE", ["org_a"]),
+      db.query("COMMIT"),
+    ]);
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual([expect.stringMatching(/^step went back: organizations\[org_a\] key share \(explicit/)]);
+  });
+
+  it("runs a multi-statement exec sent behind its own flow's BEGIN inside that transaction", async () => {
+    await Promise.all([
+      db.query("BEGIN"),
+      db.exec!("UPDATE identities SET name = 'x' WHERE id = 'idn_a'; UPDATE identities SET name = 'y' WHERE id = 'idn_b'"),
+    ]);
+    await db.query("ROLLBACK");
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "a" }, { name: "b" }]);
+    takeLockViolations();
+  });
+
+  it("checks a SELECT that writes as any other statement, and keeps it out of another flow's transaction", async () => {
+    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
+    await db.close();
+    db = own;
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
+    await db.query("CREATE FUNCTION change_people() RETURNS void LANGUAGE sql AS $$ UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b') $$");
+    await db.query("SELECT change_people()");
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
+    // While another flow's transaction is open, it waits for that one to end.
+    const aOpen = gate();
+    const aMayEnd = gate();
+    const a = withTx(db, async (q) => {
+      await q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
+      aOpen.open();
+      await aMayEnd.opened;
+      throw new Error("refused");
+    });
+    await aOpen.opened;
+    const change = db.query("SELECT change_people()");
+    await turn();
+    aMayEnd.open();
+    await expect(a).rejects.toThrow("refused");
+    await change;
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "a!!" }, { name: "b!!" }]);
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+    takeLockViolations();
+  });
+
+  it("refuses transaction control it does not model at once, leaving the transaction its caller's and nothing else held", async () => {
+    await db.query("BEGIN");
+    await db.query("UPDATE identities SET name = 'x' WHERE id = 'idn_a'");
+    for (const sql of ["COMMIT AND CHAIN", "END AND CHAIN", "ROLLBACK AND CHAIN", "ABORT WORK AND CHAIN", "PREPARE TRANSACTION 'p1'", "COMMIT PREPARED 'p1'", "ROLLBACK PREPARED 'p1'",
+      // A line comment ends at a carriage return too, as in PostgreSQL.
+      "COMMIT --comment\rAND CHAIN", "ROLLBACK -- x\r\nAND CHAIN"]) {
+      await expect(db.query(sql)).rejects.toThrow(/does not model/);
+    }
+    // Inside a compound statement too.
+    await expect(db.exec!("UPDATE identities SET name = 'y' WHERE id = 'idn_b'; COMMIT AND CHAIN")).rejects.toThrow(/does not model/);
+    await expect(db.exec!("SELECT 1; ROLLBACK PREPARED 'p1'")).rejects.toThrow(/does not model/);
+    // The caller's transaction is still open, and its own; AND NO CHAIN is a plain end.
+    await db.query("COMMIT AND NO CHAIN");
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "x" }, { name: "b" }]);
+    await db.query("BEGIN");
+    await db.query("UPDATE identities SET name = 'z' WHERE id = 'idn_a'");
+    await db.query("ROLLBACK AND NO CHAIN");
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_a'")).rows).toEqual([{ name: "x" }]);
+    // Nothing is held: another flow's transaction runs at once.
+    await withTx(db, (q) => q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'"));
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A2" }]);
+    takeLockViolations();
+  });
+
+  it("refuses a BEGIN outside withTx while another such transaction is open, at once and changing nothing", async () => {
+    await db.query("BEGIN");
+    await expect(db.query("BEGIN")).rejects.toThrow(/BEGIN outside withTx while a transaction begun outside withTx is open/);
+    await expect(db.query("START TRANSACTION")).rejects.toThrow(/BEGIN outside withTx/);
+    // The first transaction is still the caller's: its statements run in it, and its COMMIT ends it.
+    await db.query("UPDATE identities SET name = 'x' WHERE id = 'idn_a'");
+    await db.query("COMMIT");
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_a'")).rows).toEqual([{ name: "x" }]);
+    // Nothing is held: a withTx and a new BEGIN run at once.
+    await withTx(db, (q) => q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'"));
+    await db.query("BEGIN");
+    await db.query("COMMIT");
+    takeLockViolations();
+  });
+
+  it("runs no other statement inside a lone statement's wrap", async () => {
+    const { traced, state, close } = await hooked();
+    try {
+      // A two-person change arrives as the first lone write's check reads
+      // the trace: it runs after that wrap, in its own, and is checked.
+      let injected: Promise<unknown> | undefined;
+      state.hook = () => {
+        injected = traced.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
+      };
+      await traced.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
+      expect(injected).toBeDefined();
+      await injected;
+      const violations = takeLockViolations();
+      expect(violations).toHaveLength(1);
+      expect(violations[0]!.problems.filter((p) => personChanged.test(p))).toHaveLength(2);
+    } finally {
+      await close();
+    }
+  });
+
+  it("checks lone statements again after a failed COMMIT, with or without the ROLLBACK after it", async () => {
+    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
+    await db.close();
+    db = own;
+    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
+    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
+    await db.query("CREATE TABLE fk_parent (id text PRIMARY KEY)");
+    await db.query("CREATE TABLE fk_child (parent text REFERENCES fk_parent DEFERRABLE INITIALLY DEFERRED)");
+    // A direct caller: no ROLLBACK after the COMMIT that failed.
+    await db.query("BEGIN");
+    await db.query("INSERT INTO fk_child VALUES ('missing')");
+    await expect(db.query("COMMIT")).rejects.toThrow(/foreign key/);
+    await db.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
+    // withTx: a ROLLBACK follows the failed COMMIT.
+    await expect(withTx(db, async (q) => q.query("INSERT INTO fk_child VALUES ('missing')"))).rejects.toThrow(/foreign key/);
+    await db.query("UPDATE identities SET name = name || '!' WHERE id IN ('idn_a', 'idn_b')");
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
   });
 
   it("checks a transaction that ends in a rollback too, and skips an aborted one", async () => {
