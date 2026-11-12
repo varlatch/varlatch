@@ -14,6 +14,7 @@ import { approvalMetadata, prepareProtectedOperation } from "./protected.js";
 import {
   groupCreateBinding,
   groupDeleteBinding,
+  groupLabel,
   groupOperation,
   groupUpdateBinding,
   isGroupMember,
@@ -462,7 +463,7 @@ export async function deleteGroup(
       binding: async (db) => {
         const group = await readGroup(db, organizationId, groupId);
         if (!group) throw new DomainError("RESOURCE_NOT_FOUND", "Group not found");
-        return groupDeleteBinding(db, { id: organizationId }, group);
+        return groupDeleteBinding(db, { id: organizationId }, { ...group, name: await groupLabel(db, groupId, group.name) });
       },
       authorizeIn: options.authorizeIn,
     });
@@ -557,7 +558,7 @@ export async function addGroupMember(
           boundMember = true;
           return null;
         }
-        return memberAddBinding({ id: organizationId }, group, person);
+        return memberAddBinding({ id: organizationId }, { ...group, name: await groupLabel(db, groupId, group.name) }, person);
       },
       authorizeIn: options.authorizeIn,
     });
@@ -616,7 +617,7 @@ export async function removeGroupMember(
       checks: [{ control: "admin-step-up", operation: groupOperation(group.kind, "member_remove") }],
       binding: async (db) => {
         if (!(await isGroupMember(db, groupId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Membership not found");
-        return memberRemoveBinding({ id: organizationId }, group, await readPerson(db, identityId));
+        return memberRemoveBinding({ id: organizationId }, { ...group, name: await groupLabel(db, groupId, group.name) }, await readPerson(db, organizationId, identityId));
       },
       authorizeIn: options.authorizeIn,
     });
@@ -684,7 +685,7 @@ export async function addTeamProject(
           boundLinked = true;
           return null;
         }
-        return teamProjectAddBinding({ id: organizationId }, team, project);
+        return teamProjectAddBinding({ id: organizationId }, { ...team, name: await groupLabel(db, teamId, team.name) }, project);
       },
       authorizeIn: options.authorizeIn,
     });
@@ -730,7 +731,7 @@ export async function removeTeamProject(
       checks: [{ control: "admin-step-up", operation: "team.project_remove" }],
       binding: async (db) => {
         if (!(await isTeamProject(db, teamId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Team does not own that project");
-        return teamProjectRemoveBinding({ id: organizationId }, team, await readProjectName(db, organizationId, projectId));
+        return teamProjectRemoveBinding({ id: organizationId }, { ...team, name: await groupLabel(db, teamId, team.name) }, await readProjectName(db, organizationId, projectId));
       },
       authorizeIn: options.authorizeIn,
     });
