@@ -213,10 +213,11 @@ export function installPs1(d: CliDownload): string {
   $ShimText = '@node "%~dp0varlatch.cjs" %*'
   $Installed = (Test-Path $Target) -and ((Get-FileHash -Algorithm SHA256 $Target).Hash -ieq $Sha256)
   $ShimOk = (Test-Path $Shim) -and ((Get-Content -Raw $Shim).Trim() -eq $ShimText)
-  # Replace a file atomically when it exists ([IO.File]::Replace), move it in
+  # Replace a file atomically when it exists ([IO.File]::Replace, with a real
+  # null for "no backup": PowerShell would pass $null as ""), move it in
   # when it does not; the staged file sits in the same directory.
   function Install-File([string]$Staged, [string]$Destination) {
-    if (Test-Path $Destination) { [IO.File]::Replace($Staged, $Destination, $null) } else { [IO.File]::Move($Staged, $Destination) }
+    if (Test-Path $Destination) { [IO.File]::Replace($Staged, $Destination, [NullString]::Value) } else { [IO.File]::Move($Staged, $Destination) }
   }
 
   if ($Installed -and $ShimOk) {

@@ -30,6 +30,78 @@ const check = (ok, what) => {
   if (!ok) failures.push(what);
 };
 
+/** One PowerShell run, async (the stub server answers from this process); `stdin` answers Read-Host. */
+function shell(exe, appData, code, { stdin = "", interactive = false } = {}) {
+  return new Promise((resolve) => {
+    import("node:child_process").then(({ spawn }) => {
+      const args = ["-NoProfile", ...(interactive ? [] : ["-NonInteractive"]), "-Command", code];
+      const child = spawn(exe, args, { env: { ...process.env, LOCALAPPDATA: appData } });
+      let out = "";
+      child.stdout.on("data", (d) => (out += d));
+      child.stderr.on("data", (d) => (out += d));
+      child.on("close", (status) => resolve({ status, out }));
+      child.stdin.end(stdin);
+    });
+  });
+}
+
+async function windowsCases(exe, origin, script, serveBody) {
+  const appData = join(work, `LocalAppData-${exe}`);
+  mkdirSync(appData);
+  const dir = join(appData, "Programs", "Varlatch");
+  const target = join(dir, "varlatch.cjs");
+  const shim = join(dir, "varlatch.cmd");
+  const userPath = async () => (await shell(exe, appData, "[Environment]::GetEnvironmentVariable('Path', 'User')")).out.trim();
+  // As a person runs it: irm <address>/install.ps1 | iex.
+  const iex = `Get-Content -Raw '${script}' | Invoke-Expression`;
+  const run = (opts) => shell(exe, appData, iex, opts);
+  const named = (what) => `${exe}: ${what}`;
+  serveBody(CLI);
+
+  const seeded = `${await userPath()};C:\\varlatch-test\\keep-me`;
+  await shell(exe, appData, `[Environment]::SetEnvironmentVariable('Path', '${seeded.replace(/'/g, "''")}', 'User')`);
+
+  const first = await run();
+  console.log(first.out);
+  check(first.status === 0, named("a fresh install succeeds"));
+  check(existsSync(target) && readFileSync(target).equals(CLI), named("the checked file is installed"));
+  check(readFileSync(shim, "utf8").trim() === '@node "%~dp0varlatch.cjs" %*', named("the varlatch.cmd shim is written"));
+  const afterFirst = (await userPath()).split(";");
+  check(afterFirst.filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, named("the user PATH gains the directory once"));
+  check(afterFirst.includes("C:\\varlatch-test\\keep-me"), named("the user PATH keeps its other entries"));
+  check(first.out.includes(`Next: varlatch login --server ${origin}`), named("it names the next step"));
+
+  const second = await run();
+  check(second.status === 0 && second.out.includes(`varlatch ${VERSION} is already installed`), named("a rerun changes nothing"));
+  check((await userPath()).split(";").filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, named("a rerun adds no second PATH entry"));
+
+  writeFileSync(shim, "@echo my own launcher\r\n");
+  const shimRefused = await run();
+  check(shimRefused.status !== 0 && shimRefused.out.includes("needs your answer in an interactive window"), named("a customized varlatch.cmd is not replaced without an answer"));
+  check(readFileSync(shim, "utf8").includes("my own launcher"), named("the customized varlatch.cmd is left as it was"));
+  writeFileSync(shim, '@node "%~dp0varlatch.cjs" %*\r\n');
+
+  writeFileSync(target, "console.log('varlatch 0.1.0 (migration 1)')\n");
+  const refused = await run();
+  check(refused.status !== 0 && refused.out.includes("replacing it needs your answer in an interactive window"), named("a different copy is not replaced without an answer"));
+  check(readFileSync(target, "utf8").includes("0.1.0"), named("the different copy is left as it was"));
+
+  // Approved: the atomic replace ([IO.File]::Replace) runs and succeeds.
+  const approved = await run({ interactive: true, stdin: "y\r\n" });
+  console.log(approved.out);
+  check(approved.status === 0 && approved.out.includes(`Installed varlatch ${VERSION}`), named("an approved replacement succeeds"));
+  check(readFileSync(target).equals(CLI), named("the approved replacement installs the checked file"));
+  check(!existsSync(join(dir, "varlatch.cjs.new")) && !existsSync(join(dir, "varlatch.cmd.new")), named("no staged file is left after a replacement"));
+
+  rmSync(target);
+  serveBody(Buffer.from("console.log('something else')\n"));
+  const mismatch = await run();
+  check(mismatch.status !== 0 && mismatch.out.includes("does not match its SHA-256"), named("a mismatching download fails"));
+  check(!existsSync(target), named("nothing is installed after a mismatch"));
+  check(!existsSync(join(dir, "varlatch.cjs.new")) && !existsSync(join(dir, "varlatch.cmd.new")), named("no staged file is left behind"));
+  serveBody(CLI);
+}
+
 const mode = process.argv[2];
 const work = mkdtempSync(join(tmpdir(), "varlatch-installers-"));
 
@@ -59,64 +131,13 @@ if (mode === "shellcheck") {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const script = join(work, "install.ps1");
   writeFileSync(script, installPs1({ file: CLI, sha256: sha(CLI), version: VERSION, origin, loopbackHttp: true }));
-  const appData = join(work, "LocalAppData");
-  mkdirSync(appData);
-  const dir = join(appData, "Programs", "Varlatch");
-  const target = join(dir, "varlatch.cjs");
-
-  const pwsh = (code) =>
-    new Promise((resolve) => {
-      // Async: the server above answers from this process.
-      import("node:child_process").then(({ spawn }) => {
-        const child = spawn("pwsh", ["-NoProfile", "-NonInteractive", "-Command", code], { env: { ...process.env, LOCALAPPDATA: appData } });
-        let out = "";
-        child.stdout.on("data", (d) => (out += d));
-        child.stderr.on("data", (d) => (out += d));
-        child.on("close", (status) => resolve({ status, out }));
-      });
-    });
-  const userPath = async () => (await pwsh("[Environment]::GetEnvironmentVariable('Path', 'User')")).out.trim();
-  // As a person runs it: irm <address>/install.ps1 | iex.
-  const run = () => pwsh(`Get-Content -Raw '${script}' | Invoke-Expression`);
-
-  const before = await userPath();
-  const seeded = `${before};C:\\varlatch-test\\keep-me`;
-  await pwsh(`[Environment]::SetEnvironmentVariable('Path', '${seeded.replace(/'/g, "''")}', 'User')`);
+  const before = await shell("pwsh", join(work, "unused"), "[Environment]::GetEnvironmentVariable('Path', 'User')");
+  const userPathBefore = before.out.trim();
   try {
-    const first = await run();
-    console.log(first.out);
-    check(first.status === 0, "a fresh install succeeds");
-    check(existsSync(target) && readFileSync(target).equals(CLI), "the checked file is installed");
-    check(readFileSync(join(dir, "varlatch.cmd"), "utf8").trim() === '@node "%~dp0varlatch.cjs" %*', "the varlatch.cmd shim is written");
-    const afterFirst = (await userPath()).split(";");
-    check(afterFirst.filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, "the user PATH gains the directory once");
-    check(afterFirst.includes("C:\\varlatch-test\\keep-me"), "the user PATH keeps its other entries");
-    check(first.out.includes(`Next: varlatch login --server ${origin}`), "it names the next step");
-
-    const second = await run();
-    check(second.status === 0 && second.out.includes(`varlatch ${VERSION} is already installed`), "a rerun changes nothing");
-    check((await userPath()).split(";").filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, "a rerun adds no second PATH entry");
-
-    const shim = join(dir, "varlatch.cmd");
-    writeFileSync(shim, "@echo my own launcher\r\n");
-    const shimRefused = await run();
-    check(shimRefused.status !== 0 && shimRefused.out.includes("needs your answer in an interactive window"), "a customized varlatch.cmd is not replaced without an answer");
-    check(readFileSync(shim, "utf8").includes("my own launcher"), "the customized varlatch.cmd is left as it was");
-    writeFileSync(shim, '@node "%~dp0varlatch.cjs" %*\r\n');
-
-    writeFileSync(target, "console.log('varlatch 0.1.0 (migration 1)')\n");
-    const refused = await run();
-    check(refused.status !== 0 && refused.out.includes("replacing it needs your answer in an interactive window"), "a different copy is not replaced without an answer");
-    check(readFileSync(target, "utf8").includes("0.1.0"), "the different copy is left as it was");
-
-    rmSync(target);
-    body = Buffer.from("console.log('something else')\n");
-    const mismatch = await run();
-    check(mismatch.status !== 0 && mismatch.out.includes("does not match its SHA-256"), "a mismatching download fails");
-    check(!existsSync(target), "nothing is installed after a mismatch");
-    check(!existsSync(join(dir, "varlatch.cjs.new")) && !existsSync(join(dir, "varlatch.cmd.new")), "no staged file is left behind");
+    // Windows PowerShell 5.1 and PowerShell 7: the script must work in both.
+    for (const exe of ["powershell", "pwsh"]) await windowsCases(exe, origin, script, (b) => (body = b));
   } finally {
-    await pwsh(`[Environment]::SetEnvironmentVariable('Path', '${before.replace(/'/g, "''")}', 'User')`);
+    await shell("pwsh", join(work, "unused"), `[Environment]::SetEnvironmentVariable('Path', '${userPathBefore.replace(/'/g, "''")}', 'User')`);
     server.close();
   }
 } else {
