@@ -534,10 +534,10 @@ describe("under enforce", () => {
     invalid(await updateRole(admin.cli, f.role, { expectedVersion: 1, name: "readers-2" }, asked), "mismatch");
     expect((await updateRole(admin.cli, f.role, { expectedVersion: 1, name: "readers", actions: ["project.read", "config.value.read"] }, asked)).status).toBe(200);
     expect(await roleRow(f.role)).toMatchObject({ name: "readers", version: 2 });
-    // The version: one approved at version 2 does not fit a request at version 3.
+    // The version: one approved at version 2 is stale for a request at version 3.
     const at2 = await approved(admin, await updateRole(admin.cli, f.role, { expectedVersion: 2, actions: ["project.read"] }));
     await ctx.db.query("UPDATE roles SET version = 3 WHERE id = $1", [f.role]);
-    invalid(await updateRole(admin.cli, f.role, { expectedVersion: 3, actions: ["project.read"] }, at2), "mismatch");
+    invalid(await updateRole(admin.cli, f.role, { expectedVersion: 3, actions: ["project.read"] }, at2), "stale");
     // A stale expected version is refused before any approval is asked for.
     const before = await intents();
     expect((await updateRole(admin.cli, f.role, { expectedVersion: 2, actions: ["project.read"] })).body.error.code).toBe("VERSION_CONFLICT");
@@ -549,9 +549,9 @@ describe("under enforce", () => {
 
   it("role.delete binds the role and the version the server read", async () => {
     const asked = await approved(admin, await deleteRole(admin.cli, f.role));
-    // Changed since (version 2): the approval no longer fits.
+    // Changed since (version 2): the approval is stale.
     await ctx.db.query("UPDATE roles SET version = 2 WHERE id = $1", [f.role]);
-    invalid(await deleteRole(admin.cli, f.role, asked), "mismatch");
+    invalid(await deleteRole(admin.cli, f.role, asked), "stale");
     expect(await roleRow(f.role)).toMatchObject({ deleted: false });
     const again = await approved(admin, await deleteRole(admin.cli, f.role));
     expect((await deleteRole(admin.cli, f.role, again)).status).toBe(204);
@@ -609,7 +609,7 @@ describe("under enforce", () => {
   it("Team-Project links bind the team and the project; a linked project needs none", async () => {
     const other = await ok("POST", `${ORG}/projects`, admin.cli, { name: "Web", slug: "web", contractAuthority: "managed" });
     const asked = await approved(admin, await removeProject(admin.cli, f.team, f.project));
-    invalid(await addProject(admin.cli, f.team, f.project, asked), "mismatch");
+    invalid(await addProject(admin.cli, f.team, other.id, asked), "mismatch");
     expect((await removeProject(admin.cli, f.team, f.project, asked)).status).toBe(204);
     const add = await approved(admin, await addProject(admin.cli, f.team, f.project));
     invalid(await addProject(admin.cli, f.team, other.id, add), "mismatch");
