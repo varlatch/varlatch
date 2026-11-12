@@ -599,21 +599,44 @@ describe("the CLI", () => {
 
   it("init writes the agent files by default, and --no-agent-files skips them", async () => {
     const withFiles = project({ "AGENTS.md": "# Mine\n" });
-    const r = await cli(["init", "--org", "acme", "--project", "web"], withFiles);
+    const r = await cli(["init", "--org", "acme", "--project", "web", "--server", "https://varlatch.example.com"], withFiles);
     expect(r.code).toBe(0);
     expect(r.stdout).toMatch(/Wrote the Varlatch skill and instructions for coding agents: \.agents\/skills\/varlatch\/, \.claude\/skills\/varlatch\/, AGENTS\.md\./);
     expect(Object.keys(snapshot(withFiles)).sort()).toEqual([...SKILL_PATHS, "AGENTS.md", "varlatch.toml"].sort());
     expect(readFileSync(join(withFiles, "AGENTS.md"), "utf8")).toBe(`# Mine\n\n${agentsBlock()}\n`);
 
     const without = project();
-    const s = await cli(["init", "--org", "acme", "--project", "web", "--no-agent-files"], without);
+    const s = await cli(["init", "--org", "acme", "--project", "web", "--no-agent-files", "--server", "https://varlatch.example.com"], without);
     expect(s.code).toBe(0);
     expect(Object.keys(snapshot(without))).toEqual(["varlatch.toml"]);
   });
 
+  it("init always names the server in varlatch.toml (ADR-0058 Decision 1), and refuses without one", async () => {
+    const none = project();
+    const refused = await cli(["init", "--org", "acme", "--project", "web"], none);
+    expect(refused.code).toBe(EXIT.usage);
+    expect(refused.stderr).toMatch(/no server to write in varlatch\.toml; pass --server <url>, or sign in first/);
+    expect(snapshot(none)).toEqual({});
+
+    const fromVariable = project();
+    const r = await cli(["init", "--org", "acme", "--project", "web", "--no-agent-files"], fromVariable, { VARLATCH_SERVER: "https://var.example" });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("Wrote varlatch.toml for https://var.example (from VARLATCH_SERVER).");
+    expect(readFileSync(join(fromVariable, "varlatch.toml"), "utf8")).toMatch(/^server = "https:\/\/var\.example"$/m);
+
+    const config = join(dir, "config-default");
+    mkdirSync(config, { recursive: true });
+    writeFileSync(join(config, "settings.json"), JSON.stringify({ defaultServer: "https://default.example" }));
+    const fromDefault = project();
+    const d = await cli(["init", "--org", "acme", "--project", "web", "--no-agent-files"], fromDefault, { VARLATCH_CONFIG_DIR: config });
+    expect(d.code).toBe(0);
+    expect(d.stdout).toContain("Wrote varlatch.toml for https://default.example (the default server).");
+    expect(readFileSync(join(fromDefault, "varlatch.toml"), "utf8")).toMatch(/^server = "https:\/\/default\.example"$/m);
+  });
+
   it("init still succeeds when the agent files cannot be written, and says how to retry", async () => {
     const damaged = project({ "AGENTS.md": "<!-- varlatch:end -->\n" });
-    const r = await cli(["init", "--org", "acme", "--project", "web"], damaged);
+    const r = await cli(["init", "--org", "acme", "--project", "web", "--server", "https://varlatch.example.com"], damaged);
     expect(r.code).toBe(0);
     expect(existsSync(join(damaged, "varlatch.toml"))).toBe(true);
     expect(r.stderr).toMatch(/files for coding agents were not written .* run varlatch agents install to try again/);
@@ -799,7 +822,7 @@ describe("symbolic links (#93)", () => {
 
     const init = project({ "AGENTS.md": rules });
     symlinkSync("AGENTS.md", join(init, "CLAUDE.md"));
-    const r = await cli(["init", "--org", "acme", "--project", "web"], init);
+    const r = await cli(["init", "--org", "acme", "--project", "web", "--server", "https://varlatch.example.com"], init);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("Note: CLAUDE.md is a link to AGENTS.md; Claude Code reads it directly");
     expect(readFileSync(join(init, "AGENTS.md"), "utf8")).toBe(block);

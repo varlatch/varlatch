@@ -48,6 +48,8 @@ long as you follow these rules.
    default**, which `varlatch --assisted context --json` shows
    (`environment`, with `environmentSource`, and `server`). Never switch to
    another environment or server to get around missing configuration.
+   Never change the default server either: it is the human's choice.
+   Outside a repository, pass `--server` with the server the human named.
    **Run anything that needs configuration with**
    `varlatch --assisted run -- <command>`. Exit status 78 means the
    configuration cannot run as it is: a Contract violation, or a secret too

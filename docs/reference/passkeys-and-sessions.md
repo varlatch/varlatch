@@ -56,7 +56,32 @@ varlatch login --server https://vault.example.com --wait    # after you approved
 ```
 
 `varlatch status` shows where you are signed in and when the credential
-expires.
+expires. Without `--server`, `varlatch login` signs in again to the server
+a command here would use: the repository's, or your default server.
+
+## The default server
+
+The first server you sign in to becomes your **default server**. Commands
+outside a repository use it when you give no `--server` and set no
+`VARLATCH_SERVER`, such as `varlatch org create` or `varlatch project
+create`, and `varlatch init` writes it into `varlatch.toml`. With no
+default, they use the only server you are signed in to.
+
+A repository never uses it: its `varlatch.toml` names its own server, so
+signing in somewhere else never moves where a repository's values go. A
+`varlatch.toml` without a server is an error that names the line to add.
+
+Signing in to another server never replaces the default. To see it, and
+to change it:
+
+```sh
+varlatch server                            # the server a command here uses, and the default
+varlatch server use https://vault.example.com   # a server you are signed in to
+```
+
+Signing out of the default server forgets it. The setting lives in
+`settings.json`, next to your credentials
+([What Varlatch puts on your machine](uninstall.md#what-varlatch-puts-on-your-machine)).
 
 ## Signing out
 

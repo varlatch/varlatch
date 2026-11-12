@@ -14,7 +14,9 @@ import {
   loadCredential,
   loadLocalState,
   loadToken,
+  rememberServerIfUnset,
   resolveContext,
+  resolveServer,
   saveCredential,
   saveLocalState,
   type LocalState,
@@ -28,6 +30,7 @@ import { deliveredSecrets, redactRefusal } from "./redact.js";
 import { resolveAssisted, takeAssistedOption, type AssistedMode } from "./assisted.js";
 import { ApprovalError, approvalLines, resumingFetch, stepUpHandler, takeApprovalOption } from "./approvals.js";
 import { cliUserAgent, setAssistedUserAgent } from "./userAgent.js";
+import { SERVER_SOURCE_WORDS, SERVER_USAGE, ServerCommandError, noteDefaultServer, showServer, useServer } from "./serverCommand.js";
 import { nodeRuntimeWarning } from "./nodeRuntime.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
 import { STRICT_EXIT } from "./strictRun.js";
@@ -733,15 +736,19 @@ function organizationTarget(
   lenient = false,
 ): { server: string | undefined; organization: string | undefined; serverOption: string } {
   const given = parsed.values.get("--server") ?? process.env.VARLATCH_SERVER;
+  const inRepository = findRepoRoot(process.cwd()) !== null;
   let repo: ResolvedContext | null = null;
-  if ((!given || !organization) && findRepoRoot(process.cwd())) {
+  if ((!given || !organization) && inRepository) {
     try {
       repo = resolveContext({ cwd: process.cwd(), environment: "(unused)", ...(given ? { server: given } : {}) });
     } catch (err) {
       if (!lenient) throw err;
     }
   }
-  return { server: given ?? repo?.server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(given)}` : "" };
+  // Outside a repository: the remembered default, then the only stored
+  // credential (ADR-0058 Decision 1). Inside one, only the repository.
+  const server = given ?? repo?.server ?? (inRepository ? undefined : resolveServer({ cwd: process.cwd() })?.server);
+  return { server, organization: organization ?? repo?.organization, serverOption: given ? ` --server ${shellWord(given)}` : "" };
 }
 
 /** organizationTarget, both parts required: a missing one is a wrong command line. */
@@ -751,6 +758,23 @@ function requiredTarget(parsed: ParsedOptions, organization: string | undefined)
     server: target.server ?? usageError("Provide --server <url>, or run inside a configured repository"),
     organization: target.organization ?? usageError("Provide --org <slug>, or run inside a configured repository"),
   };
+}
+
+/**
+ * The server for a command that needs no Project (org create/list, project
+ * create): --server, VARLATCH_SERVER, the repository's server, else outside
+ * a repository the remembered default or the only stored credential.
+ */
+function commandServer(args: string[]): string {
+  const given = flag(args, "--server");
+  return (
+    resolveServer({ cwd: process.cwd(), ...(given ? { server: given } : {}) })?.server ??
+    usageError(
+      findRepoRoot(process.cwd())
+        ? `Provide --server <url>, or name the server in ${REPO_CONFIG_FILE}`
+        : "Provide --server <url>, or sign in with varlatch login --server <url> to remember it",
+    )
+  );
 }
 
 const PROJECT_DELETE_USAGE = "Usage: varlatch project delete <slug> --confirm <slug> [--org <org>] [--server <url>]";
@@ -1075,7 +1099,12 @@ async function main(): Promise<void> {
           );
         }
         const login = strictOptions("login", args, LOGIN_OPTIONS, LOGIN_USAGE);
-        const server = login.values.get("--server") ?? usageError(LOGIN_USAGE);
+        // Without --server: the server a command here would use, so signing
+        // in again needs no address (ADR-0058 Decision 1).
+        const server =
+          login.values.get("--server") ??
+          resolveServer({ cwd: process.cwd() })?.server ??
+          usageError(`varlatch login: no server; pass --server <url> the first time\n${LOGIN_USAGE}`);
         const given = (["--token", "--token-stdin", "--oidc", "--start", "--wait"] as const).filter((m) =>
           m === "--token" ? login.values.has(m) : login.booleans.has(m),
         );
@@ -1172,6 +1201,7 @@ async function main(): Promise<void> {
           ...(issuedMeta ? { expiresAt: issuedMeta.expiresAt, credentialId: issuedMeta.id } : {}),
         });
         console.log(`Logged in to ${server} (server ${meta.serverVersion}, API v${meta.apiMajor}).`);
+        noteDefaultServer(server, (line) => console.error(line));
         if (replaced) {
           // Revoke only after the new credential is verified and stored: a
           // failed or abandoned login must never leave the user signed out.
@@ -1210,17 +1240,23 @@ async function main(): Promise<void> {
         }
         const org = opts.values.get("--org") ?? usageError(usage);
         const project = opts.values.get("--project") ?? usageError("Provide --project");
-        const server = opts.values.get("--server");
+        // ADR-0058 Decision 1: varlatch.toml always names its server, so the
+        // repository never depends on anyone's default.
+        const resolved = resolveServer({ cwd: process.cwd(), ...(opts.values.has("--server") ? { server: opts.values.get("--server") as string } : {}) });
+        if (!resolved) {
+          usageError(`varlatch init: no server to write in ${REPO_CONFIG_FILE}; pass --server <url>, or sign in first with varlatch login --server <url>\n${usage}`);
+        }
+        const server = resolved.server;
         const defaultEnv = opts.values.get("--default-environment") ?? "development";
         const lines = [
-          ...(server ? [`server = "${server}"`] : []),
+          `server = "${server}"`,
           `organization = "${org}"`,
           `project = "${project}"`,
           `default_environment = "${defaultEnv}"`,
           "",
         ];
         writeFileSync(join(process.cwd(), REPO_CONFIG_FILE), lines.join("\n"));
-        console.log(`Wrote ${REPO_CONFIG_FILE}. Commit it; it contains no credentials.`);
+        console.log(`Wrote ${REPO_CONFIG_FILE} for ${server}${resolved.source === "flag" ? "" : ` (${SERVER_SOURCE_WORDS[resolved.source]})`}. Commit it; it contains no credentials.`);
         // ADR-0043 Decision 7: the files coding agents read, unless
         // --no-agent-files. A failure here leaves the project initialized.
         if (!opts.booleans.has("--no-agent-files")) {
@@ -1323,8 +1359,17 @@ async function main(): Promise<void> {
         if (has(args, "--all")) {
           targets = stored;
         } else {
+          // --server, else the server a command here would use (ADR-0058
+          // Decision 1), else the only stored one.
+          let here: string | undefined;
+          try {
+            here = resolveServer({ cwd: process.cwd() })?.server;
+          } catch (err) {
+            if (!(err instanceof ContextError)) throw err;
+          }
           const server =
             flag(args, "--server") ??
+            here ??
             (stored.length === 1
               ? (stored[0] as (typeof stored)[number]).server
               : usageError(
@@ -1381,6 +1426,24 @@ async function main(): Promise<void> {
 
       case "whoami": {
         await whoamiCommand(args);
+        return;
+      }
+
+      case "server": {
+        // ADR-0058 Decision 1: the remembered default server.
+        if (args[0] === "use") {
+          const parsed = strictOptions("server use", args.slice(1), { booleans: ["--json"], positionals: 1 }, SERVER_USAGE);
+          const url = parsed.positionals[0] ?? usageError(SERVER_USAGE);
+          try {
+            useServer(url, { out: (line) => console.log(line), json: parsed.booleans.has("--json") ? printJson : null });
+          } catch (err) {
+            if (err instanceof ServerCommandError) fail(err.message, EXIT.usage);
+            throw err;
+          }
+          return;
+        }
+        const parsed = strictOptions("server", args, { booleans: ["--json"] }, SERVER_USAGE);
+        showServer(process.cwd(), { out: (line) => console.log(line), json: parsed.booleans.has("--json") ? printJson : null });
         return;
       }
 
@@ -2311,8 +2374,8 @@ async function main(): Promise<void> {
           const parsed = strictOptions("audit export", args, { values: ["--deleted-org", "--server"], positionals: 1 }, usage);
           const organizationId = parsed.values.get("--deleted-org") ?? usageError(usage);
           const server =
-            parsed.values.get("--server") ?? process.env.VARLATCH_SERVER ??
-            (findRepoRoot(process.cwd()) ? resolveContext({ cwd: process.cwd(), environment: "(unused)" }).server : usageError(`Provide --server <url>\n${usage}`));
+            resolveServer({ cwd: process.cwd(), ...(parsed.values.has("--server") ? { server: parsed.values.get("--server") as string } : {}) })?.server ??
+            usageError(`Provide --server <url>\n${usage}`);
           process.stdout.write(await client({ server }).exportDeletedOrganizationAuditEventsNdjson(organizationId));
           return;
         }
@@ -2351,9 +2414,7 @@ async function main(): Promise<void> {
         }
         if (sub !== "list" && sub !== "create") usageError("Usage: varlatch org <list|create|delete|deletion|freeze|unfreeze>");
         if (sub === "create" && !args[1]) usageError("Usage: varlatch org create <slug> [name]");
-        const server =
-          flag(args, "--server") ?? process.env.VARLATCH_SERVER ??
-          (findRepoRoot(process.cwd()) ? context(args).server : usageError("Provide --server"));
+        const server = commandServer(args);
         const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
         warnIfExpiring(server);
         const api = new VarlatchClient({ onMaintenance: maintenanceNotice, onCredentialExpires: credentialExpiryNotice(server, token), server, token, userAgent: cliUserAgent() });
@@ -2386,7 +2447,7 @@ async function main(): Promise<void> {
         }
         if (sub === "create") {
           const slug = args[1] ?? usageError("Usage: varlatch project create <slug> [name] [--managed]");
-          const server = flag(args, "--server") ?? process.env.VARLATCH_SERVER ?? usageError("Provide --server");
+          const server = commandServer(args);
           const org = flag(args, "--org") ?? usageError("Provide --org <slug>");
           const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
           warnIfExpiring(server);
@@ -2779,6 +2840,8 @@ async function main(): Promise<void> {
         const securityScope = (sub: string, values: Map<string, string>, usage: string) => {
           let server = values.get("--server") ?? process.env.VARLATCH_SERVER;
           let organization = values.get("--org");
+          // Outside a repository a default (ADR-0058 Decision 1) may name the server; --org stays required there.
+          if (!server && !findRepoRoot(process.cwd())) server = resolveServer({ cwd: process.cwd() })?.server;
           if (!server || !organization) {
             if (!findRepoRoot(process.cwd())) {
               usageError(`varlatch security ${sub}: run it inside a varlatch repository, or pass --org <organization> and --server <url>\n${usage}`);

@@ -264,6 +264,25 @@ describe("login --wait", () => {
     expect(fake.seen.some((s) => s.path === "/v1/organizations" && s.authorization === `Bearer ${ISSUED.token}`)).toBe(true);
   });
 
+  it("the first sign-in becomes the default server, said on stderr only; a later one never replaces it (ADR-0058)", { timeout: SPAWNS }, async () => {
+    const config = await started();
+    fake.state.polls = [issued];
+    const r = await cli(["login", "--server", fake.origin, "--wait", "--json"], config);
+    expect(r.code).toBe(EXIT.ok);
+    expect(JSON.parse(r.stdout)).toMatchObject({ state: "signed-in" });
+    expect(r.stderr).toContain(`Default server: ${fake.origin}, for commands outside a repository.`);
+    const settings = () => JSON.parse(readFileSync(join(config, "varlatch", "settings.json"), "utf8")) as Record<string, unknown>;
+    expect(settings()).toEqual({ defaultServer: fake.origin });
+
+    writeFileSync(join(config, "varlatch", "settings.json"), JSON.stringify({ defaultServer: "https://chosen.example" }));
+    expect((await cli(["login", "--server", fake.origin, "--start"], config)).code).toBe(EXIT.ok);
+    fake.state.polls = [issued];
+    const again = await cli(["login", "--server", fake.origin, "--wait"], config);
+    expect(again.code).toBe(EXIT.ok);
+    expect(again.stderr).not.toContain("Default server");
+    expect(settings()).toEqual({ defaultServer: "https://chosen.example" });
+  });
+
   it("keeps the existing credential until the new one is verified and saved; revokes it only after (control)", { timeout: SPAWNS }, async () => {
     const config = home();
     mkdirSync(join(config, "varlatch"), { recursive: true });

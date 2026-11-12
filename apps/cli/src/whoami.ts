@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { ContextError, resolveContext } from "@varlatch/context";
+import { ContextError, resolveServer } from "@varlatch/context";
 import type { TailnetDevice, VarlatchClient, WhoAmI } from "@varlatch/sdk";
 
 /**
@@ -37,7 +37,8 @@ export async function fetchWhoami(api: WhoamiApi): Promise<WhoAmI> {
 
 /**
  * The server to ask: --server, VARLATCH_SERVER, the repository's server
- * (its local override included), else the only server with a stored
+ * (its local override included); outside a repository the remembered
+ * default (ADR-0058 Decision 1); else the only server with a stored
  * credential. Null when none of these names one.
  */
 export function whoamiServer(input: {
@@ -47,9 +48,8 @@ export function whoamiServer(input: {
   stored: readonly string[];
 }): string | null {
   try {
-    // The Environment plays no part; only the server is wanted.
-    return resolveContext({ cwd: input.cwd, env: input.env, environment: "(unused)", ...(input.server ? { server: input.server } : {}) })
-      .server;
+    const resolved = resolveServer({ cwd: input.cwd, env: input.env, stored: input.stored, ...(input.server ? { server: input.server } : {}) });
+    if (resolved) return resolved.server;
   } catch (err) {
     if (!(err instanceof ContextError)) throw err;
   }

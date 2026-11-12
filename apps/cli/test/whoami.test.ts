@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { setDefaultServer } from "@varlatch/context";
 import type { Meta, WhoAmI } from "@varlatch/protocol";
 import { WhoamiUnsupportedError, fetchWhoami, formatWhoamiHuman, whoamiServer, type WhoamiApi } from "../src/whoami.js";
 
@@ -116,22 +117,34 @@ describe("whoamiServer", () => {
   writeFileSync(join(repo, "varlatch.toml"), 'organization = "acme"\nproject = "web"\nserver = "https://repo.example"\n');
   const outside = join(dir, "outside");
   mkdirSync(outside);
+  // Never the real configuration directory: the default server lives there.
+  const config = { VARLATCH_CONFIG_DIR: join(dir, "config") };
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("--server first, then VARLATCH_SERVER, then the repository's server", () => {
-    const env = { VARLATCH_SERVER: "https://env.example" };
+    const env = { ...config, VARLATCH_SERVER: "https://env.example" };
     expect(whoamiServer({ server: "https://flag.example", env, cwd: repo, stored: [] })).toBe("https://flag.example");
     expect(whoamiServer({ server: undefined, env, cwd: repo, stored: [] })).toBe("https://env.example");
-    expect(whoamiServer({ server: undefined, env: {}, cwd: repo, stored: ["https://stored.example"] })).toBe("https://repo.example");
+    expect(whoamiServer({ server: undefined, env: config, cwd: repo, stored: ["https://stored.example"] })).toBe("https://repo.example");
   });
 
   it("outside a repository: the flag, the variable, else the only stored server", () => {
-    expect(whoamiServer({ server: "https://flag.example", env: {}, cwd: outside, stored: [] })).toBe("https://flag.example");
-    expect(whoamiServer({ server: undefined, env: { VARLATCH_SERVER: "https://env.example" }, cwd: outside, stored: [] })).toBe(
+    expect(whoamiServer({ server: "https://flag.example", env: config, cwd: outside, stored: [] })).toBe("https://flag.example");
+    expect(whoamiServer({ server: undefined, env: { ...config, VARLATCH_SERVER: "https://env.example" }, cwd: outside, stored: [] })).toBe(
       "https://env.example",
     );
-    expect(whoamiServer({ server: undefined, env: {}, cwd: outside, stored: ["https://stored.example"] })).toBe("https://stored.example");
-    expect(whoamiServer({ server: undefined, env: {}, cwd: outside, stored: ["https://a.example", "https://b.example"] })).toBeNull();
-    expect(whoamiServer({ server: undefined, env: {}, cwd: outside, stored: [] })).toBeNull();
+    expect(whoamiServer({ server: undefined, env: config, cwd: outside, stored: ["https://stored.example"] })).toBe("https://stored.example");
+    expect(whoamiServer({ server: undefined, env: config, cwd: outside, stored: ["https://a.example", "https://b.example"] })).toBeNull();
+    expect(whoamiServer({ server: undefined, env: config, cwd: outside, stored: [] })).toBeNull();
+  });
+
+  it("outside a repository the remembered default comes before the only stored server, and a repository ignores it", () => {
+    setDefaultServer("https://default.example", config);
+    try {
+      expect(whoamiServer({ server: undefined, env: config, cwd: outside, stored: ["https://stored.example"] })).toBe("https://default.example");
+      expect(whoamiServer({ server: undefined, env: config, cwd: repo, stored: [] })).toBe("https://repo.example");
+    } finally {
+      setDefaultServer(null, config);
+    }
   });
 });
