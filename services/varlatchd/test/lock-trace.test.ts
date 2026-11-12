@@ -414,8 +414,9 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
   });
 
   it("gives a transaction begun after another flow's prelocks none of them", async () => {
-    // A and B begin; A prelocks both people and commits while B stays
-    // open; C then begins and changes both people without a prelock.
+    // A and B begin (B through withTx: two transactions begun outside
+    // withTx at once are refused); A prelocks both people and commits while
+    // B stays open; C then begins and changes both people without a prelock.
     const aDone = gate();
     const bMayEnd = gate();
     const a = (async () => {
@@ -424,11 +425,9 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       await db.query("COMMIT");
       aDone.open();
     })();
-    const b = (async () => {
-      await db.query("BEGIN");
+    const b = withTx(db, async () => {
       await bMayEnd.opened;
-      await db.query("COMMIT");
-    })();
+    });
     await aDone.opened;
     const c = (async () => {
       await db.query("BEGIN");
@@ -519,6 +518,43 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     await change;
     expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "a!!" }, { name: "b!!" }]);
     expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+    takeLockViolations();
+  });
+
+  it("refuses transaction control it does not model at once, leaving the transaction its caller's and nothing else held", async () => {
+    await db.query("BEGIN");
+    await db.query("UPDATE identities SET name = 'x' WHERE id = 'idn_a'");
+    for (const sql of ["COMMIT AND CHAIN", "END AND CHAIN", "ROLLBACK AND CHAIN", "ABORT WORK AND CHAIN", "PREPARE TRANSACTION 'p1'", "COMMIT PREPARED 'p1'", "ROLLBACK PREPARED 'p1'"]) {
+      await expect(db.query(sql)).rejects.toThrow(/does not model/);
+    }
+    // Inside a compound statement too.
+    await expect(db.exec!("UPDATE identities SET name = 'y' WHERE id = 'idn_b'; COMMIT AND CHAIN")).rejects.toThrow(/does not model/);
+    await expect(db.exec!("SELECT 1; ROLLBACK PREPARED 'p1'")).rejects.toThrow(/does not model/);
+    // The caller's transaction is still open, and its own; AND NO CHAIN is a plain end.
+    await db.query("COMMIT AND NO CHAIN");
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "x" }, { name: "b" }]);
+    await db.query("BEGIN");
+    await db.query("UPDATE identities SET name = 'z' WHERE id = 'idn_a'");
+    await db.query("ROLLBACK AND NO CHAIN");
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_a'")).rows).toEqual([{ name: "x" }]);
+    // Nothing is held: another flow's transaction runs at once.
+    await withTx(db, (q) => q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'"));
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A2" }]);
+    takeLockViolations();
+  });
+
+  it("refuses a BEGIN outside withTx while another such transaction is open, at once and changing nothing", async () => {
+    await db.query("BEGIN");
+    await expect(db.query("BEGIN")).rejects.toThrow(/BEGIN outside withTx while a transaction begun outside withTx is open/);
+    await expect(db.query("START TRANSACTION")).rejects.toThrow(/BEGIN outside withTx/);
+    // The first transaction is still the caller's: its statements run in it, and its COMMIT ends it.
+    await db.query("UPDATE identities SET name = 'x' WHERE id = 'idn_a'");
+    await db.query("COMMIT");
+    expect((await db.query("SELECT name FROM identities WHERE id = 'idn_a'")).rows).toEqual([{ name: "x" }]);
+    // Nothing is held: a withTx and a new BEGIN run at once.
+    await withTx(db, (q) => q.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'"));
+    await db.query("BEGIN");
+    await db.query("COMMIT");
     takeLockViolations();
   });
 

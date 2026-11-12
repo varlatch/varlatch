@@ -469,6 +469,16 @@ export function statementsOf(sql: string): string[] {
 const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\b/i;
 
 /**
+ * Transaction control the lock trace does not model, refused before it
+ * runs: an end AND CHAIN (it opens the next transaction at once), and
+ * two-phase commit (PREPARE TRANSACTION, COMMIT PREPARED, ROLLBACK
+ * PREPARED). The code does not use them. SET TRANSACTION and SET SESSION
+ * CHARACTERISTICS only set a transaction's isolation or snapshot, not
+ * which locks it takes or when, and pass.
+ */
+const UNMODELLED = /^(?:(?:COMMIT|END|ROLLBACK|ABORT)(?:\s+(?:WORK|TRANSACTION))?\s+AND\s+CHAIN\b|PREPARE\s+TRANSACTION\b|(?:COMMIT|ROLLBACK)\s+PREPARED\b)/i;
+
+/**
  * The grammar a statement with a locking clause may use, and nothing else:
  * the checker refuses rather than parses anything outside it (Codex's
  * review of #106). At the locking clause's query level:
@@ -837,6 +847,10 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
    */
   const split = (text: string) => {
     const statements = statementsOf(text);
+    const unmodelled = statements.find((s) => UNMODELLED.test(s));
+    if (unmodelled) {
+      throw new Error(`lock trace: transaction control the check does not model (AND CHAIN, two-phase commit) is refused: ${unmodelled.slice(0, 160)}`);
+    }
     if (statements.length > 1 && statements.some((s) => BOUNDARY.test(s))) {
       throw new Error(`lock trace: send BEGIN, COMMIT and ROLLBACK as statements of their own, not in a compound statement: ${text.slice(0, 160)}`);
     }
@@ -933,6 +947,12 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       const label = writerLabel();
       let key: object | undefined = openTxScope(self);
       if (!key) {
+        // A BEGIN without withTx while another such transaction is open or
+        // beginning: nested in the same caller, or a second caller's, which
+        // nothing tells apart. Refused before anything changes.
+        if ((owner && !isScope(owner.key)) || [...beginning.keys()].some((k) => !isScope(k))) {
+          throw new Error("lock trace: a BEGIN outside withTx while a transaction begun outside withTx is open; end it first (or use withTx)");
+        }
         key = {};
         rawFlow.enterWith(key);
       }
@@ -960,7 +980,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     }
     const key = flowKey();
     const commit = /^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first);
-    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
+    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?(\s+AND\s+NO\s+CHAIN)?$/i.test(first)) {
       if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
       // No transaction of this flow's is open (after a COMMIT that failed,
       // or a stray end): on a connection of its own PostgreSQL only warns.
