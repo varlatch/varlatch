@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync } from "node:fs";
 import { LOCK_TAG } from "../../src/db/locks.js";
 import type { Querier } from "../../src/db/migrate.js";
+import { openTxScope } from "../../src/db/tx.js";
 
 /**
  * The lock-order completeness check (ADR-0054 amendment E), test-time only:
@@ -763,75 +764,55 @@ function writerLabel(): string {
 }
 
 /**
- * A flow: the async context that began a transaction (BEGIN), or that ran
- * a statement inside another flow's open transaction (joined). PGlite has
- * one connection, so concurrent flows share it, and can share one
- * transaction: a second flow's BEGIN only warns, and a withTx called while
- * another flow's is open joins it as if nested. On a pool each would have
- * its own connection and transaction.
+ * The flow of a BEGIN sent without withTx (as tests do): its async
+ * context, entered at that BEGIN. A withTx transaction's flow is its scope
+ * (src/db/tx.ts openTxScope).
  */
-interface Flow { label: string; joined: boolean; episode: Episode | null; ended: boolean; failedCommit: boolean }
-
-/**
- * The flows that share one transaction, from the first BEGIN until every
- * flow that began has ended, and the trace of all their statements: those
- * inside the transaction, and those a flow ran after another flow's COMMIT
- * had ended the transaction they shared.
- */
-interface Episode { rows: TraceRow[]; reported: Set<string>; open: Set<Flow> }
-
-const flowOf = new AsyncLocalStorage<Flow>();
+const rawFlow = new AsyncLocalStorage<object>();
 
 /**
  * Wraps a single-connection test database (PGlite) with the trace: refuses
  * untagged locking clauses, records tagged ones, and checks each
- * transaction at COMMIT.
+ * transaction at its end.
  *
- * Concurrent flows share the one connection:
- * - BEGIN, COMMIT, ROLLBACK and each lone statement's wrap are sections,
- *   run one at a time, and every statement waits while one runs: no
- *   statement lands in a lone wrap, or in a transaction after its check.
- * - A flow is told apart by its async context (AsyncLocalStorage), entered
- *   at its BEGIN, or at its first statement inside another flow's open
- *   transaction (joined). An end ends the flow that sends it; a ROLLBACK
- *   after the same flow's failed COMMIT ends nothing more.
- * - Flows that share a transaction share its trace (the episode). Each end
- *   checks it whole, reporting only problems not reported before. A
- *   statement of a flow still open, after another flow's COMMIT ended
- *   their transaction, runs in a wrap whose rows join the episode's trace,
- *   checked with it.
- * - A joined flow sends no COMMIT, so its end is unknown: once its episode
- *   is over, its statements outside a transaction are checked as lone ones,
- *   with references not counted (they may still be its transaction's).
+ * The one connection behaves as each flow's own: one transaction at a
+ * time, as separate connections that conflict would. withTx nests only
+ * within its own async flow (openTxScope), so a concurrent flow's withTx
+ * sends a BEGIN of its own, and that BEGIN waits until the open
+ * transaction has ended, as does any other flow's write or lock. A lone
+ * write or lock outside a transaction runs in a wrap of its own, holding
+ * the connection the same way. So the trace of a transaction is exactly
+ * its own flow's statements, read at its end once they have all finished.
  */
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
-  /** A transaction that flows began is open on the connection. */
-  let inTx = false;
-  let episode: Episode | null = null;
-  let beginsPending = 0;
-  let lastSeq = 0;
+  /** The open transaction: its flow, who began it, and its statements still running. */
+  let owner: { key: object; label: string; ending: boolean; running: Set<Promise<unknown>> } | null = null;
   /**
-   * Sections wait on `section` in a loop of their own, never through a
-   * helper: waiters then resume in the order they came, and one finding it
-   * free takes it in the same turn.
+   * Held by the open transaction from its BEGIN to its end, or by a lone
+   * wrap. Waiters loop on it in place, never through a helper: they resume
+   * in the order they came, and one finding it free takes it in the same turn.
    */
-  let section: Promise<void> | null = null;
-  /** Settles when the open transaction ends. */
-  let txClosed: Promise<void> | null = null;
-  let closeTx: () => void = () => undefined;
-  const exclusive = async <T>(fn: () => Promise<T>): Promise<T> => {
-    while (section) await section;
+  let held: Promise<void> | null = null;
+  let releaseHeld: () => void = () => undefined;
+  const hold = () => {
     let release!: () => void;
-    section = new Promise<void>((r) => (release = r));
-    try {
-      return await fn();
-    } finally {
-      section = null;
+    held = new Promise<void>((r) => (release = r));
+    releaseHeld = () => {
+      held = null;
       release();
-    }
+    };
   };
-  const member = (flow: Flow | undefined): boolean => !!flow && !!episode && flow.episode === episode && !flow.ended;
+  /** BEGINs still waiting or running, by flow: the flow's next statements wait for theirs. */
+  const beginning = new Map<object, Promise<unknown>>();
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
+  // The Querier withTx is handed: set below, before any call.
+  let self: Q;
+
+  const flowKey = (): object | undefined => openTxScope(self) ?? rawFlow.getStore();
+  /** The statement belongs in the open transaction. A raw BEGIN's flow also takes statements from no flow at all (a test's helper that began it). */
+  const ownedBy = (key: object | undefined) =>
+    !!owner && !owner.ending && (owner.key === key || (key === undefined && !isScope(owner.key)));
+  const isScope = (key: object) => "db" in key && "open" in key;
 
   /**
    * The statements of a text, refusing a compound one that begins or ends
@@ -847,22 +828,17 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     return statements;
   };
 
-  /** The trace recorded since the last read, or null in an aborted transaction (it cannot be read, and it rolls back). */
+  /** The open transaction's trace, or null when it is aborted (it cannot be read, and it rolls back). */
   const collect = async (): Promise<TraceRow[] | null> => {
     try {
-      const rows = (await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace WHERE seq > $1 ORDER BY seq`, [lastSeq])).rows as TraceRow[];
-      if (rows.length > 0) {
-        lastSeq = rows.at(-1)!.seq;
-        await db.query(`DELETE FROM ${SCHEMA}.trace WHERE seq <= $1`, [lastSeq]);
-      }
-      return rows;
+      return (await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace ORDER BY seq`)).rows as TraceRow[];
     } catch {
       return null;
     }
   };
 
   const enforce = (label: string, problems: string[], trace: TraceRow[]) => {
-    // VARLATCH_LOCK_TRACE_LABELS: one line per check, to see what a run covered.
+    // VARLATCH_LOCK_TRACE_LABELS: one line per checked transaction, to see what a run covered.
     if (process.env.VARLATCH_LOCK_TRACE_LABELS) appendFileSync(process.env.VARLATCH_LOCK_TRACE_LABELS, `${label}\t${problems.length}\n`);
     if (problems.length === 0) return;
     const violation = { label, problems, trace };
@@ -873,157 +849,125 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     }
   };
 
-  /** Checks an episode's whole trace; reports what was not reported before. */
-  const checkEpisode = (ep: Episode, label: string) => {
-    const problems = checkTrace(ep.rows).filter((p) => !ep.reported.has(p));
-    for (const p of problems) ep.reported.add(p);
-    enforce(label, problems, ep.rows);
-  };
-
   /**
    * A lone statement that takes at most one row lock, its foreign keys'
    * references counted (a single-row update such as a last-use stamp),
    * never holds a lock while waiting for another (amendment E): not
    * checked. The rows it inserts do not count.
    */
-  const checkLone = (rows: TraceRow[], label: string, joined: boolean) => {
+  const checkLone = (rows: TraceRow[], label: string) => {
     // A test's own fixture statement is not production code.
     if (label.startsWith("(test)") && !options.checkTestStatements) return;
     const inserted = new Set(rows.filter((r) => r.kind === "insert").map((r) => `${r.tbl}\u0000${r.key}`));
-    const acquired = new Set(
-      rows
-        .filter((r) => r.kind !== "insert" && !(joined && r.kind === "reference"))
-        .map((r) => `${r.tbl}\u0000${r.key}`)
-        .filter((k) => !inserted.has(k)),
-    );
+    const acquired = new Set(rows.filter((r) => r.kind !== "insert").map((r) => `${r.tbl}\u0000${r.key}`).filter((k) => !inserted.has(k)));
     if (acquired.size < 2) return;
     enforce(label, checkTrace(rows), rows);
   };
 
-  const query = async (text: string, params?: unknown[]) => {
-    const first = split(text)[0] ?? "";
-    const here = flowOf.getStore();
-    if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(first)) {
-      // Before any await: the stack still shows who began the transaction,
-      // and the caller's context becomes this flow.
-      const flow: Flow = { label: writerLabel(), joined: false, episode: null, ended: false, failedCommit: false };
-      flowOf.enterWith(flow);
-      beginsPending++;
-      try {
-        return await exclusive(async () => {
-          // Rows no check has read are no flow's of this transaction.
-          if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
-          const res = await db.query(text, params);
-          episode ??= { rows: [], reported: new Set(), open: new Set() };
-          flow.episode = episode;
-          episode.open.add(flow);
-          if (!inTx) txClosed = new Promise<void>((r) => (closeTx = r));
-          inTx = true;
-          return res;
-        });
-      } finally {
-        beginsPending--;
-      }
-    }
-    const commit = /^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first);
-    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
-      return exclusive(async () => {
-        // The ROLLBACK withTx sends after its failed COMMIT: that ended it.
-        if (!commit && here?.failedCommit) {
-          here.failedCommit = false;
-          return db.query(text, params);
-        }
-        const ep = episode;
-        // The flow that sends it; or, from a context that began no open
-        // flow (one async context playing several), the oldest open one.
-        const ending = here && member(here) && ep!.open.has(here) ? here : ep ? [...ep.open][0] : undefined;
-        // A transaction that ends in a refusal took its locks too: check it
-        // before rolling back. An aborted one cannot be read; it is skipped.
-        if (inTx && ep) {
-          const rows = await collect();
-          if (rows) {
-            ep.rows.push(...rows);
-            checkEpisode(ep, (ending ?? here)?.label ?? "");
-          }
-        }
-        if (inTx) closeTx();
-        inTx = false;
-        txClosed = null;
-        const end = () => {
-          if (!ending || !ep) return;
-          ending.ended = true;
-          ep.open.delete(ending);
-          if (ep.open.size === 0 && episode === ep) episode = null;
-        };
-        try {
-          const res = await db.query(text, params);
-          end();
-          return res;
-        } catch (err) {
-          // A failed COMMIT ends the transaction too.
-          end();
-          if (commit && here) here.failedCommit = true;
-          throw err;
-        }
-      });
-    }
+  /** A statement of the open transaction: its end waits for it, trace writes included. */
+  const owned = <T>(run: Promise<T>): Promise<T> => {
+    const running = owner!.running;
+    running.add(run);
+    const done = () => running.delete(run);
+    run.then(done, done);
+    return run;
+  };
 
-    // Before any await: a statement from another context while a
-    // transaction is open (or opening) runs inside it, so that context
-    // joins the episode, as the flow its withTx call made it.
-    const write = /^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0;
-    // Who runs it, while the stack shows it: for a statement that may run
-    // outside a transaction (a section in progress may end the open one).
-    const began = write && (!inTx || section) ? writerLabel() : "";
-    let flow = here;
-    let inside = member(flow);
-    if (!inside && episode && inTx) {
-      flow = { label: began || writerLabel(), joined: true, episode, ended: false, failedCommit: false };
-      flowOf.enterWith(flow);
-      inside = true;
-    }
-    // A statement that came outside a transaction never runs in one another
-    // flow opened meanwhile: it waits for that one to end.
-    for (;;) {
-      while (section) await section;
-      if (!inTx || inside) break;
-      await txClosed;
-    }
-    if (inTx || !write) return statement(text, params);
-    // A write or lock outside a transaction runs as one implicit
-    // transaction; run it in an explicit one (the same effect), so its
-    // locks are checked like any other transaction's.
-    return exclusive(async () => {
-      // A BEGIN took the section first: the statement runs inside it.
-      if (inTx) return statement(text, params);
-      const tail = member(flow) ? episode! : null;
-      let judged = false;
-      const judge = async () => {
-        if (judged) return;
-        judged = true;
-        const rows = await collect();
-        if (!rows) return;
-        if (tail) {
-          tail.rows.push(...rows);
-          checkEpisode(tail, flow!.label);
-        } else checkLone(rows, began, !!flow?.joined);
-      };
+  /**
+   * A write or lock outside a transaction runs as one implicit
+   * transaction; run it in an explicit one (the same effect), holding the
+   * connection, so its locks are checked like any other transaction's.
+   */
+  const lone = async (text: string, params: unknown[] | undefined, label: string) => {
+    while (held) await held;
+    hold();
+    try {
       await db.query(`DELETE FROM ${SCHEMA}.trace`);
       await db.query("BEGIN");
       try {
         const res = await statement(text, params);
-        await judge();
+        const rows = await collect();
+        if (rows) checkLone(rows, label);
         await db.query("COMMIT");
         return res;
       } catch (err) {
-        await judge();
+        const rows = await collect();
+        if (rows) checkLone(rows, label);
         await db.query("ROLLBACK").catch(() => undefined);
         throw err;
       }
-    });
+    } finally {
+      releaseHeld();
+    }
   };
 
-  /** One statement inside a transaction: refuses untagged locks, records tagged ones. */
+  const query = async (text: string, params?: unknown[]) => {
+    const first = split(text)[0] ?? "";
+    if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(first)) {
+      // Before any await: the stack still shows who began the transaction,
+      // and a raw BEGIN's caller context becomes its flow.
+      const label = writerLabel();
+      let key: object | undefined = openTxScope(self);
+      if (!key) {
+        key = {};
+        rawFlow.enterWith(key);
+      }
+      // The same flow again: PostgreSQL only warns.
+      if (owner?.key === key) return db.query(text, params);
+      const flow = key;
+      const begin = (async () => {
+        while (held) await held;
+        hold();
+        try {
+          await db.query(`DELETE FROM ${SCHEMA}.trace`);
+          const res = await db.query(text, params);
+          owner = { key: flow, label, ending: false, running: new Set() };
+          return res;
+        } catch (err) {
+          releaseHeld();
+          throw err;
+        }
+      })();
+      beginning.set(flow, begin);
+      try {
+        return await begin;
+      } finally {
+        if (beginning.get(flow) === begin) beginning.delete(flow);
+      }
+    }
+    const key = flowKey();
+    const commit = /^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first);
+    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
+      if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+      // No transaction of this flow's is open (after a COMMIT that failed,
+      // or a stray end): on a connection of its own PostgreSQL only warns.
+      if (!ownedBy(key)) return { rows: [] };
+      const o = owner!;
+      o.ending = true;
+      // The flow's earlier statements, and their trace writes, finish first.
+      await Promise.allSettled([...o.running]);
+      // A transaction that ends in a refusal took its locks too: check it
+      // before rolling back. An aborted one cannot be read; it is skipped.
+      const rows = await collect();
+      if (rows) enforce(o.label, checkTrace(rows), rows);
+      owner = null;
+      try {
+        return await db.query(text, params);
+      } finally {
+        releaseHeld();
+      }
+    }
+    const write = /^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0;
+    // Before any await: who runs it, while the stack shows it.
+    const label = write ? writerLabel() : "";
+    if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+    if (ownedBy(key)) return owned(statement(text, params));
+    // A read takes no lock the trace records: it runs at once.
+    if (!write) return statement(text, params);
+    return lone(text, params, label);
+  };
+
+  /** One statement: refuses untagged locks, records tagged ones. */
   const statement = async (text: string, params?: unknown[]) => {
     const tag = lockTagOf(text);
     const res = await db.query(text, params);
@@ -1048,8 +992,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // One statement: as query runs it (a write outside a transaction is wrapped).
     if (statements.length < 2) return query(text);
     const run = () => (db.exec ? db.exec(text) : db.query(text));
-    while (section) await section;
-    if (inTx) return run();
+    if (ownedBy(flowKey())) return owned(run());
     // Several statements outside a transaction run as one implicit
     // transaction; run them in an explicit one instead (the same effect),
     // so its trace is checked at COMMIT like any other.
@@ -1064,5 +1007,6 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     }
   };
 
-  return { ...db, query, exec };
+  self = { ...db, query, exec };
+  return self;
 }

@@ -363,14 +363,15 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
   });
 
-  // Concurrent flows on the one connection can share a transaction: a
-  // second flow's BEGIN only warns, and the first COMMIT ends it for both.
+  // Concurrent flows on the one connection: each gets a transaction of its
+  // own, one at a time, as separate connections that conflict would.
   const gate = () => {
     let open!: () => void;
     const opened = new Promise<void>((r) => (open = r));
     return { opened, open };
   };
-  /** A traced database whose connection calls `hook` when a check clears the trace it read. */
+  const turn = () => new Promise<void>((r) => setTimeout(r, 5));
+  /** A traced database whose connection calls `hook` when a check reads the trace. */
   const hooked = async () => {
     const raw = await migratedTestDb({ lockOrder: "off" });
     await installLockTrace(raw);
@@ -379,7 +380,7 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
       ...raw,
       query: (text: string, params?: unknown[]) => {
         const res = raw.query(text, params);
-        if (/^DELETE FROM varlatch_lock_trace\.trace WHERE (txid|seq)/.test(text)) {
+        if (/^SELECT seq::int AS seq, tbl, key, mode, kind FROM varlatch_lock_trace\.trace/.test(text)) {
           const hook = state.hook;
           state.hook = undefined;
           hook?.();
@@ -398,109 +399,94 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
   };
   const personChanged = /^a person's row changed without an explicit FOR UPDATE prelock at step 2: identities\[idn_(a|b)\]/;
 
-  it("checks a flow's statements after another flow's COMMIT ended their shared transaction, with the trace they shared", async () => {
-    const aMayCommit = gate();
-    const aCommitted = gate();
-    const flowA = (async () => {
-      await db.query("BEGIN");
-      await steps1And2(db);
-      await aMayCommit.opened;
-      await db.query("COMMIT");
-      aCommitted.open();
-    })();
-    const flowB = (async () => {
-      await db.query("BEGIN");
-      await steps1And2(db);
-      aMayCommit.open();
-      await aCommitted.opened;
-      // Outside a transaction now, as B's statements, after its step-2
-      // locks: the references pass, the unprelocked change of two people fails.
-      await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')");
-      await db.query("UPDATE identities SET name = 'changed' WHERE id IN ('idn_a', 'idn_b')");
-      await db.query("COMMIT");
-    })();
-    await Promise.all([flowA, flowB]);
-    const problems = takeLockViolations().flatMap((v) => v.problems);
-    expect(problems.filter((p) => personChanged.test(p))).toHaveLength(2);
-    expect(problems.filter((p) => /referenced without being locked/.test(p))).toEqual([]);
-    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "changed" }, { name: "changed" }]);
-  });
-
-  it("checks a transaction that concurrent flows share once, on its whole trace", async () => {
-    const { traced, state, close } = await hooked();
-    try {
-      const aLocked = gate();
-      const bLocked = gate();
-      const bGo = gate();
-      const flowA = (async () => {
-        await traced.query("BEGIN");
-        await steps1And2(traced);
-        aLocked.open();
-        await bLocked.opened;
-        // B's insert and COMMIT arrive while this COMMIT's check clears the trace.
-        state.hook = bGo.open;
-        await traced.query("COMMIT");
-      })();
-      const flowB = (async () => {
-        await aLocked.opened;
-        await traced.query("BEGIN");
-        await steps1And2(traced);
-        bLocked.open();
-        await bGo.opened;
-        await Promise.all([
-          traced.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')"),
-          traced.query("COMMIT"),
-        ]);
-      })();
-      await Promise.all([flowA, flowB]);
-      expect(state.hook).toBeUndefined();
-      // Checked with the step-2 locks: not the insert's references alone.
-      expect(takeLockViolations()).toEqual([]);
-      expect((await traced.query("SELECT identity_id FROM org_memberships")).rows).toEqual([{ identity_id: "idn_a" }]);
-    } finally {
-      await close();
-    }
-  });
-
-  it("checks a joined flow's statements after its shared transaction ended as lone ones, references not counted", async () => {
-    const own = await migratedTestDb({ lockOrder: "all", checkTestStatements: true });
-    await db.close();
-    db = own;
-    await db.query("INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ('org_a', 'a', 'A', '{}'::jsonb)");
-    await db.query("INSERT INTO identities (id, organization_id, kind, name) VALUES ('idn_b', 'org_a', 'service', 'b'), ('idn_a', 'org_a', 'service', 'a')");
-    const aLocked = gate();
-    const cJoined = gate();
-    const aCommitted = gate();
-    // C starts first, so its context owes nothing to A's. It runs inside
-    // A's transaction without a BEGIN of its own, as a withTx called while
-    // A's is open does, and goes on after A's COMMIT.
-    const flowC = (async () => {
-      await aLocked.opened;
-      await steps1And2(db);
-      cJoined.open();
-      await aCommitted.opened;
-      await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_b', 'member')");
-    })();
-    const flowA = (async () => {
-      await db.query("BEGIN");
-      await steps1And2(db);
-      aLocked.open();
-      await cJoined.opened;
-      await db.query("COMMIT");
-      aCommitted.open();
-    })();
-    await Promise.all([flowA, flowC]);
+  it("gives concurrent withTx flows a transaction each, checked on its own trace", async () => {
+    // The shape of three concurrent credential issues (whoami.test.ts):
+    // each flow's references follow its own step-2 locks.
+    const issue = (id: string) =>
+      withTx(db, async (q) => {
+        await steps1And2(q);
+        await turn();
+        await q.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', $1, 'member')", [id]);
+      });
+    await Promise.all([issue("idn_a"), issue("idn_b")]);
     expect(takeLockViolations()).toEqual([]);
-    // Another context's lone insert counts its references.
-    await db.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')");
-    expect(takeLockViolations().flatMap((v) => v.problems))
-      .toEqual(expect.arrayContaining([expect.stringMatching(/^identity referenced without being locked at step 2 first: identities\[idn_a\]/)]));
+    expect((await db.query("SELECT identity_id FROM org_memberships ORDER BY identity_id")).rows).toEqual([{ identity_id: "idn_a" }, { identity_id: "idn_b" }]);
+  });
+
+  it("gives a transaction begun after another flow's prelocks none of them", async () => {
+    // A and B begin; A prelocks both people and commits while B stays
+    // open; C then begins and changes both people without a prelock.
+    const aDone = gate();
+    const bMayEnd = gate();
+    const a = (async () => {
+      await db.query("BEGIN");
+      await lockPeople(db, [{ id: "idn_a", mode: "update" }, { id: "idn_b", mode: "update" }]);
+      await db.query("COMMIT");
+      aDone.open();
+    })();
+    const b = (async () => {
+      await db.query("BEGIN");
+      await bMayEnd.opened;
+      await db.query("COMMIT");
+    })();
+    await aDone.opened;
+    const c = (async () => {
+      await db.query("BEGIN");
+      await db.query("UPDATE identities SET name = 'c' WHERE id IN ('idn_a', 'idn_b')");
+      await db.query("COMMIT");
+    })();
+    await turn();
+    bMayEnd.open();
+    await Promise.all([a, b, c]);
+    expect(takeLockViolations().flatMap((v) => v.problems).filter((p) => personChanged.test(p))).toHaveLength(2);
+    expect((await db.query("SELECT name FROM identities ORDER BY id")).rows).toEqual([{ name: "c" }, { name: "c" }]);
+  });
+
+  it("runs a statement sent behind its own flow's BEGIN inside that transaction", async () => {
+    await Promise.all([db.query("BEGIN"), db.query("SELECT 1"), db.query("UPDATE organizations SET name = 'A2' WHERE id = 'org_a'")]);
+    await db.query("ROLLBACK");
+    expect((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows).toEqual([{ name: "A" }]);
+    expect(takeLockViolations()).toEqual([]);
+  });
+
+  it("checks a withTx that began while another flow's was open as a whole transaction", async () => {
+    // C's withTx starts while A's is open, and its statements come after
+    // A's COMMIT: one person changed unprelocked, then the Organization.
+    const aLocked = gate();
+    const aMayCommit = gate();
+    const a = withTx(db, async (q) => {
+      await steps1And2(q);
+      aLocked.open();
+      await aMayCommit.opened;
+    });
+    await aLocked.opened;
+    const c = withTx(db, async (q) => {
+      await q.query("SELECT 1");
+      await q.query("UPDATE identities SET name = 'c' WHERE id = 'idn_a'");
+      await q.query("UPDATE organizations SET name = 'C' WHERE id = 'org_a'");
+    });
+    await turn();
+    aMayCommit.open();
+    await Promise.all([a, c]);
+    const problems = takeLockViolations().flatMap((v) => v.problems);
+    expect(problems.filter((p) => personChanged.test(p))).toHaveLength(1);
+    expect(problems.filter((p) => /^step went back: organizations\[org_a\]/.test(p))).toHaveLength(1);
+  });
+
+  it("ends a transaction only after its earlier statements have recorded their locks", async () => {
+    await db.query("BEGIN");
+    await lockPeople(db, ["idn_a"]);
+    await Promise.all([
+      lockedQuery(db, { table: "organizations", mode: "key share", key: "$1" }, "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE", ["org_a"]),
+      db.query("COMMIT"),
+    ]);
+    expect(takeLockViolations().flatMap((v) => v.problems)).toEqual([expect.stringMatching(/^step went back: organizations\[org_a\] key share \(explicit/)]);
   });
 
   it("runs no other statement inside a lone statement's wrap", async () => {
     const { traced, state, close } = await hooked();
     try {
-      // A two-person change arrives as the first lone write's check clears
+      // A two-person change arrives as the first lone write's check reads
       // the trace: it runs after that wrap, in its own, and is checked.
       let injected: Promise<unknown> | undefined;
       state.hook = () => {
