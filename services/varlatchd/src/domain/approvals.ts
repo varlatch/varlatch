@@ -175,6 +175,26 @@ export const APPROVAL_OPERATIONS = [
   "identity.reactivate",
   "oidc_binding.create",
   "oidc_binding.delete",
+  // admin-step-up: Grants, roles, groups, teams, their memberships and
+  // Team-Project links (step 4.6).
+  "grant.create",
+  "grant.replace",
+  "grant.revoke",
+  "role.create",
+  "role.update",
+  "role.delete",
+  "group.create",
+  "group.update",
+  "group.delete",
+  "group.member_add",
+  "group.member_remove",
+  "team.create",
+  "team.update",
+  "team.delete",
+  "team.member_add",
+  "team.member_remove",
+  "team.project_add",
+  "team.project_remove",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
@@ -185,7 +205,14 @@ export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
  */
 export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly ApprovalOperation[]>> = {
   "requirement-protection": ["requirement.update", "requirement.revoke"],
-  "admin-step-up": ["identity.create", "credential.issue", "identity.reactivate", "oidc_binding.create", "oidc_binding.delete"],
+  "admin-step-up": [
+    "identity.create", "credential.issue", "identity.reactivate", "oidc_binding.create", "oidc_binding.delete",
+    "grant.create", "grant.replace", "grant.revoke",
+    "role.create", "role.update", "role.delete",
+    "group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
+    "team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
+    "team.project_add", "team.project_remove",
+  ],
 };
 
 /**
@@ -193,13 +220,14 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
  * Organization is frozen for an incident (ADR-0055 Decision 3): the lift,
  * and the operations under `recovery` that ask for an approval (ADR-0055
  * Decision 6: admin-step-up still asks for them, such as removing an OIDC
- * binding). Account intents (passkey.remove) are not Organization-bound
+ * binding or revoking a Grant). Account intents (passkey.remove) are not Organization-bound
  * and are unaffected.
  */
 export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set([
   "organization.unfreeze",
   "security_control.change",
   "oidc_binding.delete",
+  "grant.revoke",
 ]);
 
 export interface ApprovalChange {
