@@ -26,8 +26,10 @@ import { approvalOutcomeMessage, durationWords } from "./approval";
  * would change, with its counts of the last 30 days for admins. Tightening
  * saves at once; loosening (a mode towards off, a lifetime that grows,
  * lifetimes cleared) needs the admin's approval with a trusted passkey,
- * which the session's approval dialog asks for. enforce is not available
- * yet: it is shown as coming in a later release, never as a broken choice.
+ * which the session's approval dialog asks for. enforce is offered per
+ * control, where this server can enforce it (the control's
+ * availableModes); elsewhere it is shown as coming in a later release,
+ * never as a broken choice.
  */
 
 export const securityControlsKey = (org: string) => ["security-controls", org] as const;
@@ -113,13 +115,27 @@ export function changeInput(
   return input.mode === undefined && input.config === undefined ? null : input;
 }
 
+/**
+ * The modes this server accepts for the control: its own list, or on an
+ * older server the modes every control accepts.
+ */
+export function modesOf(control: SecurityControl, available: readonly SecurityControlMode[]): readonly SecurityControlMode[] {
+  return control.availableModes ?? available;
+}
+
+/** What turning a control to enforce changes at once, said before saving. */
+export const ENFORCE_NOTE: Partial<Record<SecurityControlName, string>> = {
+  "requirement-protection":
+    "From then on, editing or removing a Tailnet Requirement needs the approval of the person asking, with a trusted passkey, and a machine credential cannot do either. Removing a trusted passkey also needs an approval, for everyone in this organization. Creating a requirement stays free.",
+};
+
 /** The message for a failed save. */
 export function saveError(err: unknown): string {
   const approval = approvalOutcomeMessage(err);
   if (approval) return approval;
   if (err instanceof VarlatchApiError) {
     if (err.code === "VERSION_CONFLICT") return "Someone changed this control meanwhile. It was reloaded: check it and save again.";
-    if (err.code === "CONTROL_MODE_UNAVAILABLE") return "Enforce is not available yet on this server. Use report to see what the control would do.";
+    if (err.code === "CONTROL_MODE_UNAVAILABLE") return "Enforce is not available for this control on this server yet. Use report to see what it would do.";
   }
   return errorMessage(err);
 }
@@ -152,7 +168,8 @@ export function SecurityControlsCard({
   report: ReportState | null;
 }) {
   const available = controls?.availableModes ?? ["off", "report"];
-  const enforceAvailable = available.includes("enforce");
+  const enforceable = (controls?.items ?? []).filter((c) => modesOf(c, available).includes("enforce"));
+  const everyControl = enforceable.length > 0 && enforceable.length === (controls?.items.length ?? 0);
   const data = report?.data ?? null;
   return (
     <SectionCard
@@ -169,7 +186,11 @@ export function SecurityControlsCard({
         <span className="text-muted">Counts what the control would have done, without refusing or changing anything.</span>
         <span className="font-medium">Enforce</span>
         <span className="text-muted" data-testid="security-controls-enforce-note">
-          {enforceAvailable ? "The control applies." : "Coming in a later release. Report shows today what it would do."}
+          {enforceable.length === 0
+            ? "Coming in a later release. Report shows today what it would do."
+            : everyControl
+              ? "The control applies."
+              : `The control applies. Offered for ${enforceable.map((c) => CONTROL_TEXT[c.control].label.toLowerCase()).join(", ")}; for the others, coming in a later release.`}
         </span>
       </div>
       {admin ? (
@@ -188,7 +209,7 @@ export function SecurityControlsCard({
           org={org}
           control={c}
           admin={admin}
-          available={available}
+          available={modesOf(c, available)}
           counts={data ? (data.controls.find((r) => r.control === c.control) ?? null) : null}
           countsLoading={report !== null && data === null && report.loading}
           days={data?.days ?? 30}
@@ -437,6 +458,11 @@ function ControlRow({
       {admin && "error" in parsed && (
         <p className="mt-2 text-xs text-deny" data-testid="security-control-input-error">
           {parsed.error}
+        </p>
+      )}
+      {admin && mode === "enforce" && control.mode !== "enforce" && ENFORCE_NOTE[control.control] && (
+        <p className="mt-3 text-[13px] text-muted" data-testid={`security-control-enforce-note-${control.control}`}>
+          {ENFORCE_NOTE[control.control]}
         </p>
       )}
       {admin && input && (

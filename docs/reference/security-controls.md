@@ -25,9 +25,14 @@ Each control has a mode:
   control would have refused a request, asked for an approval or changed
   an outcome, Varlatch counts it, so you can see what turning it on would
   do before you decide (see [What report mode counts](#what-report-mode-counts)).
-- **`enforce`**: the control applies. **This release does not offer
-  `enforce` yet**: the server refuses it with `CONTROL_MODE_UNAVAILABLE`,
-  and the dashboard shows it as not available.
+- **`enforce`**: the control applies. **This release offers `enforce`
+  for `requirement-protection` only** (see [Requirement
+  protection](#requirement-protection)). For the other controls the
+  server refuses it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard
+  shows it as coming in a later release. A release says which controls it
+  can enforce: each control's `availableModes`, and the capability
+  `security.enforce.<control>` in `GET /v1/meta`. Nothing changes this at
+  runtime.
 
 A control's state has a version that goes up by one with every change. A
 control nobody has changed is off at version 0.
@@ -40,6 +45,7 @@ Security page](#the-security-page)). With the CLI:
 ```sh
 varlatch security controls            # each control, its mode, lifetimes, version, last change
 varlatch security set admin-step-up report
+varlatch security set requirement-protection enforce
 varlatch security set credential-lifetime report --default-ttl 86400 --max-ttl 2592000
 varlatch security set credential-lifetime report --max-ttl 604800   # keeps the default
 varlatch security set credential-lifetime off --clear-config
@@ -63,8 +69,9 @@ Who may do what:
 Each organization has a **Security** page in the dashboard, next to
 Settings, at `/o/<organization>/security`. It is the place to decide
 which controls to turn on: try one in `report`, watch what it counts for
-a while, then decide. Every control is off until an admin changes it,
-and `enforce` is shown as coming in a later release.
+a while, then decide. Every control is off until an admin changes it.
+`enforce` is offered for the controls this server can enforce and shown
+as coming in a later release for the others.
 
 It has five parts:
 
@@ -193,8 +200,8 @@ Per control:
 
 What the reasons mean:
 
-- `no-approval`: a person did it without an approval. No operation asks
-  for one yet; with `enforce`, these would need one.
+- `no-approval`: a person did it without an approval. With `enforce`,
+  these would need one.
 - `machine-credential`: a machine credential did it. A machine can never
   give an approval, so with `enforce` it would be refused.
 - `no-evidence`: the sign-in recorded no evidence, such as a sign-in from
@@ -355,12 +362,118 @@ run again with `--approval <id>`, and exits 75. Approve it yourself, then
 let the agent run that command. The output never contains a secret value:
 only the server's summary, the address and the expiry.
 
+## Requirement protection
+
+`requirement-protection` is about [Tailnet
+Requirements](../../CONTEXT.md): rules that say values can only be read
+from certain devices on your tailnet. Without it, anyone holding
+`policy.manage` (an organization admin's CLI sign-in, for example) can
+edit or remove a Requirement from anywhere, off the tailnet, and then read
+what it protected. Each change is audited, but nothing stops it.
+
+Turn it on from the Security page, or:
+
+```sh
+varlatch security set requirement-protection report    # see first what it would ask for
+varlatch security set requirement-protection enforce
+```
+
+Turning it on is tightening: it needs no approval. Turning it down again
+(to `report` or `off`) needs your approval, like any loosening.
+
+### What it guarantees
+
+With `requirement-protection` at `enforce`:
+
+- **Editing or removing a Tailnet Requirement needs the approval of the
+  person asking**, with a trusted passkey that verifies them (PIN,
+  fingerprint or face), for exactly that change. The approval covers the
+  Requirement, what it will cover and which devices it will allow
+  afterwards, and the version you edited (for a removal, the version the
+  server saw when it asked). If the Requirement changes in between, the
+  approval no longer fits; ask again. See [Approvals](#approvals).
+- **A machine credential cannot do either.** It can never give an
+  approval, so it is refused with `PERMISSION_DENIED` (reason
+  `machine-credential`), and no approval is created.
+- **Creating a Requirement needs no approval**: it only takes access
+  away. Neither does an edit that changes nothing.
+- **Removing a trusted passkey needs an approval** for everyone with a
+  live membership in the organization (see [Removing a
+  passkey](#removing-a-passkey)). Otherwise a stolen session could remove
+  the person's passkeys and add its own.
+- The mode is read inside the change, after the organization is locked: a
+  change either completes before the control changes, or sees the new
+  mode.
+- The approval is used once, together with the change. A change that
+  fails leaves it usable until it expires.
+
+Report mode counts the same edits and removals without refusing them.
+While the organization is [frozen for an incident](incident-freeze.md),
+editing or removing a Requirement is refused before any approval is asked
+for; adding one still works.
+
+### Approving a change
+
+- **Dashboard** (**Access**, **Advanced**, and the installation's Tailnet
+  tab): saving an edit or removing a Requirement opens the approval dialog
+  with the server's summary, for example "Remove the Tailnet Requirement
+  on the production tier (tailnet example.ts.net: tags tag:prod). What it
+  constrained is no longer constrained". A change that can let in a
+  device the Requirement used to refuse is marked as weakening it.
+  Approve, and the change is saved; close the dialog and nothing changes.
+- **CLI**: `varlatch tailnet remove <id>` prints the approval's address
+  and waits, as described in [From the CLI](#from-the-cli). Resume with
+  `varlatch --approval <id> tailnet remove <id>`.
+- **API**: `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}`
+  answer `403 STEP_UP_REQUIRED` with the approval; repeat the identical
+  request with `Varlatch-Approval: <id>` once it is approved. A removal
+  whose Requirement was edited while it ran answers `STATE_CHANGED`, and
+  nothing is removed.
+
+`requirement.updated` and `requirement.revoked` in the audit log name the
+approval that was used.
+
+### What it does not do
+
+- **It is not a second person.** The approval comes from the person who
+  asked. Someone who has both their sign-in and one of their trusted
+  passkeys can still change a Requirement.
+- **It protects Requirements, not every path to a value.** Grants, roles,
+  groups and memberships also decide who can read what, and changing them
+  is `admin-step-up`'s business, which cannot be enforced yet.
+- **Whoever controls the host or the deployment can turn it off** with
+  the [host operator's reset](#the-way-back-the-host-operators-reset).
+- **Coding agents stop.** A coding agent cannot approve; in assisted mode
+  the CLI prints the address and exits 75 (see [Coding
+  agents](#coding-agents)).
+- What was removed before you turned it on stays removed.
+
+### The way back
+
+If you lost your trusted passkeys, nobody else can approve for you:
+
+- whoever runs the server can send you a link that enrolls a trusted
+  passkey: `varlatch admin reenroll --identity <your identity id>`. Then
+  approve as usual;
+- or they can turn the control off: `varlatch admin security reset --org
+  <slug> --control requirement-protection`. This also closes the open
+  approvals for Requirement changes.
+
 ## Removing a passkey
 
-Removing a trusted passkey will need an approval while you are a member of
-an organization with any control at `enforce`. Until `enforce` is offered,
-removing a passkey works as before. Removing an unconfirmed passkey never
-needs one.
+Removing a trusted passkey needs an approval while you are a member of an
+organization with any control at `enforce` (in this release, that means
+`requirement-protection`). Approve it with a trusted passkey, which may be
+the one you are removing. When none of your organizations enforces a
+control, removing a passkey works as before. Removing an unconfirmed
+passkey never needs one. Better Auth's own passkey removal endpoint is
+turned off: the dashboard removes passkeys through Varlatch's
+`DELETE /v1/me/passkeys/{id}`.
+
+If you are left with unconfirmed passkeys only, you cannot approve
+anything, including removing them or turning a control down; whoever runs
+the server can enroll a trusted one for you with `varlatch admin reenroll
+--identity <your identity id>`.
 
 ## The way back: the host operator's reset
 
@@ -388,8 +501,10 @@ when the organization is still frozen.
 
 ## API
 
-- `GET /v1/organizations/{org}/security/controls`: the controls and
-  `availableModes`.
+- `GET /v1/organizations/{org}/security/controls`: the controls, each
+  with the modes this server accepts for it (`availableModes`, with
+  `enforce` only where it can enforce that control), and the modes every
+  control accepts (`availableModes`).
 - `PATCH /v1/organizations/{org}/security/controls/{control}` with
   `{ "mode", "config", "expectedVersion" }`: `config` is the lifetimes
   object, `null` to clear it, or absent to keep it.
@@ -422,4 +537,5 @@ when the organization is still frozen.
 
 The capabilities are `security.controls`, `security.report`,
 `security.approval-keys`, `security.refused-destinations` and
-`organizations.permissions`.
+`organizations.permissions`, and `security.enforce.<control>` for each
+control this server can enforce (`security.enforce.requirement-protection`).

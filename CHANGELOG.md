@@ -31,6 +31,38 @@ fixes.
 - **Runners and scripts: `ORGANIZATION_FROZEN` is final.** It answers HTTP
   409 with `Retry-After: 300`. The CLI exits with status 77 and never
   retries it; back off in your own runners too.
+- **Requirement protection can now be enforced.** With
+  `varlatch security set requirement-protection enforce` (or from the
+  Security page), editing or removing one of the organization's Tailnet
+  Requirements needs the approval of the person asking, with a trusted
+  passkey, for exactly that change. A stolen sign-in or a machine
+  credential with `policy.manage` can then no longer remove a Requirement
+  from off the tailnet; a machine credential is refused outright.
+  Creating a Requirement, and an edit that changes nothing, need no
+  approval. `varlatch tailnet remove` waits for the approval like
+  `varlatch security set`; the dashboard opens the approval dialog. The
+  audit events `requirement.updated` and `requirement.revoked` name the
+  approval used. Every control stays off until an admin turns it on, and
+  the other three controls still refuse `enforce`
+  (`CONTROL_MODE_UNAVAILABLE`). See [Requirement
+  protection](docs/reference/security-controls.md#requirement-protection).
+- **Removing a trusted passkey needs an approval** once you are a member of
+  an organization that enforces a control. Removing an unconfirmed passkey
+  never does. If you lose your trusted passkeys, the host operator's
+  `admin reenroll` enrolls a new one, and `admin security reset` turns the
+  control off.
+
+### Scripts and API
+
+- `GET /v1/meta` lists `security.enforce.<control>` for each control the
+  server can enforce (`security.enforce.requirement-protection` in this
+  release). Each item of `GET /v1/organizations/{org}/security/controls`
+  gains its own `availableModes`. `varlatch security status --json` gains
+  `enforceable`.
+- `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
+  answer `403 STEP_UP_REQUIRED`: repeat the request with the
+  `Varlatch-Approval` header once it is approved. A removal whose
+  Requirement changed meanwhile answers `STATE_CHANGED`.
 
 ### CLI
 
@@ -47,11 +79,45 @@ fixes.
   default; `varlatch server` shows it and `varlatch server use <url>`
   changes it. It is kept in `settings.json`, next to `credentials.json`.
   See [The default server](docs/reference/passkeys-and-sessions.md#the-default-server).
+- **`varlatch init` guides you on a terminal.** Without `--org` or
+  `--project`, it asks for what is missing: the server (signing you in
+  when needed), the organization and project (creating them after asking),
+  the environments when the project has none, and which environment each
+  `.env` file goes to. It shows names, types and Secrets, never a value;
+  asks separately before replacing a value an environment already has
+  (typing the environment's name in production) and before activating the
+  one contract revision it adds for all files; and offers to delete a
+  `.env` file only once all of its values are stored and its items are in
+  the active contract. Off a terminal or in assisted mode it asks nothing
+  and needs both flags, as before. See [Set up a project](docs/set-up-a-project.md#the-quick-way).
 - **`varlatch init` always names the server** in `varlatch.toml`: from
   `--server`, `VARLATCH_SERVER`, your default server, or the only server
   you are signed in to.
 - **`context --json` and `status --json`** report `serverSource` in the
   repository context: `flag`, `env-var`, `local-override` or `repository`.
+
+### Self-hosting
+
+- **An installation can serve its own CLI.** With `VARLATCH_SERVE_CLI=on`,
+  people install the CLI the installation runs with one line:
+  `curl -fsSL https://vault.example.com/install.sh | sh`, or
+  `irm https://vault.example.com/install.ps1 | iex` on Windows. The
+  scripts install for the current user, without `sudo`, check the file's
+  SHA-256, never install Node.js, ask before replacing a copy, and leave a
+  Homebrew copy to Homebrew. It is **off by default**: installing this way
+  trusts the installation, and whoever controls its host or its address, to
+  run code on the installer's machine. `varlatch setup` asks on a new
+  installation; `--serve-cli` and `--no-serve-cli` change it, and
+  `varlatch doctor` reports it. It serves only an https address or
+  `http://localhost`. `/v1/meta` lists the `cli.download` capability when
+  it is on. See [Serving the CLI](docs/self-hosting/configuration.md#serving-the-cli).
+- **The invitation page shows what to do next.** After someone creates
+  their passkey from an invitation, the page shows how to install the CLI
+  (the one-line install for their system when the installation serves it,
+  the signed release otherwise), the `varlatch login` line for this
+  installation, and `varlatch run`. The short-lived credential moved under
+  "Sign in without a browser". The dashboard's project onboarding shows
+  the install line too, and its `varlatch init` line now names the server.
 
 ### Documentation
 
@@ -76,6 +142,8 @@ fixes.
 - Migration 44 adds the freeze history. Restoring a backup taken before a
   freeze brings the organization back unfrozen: freeze it again after the
   restore.
+- Migration 45 lets approvals cover Tailnet Requirement changes. Nothing
+  changes until an admin enforces `requirement-protection`.
 
 ## Unreleased (0.21.1)
 

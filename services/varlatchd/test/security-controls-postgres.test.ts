@@ -171,6 +171,59 @@ describe.skipIf(!url)("Security Controls on real PostgreSQL", () => {
     }
   });
 
+  describe("requirement-protection enforced (ADR-0054 step 4.2)", () => {
+    const REQS = "/v1/organizations/acme/requirements";
+    /** Ask for an approval with `request`, then approve it directly (the ceremony is covered on PGlite). */
+    const approved = async (request: () => Promise<{ status: number; body: any }>) => {
+      const asked = await request();
+      expect(asked.body?.error?.code, JSON.stringify(asked.body)).toBe("STEP_UP_REQUIRED");
+      const id = asked.body.error.details.approval.id as string;
+      const key = await registerSoftPasskey(db, adminId, { ...RP, trust: "trusted" });
+      await db.query(
+        "UPDATE approval_intents SET approved_at = clock_timestamp(), approved_with_passkey_id = $2, approval_user_verified = true WHERE id = $1",
+        [id, key.passkeyId],
+      );
+      return id;
+    };
+    const setup = async () => {
+      expect((await call("PATCH", "/v1/organizations/acme/security/controls/requirement-protection", cli.token, { mode: "enforce", expectedVersion: 0 })).status).toBe(200);
+      const created = await call("POST", REQS, cli.token, { kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"] } });
+      expect(created.status).toBe(201);
+      return created.body.id as string;
+    };
+
+    it("revocations racing with one approval: one revokes, the others are refused, none deadlocks", async () => {
+      const id = await setup();
+      const approval = await approved(() => call("DELETE", `${REQS}/${id}`, cli.token));
+      const answers = await Promise.all(
+        Array.from({ length: 6 }, () => call("DELETE", `${REQS}/${id}`, cli.token, undefined, { "Varlatch-Approval": approval })),
+      );
+      expect(answers.filter((a) => a.status === 204)).toHaveLength(1);
+      for (const a of answers.filter((a) => a.status !== 204)) {
+        // Refused before or at consumption: already revoked, or already used.
+        expect(["RESOURCE_NOT_FOUND", "APPROVAL_INVALID"]).toContain(a.body.error.code);
+      }
+      expect((await db.query("SELECT count(*)::int AS n FROM approval_intents WHERE consumed_at IS NOT NULL")).rows[0]).toEqual({ n: 1 });
+    });
+
+    it("an approved edit and an approved revocation of one Requirement race without a deadlock; the loser's approval stays unused", async () => {
+      const id = await setup();
+      const body = { expectedVersion: 1, selector: { tailnet: "example.ts.net", tags: ["tag:prod", "tag:ops"] } };
+      const editApproval = await approved(() => call("PATCH", `${REQS}/${id}`, cli.token, body));
+      const revokeApproval = await approved(() => call("DELETE", `${REQS}/${id}`, cli.token));
+      const [edit, revoke] = await Promise.all([
+        call("PATCH", `${REQS}/${id}`, cli.token, body, { "Varlatch-Approval": editApproval }),
+        call("DELETE", `${REQS}/${id}`, cli.token, undefined, { "Varlatch-Approval": revokeApproval }),
+      ]);
+      expect([edit.status, revoke.status].filter((s) => s >= 500)).toEqual([]);
+      const consumed = (await db.query("SELECT id FROM approval_intents WHERE consumed_at IS NOT NULL")).rows as { id: string }[];
+      // Exactly one commits: the other finds the version it bound changed
+      // (stale, or STATE_CHANGED under the row lock) or the Requirement gone.
+      expect([edit.status === 200, revoke.status === 204].filter(Boolean)).toHaveLength(1);
+      expect(consumed.map((r) => r.id)).toEqual([edit.status === 200 ? editApproval : revokeApproval]);
+    });
+  });
+
   /** A browser bearer of the admin for one Better Auth session. */
   const browser = async (sessionId: string) =>
     (await issueCredential(db, {

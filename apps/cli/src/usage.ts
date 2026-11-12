@@ -37,7 +37,10 @@ Usage:
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
   varlatch whoami [--server <url>] [--json]              # who this credential belongs to: identity, organization, credential
                (a person's or a machine's; uses VARLATCH_TOKEN, else the stored credential, as every command does)
-  varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
+  varlatch init [--org <slug>] [--project <slug>] [--server <url>] [--no-agent-files]
+               (on a terminal, without --org or --project: asks for what is missing, signs in, creates the
+                organization, project and environments you confirm, and offers to import .env files;
+                off a terminal or in assisted mode both flags are needed, as before)
                (writes varlatch.toml with the server: --server, VARLATCH_SERVER, or the default server;
                 also writes the files coding agents read, as agents install does; --no-agent-files skips them)
   varlatch agents guide [setup|run|agent-run|self-hosting|contract]
@@ -109,11 +112,13 @@ Usage:
   varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
   varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
                  [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]
-                 [--tailnet-endpoint | --no-tailnet-endpoint]
+                 [--tailnet-endpoint | --no-tailnet-endpoint] [--serve-cli | --no-serve-cli]
                  [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]
                                                        # install: one command, resumable; --tailnet-endpoint
                                                        # lets approved devices read tailnet-protected values
-                                                       # in the dashboard (HTTPS on port 8688 of the node)
+                                                       # in the dashboard (HTTPS on port 8688 of the node);
+                                                       # --serve-cli serves this installation's CLI and
+                                                       # install scripts at /install.sh (off unless chosen)
   varlatch adopt [--dir <compose-directory>] [--apply] [--only <step>] [--revert <step>] [--secrets-dir <dir>]
                                                        # existing installation → managed, step by step
   varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]

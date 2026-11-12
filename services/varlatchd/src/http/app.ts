@@ -2,6 +2,7 @@
 import { backupStatus } from "@varlatch/backup";
 import { installationRelease } from "../domain/releaseNotice.js";
 import { Hono, type Context } from "hono";
+import { installPs1, installSh, type CliDownload } from "./cliDownload.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
@@ -159,7 +160,14 @@ import {
   withApproval,
   type Requester,
 } from "../domain/approvals.js";
-import { SECURITY_CONTROLS, AVAILABLE_MODES, changeControl, listControls } from "../domain/securitycontrols.js";
+import { SECURITY_CONTROLS, AVAILABLE_MODES, availableModesOf, changeControl, listControls } from "../domain/securitycontrols.js";
+import { approvalMetadata, prepareProtectedOperation } from "../domain/protected.js";
+import {
+  readRequirement,
+  requirementRevokeBinding,
+  requirementUpdateBinding,
+  sameRequirementState,
+} from "../domain/requirementprotection.js";
 import { approvalKeys } from "../domain/approvalKeys.js";
 import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js";
 import {
@@ -192,7 +200,6 @@ import {
   queueAccessCount,
   reportAdminStepUp,
   reportingControls,
-  reportProtectedWrite,
   securityControlReport,
   type PendingAccessReport,
   type WouldBlock,
@@ -282,6 +289,12 @@ export interface BuildAppOptions {
   humanAuth?: import("../auth/humanauth.js").HumanAuth;
   /** Absolute path to the bundled enrollment client JS. */
   enrollBundlePath?: string;
+  /**
+   * The CLI and install scripts this installation serves (ADR-0058
+   * Decision 3), on the ordinary listener only; absent, those paths answer
+   * 404 and /v1/meta does not list cli.download.
+   */
+  cliDownload?: CliDownload;
   /**
    * Present ONLY on the dedicated tailnet listener (ADR-0014 §7): resolves
    * the true socket peer to verified Tailnet Context. The ordinary listener
@@ -744,6 +757,32 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   const deviceBase = deviceSignInBase(options.publicUrl);
 
+  // The CLI and its install scripts (ADR-0058 Decision 3): unauthenticated,
+  // like /v1/meta, which already says the version. Off: 404, the same
+  // answer as a path that does not exist.
+  {
+    const download = options.cliDownload;
+    const common = { "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" };
+    const notServed = (c: Context) => c.text("Not found", 404, common);
+    if (download) {
+      const sh = installSh(download);
+      const ps1 = installPs1(download);
+      app.get("/cli/varlatch.cjs", (c) =>
+        c.body(new Uint8Array(download.file), 200, {
+          ...common,
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": "attachment; filename=\"varlatch.cjs\"",
+        }),
+      );
+      app.get("/install.sh", (c) => c.text(sh, 200, { ...common, "Content-Type": "text/plain; charset=utf-8" }));
+      app.get("/install.ps1", (c) => c.text(ps1, 200, { ...common, "Content-Type": "text/plain; charset=utf-8" }));
+    } else {
+      app.get("/cli/varlatch.cjs", notServed);
+      app.get("/install.sh", notServed);
+      app.get("/install.ps1", notServed);
+    }
+  }
+
   app.get("/v1/meta", async (c) => {
     const inst = await getInstallation(ctx.db).catch(() => null);
     // sync.targets is advertised only when the installation switch is on;
@@ -756,6 +795,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // Advertised when configured; the endpoint itself is never in this
       // unauthenticated document (GET /v1/tailnet/endpoint has it).
       ...(options.browserEndpoint ? [] : ["tailnet.browser-reads"]),
+      ...(options.cliDownload ? [] : ["cli.download"]),
     ]);
     return c.json({
       apiMajor: 1,
@@ -1193,6 +1233,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     if (!id) throw approvalInvalid("not-found", null);
     return id;
   };
+  /**
+   * The Varlatch-Approval header as sent, checked only when an approval is
+   * consumed (withApproval). For operations a control may or may not protect
+   * (ADR-0054 step 4.2): with their controls off the header is never read, so
+   * a malformed one changes nothing there.
+   */
+  const approvalHeaderOf = (c: Context): string | null => c.req.header(APPROVAL_HEADER) ?? null;
   /** Approving takes the dashboard's session bearer of a person, as confirming a passkey does. */
   const approvalOwner = (c: Context) => {
     const principal = c.get("principal") as Principal;
@@ -2783,7 +2830,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c, INSPECTION);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
-    return c.json({ items: await listControls(ctx.db, org.id), availableModes: [...AVAILABLE_MODES] });
+    // availableModes: what every control accepts; each item's, what that
+    // control accepts in this release (enforce only where it is unlocked).
+    const items = (await listControls(ctx.db, org.id)).map((control) => ({ ...control, availableModes: availableModesOf(control.control) }));
+    return c.json({ items, availableModes: [...AVAILABLE_MODES] });
   });
 
   // What the controls in report mode counted (ADR-0054 Decision 9;
@@ -3605,7 +3655,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
   });
 
   // In-place Requirement update (ADR-0029): kind is immutable; loosening a
-  // selector is exactly as audited as tightening one (old/new diff).
+  // selector is exactly as audited as tightening one (old/new diff). While
+  // the Organization enforces requirement-protection (ADR-0054 step 4.2),
+  // an edit that changes anything needs the requester's step-up approval,
+  // bound to the Requirement, the resulting target and selector and the
+  // version it expects; consumed in the edit's transaction.
   app.patch("/v1/organizations/:org/requirements/:requirement", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -3640,9 +3694,35 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     }
     const requirementId = c.req.param("requirement");
     const endpoint = `PATCH requirements ${requirementId}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) =>
+    const approvalId = approvalHeaderOf(c);
+    const { status, payload } = await withApproval(ctx, { requester: requesterOf(c), approvalId, publicUrl: options.publicUrl }, (gate) =>
+      // The claim (step 2.5) comes after every person in its strongest
+      // mode: the requester FOR UPDATE when the request carries an
+      // approval it may consume.
+      withIdempotency(ctx, c, principal, endpoint, body, {
+        organizationId: org.id,
+        people: approvalId !== null ? [{ id: principal.identity.id, mode: "update" }] : [],
+      }, async (ctx) =>
       withTx(ctx.db, async (db) => {
-        await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
+        const prepared = await prepareProtectedOperation(db, gate, {
+          scope: { organizationId: org.id, people: [principal.identity.id] },
+          checks: [{ control: "requirement-protection", operation: "requirement.update" }],
+          binding: async (db) => {
+            // Refusals first (amendment A), read without a lock; checked
+            // again under the row lock below.
+            const current = await readRequirement(db, org.id, requirementId);
+            if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+            if (current.version !== body.expectedVersion) {
+              throw new DomainError("VERSION_CONFLICT", "Requirement was modified concurrently; reload and retry");
+            }
+            const next = { target: body.target ?? current.target, selector: body.selector ?? current.selector };
+            if (sameRequirementState(current, next)) return null;
+            return requirementUpdateBinding(db, org, current, next, body.expectedVersion);
+          },
+          authorizeIn: async (db) => {
+            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+          },
+        });
         const res = await lockedQuery(
           db,
           { table: "requirements", mode: "update" },
@@ -3651,6 +3731,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         );
         const row = res.rows[0] as Record<string, unknown> | undefined;
         if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+        // Under the row lock: the version the request expects, which is also
+        // the one an approval bound (a difference rolls back its consumption).
         if (row.version !== body.expectedVersion) {
           throw new DomainError("VERSION_CONFLICT", "Requirement was modified concurrently; reload and retry");
         }
@@ -3682,11 +3764,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         );
         const out = updated.rows[0] as { version: number; updated_at: string };
         // Report mode (ADR-0054 Decision 9): an edit without an approval.
-        await reportProtectedWrite(db, {
-          organizationId: org.id,
-          actorIdentityId: principal.identity.id,
-          checks: [{ control: "requirement-protection", operation: "requirement.update" }],
-        });
+        await prepared.count(db);
         await recordAuditEvent(db, {
           eventType: "requirement.updated",
           decision: "info",
@@ -3700,40 +3778,63 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             oldSelector: JSON.stringify(oldSelector),
             newSelector: JSON.stringify(selector),
             version: out.version,
+            ...approvalMetadata(prepared.approval),
           },
         });
         return { status: 200, payload: serialized(out.version, iso(out.updated_at)) };
-      }),
+      })),
     );
     return c.json(payload as Record<string, unknown>, status as 200);
   });
 
+  // Revoking a Requirement. While the Organization enforces
+  // requirement-protection (ADR-0054 step 4.2), it needs the requester's
+  // step-up approval, bound to the Requirement and the version the server
+  // read (the request carries none), checked again under the row lock.
   app.delete("/v1/organizations/:org/requirements/:requirement", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
-    await withTx(ctx.db, async (db) => {
-      await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id] });
-      const res = await db.query(
-        "UPDATE requirements SET revoked_at = now() WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id",
-        [c.req.param("requirement"), org.id],
-      );
-      if (!res.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
-      // Report mode (ADR-0054 Decision 9): a revocation without an approval.
-      await reportProtectedWrite(db, {
-        organizationId: org.id,
-        actorIdentityId: principal.identity.id,
-        checks: [{ control: "requirement-protection", operation: "requirement.revoke" }],
-      });
-      await recordAuditEvent(db, {
-        eventType: "requirement.revoked",
-        decision: "info",
-        actorIdentityId: principal.identity.id,
-        organizationId: org.id,
-        action: "policy.manage",
-        resource: { requirementId: c.req.param("requirement") },
-      });
-    });
+    const requirementId = c.req.param("requirement");
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      withTx(ctx.db, async (db) => {
+        const prepared = await prepareProtectedOperation(db, gate, {
+          scope: { organizationId: org.id, people: [principal.identity.id] },
+          checks: [{ control: "requirement-protection", operation: "requirement.revoke" }],
+          binding: async (db) => {
+            const current = await readRequirement(db, org.id, requirementId);
+            if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+            return requirementRevokeBinding(db, org, current);
+          },
+          authorizeIn: async (db) => {
+            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+          },
+        });
+        const locked = (await lockedQuery(
+          db,
+          { table: "requirements", mode: "update" },
+          "SELECT id, version FROM requirements WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE",
+          [requirementId, org.id],
+        )).rows[0] as { id: string; version: number } | undefined;
+        if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+        // The version the approval bound, under the row lock: an edit since
+        // rolls back this attempt, consumption included.
+        if (prepared.binding && locked.version !== prepared.binding.expectedVersion) {
+          throw new DomainError("STATE_CHANGED", "The Requirement changed while it was being removed; nothing was removed. Read it again and ask for a new approval");
+        }
+        await db.query("UPDATE requirements SET revoked_at = now() WHERE id = $1", [requirementId]);
+        // Report mode (ADR-0054 Decision 9): a revocation without an approval.
+        await prepared.count(db);
+        await recordAuditEvent(db, {
+          eventType: "requirement.revoked",
+          decision: "info",
+          actorIdentityId: principal.identity.id,
+          organizationId: org.id,
+          action: "policy.manage",
+          resource: { requirementId },
+          ...(prepared.approval ? { metadata: approvalMetadata(prepared.approval) } : {}),
+        });
+      }));
     return c.body(null, 204);
   });
 

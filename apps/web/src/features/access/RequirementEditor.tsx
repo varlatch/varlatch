@@ -9,6 +9,7 @@ import { PROBE_TIMEOUT_MS, useTailnetConnection } from "../../lib/tailnetConnect
 import { Button, Callout, Checkbox, Field, Input, Segmented, Select, TierDot, cn } from "../../components/ui";
 import { Dialog } from "../../components/Dialog";
 import { errorMessage } from "../../shell/Shell";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 import { TIERS } from "./shared";
 import type { Names } from "./model";
 import {
@@ -340,7 +341,7 @@ export function RequirementEditor({
           ))}
         </ul>
       ) : null}
-      {save.error && !refused && <p className="text-sm text-deny">{errorMessage(save.error)}</p>}
+      {save.error && !refused && <p className="text-sm text-deny">{approvalOutcomeMessage(save.error) ?? errorMessage(save.error)}</p>}
       <div className="flex items-center justify-end gap-2">
         {editing && unchanged && !stale && <span className="text-xs text-muted">No changes yet</span>}
         <Button size="sm" variant="ghost" onClick={onCancel}>

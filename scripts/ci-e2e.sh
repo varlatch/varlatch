@@ -108,6 +108,8 @@ echo "--- dashboard E2E (production container)"
 GRANT1=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
 budget wait "dashboard"
 node "$REPO_ROOT"/apps/web/scripts/e2e-web.mjs "$GRANT1"
+# The enroll page's next steps against a stub server (ADR-0058 Decision 4).
+node "$REPO_ROOT"/apps/web/scripts/e2e-enroll-steps.mjs
 
 echo "--- values/matrix E2E (production container)"
 GRANT_V=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
@@ -225,6 +227,33 @@ echo "web=$DOWN_WEB api=$DOWN_API convex=$DOWN_CVX (${CVX_SECONDS}s) web-after-r
   || { echo "FAIL: dashboard/API must not depend on convex-backend being up"; exit 1; }
 [ "$CVX_SECONDS" -le 10 ] || { echo "FAIL: /convex must fail fast while the backend is down (${CVX_SECONDS}s)"; exit 1; }
 echo "PASS  dashboard and /v1 serve while Convex is down; /convex recovers when it returns"
+
+echo "--- the CLI and install scripts through the dashboard's nginx (ADR-0058 Decision 3)"
+# Off (the default): 404 from varlatchd, never the dashboard's page.
+for path in /install.sh /install.ps1 /cli/varlatch.cjs; do
+  OFF=$(code "$WEB_ORIGIN$path")
+  [ "$OFF" = 404 ] || { echo "FAIL: $path answers $OFF while serving is off (expected 404, not the dashboard)"; exit 1; }
+done
+curl -fsS "$WEB_ORIGIN/v1/meta" | grep -q '"cli.download"' && { echo "FAIL: /v1/meta lists cli.download while serving is off"; exit 1; }
+# On: recreate varlatchd with it, then install through nginx as a person would.
+VARLATCH_SERVE_CLI=on "${COMPOSE[@]}" up -d varlatchd >/dev/null 2>&1
+for i in $(seq 1 60); do curl -fsS "$WEB_ORIGIN/v1/meta" 2>/dev/null | grep -q '"cli.download"' && break; sleep 2; done
+curl -fsS "$WEB_ORIGIN/v1/meta" | grep -q '"cli.download"' || { echo "FAIL: /v1/meta does not list cli.download with VARLATCH_SERVE_CLI=on"; exit 1; }
+INSTALL_HOME=$(mktemp -d)
+curl -fsS "$WEB_ORIGIN/install.sh" > "$INSTALL_HOME/install.sh"
+grep -qx "ORIGIN='$WEB_ORIGIN'" "$INSTALL_HOME/install.sh" || { echo "FAIL: install.sh does not name $WEB_ORIGIN"; exit 1; }
+curl -fsS "$WEB_ORIGIN/install.ps1" | grep -q "\$Origin = '$WEB_ORIGIN'" || { echo "FAIL: install.ps1 does not name $WEB_ORIGIN"; exit 1; }
+HOME="$INSTALL_HOME" sh "$INSTALL_HOME/install.sh" < /dev/null > "$INSTALL_HOME/out.txt" 2>&1 || { cat "$INSTALL_HOME/out.txt"; echo "FAIL: install.sh through nginx"; exit 1; }
+INSTALLED=$("$INSTALL_HOME/.local/bin/varlatch" --version)
+case "$INSTALLED" in
+  "varlatch $(node -p "require(process.argv[1]).version" "$REPO_ROOT/packages/backup/src/release.json") "*) ;;
+  *) echo "FAIL: the installed CLI reports '$INSTALLED'"; exit 1 ;;
+esac
+grep -q "Next: varlatch login --server $WEB_ORIGIN" "$INSTALL_HOME/out.txt" || { echo "FAIL: install.sh does not name the next step"; exit 1; }
+rm -rf "$INSTALL_HOME"
+VARLATCH_SERVE_CLI=off "${COMPOSE[@]}" up -d varlatchd >/dev/null 2>&1
+for i in $(seq 1 60); do curl -fsS -o /dev/null "$WEB_ORIGIN/v1/meta" 2>/dev/null && break; sleep 2; done
+echo "PASS  off: 404 through nginx; on: install.sh through nginx installs $INSTALLED"
 
 budget report
 echo "ALL E2E SUITES PASSED"

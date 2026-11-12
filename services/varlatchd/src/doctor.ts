@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { activeGate, backupStatus, compareVersions, DEFAULT_RELEASE_REPO, EMBEDDED_RELEASE, readReleaseCheck, RELEASE_CHECK_MAX_AGE_MS, type ReleaseCheck } from "@varlatch/backup";
+import type { CliDownloadSetting } from "./http/cliDownload.js";
 import type { Querier } from "./db/migrate.js";
 import { schemaIsCurrent } from "./db/migrate.js";
 import { getInstallation, verifyLoadedKek } from "./domain/bootstrap.js";
@@ -73,6 +74,26 @@ export interface ServerDoctorInput {
   outboundAllow?: AllowEntry[];
   /** The policy to check destinations with (tests: a fixed resolver). */
   outboundPolicy?: OutboundPolicy;
+  /** VARLATCH_SERVE_CLI and what it gives (ADR-0058 Decision 3); absent, not reported. */
+  cliDownload?: { serve: "on" | "off"; setting: CliDownloadSetting };
+}
+
+/**
+ * Serving the CLI (ADR-0058 Decision 3), advisory: off is a choice, and on
+ * names the address people install from; on without serving says why.
+ */
+export function checkCliDownload(input: { serve: "on" | "off"; setting: CliDownloadSetting }): Check {
+  const base = { id: "cli.download", title: "CLI and install scripts served by this installation", class: "advisory" as const };
+  if (input.setting.serving) {
+    return { ...base, status: "pass", detail: `on: ${input.setting.download.origin}/install.sh and /install.ps1 install CLI ${input.setting.download.version}` };
+  }
+  if (input.serve !== "on") return { ...base, status: "pass", detail: "off (VARLATCH_SERVE_CLI); people install the CLI from its GitHub release" };
+  return {
+    ...base,
+    status: "fail",
+    detail: `VARLATCH_SERVE_CLI is on, but nothing is served: ${input.setting.reason}`,
+    remedy: "Use an https:// public URL (or http://localhost), or turn it off with `varlatch setup --no-serve-cli`",
+  };
 }
 
 export const FUNCTIONS_FINGERPRINT_FILE = "/opt/varlatch/convex-functions.fingerprint";
@@ -440,6 +461,7 @@ export async function serverDoctor(input: ServerDoctorInput): Promise<ServerDoct
   checks.push(await checkCustody(input.db));
   checks.push(...checkTailnet(input));
   checks.push(await checkOutbound(input));
+  if (input.cliDownload) checks.push(checkCliDownload(input.cliDownload));
 
   return {
     facts: {

@@ -14,6 +14,7 @@ import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { DotenvParseError, parseDotenv, type DotenvEntry } from "./dotenv.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
+import { safeApiCode } from "./safeText.js";
 
 /**
  * `varlatch import <file>` (ADR-0043 Decision 2): the CLI reads a dotenv file
@@ -70,7 +71,7 @@ export interface ImportIo {
   err: (line: string) => void;
 }
 
-interface Row {
+export interface Row {
   entry: DotenvEntry;
   type: ItemType;
   /** Null when the sensitivity is unknown (a dry run without a connection). */
@@ -163,7 +164,7 @@ async function activeContract(api: VarlatchClient, ctx: ResolvedContext): Promis
   }
 }
 
-function formatRows(rows: Row[], plain: Set<string>): string[] {
+export function formatRows(rows: Row[], plain: Set<string>): string[] {
   const width = Math.max(...rows.map((r) => r.entry.name.length));
   const typeWidth = Math.max(...rows.map((r) => r.type.length));
   return rows.map((r) => {
@@ -172,6 +173,91 @@ function formatRows(rows: Row[], plain: Set<string>): string[] {
     const note = `${r.contracted ? "  in the Contract" : ""}${r.existing ? "  already has a value" : ""}`;
     return `  ${r.entry.name.padEnd(width)}  ${r.type.padEnd(typeWidth)}  ${sensitivity}${note}`.trimEnd();
   });
+}
+
+/** A file as read once: its bytes (the snapshot later steps compare with) and its entries. Value-free errors. */
+export function readSource(file: string): { bytes: Buffer; entries: DotenvEntry[] } {
+  if (!existsSync(file)) throw new ImportError(`No such file: ${file}`);
+  const bytes = readFileSync(file);
+  try {
+    return { bytes, entries: parseDotenv(decodeStrict(bytes, file)) };
+  } catch (err) {
+    if (err instanceof DotenvParseError) throw new ImportError(`${file} ${err.message}. Nothing was imported.`);
+    throw err;
+  }
+}
+
+/** What an environment already has, by name: plain values compared, a Secret or a withheld value unknown. */
+export type Present = Map<string, { sensitive: boolean; value: string | null }>;
+
+/** The environment's present values, or the HTTP status (403, 404) that kept them unreadable. */
+export async function readPresent(api: VarlatchClient, ctx: Pick<ResolvedContext, "organization" | "project" | "environment">): Promise<Present | number> {
+  try {
+    const effective = await api.effectiveConfiguration(ctx.organization, ctx.project, ctx.environment, { includeValues: true });
+    return new Map((effective.items ?? []).map((i) => [i.name, { sensitive: i.sensitive, value: i.sensitive ? null : (i.rawValue ?? i.value ?? null) }]));
+  } catch (err) {
+    if (err instanceof VarlatchApiError && (err.status === 403 || err.status === 404)) return err.status;
+    throw err;
+  }
+}
+
+/** The active Contract, null when there is none, "forbidden" without contract.read. */
+export const readActiveContract = activeContract;
+
+/** One row per entry: its type, sensitivity, whether the Contract has it, whether it replaces a present value. */
+export function planRows(
+  entries: DotenvEntry[],
+  opts: { contracted: Map<string, ContractItem>; present: Present | null; semanticsVersion: number; online: boolean; contract: boolean; plain: Set<string> },
+): Row[] {
+  return entries.map((entry) => {
+    const existing = opts.contracted.get(entry.name);
+    const sensitive = !opts.online ? null : existing ? existing.sensitive : opts.contract ? !opts.plain.has(entry.name) : true;
+    const there = opts.present?.get(entry.name);
+    const replaces = opts.present === null ? null : there !== undefined && (there.sensitive || there.value === null || there.value !== entry.value);
+    return { entry, type: existing?.type ?? inferType(entry.value, opts.semanticsVersion), sensitive, contracted: existing !== undefined, existing: replaces };
+  });
+}
+
+/**
+ * Stores the entries in order and stops at the first failure: what was
+ * stored, and the failing name with a value-free reason (an API error code,
+ * a network failure's name) and the names not attempted.
+ */
+export async function storeValues(
+  api: VarlatchClient,
+  ctx: Pick<ResolvedContext, "organization" | "project" | "environment">,
+  entries: DotenvEntry[],
+): Promise<{ stored: string[]; failure: { name: string; reason: string; exitCode: number; skipped: string[] } | null }> {
+  const stored: string[] = [];
+  for (const [index, entry] of entries.entries()) {
+    try {
+      await api.setValue(ctx.organization, ctx.project, ctx.environment, entry.name, { value: entry.value });
+      stored.push(entry.name);
+    } catch (err) {
+      const network = networkFailure(err);
+      // Only a code the protocol defines: a server could echo the value it was sent in that field.
+      const reason = err instanceof VarlatchApiError ? safeApiCode(err) : (network ?? (err instanceof Error ? err.name : "an error"));
+      const exitCode = err instanceof VarlatchApiError ? apiErrorExit(err) : network ? EXIT.unavailable : EXIT.failure;
+      return { stored, failure: { name: entry.name, reason, exitCode, skipped: entries.slice(index + 1).map((e) => e.name) } };
+    }
+  }
+  return { stored, failure: null };
+}
+
+/**
+ * Deletes the file only if its bytes still match the snapshot taken when it
+ * was read; false when it changed or disappeared. Never writes a value.
+ */
+export function finishSource(file: string, snapshot: Buffer): boolean {
+  let current: Buffer | null = null;
+  try {
+    current = readFileSync(file);
+  } catch {
+    current = null;
+  }
+  if (!current || digest(current) !== digest(snapshot)) return false;
+  unlinkSync(file);
+  return true;
 }
 
 export async function runImport(opts: ImportOptions, target: ImportTarget, streams: ImportIo): Promise<number> {
@@ -184,15 +270,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   if (opts.plain.length > 0 && !opts.contract) {
     throw new ImportError("--plain applies only with --contract: an item's sensitivity lives in the Contract", EXIT.usage);
   }
-  if (!existsSync(opts.file)) throw new ImportError(`No such file: ${opts.file}`);
-  const bytes = readFileSync(opts.file);
-  let entries: DotenvEntry[];
-  try {
-    entries = parseDotenv(decodeStrict(bytes, opts.file));
-  } catch (err) {
-    if (err instanceof DotenvParseError) throw new ImportError(`${opts.file} ${err.message}. Nothing was imported.`);
-    throw err;
-  }
+  const { bytes, entries } = readSource(opts.file);
   const problems = checkEntries(entries);
   const names = new Set(entries.map((e) => e.name));
   const plain = new Set(opts.plain);
@@ -230,14 +308,13 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   // requested (include=values returns non-sensitive values only) and compared in their stored form, before
   // reference expansion: an identical one is not a replacement. A Secret's value is never on this path, and
   // a withheld plain value is unknown: both count as replacements.
-  let present: Map<string, { sensitive: boolean; value: string | null }> | null = null;
+  let present: Present | null = null;
   if (online) {
-    try {
-      const effective = await online.api.effectiveConfiguration(online.ctx.organization, online.ctx.project, online.ctx.environment, { includeValues: true });
-      present = new Map((effective.items ?? []).map((i) => [i.name, { sensitive: i.sensitive, value: i.sensitive ? null : (i.rawValue ?? i.value ?? null) }]));
-    } catch (err) {
-      if (!(err instanceof VarlatchApiError && (err.status === 403 || err.status === 404))) throw err;
-      io.err(`varlatch import: cannot read what ${online.ctx.environment} already has (${err.status}); existing values cannot be told apart`);
+    const read = await readPresent(online.api, online.ctx);
+    if (typeof read === "number") {
+      io.err(`varlatch import: cannot read what ${online.ctx.environment} already has (${read}); existing values cannot be told apart`);
+    } else {
+      present = read;
     }
   }
   const semanticsVersion = contract ? (contract.semanticsVersion ?? 1) : LATEST_SEMANTICS_VERSION;
@@ -252,13 +329,7 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     throw new ImportError("Nothing was imported.");
   }
 
-  const rows: Row[] = entries.map((entry) => {
-    const existing = contracted.get(entry.name);
-    const sensitive = !online ? null : existing ? existing.sensitive : opts.contract ? !plain.has(entry.name) : true;
-    const there = present?.get(entry.name);
-    const replaces = present === null ? null : there !== undefined && (there.sensitive || there.value === null || there.value !== entry.value);
-    return { entry, type: existing?.type ?? inferType(entry.value, semanticsVersion), sensitive, contracted: existing !== undefined, existing: replaces };
-  });
+  const rows: Row[] = planRows(entries, { contracted, present, semanticsVersion, online: online !== null, contract: opts.contract, plain });
   const where = online ? `${online.ctx.organization}/${online.ctx.project} (${online.ctx.environment})` : null;
   const secrets = rows.filter((r) => r.sensitive).length;
   const counts = online ? ` (${secrets} secret, ${rows.length - secrets} plain)` : "";
@@ -335,18 +406,13 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
     if (!revision.active) io.out(`Activate with: varlatch contract activate ${revision.id}`);
   }
 
-  const stored: string[] = [];
-  for (const [index, row] of rows.entries()) {
-    try {
-      await api.setValue(ctx.organization, ctx.project, ctx.environment, row.entry.name, { value: row.entry.value });
-      stored.push(row.entry.name);
-    } catch (err) {
-      const network = networkFailure(err);
-      const reason = err instanceof VarlatchApiError ? err.code : (network ?? (err instanceof Error ? err.name : "an error"));
-      const exitCode = err instanceof VarlatchApiError ? apiErrorExit(err) : network ? EXIT.unavailable : EXIT.failure;
-      const skipped = rows.slice(index + 1).map((r) => r.entry.name);
+  const result = await storeValues(api, ctx, rows.map((r) => r.entry));
+  const stored = result.stored;
+  if (result.failure) {
+    {
+      const { name: failedName, reason, exitCode, skipped } = result.failure;
       if (stored.length > 0) io.err(`varlatch import: stored: ${stored.join(", ")}`);
-      io.err(`varlatch import: not stored: ${row.entry.name} (${reason})`);
+      io.err(`varlatch import: not stored: ${failedName} (${reason})`);
       if (skipped.length > 0) io.err(`varlatch import: not attempted: ${skipped.join(", ")}`);
       if (stored.length > 0) copyNotice(io, opts.file, secretsAmong(stored), false);
       // A retry in assisted mode finds the values stored above as existing, and may find them changed since
@@ -363,19 +429,12 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
   const storedSecrets = secretsAmong(stored);
 
   if (opts.deleteSource) {
-    let current: Buffer | null = null;
-    try {
-      current = readFileSync(opts.file);
-    } catch {
-      current = null;
-    }
-    if (!current || digest(current) !== digest(bytes)) {
+    if (!finishSource(opts.file, bytes)) {
       io.err(`varlatch import: ${opts.file} changed or disappeared while importing; it was not deleted`);
       copyNotice(io, opts.file, storedSecrets, false);
       emit({ ...contractDoc(pushed), stored, deleted: false });
       return 1;
     }
-    unlinkSync(opts.file);
     io.out(`Deleted ${opts.file}.`);
     copyNotice(io, opts.file, storedSecrets, true);
   } else {

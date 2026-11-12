@@ -178,6 +178,24 @@ describe("the Security controls section", () => {
     expect(one("security-control-select-admin-step-up-report").props.disabled).toBe(false);
   });
 
+  it("offers enforce for a control the server can enforce, says what it changes, and names it in the explainer", async () => {
+    fake.api.listSecurityControls = vi.fn(async () => ({
+      items: CONTROLS.map((c) => ({ ...c, availableModes: c.control === "requirement-protection" ? ["off", "report", "enforce"] : ["off", "report"] })),
+      availableModes: ["off", "report"],
+    }));
+    await mount(<Controls />);
+    expect(one("security-control-select-requirement-protection-enforce").props.disabled).toBe(false);
+    expect(one("security-control-select-admin-step-up-enforce").props.disabled).toBe(true);
+    expect(text(one("security-controls-enforce-note"))).toBe(
+      "The control applies. Offered for requirement protection; for the others, coming in a later release.",
+    );
+    await click("security-control-select-requirement-protection-enforce");
+    expect(text(one("security-control-enforce-note-requirement-protection"))).toContain("editing or removing a Tailnet Requirement needs the approval");
+    expect(text(one("security-control-save-requirement-protection"))).toBe("Save");
+    await click("security-control-save-requirement-protection");
+    expect(fake.api.changeSecurityControl).toHaveBeenCalledWith("acme", "requirement-protection", { mode: "enforce", expectedVersion: 0 });
+  });
+
   it("saves a tightening at once, with the version it read", async () => {
     await mount(<Controls />);
     await click("security-control-select-admin-step-up-report");
@@ -215,7 +233,7 @@ describe("the Security controls section", () => {
     await mount(<Controls />);
     await click("security-control-select-admin-step-up-report");
     await click("security-control-save-admin-step-up");
-    expect(text(one("security-control-error-admin-step-up"))).toContain("Enforce is not available yet");
+    expect(text(one("security-control-error-admin-step-up"))).toContain("Enforce is not available for this control on this server yet");
   });
 
   it("shows a member the controls without anything to change", async () => {

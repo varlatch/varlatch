@@ -578,7 +578,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The Organization's Security Controls (capability security.controls, ADR-0054 Decision 1): each of requirement-protection, admin-step-up, passkey-verification and credential-lifetime with its mode, its configuration, its version and who changed it last. A control nobody has changed is off at version 0. availableModes lists the modes this server accepts; enforce is not among them yet. Needs organization.read; existence-hiding. */
+        /** The Organization's Security Controls (capability security.controls, ADR-0054 Decision 1): each of requirement-protection, admin-step-up, passkey-verification and credential-lifetime with its mode, its configuration, its version and who changed it last. A control nobody has changed is off at version 0. availableModes lists the modes this server accepts for every control; each item's availableModes, the modes it accepts for that control (enforce only for a control this release can enforce, also advertised as the capability security.enforce.<control>). Needs organization.read; existence-hiding. */
         get: operations["listSecurityControls"];
         put?: never;
         post?: never;
@@ -669,7 +669,7 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Change one Security Control (capability security.controls, ADR-0054 Decision 2). Needs organization.manage and a person's credential (browser or cli): machine credentials are always refused. The change is compared field by field with the current state: it is loosening when the mode moves towards off, a lifetime grows, or configuration is cleared, even alongside tightening. Loosening needs a step-up approval bound to this exact change: without the Varlatch-Approval header the answer is STEP_UP_REQUIRED with details.approval (its id, approval URL and expiry); the client repeats the identical request with the header once the person approved. Tightening needs none. expectedVersion must be the control's current version (VERSION_CONFLICT otherwise). enforce is refused with CONTROL_MODE_UNAVAILABLE. Refused while the Organization is being deleted. Records security_control.changed with metadata.loosened. */
+        /** Change one Security Control (capability security.controls, ADR-0054 Decision 2). Needs organization.manage and a person's credential (browser or cli): machine credentials are always refused. The change is compared field by field with the current state: it is loosening when the mode moves towards off, a lifetime grows, or configuration is cleared, even alongside tightening. Loosening needs a step-up approval bound to this exact change: without the Varlatch-Approval header the answer is STEP_UP_REQUIRED with details.approval (its id, approval URL and expiry); the client repeats the identical request with the header once the person approved. Tightening needs none. expectedVersion must be the control's current version (VERSION_CONFLICT otherwise). enforce is accepted only for a control this server can enforce (capability security.enforce.<control>; the control's availableModes), and refused with CONTROL_MODE_UNAVAILABLE for the others; setting it is tightening. Refused while the Organization is being deleted. Records security_control.changed with metadata.loosened. */
         patch: operations["changeSecurityControl"];
         trace?: never;
     };
@@ -1197,7 +1197,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Removing a trusted passkey needs a step-up approval (operation passkey.remove, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header) while the person holds a live membership in an Organization with any Security Control at enforce (ADR-0054 Decision 4). No server offers enforce yet, so today nothing restricts it. Removing an unconfirmed passkey never needs an approval. */
+        /** Remove one of the caller's own passkeys (capability account.passkeys). Replaces Better Auth's /auth/passkey/delete-passkey, which is turned off. Requires a human's dashboard session bearer. Another person's passkey, or an unknown id, is RESOURCE_NOT_FOUND. Removing a trusted passkey needs a step-up approval (operation passkey.remove, STEP_UP_REQUIRED, then the same request with the Varlatch-Approval header) while the person holds a live membership in an Organization with any Security Control at enforce (ADR-0054 Decision 4); a control can be enforced from servers that offer security.enforce.requirement-protection. Removing an unconfirmed passkey never needs an approval. */
         delete: operations["removeMyPasskey"];
         options?: never;
         head?: never;
@@ -1649,10 +1649,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
+        /** Revoke a Requirement. While the Organization enforces requirement-protection (capability security.enforce.requirement-protection, ADR-0054), it needs the requester's step-up approval (operation requirement.revoke, bound to the Requirement and the version the server read): without the Varlatch-Approval header the answer is STEP_UP_REQUIRED, and a machine credential is refused with PERMISSION_DENIED. STATE_CHANGED when the Requirement was edited while the revocation ran; nothing is revoked. */
         delete: operations["deleteRequirement"];
         options?: never;
         head?: never;
-        /** Update a Requirement's target or selector in place (capability access.update, ADR-0029). Kind is immutable. Loosening and tightening are equally audited with the old/new diff. */
+        /** Update a Requirement's target or selector in place (capability access.update, ADR-0029). Kind is immutable. Loosening and tightening are equally audited with the old/new diff. While the Organization enforces requirement-protection (capability security.enforce.requirement-protection, ADR-0054), an edit that changes anything needs the requester's step-up approval (operation requirement.update, bound to the Requirement, its resulting target and selector and expectedVersion): without the Varlatch-Approval header the answer is STEP_UP_REQUIRED, and a machine credential is refused with PERMISSION_DENIED. An edit that changes nothing needs none. */
         patch: operations["updateRequirement"];
         trace?: never;
     };
@@ -3279,10 +3280,12 @@ export interface components {
                 id: string;
                 name: string | null;
             } | null;
+            /** @description In a list of the controls: the modes this server accepts for this control, enforce included only where this release can enforce it. Absent from older servers, which accept off and report for every control, and from a change's result. */
+            availableModes?: components["schemas"]["SecurityControlMode"][];
         };
         SecurityControlList: {
             items: components["schemas"]["SecurityControl"][];
-            /** @description The modes this server accepts in a change. */
+            /** @description The modes this server accepts for every control; each item's availableModes may add enforce. */
             availableModes: components["schemas"]["SecurityControlMode"][];
         };
         /**
@@ -3362,7 +3365,7 @@ export interface components {
              * @description The semantic operation, not the HTTP route.
              * @enum {string}
              */
-            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze";
+            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke";
             /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
             organization: {
                 id: string;
@@ -7483,7 +7486,10 @@ export interface operations {
     deleteRequirement: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7509,6 +7515,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */

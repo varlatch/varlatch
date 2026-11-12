@@ -10,7 +10,8 @@ import { CodeBlock } from "../../components/CodeBlock";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { contractItems } from "./health";
-import { keys, sortEnvironments } from "./hooks";
+import { keys, sortEnvironments, useCapability } from "./hooks";
+import { CLI_DOWNLOAD_CAPABILITY, detectOs, installLine } from "../../lib/installCli";
 import { NewEnvironmentDialog } from "./NewEnvironmentDialog";
 
 /**
@@ -147,6 +148,7 @@ export function Onboarding({
   const navigate = useNavigate();
 
   const origin = window.location.origin;
+  const servesCli = useCapability(CLI_DOWNLOAD_CAPABILITY);
   const slug = target?.slug ?? "<project>";
   const git = target?.contractAuthority !== "managed";
   const firstItem = state.itemNames[0] ?? "DATABASE_URL";
@@ -249,8 +251,10 @@ export function Onboarding({
               <CodeBlock
                 numbered
                 lines={[
+                  ...(servesCli ? [installLine(origin, detectOs())] : []),
                   `varlatch login --server ${origin}`,
-                  `varlatch init --org ${org} --project ${slug}`,
+                  // Always the server: a default from an earlier sign-in may name another installation (ADR-0058).
+                  `varlatch init --org ${org} --project ${slug} --server ${origin}`,
                   "varlatch contract push --schema .env.schema",
                   "varlatch contract activate <revision>",
                 ]}

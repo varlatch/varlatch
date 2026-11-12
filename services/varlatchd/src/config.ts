@@ -51,6 +51,10 @@ const envSchema = z.object({
   // comma-separated host names, *.suffixes, addresses and CIDR ranges, each
   // with an optional port. Unset: Organizations reach public https only.
   VARLATCH_OUTBOUND_ALLOW: optional(z.string()),
+  // Serve this image's CLI and install scripts (ADR-0058 Decision 3): off
+  // unless the host operator says on, since installing from the
+  // installation trusts it to run code on the installer's machine.
+  VARLATCH_SERVE_CLI: optional(z.enum(["on", "off"])),
 });
 
 export interface VarlatchdConfig {
@@ -76,6 +80,8 @@ export interface VarlatchdConfig {
   trustedProxies: string | null;
   /** VARLATCH_OUTBOUND_ALLOW, parsed (ADR-0057); empty when unset. */
   outboundAllow: AllowEntry[];
+  /** VARLATCH_SERVE_CLI (ADR-0058 Decision 3): "on" serves the CLI and install scripts. */
+  serveCli: "on" | "off";
   /** Loads and validates the raw 32-byte root KEK. Never log its value. */
   loadRootKek: () => Buffer;
 }
@@ -262,6 +268,7 @@ export function loadConfig(
     databaseUrl: withPasswordFile(cfg.VARLATCH_DATABASE_URL, cfg.VARLATCH_DATABASE_PASSWORD_FILE),
     port: cfg.VARLATCH_PORT,
     publicUrl: cfg.VARLATCH_PUBLIC_URL,
+    serveCli: cfg.VARLATCH_SERVE_CLI ?? "off",
     // The one token issuer (#110): the server, the Mirror publisher, and
     // `admin mirror-sync` must agree, and Convex trusts exactly this value.
     // Compose refuses to start without VARLATCH_PUBLIC_URL; the localhost
