@@ -2,6 +2,7 @@
 import type { Querier } from "../db/migrate.js";
 import { canonicalJson, type ApprovalBinding, type ApprovalChange, type ApprovalOperation } from "./approvals.js";
 import { DomainError } from "./errors.js";
+import type { AdminStepUpOperation } from "./securityreport.js";
 
 /**
  * admin-step-up for the access structure (ADR-0054 Decision 5, step 4.6):
@@ -48,8 +49,11 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export type GroupKind = "group" | "team";
 
 /** `group.update` or `team.update`, from the stored kind. */
-export function groupOperation(kind: GroupKind, verb: "create" | "update" | "delete" | "member_add" | "member_remove"): ApprovalOperation {
-  return `${kind}.${verb}` as ApprovalOperation;
+export function groupOperation(
+  kind: GroupKind,
+  verb: "create" | "update" | "delete" | "member_add" | "member_remove",
+): ApprovalOperation & AdminStepUpOperation {
+  return `${kind}.${verb}`;
 }
 
 // ---- Grants
