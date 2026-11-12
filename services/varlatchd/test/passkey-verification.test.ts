@@ -388,6 +388,89 @@ describe("the Convex token", () => {
   });
 });
 
+describe("where it decides", () => {
+  const counted = async () =>
+    (await rows("SELECT operation, reason, count::int AS count FROM security_control_counters WHERE control = 'passkey-verification' ORDER BY operation"));
+
+  it("answers not-found for a missing nested resource, and refuses the same request for one that exists", async () => {
+    await setMode("enforce");
+    const revision = (await rows("SELECT id FROM contract_revisions"))[0].id as string;
+    expect((await call("GET", `${P}/contract/revisions/crev_missing`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expectRefused(await call("GET", `${P}/contract/revisions/${revision}`, admin));
+    expect((await call("DELETE", `${E}/values/NOPE`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expectRefused(await call("DELETE", `${E}/values/DB_PASS`, admin));
+    expect((await rows("SELECT count(*)::int AS n FROM env_values WHERE deleted_at IS NULL"))[0].n).toBe(1);
+    // One audit event per refusal, with the action and resource it was authorized for.
+    const denials = await passkeyDenials();
+    expect(denials.map((d) => [d.action, d.metadata.evidence])).toEqual([
+      ["contract.read", "no-evidence"],
+      ["config.value.write", "no-evidence"],
+    ]);
+  });
+
+  it("refuses before any approval is asked for: a refused sign-in creates no approval intent (requirement-protection)", async () => {
+    await ok("PATCH", `${ORG}/security/controls/requirement-protection`, verified, { mode: "enforce", expectedVersion: 0 });
+    const requirement = await ok("POST", `${ORG}/requirements`, verified, {
+      kind: "tailnet", target: { kind: "tier", tier: "staging" }, selector: { tailnet: "example.ts.net", tags: ["tag:ci"] },
+    });
+    await setMode("enforce");
+    const intents = async () => (await rows("SELECT count(*)::int AS n FROM approval_intents"))[0].n as number;
+    const edit = { expectedVersion: 1, selector: { tailnet: "example.ts.net", tags: ["tag:other"] } };
+    // A missing Requirement: not found, whatever the controls.
+    expect((await call("PATCH", `${ORG}/requirements/req_missing`, admin, edit)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expect((await call("DELETE", `${ORG}/requirements/req_missing`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    // A refused sign-in: refused, and nothing asked for.
+    expectRefused(await call("PATCH", `${ORG}/requirements/${requirement.id}`, admin, edit));
+    expectRefused(await call("DELETE", `${ORG}/requirements/${requirement.id}`, admin));
+    expect(await intents()).toBe(0);
+    // An accepted sign-in is asked for its approval, as before.
+    const asked = await call("PATCH", `${ORG}/requirements/${requirement.id}`, verified, edit);
+    expect(asked.body.error.code, JSON.stringify(asked.body)).toBe("STEP_UP_REQUIRED");
+    expect(await intents()).toBe(1);
+  });
+
+  it("checks an Idempotency-Key replay against the current mode", async () => {
+    const send = (token: string) =>
+      app.request(`${E}/values/DB_PASS`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "replay-1" },
+        body: JSON.stringify({ value: "replayed-replayed" }),
+      });
+    const first = await send(admin);
+    expect(first.status).toBe(200);
+    const stored = await first.json();
+    await setMode("enforce");
+    const refused = await send(admin);
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    await setMode("off");
+    const replayed = await send(admin);
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toEqual(stored);
+  });
+
+  it("report mode counts each successful request once, as its first authorized action; not-found and refused requests count nothing", async () => {
+    await setMode("report");
+    await ok("GET", P, admin);
+    await ok("PUT", `${E}/values/DB_PASS`, admin, { value: "counted-counted" });
+    expect((await call("GET", `${P}/contract/revisions/crev_missing`, admin)).status).toBe(404);
+    expect((await call("DELETE", `${E}/values/NOPE`, admin)).status).toBe(404);
+    // A verified sign-in is not counted.
+    await ok("GET", P, verified);
+    expect(await counted()).toEqual([
+      { operation: "config.value.write", reason: "no-evidence", count: 1 },
+      { operation: "project.read", reason: "no-evidence", count: 1 },
+    ]);
+  });
+
+  it("audits turning it on from a sign-in it would refuse, once, as such", async () => {
+    expectRefused(await call("PATCH", CONTROL, admin, { mode: "enforce", expectedVersion: 0 }));
+    const [denial] = await passkeyDenials();
+    expect(denial!.metadata).toMatchObject({ reason: "passkey_verification_required", evidence: "no-evidence", change: "refused" });
+    expect(await passkeyDenials()).toHaveLength(1);
+  });
+});
+
 describe("every /v1/organizations/:org route", () => {
   const ROUTES = "/v1/organizations/:org";
   /** Each route, with acme, its Project and environment, and placeholders for the rest. */

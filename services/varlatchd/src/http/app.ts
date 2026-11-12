@@ -3431,14 +3431,18 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const newGrantId = newId("grant");
       await withTx(ctx.db, async (db) => {
         await lockLiveScope(db, { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId], accessCheck: "deferred" });
-        // The Grant exists (read without a lock), before the subject's
-        // checks, which run passkey-verification (ADR-0054 Decision 7).
-        if (!(await db.query("SELECT 1 FROM grants WHERE id = $1 AND organization_id = $2", [grantId, org.id])).rows[0]) {
-          throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
-        }
+        // The Grant exists (read without a lock): after the subject's
+        // checks, as before, and before passkey-verification, which the
+        // subject's pin is preceded by (ADR-0054 Decision 7).
+        const grantExists = async () => {
+          if (!(await db.query("SELECT 1 FROM grants WHERE id = $1 AND organization_id = $2", [grantId, org.id])).rows[0]) {
+            throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+          }
+        };
         // Membership before the Grant, the order a removal locks them in,
         // so replacing a Grant of someone being removed cannot deadlock.
-        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId);
+        if (body.subjectIdentityId) await requireGrantSubject(db, org.id, body.subjectIdentityId, grantExists);
+        else await grantExists();
         const existing = await lockedQuery(
           db,
           { table: "grants", mode: "update" },

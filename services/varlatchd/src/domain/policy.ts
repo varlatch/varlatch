@@ -341,13 +341,20 @@ export async function deleteGroup(
  * live membership, pinned for the rest of the caller's transaction so a
  * concurrent removal cannot miss the Grant.
  */
-export async function requireGrantSubject(db: Querier, organizationId: string, identityId: string): Promise<void> {
+export async function requireGrantSubject(
+  db: Querier,
+  organizationId: string,
+  identityId: string,
+  /** The caller's own existence checks, after the subject's and before passkey-verification (a replaced Grant). */
+  thenExists?: () => Promise<void>,
+): Promise<void> {
   const res = await db.query("SELECT kind, organization_id FROM identities WHERE id = $1", [identityId]);
   const row = res.rows[0] as { kind: string; organization_id: string | null } | undefined;
   const ok =
     row !== undefined &&
     (row.kind === "human" ? await isLiveMember(db, organizationId, identityId) : row.organization_id === organizationId);
   if (!ok) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+  await thenExists?.();
   // The subject exists; passkey-verification before the pin, which writes
   // (ADR-0054 Decision 7). A removal committed in between: not found.
   await requireOrganizationAccess(db, organizationId);
