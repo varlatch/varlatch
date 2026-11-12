@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync } from "node:fs";
 import { LOCK_TAG } from "../../src/db/locks.js";
 import type { Querier } from "../../src/db/migrate.js";
+import { openTxScope, shareConnection } from "../../src/db/tx.js";
 
 /**
  * The lock-order completeness check (ADR-0054 amendment E), test-time only:
@@ -32,6 +34,17 @@ import type { Querier } from "../../src/db/migrate.js";
  * order) and reports the others; "report" enforces nothing and reports
  * every violation; reports go to the file named by
  * VARLATCH_LOCK_TRACE_REPORT, when set. "off" installs nothing.
+ *
+ * What it is for: catching a writer that takes its locks out of the order
+ * by mistake, in code written to this repository's conventions. It is a
+ * test tool, not a security boundary, and assumes the code under test does
+ * not set out to evade it. Where SQL could read differently to it than to
+ * PostgreSQL it refuses rather than guesses. It does not defend against
+ * session or schema state the code would have to create on purpose: a
+ * changed search_path, a view or table in another schema shadowing a
+ * public table, a client encoding other than UTF-8. Table names in tags
+ * are the public base tables the migrations create. The concurrency tests
+ * on real PostgreSQL (lock-order-postgres and others) back it up.
  */
 
 export type LockOrderMode = "off" | "report" | "migrated" | "all";
@@ -382,6 +395,12 @@ const MODE_OF: Record<string, string> = { "no-key-update": "no key update", "key
  * replaced. What is left can be split on `;` and searched for keywords.
  */
 export function scanSql(sql: string): { bare: string; comments: string[] } {
+  // Ordinary strings are read with standard_conforming_strings on, the
+  // default; turning it off makes a backslash escape there. Any statement
+  // naming the setting is refused, wherever the name appears.
+  if (/standard_conforming_strings/i.test(sql)) {
+    throw new Error(`lock trace: changing standard_conforming_strings is outside what the checker reads: ${sql.slice(0, 200)}`);
+  }
   let bare = "";
   const comments: string[] = [];
   let i = 0;
@@ -390,7 +409,10 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
     const c = sql[i]!;
     const next = sql[i + 1];
     if (c === "-" && next === "-") {
-      const end = sql.indexOf("\n", i);
+      // A line comment ends at a newline or a carriage return, as in PostgreSQL.
+      const lf = sql.indexOf("\n", i);
+      const cr = sql.indexOf("\r", i);
+      const end = lf < 0 ? cr : cr < 0 ? lf : Math.min(lf, cr);
       comments.push(sql.slice(i, end < 0 ? n : end));
       i = end < 0 ? n : end;
       bare += " ";
@@ -415,6 +437,14 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       if (escaped) bare = bare.slice(0, -1);
       let j = i + 1;
       while (j < n) {
+        // In an ordinary string, a backslash right before a quote ends the
+        // string here but escapes the quote once standard_conforming_strings
+        // is off, however that was set. Without that pair the string ends at
+        // the same place either way (an escape never takes a quote), so only
+        // the pair is refused.
+        if (!escaped && sql[j] === "\\" && sql[j + 1] === "'") {
+          throw new Error(`lock trace: a backslash before a quote in an ordinary string is outside what the checker reads: ${sql.slice(0, 200)}`);
+        }
         if (escaped && sql[j] === "\\") j += 2;
         else if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
         else if (sql[j] === "'") break;
@@ -422,6 +452,12 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       }
       i = j + 1;
       bare += "''";
+      // Another quote next, across white space or comments, is a string
+      // continued on a new line (which keeps an E-string's escapes): not
+      // modelled, and never written here, so refused.
+      if (/^(?:\s|--[^\r\n]*|\/\*[\s\S]*?\*\/)*'/.test(sql.slice(i))) {
+        throw new Error(`lock trace: a string literal continued across lines is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
     } else if (c === '"') {
       let j = i + 1;
       let name = "";
@@ -437,17 +473,32 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       }
       i = j + 1;
       bare += `"${name}"`;
-    } else if (c === "$" && !/\w/.test(bare.slice(-1))) {
-      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
-      if (!tag) {
+    } else if (c === "$") {
+      // A $ inside a name (foo$$), a parameter ($1), or a dollar quote with an
+      // ASCII tag; any other $ (a tag PostgreSQL also accepts, such as $é$)
+      // is refused rather than guessed at.
+      if (/[\w$]/.test(bare.slice(-1))) {
+        throw new Error(`lock trace: a $ inside a name is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
+      if (/^\$\d/.test(sql.slice(i))) {
         bare += c;
         i++;
         continue;
+      }
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i));
+      if (!tag) {
+        throw new Error(`lock trace: a $ that is neither a parameter nor an ASCII dollar quote is outside what the checker reads: ${sql.slice(0, 200)}`);
       }
       const end = sql.indexOf(tag[0], i + tag[0].length);
       i = end < 0 ? n : end + tag[0].length;
       bare += "''";
     } else {
+      // PostgreSQL reads a non-ASCII character outside a literal, a quoted
+      // name or a comment as part of a name (high-bit bytes); the scanner
+      // would not, and could then open a false dollar quote (é$$). Refused.
+      if (c.charCodeAt(0) > 0x7f) {
+        throw new Error(`lock trace: a non-ASCII character outside a literal, quoted name or comment is outside what the checker reads: ${sql.slice(0, 200)}`);
+      }
       bare += c;
       i++;
     }
@@ -465,6 +516,16 @@ export function statementsOf(sql: string): string[] {
 }
 
 const BOUNDARY = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE\s+TRANSACTION)\b/i;
+
+/**
+ * Transaction control the lock trace does not model, refused before it
+ * runs: an end AND CHAIN (it opens the next transaction at once), and
+ * two-phase commit (PREPARE TRANSACTION, COMMIT PREPARED, ROLLBACK
+ * PREPARED). The code does not use them. SET TRANSACTION and SET SESSION
+ * CHARACTERISTICS only set a transaction's isolation or snapshot, not
+ * which locks it takes or when, and pass.
+ */
+const UNMODELLED = /^(?:(?:COMMIT|END|ROLLBACK|ABORT)(?:\s+(?:WORK|TRANSACTION))?\s+AND\s+CHAIN\b|PREPARE\s+TRANSACTION\b|(?:COMMIT|ROLLBACK)\s+PREPARED\b)/i;
 
 /**
  * The grammar a statement with a locking clause may use, and nothing else:
@@ -570,7 +631,16 @@ const LOCKING_CLAUSE = /\bFOR\s+(NO\s+KEY\s+UPDATE|KEY\s+SHARE|UPDATE|SHARE)\b((
  * those named by FOR … OF, or else every item of its query level's FROM.
  * Anything outside the grammar above is refused.
  */
-export function lockingClauses(sql: string): { mode: string; relations: string[]; nested: boolean; skipLocked: boolean; selectList: string }[] {
+export function lockingClauses(sql: string): {
+  mode: string;
+  relations: string[];
+  nested: boolean;
+  depth: number;
+  skipLocked: boolean;
+  selectList: string;
+  lockedName: string;
+  fromCount: number;
+}[] {
   const bare = bareSql(sql);
   const clauses = [...bare.matchAll(LOCKING_CLAUSE)];
   if (clauses.length > 0 && /^\s*WITH\b/i.test(bare)) throw outsideGrammar(sql, "WITH");
@@ -620,8 +690,11 @@ export function lockingClauses(sql: string): { mode: string; relations: string[]
       mode: m[1]!.toLowerCase().replace(/\s+/g, " "),
       relations,
       nested: open.length > 0,
+      depth: open.length,
       skipLocked: /SKIP\s+LOCKED/i.test(m[3] ?? ""),
       selectList,
+      lockedName: of ? of[0]! : items[0]!.name,
+      fromCount: items.length,
     };
   });
 }
@@ -672,7 +745,8 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
       // And it writes every row it locks: SKIP LOCKED, and the outer
       // predicate is only <column> IN (the subquery selecting that column)
       // or a USING join on exactly the columns the subquery selects.
-      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause.selectList)) {
+      if (clause.depth !== 1) throw outsideGrammar(sql, "a nested lock deeper than one subquery level");
+      if (!clause.skipLocked || !writesEveryLockedRow(flatten(bareSql(sql)), clause)) {
         throw outsideGrammar(sql, "a nested lock outside the sweep shapes (SKIP LOCKED; WHERE <column> IN (subquery), or DELETE … USING (subquery) joined on the columns it selects)");
       }
     } else {
@@ -696,11 +770,27 @@ export function lockTagOf(sql: string): { table: string; mode: string; key: stri
  * or a DELETE … USING (subquery) alias WHERE <target>.<c> = <alias>.<c>
  * AND … over exactly the columns the subquery selects.
  */
-function writesEveryLockedRow(top: string, selectList: string): boolean {
-  const selected = selectList.split(",").map((c) => c.trim().replace(/^\w+\./, "").toLowerCase());
-  const inForm = /^\s*(?:DELETE\s+FROM|UPDATE)\s+\w+(?:\s+(?:AS\s+)?\w+)?(?:\s+SET\s+[\s\S]*?)?\s+WHERE\s+(?:\w+\.)?(\w+)\s+IN\s+\u00a7\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
-  if (inForm) return selected.length === 1 && selected[0] === inForm[1]!.toLowerCase();
-  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+\u00a7\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+function writesEveryLockedRow(top: string, clause: { selectList: string; lockedName: string; fromCount: number }): boolean {
+  // Each selected column is the locked item's: qualified by its name, or
+  // unqualified when the subquery's FROM has that one item.
+  const selected: string[] = [];
+  for (const c of clause.selectList.split(",").map((x) => x.trim())) {
+    const m = /^(?:(\w+)\.)?(\w+)$/.exec(c);
+    if (!m) return false;
+    if (m[1] ? m[1].toLowerCase() !== clause.lockedName : clause.fromCount !== 1) return false;
+    selected.push(m[2]!.toLowerCase());
+  }
+  const inForm = /^\s*(DELETE\s+FROM|UPDATE)\s+(\w+)(?:\s+(?:AS\s+)?(?!SET\b|WHERE\b)(\w+))?(?:\s+SET\s+([\s\S]*?))?\s+WHERE\s+(?:(\w+)\.)?(\w+)\s+IN\s+§\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
+  if (inForm) {
+    const [, verb, table, alias, set, qualifier, column] = inForm as unknown as [string, string, string, string | undefined, string | undefined, string | undefined, string];
+    // An UPDATE … FROM joins another table: refused. The IN column is the
+    // target's, named by its alias or table if qualified.
+    if (/^UPDATE$/i.test(verb) && set !== undefined && /\bFROM\b/i.test(set)) return false;
+    if (/^DELETE/i.test(verb) && set !== undefined) return false;
+    if (qualifier && qualifier.toLowerCase() !== (alias ?? table).toLowerCase()) return false;
+    return selected.length === 1 && selected[0] === column.toLowerCase();
+  }
+  const using = /^\s*DELETE\s+FROM\s+\w+\s+(?:AS\s+)?(\w+)\s+USING\s+§\s+(?:AS\s+)?(\w+)\s+WHERE\s+([\s\S]+?)\s*(?:RETURNING\b[\s\S]*)?$/i.exec(top);
   if (!using) return false;
   const [, t, s, where] = using as unknown as [string, string, string, string];
   const joined = new Set<string>();
@@ -717,10 +807,23 @@ function writesEveryLockedRow(top: string, selectList: string): boolean {
 
 /** The function in src/ that began the transaction, for reports and gating. */
 function writerLabel(): string {
+  return writerAt()();
+}
+
+/**
+ * Captures the stack now (V8 records the frames at construction) and names
+ * the writer only when asked: most statements never need the name.
+ */
+function writerAt(): () => string {
   const limit = Error.stackTraceLimit;
   Error.stackTraceLimit = 60;
-  const stack = new Error().stack ?? "";
+  const at = new Error();
   Error.stackTraceLimit = limit;
+  let label: string | undefined;
+  return () => (label ??= labelOf(at.stack ?? ""));
+}
+
+function labelOf(stack: string): string {
   const lines = stack.split("\n").slice(1);
   for (const line of lines) {
     const m = /at (?:async )?(?:(\S+) \()?(?:file:\/\/)?([^()\s]*\/services\/varlatchd\/src\/([^:()]+)):(\d+)/.exec(line);
@@ -733,16 +836,57 @@ function writerLabel(): string {
 }
 
 /**
+ * The flow of a BEGIN sent without withTx (as tests do): its async
+ * context, entered at that BEGIN. A withTx transaction's flow is its scope
+ * (src/db/tx.ts openTxScope).
+ */
+const rawFlow = new AsyncLocalStorage<object>();
+
+/**
  * Wraps a single-connection test database (PGlite) with the trace: refuses
  * untagged locking clauses, records tagged ones, and checks each
- * transaction at COMMIT.
+ * transaction at its end.
+ *
+ * The one connection behaves as each flow's own: one transaction at a
+ * time, as separate connections that conflict would. The wrapper registers
+ * itself as a shared connection (tx.ts shareConnection), so withTx nests
+ * only within its own async flow (openTxScope): a concurrent flow's withTx
+ * sends a BEGIN of its own, and that BEGIN waits until the open
+ * transaction has ended, as does any other flow's statement. A statement
+ * outside a transaction, read or write alike (a SELECT can call a function
+ * that writes), runs in a wrap of its own, holding the connection the same
+ * way. So the trace of a transaction is exactly its own flow's statements,
+ * read at its end once they have all finished.
  */
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
-  let inTx = false;
-  let label = "";
-  /** The open transaction is one the wrapper began around a lone statement. */
-  let lone = false;
+  /** The open transaction: its flow, who began it, and its statements still running. */
+  let owner: { key: object; label: string; ending: boolean; running: Set<Promise<unknown>>; tail: Promise<unknown> } | null = null;
+  /**
+   * Held by the open transaction from its BEGIN to its end, or by a lone
+   * wrap. Waiters loop on it in place, never through a helper: they resume
+   * in the order they came, and one finding it free takes it in the same turn.
+   */
+  let held: Promise<void> | null = null;
+  let releaseHeld: () => void = () => undefined;
+  const hold = () => {
+    let release!: () => void;
+    held = new Promise<void>((r) => (release = r));
+    releaseHeld = () => {
+      held = null;
+      release();
+    };
+  };
+  /** BEGINs still waiting or running, by flow: the flow's next statements wait for theirs. */
+  const beginning = new Map<object, Promise<unknown>>();
   const report = process.env.VARLATCH_LOCK_TRACE_REPORT;
+  // The Querier withTx is handed: set below, before any call.
+  let self: Q;
+
+  const flowKey = (): object | undefined => openTxScope(self) ?? rawFlow.getStore();
+  /** The statement belongs in the open transaction. A raw BEGIN's flow also takes statements from no flow at all (a test's helper that began it). */
+  const ownedBy = (key: object | undefined) =>
+    !!owner && !owner.ending && (owner.key === key || (key === undefined && !isScope(owner.key)));
+  const isScope = (key: object) => "db" in key && "open" in key;
 
   /**
    * The statements of a text, refusing a compound one that begins or ends
@@ -752,95 +896,177 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
    */
   const split = (text: string) => {
     const statements = statementsOf(text);
+    const unmodelled = statements.find((s) => UNMODELLED.test(s));
+    if (unmodelled) {
+      throw new Error(`lock trace: transaction control the check does not model (AND CHAIN, two-phase commit) is refused: ${unmodelled.slice(0, 160)}`);
+    }
     if (statements.length > 1 && statements.some((s) => BOUNDARY.test(s))) {
       throw new Error(`lock trace: send BEGIN, COMMIT and ROLLBACK as statements of their own, not in a compound statement: ${text.slice(0, 160)}`);
     }
     return statements;
   };
 
-  const check = async () => {
-    let rows: TraceRow[];
+  /**
+   * The open transaction's trace, cleared as it is read; empty when it
+   * wrote nothing (no transaction id), null when it is aborted (it cannot
+   * be read, and it rolls back).
+   */
+  const collect = async (): Promise<TraceRow[] | null> => {
     try {
-      const tx = ((await db.query("SELECT txid_current_if_assigned()::text AS x")).rows[0] as { x: string | null }).x;
-      if (tx === null) return;
-      rows = ((await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace WHERE txid = $1::bigint ORDER BY seq`, [tx])).rows as TraceRow[]);
-      await db.query(`DELETE FROM ${SCHEMA}.trace WHERE txid = $1::bigint`, [tx]);
+      const rows = (await db.query(
+        `SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace WHERE txid = txid_current_if_assigned() ORDER BY seq`,
+      )).rows as TraceRow[];
+      if (rows.length > 0) await db.query(`DELETE FROM ${SCHEMA}.trace WHERE txid = txid_current_if_assigned()`);
+      return rows;
     } catch {
-      return; // an aborted transaction: it cannot be read, and it rolls back
+      return null;
     }
-    // A lone statement that takes at most one row lock (an insert's
-    // references aside, a single-row update such as a last-use stamp) never
-    // holds a lock while waiting for another (amendment E): not checked.
-    if (lone) {
-      // A test's own fixture statement is not production code.
-      if (label.startsWith("(test)") && !options.checkTestStatements) return;
-      const acquired = new Set(rows.filter((r) => r.kind !== "insert" && r.kind !== "reference").map((r) => `${r.tbl}\u0000${r.key}`));
-      if (acquired.size < 2) return;
-    }
-    const problems = checkTrace(rows);
+  };
+
+  const enforce = (label: string, problems: string[], trace: TraceRow[]) => {
     // VARLATCH_LOCK_TRACE_LABELS: one line per checked transaction, to see what a run covered.
     if (process.env.VARLATCH_LOCK_TRACE_LABELS) appendFileSync(process.env.VARLATCH_LOCK_TRACE_LABELS, `${label}\t${problems.length}\n`);
     if (problems.length === 0) return;
-    const violation = { label, problems, trace: rows };
+    const violation = { label, problems, trace };
     if (mode === "all" || (mode === "migrated" && MIGRATED.has(label))) enforced.push(violation);
     else if (report) {
       const testPath = (globalThis as { expect?: { getState?: () => { testPath?: string; currentTestName?: string } } }).expect?.getState?.();
-      appendFileSync(report, `${JSON.stringify({ file: testPath?.testPath ?? null, test: testPath?.currentTestName ?? null, label, problems, trace: rows })}\n`);
+      appendFileSync(report, `${JSON.stringify({ file: testPath?.testPath ?? null, test: testPath?.currentTestName ?? null, label, problems, trace })}\n`);
+    }
+  };
+
+  /**
+   * A lone statement that takes at most one row lock, its foreign keys'
+   * references counted (a single-row update such as a last-use stamp),
+   * never holds a lock while waiting for another (amendment E): not
+   * checked. The rows it inserts do not count.
+   */
+  const checkLone = (rows: TraceRow[], label: string) => {
+    // A test's own fixture statement is not production code.
+    if (label.startsWith("(test)") && !options.checkTestStatements) return;
+    const inserted = new Set(rows.filter((r) => r.kind === "insert").map((r) => `${r.tbl}\u0000${r.key}`));
+    const acquired = new Set(rows.filter((r) => r.kind !== "insert").map((r) => `${r.tbl}\u0000${r.key}`).filter((k) => !inserted.has(k)));
+    if (acquired.size < 2) return;
+    enforce(label, checkTrace(rows), rows);
+  };
+
+  /**
+   * A statement of the open transaction: its end waits for it, trace writes
+   * included. Statements of one transaction run one at a time, each with its
+   * trace writes, in the order they were sent: two sent at once (Promise.all)
+   * would otherwise record their locks in another order than PostgreSQL took
+   * them.
+   */
+  const owned = <T>(start: () => Promise<T>): Promise<T> => {
+    const o = owner!;
+    const run = o.tail.then(start, start);
+    o.tail = run.then(() => undefined, () => undefined);
+    const running = o.running;
+    running.add(run);
+    const done = () => running.delete(run);
+    run.then(done, done);
+    return run;
+  };
+
+  /**
+   * A statement outside a transaction runs as one implicit transaction,
+   * holding the connection: the trace then holds only its rows, read and
+   * checked when it has run, as a transaction's are at its end. A failed
+   * statement's rows rolled back with it.
+   */
+  const lone = async (text: string, params: unknown[] | undefined, label: () => string) => {
+    while (held) await held;
+    hold();
+    try {
+      let failed: { err: unknown } | undefined;
+      let res: Awaited<ReturnType<typeof statement>> | undefined;
+      try {
+        res = await statement(text, params);
+      } catch (err) {
+        failed = { err };
+      }
+      const rows = (await db.query(`SELECT seq::int AS seq, tbl, key, mode, kind FROM ${SCHEMA}.trace ORDER BY seq`)).rows as TraceRow[];
+      if (rows.length > 0) {
+        await db.query(`DELETE FROM ${SCHEMA}.trace`);
+        checkLone(rows, label());
+      }
+      if (failed) throw failed.err;
+      return res!;
+    } finally {
+      releaseHeld();
     }
   };
 
   const query = async (text: string, params?: unknown[]) => {
     const first = split(text)[0] ?? "";
     if (/^(BEGIN|START\s+TRANSACTION)\b/i.test(first)) {
-      // Before any await: the stack still shows who began the transaction.
-      const began = writerLabel();
-      if (!inTx) await db.query(`DELETE FROM ${SCHEMA}.trace`);
-      const res = await db.query(text, params);
-      inTx = true;
-      label = began;
-      return res;
-    }
-    if (/^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first)) {
-      if (inTx) await check();
-      inTx = false;
-      return db.query(text, params);
-    }
-    if (/^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?$/i.test(first)) {
-      // A transaction that ends in a refusal took its locks too: check it
-      // before rolling back. An aborted one cannot be read; it is skipped.
-      if (inTx) await check();
-      inTx = false;
-      return db.query(text, params);
-    }
-    // A lone write or lock outside a transaction runs as one implicit
-    // transaction; run it in an explicit one (the same effect), so its
-    // locks are checked at COMMIT like any other transaction's.
-    if (!inTx && (/^(INSERT|UPDATE|DELETE|MERGE|WITH)\b/i.test(first) || tagsOf(text).length > 0)) {
-      const began = writerLabel();
-      await db.query(`DELETE FROM ${SCHEMA}.trace`);
-      await db.query("BEGIN");
-      inTx = true;
-      lone = true;
-      label = began;
+      // Before any await: the stack still shows who began the transaction,
+      // and a raw BEGIN's caller context becomes its flow.
+      const label = writerLabel();
+      let key: object | undefined = openTxScope(self);
+      if (!key) {
+        // A BEGIN without withTx while another such transaction is open or
+        // beginning: nested in the same caller, or a second caller's, which
+        // nothing tells apart. Refused before anything changes.
+        if ((owner && !isScope(owner.key)) || [...beginning.keys()].some((k) => !isScope(k))) {
+          throw new Error("lock trace: a BEGIN outside withTx while a transaction begun outside withTx is open; end it first (or use withTx)");
+        }
+        key = {};
+        rawFlow.enterWith(key);
+      }
+      // The same flow again: PostgreSQL only warns. Not while its end is in
+      // progress: then this BEGIN waits for the end, below, and opens the next.
+      if (owner?.key === key && !owner.ending) return db.query(text, params);
+      const flow = key;
+      const begin = (async () => {
+        while (held) await held;
+        hold();
+        try {
+          const res = await db.query(text, params);
+          owner = { key: flow, label, ending: false, running: new Set(), tail: Promise.resolve() };
+          return res;
+        } catch (err) {
+          releaseHeld();
+          throw err;
+        }
+      })();
+      beginning.set(flow, begin);
       try {
-        const res = await statement(text, params);
-        await check();
-        inTx = false;
-        lone = false;
-        await db.query("COMMIT");
-        return res;
-      } catch (err) {
-        if (inTx) await check();
-        inTx = false;
-        lone = false;
-        await db.query("ROLLBACK").catch(() => undefined);
-        throw err;
+        return await begin;
+      } finally {
+        if (beginning.get(flow) === begin) beginning.delete(flow);
       }
     }
-    return statement(text, params);
+    const key = flowKey();
+    const commit = /^(COMMIT|END)\b/i.test(first) && !/^COMMIT\s+PREPARED\b/i.test(first);
+    if (commit || /^(ROLLBACK|ABORT)(\s+(WORK|TRANSACTION))?(\s+AND\s+NO\s+CHAIN)?$/i.test(first)) {
+      if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+      // No transaction of this flow's is open (after a COMMIT that failed,
+      // or a stray end): on a connection of its own PostgreSQL only warns.
+      if (!ownedBy(key)) return { rows: [] };
+      const o = owner!;
+      o.ending = true;
+      // The flow's earlier statements, and their trace writes, finish first.
+      await Promise.allSettled([...o.running]);
+      // A transaction that ends in a refusal took its locks too: check it
+      // before rolling back. An aborted one cannot be read; it is skipped.
+      const rows = await collect();
+      if (rows) enforce(o.label, checkTrace(rows), rows);
+      owner = null;
+      try {
+        return await db.query(text, params);
+      } finally {
+        releaseHeld();
+      }
+    }
+    // Before any await: who runs it, while the stack shows it.
+    const label = writerAt();
+    if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+    if (ownedBy(key)) return owned(() => statement(text, params));
+    return lone(text, params, label);
   };
 
-  /** One statement inside a transaction: refuses untagged locks, records tagged ones. */
+  /** One statement: refuses untagged locks, records tagged ones. */
   const statement = async (text: string, params?: unknown[]) => {
     const tag = lockTagOf(text);
     const res = await db.query(text, params);
@@ -862,14 +1088,20 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     const statements = split(text);
     if (statements.length === 1 && BOUNDARY.test(statements[0]!)) return query(text);
     if (lockTagOf(text)) throw new Error(`lock trace: run tagged locks through query, not exec: ${text.slice(0, 160)}`);
+    // One statement: as query runs it (a write outside a transaction is wrapped).
+    if (statements.length < 2) return query(text);
     const run = () => (db.exec ? db.exec(text) : db.query(text));
-    if (inTx || statements.length < 2) return run();
+    const key = flowKey();
+    // Behind its own flow's BEGIN: inside that transaction.
+    if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
+    if (ownedBy(key)) return owned(run);
     // Several statements outside a transaction run as one implicit
     // transaction; run them in an explicit one instead (the same effect),
     // so its trace is checked at COMMIT like any other.
     await query("BEGIN");
     try {
-      const res = await run();
+      // In the chain of the transaction it just opened, as any statement of it.
+      const res = ownedBy(key ?? flowKey()) ? await owned(run) : await run();
       await query("COMMIT");
       return res;
     } catch (err) {
@@ -878,5 +1110,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     }
   };
 
-  return { ...db, query, exec };
+  self = { ...db, query, exec };
+  shareConnection(self);
+  return self;
 }
