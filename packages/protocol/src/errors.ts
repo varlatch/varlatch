@@ -108,6 +108,8 @@ export const CAPABILITIES = [
   "security.approval-keys",
   "organizations.permissions",
   "installation.outbound",
+  // GET /cli/varlatch.cjs, /install.sh and /install.ps1 answer (ADR-0058 Decision 3).
+  "cli.download",
   "security.refused-destinations",
   "organizations.incident-freeze",
 ] as const;

@@ -38,6 +38,7 @@ import {
   type EscrowBlob,
 } from "./crypto/escrow.js";
 import { buildApp, SERVER_VERSION } from "./http/app.js";
+import { cliDownloadSetting } from "./http/cliDownload.js";
 import { buildHumanAuth } from "./auth/humanauth.js";
 import { OutboundPolicy, allowListWarnings } from "./net/outbound.js";
 import { fileURLToPath } from "node:url";
@@ -168,12 +169,17 @@ async function serveCommand(): Promise<void> {
       })
     : null;
   observed = observer;
+  // ADR-0058 Decision 3: the CLI and install scripts, when the operator turned them on.
+  const cliDownload = cliDownloadSetting({ serve: config.serveCli, publicUrl: config.publicUrl, version: SERVER_VERSION });
+  if (cliDownload.serving) console.log(`serving the CLI ${SERVER_VERSION} and install scripts at ${cliDownload.download.origin}/install.sh and /install.ps1`);
+  else if (config.serveCli === "on") console.error(`varlatchd: not serving the CLI: ${cliDownload.reason}`);
   const app = buildApp(ctx, {
     clientAddress: clientAddressResolver(c => getConnInfo(c).remote.address ?? "unknown", trustedProxies),
     issuer,
     publicUrl: issuer,
     humanAuth,
     enrollBundlePath: fileURLToPath(new URL("./enroll.js", import.meta.url)),
+    ...(cliDownload.serving ? { cliDownload: cliDownload.download } : {}),
     sync: config.sync,
     browserEndpoint,
     ...(observer ? { tailnetListeners: () => observer.report() } : {}),
@@ -426,6 +432,7 @@ async function adminCommand(rest: string[]): Promise<void> {
           ? { browserEndpoint: config.tailscale.browser ? `https://${config.tailscale.browser.host}:${config.tailscale.browser.port}` : null }
           : null,
         outboundAllow: config.outboundAllow,
+        cliDownload: { serve: config.serveCli, setting: cliDownloadSetting({ serve: config.serveCli, publicUrl: config.publicUrl, version: SERVER_VERSION }) },
       });
       rootKek?.fill(0);
       console.log(JSON.stringify(report));

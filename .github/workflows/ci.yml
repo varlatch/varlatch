@@ -240,6 +240,31 @@ jobs:
             ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             git /repo --log-opts=--all --redact=100 --no-banner
 
+  # The install scripts an installation serves (ADR-0058 Decision 3):
+  # install.sh through shellcheck, and install.ps1 run in PowerShell on
+  # Windows. GitHub-hosted only (no self-hosted Windows runner); when hosted
+  # minutes are out the job is skipped and runs again nightly.
+  installers:
+    needs: changes
+    if: needs.changes.outputs.installers == 'true' && needs.changes.outputs.hosted == 'true' && !vars.CI_RUNNER
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            check: shellcheck
+          - os: windows-latest
+            check: windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+      - name: Install scripts (${{ matrix.check }})
+        run: node scripts/test-installers.mjs ${{ matrix.check }}
+
   docker:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -375,6 +400,7 @@ jobs:
       contributor: ${{ steps.filter.outputs.contributor }}
       recovery: ${{ steps.filter.outputs.recovery }}
       lifecycle: ${{ steps.filter.outputs.lifecycle }}
+      installers: ${{ steps.filter.outputs.installers }}
     steps:
       - name: Runner for this run
         id: runner
@@ -402,7 +428,7 @@ jobs:
           REF: ${{ github.ref }}
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          tiers="multiarch contributor recovery lifecycle"
+          tiers="multiarch contributor recovery lifecycle installers"
           if [ "$EVENT" = schedule ] && [ -z "$(git log -1 --since='25 hours ago' --format=%H)" ]; then
             echo "No commits on main since the last nightly run; skipping."
             for t in run code $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
@@ -444,6 +470,8 @@ jobs:
             # Convex mirror, the backup CLI.
             [recovery]="$shared|^services/varlatchd/src/(backup|db|crypto|mirror)/|^services/varlatchd/src/(cli|control-entry|config)\.ts$|^packages/backup/|^apps/cli/src/(backup|legacyBackup|maintenance)\.ts$|^convex/convex/(schema|mirror)\.ts$|^infra/|^scripts/(test-backup|fixtures/)"
             # Installing, upgrading and adopting an installation, and its ingress.
+            # The install scripts an installation serves (ADR-0058), on Windows too.
+            [installers]='^\.github/workflows/ci\.yml$|^services/varlatchd/src/http/cliDownload\.ts$|^scripts/test-installers\.mjs$'
             [lifecycle]="$shared|^services/varlatchd/src/(tailnet|enroll)/|^services/varlatchd/src/(control-entry|config|netns-watchdog)\.ts$|^services/varlatchd/src/(domain/bootstrap|auth/humanauth|cli)\.ts$|^apps/cli/src/(setup|adopt|upgrade|doctor|move|moveState)\.ts$|^infra/|^scripts/(test-backup-upgrade|test-prod-shape|test-adopt|test-sidecar-restart|test-ingress|test-setup|test-move|fixtures/)"
           )
           for t in $tiers; do

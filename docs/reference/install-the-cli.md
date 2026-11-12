@@ -1,5 +1,32 @@
 # Install the CLI
 
+## From your installation
+
+When whoever runs your installation turned it on, the installation serves
+its own CLI, always the version it runs. One line installs it for you, in
+`~/.local/bin` (or `%LOCALAPPDATA%\Programs\Varlatch` on Windows), without
+`sudo` and without installing Node.js:
+
+```sh
+curl -fsSL https://vault.example.com/install.sh | sh          # Linux and macOS
+```
+
+```powershell
+irm https://vault.example.com/install.ps1 | iex               # Windows PowerShell
+```
+
+Leave out `| sh` (or `| iex`) to read the script first. It checks the file
+against the SHA-256 it carries, asks before replacing a copy you already
+have, leaves a Homebrew copy to Homebrew, and ends with the `varlatch login`
+line to run. Without it, the installation answers 404: use the verified
+route below.
+
+Installing this way trusts your installation, and whoever controls its
+host or its address, to run code on your machine. To check the release's
+signature instead, install it from GitHub as below.
+
+## From the release
+
 The CLI is one file, `varlatch-cli-<version>.cjs`, attached to every
 release. It needs only Node.js: [Node.js version](#nodejs-version). Use
 the version your installation runs: the CLI and the installation are

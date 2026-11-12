@@ -20,8 +20,15 @@ one device never locks you out:
 
 ## 2. Install the CLI
 
-Install the release your installation runs. The dashboard shows it under
-Settings, then Server. On Linux:
+If your installation serves the CLI, one line installs it (on Windows,
+`irm https://vault.example.com/install.ps1 | iex`):
+
+```sh
+curl -fsSL https://vault.example.com/install.sh | sh
+```
+
+Otherwise, install the release your installation runs. The dashboard
+shows it under Settings, then Server. On Linux:
 
 ```sh
 V=0.21.0  # the release your installation runs

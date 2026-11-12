@@ -54,6 +54,12 @@ export interface InstallConfig {
    * With the public or external ingress it brings the Tailscale sidecar.
    */
   tailnetEndpoint?: { port: number };
+  /**
+   * Serve this installation's CLI and install scripts (ADR-0058 Decision 3).
+   * Absent in configurations written before the question: no line in .env,
+   * so Compose's default (off) applies and an operator's own line counts.
+   */
+  serveCli?: boolean;
   /** Host port of the dashboard (the only service that needs one). */
   webPort: number;
   bindAddress: string;
@@ -234,6 +240,12 @@ export function renderEnv(config: InstallConfig, additions = "", opts: { overrid
     ...(config.convexOrigin ? [] : ["# One public origin (ADR-0035 D5): varlatchd and Convex need no host port.", "VARLATCHD_PORT=0", "CONVEX_PORT=0"]),
     ...SECRET_FILES.filter((s) => s.hostPath).map((s) => `${s.hostPath}=${config.secretPaths?.[s.hostPath!] ?? `./secrets/${s.file}`}`),
     ...ingressEnv(config, opts.override ?? false),
+    ...(config.serveCli === undefined
+      ? []
+      : [
+          "# The CLI and install scripts at /install.sh (ADR-0058): installing that way trusts this installation.",
+          `VARLATCH_SERVE_CLI=${config.serveCli ? "on" : "off"}`,
+        ]),
     ENV_KEEP,
   ];
   return `${lines.join("\n")}\n${additions}`;
@@ -409,6 +421,8 @@ export interface SetupOptions {
    * it, absent keeps what the configuration says.
    */
   tailnetEndpoint?: boolean | undefined;
+  /** Serve the CLI and install scripts (ADR-0058): true on, false off, absent asks on a new installation in a terminal. */
+  serveCli?: boolean | undefined;
   webPort?: number | undefined;
   /** Print the enrollment link and stop instead of waiting for it. */
   noWait: boolean;
@@ -592,6 +606,16 @@ export async function escrowPhase(dir: string, opts: Pick<SetupOptions, "escrow"
 }
 
 // ---- The command -----------------------------------------------------------
+
+async function askServeCli(): Promise<boolean> {
+  console.log("  Serve the CLI from this installation? People then install it with one line, such as");
+  console.log("  curl -fsSL <address>/install.sh | sh, always the version this installation runs. That trusts");
+  console.log("  this installation, and whoever controls this host or its address, to run code on their");
+  console.log("  machines. Without it, people install the CLI from its signed GitHub release. Change it later");
+  console.log("  with varlatch setup --serve-cli or --no-serve-cli.");
+  const answer = (await ask("  Serve the CLI? [y/N]: ", "--serve-cli or --no-serve-cli")).trim();
+  return /^(y|yes)$/i.test(answer);
+}
 
 async function askIngress(): Promise<Ingress> {
   console.log("  How will people reach Varlatch?");
@@ -784,8 +808,16 @@ export async function runSetup(opts: SetupOptions): Promise<number> {
       if (ingress === "public") publicUrl = validatePublicHost(publicUrl);
       config = { ...base, publicUrl };
     }
+    // A new installation answers the question once; without a terminal and a flag, off.
+    const serveCli = opts.serveCli ?? (process.stdin.isTTY ? await askServeCli() : false);
+    config = { ...config, serveCli };
     saveConfig(config);
     console.log(`  ✓ ${config.publicUrl || `tailnet machine "${config.tailnetMachine}"`} (${ingress} ingress) → ${CONFIG_FILE}`);
+  }
+  if (opts.serveCli !== undefined && opts.serveCli !== config.serveCli) {
+    config = { ...config, serveCli: opts.serveCli };
+    saveConfig(config);
+    console.log(`  ✓ serving the CLI and install scripts ${opts.serveCli ? "on" : "off"} (ADR-0058) → ${CONFIG_FILE}`);
   }
   if (opts.tailnetEndpoint !== undefined && opts.tailnetEndpoint !== (config.tailnetEndpoint !== undefined)) {
     if (opts.tailnetEndpoint) {

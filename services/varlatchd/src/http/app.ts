@@ -2,6 +2,7 @@
 import { backupStatus } from "@varlatch/backup";
 import { installationRelease } from "../domain/releaseNotice.js";
 import { Hono, type Context } from "hono";
+import { installPs1, installSh, type CliDownload } from "./cliDownload.js";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import {
@@ -282,6 +283,12 @@ export interface BuildAppOptions {
   humanAuth?: import("../auth/humanauth.js").HumanAuth;
   /** Absolute path to the bundled enrollment client JS. */
   enrollBundlePath?: string;
+  /**
+   * The CLI and install scripts this installation serves (ADR-0058
+   * Decision 3), on the ordinary listener only; absent, those paths answer
+   * 404 and /v1/meta does not list cli.download.
+   */
+  cliDownload?: CliDownload;
   /**
    * Present ONLY on the dedicated tailnet listener (ADR-0014 §7): resolves
    * the true socket peer to verified Tailnet Context. The ordinary listener
@@ -744,6 +751,32 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   const deviceBase = deviceSignInBase(options.publicUrl);
 
+  // The CLI and its install scripts (ADR-0058 Decision 3): unauthenticated,
+  // like /v1/meta, which already says the version. Off: 404, the same
+  // answer as a path that does not exist.
+  {
+    const download = options.cliDownload;
+    const common = { "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff" };
+    const notServed = (c: Context) => c.text("Not found", 404, common);
+    if (download) {
+      const sh = installSh(download);
+      const ps1 = installPs1(download);
+      app.get("/cli/varlatch.cjs", (c) =>
+        c.body(new Uint8Array(download.file), 200, {
+          ...common,
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": "attachment; filename=\"varlatch.cjs\"",
+        }),
+      );
+      app.get("/install.sh", (c) => c.text(sh, 200, { ...common, "Content-Type": "text/plain; charset=utf-8" }));
+      app.get("/install.ps1", (c) => c.text(ps1, 200, { ...common, "Content-Type": "text/plain; charset=utf-8" }));
+    } else {
+      app.get("/cli/varlatch.cjs", notServed);
+      app.get("/install.sh", notServed);
+      app.get("/install.ps1", notServed);
+    }
+  }
+
   app.get("/v1/meta", async (c) => {
     const inst = await getInstallation(ctx.db).catch(() => null);
     // sync.targets is advertised only when the installation switch is on;
@@ -756,6 +789,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // Advertised when configured; the endpoint itself is never in this
       // unauthenticated document (GET /v1/tailnet/endpoint has it).
       ...(options.browserEndpoint ? [] : ["tailnet.browser-reads"]),
+      ...(options.cliDownload ? [] : ["cli.download"]),
     ]);
     return c.json({
       apiMajor: 1,
