@@ -364,6 +364,12 @@ describe("under enforce", () => {
     expect((await revoke(admin.cli, r.id, "invalid")).body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "not-found" } });
     expect(await intents()).toBe(0);
     expect(await versionOf(r.id)).toEqual({ version: 1, revoked_at: null });
+    // An empty header is still a header: the requester is locked FOR UPDATE
+    // before the Idempotency-Key claim, never KEY SHARE first and upgraded
+    // (the lock-order check fails the test otherwise).
+    const empty = await edit(admin.cli, r.id, tags(1, ["tag:prod"]), undefined, { "Varlatch-Approval": "", "Idempotency-Key": "edit-empty" });
+    expect(empty.body.error).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "not-found" } });
+    expect(await count("SELECT count(*)::int AS n FROM idempotency_keys")).toBe(0);
   });
 
   it("asks under an Idempotency-Key without leaving a claim; the approved repeat claims it once", async () => {

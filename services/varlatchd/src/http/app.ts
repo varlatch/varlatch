@@ -3667,7 +3667,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // approval it may consume.
       withIdempotency(ctx, c, principal, endpoint, body, {
         organizationId: org.id,
-        people: approvalId ? [{ id: principal.identity.id, mode: "update" }] : [],
+        people: approvalId !== null ? [{ id: principal.identity.id, mode: "update" }] : [],
       }, async (ctx) =>
       withTx(ctx.db, async (db) => {
         const prepared = await prepareProtectedOperation(db, gate, {
