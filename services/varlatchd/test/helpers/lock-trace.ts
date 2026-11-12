@@ -34,6 +34,17 @@ import { openTxScope, shareConnection } from "../../src/db/tx.js";
  * order) and reports the others; "report" enforces nothing and reports
  * every violation; reports go to the file named by
  * VARLATCH_LOCK_TRACE_REPORT, when set. "off" installs nothing.
+ *
+ * What it is for: catching a writer that takes its locks out of the order
+ * by mistake, in code written to this repository's conventions. It is a
+ * test tool, not a security boundary, and assumes the code under test does
+ * not set out to evade it. Where SQL could read differently to it than to
+ * PostgreSQL it refuses rather than guesses. It does not defend against
+ * session or schema state the code would have to create on purpose: a
+ * changed search_path, a view or table in another schema shadowing a
+ * public table, a client encoding other than UTF-8. Table names in tags
+ * are the public base tables the migrations create. The concurrency tests
+ * on real PostgreSQL (lock-order-postgres and others) back it up.
  */
 
 export type LockOrderMode = "off" | "report" | "migrated" | "all";
