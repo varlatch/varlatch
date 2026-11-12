@@ -4,7 +4,8 @@ import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import { withSerializableTx, withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { roleCreateBinding } from "../src/domain/accessstepup.js";
+import { grantReplaceBinding, roleCreateBinding } from "../src/domain/accessstepup.js";
+import type { Querier } from "../src/db/migrate.js";
 import { withApproval, type Requester } from "../src/domain/approvals.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { DomainError } from "../src/domain/errors.js";
@@ -648,6 +649,41 @@ describe("under enforce", () => {
     expect((await addProject(admin.cli, f.team, "prj_nope")).status).toBe(404);
     expect((await removeProject(admin.cli, f.team, other.id)).status).toBe(404);
     expect(await intents()).toBe(before);
+  });
+
+  it("never hides a changed subject: two identities named Bob read apart in every summary", async () => {
+    // A machine also named Bob, beside the person Bob.
+    const machine = await ok("POST", `${ORG}/identities`, admin.cli, { name: "Bob", kind: "service" },
+      header(await approved(admin, await call("POST", `${ORG}/identities`, admin.cli, { name: "Bob", kind: "service" }))));
+    const person = `Bob (${f.bob.id})`;
+    const robotBob = `Bob (${machine.id})`;
+    const decl = (subjectIdentityId: string) => ({ subjectIdentityId, scope: { kind: "project", projectId: f.project }, actions: ["project.read"] });
+    const toPerson = stepUp(await createGrant(admin.cli, decl(f.bob.id)));
+    expect(toPerson.summary.title).toBe(`Grant project.read on project api to ${person}`);
+    await approve(admin, toPerson.id);
+    const grant = (await createGrant(admin.cli, decl(f.bob.id), toPerson.id)).body;
+    // The same scope and permission, the other Bob: the subject change is listed, with both ids.
+    const swap = stepUp(await replaceGrant(admin.cli, grant.id, decl(machine.id)));
+    expect(swap.summary).toEqual({
+      title: `Change the Grant of project.read on project api to ${person}`,
+      changes: [{ field: "subject", from: person, to: robotBob, loosens: false }],
+    });
+    // Memberships name the Bob they mean.
+    expect(stepUp(await addMember("groups", admin.cli, f.group, machine.id)).summary.title).toBe(`Add ${robotBob} to group oncall`);
+    expect(stepUp(await removeMember("teams", admin.cli, f.team, f.bob.id)).summary.title).toBe(`Remove ${person} from team platform`);
+  });
+
+  it("decides a Grant change on what is bound, not on its labels", async () => {
+    // A store whose every label reads "Bob": the subject change is still listed, with what each side binds.
+    const db = { query: async (_sql: string, params: unknown[] = []) => ({ rows: (params[0] as string[]).map((id) => ({ id, label: "Bob", kind: "group" })) }) } as unknown as Querier;
+    const old = { id: "grt_old", revoked: false, subjectIdentityId: "idn_a", scope: { kind: "organization" as const }, actions: ["project.read"] };
+    const binding = await grantReplaceBinding(db, { id: orgId }, old, { ...old, subjectIdentityId: "idn_b" });
+    expect(binding.summary.changes).toEqual([
+      { field: "subject", from: 'Bob {"identityId":"idn_a"}', to: 'Bob {"identityId":"idn_b"}', loosens: false },
+    ]);
+    // A role in place of the same actions, both read "Bob": listed too.
+    const role = await grantReplaceBinding(db, { id: orgId }, { ...old, actions: null, roleId: "rol_a" }, { ...old, actions: null, roleId: "rol_b" });
+    expect(role.summary.changes.map((c) => c.field)).toEqual(["permission"]);
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {
