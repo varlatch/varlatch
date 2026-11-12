@@ -173,11 +173,16 @@ export function changedTables(before: Map<string, string>, after: Map<string, st
   return [...new Set([...before.keys(), ...after.keys()])].filter((t) => before.get(t) !== after.get(t)).sort();
 }
 
-/** A JSON body's shape: object keys and value types, an array as its first element's shape. */
+/**
+ * A JSON body's shape: object keys and value types, an array as its first
+ * element's shape. A key that is an id (a map keyed by credential, say)
+ * becomes "<id>": ids differ from run to run.
+ */
 export function shapeOf(value: unknown): unknown {
   if (Array.isArray(value)) return value.length === 0 ? [] : [shapeOf(value[0])];
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((k) => [k, shapeOf((value as Record<string, unknown>)[k])]));
+    const id = (k: string) => (/^[a-z]+_[a-z0-9]{16,}$/.test(k) ? "<id>" : k);
+    return Object.fromEntries(Object.keys(value).sort().map((k) => [id(k), shapeOf((value as Record<string, unknown>)[k])]));
   }
   return value === null ? "null" : typeof value;
 }
@@ -261,21 +266,25 @@ export async function sweeper(rootKek: Buffer): Promise<Sweeper> {
 export interface OffRecord { status: number; code: string | null; shape: unknown; tables: string[] }
 
 /**
- * The off-mode baseline: every variant, the blocked admin, the control
- * off, from the same states the enforce sweep sees (back to the fixtures
- * after a variant that changed something).
+ * One variant with the control off, on the fixtures exactly (each variant
+ * starts from them: any earlier change was undone by `fresh`): its answer
+ * and the tables it changed. The baseline and the sweep both take it this
+ * way, so they compare like with like.
  */
+export async function offRun(s: Sweeper, v: Variant): Promise<{ answer: Answer; record: OffRecord }> {
+  await s.setMode("off");
+  const before = await s.state();
+  const answer = await s.send(v);
+  const tables = changedTables(before, await s.state());
+  if (tables.length > 0) await s.fresh();
+  return { answer, record: { status: answer.status, code: answer.code, shape: answer.shape, tables } };
+}
+
+/** The off-mode baseline: every variant, the blocked admin, the control off. */
 export async function recordOff(rootKek: Buffer): Promise<Record<string, OffRecord>> {
   const s = await sweeper(rootKek);
   const out: Record<string, OffRecord> = {};
-  for (const v of s.variants()) {
-    await s.setMode("off");
-    const before = await s.state();
-    const a = await s.send(v);
-    const tables = changedTables(before, await s.state());
-    out[v.label] = { status: a.status, code: a.code, shape: a.shape, tables };
-    if (tables.length > 0) await s.fresh();
-  }
+  for (const v of s.variants()) out[v.label] = (await offRun(s, v)).record;
   await s.close();
   return out;
 }

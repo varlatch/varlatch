@@ -12,7 +12,7 @@ import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { changedTables, sweeper, type OffRecord } from "./helpers/route-sweep.js";
+import { changedTables, offRun, sweeper, type OffRecord } from "./helpers/route-sweep.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 import { uncheckedOrganizations } from "../src/domain/requestaccess.js";
@@ -569,8 +569,9 @@ describe("every /v1/organizations/:org route", () => {
 //   (test/fixtures/passkey-verification-off-baseline.json).
 //
 // Each request runs under the lock-order harness, which also checks that a
-// write never comes before its checkpoint; a run whose off-mode request
-// changed something starts the next one from the fixtures again.
+// write never comes before its checkpoint. Every variant starts from the
+// fixtures: the off-mode request runs first, and any change, or refusal
+// audit, is undone before the next.
 
 type Sweep = {
   succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number; misclassified: string[]; tailnetKept: string[];
@@ -592,23 +593,25 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
   if (missing.length > 0) out.offDiffers.push(`not in the baseline: ${missing.join(", ")}`);
   for (const v of variants) {
     const { key, label, variant } = v;
+    // With the control off first, on the fixtures: exactly what main
+    // answered and changed.
+    settledAtAnswer.mockClear();
+    const { answer: off, record } = await offRun(s, v);
+    const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
+    const base = OFF_BASELINE.variants[label];
+    if (base && JSON.stringify(record) !== JSON.stringify(base)) out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify(record)}`);
+    // Then under enforce, on the same state (offRun undid any change).
     await s.setMode("enforce");
     const before = await s.state();
     const denied = await s.denials();
     const enforced = await s.send(v);
     const refused = enforced.code === "PASSKEY_VERIFICATION_REQUIRED";
-    if (changedTables(before, await s.state()).length > 0) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
-    if ((await s.denials()) - denied !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${(await s.denials()) - denied} denial audits for ${enforced.code}`);
-    await s.setMode("off");
-    settledAtAnswer.mockClear();
-    const off = await s.send(v);
-    const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
-    const tables = changedTables(before, await s.state());
-    // With the control off, exactly what main answered and changed.
-    const base = OFF_BASELINE.variants[label];
-    if (base && JSON.stringify({ status: off.status, code: off.code, shape: off.shape, tables }) !== JSON.stringify(base)) {
-      out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify({ status: off.status, code: off.code, shape: off.shape, tables })}`);
-    }
+    const changed = changedTables(before, await s.state()).length > 0;
+    const audits = (await s.denials()) - denied;
+    if (changed) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
+    if (audits !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${audits} denial audits for ${enforced.code}`);
+    // The next variant starts from the fixtures again.
+    if (changed || audits > 0) await s.fresh();
     if (off.code === "PASSKEY_VERIFICATION_REQUIRED") out.wrong.push(`${label}: refused with the control off`);
     if (off.status < 400 || off.status === 428) {
       if (variant === "fixtures") out.succeededOff.push(`${label}: ${off.status}`);
@@ -623,8 +626,6 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
     } else if (!refused && (enforced.status !== off.status || enforced.code !== off.code)) {
       out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
     }
-    // The off-mode run may have changed the fixtures: start the next one afresh.
-    if (tables.length > 0) await s.fresh();
   }
   await s.close();
   return out;

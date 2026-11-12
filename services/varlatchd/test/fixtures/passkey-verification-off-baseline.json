@@ -5221,15 +5221,10 @@
    "code": null,
    "shape": {
     "credentials": {
-     "crd_uof4vi567mfa2eh7z4pdvmk27e": {
+     "<id>": {
       "client": "null",
       "kind": "string",
       "name": "null"
-     },
-     "crd_wmnnepqnhg4kv73axue5pkplye": {
-      "client": "null",
-      "kind": "string",
-      "name": "string"
      }
     },
     "items": [

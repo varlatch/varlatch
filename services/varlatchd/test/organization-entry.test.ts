@@ -273,7 +273,7 @@ const ORGANIZATION_LOCKS: { file: string; count: number; reason: string }[] = [
  */
 const EFFECT_GUARDS: { file: string; line: string }[] = [
   { file: "domain/retrieval.ts", line: "await assertOrganizationAccessChecked(ctx.db, state.org.id, \"a disclosure audit and decryption\");" },
-  { file: "net/outbound.ts", line: "if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`);" },
+  { file: "net/outbound.ts", line: "if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`, { underLock: true });" },
 ];
 
 /**

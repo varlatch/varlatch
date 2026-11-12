@@ -722,12 +722,20 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
 
   it("records explicit locks, writes and references, and fails the transaction that breaks the order", async () => {
     // Enforced at its COMMIT (lockOrder "all"); the trace is read before it.
-    const rows = await withTx(db, async (q) => {
+    let rows = await withTx(db, async (q) => {
       await lockPeople(q, ["idn_b", { id: "idn_a", mode: "update" }]);
       await q.query("UPDATE identities SET name = 'b2' WHERE id = 'idn_b'");
       await q.query("INSERT INTO org_memberships (organization_id, identity_id, role) VALUES ('org_a', 'idn_a', 'member')");
       return (await q.query("SELECT tbl, key, mode, kind FROM varlatch_lock_trace.trace WHERE txid = txid_current() ORDER BY seq")).rows;
     });
+    // Each written row's Organization ("owner" rows, for passkey-verification's
+    // coverage check) right after it; the lock-order check never sees them.
+    const owners = rows.filter((r) => (r as TraceRow).kind === "owner");
+    expect(owners).toEqual([
+      { tbl: "identities", key: "idn_b", mode: "org_a", kind: "owner" },
+      { tbl: "org_memberships", key: "org_a|idn_a", mode: "org_a", kind: "owner" },
+    ]);
+    rows = rows.filter((r) => (r as TraceRow).kind !== "owner");
     expect(rows).toEqual([
       { tbl: "identities", key: "idn_a", mode: "update", kind: "explicit" },
       { tbl: "identities", key: "idn_b", mode: "key share", kind: "explicit" },
