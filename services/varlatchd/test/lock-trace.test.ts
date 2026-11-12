@@ -179,11 +179,18 @@ describe("scanSql", () => {
       // Backslashes escape in ordinary strings once this is off.
       "SET standard_conforming_strings = off",
       "SELECT set_config('standard_conforming_strings', 'off', false)",
+      // However the setting was turned off, a backslash before a quote in an
+      // ordinary string would then escape it.
+      "SELECT '\\'foo' AS s, id FROM identities FOR UPDATE",
+      "SELECT '\\'foo'; COMMIT",
+      "SELECT 'a\\\\\\'b' FROM t",
     ]) {
       expect(() => scanSql(sql), JSON.stringify(sql)).toThrow(/outside what the checker reads/);
     }
     // Still read: parameters, ASCII dollar quotes, adjacent strings on one line joined by an operator.
     expect(statementsOf("SELECT $1::text, $tag$ x $tag$, 'a' || 'b'")).toEqual(["SELECT $1::text, '', '' || ''"]);
+    // A backslash before anything but a quote reads the same either way (a migration's regex: '^a(\\.b)+$').
+    expect(statementsOf("SELECT 'x' ~ '^a(\\.b)+$'")).toHaveLength(1);
   });
 });
 

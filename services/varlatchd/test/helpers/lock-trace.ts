@@ -426,6 +426,14 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
       if (escaped) bare = bare.slice(0, -1);
       let j = i + 1;
       while (j < n) {
+        // In an ordinary string, a backslash right before a quote ends the
+        // string here but escapes the quote once standard_conforming_strings
+        // is off, however that was set. Without that pair the string ends at
+        // the same place either way (an escape never takes a quote), so only
+        // the pair is refused.
+        if (!escaped && sql[j] === "\\" && sql[j + 1] === "'") {
+          throw new Error(`lock trace: a backslash before a quote in an ordinary string is outside what the checker reads: ${sql.slice(0, 200)}`);
+        }
         if (escaped && sql[j] === "\\") j += 2;
         else if (sql[j] === "'" && sql[j + 1] === "'") j += 2;
         else if (sql[j] === "'") break;
