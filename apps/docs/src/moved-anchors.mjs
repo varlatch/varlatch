@@ -33,5 +33,6 @@ export const MOVED = {
 
 /** The inline script every page carries: on an old page with a moved fragment, go to the new place. */
 export function movedAnchorsScript(moved = MOVED) {
-  return `(()=>{const m=${JSON.stringify(moved)}[location.pathname];if(!m)return;const t=m[decodeURIComponent(location.hash.slice(1))];if(t)location.replace(t);})();`;
+  // Own properties only: a fragment such as #constructor or #__proto__ must not reach Object.prototype.
+  return `(()=>{const all=${JSON.stringify(moved)};if(!Object.hasOwn(all,location.pathname))return;const m=all[location.pathname];let id;try{id=decodeURIComponent(location.hash.slice(1))}catch{return}if(Object.hasOwn(m,id))location.replace(m[id]);})();`;
 }

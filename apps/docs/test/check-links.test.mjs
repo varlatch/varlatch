@@ -74,4 +74,12 @@ describe("movedAnchorsScript", () => {
     expect(run("/old/", "")).toBeUndefined();
     expect(run("/new/", "#a-b")).toBeUndefined();
   });
+
+  it("follows own entries only, never inherited properties or a malformed fragment", () => {
+    for (const hash of ["#constructor", "#toString", "#__proto__", "#hasOwnProperty", "#%E0%A4%A"]) {
+      expect(run("/old/", hash), hash).toBeUndefined();
+    }
+    expect(run("/constructor", "#a-b")).toBeUndefined();
+    expect(run("/__proto__", "#a-b")).toBeUndefined();
+  });
 });
