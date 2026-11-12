@@ -30,7 +30,7 @@ export const CHECKLIST: readonly ChecklistItem[] = [
     id: "trusted-passkeys",
     title: "Give every admin a trusted passkey",
     why: "Only a trusted passkey can approve turning a control down or off.",
-    url: `${DOCS}/getting-started/#your-passkeys`,
+    url: `${DOCS}/reference/passkeys-and-sessions/#your-passkeys`,
   },
   {
     id: "find-files",

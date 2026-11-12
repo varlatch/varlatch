@@ -32,6 +32,20 @@ fixes.
   409 with `Retry-After: 300`. The CLI exits with status 77 and never
   retries it; back off in your own runners too.
 
+### Documentation
+
+- **Getting started is split by reader.** It now sends you to a short
+  page for where you are: [Join a team](docs/join-a-team.md) when you
+  were invited, [Set up a project](docs/set-up-a-project.md), or
+  [Run an installation](docs/run-an-installation.md). The rest moved to
+  reference pages: [Install the CLI](docs/reference/install-the-cli.md),
+  [Members and access](docs/reference/members.md),
+  [Passkeys and sessions](docs/reference/passkeys-and-sessions.md),
+  [CI and other machines](docs/reference/ci-and-machines.md) and
+  [Removing Varlatch](docs/reference/uninstall.md). Links to the old
+  sections on docs.varlatch.com, including those in earlier releases' CLI
+  and dashboard, lead to the new places.
+
 ### Upgrading
 
 - Migration 44 adds the freeze history. Restoring a backup taken before a

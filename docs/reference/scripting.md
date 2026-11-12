@@ -9,7 +9,7 @@ distinct exit statuses, and help that never fails.
 Add `--json` to print one JSON document on stdout instead of the human
 format. Diagnostics stay on stderr, including the warning every command
 but `agents hook` prints first on a Node.js release without its line's
-security fixes ([Node.js version](../getting-started.md#nodejs-version))
+security fixes ([Node.js version](install-the-cli.md#nodejs-version))
 and the [credential expiry warning](#credential-expiry-warnings), so a
 script should not expect stderr to be empty. Every document has
 `"version": 1`; a change that removes or renames a field raises it. The

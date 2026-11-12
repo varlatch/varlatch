@@ -9,7 +9,7 @@ are operator files, never Organization Platform Connections.
 
 Each release attaches `varlatch-cli-<version>.cjs`, a single-file build of
 the CLI that needs only Node.js, at a release with its line's security
-fixes ([Node.js version](../getting-started.md#nodejs-version)): no
+fixes ([Node.js version](../reference/install-the-cli.md#nodejs-version)): no
 checkout, pnpm, or build.
 Install it root-owned on the Compose host:
 
