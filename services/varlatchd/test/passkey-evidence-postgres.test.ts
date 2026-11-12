@@ -22,7 +22,11 @@ import { softAuthenticator, type UnregisteredAuthenticator } from "./helpers/sof
  * written to the ceremony's own session only (concurrent sign-ins of one
  * person included), the signature counter under concurrent assertions of
  * one passkey, the CLI handoff's session link, and the native passkey
- * removal turned off.
+ * removal turned off. Once an Organization enforces requirement-protection
+ * (ADR-0054 step 4.2), the live paths of Decision 4: removing a trusted
+ * passkey takes an approval, the native removal stays blocked, and the
+ * host operator's re-enrollment restores approval rights to a person left
+ * with unconfirmed passkeys only.
  */
 const url = process.env.VARLATCH_TEST_DATABASE_URL;
 describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL", () => {
@@ -122,10 +126,10 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
     }
   }
 
-  async function bearerCall(method: string, path: string, token: string, body?: unknown) {
+  async function bearerCall(method: string, path: string, token: string, body?: unknown, headers: Record<string, string> = {}) {
     const res = await app.request(path, {
       method,
-      headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      headers: { Authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...headers },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     return { status: res.status, body: res.status === 204 ? null : ((await res.json().catch(() => null)) as any) };
@@ -645,5 +649,79 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
     const bearer = await browser.bearer();
     expect((await bearerCall("DELETE", `/v1/me/passkeys/${addedId}`, bearer)).status).toBe(204);
     expect(await passkeyIdOf(added.credentialId)).toBeUndefined();
+  });
+  /** An Organization of the browser's person, enforcing requirement-protection through the API. */
+  async function enforcingOrganization(bearer: string) {
+    const org = await bearerCall("POST", "/v1/organizations", bearer, { name: "Acme", slug: "acme" });
+    expect(org.status, JSON.stringify(org.body)).toBe(201);
+    const on = await bearerCall("PATCH", "/v1/organizations/acme/security/controls/requirement-protection", bearer, { mode: "enforce", expectedVersion: 0 });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+  }
+
+  /** Approve a pending approval from this browser's session, with this passkey. */
+  async function approveWith(browser: Browser, approvalId: string, key: UnregisteredAuthenticator) {
+    const bearer = await browser.bearer();
+    const started = await bearerCall("POST", `/v1/me/approvals/${approvalId}/options`, bearer);
+    if (started.status !== 200) return started;
+    return bearerCall("POST", `/v1/me/approvals/${approvalId}/approve`, bearer, { assertion: key.assert(started.body.publicKey.challenge) });
+  }
+
+  it("once an Organization enforces requirement-protection, removing a trusted passkey takes an approval, and the native removal stays blocked", async () => {
+    const { browser, key, identityId } = await bootstrapAdmin();
+    await enforcingOrganization(await browser.bearer());
+    const [link] = await issueReenrollmentGrants(ctx, { identityIds: [identityId] });
+    const second = softAuthenticator(RP);
+    expect((await new Browser().enroll(second, { context: link!.token, createSession: true })).status).toBe(200);
+    const secondId = await passkeyIdOf(second.credentialId);
+    expect(await provenance(second.credentialId)).toMatchObject({ trust: "trusted" });
+
+    for (const path of ["/auth/passkey/delete-passkey", "/auth//passkey/delete-passkey"]) {
+      expect((await browser.request("POST", path, { id: secondId })).status, path).toBe(404);
+    }
+    expect(await passkeyIdOf(second.credentialId)).toBe(secondId);
+
+    const asked = await bearerCall("DELETE", `/v1/me/passkeys/${secondId}`, await browser.bearer());
+    expect(asked.status).toBe(403);
+    expect(asked.body.error).toMatchObject({ code: "STEP_UP_REQUIRED", details: { approval: { operation: "passkey.remove", organization: null } } });
+    expect(await passkeyIdOf(second.credentialId)).toBe(secondId);
+    const approvalId = asked.body.error.details.approval.id as string;
+    expect((await approveWith(browser, approvalId, key)).status).toBe(200);
+    const removed = await bearerCall("DELETE", `/v1/me/passkeys/${secondId}`, await browser.bearer(), undefined, { "Varlatch-Approval": approvalId });
+    expect(removed.status, JSON.stringify(removed.body)).toBe(204);
+    expect(await passkeyIdOf(second.credentialId)).toBeUndefined();
+  });
+
+  it("left with unconfirmed passkeys only, a person approves nothing until the host operator re-enrolls a trusted one", async () => {
+    const { browser, key, identityId } = await bootstrapAdmin();
+    await enforcingOrganization(await browser.bearer());
+    const added = softAuthenticator(RP);
+    expect((await browser.enroll(added)).status).toBe(200);
+    expect(await provenance(added.credentialId)).toMatchObject({ trust: "unconfirmed" });
+
+    // The trusted key goes, approved by itself.
+    const keyId = await passkeyIdOf(key.credentialId);
+    const removal = await bearerCall("DELETE", `/v1/me/passkeys/${keyId}`, await browser.bearer());
+    const removalId = removal.body.error.details.approval.id as string;
+    expect((await approveWith(browser, removalId, key)).status).toBe(200);
+    expect((await bearerCall("DELETE", `/v1/me/passkeys/${keyId}`, await browser.bearer(), undefined, { "Varlatch-Approval": removalId })).status).toBe(204);
+
+    // Turning the control down needs an approval nobody can give now.
+    const down = { mode: "report", expectedVersion: 1 };
+    const asked = await bearerCall("PATCH", "/v1/organizations/acme/security/controls/requirement-protection", await browser.bearer(), down);
+    expect(asked.body.error.code).toBe("STEP_UP_REQUIRED");
+    const approvalId = asked.body.error.details.approval.id as string;
+    const refused = await approveWith(browser, approvalId, added);
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatchObject({ code: "PERMISSION_DENIED", details: { reason: "no-trusted-passkey" } });
+
+    // The host operator's re-enrollment link enrolls a trusted key, which approves.
+    const [link] = await issueReenrollmentGrants(ctx, { identityIds: [identityId] });
+    const recovered = softAuthenticator(RP);
+    expect((await new Browser().enroll(recovered, { context: link!.token, createSession: true })).status).toBe(200);
+    expect(await provenance(recovered.credentialId)).toMatchObject({ trust: "trusted", setup_grant_kind: "reenroll" });
+    expect((await approveWith(browser, approvalId, recovered)).status).toBe(200);
+    const done = await bearerCall("PATCH", "/v1/organizations/acme/security/controls/requirement-protection", await browser.bearer(), down, { "Varlatch-Approval": approvalId });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect(done.body).toMatchObject({ loosened: true, control: { mode: "report" } });
   });
 });
