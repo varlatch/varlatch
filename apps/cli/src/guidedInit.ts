@@ -5,6 +5,8 @@ import { CONTRACT_SCHEMA_VERSION, LATEST_SEMANTICS_VERSION, type ConfigurationCo
 import type { ResolvedContext } from "@varlatch/context";
 import type { Environment, Project } from "@varlatch/protocol";
 import type { VarlatchClient } from "@varlatch/sdk";
+import { VarlatchApiError } from "@varlatch/sdk";
+import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
 import { checkEntries, formatRows, ImportError, planRows, readActiveContract, readPresent, readSource, storeValues, finishSource, type Row } from "./importCommand.js";
 import type { DotenvEntry } from "./dotenv.js";
 import type { Prompter } from "./prompt.js";
@@ -88,7 +90,39 @@ interface FilePlan {
   declined: string[];
 }
 
+/** What the run is doing, for a failure message that names the step and never the server's text. */
+interface Phase {
+  label: string;
+  /** .env files were found: a failure says every one of them is kept. */
+  files: boolean;
+}
+
 export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
+  const phase: Phase = { label: "setting up", files: false };
+  try {
+    return await guidedSteps(deps, phase);
+  } catch (err) {
+    // Value-free: an API error's code, a network failure's name, an
+    // ImportError's own message (built from names only); never err.message
+    // from a server, which could echo what was sent.
+    if (err instanceof ImportError) {
+      deps.err(`varlatch init: ${phase.label}: ${err.message}`);
+    } else {
+      const network = networkFailure(err);
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      const reason =
+        err instanceof VarlatchApiError
+          ? `${err.code}, HTTP ${err.status}`
+          : (network ?? (typeof code === "string" && /^E[A-Z]+$/.test(code) ? code : err instanceof Error ? err.name : "an error"));
+      deps.err(`varlatch init: ${phase.label} failed (${reason}).`);
+    }
+    if (phase.files) deps.err("varlatch init: every .env file is kept.");
+    if (err instanceof ImportError) return err.exitCode;
+    return err instanceof VarlatchApiError ? apiErrorExit(err) : networkFailure(err) ? EXIT.unavailable : EXIT.failure;
+  }
+}
+
+async function guidedSteps(deps: GuidedInitDeps, phase: Phase): Promise<number> {
   const { prompt, out } = deps;
   const command = (line: string) => out(`  $ ${line}`);
 
@@ -106,7 +140,9 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
     }
   }
   out(`Server: ${server}`);
+  phase.label = "signing in";
   const api = await deps.signIn(server);
+  phase.label = "reading or creating the organization";
 
   // 2. Organization.
   let organization = deps.organization;
@@ -128,6 +164,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
   }
 
   // 3. Project.
+  phase.label = "reading or creating the project";
   let project = deps.project;
   let projectInfo: Project | undefined;
   const projects = (await api.listProjects(organization)).items;
@@ -153,6 +190,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
   }
 
   // 4. Environments.
+  phase.label = "reading or creating the environments";
   let environments = (await api.listEnvironments(organization, project)).items;
   if (environments.length === 0) {
     if (await prompt.confirm("The project has no environments. Create development (tier development) and production (tier production)?", true)) {
@@ -175,6 +213,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
   }
 
   // 5. varlatch.toml and the agent files.
+  phase.label = "writing varlatch.toml";
   await deps.writeRepository({ server, organization, project, defaultEnvironment });
   command(`varlatch init --org ${organization} --project ${project} --server ${server}${defaultEnvironment !== "development" ? ` --default-environment ${defaultEnvironment}` : ""}`);
 
@@ -185,15 +224,19 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
     return done(deps);
   }
   out(`Found ${files.join(", ")}.`);
+  phase.files = true;
+  phase.label = "reading the Contract";
   const managed = projectInfo?.contractAuthority === "managed";
   const ctx = { organization, project } as ResolvedContext;
-  const contract = managed ? null : await readActiveContract(api as VarlatchClient, ctx);
+  // Read for a managed Contract too: its items keep their definitions, and
+  // whether a file's items are in it decides whether the file may go.
+  const contract = await readActiveContract(api as VarlatchClient, ctx);
   const canAddItems = !managed && contract !== "forbidden";
   const active = contract === "forbidden" ? null : contract;
   const contracted = new Map((active?.items ?? []).map((i) => [i.name, i]));
   const semanticsVersion = active ? (active.semanticsVersion ?? 1) : LATEST_SEMANTICS_VERSION;
-  if (managed) out("This project's Contract is managed in the dashboard: values only; new items are added there.");
-  else if (contract === "forbidden") out("You cannot read this project's Contract: values only; ask an admin to add new items.");
+  if (contract === "forbidden") out("You cannot read this project's Contract: values only, and every .env file is kept, since whether its items are in the Contract is unknown.");
+  else if (managed) out("This project's Contract is managed in the dashboard: values only; new items are added there.");
 
   const plans: FilePlan[] = [];
   const used = new Set<string>();
@@ -235,6 +278,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
       out(`${file} sets no values; nothing to import.`);
       continue;
     }
+    phase.label = `reading what ${environment.name} already has`;
     const present = await readPresent(api as VarlatchClient, { organization, project, environment: environment.name });
     if (typeof present === "number") {
       out(`${file}: what ${environment.name} already has cannot be read (${present}), so a value could be replaced unseen. Nothing from it is imported, and it is kept.`);
@@ -306,19 +350,29 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
       })),
     ];
     const next = { ...((active ?? { schemaVersion: CONTRACT_SCHEMA_VERSION }) as ConfigurationContract), items };
+    phase.label = "pushing the Contract revision";
     const pushed = await api.pushContractRevision(organization, project, { contract: next, provenance: { adapter: "varlatch-init" } });
     revision = { id: pushed.id, active: pushed.active };
     out(`Contract revision ${pushed.id} with ${additions.size} new item(s)${pushed.active ? " [active]" : ""}.`);
   }
-  const stored = new Map<string, string[]>();
-  for (const plan of plans) {
+  phase.label = "storing values";
+  for (const [index, plan] of plans.entries()) {
     const approved = plan.entries.filter((e) => !plan.declined.includes(e.name));
     const result = await storeValues(api as VarlatchClient, { organization, project, environment: plan.environment.name }, approved);
-    stored.set(plan.file, result.stored);
     if (result.failure) {
-      if (result.stored.length > 0) deps.err(`varlatch init: stored in ${plan.environment.name}: ${result.stored.join(", ")}`);
-      deps.err(`varlatch init: not stored: ${result.failure.name} (${result.failure.reason})`);
-      if (result.failure.skipped.length > 0) deps.err(`varlatch init: not attempted: ${result.failure.skipped.join(", ")}`);
+      // One summary for every file: what was stored, what failed, what was never attempted.
+      const where = (p: FilePlan) => `${organization} / ${project} / ${p.environment.name} (${p.file})`;
+      for (const done of plans.slice(0, index)) {
+        deps.err(`varlatch init: stored in ${where(done)}: ${done.entries.filter((e) => !done.declined.includes(e.name)).map((e) => e.name).join(", ")}`);
+      }
+      if (result.stored.length > 0) deps.err(`varlatch init: stored in ${where(plan)}: ${result.stored.join(", ")}`);
+      deps.err(`varlatch init: not stored in ${where(plan)}: ${result.failure.name} (${result.failure.reason})`);
+      if (result.failure.skipped.length > 0) deps.err(`varlatch init: not attempted in ${where(plan)}: ${result.failure.skipped.join(", ")}`);
+      for (const later of plans.slice(index + 1)) {
+        const names = later.entries.filter((e) => !later.declined.includes(e.name)).map((e) => e.name);
+        if (names.length > 0) deps.err(`varlatch init: not attempted in ${where(later)}: ${names.join(", ")}`);
+      }
+      if (revision && !revision.active) deps.err(`varlatch init: Contract revision ${revision.id} was not activated.`);
       deps.err("varlatch init: every .env file is kept. Fix the cause, then import the rest with varlatch import <file> -e <environment>.");
       return result.failure.exitCode;
     }
@@ -332,6 +386,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
   if (revision && !revision.active) {
     out(`Revision ${revision.id} adds: ${[...additions.keys()].map((n) => `${n} (${chosenTypes.get(n)}, ${plain.has(n) ? "plain" : "secret"})`).join(", ")}.`);
     if (await prompt.confirm("Activate it? The Contract applies to the whole project, every environment.", true)) {
+      phase.label = `activating Contract revision ${revision.id}`;
       await api.activateContractRevision(organization, project, revision.id);
       activated = true;
       command(`varlatch contract activate ${revision.id}`);
@@ -343,15 +398,20 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
   }
 
   // 10. Deleting the sources: last, default no, only when nothing is left behind.
+  phase.label = "deleting .env files";
+  // In the active Contract after this run: what it had, plus the additions once activated.
+  const inActive = (name: string) => contracted.has(name) || (activated && additions.has(name));
   for (const plan of plans) {
-    const contributed = plan.rows.some((r) => additions.has(r.entry.name));
+    const missing = plan.rows.filter((r) => !inActive(r.entry.name)).map((r) => r.entry.name);
     const why =
       plan.declined.length > 0
         ? "it holds values you chose not to store"
-        : contributed && !activated
-          ? "its new items are not in the active Contract"
-          : managed && plan.rows.some((r) => !r.contracted)
-            ? "its new items still need adding in the dashboard"
+        : contract === "forbidden"
+          ? "whether its items are in the Contract cannot be read"
+          : missing.length > 0
+            ? managed
+              ? `${missing.join(", ")} still need adding to the Contract in the dashboard`
+              : "its new items are not in the active Contract"
             : null;
     if (why) {
       out(`${plan.file} is kept: ${why}.`);
