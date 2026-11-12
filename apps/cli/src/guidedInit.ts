@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: Apache-2.0
-import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { CONTRACT_SCHEMA_VERSION, LATEST_SEMANTICS_VERSION, type ConfigurationContract, type ContractItem, type ItemType } from "@varlatch/contract";
@@ -437,17 +436,32 @@ async function askSlug(prompt: Prompter, question: string, defaultValue?: string
   }
 }
 
+/** The calls the guided sign-in makes. */
+export interface SignInParts {
+  /** The browser hand-off (ADR-0017): prints the locally built address to open, resolves with the session bearer. */
+  browserLogin: (server: string) => Promise<string>;
+  /** A client for the server with this bearer. */
+  client: (token: string) => Pick<VarlatchClient, "exchangeCliCredential" | "listOrganizations">;
+  /** Stores the verified credential, as varlatch login does. */
+  save: (credential: { token: string; issuedAt: string; expiresAt: string; credentialId: string }) => void;
+  out: (line: string) => void;
+}
+
 /**
- * The normal `varlatch login`, run as a child on this terminal for the
- * guided sign-in. Its input and its output (the address to open, the code)
- * are the terminal's; its error output is captured and dropped, since a
- * server's error text could carry what was sent. On a failure the caller
- * prints a fixed message instead. Returns the child's exit status.
+ * The guided sign-in: varlatch login's browser hand-off, done here so that
+ * nothing a server sends is printed. varlatch login itself prints fields of
+ * the server's answers (the credential's expiry, the server's version);
+ * this prints only fixed lines and the address it built itself. Errors go
+ * to guidedInit's value-free handler.
  */
-export function runLoginChild(command: string, args: string[]): number {
-  const result = spawnSync(command, args, { stdio: ["inherit", "inherit", "pipe"] });
-  if (result.error) return EXIT.failure;
-  return result.status ?? EXIT.failure;
+export async function guidedSignIn(server: string, parts: SignInParts): Promise<Pick<VarlatchClient, "listOrganizations">> {
+  const handoff = await parts.browserLogin(server);
+  const issued = await parts.client(handoff).exchangeCliCredential({});
+  const api = parts.client(issued.token);
+  await api.listOrganizations(); // verifies the credential before it is stored
+  parts.save({ token: issued.token, issuedAt: new Date().toISOString(), expiresAt: issued.expiresAt, credentialId: issued.id });
+  parts.out(`Signed in to ${server}.`);
+  return api;
 }
 
 function stopped(deps: GuidedInitDeps, message: string): number {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VarlatchApiError } from "@varlatch/sdk";
-import { findEnvFiles, guidedInit, runLoginChild, type GuidedApi } from "../src/guidedInit.js";
+import { findEnvFiles, guidedInit, guidedSignIn, type GuidedApi } from "../src/guidedInit.js";
 import type { Prompter } from "../src/prompt.js";
 
 /**
@@ -429,10 +429,29 @@ describe("guided init", () => {
     expect(prompt.said[0]).toMatch(/^That is not an installation's address/);
   });
 
-  it("the sign-in child's error output never reaches the terminal, and its status is kept", () => {
-    const canary = "LOGIN_CANARY_5821";
-    const status = runLoginChild(process.execPath, ["-e", `process.stderr.write("Error INTERNAL: rejected credential ${canary}\\n"); process.exit(77)`]);
-    expect(status).toBe(77);
-    expect(runLoginChild(process.execPath, ["-e", "process.exit(0)"])).toBe(0);
+  it("the guided sign-in prints nothing a server sent, even when its answers echo the bearers", async () => {
+    const handoff = "HANDOFF_CANARY_4410";
+    const cli = "CLI_CANARY_9902";
+    const out: string[] = [];
+    const saved: unknown[] = [];
+    const api = await guidedSignIn("https://vault.example.com", {
+      browserLogin: async (server) => {
+        out.push(`Complete passkey sign-in in your browser:\n  ${server}/enroll?callback=...`);
+        return handoff;
+      },
+      client: (token) => ({
+        // A hostile server echoing what it was sent in every field it controls.
+        exchangeCliCredential: async () => ({ token: cli, id: `crd ${token}`, expiresAt: `expires ${token}` }) as never,
+        listOrganizations: async () => ({ items: [{ slug: `org ${token}`, name: token }], nextCursor: null }) as never,
+      }),
+      save: (credential) => void saved.push(credential),
+      out: (line) => out.push(line),
+    });
+    expect(api).toBeDefined();
+    expect(saved).toHaveLength(1);
+    const printed = out.join("\n");
+    expect(printed).not.toContain(handoff);
+    expect(printed).not.toContain(cli);
+    expect(printed).toContain("Signed in to https://vault.example.com.");
   });
 });

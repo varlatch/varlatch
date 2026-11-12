@@ -1305,16 +1305,19 @@ async function main(): Promise<void> {
                     if (!(err instanceof VarlatchApiError && err.status === 401)) throw err;
                   }
                 }
-                // The normal sign-in, on this terminal: the same command a person would run.
-                console.log(`Signing in: varlatch login --server ${server}`);
-                prompt.pause();
-                const { runLoginChild } = await import("./guidedInit.js");
-                const status = runLoginChild(process.execPath, [...process.execArgv, process.argv[1] as string, "login", "--server", server]);
-                prompt.resume();
-                // Fixed text only: the child's error output was dropped (it may carry a server's message).
-                if (status !== 0) fail(`Sign-in did not complete. Run varlatch login --server ${server} to see why, then varlatch init again.`, status);
-                const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
-                return new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+                // varlatch login's browser hand-off, printing nothing a server sent (guidedSignIn).
+                const { guidedSignIn } = await import("./guidedInit.js");
+                const client = (token: string) => new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
+                await guidedSignIn(server, {
+                  browserLogin,
+                  client,
+                  save: (credential) => {
+                    saveCredential(server, credential);
+                    noteDefaultServer(server, (line) => console.error(line));
+                  },
+                  out: (line) => console.log(line),
+                });
+                return client(loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied));
               },
               writeRepository: (config) => writeRepository(config, ""),
               ...(opts.values.has("--org") ? { organization: opts.values.get("--org") as string } : {}),
