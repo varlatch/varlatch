@@ -211,7 +211,13 @@ export function installPs1(d: CliDownload): string {
 
   $Shim = Join-Path $Dir 'varlatch.cmd'
   $ShimText = '@node "%~dp0varlatch.cjs" %*'
-  $Installed = (Test-Path $Target) -and ((Get-FileHash -Algorithm SHA256 $Target).Hash -ieq $Sha256)
+  # SHA-256 through .NET: Get-FileHash is a script function in Windows
+  # PowerShell 5.1 and is missing where that module does not load.
+  function Get-Sha256([string]$Path) {
+    $Algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($Algorithm.ComputeHash([IO.File]::ReadAllBytes($Path)))).Replace('-', '') } finally { $Algorithm.Dispose() }
+  }
+  $Installed = (Test-Path $Target) -and ((Get-Sha256 $Target) -ieq $Sha256)
   $ShimOk = (Test-Path $Shim) -and ((Get-Content -Raw $Shim).Trim() -eq $ShimText)
   # Replace a file atomically when it exists ([IO.File]::Replace, with a real
   # null for "no backup": PowerShell would pass $null as ""), move it in
@@ -235,7 +241,7 @@ export function installPs1(d: CliDownload): string {
       if (-not $Installed) {
         # No redirect is followed: a redirect fails the download.
         Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri "$Origin/cli/varlatch.cjs" -OutFile $Staged
-        if ((Get-FileHash -Algorithm SHA256 $Staged).Hash -ine $Sha256) { Stop-Install 'the download does not match its SHA-256; nothing was installed' }
+        if ((Get-Sha256 $Staged) -ine $Sha256) { Stop-Install 'the download does not match its SHA-256; nothing was installed' }
         $Reported = (& node $Staged --version) -join ' '
         if (-not ($Reported -eq "varlatch $Version" -or $Reported.StartsWith("varlatch $Version "))) {
           Stop-Install "the downloaded CLI reports '$Reported', not $Version; nothing was installed"

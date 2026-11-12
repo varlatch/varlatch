@@ -35,7 +35,11 @@ function shell(exe, appData, code, { stdin = "", interactive = false } = {}) {
   return new Promise((resolve) => {
     import("node:child_process").then(({ spawn }) => {
       const args = ["-NoProfile", ...(interactive ? [] : ["-NonInteractive"]), "-Command", code];
-      const child = spawn(exe, args, { env: { ...process.env, LOCALAPPDATA: appData } });
+      // Each PowerShell with its own module path: one started from the other
+      // (CI steps run under pwsh) would otherwise inherit the wrong one.
+      const env = { ...process.env, LOCALAPPDATA: appData };
+      delete env.PSModulePath;
+      const child = spawn(exe, args, { env });
       let out = "";
       child.stdout.on("data", (d) => (out += d));
       child.stderr.on("data", (d) => (out += d));
