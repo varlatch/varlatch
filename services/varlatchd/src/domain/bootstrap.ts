@@ -302,10 +302,14 @@ export async function issueInviteGrant(
   });
 }
 
-/** The gate of a direct call by an identity: no approval, as a request without the Varlatch-Approval header. */
+/**
+ * The gate of a direct call by an identity: no approval, as that
+ * identity's request without the Varlatch-Approval header (a person's as
+ * from the CLI), so an operation that needs one throws ApprovalNeeded.
+ */
 async function directGate(db: Querier, identityId: string): Promise<ProtectedGate> {
   const kind = ((await db.query("SELECT kind FROM identities WHERE id = $1", [identityId])).rows[0] as { kind: string } | undefined)?.kind ?? "unknown";
-  return noApprovalGate({ identityId, identityKind: kind, credentialId: "direct", credentialKind: "direct" });
+  return noApprovalGate({ identityId, identityKind: kind, credentialId: "direct", credentialKind: kind === "human" ? "cli" : "service" });
 }
 
 export interface ReenrollmentGrant {

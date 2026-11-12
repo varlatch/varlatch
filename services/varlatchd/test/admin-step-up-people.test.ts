@@ -462,6 +462,12 @@ describe("under enforce", () => {
     expect((await inviteAs(bot.token, "Guest2", "member")).status).toBe(201);
   });
 
+  it("a direct call, which can carry no approval, throws ApprovalNeeded for an admin invitation and none for a member's", async () => {
+    await expect(issueInviteGrant(ctx, { organizationId: orgId, role: "admin", name: "Zoe" }, admin.id)).rejects.toMatchObject({ name: "ApprovalNeeded" });
+    await expect(issueInviteGrant(ctx, { organizationId: orgId, role: "member", name: "Zoe" }, admin.id)).resolves.toMatchObject({ id: expect.any(String) });
+    expect(await intents()).toBe(0);
+  });
+
   it("refuses a second consumption of one approval", async () => {
     const asked = await approved(admin, await inviteAs(admin.cli, "Zoe", "admin"));
     expect((await inviteAs(admin.cli, "Zoe", "admin", asked)).status).toBe(201);
