@@ -76,3 +76,43 @@ it("shows maintenance, never sign-in, when the session exchange answers MAINTENA
     expect(state.needsAuth).toBe(false);
   } finally { vi.useRealTimers(); }
 });
+it("notes a refusal by passkey-verification, offers to sign in again, and forgets it after a new sign-in (ADR-0054 Decision 7)", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("location", { origin: "https://varlatch.example", hostname: "varlatch.example" });
+  let exchanges = 0;
+  vi.stubGlobal("fetch", async (url: unknown) => {
+    if (String(url).includes("varlatch-token")) return Response.json({ token: `token-${++exchanges}`, identityId: "me" });
+    return Response.json(
+      { error: { code: "PASSKEY_VERIFICATION_REQUIRED", message: "Sign in again", requestId: "r", details: { control: "passkey-verification", reason: "not-user-verified" } } },
+      { status: 403 },
+    );
+  });
+  const { PasskeyVerificationBanner, VERIFICATION_GAP_TEXT } = await import("../src/shell/AuthScreens");
+  const client = new QueryClient();
+  await act(async () => {
+    root = create(
+      <QueryClientProvider client={client}>
+        <SessionProvider>
+          {React.createElement(probe)}
+          <PasskeyVerificationBanner />
+        </SessionProvider>
+      </QueryClientProvider>,
+    );
+  });
+  const banner = () => root.root.findAll((n) => n.props["data-testid"] === "passkey-verification-required");
+  expect(state.verificationRequired).toBeNull();
+  expect(banner()).toHaveLength(0);
+  await act(async () => { await expect(state.api.listOrganizations()).rejects.toMatchObject({ code: "PASSKEY_VERIFICATION_REQUIRED" }); });
+  expect(state.verificationRequired).toBe("not-user-verified");
+  expect(banner()).toHaveLength(1);
+  const text = (node: { children: unknown[] }): string => node.children.map((c) => (typeof c === "string" ? c : text(c as { children: unknown[] }))).join("");
+  expect(text(banner()[0]!)).toContain(VERIFICATION_GAP_TEXT["not-user-verified"]);
+  // "Sign in again" signs out: the route-preserving sign-in screen follows.
+  const again = root.root.findAll((n) => n.props["data-testid"] === "passkey-verification-sign-in-again" && typeof n.props.onClick === "function")[0]!;
+  await act(async () => { again.props.onClick(); });
+  expect(state.needsAuth).toBe(true);
+  // The next sign-in starts without the note.
+  await act(async () => { await state.signInWithPasskey(); });
+  expect(state.needsAuth).toBe(false);
+  expect(state.verificationRequired).toBeNull();
+});

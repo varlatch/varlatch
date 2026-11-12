@@ -14,6 +14,7 @@ import { ApprovalDialogProvider } from "./features/security-controls/approval";
 import {
   FullPageLoading,
   MaintenanceBanner,
+  PasskeyVerificationBanner,
   MaintenanceScreen,
   SignInScreen,
   WelcomeScreen,
@@ -77,6 +78,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return (
     <React.Fragment key={identityId}>
       {maintenance && <MaintenanceBanner />}
+      <PasskeyVerificationBanner />
       {children}
     </React.Fragment>
   );

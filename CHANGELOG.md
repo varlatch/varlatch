@@ -51,6 +51,24 @@ fixes.
   never does. If you lose your trusted passkeys, the host operator's
   `admin reenroll` enrolls a new one, and `admin security reset` turns the
   control off.
+- **Passkey verification can now be enforced.** With
+  `varlatch security set passkey-verification enforce` (or from the
+  Security page), the organization refuses requests by a person's
+  dashboard or CLI sign-in unless it was made with a trusted passkey that
+  verified them with a PIN, fingerprint or face. It applies to every
+  route of the organization, retrieval, validation and export included;
+  the dashboard's live updates leave the organization out. Machine
+  credentials, other organizations and people outside the organization
+  see no change, and a refusal comes after every other one, so it reveals
+  nothing to outsiders. The dashboard offers to sign in again; the CLI
+  explains how (`varlatch login`) and exits 77. A passkey added from the
+  dashboard counts once it is confirmed. Look at report mode first: it
+  refuses admins too, and sign-ins from before this was recorded count as
+  unverified. Turning it on from a sign-in it would refuse is refused. A
+  person whose passkeys cannot verify them gets back in through the host
+  operator (`admin reenroll`, or `admin security reset --control
+  passkey-verification`). See [Passkey
+  verification](docs/reference/security-controls.md#passkey-verification).
 
 ### Scripts and API
 
@@ -63,6 +81,12 @@ fixes.
   answer `403 STEP_UP_REQUIRED`: repeat the request with the
   `Varlatch-Approval` header once it is approved. A removal whose
   Requirement changed meanwhile answers `STATE_CHANGED`.
+- New error code `PASSKEY_VERIFICATION_REQUIRED` (HTTP 403, details
+  `control` and `reason`: `no-evidence`, `not-user-verified` or
+  `untrusted-passkey`) from organizations that enforce
+  `passkey-verification`. Repeating the request with the same credential
+  will not help; sign in again. `GET /v1/meta` lists
+  `security.enforce.passkey-verification`.
 
 ### CLI
 

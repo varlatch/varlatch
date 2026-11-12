@@ -36,6 +36,8 @@ let loosens = false;
 let approvalStates: (Approval["state"] | "slow")[] = [];
 let approvalCloseReason: Approval["closeReason"] = null;
 let expiresInMs = 60_000;
+/** Answer every Organization request with PASSKEY_VERIFICATION_REQUIRED for this reason (ADR-0054 Decision 7). */
+let verificationRequired: string | null = null;
 let requests: { method: string; url: string; approval: string | null; body: string; userAgent: string | null }[] = [];
 
 function control(name: SecurityControl["control"], extra: Partial<SecurityControl> = {}): SecurityControl {
@@ -85,6 +87,12 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     const error = (status: number, code: string, message: string, details?: Record<string, unknown>) =>
       json(status, { error: { code, message, requestId: "req_1", ...(details ? { details } : {}) } });
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.21.0", capabilities });
+    if (verificationRequired && url.startsWith("/v1/organizations/acme")) {
+      return error(403, "PASSKEY_VERIFICATION_REQUIRED", "This Organization requires a sign-in with a trusted passkey that verifies you.", {
+        control: "passkey-verification",
+        reason: verificationRequired,
+      });
+    }
     if (url === "/v1/organizations/acme/security/controls" && req.method === "GET") {
       const list: SecurityControlList = { items: controls, availableModes: ["off", "report"] };
       return json(200, list);
@@ -147,6 +155,7 @@ beforeEach(() => {
     control("credential-lifetime", { mode: "report", config: { defaultTtlSeconds: 86400, maxTtlSeconds: 2592000 }, version: 3, changedAt: "2026-11-09T11:00:00.000Z", changedBy: null }),
   ];
   loosens = false;
+  verificationRequired = null;
   approvalStates = ["approved"];
   approvalCloseReason = null;
   expiresInMs = 60_000;
@@ -267,6 +276,29 @@ describe("varlatch security set", () => {
     expect(refused.code).toBe(EXIT.failure);
     expect(refused.stderr).toContain("does not offer the mode enforce for admin-step-up yet (it offers off, report)");
     expect(patches()).toEqual([]);
+  });
+
+  it("says what turning passkey-verification to enforce does, and how to get back in", async () => {
+    controls = controls.map((c) => ({ ...c, availableModes: ["off", "report", "enforce"] }));
+    const r = await cli(["security", "set", "passkey-verification", "enforce"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")).toEqual([
+      "passkey-verification in acme: off -> enforce, version 1.",
+      "From now on acme refuses a person's sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face),",
+      "admins included, until they sign in again with one. Machine credentials are not affected.",
+      "Someone whose passkeys cannot verify them gets back in only through the host operator: varlatch admin security reset.",
+      "",
+    ]);
+  });
+
+  it("explains a refusal for an unverified sign-in, and exits 77 (ADR-0054 Decision 7)", async () => {
+    verificationRequired = "not-user-verified";
+    const r = await cli(["security", "controls"]);
+    expect(r.code).toBe(EXIT.denied);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("Error PASSKEY_VERIFICATION_REQUIRED: This Organization requires a sign-in with a trusted passkey that verifies you. (request req_1)");
+    expect(r.stderr).toContain("  varlatch login --server <url>\n");
+    expect(r.stderr).toContain("approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face");
   });
 
   it("refuses a wrong command line before any request (exit 64)", async () => {

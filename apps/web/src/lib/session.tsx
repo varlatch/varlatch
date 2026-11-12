@@ -45,6 +45,13 @@ interface SessionState {
    */
   accessEpoch: number;
   accessChanged: () => void;
+  /**
+   * An organization refused this sign-in for passkey-verification (ADR-0054
+   * Decision 7): what the sign-in lacks, until the person signs in again.
+   * The shell shows it with a way to sign in again.
+   */
+  verificationRequired: VerificationGap | null;
+  dismissVerificationRequired: () => void;
   api: VarlatchClient;
   /** fetch with this session's bearer and its one silent re-exchange on 401, for another origin of this installation. */
   fetch: typeof fetch;
@@ -61,6 +68,18 @@ interface SessionState {
 }
 
 export type StepUpHandler = (approval: Approval) => Promise<boolean>;
+
+/** Why passkey-verification refused a sign-in (details.reason of PASSKEY_VERIFICATION_REQUIRED). */
+export type VerificationGap = "no-evidence" | "not-user-verified" | "untrusted-passkey";
+
+/** The reason a PASSKEY_VERIFICATION_REQUIRED answer carries, or null for any other response. */
+export async function verificationGapOf(res: Response): Promise<VerificationGap | null> {
+  if (res.status !== 403) return null;
+  const body = (await res.clone().json().catch(() => null)) as { error?: { code?: string; details?: { reason?: string } } } | null;
+  if (body?.error?.code !== "PASSKEY_VERIFICATION_REQUIRED") return null;
+  const reason = body.error.details?.reason;
+  return reason === "not-user-verified" || reason === "untrusted-passkey" ? reason : "no-evidence";
+}
 
 const SessionContext = createContext<SessionState | null>(null);
 
@@ -175,6 +194,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [authEpoch, setAuthEpoch] = useState(0);
   const [accessEpoch, setAccessEpoch] = useState(0);
   const accessChanged = useCallback(() => setAccessEpoch((n) => n + 1), []);
+  const [verificationRequired, setVerificationRequired] = useState<VerificationGap | null>(null);
+  const dismissVerificationRequired = useCallback(() => setVerificationRequired(null), []);
 
   const adopt = useCallback((token: string, id: string) => {
     if (currentIdentity.current !== id) {
@@ -184,6 +205,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
     currentIdentity.current = id;
     bearer.current = token;
+    // A new bearer may come from a new sign-in: ask again when refused.
+    setVerificationRequired(null);
     setIdentityId(id);
     setNeedsAuth(false);
     setAuthEpoch((n) => n + 1);
@@ -254,6 +277,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       // the window itself (ADR-0036 D6).
       if (await isMaintenance(res)) setMaintenance(true);
       else if (res.ok) setMaintenance(false);
+      // An organization that enforces passkey-verification refused this
+      // sign-in: the shell offers to sign in again.
+      const gap = await verificationGapOf(res);
+      if (gap) setVerificationRequired(gap);
       return res;
     },
     [adopt, clearSession],
@@ -296,8 +323,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [clearSession]);
 
   const value = useMemo(
-    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, fetch: sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut }),
-    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, api, sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut],
+    () => ({ identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, fetch: sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut }),
+    [identityId, needsAuth, maintenance, authEpoch, accessEpoch, accessChanged, verificationRequired, dismissVerificationRequired, api, sessionFetch, mintConvexToken, setStepUpHandler, signInWithPasskey, signOut],
   );
 
   if (!checked) return <p className="p-8 text-muted">Loading…</p>;

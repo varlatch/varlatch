@@ -236,6 +236,28 @@ describe("the Security controls section", () => {
     expect(text(one("security-control-error-admin-step-up"))).toContain("Enforce is not available for this control on this server yet");
   });
 
+  it("says what enforcing passkey-verification does and how to get back in, and explains a refusal of your own sign-in (ADR-0054 Decision 7)", async () => {
+    fake.api.listSecurityControls = vi.fn(async () => ({
+      items: CONTROLS.map((c) => ({ ...c, availableModes: c.control === "passkey-verification" ? ["off", "report", "enforce"] : ["off", "report"] })),
+      availableModes: ["off", "report"],
+    }));
+    fake.api.changeSecurityControl = vi.fn(async () => {
+      throw new VarlatchApiError(403, {
+        code: "PASSKEY_VERIFICATION_REQUIRED", message: "no", requestId: "req_1",
+        details: { control: "passkey-verification", reason: "not-user-verified", change: "refused" },
+      });
+    });
+    await mount(<Controls />);
+    await click("security-control-select-passkey-verification-enforce");
+    const note = text(one("security-control-enforce-note-passkey-verification"));
+    expect(note).toContain("admins included");
+    expect(note).toContain("Look at report first");
+    expect(note).toContain("varlatch admin security reset");
+    await click("security-control-save-passkey-verification");
+    expect(fake.api.changeSecurityControl).toHaveBeenCalledWith("acme", "passkey-verification", { mode: "enforce", expectedVersion: 0 });
+    expect(text(one("security-control-error-passkey-verification"))).toContain("Your own sign-in would be refused, so nothing was changed");
+  });
+
   it("shows a member the controls without anything to change", async () => {
     await mount(<Controls admin={false} />);
     expect(byTestId("security-control-admin-step-up")).toHaveLength(1);

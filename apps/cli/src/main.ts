@@ -35,6 +35,7 @@ import { nodeRuntimeWarning } from "./nodeRuntime.js";
 import { assistedGate, assistedRedactionSet, knownSecretNames, planAssistedRedaction } from "./assistedRun.js";
 import { STRICT_EXIT } from "./strictRun.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
+import { passkeyVerificationLines } from "./passkeyVerification.js";
 import { USAGE, commandHelp } from "./usage.js";
 import { OptionsError, parseOptions, type OptionSpec, type ParsedOptions } from "./options.js";
 import {
@@ -3263,6 +3264,8 @@ async function main(): Promise<void> {
     if (pending) {
       fail([...approvalLines(pending), `Error STEP_UP_REQUIRED: ${(err as Error).message}`].join("\n"), EXIT.denied);
     }
+    const verification = passkeyVerificationLines(err);
+    if (verification) fail(verification.join("\n"), EXIT.denied);
     if (err instanceof VarlatchApiError && err.code === "MAINTENANCE") {
       fail(`The installation is still in maintenance (restore or upgrade); try again later. (request ${err.requestId})`, EXIT.unavailable);
     }

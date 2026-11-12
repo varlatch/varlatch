@@ -50,7 +50,7 @@ export const AVAILABLE_MODES: readonly ControlMode[] = ["off", "report"];
  * request that completes its guarantee (ADR-0054 step 4). Nothing changes
  * this at runtime.
  */
-export const ENFORCEABLE_CONTROLS: ReadonlySet<SecurityControlName> = new Set<SecurityControlName>(["requirement-protection"]);
+export const ENFORCEABLE_CONTROLS: ReadonlySet<SecurityControlName> = new Set<SecurityControlName>(["requirement-protection", "passkey-verification"]);
 
 /** The modes a change may set for this control in this release. */
 export function availableModesOf(control: SecurityControlName): ControlMode[] {

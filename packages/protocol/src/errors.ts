@@ -43,6 +43,10 @@ export const ERROR_CODES = [
   // The incident freeze (ADR-0055): refused while the Organization is
   // frozen (details: freezeId, frozenAt). Final for the request: do not retry.
   "ORGANIZATION_FROZEN",
+  // passkey-verification (ADR-0054 Decision 7): this Organization needs a
+  // sign-in by a trusted passkey that verified the person (details:
+  // control, reason). Sign in again; retrying the same credential will not help.
+  "PASSKEY_VERIFICATION_REQUIRED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -116,6 +120,7 @@ export const CAPABILITIES = [
   // Security Controls this server can enforce (ADR-0054 step 4), one per
   // control, unlocked by the release that builds its full guarantee.
   "security.enforce.requirement-protection",
+  "security.enforce.passkey-verification",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

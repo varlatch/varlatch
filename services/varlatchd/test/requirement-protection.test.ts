@@ -164,9 +164,12 @@ afterEach(async () => {
 });
 
 describe("which controls can enforce", () => {
-  it("advertises security.enforce.requirement-protection, and offers enforce for that control only", async () => {
+  it("advertises security.enforce.requirement-protection, and offers enforce for the unlocked controls only", async () => {
     const meta = (await call("GET", "/v1/meta", admin.cli)).body.capabilities as string[];
-    expect(meta.filter((c) => c.startsWith("security.enforce."))).toEqual(["security.enforce.requirement-protection"]);
+    expect(meta.filter((c) => c.startsWith("security.enforce."))).toEqual([
+      "security.enforce.requirement-protection",
+      "security.enforce.passkey-verification",
+    ]);
     // The release's list and the capabilities say the same.
     expect(CAPABILITIES.filter((c) => c.startsWith("security.enforce."))).toEqual([...ENFORCEABLE_CONTROLS].map(enforceCapability));
     const list = (await ok("GET", CONTROLS, admin.cli)) as { items: { control: string; availableModes: string[] }[]; availableModes: string[] };
@@ -174,7 +177,7 @@ describe("which controls can enforce", () => {
     expect(Object.fromEntries(list.items.map((i) => [i.control, i.availableModes]))).toEqual({
       "requirement-protection": ["off", "report", "enforce"],
       "admin-step-up": ["off", "report"],
-      "passkey-verification": ["off", "report"],
+      "passkey-verification": ["off", "report", "enforce"],
       "credential-lifetime": ["off", "report"],
     });
   });
