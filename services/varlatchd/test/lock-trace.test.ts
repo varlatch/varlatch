@@ -328,6 +328,24 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(violations.map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: organizations\[org_a\]/)]]);
   });
 
+  it("runs an exec sent with its transaction's COMMIT after that end, in a transaction of its own", async () => {
+    let first: unknown;
+    let after: unknown;
+    await withTx(db, async (q) => {
+      const [locked] = await Promise.all([
+        lockedQuery(q, { table: "identities", mode: "update" }, "SELECT id, txid_current()::text AS t FROM identities WHERE id = 'idn_a' FOR UPDATE"),
+        q.query("COMMIT"),
+        q.exec!("UPDATE organizations SET name = txid_current()::text WHERE id = 'org_a'; SELECT 1"),
+      ]);
+      first = (locked.rows[0] as { t: string }).t;
+    });
+    after = ((await db.query("SELECT name FROM organizations WHERE id = 'org_a'")).rows[0] as { name: string }).name;
+    // Not inside the ending transaction (where the update would have come
+    // after the person's lock, a step back recorded in the wrong order).
+    expect(after).not.toBe(first);
+    expect(takeLockViolations()).toEqual([]);
+  });
+
   it("checks the statements of one exec outside a transaction as one transaction", async () => {
     await db.exec!("UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
     const violations = takeLockViolations();

@@ -1014,8 +1014,9 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         key = {};
         rawFlow.enterWith(key);
       }
-      // The same flow again: PostgreSQL only warns.
-      if (owner?.key === key) return db.query(text, params);
+      // The same flow again: PostgreSQL only warns. Not while its end is in
+      // progress: then this BEGIN waits for the end, below, and opens the next.
+      if (owner?.key === key && !owner.ending) return db.query(text, params);
       const flow = key;
       const begin = (async () => {
         while (held) await held;
@@ -1099,7 +1100,8 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // so its trace is checked at COMMIT like any other.
     await query("BEGIN");
     try {
-      const res = await run();
+      // In the chain of the transaction it just opened, as any statement of it.
+      const res = ownedBy(key ?? flowKey()) ? await owned(run) : await run();
       await query("COMMIT");
       return res;
     } catch (err) {
