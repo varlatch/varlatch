@@ -19,14 +19,14 @@ shell, and you can read every step before your agent runs it.
 ## Before you start
 
 - **An installation.** One person on your team runs it, once, on a Linux
-  host with Docker: [Run an installation](getting-started.md#run-an-installation).
+  host with Docker: [Run an installation](run-an-installation.md).
   Your agent does not set up the server for you. `varlatch setup` asks you
   to choose the address, creates the first passkey, and hands you the
   recovery keys, which no agent should see.
 - **An account on it.** You ran the setup, or you opened an invitation and
-  created your passkey ([Join a project](getting-started.md#join-a-project)).
+  created your passkey ([Join a project](join-a-team.md)).
 - **Node.js** 22, 24 or 26, at least 22.23.4, 24.22.1 or 26.12.1
-  ([Node.js version](getting-started.md#nodejs-version)).
+  ([Node.js version](reference/install-the-cli.md#nodejs-version)).
 - **[cosign](https://docs.sigstore.dev/cosign/system_config/installation/)**,
   to check that the CLI was published by Varlatch's release workflow
   ([Verifying a release](operations/verify-release.md)).
@@ -62,7 +62,7 @@ tell the human: never work around it.
 
 Use the address the human gave you. If they gave none, ask for it. If they
 have no installation yet, stop: point them to
-[Run an installation](getting-started.md#run-an-installation), and
+[Run an installation](run-an-installation.md), and
 continue when they give you its address.
 
 The installation reports its version without signing in:
@@ -116,7 +116,7 @@ release has no `SHA256SUMS.sigstore.json`, tell the human what failed: do
 not install the file another way. Releases 0.15.0 and earlier are not signed: for those,
 stop and point the human to
 [Verifying a release](operations/verify-release.md). On Windows, follow
-[On Windows](getting-started.md#on-windows), with the signature check
+[On Windows](reference/install-the-cli.md#on-windows), with the signature check
 first. If `~/.local/bin` is not on the `PATH`, tell the human.
 
 ### 3. Sign in
@@ -261,7 +261,7 @@ Tell the human:
 
 ## Next
 
-- [Invite your team](getting-started.md#invite-your-team).
-- [Connect CI and other machines](getting-started.md#connect-ci-and-other-machines).
+- [Invite your team](reference/members.md#invite-your-team).
+- [Connect CI and other machines](reference/ci-and-machines.md).
 - [Coding agents](reference/coding-agents.md): the skill, and optional
   guardrails for Claude Code and Codex.

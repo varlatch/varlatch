@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkLinks } from "../scripts/check-links.mjs";
+import { checkLinks, checkMoved } from "../scripts/check-links.mjs";
+import { movedAnchorsScript } from "../src/moved-anchors.mjs";
 
 let dist;
 function page(path, html) {
@@ -31,5 +32,54 @@ describe("checkLinks", () => {
       "/b/index.html: /c/ has no page",
       "/b/index.html: #nowhere has no #nowhere on its page",
     ]);
+  });
+
+  it("accepts a link to a section that moved", () => {
+    dist = mkdtempSync(join(tmpdir(), "docs-links-"));
+    page("old", "");
+    page("b", '<a href="/old/#gone">x</a> <a href="/old/#other">x</a>');
+    expect(checkLinks(dist, { "/old/": { gone: "/b/" } })).toEqual(["/b/index.html: /old/#other has no #other on its page"]);
+  });
+
+  it("accepts moved sections whose new place exists and whose old page keeps an anchor", () => {
+    dist = mkdtempSync(join(tmpdir(), "docs-links-"));
+    page("old", '<a id="moved"></a><a id="whole"></a>');
+    page("new", '<h2 id="moved">Moved</h2>');
+    expect(checkMoved(dist, { "/old/": { moved: "/new/#moved", whole: "/new/" } })).toEqual([]);
+  });
+
+  it("reports a moved section with no new place, or whose old page lost its anchor", () => {
+    dist = mkdtempSync(join(tmpdir(), "docs-links-"));
+    page("old", '<a id="gone"></a><a id="page"></a>');
+    page("new", "");
+    expect(checkMoved(dist, { "/old/": { lost: "/new/", gone: "/new/#gone", page: "/nope/" }, "/missing/": {} })).toEqual([
+      "moved from /old/#lost: the page has no anchor with that ID for readers without the script",
+      "moved from /old/#gone: /new/#gone has no #gone on its page",
+      "moved from /old/#page: /nope/ has no page",
+      "moved from /missing/: the page no longer exists, so its script never runs",
+    ]);
+  });
+});
+
+describe("movedAnchorsScript", () => {
+  function run(pathname, hash) {
+    const location = { pathname, hash, replace: target => { location.to = target; } };
+    new Function("location", movedAnchorsScript({ "/old/": { "a-b": "/new/#c" } }))(location);
+    return location.to;
+  }
+
+  it("sends a moved fragment on, and leaves everything else alone", () => {
+    expect(run("/old/", "#a-b")).toBe("/new/#c");
+    expect(run("/old/", "#other")).toBeUndefined();
+    expect(run("/old/", "")).toBeUndefined();
+    expect(run("/new/", "#a-b")).toBeUndefined();
+  });
+
+  it("follows own entries only, never inherited properties or a malformed fragment", () => {
+    for (const hash of ["#constructor", "#toString", "#__proto__", "#hasOwnProperty", "#%E0%A4%A"]) {
+      expect(run("/old/", hash), hash).toBeUndefined();
+    }
+    expect(run("/constructor", "#a-b")).toBeUndefined();
+    expect(run("/__proto__", "#a-b")).toBeUndefined();
   });
 });
