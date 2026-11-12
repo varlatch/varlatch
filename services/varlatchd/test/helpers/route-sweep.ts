@@ -30,7 +30,7 @@ export async function insertGitHubApp(ctx: AppCtx, organization: string, created
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, pem);
   await ctx.db.query(
     `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by)
-     VALUES ($1,$2,4242,'acme-varlatch','Iv1.fixture','acme',4243,'Organization',$3,$4)`,
+     VALUES ($1,$2,4242,'acme-varlatch','Iv1.fixture','acme',4243,'organization',$3,$4)`,
     [id, org.id, JSON.stringify(envelope), createdBy],
   );
   return id;

@@ -4355,11 +4355,20 @@
    "shape": {
     "error": {
      "code": "string",
+     "details": {
+      "check": {
+       "message": "string",
+       "status": "string",
+       "where": "string"
+      }
+     },
      "message": "string",
      "requestId": "string"
     }
    },
-   "tables": []
+   "tables": [
+    "audit_events"
+   ]
   },
   "POST /v1/organizations/:org/platform-connections (missing org)": {
    "status": 404,
@@ -4530,14 +4539,23 @@
    "tables": []
   },
   "GET /v1/organizations/:org/github-app (fixtures)": {
-   "status": 404,
-   "code": "RESOURCE_NOT_FOUND",
+   "status": 200,
+   "code": null,
    "shape": {
-    "error": {
-     "code": "string",
-     "message": "string",
-     "requestId": "string"
-    }
+    "clientId": "string",
+    "createdAt": "string",
+    "githubAppId": "number",
+    "htmlUrl": "string",
+    "id": "string",
+    "organizationId": "string",
+    "owner": {
+     "id": "number",
+     "login": "string",
+     "type": "string"
+    },
+    "slug": "string",
+    "updatedAt": "null",
+    "version": "number"
    },
    "tables": []
   },
@@ -4674,16 +4692,20 @@
    "tables": []
   },
   "GET /v1/organizations/:org/github-app/installations (fixtures)": {
-   "status": 404,
-   "code": "RESOURCE_NOT_FOUND",
+   "status": 200,
+   "code": null,
    "shape": {
-    "error": {
-     "code": "string",
+    "check": {
      "message": "string",
-     "requestId": "string"
-    }
+     "status": "string",
+     "where": "string"
+    },
+    "items": [],
+    "truncated": "boolean"
    },
-   "tables": []
+   "tables": [
+    "audit_events"
+   ]
   },
   "GET /v1/organizations/:org/github-app/installations (missing org)": {
    "status": 404,
