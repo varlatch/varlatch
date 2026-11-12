@@ -9,6 +9,11 @@
  * the name field keeps id `name`, and every outcome is rendered inside
  * `#status` with the phrases "Authenticated as <identity>", "API credential",
  * the credential itself, "terminal" for the CLI hand-off, and "failed".
+ *
+ * After an invitation (ADR-0058 Decision 4) it shows the next steps: the
+ * install line for the visitor's system when /v1/meta lists cli.download
+ * (the verified route otherwise, and when /v1/meta fails), the sign-in, and
+ * the run. The CLI hand-off is handled first and returns before any of it.
  */
 export const ENROLL_HTML = /* html */ `<!doctype html>
 <html lang="en" data-theme="dark">
@@ -65,6 +70,13 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
     .row .grow { flex: 1; }
     .foot { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); text-align: center; font-size: 12.5px; color: var(--muted); }
     .who { margin-top: 6px; font-size: 12px; color: var(--muted); text-align: center; }
+    .hint { margin: 6px 0 0; font-size: 12.5px; color: var(--muted); }
+    .hint a, .tabs button.link { color: var(--text); }
+    .tabs { display: flex; gap: 12px; margin: 0 0 8px; font-size: 12.5px; }
+    .tabs button.link { background: none; border: 0; padding: 0; height: auto; font: inherit; font-weight: 500; cursor: pointer; color: var(--muted); }
+    .tabs button.link[aria-pressed="true"] { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+    details { margin-top: 18px; }
+    summary { cursor: pointer; font-size: 13px; color: var(--muted); }
     [hidden] { display: none !important; }
   </style>
 </head>
@@ -139,6 +151,14 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
       }
       hideForm();
       if (token) setStep(3);
+      // Invitations only: whether this installation serves the CLI (ADR-0058).
+      let serves = false;
+      if (token) {
+        try {
+          const meta = await fetch("/v1/meta", { headers: { Accept: "application/json" } });
+          serves = meta.ok && ((await meta.json()).capabilities || []).includes("cli.download");
+        } catch { serves = false; }
+      }
       document.getElementById("title").textContent = token ? "You're in" : "Signed in";
       document.getElementById("lead").textContent = token ? "Your passkey is saved on this device." : "Your passkey worked.";
       const login = "varlatch login --server " + location.origin;
@@ -152,16 +172,61 @@ export const ENROLL_HTML = /* html */ `<!doctype html>
       tick();
       setInterval(tick, 1000);
       status.className = "result";
-      status.replaceChildren(
-        el("div", { class: "section-title", text: "Sign in from your terminal" }),
-        el("div", { class: "code" }, [el("span", { text: login }), document.createTextNode(" "), copyButton(login, "Copy")]),
+      const codeLine = (text) => el("div", { class: "code" }, [el("span", { text }), document.createTextNode(" "), copyButton(text, "Copy")]);
+      const credential = [
         el("div", { class: "section-title", text: "Short-lived API credential (for varlatch login)" }),
         // The space keeps the credential a separate word in #status text.
         el("div", { class: "code" }, [tokenSpan, document.createTextNode(" "), copyButton(r.token, "Copy credential")]),
         el("div", { class: "row" }, [countdown]),
+      ];
+      if (!token) {
+        status.replaceChildren(
+          el("div", { class: "section-title", text: "Sign in from your terminal" }),
+          codeLine(login),
+          ...credential,
+          el("a", { class: "button primary", href: "/", text: "Open the dashboard" }),
+          el("div", { class: "who", text: "Authenticated as " + r.identityId }),
+          el("div", { class: "foot", text: "This credential works only for a few minutes; varlatch login exchanges it." }),
+        );
+        return;
+      }
+      const verified = el("a", { href: "https://docs.varlatch.com/getting-started/#get-the-cli", target: "_blank", rel: "noreferrer", text: "Install it from its signed release" });
+      const install = [el("div", { class: "section-title", text: "1. Install the CLI" })];
+      if (serves) {
+        const lines = {
+          posix: "curl -fsSL " + location.origin + "/install.sh | sh",
+          windows: "irm " + location.origin + "/install.ps1 | iex",
+        };
+        const platform = ((navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "").toLowerCase();
+        let os = platform.indexOf("win") === 0 ? "windows" : "posix";
+        const holder = el("div");
+        const tabs = el("div", { class: "tabs" });
+        const render = () => {
+          holder.replaceChildren(codeLine(lines[os]));
+          for (const b of tabs.children) b.setAttribute("aria-pressed", String(b.dataset.os === os));
+        };
+        for (const [key, label] of [["posix", "Linux and macOS"], ["windows", "Windows"]]) {
+          const b = el("button", { class: "link", type: "button", text: label, "data-os": key });
+          b.onclick = () => { os = key; render(); };
+          tabs.append(b);
+        }
+        render();
+        install.push(tabs, holder, el("p", { class: "hint" }, [document.createTextNode("It needs Node.js 22 or newer. Or "), verified, document.createTextNode(".")]));
+      } else {
+        install.push(el("p", { class: "hint" }, [verified, document.createTextNode(": one file, for Node.js 22 or newer.")]));
+      }
+      const details = el("details", {}, [el("summary", { text: "Sign in without a browser" }), ...credential]);
+      status.replaceChildren(
+        ...install,
+        el("div", { class: "section-title", text: "2. Sign in from your terminal" }),
+        codeLine(login),
+        el("div", { class: "section-title", text: "3. Run your application" }),
+        codeLine("varlatch run -- <your command>"),
+        el("p", { class: "hint", text: "In your copy of the repository: its varlatch.toml already names the project." }),
         el("a", { class: "button primary", href: "/", text: "Open the dashboard" }),
         el("div", { class: "who", text: "Authenticated as " + r.identityId }),
-        el("div", { class: "foot", text: token ? "Add a second passkey later under Account, Security, so losing this device never locks you out." : "This credential works only for a few minutes; varlatch login exchanges it." }),
+        details,
+        el("div", { class: "foot", text: "Add a second passkey later under Account, Security, so losing this device never locks you out." }),
       );
     };
     if (token) {

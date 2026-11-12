@@ -68,6 +68,13 @@ fixes.
   `varlatch doctor` reports it. It serves only an https address or
   `http://localhost`. `/v1/meta` lists the `cli.download` capability when
   it is on. See [Serving the CLI](docs/self-hosting/configuration.md#serving-the-cli).
+- **The invitation page shows what to do next.** After someone creates
+  their passkey from an invitation, the page shows how to install the CLI
+  (the one-line install for their system when the installation serves it,
+  the signed release otherwise), the `varlatch login` line for this
+  installation, and `varlatch run`. The short-lived credential moved under
+  "Sign in without a browser". The dashboard's project onboarding shows
+  the install line too, and its `varlatch init` line now names the server.
 
 ### Documentation
 

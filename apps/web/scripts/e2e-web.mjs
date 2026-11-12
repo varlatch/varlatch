@@ -51,6 +51,17 @@ await page.waitForFunction(
   { timeout: 20000 },
 );
 check("enrollment on dashboard origin", /API credential/.test(await page.textContent("#status")));
+// ADR-0058 Decision 4: an invitation's next steps. This stack does not serve
+// the CLI, so the verified route is offered and no install line is shown.
+{
+  const steps = await page.textContent("#status");
+  check(
+    "invitation shows the next steps: install, sign in, run",
+    /1\. Install the CLI/.test(steps) && /2\. Sign in from your terminal/.test(steps) && /varlatch run -- <your command>/.test(steps),
+  );
+  check("without cli.download, the verified route and no install.sh", /Install it from its signed release/.test(steps) && !/install\.sh/.test(steps));
+  check("the short-lived credential is folded away", await page.$eval("#status details", (d) => !d.open && /API credential/.test(d.textContent)));
+}
 
 // 2. The app resumes the session and redirects into the org shell, under a
 // strict Content-Security-Policy (ADR-0046 rollout step 4).

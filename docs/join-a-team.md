@@ -12,7 +12,8 @@ browser that supports passkeys.
 
 Open the link you were sent and create your passkey. Varlatch has no
 passwords: the passkey stays on your device, in your password manager, or
-on a security key. The link works once.
+on a security key. The link works once. The page then shows the next two
+steps, with your installation's address filled in.
 
 Add a second passkey later, under your account, then Security, so losing
 one device never locks you out:
