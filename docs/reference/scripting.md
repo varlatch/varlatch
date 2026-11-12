@@ -57,7 +57,7 @@ human formats do not change either: scripts that parse them keep working.
 | 64 | The command line is wrong: an unknown command or subcommand, a missing argument, flags that conflict, or a value given the way assisted mode refuses. Checked before any credential is needed, so it is 64 whether or not you are signed in. Nothing was changed. |
 | 69 | The server cannot be reached, or is in maintenance or overloaded (502, 503, 504), including an error page from a proxy in front of it. Try again later. |
 | 75 | `varlatch login --wait` reached its deadline while the sign-in still waits for approval. The sign-in is kept: run `--wait` again. Also: a change waits for your [approval](security-controls.md#approvals) and the CLI does not wait for it (assisted mode), or the approval expired before anyone approved it. Nothing was changed. |
-| 77 | Not authenticated, or the server denied the request (401, 403). Also: an approval was denied or cancelled, was already used, or does not fit the request. |
+| 77 | Not authenticated, or the server denied the request (401, 403). Also: an approval was denied or cancelled, was already used, or does not fit the request; an organization that needs a verified passkey sign-in refused this one (`PASSKEY_VERIFICATION_REQUIRED`: run `varlatch login` again). |
 | 130 | Ctrl-C stopped the wait for an approval; the CLI cancelled it. Nothing was changed. |
 | 78 | Strict startup found a violation, or assisted mode cannot mask a Secret shorter than 8 bytes. The command was not started. |
 

@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fingerprint, Plus } from "lucide-react";
-import { useSession } from "../lib/session";
+import { useSession, type VerificationGap } from "../lib/session";
 import { Button, Spinner, StatusDot } from "../components/ui";
 import { BrandMark } from "./BrandMark";
 import { NewOrgDialog } from "./Shell";
@@ -102,6 +102,47 @@ export function MaintenanceBanner() {
     >
       <StatusDot tone="muted" className="animate-pulse" />
       Maintenance in progress · requests resume automatically
+    </div>
+  );
+}
+
+/** What the refused sign-in lacks, in the banner's words. */
+export const VERIFICATION_GAP_TEXT: Record<VerificationGap, string> = {
+  "no-evidence": "This sign-in has no record of a verified passkey (it may be older than this check).",
+  "not-user-verified": "The passkey you signed in with did not ask for your PIN, fingerprint or face.",
+  "untrusted-passkey": "You signed in with a passkey that is not confirmed yet: confirm it under Account, Security, or sign in with a trusted one.",
+};
+
+/**
+ * Shown when an organization that enforces passkey-verification refused
+ * this sign-in (ADR-0054 Decision 7): what the sign-in lacks, and a way to
+ * sign in again. Signing out returns to the sign-in screen on the same
+ * page; the new sign-in's evidence is what the organization checks.
+ */
+export function PasskeyVerificationBanner() {
+  const { verificationRequired, dismissVerificationRequired, signOut } = useSession();
+  if (!verificationRequired) return null;
+  return (
+    <div
+      role="alert"
+      data-testid="passkey-verification-required"
+      className="fixed left-1/2 top-3 z-[90] w-[min(560px,calc(100vw-32px))] -translate-x-1/2 rounded-xl border border-bd bg-raised px-4 py-3 text-[13px] shadow-pop"
+    >
+      <p className="flex items-center gap-2 font-medium">
+        <Fingerprint size={15} aria-hidden="true" />
+        This organization needs a verified passkey sign-in
+      </p>
+      <p className="mt-1 text-muted">
+        Sign in again with a trusted passkey that asks for your PIN, fingerprint or face. {VERIFICATION_GAP_TEXT[verificationRequired]}
+      </p>
+      <div className="mt-2.5 flex items-center gap-2">
+        <Button variant="primary" size="sm" onClick={() => void signOut()} data-testid="passkey-verification-sign-in-again">
+          Sign in again
+        </Button>
+        <Button variant="ghost" size="sm" onClick={dismissVerificationRequired}>
+          Not now
+        </Button>
+      </div>
     </div>
   );
 }

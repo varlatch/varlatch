@@ -192,8 +192,9 @@ export interface CredentialEvidence extends Evidence {
 /**
  * The sign-in evidence a credential carries, or null when it has none
  * (machine credentials, and anything issued before evidence was recorded:
- * unverified). Step 3 of ADR-0054's build reads it for
- * `passkey-verification`; nothing uses it to refuse anything yet.
+ * unverified). `passkey-verification` reads it for the requesting
+ * credential (passkeyverification.ts): counted in report mode, refused
+ * under enforce.
  */
 export async function credentialEvidence(db: Querier, credentialId: string): Promise<CredentialEvidence | null> {
   const row = (await db.query(

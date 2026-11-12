@@ -1487,9 +1487,20 @@ paths:
         (VERSION_CONFLICT otherwise). enforce is accepted only for a control
         this server can enforce (capability security.enforce.<control>; the
         control's availableModes), and refused with CONTROL_MODE_UNAVAILABLE
-        for the others; setting it is tightening. Refused while the
-        Organization is being deleted. Records security_control.changed with
-        metadata.loosened.
+        for the others; setting it is tightening. Setting
+        passkey-verification to enforce from a sign-in it would refuse is
+        refused with PASSKEY_VERIFICATION_REQUIRED (details.change "refused")
+        and changes nothing. Refused while the Organization is being deleted.
+        Records security_control.changed with metadata.loosened. While the
+        Organization enforces passkey-verification (capability
+        security.enforce.passkey-verification, ADR-0054 Decision 7), every
+        /v1/organizations/{org} route answers a person's browser or cli
+        credential whose sign-in was not made with a trusted passkey that
+        verified them with 403 PASSKEY_VERIFICATION_REQUIRED (details:
+        control, reason no-evidence, not-user-verified or untrusted-passkey),
+        in place of an answer that would have allowed the request; every
+        other refusal, not-found included, comes first. Machine credentials
+        are never affected.
       parameters:
         - $ref: "#/components/parameters/org"
         - name: control
@@ -4626,6 +4637,7 @@ components:
         - CONTROL_MODE_UNAVAILABLE
         - CREDENTIAL_LIFETIME_EXCEEDED
         - ORGANIZATION_FROZEN
+        - PASSKEY_VERIFICATION_REQUIRED
 
     NextCursor:
       type: [string, "null"]

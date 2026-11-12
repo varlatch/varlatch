@@ -21,6 +21,10 @@ import { VarlatchApiError } from "@varlatch/sdk";
  *
  * An Organization frozen for an incident (ADR-0055): 77, final for the
  * invocation. The CLI never retries it; runners and CI should back off.
+ *
+ * An Organization that needs a verified passkey sign-in
+ * (PASSKEY_VERIFICATION_REQUIRED, ADR-0054 Decision 7): 77. The same
+ * credential will keep being refused; `varlatch login` gets a new one.
  */
 export const EXIT = {
   ok: 0,
@@ -45,6 +49,8 @@ export function apiErrorExit(err: VarlatchApiError): number {
   if (err.code === "APPROVAL_INVALID" || err.code === "STEP_UP_REQUIRED") return EXIT.denied;
   // Frozen for an incident: the server refused, and asking again will not help until it is lifted.
   if (err.code === "ORGANIZATION_FROZEN") return EXIT.denied;
+  // An Organization that needs a verified passkey sign-in (ADR-0054 Decision 7): sign in again.
+  if (err.code === "PASSKEY_VERIFICATION_REQUIRED") return EXIT.denied;
   // A mode this server does not offer yet: an ordinary failure, not a denial.
   if (err.code === "CONTROL_MODE_UNAVAILABLE") return EXIT.failure;
   if (err.status === 401 || err.status === 403) return EXIT.denied;

@@ -26,11 +26,13 @@ Each control has a mode:
   an outcome, Varlatch counts it, so you can see what turning it on would
   do before you decide (see [What report mode counts](#what-report-mode-counts)).
 - **`enforce`**: the control applies. **This release offers `enforce`
-  for `requirement-protection` and `credential-lifetime`** (see
-  [Requirement protection](#requirement-protection) and [Credential
-  lifetime](#credential-lifetime)). For the other controls the
-  server refuses it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard
-  shows it as coming in a later release. A release says which controls it
+  for `requirement-protection`, `credential-lifetime` and
+  `passkey-verification`** (see [Requirement
+  protection](#requirement-protection), [Credential
+  lifetime](#credential-lifetime) and [Passkey
+  verification](#passkey-verification)). For `admin-step-up` the server
+  refuses it with `CONTROL_MODE_UNAVAILABLE`, and the dashboard shows it
+  as coming in a later release. A release says which controls it
   can enforce: each control's `availableModes`, and the capability
   `security.enforce.<control>` in `GET /v1/meta`. Nothing changes this at
   runtime.
@@ -537,6 +539,135 @@ nobody can approve, whoever runs the server can turn the control off:
 credential-lifetime`. Credentials issued while it was enforced keep the
 expiry they got; issue new ones if needed.
 
+## Passkey verification
+
+`passkey-verification` is about how a person signed in. A passkey can
+verify the person holding it (a PIN, fingerprint or face) or not: a
+security key without a PIN set up proves only that someone has the key.
+Varlatch records, for each sign-in, whether the authenticator verified the
+person and which passkey signed in. This control makes an organization
+accept only sign-ins that did, with a trusted passkey.
+
+**Look at report mode first.** Turned on, it refuses everyone in the
+organization whose sign-in does not qualify, admins included, and someone
+whose passkeys cannot verify them can only get back in through whoever
+runs the server. Report mode counts each such request, per person and
+reason, without refusing anything:
+
+```sh
+varlatch security set passkey-verification report    # who would be refused, and why
+varlatch security status                             # the counts
+varlatch security set passkey-verification enforce
+```
+
+Every person it counts would be refused. Sign-ins from before Varlatch
+recorded this count as `no-evidence` until the person signs in again. A
+credential keeps the evidence of the sign-in that issued it however it is
+passed later (`--token-stdin`, `VARLATCH_TOKEN`); a credential issued
+without a passkey sign-in, for example by `admin bootstrap` or `admin
+recover` with `--cli-credential`, has none and is always refused.
+
+### What it guarantees
+
+With `passkey-verification` at `enforce`, a request to the organization by
+a person's dashboard or CLI sign-in is refused with `403
+PASSKEY_VERIFICATION_REQUIRED` unless that sign-in:
+
+- was made with a passkey whose authenticator **verified the person**
+  (`userVerified`), and
+- that passkey is **trusted** when the request arrives: a passkey added
+  from a signed-in session counts only once it is confirmed with a trusted
+  one (see [Trusted passkeys only](#trusted-passkeys-only)), and a removed
+  passkey no longer counts.
+
+`error.details.reason` says what the sign-in lacks: `no-evidence` (no
+record of how it was made), `not-user-verified`, or `untrusted-passkey`.
+
+- **Every route of the organization**, reads included: projects,
+  environments, values, retrieval and `varlatch run`, validation,
+  disclosure and export, access, settings and the Security page. The
+  organization's Convex token for the dashboard's live updates leaves it
+  out.
+- **People only.** Machine credentials (services, CI and OIDC, brokers
+  and agents) are never affected, whatever their mode. Capability exercise
+  is a broker's, so it is never affected either.
+- **Only that organization.** The person's other organizations, their
+  account pages and their list of organizations work as before, and so do
+  the audit logs of deleted organizations
+  (`/v1/deleted-organizations/{organization}/audit-events` and its
+  export), which have no live organization to enforce anything.
+- **Other refusals come first.** The refusal replaces an answer that would
+  have let the request through: someone outside the organization still
+  gets "not found", and a member asking for something their role does not
+  allow still gets `PERMISSION_DENIED`. Nothing is written, disclosed or
+  decrypted for a refused request, and each refusal is recorded as
+  `authorization.denied` with `metadata.reason`
+  `passkey_verification_required`.
+- **It checks the person asking, never anyone else.** Removing a member,
+  the exposure report and machine reach still show other people's
+  authority as it is.
+- **Each sign-in carries its own evidence.** A dashboard session has what
+  its own sign-in recorded; signing in again with a verifying passkey in
+  one browser does not change another session. A CLI sign-in carries what
+  its approval recorded (device sign-in), or what the browser session it
+  came from recorded (browser sign-in).
+- Turning it on is tightening: it needs no approval. **Turning it on from a
+  sign-in it would refuse is refused** (`PASSKEY_VERIFICATION_REQUIRED`,
+  `details.change: "refused"`), so you cannot lock yourself out by saving
+  it.
+
+### Getting a sign-in it accepts
+
+- **Dashboard:** when an organization refuses your sign-in, the dashboard
+  says so and offers **Sign in again**. Sign in with a trusted passkey and
+  use its PIN, fingerprint or face when asked.
+- **CLI:** `varlatch login --server <url>` and approve the sign-in in the
+  browser with such a passkey. The CLI explains the refusal and exits 77.
+- **A passkey you added from the dashboard** must be confirmed first: on
+  your account's Security page, confirm it with one of your trusted
+  passkeys. The sign-in you made with it then counts, without signing in
+  again.
+- **A security key without a PIN** cannot verify you. Set a PIN on the key
+  (with its vendor's tool or your browser's security key settings), or use
+  a passkey that unlocks with your device's PIN or biometric.
+
+Sign-in itself still asks for user verification as `preferred`, as
+before: turning this control on changes nothing about how people sign in
+to the installation or to other organizations.
+
+### What it does not do
+
+- **It trusts the authenticator's report.** Whether the person was
+  verified is what the authenticator signed.
+- **A stolen credential is still a stolen credential.** The evidence
+  describes the sign-in that created the session or credential; whoever
+  holds that credential later is accepted.
+- **It hides nothing from members that membership does not.** A member's
+  stolen unverified credential is refused, but can still tell
+  `PASSKEY_VERIFICATION_REQUIRED` apart from "not found" for the names
+  that member could see anyway, such as which projects and environments
+  exist.
+- **It takes effect from the next request.** A request already under way
+  finishes under the mode it read (a retrieval, at its snapshot). A Convex
+  token minted before the control was enforced stays valid until it
+  expires, at most 10 minutes; it carries metadata, never values.
+- **Whoever controls the host or the deployment can turn it off** with
+  the [host operator's reset](#the-way-back-the-host-operators-reset).
+
+### The way back
+
+Turning the control down (to `report` or `off`) is loosening: it needs
+your approval with a trusted passkey that verifies you, and so does any
+request to the organization while it is enforced. If nobody in the
+organization can sign in with such a passkey:
+
+- whoever runs the server can send a person a link that enrolls a trusted
+  passkey: `varlatch admin reenroll --identity <identity id>`. Enroll a
+  passkey that can verify you (set a PIN on a security key first), sign in
+  with it, and continue;
+- or they can turn the control off: `varlatch admin security reset --org
+  <slug> --control passkey-verification`.
+
 ## Admin step-up
 
 `admin-step-up` cannot be enforced yet: the server refuses `enforce` with
@@ -562,8 +693,9 @@ operations.
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an
-organization with any control at `enforce` (in this release, that means
-`requirement-protection` or `credential-lifetime`). Approve it with a trusted passkey, which may be
+organization with any control at `enforce` (in this release,
+`requirement-protection`, `credential-lifetime` or
+`passkey-verification`). Approve it with a trusted passkey, which may be
 the one you are removing. When none of your organizations enforces a
 control, removing a passkey works as before. Removing an unconfirmed
 passkey never needs one. Better Auth's own passkey removal endpoint is
@@ -639,4 +771,5 @@ The capabilities are `security.controls`, `security.report`,
 `security.approval-keys`, `security.refused-destinations` and
 `organizations.permissions`, and `security.enforce.<control>` for each
 control this server can enforce (`security.enforce.requirement-protection`,
-`security.enforce.credential-lifetime`).
+`security.enforce.credential-lifetime`,
+`security.enforce.passkey-verification`).
