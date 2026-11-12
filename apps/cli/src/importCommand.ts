@@ -14,6 +14,7 @@ import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { DotenvParseError, parseDotenv, type DotenvEntry } from "./dotenv.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
+import { safeApiCode } from "./safeText.js";
 
 /**
  * `varlatch import <file>` (ADR-0043 Decision 2): the CLI reads a dotenv file
@@ -234,7 +235,8 @@ export async function storeValues(
       stored.push(entry.name);
     } catch (err) {
       const network = networkFailure(err);
-      const reason = err instanceof VarlatchApiError ? err.code : (network ?? (err instanceof Error ? err.name : "an error"));
+      // Only a code the protocol defines: a server could echo the value it was sent in that field.
+      const reason = err instanceof VarlatchApiError ? safeApiCode(err) : (network ?? (err instanceof Error ? err.name : "an error"));
       const exitCode = err instanceof VarlatchApiError ? apiErrorExit(err) : network ? EXIT.unavailable : EXIT.failure;
       return { stored, failure: { name: entry.name, reason, exitCode, skipped: entries.slice(index + 1).map((e) => e.name) } };
     }

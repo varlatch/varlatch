@@ -7,6 +7,7 @@ import type { Environment, Project } from "@varlatch/protocol";
 import type { VarlatchClient } from "@varlatch/sdk";
 import { VarlatchApiError } from "@varlatch/sdk";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
+import { printable, safeApiCode } from "./safeText.js";
 import { checkEntries, formatRows, ImportError, planRows, readActiveContract, readPresent, readSource, storeValues, finishSource, type Row } from "./importCommand.js";
 import type { DotenvEntry } from "./dotenv.js";
 import type { Prompter } from "./prompt.js";
@@ -97,7 +98,25 @@ interface Phase {
   files: boolean;
 }
 
-export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
+export async function guidedInit(raw: GuidedInitDeps): Promise<number> {
+  // Everything shown goes through printable(): organization, project and
+  // environment names come from the server and must not act on the terminal.
+  // The steps keep the original values for their API calls.
+  const deps: GuidedInitDeps = {
+    ...raw,
+    out: (line) => raw.out(printable(line)),
+    err: (line) => raw.err(printable(line)),
+    prompt: {
+      ...raw.prompt,
+      select: (question, options, preselected) => raw.prompt.select(printable(question), options.map(printable), preselected),
+      confirm: (question, defaultYes) => raw.prompt.confirm(printable(question), defaultYes),
+      text: (question, defaultValue) => raw.prompt.text(printable(question), defaultValue === undefined ? undefined : printable(defaultValue)),
+      say: (line) => raw.prompt.say(printable(line)),
+      pause: () => raw.prompt.pause(),
+      resume: () => raw.prompt.resume(),
+      close: () => raw.prompt.close(),
+    },
+  };
   const phase: Phase = { label: "setting up", files: false };
   try {
     return await guidedSteps(deps, phase);
@@ -112,7 +131,7 @@ export async function guidedInit(deps: GuidedInitDeps): Promise<number> {
       const code = (err as NodeJS.ErrnoException | null)?.code;
       const reason =
         err instanceof VarlatchApiError
-          ? `${err.code}, HTTP ${err.status}`
+          ? `${safeApiCode(err)}, HTTP ${err.status}`
           : (network ?? (typeof code === "string" && /^E[A-Z]+$/.test(code) ? code : err instanceof Error ? err.name : "an error"));
       deps.err(`varlatch init: ${phase.label} failed (${reason}).`);
     }

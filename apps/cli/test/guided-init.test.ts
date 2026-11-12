@@ -20,8 +20,9 @@ const CANARY_OLD = "old-canary-77aa31";
 
 type Answer = { q: RegExp; a: number | boolean | string };
 
-function scripted(answers: Answer[]): Prompter & { asked: string[]; said: string[] } {
+function scripted(answers: Answer[]): Prompter & { asked: string[]; said: string[]; shown: string[] } {
   const asked: string[] = [];
+  const shown: string[] = [];
   const said: string[] = [];
   const next = (question: string) => {
     asked.push(question);
@@ -33,7 +34,11 @@ function scripted(answers: Answer[]): Prompter & { asked: string[]; said: string
   return {
     asked,
     said,
-    select: async (q) => next(q) as number,
+    shown,
+    select: async (q, options) => {
+      shown.push(...options);
+      return next(q) as number;
+    },
     confirm: async (q) => next(q) as boolean,
     text: async (q) => next(q) as string,
     say: (line) => void said.push(line),
@@ -56,6 +61,8 @@ interface Fake {
   contractForbidden: boolean;
   /** Calls that fail with a server message carrying a value (it must never be printed). */
   failing: Set<"push" | "activate" | "read">;
+  /** The code a failing call answers with: a server can put anything there. */
+  failCode: string;
 }
 
 function fake(init: Partial<Pick<Fake, "orgs" | "projects" | "envs">> = {}): Fake {
@@ -73,6 +80,7 @@ function fake(init: Partial<Pick<Fake, "orgs" | "projects" | "envs">> = {}): Fak
     failOn: null,
     contractForbidden: false,
     failing: new Set(),
+    failCode: "VALIDATION_FAILED",
     api: undefined as unknown as GuidedApi,
   };
   const page = <T>(items: T[]) => ({ items, nextCursor: null });
@@ -94,24 +102,24 @@ function fake(init: Partial<Pick<Fake, "orgs" | "projects" | "envs">> = {}): Fak
       return { id: active.id, contract: { schemaVersion: 1, semanticsVersion: 3, items: active.items.map((i) => ({ ...i, required: { kind: "never" } })) } };
     },
     pushContractRevision: async (_o: string, _p: string, input: { contract: { items: { name: string; type: string; sensitive: boolean }[] } }) => {
-      if (f.failing.has("push")) throw echo(422);
+      if (f.failing.has("push")) throw echo(422, f.failCode);
       const revision = { id: `rev_${f.revisions.length}`, items: input.contract.items, active: false };
       f.revisions.push(revision);
       return { id: revision.id, contentHash: "h", active: false };
     },
     activateContractRevision: async (_o: string, _p: string, id: string) => {
-      if (f.failing.has("activate")) throw echo(409);
+      if (f.failing.has("activate")) throw echo(409, f.failCode);
       for (const r of f.revisions) r.active = r.id === id;
       return {};
     },
     effectiveConfiguration: async (_o: string, _p: string, env: string) => {
       if (f.unreadable.has(env)) throw new VarlatchApiError(403, { code: "FORBIDDEN", message: "no", requestId: "r" } as never);
-      if (f.failing.has("read")) throw echo(500);
+      if (f.failing.has("read")) throw echo(500, f.failCode);
       const stored = f.values.get(env) ?? new Map();
       return { items: [...stored].map(([name, value]) => ({ name, sensitive: f.sensitive.has(name), value: f.sensitive.has(name) ? null : value, rawValue: f.sensitive.has(name) ? null : value })) };
     },
     setValue: async (_o: string, _p: string, env: string, name: string, input: { value: string }) => {
-      if (f.failOn === name) throw new VarlatchApiError(500, { code: "INTERNAL", message: "boom", requestId: "r" } as never);
+      if (f.failOn === name) throw new VarlatchApiError(500, { code: f.failCode === "VALIDATION_FAILED" ? "INTERNAL" : f.failCode, message: "boom", requestId: "r" } as never);
       const stored = f.values.get(env) ?? new Map<string, string>();
       stored.set(name, input.value);
       f.values.set(env, stored);
@@ -122,8 +130,8 @@ function fake(init: Partial<Pick<Fake, "orgs" | "projects" | "envs">> = {}): Fak
 }
 
 /** A server error whose message echoes what was sent: it must never reach the output. */
-function echo(status: number) {
-  return new VarlatchApiError(status, { code: "VALIDATION_FAILED", message: `rejected ${CANARY_DEV} ${CANARY_PROD}`, requestId: "r" } as never);
+function echo(status: number, code = "VALIDATION_FAILED") {
+  return new VarlatchApiError(status, { code, message: `rejected ${CANARY_DEV} ${CANARY_PROD}`, requestId: "r" } as never);
 }
 
 function repo(files: Record<string, string>): string {
@@ -151,7 +159,7 @@ async function run(cwd: string, f: Fake, answers: Answer[], extra: { organizatio
   const text = [...out, ...err].join("\n");
   for (const canary of [CANARY_DEV, CANARY_PROD, CANARY_OLD]) expect(text, "a value reached the output").not.toContain(canary);
   expect(answers, "every scripted answer was asked for").toEqual([]);
-  return { code, out: out.join("\n"), err: err.join("\n"), written, asked: prompt.asked };
+  return { code, out: out.join("\n"), err: err.join("\n"), written, asked: prompt.asked, shown: prompt.shown };
 }
 
 const pickExisting: Answer[] = [
@@ -453,5 +461,40 @@ describe("guided init", () => {
     expect(printed).not.toContain(handoff);
     expect(printed).not.toContain(cli);
     expect(printed).toContain("Signed in to https://vault.example.com.");
+  });
+
+  it("prints an error code only when the protocol defines it: a server can echo a value there", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\n` });
+    const f = fake();
+    f.failing.add("push");
+    f.failCode = CANARY_DEV;
+    const r = await run(dir, f, [...pickExisting, { q: /^Import \.env into:/, a: 0 }, { q: /^Items that are not secret/, a: "" }]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("pushing the Contract revision failed (UNRECOGNIZED_ERROR, HTTP 422).");
+  });
+
+  it("the same for a failed write's reason", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\nB_ITEM=x\n` });
+    const f = fake();
+    f.failOn = "B_ITEM";
+    f.failCode = CANARY_PROD;
+    const r = await run(dir, f, [...pickExisting, { q: /^Import \.env into:/, a: 0 }, { q: /^Items that are not secret/, a: "" }]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("not stored in acme / api / development (.env): B_ITEM (UNRECOGNIZED_ERROR)");
+  });
+
+  it("shows server-provided names with control characters escaped, and uses the real ones for API calls", async () => {
+    const hostile = "Acme\n  [2] Evil\u001b]52;c;ZXZpbA==\u0007\u001b[31m";
+    const dir = repo({ ".env": "PORT=3000\n" });
+    const f = fake({
+      orgs: [{ slug: "acme", name: hostile }],
+      envs: [{ name: "development", tier: "development", kind: "shared" }, { name: "production\u001b[2J", tier: "production", kind: "shared" }],
+    });
+    const r = await run(dir, f, [...pickExisting, { q: /^Import \.env into:/, a: 0 }, { q: /^Delete \.env\?/, a: false }]);
+    expect(r.code).toBe(0);
+    const everything = [r.out, r.err, ...r.asked, ...r.shown].join("\n");
+    expect(everything).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(r.shown).toContain("acme (Acme\\u000a  [2] Evil\\u001b]52;c;ZXZpbA==\\u0007\\u001b[31m)");
+    expect(r.written).toEqual([{ server: "https://vault.example.com", organization: "acme", project: "api", defaultEnvironment: "development" }]);
   });
 });
