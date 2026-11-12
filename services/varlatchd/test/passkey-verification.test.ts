@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { readFile } from "node:fs/promises";
-import { PGlite } from "@electric-sql/pglite";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { CAPABILITIES } from "@varlatch/protocol";
-import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
@@ -11,9 +11,8 @@ import { ENFORCEABLE_CONTROLS, enforceCapability, resetControls } from "../src/d
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
-import { lockOrderMode, lockTraced } from "./helpers/lock-trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { asQuerier } from "./helpers/pglite-snapshots.js";
+import { changedTables, sweeper, type OffRecord } from "./helpers/route-sweep.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 import { uncheckedOrganizations } from "../src/domain/requestaccess.js";
@@ -408,6 +407,23 @@ describe("where it decides", () => {
     ]);
   });
 
+  it("answers a Tailnet denial before the refusal: effective configuration with values, and a disclosure, from off the tailnet", async () => {
+    await ok("POST", `${ORG}/requirements`, verified, {
+      kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
+    });
+    const off = {
+      values: await call("GET", `${E}/effective-configuration?include=values`, admin),
+      disclosure: await call("POST", `${E}/disclosures`, admin, { scope: "all-authorized-secrets" }),
+    };
+    expect(off.values.body.error.code).toBe("TAILNET_CONTEXT_REQUIRED");
+    await setMode("enforce");
+    expect(await call("GET", `${E}/effective-configuration?include=values`, admin)).toMatchObject({ status: off.values.status, body: { error: { code: off.values.body.error.code } } });
+    expect(await call("POST", `${E}/disclosures`, admin, { scope: "all-authorized-secrets" })).toMatchObject({ status: off.disclosure.status, body: { error: { code: off.disclosure.body.error.code } } });
+    expect(await passkeyDenials()).toEqual([]);
+    // Metadata only: the request goes on, and is refused for the sign-in.
+    expectRefused(await call("GET", `${E}/effective-configuration`, admin));
+  });
+
   it("refuses before any approval is asked for: a refused sign-in creates no approval intent (requirement-protection)", async () => {
     await ok("PATCH", `${ORG}/security/controls/requirement-protection`, verified, { mode: "enforce", expectedVersion: 0 });
     const requirement = await ok("POST", `${ORG}/requirements`, verified, {
@@ -463,11 +479,13 @@ describe("where it decides", () => {
     ]);
   });
 
-  it("audits turning it on from a sign-in it would refuse, once, as such", async () => {
-    expectRefused(await call("PATCH", CONTROL, admin, { mode: "enforce", expectedVersion: 0 }));
-    const [denial] = await passkeyDenials();
-    expect(denial!.metadata).toMatchObject({ reason: "passkey_verification_required", evidence: "no-evidence", change: "refused" });
-    expect(await passkeyDenials()).toHaveLength(1);
+  it("records nothing when turning it on from a sign-in it would refuse is refused, as before", async () => {
+    const events = async () => (await rows("SELECT count(*)::int AS n FROM audit_events"))[0].n as number;
+    const before = await events();
+    const res = await call("PATCH", CONTROL, admin, { mode: "enforce", expectedVersion: 0 });
+    expectRefused(res);
+    expect(res.body.error.details.change).toBe("refused");
+    expect(await events()).toBe(before);
   });
 });
 
@@ -505,9 +523,16 @@ describe("every /v1/organizations/:org route", () => {
     expect(out.succeededOff.length, out.succeededOff.join("\n")).toBeGreaterThan(80);
     expect(out.wrong, "answers under enforce that break the boundary").toEqual([]);
     expect(out.misclassified, "routes decided elsewhere than the inventory says (helpers/route-access.ts)").toEqual([]);
+    expect(out.offDiffers, `off-mode answers and effects that differ from ${OFF_BASELINE.source}`).toEqual([]);
     expect(out.changed, "effects of refused or earlier-refused requests under enforce").toEqual([]);
     // Every nesting level's missing resource was tried somewhere and kept its not-found.
     expect(out.notFoundKept).toBeGreaterThan(150);
+    // A Tailnet denial is answered as with the control off, values read with
+    // and without a snapshot (effective configuration with values, disclosure).
+    expect(out.tailnetKept).toEqual(expect.arrayContaining([
+      "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (tailnet environment)",
+      "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (tailnet environment)",
+    ]));
   }, 300_000);
 
   it("gives an outsider and a machine exactly the answers they got with the control off", async () => {
@@ -537,223 +562,70 @@ describe("every /v1/organizations/:org route", () => {
 // - with the control off it was not found, or an authorization or Tailnet
 //   denial: under enforce exactly the same answer, and no denial audit;
 // - any other refusal (a validation failure, a conflict): that refusal or
-//   the passkey refusal, and no effect either way.
+//   the passkey refusal, and no effect either way;
+// - with the control off, the status, error code, body shape and the
+//   tables changed are exactly main's before this fix: the baseline
+//   test/passkey-verification-baseline.test.ts recorded there
+//   (test/fixtures/passkey-verification-off-baseline.json).
 //
 // Each request runs under the lock-order harness, which also checks that a
 // write never comes before its checkpoint; a run whose off-mode request
 // changed something starts the next one from the fixtures again.
 
-type Fixtures = Record<string, string>;
-type Sweep = { succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number; misclassified: string[] };
+type Sweep = {
+  succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number; misclassified: string[]; tailnetKept: string[];
+  /** Off-mode answers or effects that differ from main's (test/fixtures/passkey-verification-off-baseline.json). */
+  offDiffers: string[];
+};
 
-async function fixtureDb(data?: Blob) {
-  const pg = new PGlite(data ? { loadDataDir: data } : { loadDataDir: new Blob([await readFile(inject("pgliteSnapshots").traced)]) });
-  await pg.waitReady;
-  const raw = asQuerier(pg);
-  const mode = lockOrderMode();
-  return { pg, db: mode === "off" ? raw : lockTraced(raw, mode) };
-}
-
-async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: Fixtures; tokens: { admin: string; verified: string } }> {
-  const { pg, db } = await fixtureDb();
-  const fctx: AppCtx = { db, rootKek };
-  await ensureInstallation(fctx);
-  const adminIdentity = (await consumeSetupGrant(fctx, (await issueBootstrapGrant(fctx)).token, { adminName: "Admin" })).identityId;
-  const adminToken = (await issueCredential(db, { identityId: adminIdentity, kind: "cli" })).token;
-  const key = await registerSoftPasskey(db, adminIdentity, { ...RP, trust: "trusted" });
-  await db.query(
-    `INSERT INTO "session" (id, "expiresAt", token, "userId")
-     SELECT 'ses_sweep', now() + interval '1 day', 'ses_sweep', better_auth_user_id FROM auth_user_links WHERE identity_id = $1`,
-    [adminIdentity],
-  );
-  await db.query("INSERT INTO auth_session_evidence (session_id, ceremony, user_verified, passkey_id) VALUES ('ses_sweep', 'sign-in', true, $1)", [key.passkeyId]);
-  const verifiedToken = (await issueCredential(db, { identityId: adminIdentity, kind: "browser", expiresAt: new Date(Date.now() + 3600_000).toISOString(), authSessionId: "ses_sweep" })).token;
-  const a = buildApp(fctx, { publicUrl: PUBLIC_URL });
-  const post = async (method: string, path: string, body?: unknown) => {
-    const res = await a.request(path, {
-      method,
-      headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
-    const text = await res.text();
-    expect(res.status, `${method} ${path}: ${text}`).toBeLessThan(300);
-    return text ? JSON.parse(text) : null;
-  };
-  const o = "/v1/organizations/acme";
-  const org = await post("POST", "/v1/organizations", { name: "Acme", slug: "acme" });
-  const project = await post("POST", `${o}/projects`, { name: "API", slug: "api", contractAuthority: "managed" });
-  await post("POST", `${o}/projects/api/environments`, { name: "production", tier: "production" });
-  const revision = await post("POST", `${o}/projects/api/contract/revisions`, {
-    contract: { schemaVersion: 1, items: [{ name: "DB_PASS", required: { kind: "never" }, sensitive: true, type: "string" }] },
-  });
-  await post("POST", `${o}/projects/api/contract/revisions/${revision.id}/activate`, {});
-  await post("PUT", `${o}/projects/api/environments/production/values/DB_PASS`, { value: "hunter2-hunter2" });
-  const bob = (await consumeSetupGrant(fctx, (await issueInviteGrant(fctx, { organizationId: org.id, role: "member", name: "Bob" }, adminIdentity)).token, {})).identityId;
-  const bot = await post("POST", `${o}/identities`, { name: "bot", kind: "service" });
-  const botCredential = ((await db.query("SELECT id FROM credentials WHERE identity_id = $1", [bot.id])).rows[0] as { id: string }).id;
-  const grant = await post("POST", `${o}/grants`, { subjectIdentityId: bot.id, scope: { kind: "organization" }, actions: ["organization.read"] });
-  const role = await post("POST", `${o}/roles`, { name: "Reader", actions: ["organization.read"] });
-  const group = await post("POST", `${o}/groups`, { name: "Ops" });
-  await post("POST", `${o}/groups/${group.id}/members`, { identityId: bob });
-  const team = await post("POST", `${o}/teams`, { name: "Core" });
-  await post("POST", `${o}/teams/${team.id}/members`, { identityId: bob });
-  await post("POST", `${o}/teams/${team.id}/projects`, { projectId: project.id });
-  const requirement = await post("POST", `${o}/requirements`, { kind: "tailnet", target: { kind: "tier", tier: "staging" }, selector: { tailnet: "example.ts.net", tags: ["tag:ci"] } });
-  const webhook = await post("POST", `${o}/webhooks`, { url: "https://hooks.example.com/varlatch" });
-  const invitation = await post("POST", `${o}/invitations`, { name: "Eve", role: "member" });
-  const binding = await post("POST", `${o}/identities/${bot.id}/oidc-bindings`, { issuer: "https://token.example.com", audience: "varlatch", subject: "repo:acme/api" });
-  const data = await pg.dumpDataDir("none");
-  await pg.close();
-  return {
-    data,
-    tokens: { admin: adminToken, verified: verifiedToken },
-    f: {
-      org: "acme", project: "api", environment: "production", item: "DB_PASS", revision: revision.id,
-      identity: bot.id, credential: botCredential, member: bob, invitation: invitation.id, grant: grant.id,
-      role: role.id, group: group.id, team: team.id, requirement: requirement.id, webhook: webhook.id,
-      binding: binding.id, control: "requirement-protection", projectId: project.id,
-    },
-  };
-}
-
-/** A body each write route accepts with the fixtures (the rest get {}). */
-function bodyOf(route: string, f: Fixtures): unknown {
-  const R = "/v1/organizations/:org";
-  const E = `${R}/projects/:project/environments/:environment`;
-  const bodies: Record<string, unknown> = {
-    [`PATCH ${R}`]: { name: "Acme 2" },
-    [`POST ${R}/deletion`]: { afterDays: 1 },
-    [`POST ${R}/incident-freeze`]: { reason: "drill" },
-    [`POST ${R}/projects`]: { name: "Web", slug: "web", contractAuthority: "git" },
-    [`PATCH ${R}/projects/:project`]: { name: "API 2" },
-    [`POST ${R}/projects/:project/environments`]: { name: "staging", tier: "staging" },
-    [`PUT ${E}/values/:item`]: { value: "changed-changed" },
-    [`POST ${E}/values/:item/rotations`]: { value: "rotated-rotated" },
-    [`POST ${E}/changes`]: { changes: [{ op: "set", item: "DB_PASS", value: "set-set-set" }] },
-    [`POST ${E}/disclosures`]: { scope: "all-authorized-secrets" },
-    [`POST ${E}/retrievals`]: { mode: "strict" },
-    [`POST ${R}/projects/:project/contract/revisions`]: { contract: { schemaVersion: 1, items: [{ name: "DB_PASS", required: { kind: "never" }, sensitive: true, type: "string" }, { name: "PORT", required: { kind: "never" }, sensitive: false, type: "string" }] } },
-    [`POST ${R}/identities`]: { name: "bot2", kind: "service" },
-    [`POST ${R}/identities/:identity/credentials`]: { name: "second" },
-    [`PATCH ${R}/identities/:identity`]: { name: "bot-renamed" },
-    [`POST ${R}/identities/:identity/oidc-bindings`]: { issuer: "https://token2.example.com", audience: "varlatch", subject: "repo:acme/web" },
-    [`PATCH ${R}/members/:member`]: { role: "admin" },
-    [`POST ${R}/invitations`]: { name: "Mallory", role: "member" },
-    [`POST ${R}/grants`]: { subjectIdentityId: f.identity, scope: { kind: "organization" }, actions: ["config.metadata.read"] },
-    [`POST ${R}/grants/:grant/replace`]: { subjectIdentityId: f.identity, scope: { kind: "organization" }, actions: ["config.metadata.read"] },
-    [`POST ${R}/roles`]: { name: "Viewer", actions: ["organization.read"] },
-    [`PATCH ${R}/roles/:role`]: { expectedVersion: 1, name: "Reader 2" },
-    [`POST ${R}/groups`]: { name: "Ops 2" },
-    [`PATCH ${R}/groups/:group`]: { expectedVersion: 1, name: "Ops 3" },
-    [`POST ${R}/groups/:group/members`]: { identityId: f.identity },
-    [`POST ${R}/teams`]: { name: "Core 2" },
-    [`PATCH ${R}/teams/:team`]: { expectedVersion: 1, name: "Core 3" },
-    [`POST ${R}/teams/:team/members`]: { identityId: f.identity },
-    [`POST ${R}/teams/:team/projects`]: { projectId: f.projectId },
-    [`POST ${R}/requirements`]: { kind: "tailnet", target: { kind: "tier", tier: "development" }, selector: { tailnet: "example.ts.net", tags: ["tag:dev"] } },
-    [`PATCH ${R}/requirements/:requirement`]: { expectedVersion: 1, selector: { tailnet: "example.ts.net", tags: ["tag:other"] } },
-    [`POST ${R}/webhooks`]: { url: "https://hooks.example.com/second" },
-    [`PATCH ${R}/webhooks/:webhook`]: { expectedVersion: 1, eventTypes: null },
-    [`PATCH ${R}/security/controls/:control`]: { mode: "report", expectedVersion: 0 },
-  };
-  return bodies[route] ?? {};
-}
-
-/** Everything a request could change, apart from refusals' audit events and the control flipped between runs. */
-async function fingerprint(db: AppCtx["db"]): Promise<string> {
-  const tables = ((await db.query(
-    `SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY c.relname`,
-  )).rows as { name: string }[]).map((r) => r.name);
-  const SPECIAL: Record<string, string> = {
-    // Changed by every request (last use); what counts is issuance and revocation.
-    credentials: "SELECT count(*)::text || '/' || count(revoked_at)::text FROM credentials",
-    audit_events: "SELECT count(*)::text FROM audit_events WHERE event_type <> 'authorization.denied'",
-    // Flipped between the runs; nothing a request changes.
-    security_controls: "SELECT count(*)::text FROM security_controls WHERE control <> 'passkey-verification'",
-    organizations: "SELECT string_agg(id || ':' || name || ':' || coalesce(deleted_at::text, ''), ',' ORDER BY id) FROM organizations",
-  };
-  const SKIP = new Set(["audit_position", "varlatch_migrations", "security_control_counters"]);
-  const parts = tables.filter((t) => !SKIP.has(t)).map((t) =>
-    `SELECT '${t}' AS t, (${SPECIAL[t] ?? `SELECT md5(coalesce(string_agg(x::text, ',' ORDER BY x::text), '')) FROM "${t}" x`}) AS v`,
-  );
-  const rows = (await db.query(parts.join(" UNION ALL "))).rows as { t: string; v: string | null }[];
-  return rows.map((r) => `${r.t}=${r.v}`).join(";");
-}
+const OFF_BASELINE = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./fixtures/passkey-verification-off-baseline.json", import.meta.url)), "utf8"),
+) as { source: string; variants: Record<string, OffRecord> };
 
 async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
-  const { data, f, tokens } = await buildFixtures(rootKek);
-  const R = "/v1/organizations/:org";
-  let current = await fixtureDb(data);
-  let sctx: AppCtx = { db: current.db, rootKek };
-  let sapp = buildApp(sctx, { publicUrl: PUBLIC_URL });
-  const fresh = async () => {
-    await current.pg.close();
-    current = await fixtureDb(data);
-    sctx = { db: current.db, rootKek };
-    sapp = buildApp(sctx, { publicUrl: PUBLIC_URL });
-  };
-  const setMode = async (mode: "off" | "enforce") => {
-    await sctx.db.query(
-      `INSERT INTO security_controls (organization_id, control, mode, version)
-       SELECT id, 'passkey-verification', $1, 1 FROM organizations WHERE slug = 'acme'
-       ON CONFLICT (organization_id, control) DO UPDATE SET mode = EXCLUDED.mode, version = security_controls.version + 1`,
-      [mode],
-    );
-  };
-  const denials = async () =>
-    ((await sctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE metadata::jsonb->>'reason' = 'passkey_verification_required'")).rows[0] as { n: number }).n;
-  const send = async (method: string, path: string, body: unknown) => {
-    const res = await sapp.request(path, {
-      method,
-      headers: { Authorization: `Bearer ${tokens.admin}`, "Content-Type": "application/json" },
-      ...(method === "GET" || method === "DELETE" ? {} : { body: JSON.stringify(body) }),
-    });
-    const parsed = (await res.json().catch(() => null)) as { error?: { code: string } } | null;
-    await accessCountsSettled();
-    return { status: res.status, code: parsed?.error?.code ?? null };
-  };
-
-  const routes = sapp.routes.filter((r) => r.method !== "ALL" && (r.path === R || r.path.startsWith(`${R}/`)));
-  const out: Sweep = { succeededOff: [], wrong: [], changed: [], notFoundKept: 0, misclassified: [] };
+  const s = await sweeper(rootKek);
+  const out: Sweep = { succeededOff: [], wrong: [], changed: [], notFoundKept: 0, misclassified: [], tailnetKept: [], offDiffers: [] };
   const EARLIER = new Set(["RESOURCE_NOT_FOUND", "PERMISSION_DENIED", "TAILNET_CONTEXT_REQUIRED", "TAILNET_CONTEXT_UNAVAILABLE"]);
-  for (const route of routes) {
-    const key = `${route.method} ${route.path}`;
-    const params = [...route.path.matchAll(/:([a-z]+)/gi)].map((m) => m[1]!);
-    // The fixtures, then each parameter missing in turn.
-    const variants: [string, Record<string, string>][] = [["fixtures", {}], ...params.map((p) => [`missing ${p}`, { [p]: `missing_${p}` }] as [string, Record<string, string>])];
-    for (const [variant, override] of variants) {
-      const path = route.path.replace(/:([a-z]+)/gi, (_, p: string) => encodeURIComponent(override[p] ?? f[p] ?? "x"));
-      const body = bodyOf(key, f);
-      const label = `${key} (${variant})`;
-      await setMode("enforce");
-      const before = await fingerprint(sctx.db);
-      const denied = await denials();
-      const enforced = await send(route.method, path, body);
-      const refused = enforced.code === "PASSKEY_VERIFICATION_REQUIRED";
-      if ((await fingerprint(sctx.db)) !== before) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
-      if ((await denials()) - denied !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${(await denials()) - denied} denial audits for ${enforced.code}`);
-      await setMode("off");
-      settledAtAnswer.mockClear();
-      const off = await send(route.method, path, body);
-      const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
-      if (off.code === "PASSKEY_VERIFICATION_REQUIRED") out.wrong.push(`${label}: refused with the control off`);
-      if (off.status < 400 || off.status === 428) {
-        if (variant === "fixtures") out.succeededOff.push(`${label}: ${off.status}`);
-        if (off.status < 400 && atAnswer !== (ROUTE_ACCESS[key] === "read")) {
-          out.misclassified.push(`${label}: listed as ${ROUTE_ACCESS[key]}, ${atAnswer ? "decided at its answer" : "decided before its answer"}`);
-        }
-        if (!refused) out.wrong.push(`${label}: off ${off.status}, enforce ${enforced.status} ${enforced.code}`);
-      } else if (off.code && EARLIER.has(off.code)) {
-        if (enforced.status !== off.status || enforced.code !== off.code) out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
-        else if (off.code === "RESOURCE_NOT_FOUND") out.notFoundKept++;
-      } else if (!refused && (enforced.status !== off.status || enforced.code !== off.code)) {
-        out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
-      }
-      // The off-mode run may have changed the fixtures: start the next one afresh.
-      if ((await fingerprint(sctx.db)) !== before) await fresh();
+  const variants = s.variants();
+  // Every variant is in main's baseline, and nothing else is.
+  const missing = variants.map((v) => v.label).filter((l) => !(l in OFF_BASELINE.variants));
+  if (missing.length > 0) out.offDiffers.push(`not in the baseline: ${missing.join(", ")}`);
+  for (const v of variants) {
+    const { key, label, variant } = v;
+    await s.setMode("enforce");
+    const before = await s.state();
+    const denied = await s.denials();
+    const enforced = await s.send(v);
+    const refused = enforced.code === "PASSKEY_VERIFICATION_REQUIRED";
+    if (changedTables(before, await s.state()).length > 0) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
+    if ((await s.denials()) - denied !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${(await s.denials()) - denied} denial audits for ${enforced.code}`);
+    await s.setMode("off");
+    settledAtAnswer.mockClear();
+    const off = await s.send(v);
+    const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
+    const tables = changedTables(before, await s.state());
+    // With the control off, exactly what main answered and changed.
+    const base = OFF_BASELINE.variants[label];
+    if (base && JSON.stringify({ status: off.status, code: off.code, shape: off.shape, tables }) !== JSON.stringify(base)) {
+      out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify({ status: off.status, code: off.code, shape: off.shape, tables })}`);
     }
+    if (off.code === "PASSKEY_VERIFICATION_REQUIRED") out.wrong.push(`${label}: refused with the control off`);
+    if (off.status < 400 || off.status === 428) {
+      if (variant === "fixtures") out.succeededOff.push(`${label}: ${off.status}`);
+      if (off.status < 400 && atAnswer !== (ROUTE_ACCESS[key] === "read")) {
+        out.misclassified.push(`${label}: listed as ${ROUTE_ACCESS[key]}, ${atAnswer ? "decided at its answer" : "decided before its answer"}`);
+      }
+      if (!refused) out.wrong.push(`${label}: off ${off.status}, enforce ${enforced.status} ${enforced.code}`);
+    } else if (off.code && EARLIER.has(off.code)) {
+      if (enforced.status !== off.status || enforced.code !== off.code) out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
+      else if (off.code === "RESOURCE_NOT_FOUND") out.notFoundKept++;
+      else if (off.code.startsWith("TAILNET_")) out.tailnetKept.push(label);
+    } else if (!refused && (enforced.status !== off.status || enforced.code !== off.code)) {
+      out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
+    }
+    // The off-mode run may have changed the fixtures: start the next one afresh.
+    if (tables.length > 0) await s.fresh();
   }
-  await current.pg.close();
+  await s.close();
   return out;
 }

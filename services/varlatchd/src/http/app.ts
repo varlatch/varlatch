@@ -674,9 +674,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       c.header("Retry-After", String(FROZEN_RETRY_AFTER_SECONDS));
       await auditFrozenRefusal(ctx, c, err);
     }
-    if (err instanceof PasskeyVerificationRefusal) {
-      // One audit event per refusal, after the transaction or snapshot
-      // that refused it ended (ADR-0054 Decision 7).
+    if (err instanceof PasskeyVerificationRefusal && !err.selfLockout) {
+      // One audit event per refusal of access, after the transaction or
+      // snapshot that refused it ended (ADR-0054 Decision 7). Refusing to
+      // turn the control on from a sign-in it would refuse is not an
+      // access refusal and records nothing, as before.
       await auditPasskeyRefusal(ctx, c, err);
     }
     if (err instanceof DomainError) {
@@ -2212,6 +2214,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // Secrets always require the explicit POST disclosure operation.
         const plain = includeValues ? await decide(sctx, c, principal, "config.value.read", resource) : null;
         const state = await captureState(sctx, scope, now, (item) => !item.sensitive && plain?.allowed === true);
+        // A terminal authorization denial answers before passkey-verification
+        // (ADR-0054 Decision 7): a Tailnet denial of the values read ends
+        // the request, as it did; recorded after the snapshot (reject).
+        if (plain && !plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
         // passkey-verification, decided in this snapshot after every
         // existence check and before any disclosure audit or decryption
         // (ADR-0054 Decision 7); not read again after the snapshot.
@@ -2297,6 +2303,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
               reason: principal.identity.kind === "human" ? "no-approval" : "machine-credential",
             }]
           : [];
+        // A terminal authorization denial answers before passkey-verification
+        // (ADR-0054 Decision 7): a Tailnet denial of the values read ends
+        // the request, as it did; recorded after the snapshot (reject).
+        if (!plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
         // passkey-verification, decided in this snapshot after every
         // existence check and before any disclosure audit or decryption
         // (ADR-0054 Decision 7); not read again after the snapshot.

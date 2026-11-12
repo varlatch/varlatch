@@ -136,8 +136,7 @@ export async function settleOrganizationAccess(ctx: AppCtx, c: Context): Promise
  * `authorization.denied`, decision deny, metadata.reason
  * passkey_verification_required and metadata.evidence what the sign-in
  * lacks, with the action and resource the request was authorized for in
- * that Organization; metadata.change "refused" for turning the control on
- * from a sign-in it would refuse. Called once per refused request, at its
+ * that Organization. Called once per refused request, at its
  * outcome, after the transaction or snapshot that refused it ended, in a
  * short transaction of its own, attributed to the request's credential.
  * Best effort: a failure to record is logged and never changes the answer.
@@ -155,11 +154,7 @@ export async function auditPasskeyRefusal(ctx: AppCtx, c: Context, err: PasskeyV
       organizationId: err.organizationId,
       action: same ? ((c.get(AUTHORIZED_ACTION) as Action | undefined) ?? null) : null,
       resource: { projectId: same ? authorized.projectId : null, environmentId: same ? authorized.environmentId : null },
-      metadata: {
-        reason: "passkey_verification_required",
-        evidence: err.reason,
-        ...(err.selfLockout ? { change: "refused" } : {}),
-      },
+      metadata: { reason: "passkey_verification_required", evidence: err.reason },
       requestId: c.get("requestId") as string,
     });
   } catch (e) {

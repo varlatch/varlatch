@@ -115,10 +115,11 @@ const GAP_MESSAGES: Record<VerificationGap, string> = {
  * The refusal (PASSKEY_VERIFICATION_REQUIRED, HTTP 403). It names what the
  * person's own sign-in lacks and how to get a sign-in that satisfies the
  * control; nothing about the Organization's contents. It carries the
- * Organization (not in the response), so the HTTP layer audits it once,
- * after the transaction or snapshot it came from ended (http/app.ts
- * onError): authorization.denied with metadata.reason
- * passkey_verification_required and metadata.evidence the gap.
+ * Organization (not in the response), so the HTTP layer audits a refusal
+ * of access once, after the transaction or snapshot it came from ended
+ * (http/app.ts onError): authorization.denied with metadata.reason
+ * passkey_verification_required and metadata.evidence the gap. The
+ * self-lockout refusal (enforceWouldRefuseYou) is not audited.
  */
 export class PasskeyVerificationRefusal extends DomainError {
   constructor(
@@ -150,8 +151,7 @@ export function passkeyVerificationRequired(organizationId: string, reason: Veri
  * out of the Organization at once, and the way back would be the host
  * operator's reset (Decision 10). Nothing is changed. It protects only the
  * person making the change; report mode shows who else it would refuse.
- * Audited like every passkey-verification refusal, with metadata.change
- * "refused".
+ * It is not an access refusal and records no audit event.
  */
 export function enforceWouldRefuseYou(organizationId: string, reason: VerificationGap): PasskeyVerificationRefusal {
   return new PasskeyVerificationRefusal(organizationId, reason, true);
