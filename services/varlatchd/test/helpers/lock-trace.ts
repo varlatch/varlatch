@@ -860,7 +860,7 @@ const rawFlow = new AsyncLocalStorage<object>();
  */
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
   /** The open transaction: its flow, who began it, and its statements still running. */
-  let owner: { key: object; label: string; ending: boolean; running: Set<Promise<unknown>> } | null = null;
+  let owner: { key: object; label: string; ending: boolean; running: Set<Promise<unknown>>; tail: Promise<unknown> } | null = null;
   /**
    * Held by the open transaction from its BEGIN to its end, or by a lone
    * wrap. Waiters loop on it in place, never through a helper: they resume
@@ -950,9 +950,18 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     enforce(label, checkTrace(rows), rows);
   };
 
-  /** A statement of the open transaction: its end waits for it, trace writes included. */
-  const owned = <T>(run: Promise<T>): Promise<T> => {
-    const running = owner!.running;
+  /**
+   * A statement of the open transaction: its end waits for it, trace writes
+   * included. Statements of one transaction run one at a time, each with its
+   * trace writes, in the order they were sent: two sent at once (Promise.all)
+   * would otherwise record their locks in another order than PostgreSQL took
+   * them.
+   */
+  const owned = <T>(start: () => Promise<T>): Promise<T> => {
+    const o = owner!;
+    const run = o.tail.then(start, start);
+    o.tail = run.then(() => undefined, () => undefined);
+    const running = o.running;
     running.add(run);
     const done = () => running.delete(run);
     run.then(done, done);
@@ -1013,7 +1022,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         hold();
         try {
           const res = await db.query(text, params);
-          owner = { key: flow, label, ending: false, running: new Set() };
+          owner = { key: flow, label, ending: false, running: new Set(), tail: Promise.resolve() };
           return res;
         } catch (err) {
           releaseHeld();
@@ -1052,7 +1061,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     // Before any await: who runs it, while the stack shows it.
     const label = writerAt();
     if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
-    if (ownedBy(key)) return owned(statement(text, params));
+    if (ownedBy(key)) return owned(() => statement(text, params));
     return lone(text, params, label);
   };
 
@@ -1084,7 +1093,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
     const key = flowKey();
     // Behind its own flow's BEGIN: inside that transaction.
     if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
-    if (ownedBy(key)) return owned(run());
+    if (ownedBy(key)) return owned(run);
     // Several statements outside a transaction run as one implicit
     // transaction; run them in an explicit one instead (the same effect),
     // so its trace is checked at COMMIT like any other.

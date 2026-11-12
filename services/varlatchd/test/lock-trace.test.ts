@@ -314,6 +314,20 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
     expect(takeLockViolations()).toEqual([]);
   });
 
+  it("records the locks of statements sent at once in a transaction in the order PostgreSQL took them", async () => {
+    // The person's lock is sent first and taken first; the Organization's
+    // write comes after it, a step back. Recorded the other way round (the
+    // write's trigger runs before the lock's trace insert), it would pass.
+    await withTx(db, async (q) => {
+      await Promise.all([
+        lockedQuery(q, { table: "identities", mode: "update" }, "SELECT id FROM identities WHERE id = 'idn_a' FOR UPDATE"),
+        q.query("UPDATE organizations SET name = 'A3' WHERE id = 'org_a'"),
+      ]);
+    });
+    const violations = takeLockViolations();
+    expect(violations.map((v) => v.problems)).toEqual([[expect.stringMatching(/^step went back: organizations\[org_a\]/)]]);
+  });
+
   it("checks the statements of one exec outside a transaction as one transaction", async () => {
     await db.exec!("UPDATE identities SET name = 'b2' WHERE id = 'idn_b'; UPDATE organizations SET name = 'A2' WHERE id = 'org_a'");
     const violations = takeLockViolations();
