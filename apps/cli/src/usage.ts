@@ -109,11 +109,13 @@ Usage:
   varlatch admin backup create|verify|restore|status [--dir <compose-directory>]
   varlatch setup [--dir <compose-directory>] [--ingress public|tailnet|external] [--public-url <url>]
                  [--tailnet-machine <name>] [--tailscale-auth-key-file <f>] [--port <web-port>] [--no-wait]
-                 [--tailnet-endpoint | --no-tailnet-endpoint]
+                 [--tailnet-endpoint | --no-tailnet-endpoint] [--serve-cli | --no-serve-cli]
                  [--escrow passphrase|shamir|copy] [--escrow-passphrase-file <f>] [--attest]
                                                        # install: one command, resumable; --tailnet-endpoint
                                                        # lets approved devices read tailnet-protected values
-                                                       # in the dashboard (HTTPS on port 8688 of the node)
+                                                       # in the dashboard (HTTPS on port 8688 of the node);
+                                                       # --serve-cli serves this installation's CLI and
+                                                       # install scripts at /install.sh (off unless chosen)
   varlatch adopt [--dir <compose-directory>] [--apply] [--only <step>] [--revert <step>] [--secrets-dir <dir>]
                                                        # existing installation → managed, step by step
   varlatch move --public-url <url> [--ingress public|external] [--dir <compose-directory>]

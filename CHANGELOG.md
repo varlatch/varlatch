@@ -85,6 +85,22 @@ fixes.
 - **`context --json` and `status --json`** report `serverSource` in the
   repository context: `flag`, `env-var`, `local-override` or `repository`.
 
+### Self-hosting
+
+- **An installation can serve its own CLI.** With `VARLATCH_SERVE_CLI=on`,
+  people install the CLI the installation runs with one line:
+  `curl -fsSL https://vault.example.com/install.sh | sh`, or
+  `irm https://vault.example.com/install.ps1 | iex` on Windows. The
+  scripts install for the current user, without `sudo`, check the file's
+  SHA-256, never install Node.js, ask before replacing a copy, and leave a
+  Homebrew copy to Homebrew. It is **off by default**: installing this way
+  trusts the installation, and whoever controls its host or its address, to
+  run code on the installer's machine. `varlatch setup` asks on a new
+  installation; `--serve-cli` and `--no-serve-cli` change it, and
+  `varlatch doctor` reports it. It serves only an https address or
+  `http://localhost`. `/v1/meta` lists the `cli.download` capability when
+  it is on. See [Serving the CLI](docs/self-hosting/configuration.md#serving-the-cli).
+
 ### Documentation
 
 - **Getting started is split by reader.** It now sends you to a short
