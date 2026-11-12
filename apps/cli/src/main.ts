@@ -1000,7 +1000,10 @@ async function credentialIssue(args: string[], assisted: AssistedMode): Promise<
     return;
   }
   const limits = [
-    issued.expiresAt ? `expires ${issued.expiresAt}` : "no expiry: revoke it when nothing uses it",
+    issued.expiresAt
+      ? // No --ttl, yet an expiry: the organization's credential-lifetime default (ADR-0054).
+        `expires ${issued.expiresAt}${ttlSeconds === undefined ? " (the organization's default lifetime for machine credentials)" : ""}`
+      : "no expiry: revoke it when nothing uses it",
     ...(issued.maxUses ? [`${issued.maxUses} use${issued.maxUses === 1 ? "" : "s"}`] : []),
   ].join(", ");
   console.log(`Issued credential ${issued.id} (${issued.name}) for ${identityId}; ${limits}.`);

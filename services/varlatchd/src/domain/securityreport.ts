@@ -23,7 +23,9 @@ import { lockedQuery } from "../db/locks.js";
  *
  * - A protected write (admin-step-up, requirement-protection,
  *   credential-lifetime) counts in its own transaction with
- *   reportProtectedWrite, so only a write that commits is counted: a
+ *   reportProtectedWrite, or the `count` of prepareProtectedOperation
+ *   (protected.ts) for an operation built on it, such as machine-credential
+ *   issuance, so only a write that commits is counted: a
  *   rolled-back attempt, a refused one and one that changed nothing leave
  *   no count. The mode and its version are read in that transaction,
  *   after the operation took the Organization row (lockLiveScope), so a

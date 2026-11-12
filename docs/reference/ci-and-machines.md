@@ -50,6 +50,14 @@ and are left out.
 To replace a credential, issue the new one, move the program to it, then
 revoke the old one.
 
+An organization can bound how long machine credentials last with the
+`credential-lifetime` security control. While it is enforced, a credential
+issued without `--ttl` (or without a lifetime in the dashboard) gets the
+organization's default lifetime, and a longer `--ttl` than its maximum is
+refused, with nothing issued. Credentials that already exist keep their
+expiry. See [Credential
+lifetime](security-controls.md#credential-lifetime).
+
 A credential issued with an expiry (`--ttl`) warns ahead: in its last 7
 days, however long it was issued for, the machine's Credentials panel
 marks it, every API response to it carries a `Varlatch-Credential-Expires`

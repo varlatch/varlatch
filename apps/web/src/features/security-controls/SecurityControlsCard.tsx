@@ -127,6 +127,8 @@ export function modesOf(control: SecurityControl, available: readonly SecurityCo
 export const ENFORCE_NOTE: Partial<Record<SecurityControlName, string>> = {
   "requirement-protection":
     "From then on, editing or removing a Tailnet Requirement needs the approval of the person asking, with a trusted passkey, and a machine credential cannot do either. Removing a trusted passkey also needs an approval, for everyone in this organization. Creating a requirement stays free.",
+  "credential-lifetime":
+    "From then on, a machine credential issued without a lifetime gets the default, and one asked for longer than the maximum is refused, for people and machines alike. Existing credentials keep their expiry. Removing a trusted passkey also needs an approval, for everyone in this organization.",
   "passkey-verification":
     "From then on, every person in this organization, admins included, is refused here until they sign in again with a trusted passkey that asks for a PIN, fingerprint or face; other organizations and machine credentials are not affected. Look at report first: everyone it counts would be refused. Your own sign-in must qualify, or saving is refused. A person whose passkeys cannot verify them gets back in only through the host operator's reset (varlatch admin security reset). Removing a trusted passkey also needs an approval, for everyone in this organization.",
 };

@@ -16,6 +16,7 @@ import {
   peekSetupGrant,
 } from "../src/domain/bootstrap.js";
 import { createMachineIdentity } from "../src/domain/identities.js";
+import { personGate } from "./helpers/gates.js";
 import { createOrganization } from "../src/domain/orgs.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 
@@ -43,7 +44,7 @@ async function installation() {
   const invite = await issueInviteGrant(ctx, { organizationId: org.id, role: "member", name: "Sam" }, adminId);
   const member = await completeEnrollment(ctx, (await enrollmentUser(ctx, invite.token)).id, invite.token);
   const memberId = member!.userId.replace(/^bau_/, "");
-  const machine = await createMachineIdentity(ctx, org.id, { name: "prod-api", kind: "service" }, adminId);
+  const machine = await createMachineIdentity(ctx, personGate(adminId), org.id, { name: "prod-api", kind: "service" });
   for (const [userId, n] of [[admin!.userId, 1], [member!.userId, 2]] as const) {
     await ctx.db.query(
       `INSERT INTO "passkey" (id, "publicKey", "userId", "credentialID", counter, "deviceType", "backedUp")

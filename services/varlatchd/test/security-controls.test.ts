@@ -169,7 +169,7 @@ describe("reading the controls", () => {
       availableModes: ["off", "report"],
       items: ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"].map((control) => ({
         control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null,
-        availableModes: control === "requirement-protection" || control === "passkey-verification" ? ["off", "report", "enforce"] : ["off", "report"],
+        availableModes: control === "admin-step-up" ? ["off", "report"] : ["off", "report", "enforce"],
       })),
     });
   });

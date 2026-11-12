@@ -43,11 +43,25 @@ fixes.
   `varlatch security set`; the dashboard opens the approval dialog. The
   audit events `requirement.updated` and `requirement.revoked` name the
   approval used. Every control stays off until an admin turns it on, and
-  the other three controls still refuse `enforce`
+  `admin-step-up` and `passkey-verification` still refuse `enforce`
   (`CONTROL_MODE_UNAVAILABLE`). See [Requirement
   protection](docs/reference/security-controls.md#requirement-protection).
+- **Credential lifetime can now be enforced.** With
+  `varlatch security set credential-lifetime enforce --default-ttl <s>
+  --max-ttl <s>` (or from the Security page), a machine credential issued
+  without a lifetime (creating a service, workload or broker identity, or
+  `varlatch credential issue` without `--ttl`) gets the organization's
+  default lifetime, and one asked for above the maximum is refused with
+  `CREDENTIAL_LIFETIME_EXCEEDED`; nothing is issued. Credentials that
+  already exist keep their expiry. People's sign-ins, OIDC and agent-run
+  credentials keep their own, shorter limits. No approval is involved in
+  issuing; lengthening the lifetimes or turning the control down needs
+  one, like any loosening. The `credential.issued` audit event says
+  `lifetimeDefaulted` when the default was applied. See [Credential
+  lifetime](docs/reference/security-controls.md#credential-lifetime).
 - **Removing a trusted passkey needs an approval** once you are a member of
-  an organization that enforces a control. Removing an unconfirmed passkey
+  an organization that enforces a control (`requirement-protection` or
+  `credential-lifetime`). Removing an unconfirmed passkey
   never does. If you lose your trusted passkeys, the host operator's
   `admin reenroll` enrolls a new one, and `admin security reset` turns the
   control off.
@@ -73,14 +87,22 @@ fixes.
 ### Scripts and API
 
 - `GET /v1/meta` lists `security.enforce.<control>` for each control the
-  server can enforce (`security.enforce.requirement-protection` in this
-  release). Each item of `GET /v1/organizations/{org}/security/controls`
+  server can enforce (`security.enforce.requirement-protection` and
+  `security.enforce.credential-lifetime` in this release). Each item of `GET /v1/organizations/{org}/security/controls`
   gains its own `availableModes`. `varlatch security status --json` gains
   `enforceable`.
 - `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}` can
   answer `403 STEP_UP_REQUIRED`: repeat the request with the
   `Varlatch-Approval` header once it is approved. A removal whose
   Requirement changed meanwhile answers `STATE_CHANGED`.
+- New error code `CREDENTIAL_LIFETIME_EXCEEDED` (HTTP 422, with
+  `details.requestedTtlSeconds` and `details.maxTtlSeconds`): `POST
+  /v1/organizations/{org}/identities` and `POST
+  /v1/organizations/{org}/identities/{id}/credentials` answer it for a
+  lifetime above the maximum while the organization enforces
+  `credential-lifetime`. Scripts that create machine credentials without a
+  lifetime should read `credentialExpiresAt` or `expiresAt` from the
+  answer rather than assume no expiry.
 - New error code `PASSKEY_VERIFICATION_REQUIRED` (HTTP 403, details
   `control` and `reason`: `no-evidence`, `not-user-verified` or
   `untrusted-passkey`) from organizations that enforce
@@ -119,6 +141,9 @@ fixes.
   you are signed in to.
 - **`context --json` and `status --json`** report `serverSource` in the
   repository context: `flag`, `env-var`, `local-override` or `repository`.
+- **`varlatch credential issue`** says when a credential got the
+  organization's default lifetime, and names the maximum when a `--ttl` is
+  refused under `credential-lifetime`.
 
 ### Self-hosting
 

@@ -40,6 +40,11 @@ export const ERROR_CODES = [
   // Security Controls (ADR-0054 Decision 1): a mode this server does not
   // offer for that control (details: control, mode, availableModes).
   "CONTROL_MODE_UNAVAILABLE",
+  // credential-lifetime at enforce (ADR-0054 Decision 5): a machine
+  // credential asked for with a lifetime above the Organization's maximum
+  // (details: control, requestedTtlSeconds, maxTtlSeconds). Nothing was
+  // issued; ask again with a lifetime of at most maxTtlSeconds.
+  "CREDENTIAL_LIFETIME_EXCEEDED",
   // The incident freeze (ADR-0055): refused while the Organization is
   // frozen (details: freezeId, frozenAt). Final for the request: do not retry.
   "ORGANIZATION_FROZEN",
@@ -120,6 +125,7 @@ export const CAPABILITIES = [
   // Security Controls this server can enforce (ADR-0054 step 4), one per
   // control, unlocked by the release that builds its full guarantee.
   "security.enforce.requirement-protection",
+  "security.enforce.credential-lifetime",
   "security.enforce.passkey-verification",
 ] as const;
 

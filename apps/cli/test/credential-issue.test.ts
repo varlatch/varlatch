@@ -27,6 +27,8 @@ const ISSUED = "vlt_svc_issued-canary-81";
 let server: http.Server;
 let origin = "";
 let capabilities: string[] = [];
+/** The organization's enforced credential-lifetime (ADR-0054), or null. */
+let enforcing: { defaultTtlSeconds: number; maxTtlSeconds: number } | null = null;
 let requests: { method: string; url: string; body: unknown }[] = [];
 
 function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -42,12 +44,23 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     };
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.15.2", capabilities });
     if (url === CREDS && req.method === "POST") {
+      const ttl = body?.ttlSeconds as number | undefined;
+      if (enforcing && ttl !== undefined && ttl > enforcing.maxTtlSeconds) {
+        return json(422, {
+          error: {
+            code: "CREDENTIAL_LIFETIME_EXCEEDED",
+            message: "too long",
+            requestId: "req_2",
+            details: { control: "credential-lifetime", requestedTtlSeconds: ttl, maxTtlSeconds: enforcing.maxTtlSeconds },
+          },
+        });
+      }
       return json(201, {
         id: "crd_new",
         kind: "service",
         name: body?.name,
         token: ISSUED,
-        expiresAt: body?.ttlSeconds ? "2026-10-09T12:00:00.000Z" : null,
+        expiresAt: body?.ttlSeconds || enforcing ? "2026-10-09T12:00:00.000Z" : null,
         maxUses: body?.maxUses ?? null,
       });
     }
@@ -81,6 +94,7 @@ afterAll(async () => {
 beforeEach(() => {
   requests = [];
   capabilities = ["identity.lifecycle", "identity.credentials.issue"];
+  enforcing = null;
 });
 
 interface Result {
@@ -193,6 +207,29 @@ describe("varlatch credential issue", () => {
     const r = await cli(["credential", "issue", "idn_agent", "--name", "x", "--out", out]);
     expect(r.code).toBe(EXIT.failure);
     expect(r.stderr).toContain("no machine identity idn_agent");
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("under credential-lifetime: says when the organization's default lifetime applied", async () => {
+    enforcing = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
+    const out = fresh();
+    const r = await cli(["credential", "issue", "idn_svc", "--name", "defaulted", "--out", out]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("expires 2026-10-09T12:00:00.000Z (the organization's default lifetime for machine credentials)");
+    expect(posts()[0]?.body).toEqual({ name: "defaulted" });
+    // With --ttl, the expiry is the one asked for.
+    const asked = await cli(["credential", "issue", "idn_svc", "--name", "asked", "--ttl", "86400", "--out", fresh()]);
+    expect(asked.stdout).toContain("expires 2026-10-09T12:00:00.000Z.");
+    expect(asked.stdout).not.toContain("default lifetime");
+  });
+
+  it("under credential-lifetime: a --ttl above the maximum names the maximum, issues nothing, and leaves no file", async () => {
+    enforcing = { defaultTtlSeconds: 3600, maxTtlSeconds: 86_400 };
+    const out = fresh();
+    const r = await cli(["credential", "issue", "idn_svc", "--name", "long", "--ttl", "172800", "--out", out]);
+    expect(r.code).toBe(EXIT.failure);
+    expect(r.stderr).toContain("acme enforces credential-lifetime: a machine credential may last at most 1 day (--ttl 86400)");
+    expect(r.stderr).toContain("Nothing was issued");
     expect(existsSync(out)).toBe(false);
   });
 
