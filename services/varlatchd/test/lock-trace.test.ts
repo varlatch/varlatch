@@ -524,7 +524,9 @@ describe.skipIf(lockOrderMode() === "off")("the trace on the test database", () 
   it("refuses transaction control it does not model at once, leaving the transaction its caller's and nothing else held", async () => {
     await db.query("BEGIN");
     await db.query("UPDATE identities SET name = 'x' WHERE id = 'idn_a'");
-    for (const sql of ["COMMIT AND CHAIN", "END AND CHAIN", "ROLLBACK AND CHAIN", "ABORT WORK AND CHAIN", "PREPARE TRANSACTION 'p1'", "COMMIT PREPARED 'p1'", "ROLLBACK PREPARED 'p1'"]) {
+    for (const sql of ["COMMIT AND CHAIN", "END AND CHAIN", "ROLLBACK AND CHAIN", "ABORT WORK AND CHAIN", "PREPARE TRANSACTION 'p1'", "COMMIT PREPARED 'p1'", "ROLLBACK PREPARED 'p1'",
+      // A line comment ends at a carriage return too, as in PostgreSQL.
+      "COMMIT --comment\rAND CHAIN", "ROLLBACK -- x\r\nAND CHAIN"]) {
       await expect(db.query(sql)).rejects.toThrow(/does not model/);
     }
     // Inside a compound statement too.

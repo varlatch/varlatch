@@ -392,7 +392,10 @@ export function scanSql(sql: string): { bare: string; comments: string[] } {
     const c = sql[i]!;
     const next = sql[i + 1];
     if (c === "-" && next === "-") {
-      const end = sql.indexOf("\n", i);
+      // A line comment ends at a newline or a carriage return, as in PostgreSQL.
+      const lf = sql.indexOf("\n", i);
+      const cr = sql.indexOf("\r", i);
+      const end = lf < 0 ? cr : cr < 0 ? lf : Math.min(lf, cr);
       comments.push(sql.slice(i, end < 0 ? n : end));
       i = end < 0 ? n : end;
       bare += " ";
