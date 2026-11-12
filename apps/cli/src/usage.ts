@@ -37,7 +37,10 @@ Usage:
   varlatch status [--json] [--probe]                     # stored credentials + repo context; offline unless --probe
   varlatch whoami [--server <url>] [--json]              # who this credential belongs to: identity, organization, credential
                (a person's or a machine's; uses VARLATCH_TOKEN, else the stored credential, as every command does)
-  varlatch init --org <slug> --project <slug> [--server <url>] [--no-agent-files]
+  varlatch init [--org <slug>] [--project <slug>] [--server <url>] [--no-agent-files]
+               (on a terminal, without --org or --project: asks for what is missing, signs in, creates the
+                organization, project and environments you confirm, and offers to import .env files;
+                off a terminal or in assisted mode both flags are needed, as before)
                (writes varlatch.toml with the server: --server, VARLATCH_SERVER, or the default server;
                 also writes the files coding agents read, as agents install does; --no-agent-files skips them)
   varlatch agents guide [setup|run|agent-run|self-hosting|contract]

@@ -1,0 +1,321 @@
+// SPDX-License-Identifier: Apache-2.0
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { VarlatchApiError } from "@varlatch/sdk";
+import { findEnvFiles, guidedInit, type GuidedApi } from "../src/guidedInit.js";
+import type { Prompter } from "../src/prompt.js";
+
+/**
+ * Guided `varlatch init` (ADR-0058 Decision 2, Acceptance): planning every
+ * .env file before writing, declined replacements left out, one Contract
+ * revision for all files, activation asked on its own, deletion only when
+ * nothing is left behind, and never a value in what it prints.
+ */
+
+const CANARY_DEV = "dev-canary-5d1f3a9e7b";
+const CANARY_PROD = "prod-canary-0c4e8b2a61";
+const CANARY_OLD = "old-canary-77aa31";
+
+type Answer = { q: RegExp; a: number | boolean | string };
+
+function scripted(answers: Answer[]): Prompter & { asked: string[] } {
+  const asked: string[] = [];
+  const next = (question: string) => {
+    asked.push(question);
+    const answer = answers.shift();
+    if (!answer) throw new Error(`unexpected question: ${question}`);
+    if (!answer.q.test(question)) throw new Error(`expected a question matching ${answer.q}, got: ${question}`);
+    return answer.a;
+  };
+  return {
+    asked,
+    select: async (q) => next(q) as number,
+    confirm: async (q) => next(q) as boolean,
+    text: async (q) => next(q) as string,
+    say: () => {},
+    pause: () => {},
+    resume: () => {},
+    close: () => {},
+  };
+}
+
+interface Fake {
+  api: GuidedApi;
+  orgs: { slug: string; name: string }[];
+  projects: { slug: string; name: string; contractAuthority: "git" | "managed" }[];
+  envs: { name: string; tier: string; kind: string }[];
+  values: Map<string, Map<string, string>>;
+  sensitive: Set<string>;
+  revisions: { id: string; items: { name: string; type: string; sensitive: boolean }[]; active: boolean }[];
+  unreadable: Set<string>;
+  failOn: string | null;
+}
+
+function fake(init: Partial<Pick<Fake, "orgs" | "projects" | "envs">> = {}): Fake {
+  const f: Fake = {
+    orgs: init.orgs ?? [{ slug: "acme", name: "Acme" }],
+    projects: init.projects ?? [{ slug: "api", name: "API", contractAuthority: "git" }],
+    envs: init.envs ?? [
+      { name: "development", tier: "development", kind: "shared" },
+      { name: "production", tier: "production", kind: "shared" },
+    ],
+    values: new Map(),
+    sensitive: new Set(),
+    revisions: [{ id: "rev_0", items: [{ name: "PORT", type: "integer", sensitive: false }], active: true }],
+    unreadable: new Set(),
+    failOn: null,
+    api: undefined as unknown as GuidedApi,
+  };
+  const page = <T>(items: T[]) => ({ items, nextCursor: null });
+  f.api = {
+    listOrganizations: async () => page(f.orgs),
+    createOrganization: async (input: { slug: string; name: string }) => (f.orgs.push(input), input),
+    listProjects: async () => page(f.projects),
+    createProject: async (_org: string, input: { slug: string; name: string; contractAuthority: "git" | "managed" }) => (f.projects.push(input), input),
+    listEnvironments: async () => page(f.envs),
+    createEnvironment: async (_o: string, _p: string, input: { name: string; tier: string }) => {
+      const env = { ...input, kind: "shared" };
+      f.envs.push(env);
+      return env;
+    },
+    getActiveContract: async () => {
+      const active = f.revisions.find((r) => r.active);
+      if (!active) throw new VarlatchApiError(404, { code: "RESOURCE_NOT_FOUND", message: "none", requestId: "r" } as never);
+      return { id: active.id, contract: { schemaVersion: 1, semanticsVersion: 3, items: active.items.map((i) => ({ ...i, required: { kind: "never" } })) } };
+    },
+    pushContractRevision: async (_o: string, _p: string, input: { contract: { items: { name: string; type: string; sensitive: boolean }[] } }) => {
+      const revision = { id: `rev_${f.revisions.length}`, items: input.contract.items, active: false };
+      f.revisions.push(revision);
+      return { id: revision.id, contentHash: "h", active: false };
+    },
+    activateContractRevision: async (_o: string, _p: string, id: string) => {
+      for (const r of f.revisions) r.active = r.id === id;
+      return {};
+    },
+    effectiveConfiguration: async (_o: string, _p: string, env: string) => {
+      if (f.unreadable.has(env)) throw new VarlatchApiError(403, { code: "FORBIDDEN", message: "no", requestId: "r" } as never);
+      const stored = f.values.get(env) ?? new Map();
+      return { items: [...stored].map(([name, value]) => ({ name, sensitive: f.sensitive.has(name), value: f.sensitive.has(name) ? null : value, rawValue: f.sensitive.has(name) ? null : value })) };
+    },
+    setValue: async (_o: string, _p: string, env: string, name: string, input: { value: string }) => {
+      if (f.failOn === name) throw new VarlatchApiError(500, { code: "INTERNAL", message: "boom", requestId: "r" } as never);
+      const stored = f.values.get(env) ?? new Map<string, string>();
+      stored.set(name, input.value);
+      f.values.set(env, stored);
+      return {};
+    },
+  } as unknown as GuidedApi;
+  return f;
+}
+
+function repo(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "varlatch-guided-"));
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  return dir;
+}
+
+async function run(cwd: string, f: Fake, answers: Answer[], extra: { organization?: string; project?: string } = {}) {
+  const out: string[] = [];
+  const err: string[] = [];
+  const written: unknown[] = [];
+  const prompt = scripted(answers);
+  const code = await guidedInit({
+    cwd,
+    prompt,
+    out: (l) => out.push(l),
+    err: (l) => err.push(l),
+    server: "https://vault.example.com",
+    validateServer: (raw) => raw,
+    signIn: async () => f.api,
+    writeRepository: async (config) => void written.push(config),
+    ...extra,
+  });
+  const text = [...out, ...err].join("\n");
+  for (const canary of [CANARY_DEV, CANARY_PROD, CANARY_OLD]) expect(text, "a value reached the output").not.toContain(canary);
+  expect(answers, "every scripted answer was asked for").toEqual([]);
+  return { code, out: out.join("\n"), err: err.join("\n"), written, asked: prompt.asked };
+}
+
+const pickExisting: Answer[] = [
+  { q: /^Organization:/, a: 0 },
+  { q: /^Project:/, a: 0 },
+  { q: /^Default environment/, a: 0 },
+];
+
+describe("guided init", () => {
+  it("finds .env files and leaves examples and schemas out", () => {
+    const dir = repo({ ".env": "A=1\n", ".env.production": "A=2\n", ".env.example": "A=\n", ".env.schema": "A=\n" });
+    expect(findEnvFiles(dir)).toEqual([".env", ".env.production"]);
+  });
+
+  it("two files: one revision with both files' new items, a type conflict the person resolves, activation, then deletion", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\nTIMEOUT=30\nPORT=3000\n`, ".env.production": `API_KEY=${CANARY_PROD}\nTIMEOUT=fast\nSENTRY_DSN=https://x.example\n` });
+    const f = fake();
+    const r = await run(dir, f, [
+      ...pickExisting,
+      { q: /^Import \.env into:/, a: 0 },
+      { q: /^Import \.env\.production into:/, a: 1 },
+      { q: /^TIMEOUT: the files suggest different types/, a: 0 },
+      { q: /^Items that are not secret/, a: "TIMEOUT" },
+      { q: /^Activate it\?/, a: true },
+      { q: /^Delete \.env\?/, a: true },
+      { q: /^Delete \.env\.production\?/, a: true },
+    ]);
+    expect(r.code).toBe(0);
+    expect(r.written).toEqual([{ server: "https://vault.example.com", organization: "acme", project: "api", defaultEnvironment: "development" }]);
+    // One revision: PORT kept as it was, every new item from both files.
+    expect(f.revisions).toHaveLength(2);
+    const rev = f.revisions[1]!;
+    expect(rev.active).toBe(true);
+    expect(rev.items.map((i) => i.name).sort()).toEqual(["API_KEY", "PORT", "SENTRY_DSN", "TIMEOUT"]);
+    expect(rev.items.find((i) => i.name === "PORT")).toMatchObject({ type: "integer", sensitive: false });
+    expect(rev.items.find((i) => i.name === "TIMEOUT")).toMatchObject({ type: "string", sensitive: false });
+    expect(rev.items.find((i) => i.name === "API_KEY")).toMatchObject({ sensitive: true });
+    expect(f.values.get("development")?.get("API_KEY")).toBe(CANARY_DEV);
+    expect(f.values.get("production")?.get("API_KEY")).toBe(CANARY_PROD);
+    expect(existsSync(join(dir, ".env")) || existsSync(join(dir, ".env.production"))).toBe(false);
+    expect(r.out).toContain("$ varlatch contract activate rev_1");
+  });
+
+  it("asks only for what the flags leave out", async () => {
+    const dir = repo({});
+    const f = fake();
+    const r = await run(dir, f, [{ q: /^Project:/, a: 0 }, { q: /^Default environment/, a: 0 }], { organization: "acme" });
+    expect(r.code).toBe(0);
+    expect(r.asked.some((q) => q.startsWith("Organization"))).toBe(false);
+  });
+
+  it("creates the organization, project and environments only after asking", async () => {
+    const dir = repo({});
+    const f = fake({ orgs: [], projects: [], envs: [] });
+    const r = await run(dir, f, [
+      { q: /^New organization's slug/, a: "acme" },
+      { q: /^Its name/, a: "Acme" },
+      { q: /^Create organization acme \(Acme\)\?/, a: true },
+      { q: /^New project's slug/, a: "api" },
+      { q: /^Its name/, a: "API" },
+      { q: /^Create project api in acme\?/, a: true },
+      { q: /^The project has no environments/, a: true },
+      { q: /^Default environment/, a: 0 },
+    ]);
+    expect(r.code).toBe(0);
+    expect(f.envs.map((e) => e.name)).toEqual(["development", "production"]);
+    expect(r.out).toContain("$ varlatch env-create production --tier production");
+  });
+
+  it("a declined replacement stores the file's new names, leaves the declined one, and keeps the file", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\nNEW_ONE=hello\n` });
+    const f = fake();
+    f.values.set("development", new Map([["API_KEY", CANARY_OLD]]));
+    f.sensitive.add("API_KEY");
+    const r = await run(dir, f, [
+      ...pickExisting,
+      { q: /^Import \.env into:/, a: 0 },
+      { q: /^Replace it with the values in \.env\?/, a: false },
+      { q: /^Items that are not secret/, a: "" },
+      { q: /^Activate it\?/, a: true },
+    ]);
+    expect(r.code).toBe(0);
+    expect(f.values.get("development")?.get("API_KEY")).toBe(CANARY_OLD);
+    expect(f.values.get("development")?.get("NEW_ONE")).toBe("hello");
+    expect(f.revisions[1]!.items.map((i) => i.name)).not.toContain("API_KEY");
+    expect(existsSync(join(dir, ".env"))).toBe(true);
+    expect(r.out).toContain(".env is kept: it holds values you chose not to store.");
+  });
+
+  it("replacing in production needs the environment's name typed", async () => {
+    const dir = repo({ ".env.production": `API_KEY=${CANARY_PROD}\n` });
+    const f = fake();
+    f.values.set("production", new Map([["API_KEY", CANARY_OLD]]));
+    f.sensitive.add("API_KEY");
+    const r = await run(dir, f, [
+      ...pickExisting,
+      { q: /^Import \.env\.production into:/, a: 1 },
+      { q: /^Replace it with the values in \.env\.production\?/, a: true },
+      { q: /^This is a production environment\. Type production/, a: "prod" },
+    ]);
+    expect(r.code).toBe(0);
+    expect(f.values.get("production")?.get("API_KEY")).toBe(CANARY_OLD);
+    expect(r.out).toContain("Not typed: they are left as they are.");
+    expect(existsSync(join(dir, ".env.production"))).toBe(true);
+  });
+
+  it("skips and keeps a file whose environment's values cannot be read", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\n` });
+    const f = fake();
+    f.unreadable.add("development");
+    const r = await run(dir, f, [...pickExisting, { q: /^Import \.env into:/, a: 0 }]);
+    expect(r.code).toBe(0);
+    expect(f.values.size).toBe(0);
+    expect(f.revisions).toHaveLength(1);
+    expect(existsSync(join(dir, ".env"))).toBe(true);
+    expect(r.out).toMatch(/cannot be read \(403\).*kept/);
+  });
+
+  it("a declined activation leaves the revision inactive and keeps the file that added items", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\n` });
+    const f = fake();
+    const r = await run(dir, f, [
+      ...pickExisting,
+      { q: /^Import \.env into:/, a: 0 },
+      { q: /^Items that are not secret/, a: "" },
+      { q: /^Activate it\?/, a: false },
+    ]);
+    expect(r.code).toBe(0);
+    expect(f.revisions[1]!.active).toBe(false);
+    expect(f.revisions[0]!.active).toBe(true);
+    expect(existsSync(join(dir, ".env"))).toBe(true);
+    expect(r.out).toContain("To activate it later: varlatch contract activate rev_1");
+    expect(r.out).toContain(".env is kept: its new items are not in the active Contract.");
+  });
+
+  it("a managed Contract gets values only, and the file with new items is kept", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\n` });
+    const f = fake({ projects: [{ slug: "api", name: "API", contractAuthority: "managed" }] });
+    const r = await run(dir, f, [...pickExisting, { q: /^Import \.env into:/, a: 0 }]);
+    expect(r.code).toBe(0);
+    expect(f.revisions).toHaveLength(1);
+    expect(f.values.get("development")?.get("API_KEY")).toBe(CANARY_DEV);
+    expect(existsSync(join(dir, ".env"))).toBe(true);
+    expect(r.out).toContain("managed in the dashboard");
+  });
+
+  it("keeps a file that changed after it was read", async () => {
+    const dir = repo({ ".env": "PORT=3000\n" });
+    const f = fake();
+    const prompt = [...pickExisting, { q: /^Import \.env into:/, a: 0 }];
+    const r = await run(dir, f, [
+      ...prompt,
+      {
+        q: /^Delete \.env\?/,
+        // The file changes between the plan and the deletion.
+        get a() {
+          writeFileSync(join(dir, ".env"), "PORT=4000\n");
+          return true;
+        },
+      },
+    ]);
+    expect(r.code).toBe(0);
+    expect(readFileSync(join(dir, ".env"), "utf8")).toBe("PORT=4000\n");
+    expect(r.out).toContain(".env changed or disappeared since it was read; it was not deleted.");
+  });
+
+  it("an interrupted import stops, names what was and was not stored, and keeps every file", async () => {
+    const dir = repo({ ".env": `API_KEY=${CANARY_DEV}\nB_ITEM=x\nC_ITEM=y\n`, ".env.production": `API_KEY=${CANARY_PROD}\n` });
+    const f = fake();
+    f.failOn = "B_ITEM";
+    const r = await run(dir, f, [
+      ...pickExisting,
+      { q: /^Import \.env into:/, a: 0 },
+      { q: /^Import \.env\.production into:/, a: 1 },
+      { q: /^Items that are not secret/, a: "" },
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain("not stored: B_ITEM (INTERNAL)");
+    expect(r.err).toContain("not attempted: C_ITEM");
+    expect(f.revisions[1]!.active).toBe(false);
+    expect(existsSync(join(dir, ".env")) && existsSync(join(dir, ".env.production"))).toBe(true);
+  });
+});

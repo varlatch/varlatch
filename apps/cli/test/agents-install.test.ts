@@ -582,6 +582,8 @@ describe("the CLI", () => {
       ["init", "--org", "acme", "--project", "web", "--no-agent-file"],
       ["init", "--org", "acme", "--project", "web", "extra"],
       ["init", "--org", "acme", "--project"],
+      // Off a terminal (as here), init never asks: no flags is the same usage error (ADR-0058 Decision 2).
+      ["init"],
       ["init", "--org", "acme", "--org", "other", "--project", "web"],
     ]) {
       const r = await cli(args, cwd);
