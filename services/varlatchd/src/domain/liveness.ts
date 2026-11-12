@@ -5,6 +5,8 @@ import { DomainError } from "./errors.js";
 import { lockPeople, type PersonRef } from "./personlocks.js";
 import { captureOrganizationAccess, requireOrganizationAccess } from "./requestaccess.js";
 import { withTx } from "../db/tx.js";
+import { recordAuditEvents } from "../audit/events.js";
+import { EXTERNAL_EFFECT_LIMITS, externalEffectDeadline, runExternalEffect, type ExternalEffect } from "./externaleffect.js";
 
 /**
  * THE LOCK ORDER (ADR-0054 amendment E). Every transaction that takes row
@@ -250,16 +252,6 @@ export async function lockScope(
 }
 
 /**
- * How long a protected external effect may hold its transaction without a
- * statement (the outbound call itself): PostgreSQL ends the session after
- * that, the transaction rolls back and the request fails, changing
- * nothing. Each call has its own shorter timeout (GITHUB_TIMEOUT_MS, the
- * adapters' DEFAULT_TIMEOUT_MS: 10 s); this bounds a run of them, such as
- * a paged listing.
- */
-export const EXTERNAL_EFFECT_HOLD_MS = 120_000;
-
-/**
  * THE EXTERNAL-EFFECT CONTRACT (ADR-0054 Decision 2 for effects;
  * requestaccess.ts). A protected external effect (decrypting or using a
  * stored credential, sending a request to a platform or to GitHub, spending
@@ -278,8 +270,17 @@ export const EXTERNAL_EFFECT_HOLD_MS = 120_000;
  *   effects in progress, and an effect either completes before the change
  *   or reads the new mode under its lock.
  * - The transaction holds a database connection across the outbound call;
- *   keep it to the effect and what must commit with it. Its idle time is
- *   capped (EXTERNAL_EFFECT_HOLD_MS).
+ *   keep it to the effect and what must commit with it.
+ * - Outbound work stops before the lock's protection can end
+ *   (externaleffect.ts): every call goes through guardEffectFetch, bound
+ *   to a deadline shorter than the transaction's idle cap, which is set
+ *   explicitly here. No call starts after the deadline and one in flight is
+ *   aborted; the effect then fails and the transaction rolls back. A
+ *   rollback does not undo what a call already did outside Varlatch: the
+ *   checkpoint is what keeps a refused request from making one.
+ * - Outbound refusal records written in the transaction are written again
+ *   after a rollback, as they were committed before effects had a
+ *   transaction.
  *
  * Validation that only resolves a configured name (the outbound policy's
  * DNS check of a webhook URL, an OIDC issuer or a base identity) sends no
@@ -292,11 +293,28 @@ export async function withExternalEffect<T>(
   scope: { organizationId: string; people: readonly PersonRef[] },
   fn: (tx: Querier) => Promise<T>,
 ): Promise<T> {
-  return withTx(db, async (tx) => {
-    await tx.query(`SET LOCAL idle_in_transaction_session_timeout = '${EXTERNAL_EFFECT_HOLD_MS}ms'`);
-    await lockLiveScope(tx, { organizationId: scope.organizationId, people: scope.people, accessCheck: "deferred" });
-    return fn(tx);
-  });
+  const controller = new AbortController();
+  const effect: ExternalEffect = { signal: controller.signal, refusals: [] };
+  const timer = setTimeout(() => controller.abort(), EXTERNAL_EFFECT_LIMITS.deadlineMs);
+  try {
+    return await runExternalEffect(effect, () =>
+      withTx(db, async (tx) => {
+        await tx.query(`SET LOCAL idle_in_transaction_session_timeout = '${EXTERNAL_EFFECT_LIMITS.idleMs}ms'`);
+        await lockLiveScope(tx, { organizationId: scope.organizationId, people: scope.people, accessCheck: "deferred" });
+        const result = await fn(tx);
+        // A call stopped at the deadline (its caller may have reported it
+        // as unreachable): nothing of the effect is kept.
+        if (controller.signal.aborted) throw externalEffectDeadline();
+        return result;
+      }),
+    );
+  } catch (err) {
+    // Rolled back: the refused destinations are still recorded, after it.
+    if (effect.refusals.length > 0) await recordAuditEvents(db, effect.refusals);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

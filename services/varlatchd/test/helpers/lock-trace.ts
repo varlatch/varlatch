@@ -215,7 +215,13 @@ async function ownerExpressions(db: Querier, tables: { oid: number; name: string
   }
   const out = new Map<string, (row: "NEW" | "OLD") => string>();
   for (const t of tables) {
-    if (t.name === "organizations") continue;
+    // An existing Organization row belongs to itself: writing B's row
+    // after checking A is checked against B (one the transaction created is
+    // skipped by checkAccessTrace).
+    if (t.name === "organizations") {
+      out.set(t.name, (row) => `${row}.id::text`);
+      continue;
+    }
     if (columns.get(t.name)?.has("organization_id")) {
       out.set(t.name, (row) => `${row}.organization_id::text`);
       continue;

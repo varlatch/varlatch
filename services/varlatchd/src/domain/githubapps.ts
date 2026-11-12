@@ -12,6 +12,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffect } from "./liveness.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
+import { guardEffectFetch } from "./externaleffect.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import {
   GITHUB_API,
@@ -266,7 +267,7 @@ export async function completeRegistration(
 
     let res: Response;
     try {
-      res = await (fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }))(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
+      res = await (guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })))(`${GITHUB_API}/app-manifests/${encodeURIComponent(input.code)}/conversions`, {
         method: "POST",
         headers: GITHUB_HEADERS,
         redirect: "error",
@@ -459,7 +460,7 @@ export async function importGitHubApp(
     }
     // passkey-verification before GitHub is called (ADR-0054 Decision 7).
     await requireOrganizationAccess(tctx.db, org.id);
-    const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }), "/app", String(input.appId), input.privateKey, now);
+    const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })), "/app", String(input.appId), input.privateKey, now);
     if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
     if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
     if (!res.ok) {
@@ -583,7 +584,7 @@ export async function listAppInstallations(
   return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
     const tctx: AppCtx = { ...ctx, db: tx };
     const { app, pem } = await appWithKey(tctx, org);
-    const listing = await readInstallations(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }), Number(app.github_app_id), app.client_id, pem, now);
+    const listing = await readInstallations(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })), Number(app.github_app_id), app.client_id, pem, now);
     await recordAuditEvent(tctx.db, {
       eventType: "sync.github_app_installations_listed",
       decision: "info",

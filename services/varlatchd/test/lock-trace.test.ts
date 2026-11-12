@@ -73,6 +73,15 @@ describe("checkAccessTrace (passkey-verification coverage, ADR-0054 Decision 7)"
       .toEqual([expect.stringContaining("before the request's checkpoint for that Organization")]);
   });
 
+  it("checks a write to an existing Organization's own row against that Organization", () => {
+    const b = checkAccessTrace([lock("org_a"), ...decided("org_a"), ...write("organizations", "org_b", "org_b")]);
+    expect(b.length).toBe(3);
+    expect(b.every((p) => p.includes("organizations[org_b] of Organization org_b"))).toBe(true);
+    expect(checkAccessTrace([lock("org_a"), ...decided("org_a"), ...write("organizations", "org_a", "org_a")])).toEqual([]);
+    // One the transaction created is its own.
+    expect(checkAccessTrace([at("organizations", "org_new", "insert", "insert"), at("organizations", "org_new", "org_new", "owner"), ...write("organizations", "org_new", "org_new")])).toEqual([]);
+  });
+
   it("skips rows of no Organization, bookkeeping, and an Organization the transaction created", () => {
     expect(checkAccessTrace([
       ...write("passkey", "pk_1", null),

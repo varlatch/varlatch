@@ -17,6 +17,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffect } from "./liveness.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
+import { guardEffectFetch } from "./externaleffect.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
@@ -464,7 +465,7 @@ export async function createAppConnection(
     const tctx: AppCtx = { ...ctx, db: tx };
     const { app, pem } = await appWithKey(tctx, org);
     const installation = await readInstallation(
-      fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }),
+      guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })),
       { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
       input.installationId,
     );
@@ -571,7 +572,7 @@ export async function rotateGitHubAppKey(
     // (ADR-0054 Decision 7).
     await requireOrganizationAccess(tctx.db, org.id);
     const githubAppId = Number(seen.github_app_id);
-    const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} }), "/app", seen.client_id, input.privateKey, now);
+    const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })), "/app", seen.client_id, input.privateKey, now);
     if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
     if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
     if (!res.ok) {
@@ -969,7 +970,7 @@ export async function checkConnectionAccess(
     // The outbound policy first (ADR-0057 Decision 6): a refused base identity
     // is reported in the policy's words, and no credential is sent.
     const refusal = await baseIdentityRefusal(tctx, org.id, baseIdentity, "sync_check", connectionId, actorIdentityId);
-    const send = fetchImpl ?? outboundOf(tctx).fetch("sync_check", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
+    const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_check", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
     const credential = refusal
       ? { ok: false as const, check: refusedCheck(refusal) }
       : await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, send);
@@ -1040,7 +1041,7 @@ export async function listConnectionDestinations(
     }
     // The outbound policy first (ADR-0057 Decision 6), as for a check.
     const refusal = await baseIdentityRefusal(tctx, org.id, baseIdentity, "sync_listing", connectionId, actorIdentityId);
-    const send = fetchImpl ?? outboundOf(tctx).fetch("sync_listing", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
+    const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_listing", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
     const credential = refusal
       ? { ok: false as const, check: refusedCheck(refusal) }
       : await credentialForUse(resolved, "listing", {}, send);
