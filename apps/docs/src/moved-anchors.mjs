@@ -3,8 +3,10 @@
  * Sections that moved to another page. Links into the old place keep
  * working: released CLIs, dashboards and other sites point at them, and a
  * fragment never reaches the server, so a small script on the old page
- * sends the reader on. check-links.mjs fails the build when a target does
- * not exist, or when the old page still has a heading with that ID.
+ * sends the reader on. The old page also keeps an anchor per moved
+ * section, in a "Moved sections" list, for GitHub and readers without
+ * scripts. check-links.mjs fails the build when a target does not exist,
+ * or when the old page lost one of those anchors.
  */
 export const MOVED = {
   "/getting-started/": {

@@ -67,7 +67,7 @@ export function checkLinks(dist, moved = MOVED) {
 
 /**
  * @param {Record<string, Record<string, string>>} moved old page, then old ID, to new place (moved-anchors.mjs)
- * @returns {string[]} one line per moved section whose new place is missing, or whose old ID still exists
+ * @returns {string[]} one line per moved section whose new place is missing, or whose old page lost its anchor
  */
 export function checkMoved(dist, moved = MOVED) {
   const problems = [];
@@ -79,7 +79,7 @@ export function checkMoved(dist, moved = MOVED) {
     }
     const oldIds = new Set([...readFileSync(oldFile, "utf8").matchAll(/\sid="([^"]+)"/g)].map(m => m[1]));
     for (const [id, target] of Object.entries(anchors)) {
-      if (oldIds.has(id)) problems.push(`moved from ${oldPath}#${id}: the page still has that ID`);
+      if (!oldIds.has(id)) problems.push(`moved from ${oldPath}#${id}: the page has no anchor with that ID for readers without the script`);
       const [path, hash] = target.split("#");
       const file = fileFor(dist, path);
       if (!file) {
