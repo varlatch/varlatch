@@ -7,6 +7,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { SECURITY_CONTROLS, type ControlMode, type LifetimeConfig, type SecurityControlName } from "./securitycontrols.js";
 import { lockedQuery } from "../db/locks.js";
+import { outsideRequest } from "./requestaccess.js";
 
 /**
  * Report counters (ADR-0054 Decisions 5 and 9). A Security Control in
@@ -470,8 +471,9 @@ export function queueAccessCount(ctx: AppCtx, report: PendingAccessReport, opera
     return;
   }
   accessQueue.waiting.push(() => runAccessCount(ctx, report, operation));
-  // After the current request has finished its own work.
-  setImmediate(pumpAccessQueue);
+  // After the current request has finished its own work, outside its
+  // security context: a count serves no request (requestaccess.ts).
+  outsideRequest(() => setImmediate(pumpAccessQueue));
 }
 
 /** Counts running and waiting in this process (tests). */
@@ -484,7 +486,7 @@ export function accessCountsSettled(): Promise<void> {
   if (accessQueue.running === 0 && accessQueue.waiting.length === 0) return Promise.resolve();
   return new Promise((resolve) => {
     accessQueue.idle.push(resolve);
-    setImmediate(pumpAccessQueue);
+    outsideRequest(() => setImmediate(pumpAccessQueue));
   });
 }
 

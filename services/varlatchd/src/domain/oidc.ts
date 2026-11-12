@@ -12,7 +12,7 @@ import { newId } from "../db/ids.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope } from "./liveness.js";
+import { lockLiveScope, lockedAccessCheckpoint } from "./liveness.js";
 import type { ProtectedGate } from "./approvals.js";
 import type { ProtectedOptions } from "./identities.js";
 import {
@@ -95,6 +95,10 @@ export async function createOidcBinding(
   if (issuer.protocol !== "https:" || issuer.search || issuer.hash) {
     throw new DomainError("VALIDATION_FAILED", "Issuer must be a plain https URL");
   }
+  // The identity exists (the route looked it up); passkey-verification
+  // before the outbound policy's lookups (ADR-0054 Decision 7). The
+  // creation's transaction checks again.
+  await lockedAccessCheckpoint(ctx.db, organizationId);
   // The outbound policy (ADR-0057 Decision 6), before any transaction. Its
   // jwks_uri is unknown until discovery, so it is checked at exchange time.
   const policy = outboundOf(ctx);

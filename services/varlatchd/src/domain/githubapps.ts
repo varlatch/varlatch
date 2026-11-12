@@ -10,7 +10,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { lockedAccessCheckpoint, lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import {
   GITHUB_API,
@@ -226,6 +226,15 @@ export async function completeRegistration(
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
   const stateHash = hashToken(input.state);
+  // The registration exists (a missing one keeps its not-found); then
+  // passkey-verification, before the claim and the call to GitHub
+  // (ADR-0054 Decision 7).
+  const registered = await ctx.db.query(
+    "SELECT 1 FROM github_app_registrations WHERE state_hash = $1 AND organization_id = $2 AND actor_identity_id = $3",
+    [stateHash, org.id, actorIdentityId],
+  );
+  if (!registered.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this state");
+  await lockedAccessCheckpoint(ctx.db, org.id);
   // Claim the state: one completion per registration, by the actor who
   // started it, in this Organization, within the hour.
   const claimed = await ctx.db.query(
@@ -395,6 +404,9 @@ export async function appWithKey(ctx: AppCtx, org: OrgRow): Promise<{ app: GitHu
   );
   const row = res.rows[0] as (GitHubAppRow & { key_envelope: Envelope | string }) | undefined;
   if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+  // The App exists; then a request's passkey-verification, before its key
+  // is unwrapped (ADR-0054 Decision 7). Nothing for background work.
+  await lockedAccessCheckpoint(ctx.db, org.id);
   const envelope = typeof row.key_envelope === "string" ? (JSON.parse(row.key_envelope) as Envelope) : row.key_envelope;
   const { key_envelope: _key, ...app } = row;
   return { app, pem: decryptGitHubAppKey(orgKekOf(ctx, org), org.id, row.id, envelope) };
@@ -430,6 +442,9 @@ export async function importGitHubApp(
   if (await liveApp(ctx.db, org.id)) {
     throw new DomainError("STATE_CHANGED", "This Organization already has a GitHub App. Remove it from Varlatch before importing another.");
   }
+  // passkey-verification before GitHub is called (ADR-0054 Decision 7);
+  // the import's transaction checks again.
+  await lockedAccessCheckpoint(ctx.db, org.id);
   const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", String(input.appId), input.privateKey, now);
   if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
   if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };

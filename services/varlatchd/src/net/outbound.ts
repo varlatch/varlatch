@@ -9,6 +9,7 @@ import { OUTBOUND_REFUSED_CODE } from "@varlatch/sync";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
 import { recordAuditEvent } from "../audit/events.js";
 import type { Querier } from "../db/migrate.js";
+import { assertOrganizationAccessChecked } from "../domain/requestaccess.js";
 import { normalizeAddress } from "../http/client-address.js";
 
 /**
@@ -716,6 +717,10 @@ export class OutboundPolicy {
       const destination = destinationOf(url);
       if (!destination) throw new TypeError(`Outbound requests use https or http, not ${url.protocol}`);
       if (url.username || url.password) throw new TypeError("Outbound request URLs never carry credentials");
+      // A request's outbound call for an Organization comes after its
+      // passkey-verification checkpoint (ADR-0054 Decision 7); reaching
+      // here without one is a coverage gap, checked now.
+      if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`);
       try {
         return (await undiciFetch(url, {
           ...(init as Record<string, unknown>),

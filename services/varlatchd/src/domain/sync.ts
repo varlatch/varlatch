@@ -15,7 +15,7 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { lockedAccessCheckpoint, lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
@@ -397,6 +397,9 @@ export async function createConnection(
   if (input.credential.trim().length === 0) {
     throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
   }
+  // passkey-verification before the outbound policy's lookups and the
+  // encryption (ADR-0054 Decision 7); the creation checks again.
+  await lockedAccessCheckpoint(ctx.db, org.id);
   // The outbound policy (ADR-0057 Decision 6), before any transaction.
   const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_check", null, actorIdentityId);
   if (refusal) throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
@@ -554,6 +557,9 @@ export async function rotateGitHubAppKey(
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
   const seen = await getGitHubApp(ctx, org.id);
+  // The App exists; then passkey-verification, before GitHub is called
+  // (ADR-0054 Decision 7). The rotation's transaction checks again.
+  await lockedAccessCheckpoint(ctx.db, org.id);
   const githubAppId = Number(seen.github_app_id);
   const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", seen.client_id, input.privateKey, now);
   if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
@@ -1125,6 +1131,9 @@ async function resolveCredential(
   let storedExpiresAt: string | null = null;
   if ("connectionId" in input) {
     const connection = await getConnection(ctx, org.id, input.connectionId);
+    // The Connection exists; then passkey-verification, before its
+    // credential is decrypted or used (ADR-0054 Decision 7).
+    await lockedAccessCheckpoint(ctx.db, org.id);
     connectionId = connection.id;
     platform = connection.platform;
     baseIdentity = connection.base_identity;
@@ -1156,6 +1165,9 @@ async function resolveCredential(
       credential = decryptPlatformCredential(orgKekOf(ctx, org), org.id, connection.id, parseJson<Envelope>(stored.credential_envelope));
     }
   } else {
+    // A credential supplied now: passkey-verification before it is used
+    // (ADR-0054 Decision 7).
+    await lockedAccessCheckpoint(ctx.db, org.id);
     platform = input.platform;
     baseIdentity = input.baseIdentity;
     credential = input.credential;
