@@ -37,6 +37,12 @@ const FIELD_LABELS: Record<string, string> = {
   audience: "Audience",
   subject: "Subject",
   claims: "Required claims",
+  // Grants, roles, groups and teams (admin-step-up).
+  scope: "Scope",
+  permission: "Permission",
+  actions: "Actions",
+  actionsAdded: "Actions added",
+  actionsRemoved: "Actions removed",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */
@@ -174,7 +180,8 @@ function ChangeRow({ change }: { change: ApprovalChange }) {
       data-loosens={change.loosens ? "true" : "false"}
     >
       <span className="w-36 shrink-0 text-muted">{fieldLabel(change.field)}</span>
-      <span className="font-mono text-[12.5px]">
+      {/* pre-wrap: a name's spaces (quoted by the server) are shown as they are, never collapsed. */}
+      <span className="whitespace-pre-wrap break-words font-mono text-[12.5px]">
         {changeValue(change.field, change.from)} {"→"} {changeValue(change.field, change.to)}
       </span>
       {change.loosens && (
@@ -191,7 +198,7 @@ export function ApprovalSummary({ approval, now }: { approval: Approval; now: nu
   const state = effectiveState(approval, now);
   return (
     <div data-testid="approval-summary" data-state={state}>
-      <p className="text-[15px] font-medium leading-snug" data-testid="approval-title">
+      <p className="whitespace-pre-wrap break-words text-[15px] font-medium leading-snug" data-testid="approval-title">
         {approval.summary.title}
       </p>
       <dl className="mt-3 space-y-1.5 rounded-lg border border-bd bg-inset px-4 py-3 text-[13px]">

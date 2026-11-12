@@ -133,6 +133,24 @@ describe("the approval page", () => {
     expect(byTestId("approval-approve")).toHaveLength(1);
   });
 
+  it("shows quoted names exactly, whitespace included: the title and the changes keep their spaces", async () => {
+    fake.api.getApproval = vi.fn(async () => approval({
+      operation: "grant.replace",
+      summary: {
+        title: 'Change the Grant of role "reader" (rol_a) on the whole organization to "Bob" (idn_a)',
+        changes: [{ field: "permission", from: 'role "reader" (rol_a)', to: 'role "reader  " (rol_b)', loosens: false }],
+      },
+    }));
+    await mount(<ApprovalPage />);
+    const title = one("approval-title");
+    expect(text(title)).toBe('Change the Grant of role "reader" (rol_a) on the whole organization to "Bob" (idn_a)');
+    expect(title.props.className).toContain("whitespace-pre-wrap");
+    const [change] = byTestId("approval-change");
+    expect(text(change!)).toContain('role "reader" (rol_a) → role "reader  " (rol_b)');
+    const value = change!.findAll((n) => typeof n.type === "string" && typeof n.props.className === "string" && n.props.className.includes("font-mono"))[0]!;
+    expect(value.props.className).toContain("whitespace-pre-wrap");
+  });
+
   it("approves with a trusted passkey over the server's challenge, then sends the person back", async () => {
     await mount(<ApprovalPage />);
     await click("approval-approve");
@@ -224,6 +242,14 @@ describe("words", () => {
     expect(fieldLabel("claims")).toBe("Required claims");
     expect(changeValue("credentialExpiry", "after 1 day")).toBe("after 1 day");
     expect(changeValue("credentialExpiry", null)).toBe("none");
+  });
+
+  it("names the fields of a Grant's or a role's approval (admin-step-up)", () => {
+    expect(fieldLabel("scope")).toBe("Scope");
+    expect(fieldLabel("permission")).toBe("Permission");
+    expect(fieldLabel("actionsAdded")).toBe("Actions added");
+    expect(fieldLabel("actionsRemoved")).toBe("Actions removed");
+    expect(changeValue("actionsRemoved", null)).toBe("none");
   });
 });
 

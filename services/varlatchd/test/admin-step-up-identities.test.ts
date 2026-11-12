@@ -282,41 +282,41 @@ describe("under enforce", () => {
     const create = stepUp(await createMachine(admin.cli, { name: "billing", kind: "service", credentialTtlSeconds: 86_400, credentialMaxUses: 5 }));
     expect(create).toMatchObject({ operation: "identity.create", organization: { id: orgId, slug: "acme" }, state: "pending" });
     expect(create.summary).toEqual({
-      title: "Create machine identity billing (service), with a credential that expires after 1 day",
+      title: 'Create machine identity "billing" (service), with a credential that expires after 1 day',
       changes: [
-        { field: "name", from: null, to: "billing", loosens: false },
+        { field: "name", from: null, to: '"billing"', loosens: false },
         { field: "kind", from: null, to: "service", loosens: false },
         { field: "credentialExpiry", from: null, to: "after 1 day", loosens: false },
         { field: "credentialUses", from: null, to: "5 uses", loosens: false },
       ],
     });
     expect(stepUp(await createMachine(admin.web, { name: "runner", kind: "ci" })).summary).toEqual({
-      title: "Create machine identity runner (ci). It gets no credential",
+      title: 'Create machine identity "runner" (ci). It gets no credential',
       changes: [
-        { field: "name", from: null, to: "runner", loosens: false },
+        { field: "name", from: null, to: '"runner"', loosens: false },
         { field: "kind", from: null, to: "ci", loosens: false },
       ],
     });
     const issuing = stepUp(await issue(admin.cli, f.svc, { name: "backup job" }));
     expect(issuing).toMatchObject({ operation: "credential.issue", organization: { id: orgId } });
-    expect(issuing.summary.title).toBe("Issue credential backup job for api (service), never expiring, unlimited");
+    expect(issuing.summary.title).toBe(`Issue credential "backup job" for service "api" (${f.svc}), never expiring, unlimited`);
     const reactivating = stepUp(await reactivate(admin.cli, f.old));
-    expect(reactivating).toMatchObject({ operation: "identity.reactivate", summary: { title: "Reactivate machine identity old-worker. It has no working credential until one is issued", changes: [] } });
+    expect(reactivating).toMatchObject({ operation: "identity.reactivate", summary: { title: `Reactivate machine identity "old-worker" (${f.old}). It has no working credential until one is issued`, changes: [] } });
     const binding = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/web:*", { claims: { ref: "refs/heads/main", environment: "prod" } })));
     expect(binding).toMatchObject({ operation: "oidc_binding.create" });
     expect(binding.summary).toEqual({
-      title: `Let tokens from ${ISSUER} with subject repo:acme/web:* act as deploy`,
+      title: `Let tokens from "${ISSUER}" with subject "repo:acme/web:*" act as "deploy" (${f.ci})`,
       changes: [
-        { field: "issuer", from: null, to: ISSUER, loosens: false },
-        { field: "audience", from: null, to: "varlatch", loosens: false },
-        { field: "subject", from: null, to: "repo:acme/web:*", loosens: false },
-        { field: "claims", from: null, to: "environment=prod, ref=refs/heads/main", loosens: false },
+        { field: "issuer", from: null, to: `"${ISSUER}"`, loosens: false },
+        { field: "audience", from: null, to: '"varlatch"', loosens: false },
+        { field: "subject", from: null, to: '"repo:acme/web:*"', loosens: false },
+        { field: "claims", from: null, to: '{"environment": "prod", "ref": "refs/heads/main"}', loosens: false },
       ],
     });
     const unbinding = stepUp(await removeBinding(admin.web, f.ci, f.binding));
     expect(unbinding).toMatchObject({
       operation: "oidc_binding.delete",
-      summary: { title: `Remove the OIDC binding ${ISSUER} / repo:acme/api:ref:refs/heads/main from deploy`, changes: [] },
+      summary: { title: `Remove the OIDC binding ${f.binding} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "varlatch") from "deploy" (${f.ci})`, changes: [] },
     });
 
     expect(await machinesNamed("billing")).toBe(0);
@@ -452,6 +452,23 @@ describe("under enforce", () => {
     expect(await intents()).toBe(before);
   });
 
+  it("oidc_binding.delete names the binding by its id and audience: two bindings alike but for the audience read apart", async () => {
+    const other = await addBinding(admin.cli, f.ci, { ...ciBinding(), audience: "other" }, await approved(admin, await addBinding(admin.cli, f.ci, { ...ciBinding(), audience: "other" })));
+    expect(other.status).toBe(201);
+    const first = stepUp(await removeBinding(admin.cli, f.ci, f.binding)).summary.title;
+    const second = stepUp(await removeBinding(admin.cli, f.ci, other.body.id)).summary.title;
+    expect(first).toBe(`Remove the OIDC binding ${f.binding} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "varlatch") from "deploy" (${f.ci})`);
+    expect(second).toBe(`Remove the OIDC binding ${other.body.id} (issuer "${ISSUER}", subject "repo:acme/api:ref:refs/heads/main", audience "other") from "deploy" (${f.ci})`);
+  });
+
+  it("oidc_binding.create writes claims as a map: two claims never read like one claim holding a comma", async () => {
+    // Codex's scenario.
+    const two = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/x:*", { claims: { ref: "main", repo: "acme/api" } }))).summary;
+    const one = stepUp(await addBinding(admin.cli, f.ci, ciBinding("repo:acme/x:*", { claims: { ref: "main, repo=acme/api" } }))).summary;
+    expect(two.changes.at(-1)).toEqual({ field: "claims", from: null, to: '{"ref": "main", "repo": "acme/api"}', loosens: false });
+    expect(one.changes.at(-1)).toEqual({ field: "claims", from: null, to: '{"ref": "main, repo=acme/api"}', loosens: false });
+  });
+
   it("refuses another person's approval: even an admin finds nothing", async () => {
     const bob = await invite("Bob", "admin");
     const asked = await approved(admin, await createMachine(admin.cli, { name: "billing", kind: "service" }));
@@ -554,7 +571,7 @@ describe("with the other controls", () => {
     expect(await intents()).toBe(0);
 
     const asked = stepUp(await createMachine(admin.cli, { name: "billing", kind: "service" }));
-    expect(asked.summary.title).toBe("Create machine identity billing (service), with a credential that expires after 1 hour");
+    expect(asked.summary.title).toBe('Create machine identity "billing" (service), with a credential that expires after 1 hour');
     await approve(admin, asked.id);
     // An explicit TTL equal to the default is another request: it binds what was asked for.
     invalid(await createMachine(admin.cli, { name: "billing", kind: "service", credentialTtlSeconds: 3600 }, asked.id), "mismatch");
@@ -582,7 +599,7 @@ describe("with the other controls", () => {
     expect(await intents()).toBe(before);
 
     const asked = stepUp(await issue(admin.cli, svc, { name: "job" }));
-    expect(asked.summary.title).toBe("Issue credential job for api (service), expiring after 1 hour, unlimited");
+    expect(asked.summary.title).toBe(`Issue credential "job" for service "api" (${svc}), expiring after 1 hour, unlimited`);
     await approve(admin, asked.id);
     // An explicit TTL equal to the default is another request.
     invalid(await issue(admin.cli, svc, { name: "job", ttlSeconds: 3600 }, asked.id), "mismatch");

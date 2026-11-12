@@ -690,6 +690,38 @@ An agent-run credential minted by a broker, retiring or renaming a machine,
 and revoking a credential never ask. Report mode already counts all five
 operations.
 
+The approvals for the access structure are built too: Grants, roles,
+groups and teams, their members, and the projects a team owns.
+
+| Operation | What the approval covers |
+| --- | --- |
+| `grant.create` | Who gets it (a machine, a person or a group), the scope, and the actions or the role. Actions and environments are compared as sets: their order does not matter. |
+| `grant.replace` | The Grant replaced and the complete new declaration. A replacement identical to the old Grant changes no access and needs no approval. |
+| `grant.revoke` | The Grant. During an incident freeze, revoking a Grant is still allowed and still asks. |
+| `role.create` | The name and the set of actions. |
+| `role.update` | The role, its resulting name and set of actions, and the version you edited. Reordering its actions, or keeping its name and actions, needs no approval. |
+| `role.delete` | The role, at the version the server read: a role changed since needs a new approval. |
+| `group.create`, `team.create` | The name. |
+| `group.update`, `team.update` | The new name and the version you edited. Keeping the name needs no approval. |
+| `group.delete`, `team.delete` | The group or team, at the version the server read. |
+| `group.member_add`, `team.member_add` | The group or team and the identity. Adding a current member changes nothing and needs no approval. |
+| `group.member_remove`, `team.member_remove` | The group or team and the identity. |
+| `team.project_add`, `team.project_remove` | The team and the project. Adding a project the team already owns needs no approval. |
+
+A team is always a team: one reached through a `/groups/` route asks for
+the `team.*` operation.
+
+What you approve never shows text that is not in quotes: every name,
+action, tag, issuer, subject or other value appears in quotes, lists in
+brackets (`["config.value.read", "project.read"]`) and claims as
+`{"ref": "main"}`, with every character you could not see (a zero-width
+space, a direction override, a no-break space) written as `\u{XXXX}`.
+Everything that already exists is named with its id, for example
+`"Bob" (idn_...)`, a Grant, an OIDC binding or a Tailnet Requirement by its
+id. Two different requests never read the same. Report mode counts these operations, except
+requests that change nothing (a current member, an owned project, an
+identical Grant, a role whose actions only change order).
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an

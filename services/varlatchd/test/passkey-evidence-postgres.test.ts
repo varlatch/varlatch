@@ -310,7 +310,7 @@ describe.skipIf(!url)("passkey evidence through Better Auth on real PostgreSQL",
           await connection.query("INSERT INTO varlatch_migrations (id, name) VALUES ($1, $2)", [migration.id, migration.name]);
         }
         await seed(connection);
-        expect((await runMigrations(connection)).applied.map((m) => m.id)).toEqual([39, 40, 41, 42, 43, 44, 45, 46]);
+        expect((await runMigrations(connection)).applied.map((m) => m.id)).toEqual([39, 40, 41, 42, 43, 44, 45, 46, 47]);
       } finally {
         connection.release();
       }

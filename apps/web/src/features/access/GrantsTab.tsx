@@ -21,6 +21,7 @@ import { useConfirm } from "../../components/Dialog";
 import { FilterInput, matchesFilter } from "../../components/FilterInput";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 import { ALL_ACTIONS, PRESETS, TIERS, useIdentities } from "./shared";
 import {
   ACTION_GROUPS,
@@ -34,6 +35,13 @@ import {
   type SubjectKind,
 } from "./model";
 import { useAccessNames } from "./useAccessNames";
+
+/**
+ * An error for the person. With admin-step-up enforced (ADR-0054), every
+ * change here needs an approval: a step-up not given, or one the server
+ * refused, gets its own words.
+ */
+const failureMessage = (err: unknown) => approvalOutcomeMessage(err) ?? errorMessage(err);
 
 /**
  * Grants: the single source of permission. The builder reads as one
@@ -112,7 +120,7 @@ export function GrantsTab({ org }: { org: string }) {
       void qc.invalidateQueries({ queryKey: ["grants", org] });
       toast.success("Access granted", { description: `${subjectOptions.find((o) => o.value === subject)?.label ?? "Subject"} · ${permissionPhrase(effectiveActions, permission.kind === "role" ? roleName(permission.id) : null)}` });
     },
-    onError: (err) => toast.error("Could not create the grant", { description: errorMessage(err) }),
+    onError: (err) => toast.error("Could not create the grant", { description: failureMessage(err) }),
   });
   const ready = subject !== "" && grantScope !== null && effectiveActions.length > 0;
 
@@ -358,7 +366,7 @@ function GrantRow({ org, grant: g, subjectName }: { org: string; grant: Grant; s
   const revoke = useMutation({
     mutationFn: () => api.deleteGrant(org, g.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["grants", org] }),
-    onError: (err) => toast.error("Could not revoke the grant", { description: errorMessage(err) }),
+    onError: (err) => toast.error("Could not revoke the grant", { description: failureMessage(err) }),
   });
   const replace = useMutation({
     mutationFn: () =>
@@ -450,7 +458,7 @@ function GrantRow({ org, grant: g, subjectName }: { org: string; grant: Grant; s
           </div>
           {!editRoleId && <ActionPicker dataAttr="edit-grant-action" value={editActions} onChange={setEditActions} />}
           <p className="text-xs text-muted">Replacing is atomic: the old grant is revoked and the new one created in one step, linked in the audit log.</p>
-          {replace.error && <p className="text-sm text-deny">{errorMessage(replace.error)}</p>}
+          {replace.error && <p className="text-sm text-deny">{failureMessage(replace.error)}</p>}
         </div>
       )}
     </li>
