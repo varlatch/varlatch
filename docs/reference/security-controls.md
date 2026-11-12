@@ -709,7 +709,12 @@ groups and teams, their members, and the projects a team owns.
 | `team.project_add`, `team.project_remove` | The team and the project. Adding a project the team already owns needs no approval. |
 
 A team is always a team: one reached through a `/groups/` route asks for
-the `team.*` operation. Report mode counts these operations, except
+the `team.*` operation.
+
+What you approve names every machine, person, group, team, role, project
+and environment by its name in quotes followed by its id, for example
+`"Bob" (idn_...)`. Two things with the same name, or a name with extra
+spaces, never read the same. Report mode counts these operations, except
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 
