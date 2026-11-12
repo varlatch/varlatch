@@ -81,7 +81,7 @@ what the bundler includes.
 | @fontsource-variable/inter | 5.3.0 | OFL-1.1 | dashboard |
 | @fontsource-variable/jetbrains-mono | 5.3.0 | OFL-1.1 | dashboard |
 | @hexagon/base64 | 1.1.28 | MIT | varlatchd, dashboard |
-| @hono/node-server | 2.1.5 | MIT | varlatchd, CLI |
+| @hono/node-server | 2.1.6 | MIT | varlatchd, CLI |
 | @isaacs/fs-minipass | 4.0.1 | ISC | CLI |
 | @levischuck/tiny-cbor | 0.2.11 | MIT | varlatchd, dashboard |
 | @modelcontextprotocol/sdk | 1.32.2 | MIT | CLI |
@@ -1340,7 +1340,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### @hono/node-server@2.1.5
+### @hono/node-server@2.1.6
 
 ````text
 MIT License

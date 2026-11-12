@@ -242,7 +242,10 @@ curl -fsS "$WEB_ORIGIN/v1/meta" | grep -q '"cli.download"' || { echo "FAIL: /v1/
 INSTALL_HOME=$(mktemp -d)
 curl -fsS "$WEB_ORIGIN/install.sh" > "$INSTALL_HOME/install.sh"
 grep -qx "ORIGIN='$WEB_ORIGIN'" "$INSTALL_HOME/install.sh" || { echo "FAIL: install.sh does not name $WEB_ORIGIN"; exit 1; }
-curl -fsS "$WEB_ORIGIN/install.ps1" | grep -q "\$Origin = '$WEB_ORIGIN'" || { echo "FAIL: install.ps1 does not name $WEB_ORIGIN"; exit 1; }
+# To a file first, as install.sh above: grep -q stops reading at its first
+# match, and under pipefail curl's "Failed writing body" would fail the check.
+curl -fsS "$WEB_ORIGIN/install.ps1" > "$INSTALL_HOME/install.ps1"
+grep -q "\$Origin = '$WEB_ORIGIN'" "$INSTALL_HOME/install.ps1" || { echo "FAIL: install.ps1 does not name $WEB_ORIGIN"; exit 1; }
 HOME="$INSTALL_HOME" sh "$INSTALL_HOME/install.sh" < /dev/null > "$INSTALL_HOME/out.txt" 2>&1 || { cat "$INSTALL_HOME/out.txt"; echo "FAIL: install.sh through nginx"; exit 1; }
 INSTALLED=$("$INSTALL_HOME/.local/bin/varlatch" --version)
 case "$INSTALLED" in
