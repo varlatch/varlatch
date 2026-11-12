@@ -709,7 +709,16 @@ groups and teams, their members, and the projects a team owns.
 | `team.project_add`, `team.project_remove` | The team and the project. Adding a project the team already owns needs no approval. |
 
 A team is always a team: one reached through a `/groups/` route asks for
-the `team.*` operation. Report mode counts these operations, except
+the `team.*` operation.
+
+What you approve never shows text that is not in quotes: every name,
+action, tag, issuer, subject or other value appears in quotes, lists in
+brackets (`["config.value.read", "project.read"]`) and claims as
+`{"ref": "main"}`, with every character you could not see (a zero-width
+space, a direction override, a no-break space) written as `\u{XXXX}`.
+Everything that already exists is named with its id, for example
+`"Bob" (idn_...)`, a Grant, an OIDC binding or a Tailnet Requirement by its
+id. Two different requests never read the same. Report mode counts these operations, except
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 
