@@ -57,6 +57,11 @@ it later means everyone registers their passkey again.
 
 ## What setup does
 
+Setup also asks whether the installation should serve the CLI, so people
+install it with one line from your address. That trusts the installation
+to run code on their machines, so it is off unless you say yes:
+[Serving the CLI](self-hosting/configuration.md#serving-the-cli).
+
 Setup does the rest, and tells you what it is doing:
 
 1. It generates every key and password the installation needs, as files in

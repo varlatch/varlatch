@@ -122,6 +122,9 @@ services:
       # ranges, each with an optional port, comma-separated. Unset: public
       # https only. Set on the host only; varlatchd reads it at startup.
       VARLATCH_OUTBOUND_ALLOW: ${VARLATCH_OUTBOUND_ALLOW:-}
+      # Serve this image's CLI and install scripts (ADR-0058 Decision 3): off
+      # unless set to on, since installing that way trusts this installation.
+      VARLATCH_SERVE_CLI: ${VARLATCH_SERVE_CLI:-off}
       VARLATCH_TAILSCALE_SOCKET: /var/run/tailscale/tailscaled.sock
       VARLATCH_TAILSCALE_TAILNET: ${VARLATCH_TAILNET_NAME:?set in .env}
       VARLATCH_TAILNET_PORT: "8687"

@@ -147,6 +147,7 @@ recorded one, and a `publicUrl` edited into the file.
 | `VARLATCH_TRUSTED_PROXIES` | [Client addresses](#client-addresses) | no | no |
 | `VARLATCH_SYNC`, `VARLATCH_SYNC_ADAPTERS` | [Sync Targets](#sync-targets) | no | no |
 | `VARLATCH_OUTBOUND_ALLOW` | [Outbound destinations](#outbound-destinations) | no | no |
+| `VARLATCH_SERVE_CLI` | [Serving the CLI](#serving-the-cli) | when setup asked (new installations) | no |
 
 A default below is what the Compose files use when the variable is unset
 or empty.
@@ -585,6 +586,44 @@ open only through a CIDR entry inside their range, such as
 its verdict and suggests the value. [Outbound policy](../reference/outbound-policy.md)
 explains the classes, the entries and the migration from earlier releases.
 After a change, recreate varlatchd: `docker compose up -d varlatchd`.
+
+## Serving the CLI
+
+### `VARLATCH_SERVE_CLI`
+
+- **Read by:** `varlatchd` only, at startup.
+- **Default:** `off`.
+- **Setup:** asks on a new installation, in a terminal, and writes the
+  answer; `varlatch setup --serve-cli` or `--no-serve-cli` changes it. An
+  installation set up before this setting has no line, so it stays off
+  until you run setup with one of those flags or add the line below the
+  marker.
+
+`on` makes the installation serve the CLI it was built with, and two
+scripts that install it for the current user:
+
+- `GET /install.sh`, for Linux and macOS:
+  `curl -fsSL https://vault.example.com/install.sh | sh`
+- `GET /install.ps1`, for Windows: `irm https://vault.example.com/install.ps1 | iex`
+- `GET /cli/varlatch.cjs`, the file the scripts download.
+
+They need no sign-in, like `/v1/meta`, which already tells the version.
+The scripts name this installation's address from `VARLATCH_PUBLIC_URL`,
+never from the request, and download only from it: over https, or over
+http on this machine only (`http://localhost`). Over any other plain http
+address varlatchd serves nothing and logs why at startup. Off, the three
+paths answer 404, and `/v1/meta` does not list the `cli.download`
+capability. `varlatch doctor` reports the setting.
+
+**What it trusts.** Installing this way trusts the installation, and
+whoever controls its host or its address, to run code on each installer's
+machine. A compromised installation already exposes the values it holds;
+with this on, it can also reach the machines of people who install from it
+afterwards. The SHA-256 in each script only catches a damaged download.
+That is why it is off unless you turn it on, and why the docs always show
+the verified route beside it: [Install the CLI](../reference/install-the-cli.md)
+checks the release signature. After a change, recreate varlatchd:
+`docker compose up -d varlatchd`.
 
 ## Logs
 

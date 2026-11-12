@@ -33,6 +33,14 @@ describe("renderEnv", () => {
   it("keeps the operator's additions below the marker", () => {
     expect(renderEnv(config, "VARLATCH_SYNC=off\n").endsWith("VARLATCH_SYNC=off\n")).toBe(true);
   });
+  it("writes VARLATCH_SERVE_CLI only when the installation answered the question (ADR-0058)", () => {
+    expect(renderEnv(config)).not.toMatch(/VARLATCH_SERVE_CLI/);
+    const on = renderEnv({ ...config, serveCli: true }, "VARLATCH_SERVE_CLI=off\n");
+    expect(on).toMatch(/^VARLATCH_SERVE_CLI=on$/m);
+    // Above the marker: an operator's own line below it is kept, and Compose takes the last one.
+    expect(on.indexOf("VARLATCH_SERVE_CLI=on")).toBeLessThan(on.indexOf("your additions below"));
+    expect(renderEnv({ ...config, serveCli: false })).toMatch(/^VARLATCH_SERVE_CLI=off$/m);
+  });
 });
 
 describe("ensureSecrets", () => {
