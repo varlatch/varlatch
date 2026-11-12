@@ -54,6 +54,17 @@ describe("varlatch server", () => {
     expect(t.lines).toEqual(["Default server: https://a.example"]);
   });
 
+  it("two servers on one origin with different paths stay two servers", () => {
+    const t = setup();
+    saveToken("https://host.example/team-a", "t", t.env);
+    saveToken("https://host.example/team-b/", "t", t.env);
+    useServer("https://host.example/team-b", t.text, t.env);
+    expect(defaultServer(t.env)).toBe("https://host.example/team-b");
+    useServer("https://host.example/team-a/", t.text, t.env);
+    expect(defaultServer(t.env)).toBe("https://host.example/team-a");
+    expect(() => useServer("https://host.example", t.text, t.env)).toThrow(/not signed in to https:\/\/host\.example\./);
+  });
+
   it("a sign-in notes a new default once, and a failed write never fails it", () => {
     const t = setup();
     const err: string[] = [];

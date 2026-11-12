@@ -85,23 +85,27 @@ export function showServer(cwd: string, io: ServerIo, env: NodeJS.ProcessEnv = p
   io.out(`Signed in to: ${signedIn.length > 0 ? signedIn.join(", ") : "none"}`);
 }
 
-/** `varlatch server use <url>`: only a server with a stored credential, so the default always names one you can use. */
+/**
+ * `varlatch server use <url>`: only a server with a stored credential, so
+ * the default always names one you can use. The match is exact in the form
+ * credentials.json keys on (trailing slashes removed, path kept): two
+ * servers on one origin with different paths are two servers.
+ */
 export function useServer(server: string, io: ServerIo, env: NodeJS.ProcessEnv = process.env): void {
-  let key: string;
   try {
-    key = storedServerKey(new URL(server).toString());
+    new URL(server);
   } catch {
     throw new ServerCommandError(`varlatch server use: not a URL: ${server}`);
   }
+  const key = storedServerKey(server);
   const signedIn = listCredentials(env).map((c) => c.server);
-  if (!signedIn.includes(key) && !signedIn.includes(storedServerKey(server))) {
+  if (!signedIn.includes(key)) {
     throw new ServerCommandError(
       `varlatch server use: you are not signed in to ${key}. Sign in first: varlatch login --server ${key}` +
         (signedIn.length > 0 ? `\nSigned in to: ${signedIn.join(", ")}` : ""),
     );
   }
-  const chosen = signedIn.includes(key) ? key : storedServerKey(server);
-  setDefaultServer(chosen, env);
-  if (io.json) io.json({ version: 1, defaultServer: chosen });
-  else io.out(`Default server: ${chosen}`);
+  setDefaultServer(key, env);
+  if (io.json) io.json({ version: 1, defaultServer: key });
+  else io.out(`Default server: ${key}`);
 }
