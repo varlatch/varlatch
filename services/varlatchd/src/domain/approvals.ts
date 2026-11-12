@@ -169,6 +169,12 @@ export const APPROVAL_OPERATIONS = [
   // requirement-protection (ADR-0054 step 4.2).
   "requirement.update",
   "requirement.revoke",
+  // admin-step-up: machine identities, credentials and OIDC bindings (step 4.5).
+  "identity.create",
+  "credential.issue",
+  "identity.reactivate",
+  "oidc_binding.create",
+  "oidc_binding.delete",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
@@ -179,15 +185,22 @@ export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
  */
 export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly ApprovalOperation[]>> = {
   "requirement-protection": ["requirement.update", "requirement.revoke"],
+  "admin-step-up": ["identity.create", "credential.issue", "identity.reactivate", "oidc_binding.create", "oidc_binding.delete"],
 };
 
 /**
  * The Organization-bound operations an intent may be created for while the
  * Organization is frozen for an incident (ADR-0055 Decision 3): the lift,
- * and the operations under `recovery` that ask for an approval. Account
- * intents (passkey.remove) are not Organization-bound and are unaffected.
+ * and the operations under `recovery` that ask for an approval (ADR-0055
+ * Decision 6: admin-step-up still asks for them, such as removing an OIDC
+ * binding). Account intents (passkey.remove) are not Organization-bound
+ * and are unaffected.
  */
-export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set(["organization.unfreeze", "security_control.change"]);
+export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set([
+  "organization.unfreeze",
+  "security_control.change",
+  "oidc_binding.delete",
+]);
 
 export interface ApprovalChange {
   field: string;

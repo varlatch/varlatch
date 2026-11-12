@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { backupStatus } from "@varlatch/backup";
 import { installationRelease } from "../domain/releaseNotice.js";
+import type { Querier } from "../db/migrate.js";
 import { Hono, type Context } from "hono";
 import { installPs1, installSh, type CliDownload } from "./cliDownload.js";
 import { bodyLimit } from "hono/body-limit";
@@ -2609,6 +2610,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     });
   });
 
+  /**
+   * identity.manage rechecked inside a protected operation's transaction,
+   * once its approval was consumed (ADR-0054 Decision 3).
+   */
+  const identityManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
+    await authorize({ ...ctx, db }, c, principal, "identity.manage", { organizationId }, { hideExistence: true });
+  };
+
   app.post("/v1/organizations/:org/identities", async (c) => {
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
@@ -2625,12 +2634,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     // A protected operation (ADR-0054): credential-lifetime may default or
-    // refuse the credential's TTL. admin-step-up cannot ask for an approval
-    // yet, so the approval header is never read here.
+    // refuse the credential's TTL, and admin-step-up at enforce asks for the
+    // requester's approval (identity.create); the header is read only then.
     const { identity, credential, credentialExpiresAt } = await withApproval(
       ctx,
       { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
-      (gate) => createMachineIdentity(ctx, gate, org.id, body),
+      (gate) => createMachineIdentity(ctx, gate, org.id, body, { authorizeIn: identityManageIn(c, principal, org.id) }),
     );
     return c.json(
       {
@@ -2686,11 +2695,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    // A protected operation (ADR-0054), like identity creation above.
+    // A protected operation (ADR-0054), like identity creation above
+    // (credential.issue). The Broker's agent-run issuance below is exempt.
     const issued = await withApproval(
       ctx,
       { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
-      (gate) => issueMachineCredential(ctx, gate, org.id, identity.id, body),
+      (gate) => issueMachineCredential(ctx, gate, org.id, identity.id, body, { authorizeIn: identityManageIn(c, principal, org.id) }),
     );
     c.header("Cache-Control", "no-store");
     return c.json(
@@ -2831,7 +2841,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const identity = await loadMachineIdentity(c, org.id);
-    await reactivateIdentity(ctx, org.id, identity.id, principal.identity.id);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for
+    // the requester's approval to reactivate a disabled identity.
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      reactivateIdentity(ctx, gate, org.id, identity.id, { authorizeIn: identityManageIn(c, principal, org.id) }));
     return c.json({ id: identity.id, disabled: false });
   });
 
@@ -3001,7 +3014,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const binding = await createOidcBinding(ctx, org.id, identity.id, body, principal.identity.id);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for
+    // the requester's approval (oidc_binding.create).
+    const binding = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      createOidcBinding(ctx, gate, org.id, identity.id, body, { authorizeIn: identityManageIn(c, principal, org.id) }));
     return c.json(serializeBinding(binding), 201);
   });
 
@@ -3019,7 +3035,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "identity.manage", { organizationId: org.id }, { hideExistence: true });
     const identity = await loadMachineIdentity(c, org.id);
-    await revokeOidcBinding(ctx, org.id, identity.id, c.req.param("binding"), principal.identity.id);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for
+    // the requester's approval (oidc_binding.delete), during a freeze too.
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      revokeOidcBinding(ctx, gate, org.id, identity.id, c.req.param("binding"), { authorizeIn: identityManageIn(c, principal, org.id) }));
     return c.body(null, 204);
   });
 

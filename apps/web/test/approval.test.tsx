@@ -44,7 +44,7 @@ vi.mock("../src/components/Dialog", () => ({
 }));
 
 import { ApprovalPage } from "../src/features/security-controls/ApprovalPage";
-import { ApprovalDialogProvider, approvalOutcomeMessage, changeValue, durationWords } from "../src/features/security-controls/approval";
+import { ApprovalDialogProvider, approvalOutcomeMessage, changeValue, durationWords, fieldLabel } from "../src/features/security-controls/approval";
 
 const at = (offsetSeconds: number) => new Date(Date.now() + offsetSeconds * 1000).toISOString();
 const approval = (over: Partial<Approval> = {}): Approval => ({
@@ -216,6 +216,14 @@ describe("words", () => {
     expect(approvalOutcomeMessage(apiError(403, "STEP_UP_REQUIRED"))).toContain("it was not given");
     expect(approvalOutcomeMessage(apiError(409, "APPROVAL_INVALID", { reason: "mismatch" }))).toContain("a different change");
     expect(approvalOutcomeMessage(apiError(409, "VERSION_CONFLICT"))).toBeNull();
+  });
+
+  it("names the fields of a machine identity's approval (admin-step-up), and leaves their words as the server wrote them", () => {
+    expect(fieldLabel("credentialExpiry")).toBe("Credential expires");
+    expect(fieldLabel("credentialUses")).toBe("Credential uses");
+    expect(fieldLabel("claims")).toBe("Required claims");
+    expect(changeValue("credentialExpiry", "after 1 day")).toBe("after 1 day");
+    expect(changeValue("credentialExpiry", null)).toBe("none");
   });
 });
 

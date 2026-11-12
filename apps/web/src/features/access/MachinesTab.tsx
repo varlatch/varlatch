@@ -37,6 +37,7 @@ import {
 } from "../../components/ui";
 import { CodeBlock, CopyButton } from "../../components/CodeBlock";
 import { Dialog, useConfirm, usePrompt } from "../../components/Dialog";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 import { FilterInput, Highlight, matchesFilter } from "../../components/FilterInput";
 import { Tabs } from "../../components/PageHeader";
 import { useToast } from "../../components/Toast";
@@ -47,6 +48,14 @@ import { useIdentities } from "./shared";
 import { KIND_AUTH, KIND_HELP, KindIcon } from "./model";
 import { MachineReachPanel, reachKey } from "./MachineReach";
 import { lifetimeError, lifetimeHint, useEnforcedLifetime } from "./credentialLifetime";
+
+/**
+ * An error for the person. With admin-step-up enforced (ADR-0054), creating
+ * a machine, issuing a credential, reactivating a machine, and adding or
+ * removing an OIDC binding need an approval: a step-up not given, or one
+ * the server refused, gets its own words.
+ */
+const failureMessage = (err: unknown) => approvalOutcomeMessage(err) ?? errorMessage(err);
 
 /**
  * Machines: non-human identities and how each signs in. Token kinds show
@@ -92,7 +101,7 @@ export function MachinesTab({ org, onGrant }: { org: string; onGrant: (identityI
     void qc.invalidateQueries({ queryKey: ["identities", org] });
     void qc.invalidateQueries({ queryKey: reachKey(org) });
   };
-  const lifecycleError = (err: unknown) => toast.error("That did not work", { description: errorMessage(err) });
+  const lifecycleError = (err: unknown) => toast.error("That did not work", { description: failureMessage(err) });
   const rename = useMutation({
     mutationFn: ({ id, next }: { id: string; next: string }) => api.renameIdentity(org, id, next),
     onSuccess: invalidate,
@@ -368,7 +377,7 @@ function OidcBindings({ org, identity }: { org: string; identity: OrgIdentity })
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeOidcBinding(org, identity.id, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
-    onError: (err) => toast.error("Could not remove the binding", { description: errorMessage(err) }),
+    onError: (err) => toast.error("Could not remove the binding", { description: failureMessage(err) }),
   });
   const items = bindings.data?.items ?? [];
   return (
@@ -437,7 +446,7 @@ function OidcBindings({ org, identity }: { org: string; identity: OrgIdentity })
               <Input data-autofocus data-testid="oidc-subject" mono className="w-full" value={subject} placeholder="repo:acme/api:*" onChange={(e) => setSubject(e.target.value)} />
             </Field>
           </div>
-          {create.error && <p className="text-sm text-deny">{errorMessage(create.error)}</p>}
+          {create.error && <p className="text-sm text-deny">{failureMessage(create.error)}</p>}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setAdding(false)}>
               Cancel
@@ -643,7 +652,7 @@ function IssueCredentialDialog({
         <Field label="Token lifetime (seconds)" hint={lifetimeHint(enforced)} error={ttlError}>
           <Input data-testid="issue-credential-ttl" mono className="w-full" placeholder="7776000" value={ttlSeconds} invalid={!ttlValid} onChange={(e) => setTtlSeconds(e.target.value.trim())} />
         </Field>
-        {issue.error && <p className="text-sm text-deny">{errorMessage(issue.error)}</p>}
+        {issue.error && <p className="text-sm text-deny">{failureMessage(issue.error)}</p>}
         <button type="submit" hidden />
       </form>
     </Dialog>
@@ -831,7 +840,7 @@ function NewMachineDialog({
             </Field>
           </div>
         )}
-        {create.error && <p className="text-sm text-deny">{errorMessage(create.error)}</p>}
+        {create.error && <p className="text-sm text-deny">{failureMessage(create.error)}</p>}
         <button type="submit" hidden />
       </form>
     </Dialog>

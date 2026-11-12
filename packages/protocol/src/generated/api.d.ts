@@ -3365,7 +3365,7 @@ export interface components {
              * @description The semantic operation, not the HTTP route.
              * @enum {string}
              */
-            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke";
+            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke" | "identity.create" | "credential.issue" | "identity.reactivate" | "oidc_binding.create" | "oidc_binding.delete";
             /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
             organization: {
                 id: string;
