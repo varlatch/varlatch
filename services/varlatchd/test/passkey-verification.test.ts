@@ -523,7 +523,8 @@ describe("every /v1/organizations/:org route", () => {
     expect(out.succeededOff.length, out.succeededOff.join("\n")).toBeGreaterThan(80);
     expect(out.wrong, "answers under enforce that break the boundary").toEqual([]);
     expect(out.misclassified, "routes decided elsewhere than the inventory says (helpers/route-access.ts)").toEqual([]);
-    expect(out.offDiffers, `off-mode answers and effects that differ from ${OFF_BASELINE.source}`).toEqual([]);
+    // Joined, so a difference is shown in full.
+    expect(out.offDiffers.join("\n"), `off-mode answers and effects that differ from ${OFF_BASELINE.source}`).toBe("");
     expect(out.changed, "effects of refused or earlier-refused requests under enforce").toEqual([]);
     // Every nesting level's missing resource was tried somewhere and kept its not-found.
     expect(out.notFoundKept).toBeGreaterThan(150);

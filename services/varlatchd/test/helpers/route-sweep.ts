@@ -176,15 +176,20 @@ export function changedTables(before: Map<string, string>, after: Map<string, st
 }
 
 /**
- * A JSON body's shape: object keys and value types, an array as its first
- * element's shape. A key that is an id (a map keyed by credential, say)
- * becomes "<id>": ids differ from run to run.
+ * A JSON body's shape: object keys and value types. Order never matters:
+ * an array is the sorted set of its elements' distinct shapes, and the
+ * entries of a map keyed by ids (credentials by id, say) collapse into one
+ * "<id>" key with the same set, since ids differ from run to run.
  */
 export function shapeOf(value: unknown): unknown {
-  if (Array.isArray(value)) return value.length === 0 ? [] : [shapeOf(value[0])];
+  const set = (items: unknown[]) => [...new Set(items.map((i) => JSON.stringify(shapeOf(i))))].sort().map((j) => JSON.parse(j) as unknown);
+  if (Array.isArray(value)) return set(value);
   if (value !== null && typeof value === "object") {
-    const id = (k: string) => (/^[a-z]+_[a-z0-9]{16,}$/.test(k) ? "<id>" : k);
-    return Object.fromEntries(Object.keys(value).sort().map((k) => [id(k), shapeOf((value as Record<string, unknown>)[k])]));
+    const entries = Object.entries(value as Record<string, unknown>);
+    const isId = (k: string) => /^[a-z]+_[a-z0-9]{16,}$/.test(k);
+    const ids = entries.filter(([k]) => isId(k)).map(([, v]) => v);
+    const named = entries.filter(([k]) => !isId(k)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return Object.fromEntries([...named.map(([k, v]) => [k, shapeOf(v)]), ...(ids.length > 0 ? [["<id>", set(ids)]] : [])]);
   }
   return value === null ? "null" : typeof value;
 }
