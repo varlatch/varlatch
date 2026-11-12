@@ -9,7 +9,6 @@ import type { CredentialRow, IdentityRow } from "../auth/credentials.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError } from "../domain/errors.js";
 import { getOrgRole } from "../domain/orgs.js";
-import { passkeyVerificationRequired, type EntryBlock } from "../domain/passkeyverification.js";
 
 export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   AUTHENTICATION_REQUIRED: 401,
@@ -53,16 +52,13 @@ export function errorBody(code: ErrorCode, message: string, reqId: string, detai
   return { error: { code, message, requestId: reqId, ...(details ? { details } : {}) } };
 }
 
-/** The request variable that carries an Organization entry check's report to the request's outcome (http/organization.ts). */
-export const ENTRY_REPORT = "organizationEntryReport";
 /**
- * The request variable that carries a passkey-verification block, noted
- * where the request entered an Organization that enforces the control
- * (http/organization.ts), to the request's authorization (decide).
+ * The request variables naming the first action the request was authorized
+ * for (decide), and its resource: what a passkey-verification report counts
+ * the request as, and what its refusal's audit event names (http/app.ts).
  */
-export const ENTRY_BLOCK = "organizationEntryBlock";
-/** The request variable naming the first action the request was authorized for (decide). */
 export const AUTHORIZED_ACTION = "authorizedAction";
+export const AUTHORIZED_RESOURCE = "authorizedResource";
 
 export interface Principal {
   identity: IdentityRow;
@@ -233,15 +229,20 @@ export async function decide(
 
   const result = evaluate({ action, resource, orgRole: role, grants, requirements, tailnetContext });
   if (result.allowed) {
-    // passkey-verification under enforce (ADR-0054 Decision 7): an access
-    // this request would have been allowed, by a person whose sign-in the
-    // Organization does not accept, is refused here, after every other
-    // denial (existence hiding included) had its chance to answer.
-    const blocked = entryBlockDenial(c, principal, resource, action);
-    if (blocked) return blocked;
-    // The first action this request was authorized for: what a
-    // passkey-verification report counts it as (http/organization.ts).
-    if (!c.get(AUTHORIZED_ACTION)) c.set(AUTHORIZED_ACTION, action);
+    // Allowed means: go on to the authorized existence checks. Not yet any
+    // effect or disclosure: passkey-verification decides at its checkpoint
+    // after them (domain/requestaccess.ts), not here.
+    // The first action this request was authorized for, and its resource:
+    // what a passkey-verification report counts it as, and what its
+    // refusal names (http/app.ts).
+    if (!c.get(AUTHORIZED_ACTION)) {
+      c.set(AUTHORIZED_ACTION, action);
+      c.set(AUTHORIZED_RESOURCE, {
+        organizationId: resource.organizationId,
+        projectId: resource.projectId ?? null,
+        environmentId: resource.environment?.id ?? null,
+      });
+    }
     return { allowed: true, evaluation: result };
   }
 
@@ -294,51 +295,6 @@ export async function decide(
       ? new DomainError("PERMISSION_DENIED", "Not authorized for this action")
       : new DomainError("RESOURCE_NOT_FOUND", "Organization not found"),
   };
-}
-
-/**
- * The passkey-verification refusal for a request that entered this
- * Organization with a block noted (ENTRY_BLOCK), as a denial with its
- * audit event (authorization.denied, metadata.reason
- * passkey_verification_required and what the sign-in lacks); null when
- * the request carries no block for this Organization. Pure, like decide.
- */
-export function entryBlockDenial(
-  c: Context,
-  principal: Principal,
-  resource: Pick<ResourceContext, "organizationId" | "projectId" | "environment">,
-  action: Action | null,
-): Denied | null {
-  const block = c.get(ENTRY_BLOCK) as EntryBlock | undefined;
-  if (!block || block.organizationId !== resource.organizationId) return null;
-  return {
-    allowed: false,
-    error: passkeyVerificationRequired(block.reason),
-    denialEvent: {
-      eventType: "authorization.denied",
-      decision: "deny",
-      actorIdentityId: principal.identity.id,
-      credentialId: principal.credentialId,
-      organizationId: resource.organizationId,
-      action,
-      resource: {
-        projectId: resource.projectId ?? null,
-        environmentId: resource.environment?.id ?? null,
-      },
-      metadata: { reason: "passkey_verification_required", evidence: block.reason },
-      requestId: c.get("requestId") as string,
-    },
-  };
-}
-
-/**
- * For a route whose authorization does not go through decide: refuse a
- * request that entered this Organization with a passkey-verification
- * block, once the route's own checks allowed it. Recorded, then thrown.
- */
-export async function refuseBlockedEntry(ctx: AppCtx, c: Context, principal: Principal, organizationId: string, action: Action | null = null): Promise<void> {
-  const blocked = entryBlockDenial(c, principal, { organizationId }, action);
-  if (blocked) await reject(ctx, blocked);
 }
 
 /** Record a denial's audit event, if it has one. Allowed decisions record nothing. */

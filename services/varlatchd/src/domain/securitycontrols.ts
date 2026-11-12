@@ -187,6 +187,18 @@ export function controlModeUnavailable(control: SecurityControlName, mode: Contr
   );
 }
 
+/**
+ * A control changed in this Organization: bump its security epoch, under
+ * the Organization row lock FOR UPDATE the change already holds (lock order
+ * step 1: reuse, no new lock). A writer that locks the row afterwards from
+ * a SERIALIZABLE snapshot taken before this commit fails to serialize and
+ * runs again, so it reads the new mode (ADR-0054 Decision 2,
+ * domain/requestaccess.ts).
+ */
+async function bumpSecurityEpoch(db: Querier, organizationId: string): Promise<void> {
+  await db.query("UPDATE organizations SET security_epoch = security_epoch + 1 WHERE id = $1", [organizationId]);
+}
+
 export interface ControlChange {
   control: ControlState;
   changed: boolean;
@@ -280,6 +292,7 @@ export async function changeControl(
       [input.organizationId, input.control, next.mode, next.config ? JSON.stringify(next.config) : null, current.version + 1,
         input.actorIdentityId],
     );
+    await bumpSecurityEpoch(db, input.organizationId);
     const updated = await readControl(db, input.organizationId, input.control);
     await recordAuditEvent(db, {
       eventType: "security_control.changed",
@@ -351,6 +364,7 @@ export async function resetControls(
         );
       }
     }
+    if ([...before.values()].some((c) => c.mode !== "off")) await bumpSecurityEpoch(db, org.id);
     for (const control of controls) {
       const current = before.get(control)!;
       const version = current.mode !== "off" ? current.version + 1 : current.version;

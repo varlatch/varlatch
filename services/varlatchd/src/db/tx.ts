@@ -43,6 +43,30 @@ export interface TxScope {
 
 const scopes = new AsyncLocalStorage<TxScope>();
 
+/**
+ * One attempt of a transaction or snapshot: what code running inside it may
+ * note for the attempt only (requestaccess.ts keeps the passkey-verification
+ * decision it captured under the Organization lock here). A retry of a
+ * serializable transaction is a new attempt that starts empty; a nested
+ * withTx joins the attempt it runs in. Nothing here is read by the database
+ * layer itself.
+ */
+export interface TxAttempt {
+  readonly kind: "transaction" | "serializable" | "snapshot";
+  readonly notes: Map<symbol, unknown>;
+}
+
+const attempts = new AsyncLocalStorage<TxAttempt>();
+
+/** The transaction or snapshot attempt this async flow runs in, if any. */
+export function currentTxAttempt(): TxAttempt | undefined {
+  return attempts.getStore();
+}
+
+function inAttempt<T>(kind: TxAttempt["kind"], body: () => Promise<T>): Promise<T> {
+  return attempts.run({ kind, notes: new Map() }, body);
+}
+
 /** The open transaction this async flow runs in on the shared connection `db`, if any. */
 export function openTxScope(db: Querier): TxScope | undefined {
   for (let s = scopes.getStore(); s; s = s.outer) if (s.open && s.db === db) return s;
@@ -80,7 +104,7 @@ export async function withTx<T>(db: Querier, fn: (db: Querier) => Promise<T>): P
     await db.query("BEGIN");
     inTx.add(db);
     try {
-      const result = await fn(db);
+      const result = await inAttempt("transaction", () => fn(db));
       await db.query("COMMIT");
       return result;
     } catch (err) {
@@ -138,7 +162,7 @@ export async function withSerializableTx<T>(
       await db.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
       inTx.add(db);
       try {
-        const result = await fn(db);
+        const result = await inAttempt("serializable", () => fn(db));
         await db.query("COMMIT");
         return { result };
       } catch (err) {
@@ -182,7 +206,7 @@ export async function withSnapshot<T>(
     inTx.add(db);
     try {
       const row = (await db.query("SELECT now() AS now")).rows[0] as { now: Date | string };
-      const result = await fn(db, new Date(row.now));
+      const result = await inAttempt("snapshot", () => fn(db, new Date(row.now)));
       await db.query("COMMIT");
       return result;
     } catch (err) {

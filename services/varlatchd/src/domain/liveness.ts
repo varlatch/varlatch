@@ -3,6 +3,7 @@ import { lockClause, lockedQuery } from "../db/locks.js";
 import type { Querier } from "../db/migrate.js";
 import { DomainError } from "./errors.js";
 import { lockPeople, type PersonRef } from "./personlocks.js";
+import { captureOrganizationAccess, requireOrganizationAccess } from "./requestaccess.js";
 
 /**
  * THE LOCK ORDER (ADR-0054 amendment E). Every transaction that takes row
@@ -113,6 +114,21 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  *   deletion worker after its SKIP LOCKED claim of steps 1.
  */
 
+/*
+ * PASSKEY-VERIFICATION (ADR-0054 Decisions 2 and 7, requestaccess.ts). A
+ * request's outcome is captured right after the Organization row is
+ * locked and checked (its deletion and freeze checks included), in a
+ * statement of its own: a control change holds that row FOR UPDATE and
+ * bumps its security_epoch, so a writer either commits before the change
+ * or reads the new mode; a SERIALIZABLE writer whose snapshot predates the
+ * change cannot lock the row (40001) and runs again. The checkpoint that
+ * applies the outcome runs once the whole scope is locked and live, unless
+ * the writer defers it (accessCheck: "deferred") because it finds out
+ * whether its target exists only after the lock; it then calls
+ * requireOrganizationAccess itself, after that lookup and before its first
+ * write. No lock is taken for either: they only read.
+ */
+
 export type LockMode = "key share" | "no key update" | "update";
 
 export interface LiveScope {
@@ -142,6 +158,14 @@ export interface LiveScope {
   /** Environments of the Project, locked in ascending ID order. */
   environmentIds?: string[] | undefined;
   environmentMode?: LockMode | undefined;
+  /**
+   * When the request's passkey-verification checkpoint runs: by default
+   * here, once the scope is locked and live. "deferred": the writer looks
+   * its target up after the lock (so a missing one keeps its not-found)
+   * and calls requireOrganizationAccess itself before its first write.
+   * The outcome is captured here either way.
+   */
+  accessCheck?: "here" | "deferred" | undefined;
 }
 
 /**
@@ -163,6 +187,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
   await refuseIfIncidentFrozen(db, scope.organizationId, scope.duringIncidentFreeze);
+  await captureOrganizationAccess(db, scope.organizationId);
 
   // Required by the type, so every writer in src names its people; a caller
   // outside the typechecked code (a test emulating a writer) may pass none.
@@ -195,6 +220,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
       throw new DomainError("RESOURCE_NOT_FOUND", "Environment not found");
     }
   }
+  if (scope.accessCheck !== "deferred") await requireOrganizationAccess(db, scope.organizationId);
 }
 
 /**
@@ -203,7 +229,9 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
  * come between the people and the writer's own checks: an Idempotency-Key
  * claim (step 2.5), whose replay answers from the stored response whatever
  * the Organization's state now. The writer's lockLiveScope afterwards finds
- * these rows held (reuse) and checks liveness as before.
+ * these rows held (reuse) and checks liveness as before. The request's
+ * passkey-verification outcome is captured under the Organization lock
+ * here too, so a replay is checked against it (withIdempotency).
  */
 export async function lockScope(
   db: Querier,
@@ -216,6 +244,7 @@ export async function lockScope(
     `SELECT deleted_at FROM organizations WHERE id = $1 ${lockClause(orgMode)}`,
     [scope.organizationId],
   );
+  await captureOrganizationAccess(db, scope.organizationId);
   await lockPeople(db, scope.people ?? []);
 }
 
