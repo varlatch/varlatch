@@ -120,6 +120,10 @@ fixes.
   operator (`admin reenroll`, or `admin security reset --control
   passkey-verification`). See [Passkey
   verification](docs/reference/security-controls.md#passkey-verification).
+- Dependency update for a published advisory: `@hono/node-server` 2.1.6
+  (GHSA-qv5m-9pm6-hqp3: a connection reset during a WebSocket upgrade could
+  crash the process). varlatchd and the MCP server accept no WebSocket
+  upgrades, so no installation was exposed.
 
 ### Scripts and API
 
