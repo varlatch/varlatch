@@ -175,7 +175,7 @@ async function namesFor(db: Querier, organizationId: string, decls: readonly Gra
       for (const e of d.scope.selector.environmentIds) ids.environments.add(e);
     }
   }
-  const q = async (sql: string, list: Set<string>) => (list.size === 0 ? [] : ((await db.query(sql, [[...list], organizationId])).rows as Record<string, string>[]));
+  const q = async (sql: string, wanted: Set<string>) => (wanted.size === 0 ? [] : ((await db.query(sql, [[...wanted], organizationId])).rows as Record<string, string>[]));
   const identities = await q(
     `SELECT i.id, i.name FROM identities i WHERE i.id = ANY($1)
        AND (i.organization_id = $2 OR EXISTS (SELECT 1 FROM org_memberships m WHERE m.organization_id = $2 AND m.identity_id = i.id))`,
@@ -263,7 +263,10 @@ export async function grantReplaceBinding(db: Querier, org: { id: string }, old:
     const [a, b] = [canonicalJson(from[field]), canonicalJson(to[field])];
     if (a === b) continue;
     const same = before[field] === after[field];
-    changes.push({ field, from: same ? `${before[field]} ${a}` : before[field], to: same ? `${after[field]} ${b}` : after[field], loosens: false });
+    // A safety net only: the labels name every bound part, so they differ
+    // whenever the bound form does. If they ever read the same, the bound
+    // forms are shown too, quoted like everything else.
+    changes.push({ field, from: same ? `${before[field]} ${quoted(a)}` : before[field], to: same ? `${after[field]} ${quoted(b)}` : after[field], loosens: false });
   }
   return {
     operation: "grant.replace",

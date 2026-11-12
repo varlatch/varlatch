@@ -29,11 +29,12 @@
  * zero-width spaces and joiners, bidi overrides, U+FEFF), line and
  * paragraph separators (Zl, Zp), every whitespace but the plain ASCII
  * space (no-break and other spaces among them), and the other default
- * ignorable code points (variation selectors, U+180E, U+3164). Each is
+ * ignorable code points (variation selectors, U+180E, U+3164), and U+2800
+ * (a blank braille pattern, which renders as a space). Each is
  * written as `\u{XXXX}`, so two names that differ only by one never read
  * the same.
  */
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|[^\S ]/gu;
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}\u2800]|[^\S ]/gu;
 const escapeInvisible = (text: string) =>
   text.replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}}`);
 

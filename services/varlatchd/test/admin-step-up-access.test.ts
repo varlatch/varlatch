@@ -793,6 +793,8 @@ describe("under enforce", () => {
     // Invisible and format characters JSON leaves literal are written as code points.
     expect(quoted("reader\u200b")).toBe('"reader\\u{200B}"');
     expect(quoted("a\u202eb\u00a0c\ufeff\u180e\ufe0f\u3164\u007f")).toBe('"a\\u{202E}b\\u{00A0}c\\u{FEFF}\\u{180E}\\u{FE0F}\\u{3164}\\u{007F}"');
+    // A blank braille pattern renders as a space.
+    expect(quoted("sub\u2800")).toBe('"sub\\u{2800}"');
     expect(quoted("plain words, one space")).toBe('"plain words, one space"');
     // Lists and maps: a delimiter, a quote, a bracket or a brace inside a value stays inside its quotes.
     expect(quotedList(["a, b"])).toBe('["a, b"]');
