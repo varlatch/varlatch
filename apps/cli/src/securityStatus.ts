@@ -13,7 +13,7 @@ import {
   type VarlatchClient,
 } from "@varlatch/sdk";
 import type { Requirement } from "@varlatch/protocol";
-import { lifetime } from "./securityControls.js";
+import { enforceable, lifetime } from "./securityControls.js";
 import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
 
 /**
@@ -116,8 +116,10 @@ export interface SecurityStatus {
   organization: string;
   /** The open incident freeze (ADR-0055), or null; null too where the server has none. */
   incidentFreeze: IncidentFreeze | null;
-  /** False while this server does not offer enforce. */
+  /** Whether this server can enforce any control. */
   enforceAvailable: boolean;
+  /** The controls this server can enforce (each item's availableModes says the same). */
+  enforceable: SecurityControlName[];
   controls: {
     availableModes: SecurityControlMode[];
     /** The counts' window; null when the counts are unavailable. */
@@ -202,7 +204,8 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
     });
   return {
     organization,
-    enforceAvailable: list.availableModes.includes("enforce"),
+    enforceAvailable: enforceable(list).length > 0,
+    enforceable: enforceable(list),
     controls: {
       availableModes: list.availableModes,
       window: report ? { days: report.days, since: report.since, generatedAt: report.generatedAt } : null,
@@ -285,7 +288,10 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
     if (more > 0) lines.push(`      and ${plural(more, "more entry", "more entries")} (--json lists all)`);
   }
   lines.push(
-    `  Modes: ${s.controls.availableModes.join(", ")}.${s.enforceAvailable ? "" : " Enforce: coming in a later release."}`,
+    s.enforceable.length > 0
+      ? `  Modes: ${s.controls.availableModes.join(", ")}, and enforce for ${s.enforceable.join(", ")}.` +
+          (s.enforceable.length < s.controls.items.length ? " Enforce for the others: coming in a later release." : "")
+      : `  Modes: ${s.controls.availableModes.join(", ")}. Enforce: coming in a later release.`,
     "  Report counts what a control would have done, without refusing or changing anything.",
     "  Turning a control down or off, or a lifetime up, needs your approval with a trusted passkey.",
   );

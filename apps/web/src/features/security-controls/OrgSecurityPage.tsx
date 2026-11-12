@@ -339,7 +339,9 @@ function RequirementsCard({ org, count, protection }: { org: string; count: numb
       <p className="border-t border-bd px-5 py-2.5 text-xs text-muted">
         {count === 0
           ? "Reading values is governed by grants alone. Add one in Access, Advanced, for example so that production values are only read from devices tagged tag:prod."
-          : "Requirement protection counts each edit or revocation without an approval; with enforce, changing one would need an approval with a trusted passkey."}
+          : protection === "enforce"
+            ? "Requirement protection is enforced: editing or removing one needs the approval of the person asking, with a trusted passkey."
+            : "Requirement protection counts each edit or revocation without an approval; with enforce, changing one would need an approval with a trusted passkey."}
       </p>
     </SectionCard>
   );

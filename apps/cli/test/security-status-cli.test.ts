@@ -292,9 +292,9 @@ describe("varlatch security status", () => {
     expect(r.code, why(r)).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(Object.keys(doc)).toEqual([
-      "version", "organization", "enforceAvailable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable", "incidentFreeze",
+      "version", "organization", "enforceAvailable", "enforceable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable", "incidentFreeze",
     ]);
-    expect(doc).toMatchObject({ version: expect.any(Number), organization: "acme", enforceAvailable: false, unavailable: [] });
+    expect(doc).toMatchObject({ version: expect.any(Number), organization: "acme", enforceAvailable: false, enforceable: [], unavailable: [] });
     expect(doc.controls.availableModes).toEqual(["off", "report"]);
     expect(doc.controls.window).toEqual({ days: 30, since: "2026-10-11T23:00:00.000Z", generatedAt: "2026-11-10T23:00:00.000Z" });
     expect(doc.controls.items.map((c: { control: string }) => c.control)).toEqual([
@@ -420,6 +420,7 @@ describe("status format", () => {
     const status: SecurityStatus = {
       organization: "acme",
       enforceAvailable: false,
+      enforceable: [],
       controls: {
         availableModes: ["off", "report"],
         window: { days: 30, since: "2026-10-11T23:00:00.000Z", generatedAt: "2026-11-10T23:00:00.000Z" },
@@ -441,6 +442,33 @@ describe("status format", () => {
     const at = lines.indexOf("  passkey-verification  report  nothing counted");
     expect(at).toBeGreaterThan(0);
     expect(lines[at + 1]).toBe("      only allowed, successful requests count; access counts are best-effort, so this is a lower bound");
+  });
+
+  it("names the controls this server can enforce, and says the others come later", () => {
+    const item = (name: SecurityControl["control"], modes: ("off" | "report" | "enforce")[]) => ({
+      ...control(name, { availableModes: modes }),
+      explanation: CONTROL_EXPLANATIONS[name],
+      counts: null,
+    });
+    const status: SecurityStatus = {
+      organization: "acme",
+      enforceAvailable: true,
+      enforceable: ["requirement-protection"],
+      controls: {
+        availableModes: ["off", "report"],
+        window: null,
+        items: [item("requirement-protection", ["off", "report", "enforce"]), item("admin-step-up", ["off", "report"])],
+      },
+      approvalKeys: null,
+      credentialReview: null,
+      requirements: null,
+      checklist: CHECKLIST,
+      unavailable: [],
+      incidentFreeze: null,
+    };
+    expect(securityStatusLines(status, Date.now())).toContain(
+      "  Modes: off, report, and enforce for requirement-protection. Enforce for the others: coming in a later release.",
+    );
   });
 
   it("says how long until an expiry in whole days", () => {
