@@ -2,7 +2,7 @@
 
 This page lists what a host needs to run a Varlatch installation with the
 canonical Docker Compose deployment, the one `varlatch setup` installs from
-a release bundle. [Getting started](../getting-started.md#run-an-installation)
+a release bundle. [Getting started](../run-an-installation.md)
 walks you through the installation itself, and
 [Configuration](configuration.md) lists every setting.
 
@@ -43,9 +43,9 @@ limits do not hold under emulation on a small host.
   tested with Docker 29 and Compose 5.
 - **Node.js 22, 24 or 26, with its current security fixes.** The operator
   CLI is a single file that needs only Node.js:
-  [Get the CLI](../getting-started.md#get-the-cli). On a Node.js release
+  [Get the CLI](../reference/install-the-cli.md). On a Node.js release
   without those fixes it prints a warning:
-  [Node.js version](../getting-started.md#nodejs-version).
+  [Node.js version](../reference/install-the-cli.md#nodejs-version).
 - **systemd,** only if you use the reference backup timer in
   [`infra/host-backup`](../../infra/host-backup/README.md).
 

@@ -9,6 +9,7 @@ import {
 } from "@varlatch/context";
 import { DeviceSignInRedirectError, VarlatchApiError, VarlatchClient, type DeviceSignInPoll } from "@varlatch/sdk";
 import { EXIT, networkFailure } from "./exitCodes.js";
+import { noteDefaultServer } from "./serverCommand.js";
 import { replacedCredential, revokeStoredCredential } from "./revoke.js";
 
 /**
@@ -419,6 +420,7 @@ async function storeCollected(
   } catch (err) {
     io.err(`varlatch: the pending sign-in could not be removed (${err instanceof Error ? err.message : String(err)}); the credential is stored.`);
   }
+  noteDefaultServer(server, io.err);
   if (io.json) io.json({ state: "signed-in", credentialId: credential.id, expiresAt: credential.expiresAt });
   else io.out(`Logged in to ${server} (server ${meta.serverVersion}, API v${meta.apiMajor}). The credential expires at ${credential.expiresAt}.`);
   if (replaced) {

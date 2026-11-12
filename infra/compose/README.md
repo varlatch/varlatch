@@ -4,9 +4,8 @@ This directory is Varlatch's deployment contract. Coolify deployments
 use this same Compose file through Coolify's Compose support: same topology,
 different UI clicks.
 
-New to Varlatch? [Getting started](https://github.com/varlatch/varlatch/blob/main/docs/getting-started.md) goes from
-nothing to `varlatch run` and is the shorter read. This page covers every
-deployment option.
+New to Varlatch? [Run an installation](https://github.com/varlatch/varlatch/blob/main/docs/run-an-installation.md)
+is the shorter read. This page covers every deployment option.
 
 **What it runs:** `postgres`; `varlatchd`, the Secret Plane, after the
 one-shot `varlatch-migrate`; `convex-backend`, the Application Plane, whose
@@ -371,7 +370,7 @@ started with non-default files or project name, set Compose's own
 `docker compose down --volumes --rmi all` in the installation's directory,
 then delete the directory. This erases every value and every key on the
 host, so only a backup and the off-host recovery keys bring anything back.
-[What Varlatch puts on your machine](../../docs/getting-started.md#what-varlatch-puts-on-your-machine)
+[What Varlatch puts on your machine](../../docs/reference/uninstall.md#what-varlatch-puts-on-your-machine)
 lists everything setup and the CLI write, and what to remove outside the
 host.
 
@@ -395,7 +394,7 @@ through the host, made explicit and audited here.
 A passkey enrolled through a recovery link, like one from `varlatch admin
 reenroll`, is trusted. It is also the way back for a person whose passkeys
 are all unconfirmed or lost: a session cannot make a passkey trusted on its
-own (see [Your passkeys](../../docs/getting-started.md#your-passkeys)).
+own (see [Your passkeys](../../docs/reference/passkeys-and-sessions.md#your-passkeys)).
 
 When nobody can give the approval an organization's security controls ask
 for (a lost passkey, say), set them back to off from the host:

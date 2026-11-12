@@ -64,8 +64,47 @@ fixes.
   `Varlatch-Approval` header once it is approved. A removal whose
   Requirement changed meanwhile answers `STATE_CHANGED`.
 
+### CLI
+
+- **A default server, so you type the address once.** The first server you
+  sign in to becomes your default server. Outside a repository, commands
+  that need no Project (`org create`, `org list`, `project create`, `org
+  delete`, `org freeze`, `security …`, `audit export --deleted-org`,
+  `whoami`, `logout`) use it when you give no `--server` and set no
+  `VARLATCH_SERVER` (with no default, the only server you are signed in
+  to, as `whoami` and `logout` did), and `varlatch login` without `--server` signs in again
+  to the server a command here would use. A repository never uses it: its
+  `varlatch.toml` names its own server, so signing in somewhere else never
+  moves a repository. Signing in to another server never replaces the
+  default; `varlatch server` shows it and `varlatch server use <url>`
+  changes it. It is kept in `settings.json`, next to `credentials.json`.
+  See [The default server](docs/reference/passkeys-and-sessions.md#the-default-server).
+- **`varlatch init` always names the server** in `varlatch.toml`: from
+  `--server`, `VARLATCH_SERVER`, your default server, or the only server
+  you are signed in to.
+- **`context --json` and `status --json`** report `serverSource` in the
+  repository context: `flag`, `env-var`, `local-override` or `repository`.
+
+### Documentation
+
+- **Getting started is split by reader.** It now sends you to a short
+  page for where you are: [Join a team](docs/join-a-team.md) when you
+  were invited, [Set up a project](docs/set-up-a-project.md), or
+  [Run an installation](docs/run-an-installation.md). The rest moved to
+  reference pages: [Install the CLI](docs/reference/install-the-cli.md),
+  [Members and access](docs/reference/members.md),
+  [Passkeys and sessions](docs/reference/passkeys-and-sessions.md),
+  [CI and other machines](docs/reference/ci-and-machines.md) and
+  [Removing Varlatch](docs/reference/uninstall.md). Links to the old
+  sections on docs.varlatch.com, including those in earlier releases' CLI
+  and dashboard, lead to the new places.
+
 ### Upgrading
 
+- `varlatch init` with no server to write (no `--server`, no
+  `VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
+  It used to write a `varlatch.toml` without a server, which every later
+  command rejected. Pass `--server`, or sign in first.
 - Migration 44 adds the freeze history. Restoring a backup taken before a
   freeze brings the organization back unfrozen: freeze it again after the
   restore.

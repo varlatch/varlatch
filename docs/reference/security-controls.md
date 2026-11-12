@@ -97,7 +97,7 @@ It has five parts:
   `requirement-protection`, which protects them.
 - **Checklist.** A few things worth doing whatever the controls say, each
   linked to its page in these docs: report mode (this page), trusted
-  passkeys ([Your passkeys](../getting-started.md#your-passkeys)),
+  passkeys ([Your passkeys](passkeys-and-sessions.md#your-passkeys)),
   finding copies of secrets ([`varlatch scan
   --find-files`](secret-scanning.md#finding-copies-of-secrets)), backups
   the host cannot erase ([Object
@@ -310,7 +310,7 @@ What holds:
 ### Trusted passkeys only
 
 Only a **trusted** passkey can approve (see [Your
-passkeys](../getting-started.md#your-passkeys)). A passkey you added in the
+passkeys](passkeys-and-sessions.md#your-passkeys)). A passkey you added in the
 dashboard while signed in is unconfirmed until you confirm it with a
 trusted one: someone with a stolen session could add a passkey of their
 own, and it must not be able to approve. Signing in still works with any of
