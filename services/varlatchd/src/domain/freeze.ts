@@ -7,6 +7,7 @@ import { closeOpenApprovals, type ApprovalChange, type ApprovalGate, type UsedAp
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, openFreeze } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { lockPerson } from "./personlocks.js";
 
 /**
@@ -289,9 +290,13 @@ export async function liftFreeze(
       duringIncidentFreeze: "freeze",
       // Step 2 comes later: closeOpenApprovals' people, or the requester.
       people: [],
+      accessCheck: "deferred",
     });
     await input.authorizeIn(db);
     const freeze = await requireOpenFreeze(db, input.organizationId, input.freezeId);
+    // The freeze exists; then passkey-verification, before any approval is
+    // asked for or consumed (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, input.organizationId);
     // Step 2: the requester FOR UPDATE, whose approval is consumed
     // (consumption takes no person lock of its own).
     await lockPerson(db, input.actor.id, "update");

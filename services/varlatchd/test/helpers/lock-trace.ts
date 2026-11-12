@@ -4,6 +4,7 @@ import { appendFileSync } from "node:fs";
 import { LOCK_TAG } from "../../src/db/locks.js";
 import type { Querier } from "../../src/db/migrate.js";
 import { openTxScope, shareConnection } from "../../src/db/tx.js";
+import { accessMarks } from "../../src/domain/requestaccess.js";
 
 /**
  * The lock-order completeness check (ADR-0054 amendment E), test-time only:
@@ -45,6 +46,17 @@ import { openTxScope, shareConnection } from "../../src/db/tx.js";
  * public table, a client encoding other than UTF-8. Table names in tags
  * are the public base tables the migrations create. The concurrency tests
  * on real PostgreSQL (lock-order-postgres and others) back it up.
+ *
+ * It also checks passkey-verification's coverage at runtime (ADR-0054
+ * Decision 7, src/domain/requestaccess.ts), with the same gating: a
+ * transaction begun inside an authenticated request that entered an
+ * Organization, or that locks one, must lock the Organization, capture the
+ * request's outcome and pass its checkpoint before its first business
+ * write; a statement outside a transaction in such a request may write
+ * only once the request decided every Organization it entered. The
+ * wrapper records the request's captures and checkpoints in the trace as
+ * "access" rows, in statement order ({@link checkAccessTrace}); they are
+ * kept apart from the lock-order check, which never sees them.
  */
 
 export type LockOrderMode = "off" | "report" | "migrated" | "all";
@@ -300,7 +312,7 @@ CREATE TRIGGER a_varlatch_lock_trace_session_end AFTER DELETE ON public."session
 // ---------------------------------------------------------------------------
 // The check
 
-export interface TraceRow { seq: number; tbl: string; key: string; mode: string; kind: "explicit" | "write" | "insert" | "reference" | "consume" }
+export interface TraceRow { seq: number; tbl: string; key: string; mode: string; kind: "explicit" | "write" | "insert" | "reference" | "consume" | "access" }
 
 const STRENGTH: Record<string, number> = { "key share": 1, share: 2, "no key update": 3, update: 4, insert: 5 };
 const cmpStep = (a: [number, number], b: [number, number]) => a[0] - b[0] || a[1] - b[1];
@@ -369,6 +381,40 @@ export function checkTrace(rows: TraceRow[]): string[] {
     if (last !== undefined && r.key < last) problems.push(`out of id order: ${show(r)} after ${r.tbl}[${last}]`);
     if (last === undefined || r.key > last) lastKey.set(r.tbl, r.key);
   }
+  return problems;
+}
+
+/**
+ * Writes that need no passkey-verification checkpoint before them, each
+ * with its reason. Everything else a request's transaction writes in an
+ * Organization is a business write.
+ */
+export const ACCESS_BOOKKEEPING: Readonly<Record<string, string>> = {
+  audit_events: "denial audits and outbound refusal records; an operation's own event follows its business writes",
+  audit_position: "the audit counter, taken with an audit insert",
+  idempotency_keys: "the Idempotency-Key claim (step 2.5): tentative, it rolls back with a refused request",
+  security_control_counters: "report-mode counters, counted after the checkpoint or by the access-count worker outside any request",
+  member_exposure: "the exposure index, written with an audit event",
+  member_integrations: "the integration index, written with an audit event",
+};
+
+const isBusinessWrite = (r: TraceRow) => (r.kind === "write" || r.kind === "insert") && !(r.tbl in ACCESS_BOOKKEEPING);
+
+/**
+ * passkey-verification's coverage in one request transaction's trace: its
+ * first business write comes after an Organization lock, a captured
+ * outcome and a passed checkpoint ("access" rows). Machines' requests are
+ * checked too: their capture reads nothing, but it still runs.
+ */
+export function checkAccessTrace(rows: TraceRow[]): string[] {
+  const first = rows.find(isBusinessWrite);
+  if (!first) return [];
+  const before = rows.filter((r) => r.seq < first.seq);
+  const at = `${first.tbl}[${first.key}] (${first.kind}, #${first.seq})`;
+  const problems: string[] = [];
+  if (!before.some((r) => r.kind === "explicit" && r.tbl === "organizations")) problems.push(`passkey-verification: ${at} written before the Organization was locked`);
+  if (!before.some((r) => r.kind === "access" && r.mode === "captured")) problems.push(`passkey-verification: ${at} written before the request's outcome was captured`);
+  if (!before.some((r) => r.kind === "access" && r.mode === "checked")) problems.push(`passkey-verification: ${at} written before the request's checkpoint`);
   return problems;
 }
 
@@ -842,6 +888,9 @@ function labelOf(stack: string): string {
  */
 const rawFlow = new AsyncLocalStorage<object>();
 
+/** A transaction's passkey-verification coverage state (checkAccessTrace). */
+interface AccessState { request: boolean; entered: boolean; readOnly: boolean; recorded: Set<string> }
+
 /**
  * Wraps a single-connection test database (PGlite) with the trace: refuses
  * untagged locking clauses, records tagged ones, and checks each
@@ -860,7 +909,11 @@ const rawFlow = new AsyncLocalStorage<object>();
  */
 export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode, "off">, options: { checkTestStatements?: boolean } = {}): Q {
   /** The open transaction: its flow, who began it, and its statements still running. */
-  let owner: { key: object; label: string; ending: boolean; running: Set<Promise<unknown>>; tail: Promise<unknown> } | null = null;
+  let owner: {
+    key: object; label: string; ending: boolean; running: Set<Promise<unknown>>; tail: Promise<unknown>;
+    /** passkey-verification coverage: whether a request began it, whether it can write, and the marks recorded so far. */
+    access: AccessState;
+  } | null = null;
   /**
    * Held by the open transaction from its BEGIN to its end, or by a lone
    * wrap. Waiters loop on it in place, never through a helper: they resume
@@ -974,7 +1027,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
    * checked when it has run, as a transaction's are at its end. A failed
    * statement's rows rolled back with it.
    */
-  const lone = async (text: string, params: unknown[] | undefined, label: () => string) => {
+  const lone = async (text: string, params: unknown[] | undefined, label: () => string, marks?: ReturnType<typeof accessMarks>) => {
     while (held) await held;
     hold();
     try {
@@ -989,6 +1042,12 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       if (rows.length > 0) {
         await db.query(`DELETE FROM ${SCHEMA}.trace`);
         checkLone(rows, label());
+        // passkey-verification: a request's write outside a transaction,
+        // once it entered an Organization, only after it decided them all.
+        if (marks?.request && marks.entered.some((id) => !marks.decided.includes(id))) {
+          const write = rows.find(isBusinessWrite);
+          if (write) enforce(label(), [`passkey-verification: ${write.tbl}[${write.key}] written outside a transaction before the request's checkpoint`], rows);
+        }
       }
       if (failed) throw failed.err;
       return res!;
@@ -1003,6 +1062,8 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       // Before any await: the stack still shows who began the transaction,
       // and a raw BEGIN's caller context becomes its flow.
       const label = writerLabel();
+      const marks = accessMarks();
+      const access: AccessState = { request: marks.request, entered: marks.entered.length > 0, readOnly: /\bREAD\s+ONLY\b/i.test(first), recorded: new Set() };
       let key: object | undefined = openTxScope(self);
       if (!key) {
         // A BEGIN without withTx while another such transaction is open or
@@ -1023,7 +1084,7 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         hold();
         try {
           const res = await db.query(text, params);
-          owner = { key: flow, label, ending: false, running: new Set(), tail: Promise.resolve() };
+          owner = { key: flow, label, ending: false, running: new Set(), tail: Promise.resolve(), access };
           return res;
         } catch (err) {
           releaseHeld();
@@ -1051,7 +1112,13 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
       // A transaction that ends in a refusal took its locks too: check it
       // before rolling back. An aborted one cannot be read; it is skipped.
       const rows = await collect();
-      if (rows) enforce(o.label, checkTrace(rows), rows);
+      if (rows) {
+        const locks = rows.filter((r) => r.kind !== "access");
+        enforce(o.label, checkTrace(locks), locks);
+        if (o.access.request && (o.access.entered || locks.some((r) => r.kind === "explicit" && r.tbl === "organizations"))) {
+          enforce(o.label, checkAccessTrace(rows), rows);
+        }
+      }
       owner = null;
       try {
         return await db.query(text, params);
@@ -1059,11 +1126,35 @@ export function lockTraced<Q extends Querier>(db: Q, mode: Exclude<LockOrderMode
         releaseHeld();
       }
     }
-    // Before any await: who runs it, while the stack shows it.
+    // Before any await: who runs it, while the stack shows it, and the
+    // request's passkey-verification marks as they are when it is sent.
     const label = writerAt();
+    const marks = accessMarks();
     if (key && beginning.has(key)) await beginning.get(key)!.then(() => undefined, () => undefined);
-    if (ownedBy(key)) return owned(() => statement(text, params));
-    return lone(text, params, label);
+    if (ownedBy(key)) {
+      const access = owner!.access;
+      if (marks.entered.length > 0) access.entered = true;
+      return owned(async () => {
+        await recordMarks(access, marks);
+        return statement(text, params);
+      });
+    }
+    return lone(text, params, label, marks);
+  };
+
+  /** The request's captures and checkpoints not yet in this transaction's trace, as "access" rows. */
+  const recordMarks = async (access: AccessState, marks: ReturnType<typeof accessMarks>) => {
+    if (!access.request || access.readOnly) return;
+    for (const [mode, ids] of [["captured", marks.captured], ["checked", marks.checked]] as const) {
+      for (const id of ids) {
+        if (access.recorded.has(`${mode}\u0000${id}`)) continue;
+        access.recorded.add(`${mode}\u0000${id}`);
+        await db.query(
+          `INSERT INTO ${SCHEMA}.trace VALUES (txid_current(), nextval('${SCHEMA}.seq'), 'access', $1, $2, 'access')`,
+          [id, mode],
+        );
+      }
+    }
   };
 
   /** One statement: refuses untagged locks, records tagged ones. */

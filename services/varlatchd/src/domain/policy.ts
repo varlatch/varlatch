@@ -346,10 +346,23 @@ export async function requireGrantSubject(db: Querier, organizationId: string, i
   const row = res.rows[0] as { kind: string; organization_id: string | null } | undefined;
   const ok =
     row !== undefined &&
-    (row.kind === "human"
-      ? (await pinLiveMembership(db, organizationId, identityId)) !== null
-      : row.organization_id === organizationId);
+    (row.kind === "human" ? await isLiveMember(db, organizationId, identityId) : row.organization_id === organizationId);
   if (!ok) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+  // The subject exists; passkey-verification before the pin, which writes
+  // (ADR-0054 Decision 7). A removal committed in between: not found.
+  await requireOrganizationAccess(db, organizationId);
+  if (row.kind === "human" && (await pinLiveMembership(db, organizationId, identityId)) === null) {
+    throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+  }
+}
+
+/** Whether the person has a live membership, read without pinning it. */
+async function isLiveMember(db: Querier, organizationId: string, identityId: string): Promise<boolean> {
+  const res = await db.query(
+    "SELECT 1 FROM org_memberships WHERE organization_id = $1 AND identity_id = $2 AND removed_at IS NULL",
+    [organizationId, identityId],
+  );
+  return res.rows.length > 0;
 }
 
 /** Verify the group exists in the org (and, when required, is a Team). */
@@ -387,11 +400,15 @@ export async function addGroupMember(
     const kind = (member.rows[0] as { kind: string } | undefined)?.kind;
     // A person joins only through a live membership, which this pins
     // against a concurrent removal (ADR-0052 Decision 1).
-    if (!kind || (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId)))) {
+    if (!kind || (kind === "human" && !(await isLiveMember(db, organizationId, identityId)))) {
       throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
     }
-    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    // Existence first, then passkey-verification (ADR-0054 Decision 7),
+    // then the pin, which writes.
     await requireOrganizationAccess(db, organizationId);
+    if (kind === "human" && !(await pinLiveMembership(db, organizationId, identityId))) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+    }
     const added = await db.query(
       "INSERT INTO group_members (group_id, identity_id) VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING group_id",
       [groupId, identityId],

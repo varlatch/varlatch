@@ -198,15 +198,17 @@ export function pendingAccessReports(): PendingAccessReport[] {
 /**
  * The current attempt's marks, for the lock-order test harness
  * (test/helpers/lock-trace.ts): whether the transaction serves a request,
- * which Organizations it entered, and which it captured and checked so far.
+ * which Organizations the request entered and decided, and which this
+ * attempt captured and checked so far. Read only; never an input.
  */
-export function accessMarks(): { request: boolean; entered: string[]; captured: string[]; checked: string[] } {
+export function accessMarks(): { request: boolean; entered: string[]; decided: string[]; captured: string[]; checked: string[] } {
   const request = storage.getStore();
   const attempt = currentTxAttempt();
   const access = attempt ? (attempt.notes.get(ATTEMPT) as AttemptAccess | undefined) : undefined;
   return {
     request: request !== undefined,
     entered: request ? [...request.entered] : [],
+    decided: request ? [...request.decided.keys()] : [],
     captured: access ? [...access.captured.keys()] : [],
     checked: access ? [...access.checked] : [],
   };
