@@ -8,9 +8,17 @@ import { Dialog, useConfirm, usePrompt } from "../../components/Dialog";
 import { Drawer } from "../../components/Drawer";
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 import { useIdentities } from "./shared";
 import { ActionPicker } from "./GrantsTab";
 import { KIND_LABEL, actionLabel } from "./model";
+
+/**
+ * An error for the person. With admin-step-up enforced (ADR-0054), every
+ * change here needs an approval: a step-up not given, or one the server
+ * refused, gets its own words.
+ */
+const failureMessage = (err: unknown) => approvalOutcomeMessage(err) ?? errorMessage(err);
 
 /**
  * Roles & teams: the reuse layer. Roles bundle actions, groups bundle
@@ -69,7 +77,7 @@ function RolesColumn({ org }: { org: string }) {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteRole(org, id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["roles", org] }),
-    onError: (err) => toast.error("Could not delete the role", { description: errorMessage(err) }),
+    onError: (err) => toast.error("Could not delete the role", { description: failureMessage(err) }),
   });
   const items = roles.data?.items ?? [];
   const usedBy = (id: string) => (grants.data?.items ?? []).filter((g) => g.roleId === id).length;
@@ -213,7 +221,7 @@ function RoleDrawer({
           <p className="text-[13px] font-medium">Permissions</p>
           <ActionPicker dataAttr={role ? "edit-action" : "role-action"} value={actions} onChange={setActions} />
         </div>
-        {save.error && <p className="text-sm text-deny">{errorMessage(save.error)}</p>}
+        {save.error && <p className="text-sm text-deny">{failureMessage(save.error)}</p>}
       </div>
     </Drawer>
   );
@@ -236,12 +244,12 @@ function GroupsColumn({ org, kind }: { org: string; kind: "group" | "team" }) {
     mutationFn: ({ id, version, name }: { id: string; version: number; name: string }) =>
       isTeam ? api.updateTeam(org, id, { expectedVersion: version, name }) : api.updateGroup(org, id, { expectedVersion: version, name }),
     onSuccess: invalidate,
-    onError: (err) => toast.error("Could not rename", { description: errorMessage(err) }),
+    onError: (err) => toast.error("Could not rename", { description: failureMessage(err) }),
   });
   const remove = useMutation({
     mutationFn: (id: string) => (isTeam ? api.deleteTeam(org, id) : api.deleteGroup(org, id)),
     onSuccess: invalidate,
-    onError: (err) => toast.error(`Could not delete the ${kind}`, { description: errorMessage(err) }),
+    onError: (err) => toast.error(`Could not delete the ${kind}`, { description: failureMessage(err) }),
   });
   const items = list.data?.items ?? [];
   const grantsFor = (id: string) => (grants.data?.items ?? []).filter((g) => g.subjectGroupId === id).length;
@@ -381,7 +389,7 @@ function NewGroupDialog({
         <Field label="Name">
           <Input data-autofocus data-testid={`${kind}-name`} mono className="w-full" placeholder={kind === "team" ? "backend" : "oncall"} value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {create.error && <p className="mt-2 text-sm text-deny">{errorMessage(create.error)}</p>}
+        {create.error && <p className="mt-2 text-sm text-deny">{failureMessage(create.error)}</p>}
       </form>
     </Dialog>
   );
@@ -429,6 +437,7 @@ function OwnedProjectsPreview({ org, teamId }: { org: string; teamId: string }) 
 function MembersEditor({ org, groupId, isTeam }: { org: string; groupId: string; isTeam: boolean }) {
   const { api } = useSession();
   const qc = useQueryClient();
+  const toast = useToast();
   const identities = useIdentities(org);
   const key = ["group-members", org, groupId];
   const members = useQuery({ queryKey: key, queryFn: () => api.listGroupMembers(org, groupId) });
@@ -440,10 +449,12 @@ function MembersEditor({ org, groupId, isTeam }: { org: string; groupId: string;
       setIdentityId("");
       invalidate();
     },
+    onError: (err) => toast.error("Could not add the member", { description: failureMessage(err) }),
   });
   const remove = useMutation({
     mutationFn: (id: string) => (isTeam ? api.removeTeamMember(org, groupId, id) : api.removeGroupMember(org, groupId, id)),
     onSuccess: invalidate,
+    onError: (err) => toast.error("Could not remove the member", { description: failureMessage(err) }),
   });
   const memberIds = new Set((members.data?.items ?? []).map((m) => m.identityId));
   const nameOf = (id: string) => identities.data?.items.find((i) => i.id === id)?.name ?? id;
@@ -485,6 +496,7 @@ function MembersEditor({ org, groupId, isTeam }: { org: string; groupId: string;
 function TeamProjectsEditor({ org, teamId }: { org: string; teamId: string }) {
   const { api } = useSession();
   const qc = useQueryClient();
+  const toast = useToast();
   const projects = useQuery({ queryKey: ["projects", org], queryFn: () => api.listProjects(org) });
   const key = ["team-projects", org, teamId];
   const owned = useQuery({ queryKey: key, queryFn: () => api.listTeamProjects(org, teamId) });
@@ -496,8 +508,13 @@ function TeamProjectsEditor({ org, teamId }: { org: string; teamId: string }) {
       setProjectId("");
       invalidate();
     },
+    onError: (err) => toast.error("Could not add the project", { description: failureMessage(err) }),
   });
-  const remove = useMutation({ mutationFn: (id: string) => api.removeTeamProject(org, teamId, id), onSuccess: invalidate });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removeTeamProject(org, teamId, id),
+    onSuccess: invalidate,
+    onError: (err) => toast.error("Could not take the project away", { description: failureMessage(err) }),
+  });
   const ownedIds = new Set((owned.data?.items ?? []).map((p) => p.projectId));
   const slugOf = (id: string) => projects.data?.items.find((p) => p.id === id)?.slug ?? id;
   return (

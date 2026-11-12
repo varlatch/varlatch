@@ -6633,7 +6633,7 @@ components:
         id: { type: string }
         operation:
           type: string
-          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete]
+          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete, grant.create, grant.replace, grant.revoke, role.create, role.update, role.delete, group.create, group.update, group.delete, group.member_add, group.member_remove, team.create, team.update, team.delete, team.member_add, team.member_remove, team.project_add, team.project_remove]
           description: The semantic operation, not the HTTP route.
         organization:
           description: The Organization it acts in; null for an account operation such as passkey.remove.

@@ -37,6 +37,12 @@ const FIELD_LABELS: Record<string, string> = {
   audience: "Audience",
   subject: "Subject",
   claims: "Required claims",
+  // Grants, roles, groups and teams (admin-step-up).
+  scope: "Scope",
+  permission: "Permission",
+  actions: "Actions",
+  actionsAdded: "Actions added",
+  actionsRemoved: "Actions removed",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */
