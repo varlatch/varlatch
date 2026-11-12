@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { VarlatchApiError } from "@varlatch/sdk";
-import { findEnvFiles, guidedInit, type GuidedApi } from "../src/guidedInit.js";
+import { findEnvFiles, guidedInit, runLoginChild, type GuidedApi } from "../src/guidedInit.js";
 import type { Prompter } from "../src/prompt.js";
 
 /**
@@ -20,8 +20,9 @@ const CANARY_OLD = "old-canary-77aa31";
 
 type Answer = { q: RegExp; a: number | boolean | string };
 
-function scripted(answers: Answer[]): Prompter & { asked: string[] } {
+function scripted(answers: Answer[]): Prompter & { asked: string[]; said: string[] } {
   const asked: string[] = [];
+  const said: string[] = [];
   const next = (question: string) => {
     asked.push(question);
     const answer = answers.shift();
@@ -31,10 +32,11 @@ function scripted(answers: Answer[]): Prompter & { asked: string[] } {
   };
   return {
     asked,
+    said,
     select: async (q) => next(q) as number,
     confirm: async (q) => next(q) as boolean,
     text: async (q) => next(q) as string,
-    say: () => {},
+    say: (line) => void said.push(line),
     pause: () => {},
     resume: () => {},
     close: () => {},
@@ -396,5 +398,41 @@ describe("guided init", () => {
     expect(r.err).toContain("not stored in acme / api / development (.env): B_ITEM (INTERNAL)");
     expect(r.err).toContain("not attempted in acme / api / production (.env.production): API_KEY, Z_ITEM");
     expect(r.err).toContain("Contract revision rev_1 was not activated.");
+  });
+
+  it("never echoes a rejected address, which may hold a credential", async () => {
+    const dir = repo({});
+    const f = fake();
+    const prompt = scripted([
+      { q: /^Your Varlatch installation's address/, a: "https://vault.example.com/?token=URL_CANARY_7723" },
+      { q: /^Your Varlatch installation's address/, a: "https://vault.example.com" },
+      { q: /^Organization:/, a: 0 },
+      { q: /^Project:/, a: 0 },
+      { q: /^Default environment/, a: 0 },
+    ]);
+    const out: string[] = [];
+    const code = await guidedInit({
+      cwd: dir,
+      prompt,
+      out: (l) => out.push(l),
+      err: (l) => out.push(l),
+      server: undefined,
+      validateServer: (raw) => {
+        if (raw.includes("?")) throw new Error(`Use an origin without path or query: ${raw}`);
+        return raw;
+      },
+      signIn: async () => f.api,
+      writeRepository: async () => {},
+    });
+    expect(code).toBe(0);
+    expect([...out, ...prompt.said].join("\n")).not.toContain("URL_CANARY_7723");
+    expect(prompt.said[0]).toMatch(/^That is not an installation's address/);
+  });
+
+  it("the sign-in child's error output never reaches the terminal, and its status is kept", () => {
+    const canary = "LOGIN_CANARY_5821";
+    const status = runLoginChild(process.execPath, ["-e", `process.stderr.write("Error INTERNAL: rejected credential ${canary}\\n"); process.exit(77)`]);
+    expect(status).toBe(77);
+    expect(runLoginChild(process.execPath, ["-e", "process.exit(0)"])).toBe(0);
   });
 });

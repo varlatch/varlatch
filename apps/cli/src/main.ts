@@ -1308,10 +1308,11 @@ async function main(): Promise<void> {
                 // The normal sign-in, on this terminal: the same command a person would run.
                 console.log(`Signing in: varlatch login --server ${server}`);
                 prompt.pause();
-                const { spawnSync } = await import("node:child_process");
-                const login = spawnSync(process.execPath, [...process.execArgv, process.argv[1] as string, "login", "--server", server], { stdio: "inherit" });
+                const { runLoginChild } = await import("./guidedInit.js");
+                const status = runLoginChild(process.execPath, [...process.execArgv, process.argv[1] as string, "login", "--server", server]);
                 prompt.resume();
-                if (login.status !== 0) fail(`Sign-in did not complete. Run varlatch login --server ${server}, then varlatch init again.`, login.status ?? EXIT.failure);
+                // Fixed text only: the child's error output was dropped (it may carry a server's message).
+                if (status !== 0) fail(`Sign-in did not complete. Run varlatch login --server ${server} to see why, then varlatch init again.`, status);
                 const token = loadToken(server) ?? fail(`Not authenticated to ${server}`, EXIT.denied);
                 return new VarlatchClient({ onMaintenance: maintenanceNotice, server, token, userAgent: cliUserAgent() });
               },

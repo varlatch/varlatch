@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import { spawnSync } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { CONTRACT_SCHEMA_VERSION, LATEST_SEMANTICS_VERSION, type ConfigurationContract, type ContractItem, type ItemType } from "@varlatch/contract";
@@ -135,7 +136,8 @@ async function guidedSteps(deps: GuidedInitDeps, phase: Phase): Promise<number> 
         server = deps.validateServer(typed);
         break;
       } catch (err) {
-        prompt.say(err instanceof Error ? err.message : String(err));
+        // A fixed message: what was typed may hold a credential, and is never echoed.
+        prompt.say("That is not an installation's address: use https://<host>[:port], or http://localhost for a local trial, without a path or query.");
       }
     }
   }
@@ -433,6 +435,19 @@ async function askSlug(prompt: Prompter, question: string, defaultValue?: string
     if (SLUG.test(slug)) return slug;
     prompt.say("Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.");
   }
+}
+
+/**
+ * The normal `varlatch login`, run as a child on this terminal for the
+ * guided sign-in. Its input and its output (the address to open, the code)
+ * are the terminal's; its error output is captured and dropped, since a
+ * server's error text could carry what was sent. On a failure the caller
+ * prints a fixed message instead. Returns the child's exit status.
+ */
+export function runLoginChild(command: string, args: string[]): number {
+  const result = spawnSync(command, args, { stdio: ["inherit", "inherit", "pipe"] });
+  if (result.error) return EXIT.failure;
+  return result.status ?? EXIT.failure;
 }
 
 function stopped(deps: GuidedInitDeps, message: string): number {
