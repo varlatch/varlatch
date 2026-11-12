@@ -108,6 +108,8 @@ echo "--- dashboard E2E (production container)"
 GRANT1=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')
 budget wait "dashboard"
 node "$REPO_ROOT"/apps/web/scripts/e2e-web.mjs "$GRANT1"
+# The enroll page's next steps against a stub server (ADR-0058 Decision 4).
+node "$REPO_ROOT"/apps/web/scripts/e2e-enroll-steps.mjs
 
 echo "--- values/matrix E2E (production container)"
 GRANT_V=$("${COMPOSE[@]}" exec -T varlatchd node dist/cli.js admin recover --identity "$ADMIN_ID" </dev/null | grep -o 'http://[^ ]*enroll#[^ ]*')

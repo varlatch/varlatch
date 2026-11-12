@@ -29,6 +29,7 @@ import { FilterInput, Highlight, matchesFilter } from "../../components/FilterIn
 import { useToast } from "../../components/Toast";
 import { errorMessage } from "../../shell/Shell";
 import { useCapability } from "../projects/hooks";
+import { CLI_DOWNLOAD_CAPABILITY, installLine } from "../../lib/installCli";
 import { useIdentities } from "./shared";
 import { permissionPhrase, scopeParts, type Names } from "./model";
 import { useAccessNames } from "./useAccessNames";
@@ -434,6 +435,7 @@ function PendingInvitations({
   const confirm = useConfirm();
   const toast = useToast();
   const manage = useCapability("invitations.manage");
+  const servesCli = useCapability(CLI_DOWNLOAD_CAPABILITY);
   const { nameOf } = useAccessNames(org);
   const now = useNow();
   const invitations = useQuery({
@@ -492,6 +494,16 @@ function PendingInvitations({
           >
             <p>Shown once. Share it over a channel you trust; it expires if unused.</p>
             <p className="mt-1.5 truncate font-mono text-[12.5px] text-fg">{freshLink.url}</p>
+            <p className="mt-1.5" data-testid="invite-next-steps">
+              {servesCli ? (
+                <>
+                  The link then shows them how to install the CLI (
+                  <span className="font-mono text-[12.5px] text-fg">{installLine(window.location.origin, "posix")}</span>), sign in, and run.
+                </>
+              ) : (
+                "The link then shows them how to install the CLI, sign in, and run."
+              )}
+            </p>
           </Callout>
         </div>
       )}
