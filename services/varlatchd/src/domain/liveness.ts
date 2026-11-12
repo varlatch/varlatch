@@ -4,7 +4,6 @@ import type { Querier } from "../db/migrate.js";
 import { DomainError } from "./errors.js";
 import { lockPeople, type PersonRef } from "./personlocks.js";
 import { captureOrganizationAccess, currentRequester, requireOrganizationAccess } from "./requestaccess.js";
-import { withTx } from "../db/tx.js";
 
 /**
  * THE LOCK ORDER (ADR-0054 amendment E). Every transaction that takes row
@@ -252,24 +251,24 @@ export async function lockScope(
 /**
  * The locked passkey-verification checkpoint of an operation with an
  * external effect (ADR-0054 Decision 7): after its local existence checks,
- * before its first credential use, decryption or outbound request. A short
- * transaction of its own (or the caller's, if one is open): the
- * Organization row FOR KEY SHARE (step 1, nothing after it), the outcome
- * captured under it, then applied. The operation's eventual database
- * mutation checks again under its own lock. Outside a request, nothing.
+ * before its first credential use, decryption or outbound request. The
+ * Organization row FOR KEY SHARE first (step 1, nothing after it), which
+ * waits for a control change in progress (it holds the row FOR UPDATE);
+ * then the outcome, read fresh by a statement of its own, and applied. No
+ * lock is held afterwards: no network call holds one (amendment D), and the
+ * operation's eventual database mutation checks again under its own lock.
+ * Inside a transaction, it is that transaction's capture and checkpoint.
+ * Outside a request, nothing.
  */
 export async function lockedAccessCheckpoint(db: Querier, organizationId: string): Promise<void> {
   if (!currentRequester()) return;
-  await withTx(db, async (tx) => {
-    await lockedQuery(
-      tx,
-      { table: "organizations", mode: "key share", key: "$1" },
-      "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE",
-      [organizationId],
-    );
-    await captureOrganizationAccess(tx, organizationId);
-    await requireOrganizationAccess(tx, organizationId);
-  });
+  await lockedQuery(
+    db,
+    { table: "organizations", mode: "key share", key: "$1" },
+    "SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE",
+    [organizationId],
+  );
+  await requireOrganizationAccess(db, organizationId, { fresh: true });
 }
 
 /**

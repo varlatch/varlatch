@@ -4746,6 +4746,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
     // Validated before the stream starts, so a bad filter is an ordinary error response.
     const filters = parseAuditFilters((name) => c.req.queries(name));
+    // passkey-verification before the stream starts reading (ADR-0054
+    // Decision 7): a streamed answer cannot be replaced at its end.
+    await requireOrganizationAccess(ctx.db, org.id);
     return auditExport(org.id, filters);
   });
 

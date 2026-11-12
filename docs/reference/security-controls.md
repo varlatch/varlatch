@@ -598,11 +598,14 @@ record of how it was made), `not-user-verified`, or `untrusted-passkey`.
   export), which have no live organization to enforce anything.
 - **Other refusals come first.** The refusal replaces an answer that would
   have let the request through: someone outside the organization still
-  gets "not found", and a member asking for something their role does not
-  allow still gets `PERMISSION_DENIED`. Nothing is written, disclosed or
-  decrypted for a refused request, and each refusal is recorded as
-  `authorization.denied` with `metadata.reason`
-  `passkey_verification_required`.
+  gets "not found", a member asking for something their role does not
+  allow still gets `PERMISSION_DENIED`, and a request for something that
+  does not exist (a project, a revision, a grant, a value) still gets
+  "not found". Nothing is written, disclosed, decrypted or sent for a
+  refused request, no approval is asked for, and each refusal is recorded
+  once as `authorization.denied` with `metadata.reason`
+  `passkey_verification_required` and `metadata.evidence` what the
+  sign-in lacks.
 - **It checks the person asking, never anyone else.** Removing a member,
   the exposure report and machine reach still show other people's
   authority as it is.
@@ -615,6 +618,38 @@ record of how it was made), `not-user-verified`, or `untrusted-passkey`.
   sign-in it would refuse is refused** (`PASSKEY_VERIFICATION_REQUIRED`,
   `details.change: "refused"`), so you cannot lock yourself out by saving
   it.
+
+### When it decides
+
+The person is identified when the request arrives; the decision is taken
+where the request's own consistency point is, after the checks that say
+whether what it asks for exists, and before anything happens:
+
+- **A change** decides under its lock on the organization, in the
+  transaction that makes the change. Changing a security control takes
+  that lock exclusively, so a change either finishes under the old mode
+  before the control changed, or reads the new one; a change that waited
+  for the control change is refused under `enforce` and changes nothing.
+  Changes that run with the strictest isolation (removing a member,
+  changing a member's role) start again when the control changed while
+  they ran, so they never finish under a mode that was already replaced.
+- **A retrieval, validation or disclosure** decides in its snapshot, the
+  one consistent read the request makes, after it found the project, the
+  environment and the values it would return, and before any disclosure is
+  recorded or any value decrypted. Nothing is read again afterwards.
+- **A read of settings or metadata** decides once it has looked everything
+  up, before the answer is sent.
+- **An operation that reaches outside Varlatch** (an access check, a
+  destination listing, GitHub App setup, a webhook or OIDC issuer check)
+  decides after it found the connection or app it uses, before any
+  credential is decrypted or any request sent; the change it then saves
+  decides again.
+- **A repeated request** with the same `Idempotency-Key` is decided too:
+  the stored answer is returned only if the request is allowed now.
+- **Report mode** counts the decision the request's change took under its
+  lock (or its snapshot's, for a retrieval), once per successful request
+  and organization: a request that failed, was refused or found nothing
+  is not counted, and a change that started again is counted once.
 
 ### Getting a sign-in it accepts
 
@@ -645,12 +680,17 @@ to the installation or to other organizations.
 - **It hides nothing from members that membership does not.** A member's
   stolen unverified credential is refused, but can still tell
   `PASSKEY_VERIFICATION_REQUIRED` apart from "not found" for the names
-  that member could see anyway, such as which projects and environments
-  exist.
-- **It takes effect from the next request.** A request already under way
-  finishes under the mode it read (a retrieval, at its snapshot). A Convex
-  token minted before the control was enforced stays valid until it
-  expires, at most 10 minutes; it carries metadata, never values.
+  that member could see anyway, such as which projects, environments,
+  grants or values exist.
+- **It cannot refuse before what only decryption or an outside call
+  reveals.** A value whose stored reference cannot be expanded, or a
+  platform that answers that a credential is wrong, is found out only by
+  decrypting or calling out, which a refused request never does: such a
+  request is refused, never told.
+- **A request already under way finishes under the mode it read** (see
+  [When it decides](#when-it-decides)). A Convex token minted before the
+  control was enforced stays valid until it expires, at most 10 minutes;
+  it carries metadata, never values.
 - **Whoever controls the host or the deployment can turn it off** with
   the [host operator's reset](#the-way-back-the-host-operators-reset).
 

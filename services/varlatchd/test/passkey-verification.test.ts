@@ -2,7 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 import { CAPABILITIES } from "@varlatch/protocol";
-import { afterEach, beforeEach, describe, expect, inject, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, inject, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
@@ -14,7 +14,17 @@ import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { lockOrderMode, lockTraced } from "./helpers/lock-trace.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { asQuerier } from "./helpers/pglite-snapshots.js";
+import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
+import { uncheckedOrganizations } from "../src/domain/requestaccess.js";
+
+// Which requests were decided at their answer (settleOrganizationAccess):
+// the routes the inventory calls effect-free reads, and only they.
+vi.mock("../src/domain/requestaccess.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/domain/requestaccess.js")>();
+  return { ...actual, uncheckedOrganizations: vi.fn(actual.uncheckedOrganizations) };
+});
+const settledAtAnswer = vi.mocked(uncheckedOrganizations);
 
 /**
  * passkey-verification enforced (ADR-0054 Decision 7, step 4.4), on
@@ -411,6 +421,7 @@ describe("every /v1/organizations/:org route", () => {
     // reaches each route's checkpoint, not only its existence checks.
     expect(out.succeededOff.length, out.succeededOff.join("\n")).toBeGreaterThan(80);
     expect(out.wrong, "answers under enforce that break the boundary").toEqual([]);
+    expect(out.misclassified, "routes decided elsewhere than the inventory says (helpers/route-access.ts)").toEqual([]);
     expect(out.changed, "effects of refused or earlier-refused requests under enforce").toEqual([]);
     // Every nesting level's missing resource was tried somewhere and kept its not-found.
     expect(out.notFoundKept).toBeGreaterThan(150);
@@ -450,7 +461,7 @@ describe("every /v1/organizations/:org route", () => {
 // changed something starts the next one from the fixtures again.
 
 type Fixtures = Record<string, string>;
-type Sweep = { succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number };
+type Sweep = { succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number; misclassified: string[] };
 
 async function fixtureDb(data?: Blob) {
   const pg = new PGlite(data ? { loadDataDir: data } : { loadDataDir: new Blob([await readFile(inject("pgliteSnapshots").traced)]) });
@@ -621,7 +632,7 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
   };
 
   const routes = sapp.routes.filter((r) => r.method !== "ALL" && (r.path === R || r.path.startsWith(`${R}/`)));
-  const out: Sweep = { succeededOff: [], wrong: [], changed: [], notFoundKept: 0 };
+  const out: Sweep = { succeededOff: [], wrong: [], changed: [], notFoundKept: 0, misclassified: [] };
   const EARLIER = new Set(["RESOURCE_NOT_FOUND", "PERMISSION_DENIED", "TAILNET_CONTEXT_REQUIRED", "TAILNET_CONTEXT_UNAVAILABLE"]);
   for (const route of routes) {
     const key = `${route.method} ${route.path}`;
@@ -640,10 +651,15 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
       if ((await fingerprint(sctx.db)) !== before) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
       if ((await denials()) - denied !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${(await denials()) - denied} denial audits for ${enforced.code}`);
       await setMode("off");
+      settledAtAnswer.mockClear();
       const off = await send(route.method, path, body);
+      const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
       if (off.code === "PASSKEY_VERIFICATION_REQUIRED") out.wrong.push(`${label}: refused with the control off`);
       if (off.status < 400 || off.status === 428) {
         if (variant === "fixtures") out.succeededOff.push(`${label}: ${off.status}`);
+        if (off.status < 400 && atAnswer !== (ROUTE_ACCESS[key] === "read")) {
+          out.misclassified.push(`${label}: listed as ${ROUTE_ACCESS[key]}, ${atAnswer ? "decided at its answer" : "decided before its answer"}`);
+        }
         if (!refused) out.wrong.push(`${label}: off ${off.status}, enforce ${enforced.status} ${enforced.code}`);
       } else if (off.code && EARLIER.has(off.code)) {
         if (enforced.status !== off.status || enforced.code !== off.code) out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);

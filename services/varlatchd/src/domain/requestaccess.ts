@@ -143,11 +143,12 @@ export async function captureOrganizationAccess(db: Querier, organizationId: str
  *   now through `db` if this is the first look in the attempt.
  * - Outside one: the decision this request already took for the
  *   Organization (a write that committed, or a snapshot that ended), never
- *   read again; otherwise read now through `db`.
+ *   read again; otherwise, or with `fresh` (an external operation's locked
+ *   checkpoint, liveness.ts lockedAccessCheckpoint), read now through `db`.
  *
  * Outside a request (background work, host commands): nothing.
  */
-export async function requireOrganizationAccess(db: Querier, organizationId: string): Promise<void> {
+export async function requireOrganizationAccess(db: Querier, organizationId: string, options: { fresh?: boolean } = {}): Promise<void> {
   const request = storage.getStore();
   if (!request) return;
   const attempt = currentTxAttempt();
@@ -155,7 +156,7 @@ export async function requireOrganizationAccess(db: Querier, organizationId: str
   if (attempt) {
     await captureOrganizationAccess(db, organizationId);
     outcome = attemptAccess(attempt).captured.get(organizationId)!;
-  } else if (request.decided.has(organizationId)) {
+  } else if (request.decided.has(organizationId) && !options.fresh) {
     return;
   } else {
     outcome = await passkeyVerification(db, request.requester, [organizationId]);
