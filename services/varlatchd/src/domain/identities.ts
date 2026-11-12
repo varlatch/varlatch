@@ -131,7 +131,9 @@ export async function createMachineIdentity(
         maxUses: input.credentialMaxUses,
         actorIdentityId,
         organizationId,
-        metadata: lifetimeMetadata(prepared),
+        // The approval that covered the creation covers its first
+        // credential too: recorded on both events, as credential.issue does.
+        metadata: { ...lifetimeMetadata(prepared), ...approvalMetadata(prepared.approval) },
       });
       credential = issued.token;
     }

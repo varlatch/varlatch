@@ -208,5 +208,12 @@ export function setLines(organization: string, before: SecurityControlMode | nul
       `${c.config ? ` (${configWords(c.config)})` : ""}, version ${c.version}.`,
   ];
   if (change.loosened) lines.push("This loosened the control; your approval was used.");
+  if (c.control === "passkey-verification" && c.mode === "enforce" && before !== "enforce") {
+    lines.push(
+      `From now on ${organization} refuses a person's sign-in that was not made with a trusted passkey that verified them (PIN, fingerprint or face),`,
+      "admins included, until they sign in again with one. Machine credentials are not affected.",
+      "Someone whose passkeys cannot verify them gets back in only through the host operator: varlatch admin security reset.",
+    );
+  }
   return lines;
 }

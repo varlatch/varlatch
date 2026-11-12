@@ -5,8 +5,9 @@ import { recordAuditEvent } from "../audit/events.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { openFreeze, organizationFrozen, type FreezeException, type OrganizationFrozenError } from "../domain/liveness.js";
 import { getOrganization, getOrgRole, type OrgRow } from "../domain/orgs.js";
-import { passkeyVerificationReports, queueAccessCount, type PendingAccessReport } from "../domain/securityreport.js";
-import { AUTHORIZED_ACTION, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
+import { passkeyVerification, type EntryBlock } from "../domain/passkeyverification.js";
+import { queueAccessCount, type PendingAccessReport } from "../domain/securityreport.js";
+import { AUTHORIZED_ACTION, ENTRY_BLOCK, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
 
 /**
  * Where a request's principal enters an Organization (ADR-0054 Decision 7).
@@ -62,17 +63,25 @@ export function entryRequester(principal: Principal) {
  * requesting principal and its credential, after the Organization resolved
  * and before the route authorizes anything (ADR-0054 Decisions 7 and 9).
  *
- * passkey-verification, in report mode: a person's credential whose
- * sign-in evidence lacks user verification or a trusted passkey is noted
- * here, against the mode and version read now (in the snapshot, on a
- * retrieval). Nothing is refused and nothing is written here: this runs
- * before authorization, so counting here would count outsiders and
- * refused requests. The note is counted at the request's outcome
- * (queueEntryReport), only when the request succeeded, after the response,
- * in a short transaction of its own after any retrieval snapshot ended.
+ * passkey-verification (passkeyverification.ts): a person's credential
+ * whose sign-in evidence lacks user verification or a trusted passkey is
+ * checked here, against the mode and version read now (in the snapshot,
+ * on a retrieval). Nothing is refused and nothing is written here: this
+ * runs before authorization.
  *
- * Enforcement (a later step) will refuse here, and must not tell an
- * outsider that the Organization exists before any distinct refusal.
+ * - In report mode the check is noted, and counted at the request's
+ *   outcome (queueEntryReport), only when the request succeeded, after the
+ *   response, in a short transaction of its own after any retrieval
+ *   snapshot ended. Counting here would count outsiders and refused
+ *   requests.
+ * - In enforce mode the block is noted (ENTRY_BLOCK), and the request's
+ *   authorization refuses it: a decision that would have allowed the
+ *   request in this Organization answers PASSKEY_VERIFICATION_REQUIRED
+ *   instead (decide, http/support.ts). Throwing here would answer before
+ *   the route's existence hiding, and so tell an outsider that the
+ *   Organization exists; deciding at authorization, every other denial
+ *   answers first, and an outsider gets exactly the answer they got
+ *   before.
  */
 export async function organizationEntryChecks(
   ctx: AppCtx,
@@ -83,8 +92,11 @@ export async function organizationEntryChecks(
 ): Promise<void> {
   if (!principal) return;
   await refuseFrozenEntry(ctx, principal, org, options.duringIncidentFreeze);
-  const [pending] = await passkeyVerificationReports(ctx.db, entryRequester(principal), [org.id]);
+  const outcome = await passkeyVerification(ctx.db, entryRequester(principal), [org.id]);
+  const [pending] = outcome.reports;
   if (pending) c.set(ENTRY_REPORT, pending);
+  const reason = outcome.blocked.get(org.id);
+  if (reason) c.set(ENTRY_BLOCK, { organizationId: org.id, reason } satisfies EntryBlock);
 }
 
 /**

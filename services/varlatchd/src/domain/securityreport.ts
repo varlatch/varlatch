@@ -5,7 +5,6 @@ import type { Querier } from "../db/migrate.js";
 import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { credentialEvidence } from "./passkeys.js";
 import { SECURITY_CONTROLS, type ControlMode, type LifetimeConfig, type SecurityControlName } from "./securitycontrols.js";
 import { lockedQuery } from "../db/locks.js";
 
@@ -18,7 +17,7 @@ import { lockedQuery } from "../db/locks.js";
  * into `security_control.would_block` audit events once the hour has been
  * over for 10 minutes. Nothing is counted for a control that is `off`, and
  * `enforce` refuses or asks for an approval instead of counting
- * (protected.ts).
+ * (protected.ts; passkeyverification.ts for passkey-verification).
  *
  * What is counted, and when:
  *
@@ -31,10 +30,11 @@ import { lockedQuery } from "../db/locks.js";
  *   no count. The mode and its version are read in that transaction,
  *   after the operation took the Organization row (lockLiveScope), so a
  *   concurrent control change either committed before or waits.
- * - A retrieval-time check (passkey-verification) is evaluated where the
- *   request enters the Organization (http/organization.ts), against the
- *   mode and version read there, inside a retrieval's snapshot when there
- *   is one, and counted afterwards with countWouldBlockAfter in a separate
+ * - A retrieval-time check (passkey-verification, passkeyverification.ts)
+ *   is evaluated where the request enters the Organization
+ *   (http/organization.ts), against the mode and version read there,
+ *   inside a retrieval's snapshot when there is one, and counted
+ *   afterwards with countWouldBlockAfter in a separate
  *   short transaction, only when the request succeeded and its person is
  *   still a member: never inside the read-only snapshot, and never for a
  *   refused or failed request. These access counts are best-effort: they
@@ -336,46 +336,6 @@ export interface PendingAccessReport {
   reason: ReportReason;
   /** When it was decided: the snapshot's time for a retrieval. */
   at: Date;
-}
-
-/**
- * passkey-verification for one request entering these Organizations
- * (Decision 7): for a human credential (browser or cli) whose sign-in
- * evidence lacks user verification or comes from a passkey that is not
- * trusted now, one pending report per Organization whose control is in
- * report mode. Machine credentials are exempt by kind and read nothing.
- * Reads only, so it can run inside a retrieval's snapshot.
- */
-export async function passkeyVerificationReports(
-  db: Querier,
-  requester: EntryRequester,
-  organizationIds: readonly string[],
-): Promise<PendingAccessReport[]> {
-  if (requester.identityKind !== "human" || (requester.credentialKind !== "browser" && requester.credentialKind !== "cli")) return [];
-  if (organizationIds.length === 0) return [];
-  const reporting = (await db.query(
-    `SELECT organization_id, version, now() AS at FROM security_controls
-     WHERE organization_id = ANY($1) AND control = 'passkey-verification' AND mode = 'report'
-     ORDER BY organization_id`,
-    [[...organizationIds]],
-  )).rows as { organization_id: string; version: number; at: Date | string }[];
-  if (reporting.length === 0) return [];
-  const evidence = await credentialEvidence(db, requester.credentialId);
-  const reason: ReportReason | null = !evidence
-    ? "no-evidence"
-    : !evidence.userVerified
-      ? "not-user-verified"
-      : !evidence.passkeyTrusted
-        ? "untrusted-passkey"
-        : null;
-  if (!reason) return [];
-  return reporting.map((r) => ({
-    organizationId: r.organization_id,
-    actorIdentityId: requester.identityId,
-    configVersion: r.version,
-    reason,
-    at: new Date(r.at),
-  }));
 }
 
 /**

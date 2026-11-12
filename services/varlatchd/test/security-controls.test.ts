@@ -169,7 +169,7 @@ describe("reading the controls", () => {
       availableModes: ["off", "report"],
       items: ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"].map((control) => ({
         control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null,
-        availableModes: control === "requirement-protection" || control === "credential-lifetime" ? ["off", "report", "enforce"] : ["off", "report"],
+        availableModes: control === "admin-step-up" ? ["off", "report"] : ["off", "report", "enforce"],
       })),
     });
   });
@@ -615,9 +615,11 @@ describe("removing a passkey", () => {
   });
 
   it("needs one for a trusted passkey when an Organization of the person enforces any control, never for an unconfirmed one", async () => {
-    // enforce is not offered by the API yet: inserted directly, as the enforcement step will store it.
+    // Inserted directly, as the API stores it. requirement-protection, which
+    // leaves this test's own sign-in free to use the organization (enforced
+    // passkey-verification would refuse it: passkey-verification.test.ts).
     await ctx.db.query(
-      "INSERT INTO security_controls (organization_id, control, mode, version, changed_by) VALUES ($1, 'passkey-verification', 'enforce', 1, $2)",
+      "INSERT INTO security_controls (organization_id, control, mode, version, changed_by) VALUES ($1, 'requirement-protection', 'enforce', 1, $2)",
       [orgId, admin.id],
     );
     const unconfirmed = await registerSoftPasskey(ctx.db, admin.id, { ...RP, trust: "unconfirmed" });
