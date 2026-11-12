@@ -673,17 +673,50 @@ describe("under enforce", () => {
     expect(stepUp(await removeMember("teams", admin.cli, f.team, f.bob.id)).summary.title).toBe(`Remove ${person} from team platform`);
   });
 
+  it("never hides an environment or a Project moved to a reused slug", async () => {
+    const prodA = (await ok("POST", `${ORG}/projects/api/environments`, admin.cli, { name: "prod", tier: "production" })).id as string;
+    const envDecl = (projectId: string, environmentIds: string[]) =>
+      ({ subjectIdentityId: f.svc, scope: { kind: "environments", projectId, selector: { kind: "environments", environmentIds } }, actions: ["project.read"] });
+    const projectDecl = (projectId: string) => ({ subjectIdentityId: f.svc, scope: { kind: "project", projectId }, actions: ["config.value.read"] });
+    const make = async (decl: Body) => (await createGrant(admin.cli, decl, await approved(admin, await createGrant(admin.cli, decl)))).body.id as string;
+    const envGrant = await make(envDecl(f.project, [prodA]));
+    const projectGrant = await make(projectDecl(f.project));
+    // Project A (slug api) deleted; Project B takes the slug, with its own prod and staging.
+    expect((await call("DELETE", `${ORG}/projects/api`, admin.cli)).status).toBe(200);
+    const projectB = (await ok("POST", `${ORG}/projects`, admin.cli, { name: "API", slug: "api", contractAuthority: "managed" })).id as string;
+    const prodB = (await ok("POST", `${ORG}/projects/api/environments`, admin.cli, { name: "prod", tier: "production" })).id as string;
+    const stagingB = (await ok("POST", `${ORG}/projects/api/environments`, admin.cli, { name: "staging", tier: "staging" })).id as string;
+
+    // prod moved Projects under the same slug/name: each prod carries its id.
+    const moved = stepUp(await replaceGrant(admin.cli, envGrant, envDecl(projectB, [prodB, stagingB])));
+    expect(moved.summary.changes).toEqual([
+      { field: "scope", from: `environments api/prod (${prodA})`, to: `environments api/prod (${prodB}), api/staging`, loosens: false },
+    ]);
+    // The Project-level analogue: the deleted and the live Project with the same slug read apart.
+    const project = stepUp(await replaceGrant(admin.cli, projectGrant, projectDecl(projectB)));
+    expect(project.summary.changes).toEqual([
+      { field: "scope", from: `project api (${f.project})`, to: `project api (${projectB})`, loosens: false },
+    ]);
+  });
+
   it("decides a Grant change on what is bound, not on its labels", async () => {
-    // A store whose every label reads "Bob": the subject change is still listed, with what each side binds.
+    // A store whose every label reads "Bob": the subject change is still listed, and the two read apart.
     const db = { query: async (_sql: string, params: unknown[] = []) => ({ rows: (params[0] as string[]).map((id) => ({ id, label: "Bob", kind: "group" })) }) } as unknown as Querier;
     const old = { id: "grt_old", revoked: false, subjectIdentityId: "idn_a", scope: { kind: "organization" as const }, actions: ["project.read"] };
     const binding = await grantReplaceBinding(db, { id: orgId }, old, { ...old, subjectIdentityId: "idn_b" });
+    // Two ids never read the same in one summary: each Bob carries its id.
     expect(binding.summary.changes).toEqual([
-      { field: "subject", from: 'Bob {"identityId":"idn_a"}', to: 'Bob {"identityId":"idn_b"}', loosens: false },
+      { field: "subject", from: "Bob (idn_a)", to: "Bob (idn_b)", loosens: false },
     ]);
     // A role in place of the same actions, both read "Bob": listed too.
     const role = await grantReplaceBinding(db, { id: orgId }, { ...old, actions: null, roleId: "rol_a" }, { ...old, actions: null, roleId: "rol_b" });
     expect(role.summary.changes.map((c) => c.field)).toEqual(["permission"]);
+    // One environment of three moved, every label "Bob": each id reads apart, item by item.
+    const envs = (environmentIds: string[]) => ({ ...old, scope: { kind: "environments" as const, projectId: "prj_a", selector: { kind: "environments" as const, environmentIds } } });
+    const scope = await grantReplaceBinding(db, { id: orgId }, { ...envs(["env_a", "env_b"]), id: "grt_old", revoked: false }, envs(["env_a", "env_c"]));
+    expect(scope.summary.changes).toEqual([
+      { field: "scope", from: "environments Bob (env_a), Bob (env_b)", to: "environments Bob (env_a), Bob (env_c)", loosens: false },
+    ]);
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {

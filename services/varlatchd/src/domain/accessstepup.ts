@@ -208,20 +208,41 @@ async function namesFor(db: Querier, organizationId: string, decls: readonly Gra
      FROM projects p WHERE p.id = ANY($1) AND p.organization_id = $2`,
     ids.projects,
   );
+  // An environment reads as slug/name: shared with any environment, live or
+  // deleted, of any Project of the Organization whose slug is the same
+  // (a slug a deleted Project freed included).
   const environments = await q(
-    `SELECT e.id, p.slug || '/' || e.name || CASE WHEN EXISTS (SELECT 1 FROM environments o WHERE o.project_id = e.project_id AND o.name = e.name AND o.id <> e.id)
+    `SELECT e.id, p.slug || '/' || e.name || CASE WHEN EXISTS (
+         SELECT 1 FROM environments o JOIN projects op ON op.id = o.project_id
+         WHERE op.organization_id = p.organization_id AND op.slug = p.slug AND o.name = e.name AND o.id <> e.id)
        THEN ' (' || e.id || ')' ELSE '' END AS label
      FROM environments e JOIN projects p ON p.id = e.project_id
      WHERE e.id = ANY($1) AND p.organization_id = $2`,
     ids.environments,
   );
+  const groupLabels = apart(new Map(groups.map((r) => [r.id!, r.label!])));
   return {
-    identities: new Map(identities.map((r) => [r.id!, r.label!])),
-    groups: new Map(groups.map((r) => [r.id!, { name: r.label!, kind: r.kind as GroupKind }])),
-    roles: new Map(roles.map((r) => [r.id!, r.label!])),
-    projects: new Map(projects.map((r) => [r.id!, r.label!])),
-    environments: new Map(environments.map((r) => [r.id!, r.label!])),
+    identities: apart(new Map(identities.map((r) => [r.id!, r.label!]))),
+    groups: new Map(groups.map((r) => [r.id!, { name: groupLabels.get(r.id!)!, kind: r.kind as GroupKind }])),
+    roles: apart(new Map(roles.map((r) => [r.id!, r.label!]))),
+    projects: apart(new Map(projects.map((r) => [r.id!, r.label!]))),
+    environments: apart(new Map(environments.map((r) => [r.id!, r.label!]))),
   };
+}
+
+/**
+ * The general rule behind the labels, for the ids one summary names (both
+ * sides of a replacement together): two different ids never read the
+ * same. A label that two of them would share carries each one's id, so no
+ * item can move from one row to another under an unchanged label, however
+ * much of the rest of the scope stays the same.
+ */
+function apart(labels: Map<string, string>): Map<string, string> {
+  const uses = new Map<string, number>();
+  for (const label of labels.values()) uses.set(label, (uses.get(label) ?? 0) + 1);
+  return new Map(
+    [...labels].map(([id, label]) => [id, (uses.get(label) ?? 0) > 1 && !label.endsWith(`(${id})`) ? `${label} (${id})` : label]),
+  );
 }
 
 function describeSubject(d: GrantDeclaration, n: Names): string {
