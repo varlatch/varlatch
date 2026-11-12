@@ -561,8 +561,11 @@ varlatch security set passkey-verification enforce
 ```
 
 Every person it counts would be refused. Sign-ins from before Varlatch
-recorded this (and every CLI credential given with `--token`) count as
-`no-evidence` until the person signs in again.
+recorded this count as `no-evidence` until the person signs in again. A
+credential keeps the evidence of the sign-in that issued it however it is
+passed later (`--token-stdin`, `VARLATCH_TOKEN`); a credential issued
+without a passkey sign-in, for example by `admin bootstrap` or `admin
+recover` with `--cli-credential`, has none and is always refused.
 
 ### What it guarantees
 
@@ -589,7 +592,10 @@ record of how it was made), `not-user-verified`, or `untrusted-passkey`.
   and agents) are never affected, whatever their mode. Capability exercise
   is a broker's, so it is never affected either.
 - **Only that organization.** The person's other organizations, their
-  account pages and their list of organizations work as before.
+  account pages and their list of organizations work as before, and so do
+  the audit logs of deleted organizations
+  (`/v1/deleted-organizations/{organization}/audit-events` and its
+  export), which have no live organization to enforce anything.
 - **Other refusals come first.** The refusal replaces an answer that would
   have let the request through: someone outside the organization still
   gets "not found", and a member asking for something their role does not
@@ -636,6 +642,11 @@ to the installation or to other organizations.
 - **A stolen credential is still a stolen credential.** The evidence
   describes the sign-in that created the session or credential; whoever
   holds that credential later is accepted.
+- **It hides nothing from members that membership does not.** A member's
+  stolen unverified credential is refused, but can still tell
+  `PASSKEY_VERIFICATION_REQUIRED` apart from "not found" for the names
+  that member could see anyway, such as which projects and environments
+  exist.
 - **It takes effect from the next request.** A request already under way
   finishes under the mode it read (a retrieval, at its snapshot). A Convex
   token minted before the control was enforced stays valid until it

@@ -2916,7 +2916,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // Enforcing passkey-verification from a sign-in it would refuse locks
     // the person making the change out at once: refused, nothing changed.
     if (control.data === "passkey-verification" && body.mode === "enforce") {
-      const gap = await verificationGap(ctx.db, principal.credentialId);
+      const gap = await verificationGap(ctx.db, principal.credentialId, principal.credentialKind);
       if (gap) throw enforceWouldRefuseYou(gap);
     }
     const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>

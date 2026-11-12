@@ -72,11 +72,17 @@ export type StepUpHandler = (approval: Approval) => Promise<boolean>;
 /** Why passkey-verification refused a sign-in (details.reason of PASSKEY_VERIFICATION_REQUIRED). */
 export type VerificationGap = "no-evidence" | "not-user-verified" | "untrusted-passkey";
 
-/** The reason a PASSKEY_VERIFICATION_REQUIRED answer carries, or null for any other response. */
+/**
+ * The reason a PASSKEY_VERIFICATION_REQUIRED answer carries, or null for any
+ * other response. Not for turning the control on from a sign-in it would
+ * refuse (details.change "refused"): nothing refused the person there, and
+ * the Security page explains it where they saved.
+ */
 export async function verificationGapOf(res: Response): Promise<VerificationGap | null> {
   if (res.status !== 403) return null;
-  const body = (await res.clone().json().catch(() => null)) as { error?: { code?: string; details?: { reason?: string } } } | null;
+  const body = (await res.clone().json().catch(() => null)) as { error?: { code?: string; details?: { reason?: string; change?: string } } } | null;
   if (body?.error?.code !== "PASSKEY_VERIFICATION_REQUIRED") return null;
+  if (body.error.details?.change === "refused") return null;
   const reason = body.error.details?.reason;
   return reason === "not-user-verified" || reason === "untrusted-passkey" ? reason : "no-evidence";
 }

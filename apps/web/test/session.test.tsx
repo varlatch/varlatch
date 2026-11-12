@@ -116,3 +116,11 @@ it("notes a refusal by passkey-verification, offers to sign in again, and forget
   expect(state.needsAuth).toBe(false);
   expect(state.verificationRequired).toBeNull();
 });
+it("raises no banner for turning passkey-verification on from a sign-in it would refuse (details.change refused)", async () => {
+  const { verificationGapOf } = await import("../src/lib/session");
+  const answer = (details: Record<string, unknown>) =>
+    Response.json({ error: { code: "PASSKEY_VERIFICATION_REQUIRED", message: "no", requestId: "r", details } }, { status: 403 });
+  expect(await verificationGapOf(answer({ control: "passkey-verification", reason: "no-evidence", change: "refused" }))).toBeNull();
+  expect(await verificationGapOf(answer({ control: "passkey-verification", reason: "untrusted-passkey" }))).toBe("untrusted-passkey");
+  expect(await verificationGapOf(Response.json({ error: { code: "PERMISSION_DENIED", message: "no", requestId: "r" } }, { status: 403 }))).toBeNull();
+});

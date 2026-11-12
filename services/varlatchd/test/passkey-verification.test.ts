@@ -215,10 +215,13 @@ describe("under enforce", () => {
     // A removed key no longer counts.
     await ctx.db.query("DELETE FROM passkey WHERE id = $1", [key.passkeyId]);
     expectRefused(await call("GET", ORG, device.token), "untrusted-passkey");
+    // Fail closed: any other kind of a person's credential carries no sign-in.
+    const odd = await issueCredential(ctx.db, { identityId: adminId, kind: "service" });
+    expectRefused(await call("GET", ORG, odd.token), "no-evidence");
 
     const denials = await passkeyDenials();
     expect(denials.map((d) => d.metadata.evidence)).toEqual([
-      "no-evidence", "no-evidence", "not-user-verified", "untrusted-passkey", "no-evidence", "not-user-verified", "untrusted-passkey",
+      "no-evidence", "no-evidence", "not-user-verified", "untrusted-passkey", "no-evidence", "not-user-verified", "untrusted-passkey", "no-evidence",
     ]);
     expect(denials.every((d) => d.actor === adminId && d.org === orgId)).toBe(true);
     expect(denials[0]!.action).toBe("organization.read");

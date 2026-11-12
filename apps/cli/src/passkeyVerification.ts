@@ -15,6 +15,7 @@ export function passkeyVerificationLines(err: unknown): string[] | null {
     "To get a CLI credential this Organization accepts:",
     "  varlatch login --server <url>",
     "and approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face.",
-    "A credential given with --token or --token-stdin carries no passkey sign-in, so it is always refused here.",
+    "A credential keeps the evidence of the sign-in that issued it, however it is passed later (--token-stdin, VARLATCH_TOKEN);",
+    "one issued without a passkey sign-in (for example by admin bootstrap or admin recover --cli-credential) is always refused here.",
   ];
 }

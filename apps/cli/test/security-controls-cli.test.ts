@@ -299,6 +299,7 @@ describe("varlatch security set", () => {
     expect(r.stderr).toContain("Error PASSKEY_VERIFICATION_REQUIRED: This Organization requires a sign-in with a trusted passkey that verifies you. (request req_1)");
     expect(r.stderr).toContain("  varlatch login --server <url>\n");
     expect(r.stderr).toContain("approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face");
+    expect(r.stderr).toContain("admin bootstrap or admin recover --cli-credential) is always refused here");
   });
 
   it("refuses a wrong command line before any request (exit 64)", async () => {

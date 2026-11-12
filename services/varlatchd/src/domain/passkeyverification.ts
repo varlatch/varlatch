@@ -6,7 +6,8 @@ import type { EntryRequester, PendingAccessReport, ReportReason } from "./securi
 
 /**
  * `passkey-verification` (ADR-0054 Decision 7): an Organization access by
- * a person's credential (browser or cli) whose sign-in evidence (Decision
+ * a person's credential (browser or cli; any other kind of a person's
+ * credential counts as having no evidence) whose sign-in evidence (Decision
  * 6) lacks user verification, or comes from a passkey that is not trusted
  * now (Decision 4), is counted under `report` and refused under `enforce`.
  * Machine credentials are exempt by kind and read nothing here.
@@ -45,13 +46,26 @@ export interface PasskeyVerificationOutcome {
 
 const NONE: PasskeyVerificationOutcome = { reports: [], blocked: new Map() };
 
-/** Whether this requester is subject to the control at all: a person's browser or CLI credential. */
-export function subjectToPasskeyVerification(requester: Pick<EntryRequester, "identityKind" | "credentialKind">): boolean {
-  return requester.identityKind === "human" && (requester.credentialKind === "browser" || requester.credentialKind === "cli");
+/**
+ * Whether this requester is subject to the control: every credential of a
+ * person, whatever its kind (fail closed: a kind added later is checked,
+ * and one that carries no sign-in counts as no-evidence). Machine
+ * identities are exempt by kind.
+ */
+export function subjectToPasskeyVerification(requester: Pick<EntryRequester, "identityKind">): boolean {
+  return requester.identityKind === "human";
 }
 
-/** What a credential lacks, or null when its evidence is user-verified and from a passkey trusted now. */
-export async function verificationGap(db: Querier, credentialId: string): Promise<VerificationGap | null> {
+/** The credential kinds that can carry a passkey sign-in's evidence. */
+const EVIDENCE_KINDS: ReadonlySet<string> = new Set(["browser", "cli"]);
+
+/**
+ * What a person's credential lacks, or null when its evidence is
+ * user-verified and from a passkey trusted now. A kind that cannot carry a
+ * sign-in's evidence has none.
+ */
+export async function verificationGap(db: Querier, credentialId: string, credentialKind?: string): Promise<VerificationGap | null> {
+  if (credentialKind !== undefined && !EVIDENCE_KINDS.has(credentialKind)) return "no-evidence";
   const evidence = await credentialEvidence(db, credentialId);
   if (!evidence) return "no-evidence";
   if (!evidence.userVerified) return "not-user-verified";
@@ -79,7 +93,7 @@ export async function passkeyVerification(
     [[...organizationIds]],
   )).rows as { organization_id: string; mode: "report" | "enforce"; version: number; at: Date | string }[];
   if (active.length === 0) return NONE;
-  const reason = await verificationGap(db, requester.credentialId);
+  const reason = await verificationGap(db, requester.credentialId, requester.credentialKind);
   if (!reason) return NONE;
   const outcome: PasskeyVerificationOutcome = { reports: [], blocked: new Map() };
   for (const r of active) {
