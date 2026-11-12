@@ -79,6 +79,9 @@ fixes.
   report mode, a Grant replacement or a role edit that only reorders
   actions is no longer counted. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Dashboard: adding or removing a group or team member, and giving a
+  team a project or taking it away, now show an error when they fail.**
+  They used to fail silently.
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection`,
   `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey

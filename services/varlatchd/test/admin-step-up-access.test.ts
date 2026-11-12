@@ -558,6 +558,35 @@ describe("under enforce", () => {
     expect(await roleRow(f.role)).toMatchObject({ deleted: true });
   });
 
+  it("role.update and role.delete bind the role: another role's request does not fit", async () => {
+    const other = await ok("POST", `${ORG}/roles`, admin.cli, { name: "writer", actions: ["config.value.read", "project.read"] },
+      header(await approved(admin, await createRole(admin.cli, { name: "writer", actions: ["config.value.read", "project.read"] }))));
+    // The same resulting state and version, on another role.
+    const update = await approved(admin, await updateRole(admin.cli, f.role, { expectedVersion: 1, actions: ["project.read"] }));
+    invalid(await updateRole(admin.cli, other.id, { expectedVersion: 1, actions: ["project.read"] }, update), "mismatch");
+    const removal = await approved(admin, await deleteRole(admin.cli, f.role));
+    invalid(await deleteRole(admin.cli, other.id, removal), "mismatch");
+    expect(await roleRow(other.id)).toMatchObject({ actions: ["config.value.read", "project.read"], version: 1, deleted: false });
+    expect((await updateRole(admin.cli, f.role, { expectedVersion: 1, actions: ["project.read"] }, update)).status).toBe(200);
+    // The edit moved the role to version 2: the deletion approved at version 1 is stale.
+    invalid(await deleteRole(admin.cli, f.role, removal), "stale");
+  });
+
+  it("group.update and group.delete bind the version: a group changed since makes the approval stale", async () => {
+    const rename = await approved(admin, await updateGroup("groups", admin.cli, f.group, { expectedVersion: 1, name: "oncall-2" }));
+    const removal = await approved(admin, await deleteGroup("groups", admin.cli, f.group));
+    // Changed since (version 2), with the same name.
+    await ctx.db.query("UPDATE groups SET version = 2 WHERE id = $1", [f.group]);
+    invalid(await updateGroup("groups", admin.cli, f.group, { expectedVersion: 2, name: "oncall-2" }, rename), "stale");
+    invalid(await deleteGroup("groups", admin.cli, f.group, removal), "stale");
+    expect(await groupRow(f.group)).toMatchObject({ name: "oncall", version: 2, deleted: false });
+    // The same for a team.
+    const teamRemoval = await approved(admin, await deleteGroup("teams", admin.cli, f.team));
+    await ctx.db.query("UPDATE groups SET version = 2 WHERE id = $1", [f.team]);
+    invalid(await deleteGroup("teams", admin.cli, f.team, teamRemoval), "stale");
+    expect(await groupRow(f.team)).toMatchObject({ deleted: false });
+  });
+
   it("group and team create, rename and delete bind the stored kind; a rename keeping the name needs none", async () => {
     const asked = await approved(admin, await createGroup("groups", admin.cli, "sre"));
     invalid(await createGroup("teams", admin.cli, "sre", asked), "mismatch");
@@ -631,7 +660,10 @@ describe("under enforce", () => {
     expect(await count("SELECT count(*)::int AS n FROM grants WHERE id = $1 AND revoked_at IS NULL", [f.grant])).toBe(1);
   });
 
-  it("refuses a machine credential outright, without an intent", async () => {
+  it("refuses a machine credential outright, without an intent, for all 18 operations", async () => {
+    // Targets each operation would change: a member of the group, and a project the team does not own yet.
+    await ctx.db.query("INSERT INTO group_members (group_id, identity_id) VALUES ($1, $2)", [f.group, f.svc]);
+    const unlinked = await ok("POST", `${ORG}/projects`, admin.cli, { name: "Web", slug: "web", contractAuthority: "managed" });
     const answers = [
       await createGrant(bot.token, { subjectIdentityId: f.svc, scope: { kind: "organization" }, actions: ["project.read"] }),
       await replaceGrant(bot.token, f.grant, { subjectGroupId: f.group, scope: { kind: "organization" }, roleId: f.role }),
@@ -642,14 +674,17 @@ describe("under enforce", () => {
       await createGroup("groups", bot.token, "x"),
       await updateGroup("groups", bot.token, f.group, { expectedVersion: 1, name: "x" }),
       await deleteGroup("groups", bot.token, f.group),
-      await addMember("groups", bot.token, f.group, f.svc),
+      await addMember("groups", bot.token, f.group, f.bob.id),
+      await removeMember("groups", bot.token, f.group, f.svc),
       await removeMember("teams", bot.token, f.team, f.bob.id),
       await createGroup("teams", bot.token, "y"),
       await updateGroup("teams", bot.token, f.team, { expectedVersion: 1, name: "y" }),
       await deleteGroup("teams", bot.token, f.team),
       await addMember("teams", bot.token, f.team, f.svc),
+      await addProject(bot.token, f.team, unlinked.id),
       await removeProject(bot.token, f.team, f.project),
     ];
+    expect(answers).toHaveLength(18);
     for (const res of answers) {
       expect(res.status, JSON.stringify(res.body)).toBe(403);
       expect(res.body.error).toMatchObject({ code: "PERMISSION_DENIED", details: { reason: "machine-credential" } });
@@ -658,7 +693,10 @@ describe("under enforce", () => {
     expect(await roleRow(f.role)).toMatchObject({ name: "reader", deleted: false });
     expect(await groupRow(f.team)).toMatchObject({ name: "platform", deleted: false });
     expect(await isMember(f.team, f.bob.id)).toBe(true);
+    expect(await isMember(f.group, f.svc)).toBe(true);
+    expect(await isMember(f.group, f.bob.id)).toBe(false);
     expect(await isLinked(f.team, f.project)).toBe(true);
+    expect(await isLinked(f.team, unlinked.id)).toBe(false);
   });
 
   it("rolls the consumption back with a failed mutation: the approval stays usable", async () => {

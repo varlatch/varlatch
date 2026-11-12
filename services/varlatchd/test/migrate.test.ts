@@ -459,3 +459,43 @@ it("adds deletion requests, one open per Organization, and a KEK that is present
   await db.query("UPDATE organizations SET deleted_at = now(), wrapped_org_kek = NULL, org_kek_destroyed_at = now() WHERE id = 'org_a'");
   expect((await runMigrations(db)).applied).toEqual([]);
 });
+
+it("lets Approval Intents name the access-structure operations of admin-step-up, always in an Organization", async () => {
+  await db.exec!("CREATE TABLE varlatch_migrations (id integer PRIMARY KEY, name text NOT NULL)");
+  for (const migration of MIGRATIONS.filter(m => m.id <= 46)) {
+    await db.exec!(migration.sql);
+    await db.query("INSERT INTO varlatch_migrations VALUES ($1,$2)", [migration.id, migration.name]);
+  }
+  await db.query("INSERT INTO organizations(id,slug,name,wrapped_org_kek) VALUES ('org_a','acme','Acme','{}')");
+  await db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_admin','human','Admin')");
+  await db.query("INSERT INTO credentials(id,identity_id,kind,token_hash) VALUES ('crd_cli','idn_admin','cli','h1')");
+  const intent = (id: string, operation: string, organizationId: string | null) =>
+    db.query(
+      `INSERT INTO approval_intents (id, credential_id, identity_id, organization_id, operation, target, body_hash, query_hash, summary, origin,
+                                     created_at, expires_at, poll_interval)
+       VALUES ($1, 'crd_cli', 'idn_admin', $2, $3, '{}'::jsonb, 'b', 'q', '{}'::jsonb, 'cli', now(), now() + interval '10 minutes', 5)`,
+      [id, organizationId, operation],
+    );
+  const access = [
+    "grant.create", "grant.replace", "grant.revoke",
+    "role.create", "role.update", "role.delete",
+    "group.create", "group.update", "group.delete", "group.member_add", "group.member_remove",
+    "team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
+    "team.project_add", "team.project_remove",
+  ];
+  // Before 0047: none of them is an operation yet.
+  await expect(intent("apr_early", "grant.create", "org_a")).rejects.toThrow(/check constraint/);
+
+  expect((await runMigrations(db)).applied.map(m => m.id)).toEqual([47]);
+  for (const [i, operation] of access.entries()) {
+    await intent(`apr_${i}`, operation, "org_a");
+    await expect(intent(`apr_noorg_${i}`, operation, null), operation).rejects.toThrow(/check constraint/);
+  }
+  // The operations before 0047 keep their rules.
+  await intent("apr_identity", "identity.create", "org_a");
+  await expect(intent("apr_identity_noorg", "identity.create", null)).rejects.toThrow(/check constraint/);
+  await intent("apr_passkey", "passkey.remove", null);
+  await intent("apr_requirement", "requirement.revoke", "org_a");
+  await expect(intent("apr_unknown", "grant.edit", "org_a")).rejects.toThrow(/check constraint/);
+  expect((await db.query("SELECT count(*)::int AS n FROM approval_intents")).rows).toEqual([{ n: access.length + 3 }]);
+});
