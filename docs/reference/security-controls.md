@@ -713,8 +713,11 @@ the `team.*` operation.
 
 What you approve names every machine, person, group, team, role, project
 and environment by its name in quotes followed by its id, for example
-`"Bob" (idn_...)`. Two things with the same name, or a name with extra
-spaces, never read the same. Report mode counts these operations, except
+`"Bob" (idn_...)`, and every character you could not see (a zero-width
+space, a direction override, a no-break space) written as `\u{XXXX}`. Two
+things with the same name, or names that differ only by such a character,
+never read the same. Removing an OIDC binding or revoking or replacing a
+Grant names its id too. Report mode counts these operations, except
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 

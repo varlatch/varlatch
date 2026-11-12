@@ -5,7 +5,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import { withSerializableTx, withTx } from "../src/db/tx.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { grantReplaceBinding, roleCreateBinding } from "../src/domain/accessstepup.js";
-import { labelWithId } from "../src/domain/approvallabels.js";
+import { labelWithId, quoted, visible } from "../src/domain/approvallabels.js";
 import type { Querier } from "../src/db/migrate.js";
 import { withApproval, type Requester } from "../src/domain/approvals.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
@@ -377,13 +377,13 @@ describe("under enforce", () => {
     const r = await shown(await replaceGrant(admin.web, f.grant, { subjectGroupId: f.team, scope: { kind: "team", teamId: f.team }, roleId: f.role }));
     expect(r).toMatchObject({ operation: "grant.replace" });
     expect(r.summary).toEqual({
-      title: `Change the Grant of role ${named("reader", f.role)} on project ${named("api", f.project)} to group ${named("oncall", f.group)}`,
+      title: `Change the Grant ${f.grant} of role ${named("reader", f.role)} on project ${named("api", f.project)} to group ${named("oncall", f.group)}`,
       changes: [
         { field: "subject", from: `group ${named("oncall", f.group)}`, to: `team ${named("platform", f.team)}`, loosens: false },
         { field: "scope", from: `project ${named("api", f.project)}`, to: `the projects of team ${named("platform", f.team)}`, loosens: false },
       ],
     });
-    expect((await shown(await revokeGrant(admin.cli, f.grant))).summary).toEqual({ title: `Revoke the Grant of role ${named("reader", f.role)} on project ${named("api", f.project)} to group ${named("oncall", f.group)}`, changes: [] });
+    expect((await shown(await revokeGrant(admin.cli, f.grant))).summary).toEqual({ title: `Revoke the Grant ${f.grant} of role ${named("reader", f.role)} on project ${named("api", f.project)} to group ${named("oncall", f.group)}`, changes: [] });
 
     expect((await shown(await createRole(admin.cli, { name: "writer", actions: ["project.read", "config.value.write"] }))).summary).toEqual({
       title: 'Create role "writer": config.value.write, project.read',
@@ -670,7 +670,7 @@ describe("under enforce", () => {
     // The same scope and permission, the other Bob: the subject change is listed, with both ids.
     const swap = stepUp(await replaceGrant(admin.cli, grant.id, decl(machine.id)));
     expect(swap.summary).toEqual({
-      title: `Change the Grant of project.read on ${api} to ${person}`,
+      title: `Change the Grant ${grant.id} of project.read on ${api} to ${person}`,
       changes: [{ field: "subject", from: person, to: robotBob, loosens: false }],
     });
     // Memberships name the Bob they mean.
@@ -696,6 +696,25 @@ describe("under enforce", () => {
     expect(moved.summary.changes).toEqual([
       { field: "permission", from: `role "reader" (${f.role})`, to: `role "reader " (${spaced.id})`, loosens: false },
     ]);
+  });
+
+  it("invisible characters are written out: a zero-width space, a bidi override, a zero-width joiner", async () => {
+    // Two roles created as "reader" and "reader" plus U+200B, with the same actions: neither has an id yet.
+    const plain = stepUp(await createRole(admin.cli, { name: "reader2", actions: ["project.read"] })).summary;
+    const zwsp = stepUp(await createRole(admin.cli, { name: "reader2\u200b", actions: ["project.read"] })).summary;
+    expect(plain.title).toBe('Create role "reader2": project.read');
+    expect(zwsp.title).toBe('Create role "reader2\\u{200B}": project.read');
+    expect(zwsp.changes[0]).toEqual({ field: "name", from: null, to: '"reader2\\u{200B}"', loosens: false });
+    // A bidi override cannot reorder what the approver reads.
+    expect(stepUp(await createGroup("groups", admin.cli, "ops\u202Eevil")).summary.title).toBe('Create group "ops\\u{202E}evil"');
+    // A rename that differs only by a zero-width joiner, under the same target id.
+    const rename = stepUp(await updateGroup("teams", admin.cli, f.team, { expectedVersion: 1, name: "plat\u200dform" })).summary;
+    expect(rename).toEqual({
+      title: `Rename team ${named("platform", f.team)} to "plat\\u{200D}form"`,
+      changes: [{ field: "name", from: '"platform"', to: '"plat\\u{200D}form"', loosens: false }],
+    });
+    // Action names are free text: written out too.
+    expect(stepUp(await createRole(admin.cli, { name: "w", actions: ["project.read\u2060"] })).summary.title).toBe('Create role "w": project.read\\u{2060}');
   });
 
   it("never hides an environment or a Project moved to a reused slug", async () => {
@@ -757,6 +776,14 @@ describe("under enforce", () => {
     expect(fake.endsWith("(idn_b)")).toBe(true);
     expect(labelWithId(null, "Bob (idn_a)", "idn_b")).not.toBe(labelWithId(null, "Bob", "idn_a"));
     expect(labelWithId(null, "Bob\n", "idn_c")).toBe('"Bob\\n" (idn_c)');
+    // Invisible and format characters JSON leaves literal are written as code points.
+    expect(quoted("reader\u200b")).toBe('"reader\\u{200B}"');
+    expect(quoted("a\u202eb\u00a0c\ufeff\u180e\ufe0f\u3164\u007f")).toBe('"a\\u{202E}b\\u{00A0}c\\u{FEFF}\\u{180E}\\u{FE0F}\\u{3164}\\u{007F}"');
+    expect(quoted("plain words, one space")).toBe('"plain words, one space"');
+    // A typed escape stays apart from a real invisible character.
+    expect(quoted("reader\\u{200B}")).not.toBe(quoted("reader\u200b"));
+    expect(visible("a\\u{200B}")).not.toBe(visible("a\u200b"));
+    expect(visible("project.read\u200d")).toBe("project.read\\u{200D}");
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {

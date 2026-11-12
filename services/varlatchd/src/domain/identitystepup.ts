@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Querier } from "../db/migrate.js";
 import type { ApprovalBinding, ApprovalChange } from "./approvals.js";
-import { labelWithId, quoted } from "./approvallabels.js";
+import { labelWithId, quoted, visible } from "./approvallabels.js";
 
 /**
  * admin-step-up for machine identities, their credentials and OIDC
@@ -140,8 +140,8 @@ export interface OidcBindingInput {
 /** oidc_binding.create on an identity. */
 export function oidcBindingCreateBinding(org: { id: string }, identity: MachineIdentityRef, input: OidcBindingInput): ApprovalBinding {
   const claims = input.claims ?? {};
-  const listed = Object.keys(claims).sort().map((k) => `${k}=${claims[k]}`);
-  const changes = [added("issuer", input.issuer), added("audience", input.audience), added("subject", input.subject)];
+  const listed = Object.keys(claims).sort().map((k) => `${visible(k)}=${visible(claims[k]!)}`);
+  const changes = [added("issuer", visible(input.issuer)), added("audience", visible(input.audience)), added("subject", visible(input.subject))];
   if (listed.length > 0) changes.push(added("claims", listed.join(", ")));
   return {
     operation: "oidc_binding.create",
@@ -152,7 +152,7 @@ export function oidcBindingCreateBinding(org: { id: string }, identity: MachineI
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Let tokens from ${input.issuer} with subject ${input.subject} act as ${labelWithId(null, identity.name, identity.id)}`,
+      title: `Let tokens from ${visible(input.issuer)} with subject ${visible(input.subject)} act as ${labelWithId(null, identity.name, identity.id)}`,
       changes,
     },
   };
@@ -186,7 +186,7 @@ export function oidcBindingDeleteBinding(org: { id: string }, identity: MachineI
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Remove the OIDC binding ${binding.issuer} / ${binding.subject} from ${labelWithId(null, identity.name, identity.id)}`,
+      title: `Remove the OIDC binding ${binding.id} (${visible(binding.issuer)} / ${visible(binding.subject)}, audience ${visible(binding.audience)}) from ${labelWithId(null, identity.name, identity.id)}`,
       changes: [],
     },
   };

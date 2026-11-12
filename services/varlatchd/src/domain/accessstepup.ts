@@ -3,7 +3,7 @@ import type { Querier } from "../db/migrate.js";
 import { canonicalJson, type ApprovalBinding, type ApprovalChange, type ApprovalOperation } from "./approvals.js";
 import { DomainError } from "./errors.js";
 import type { AdminStepUpOperation } from "./securityreport.js";
-import { labelWithId, quoted, unnamed } from "./approvallabels.js";
+import { labelWithId, quoted, unnamed, visible } from "./approvallabels.js";
 
 /**
  * admin-step-up for the access structure (ADR-0054 Decision 5, step 4.6):
@@ -222,7 +222,7 @@ function describeScope(d: GrantDeclaration, n: Names): string {
 
 function describePermission(d: GrantDeclaration, n: Names): string {
   if (d.roleId) return n.roles.get(d.roleId) ?? unnamed("role", d.roleId);
-  return set(d.actions ?? []).join(", ");
+  return set(d.actions ?? []).map(visible).join(", ");
 }
 
 const describeGrant = (d: GrantDeclaration, n: Names) => ({
@@ -272,7 +272,7 @@ export async function grantReplaceBinding(db: Querier, org: { id: string }, old:
     body: normalizedGrant(next),
     query: {},
     expectedVersion: null,
-    summary: { title: `Change the Grant of ${before.permission} on ${before.scope} to ${before.subject}`, changes },
+    summary: { title: `Change the Grant ${old.id} of ${before.permission} on ${before.scope} to ${before.subject}`, changes },
   };
 }
 
@@ -286,7 +286,7 @@ export async function grantRevokeBinding(db: Querier, org: { id: string }, grant
     body: null,
     query: {},
     expectedVersion: null,
-    summary: { title: `Revoke the Grant of ${g.permission} on ${g.scope} to ${g.subject}`, changes: [] },
+    summary: { title: `Revoke the Grant ${grant.id} of ${g.permission} on ${g.scope} to ${g.subject}`, changes: [] },
   };
 }
 
@@ -344,8 +344,8 @@ export function roleCreateBinding(org: { id: string }, input: { name: string; ac
     query: {},
     expectedVersion: null,
     summary: {
-      title: `Create role ${quoted(input.name)}: ${actions.join(", ")}`,
-      changes: [added("name", quoted(input.name)), added("actions", actions.join(", "))],
+      title: `Create role ${quoted(input.name)}: ${actions.map(visible).join(", ")}`,
+      changes: [added("name", quoted(input.name)), added("actions", actions.map(visible).join(", "))],
     },
   };
 }
@@ -368,8 +368,8 @@ export async function roleUpdateBinding(
   const lost = set([...before].filter((a) => !after.has(a)));
   const changes: ApprovalChange[] = [];
   if (next.name !== current.name) changes.push({ field: "name", from: quoted(current.name), to: quoted(next.name), loosens: false });
-  if (gained.length > 0) changes.push({ field: "actionsAdded", from: null, to: gained.join(", "), loosens: true });
-  if (lost.length > 0) changes.push({ field: "actionsRemoved", from: lost.join(", "), to: null, loosens: false });
+  if (gained.length > 0) changes.push({ field: "actionsAdded", from: null, to: gained.map(visible).join(", "), loosens: true });
+  if (lost.length > 0) changes.push({ field: "actionsRemoved", from: lost.map(visible).join(", "), to: null, loosens: false });
   return {
     operation: "role.update",
     organizationId: org.id,

@@ -5,8 +5,8 @@
  * approver must be able to tell, from the words alone, exactly which rows
  * an approval is for. Names are not unique and may contain anything a
  * request accepted: trailing whitespace, parentheses, text that looks like
- * an id. So a named item is always written as its name in JSON quotes
- * (whitespace, quotes and control characters stay visible and escaped),
+ * an id, invisible characters. So a named item is always written as its
+ * name in JSON quotes, with every character a reader cannot see escaped,
  * followed by the id the approval binds, whether or not another row shares
  * the name. A collision lookup could miss a case; this has none to miss.
  *
@@ -15,9 +15,36 @@
  * operations. Keep this name and location.
  */
 
-/** A name as a summary writes it: JSON-quoted. */
+/**
+ * Characters a reader cannot see: controls (Cc), format characters (Cf:
+ * zero-width spaces and joiners, bidi overrides, U+FEFF), line and
+ * paragraph separators (Zl, Zp), every whitespace but the plain ASCII
+ * space (no-break and other spaces among them), and the other default
+ * ignorable code points (variation selectors, U+180E, U+3164). Each is
+ * written as `\u{XXXX}`, so two names that differ only by one never read
+ * the same.
+ */
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]|[^\S ]/gu;
+const escapeInvisible = (text: string) =>
+  text.replace(INVISIBLE, (c) => `\\u{${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}}`);
+
+/**
+ * A name as a summary writes it: JSON-quoted (a backslash, a quote and the
+ * C0 controls escaped as JSON does), then every invisible character JSON
+ * leaves literal written as `\u{XXXX}`. The escapes cannot be faked: a
+ * backslash typed in the name is already doubled.
+ */
 export function quoted(name: string): string {
-  return JSON.stringify(name);
+  return escapeInvisible(JSON.stringify(name));
+}
+
+/**
+ * Free text a summary writes unquoted (action names, an OIDC issuer,
+ * audience, subject or claim): a backslash doubled, then every invisible
+ * character written as `\u{XXXX}`, as in quoted().
+ */
+export function visible(text: string): string {
+  return escapeInvisible(text.replace(/\\/g, "\\\\"));
 }
 
 /**

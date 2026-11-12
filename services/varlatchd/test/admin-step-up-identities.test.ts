@@ -316,7 +316,7 @@ describe("under enforce", () => {
     const unbinding = stepUp(await removeBinding(admin.web, f.ci, f.binding));
     expect(unbinding).toMatchObject({
       operation: "oidc_binding.delete",
-      summary: { title: `Remove the OIDC binding ${ISSUER} / repo:acme/api:ref:refs/heads/main from "deploy" (${f.ci})`, changes: [] },
+      summary: { title: `Remove the OIDC binding ${f.binding} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience varlatch) from "deploy" (${f.ci})`, changes: [] },
     });
 
     expect(await machinesNamed("billing")).toBe(0);
@@ -450,6 +450,15 @@ describe("under enforce", () => {
     const before = await intents();
     expect((await removeBinding(admin.cli, f.ci, f.binding)).status).toBe(404);
     expect(await intents()).toBe(before);
+  });
+
+  it("oidc_binding.delete names the binding by its id and audience: two bindings alike but for the audience read apart", async () => {
+    const other = await addBinding(admin.cli, f.ci, { ...ciBinding(), audience: "other" }, await approved(admin, await addBinding(admin.cli, f.ci, { ...ciBinding(), audience: "other" })));
+    expect(other.status).toBe(201);
+    const first = stepUp(await removeBinding(admin.cli, f.ci, f.binding)).summary.title;
+    const second = stepUp(await removeBinding(admin.cli, f.ci, other.body.id)).summary.title;
+    expect(first).toBe(`Remove the OIDC binding ${f.binding} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience varlatch) from "deploy" (${f.ci})`);
+    expect(second).toBe(`Remove the OIDC binding ${other.body.id} (${ISSUER} / repo:acme/api:ref:refs/heads/main, audience other) from "deploy" (${f.ci})`);
   });
 
   it("refuses another person's approval: even an admin finds nothing", async () => {
