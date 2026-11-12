@@ -100,6 +100,20 @@ async function requireCapability(api: SecurityApi, command: string): Promise<voi
   }
 }
 
+/**
+ * The modes the server accepts for this control: its own list where the
+ * server gives one (enforce only where that control can enforce), the
+ * modes every control accepts on an older server.
+ */
+export function modesOf(list: Pick<SecurityControlList, "availableModes">, control: Pick<SecurityControl, "availableModes">): SecurityControlMode[] {
+  return control.availableModes ?? list.availableModes;
+}
+
+/** The controls this server can enforce. */
+export function enforceable(list: SecurityControlList): SecurityControl["control"][] {
+  return list.items.filter((c) => modesOf(list, c).includes("enforce")).map((c) => c.control);
+}
+
 export async function fetchControls(api: SecurityApi, organization: string): Promise<SecurityControlList> {
   await requireCapability(api, "security controls");
   return api.listSecurityControls(organization);
@@ -136,14 +150,15 @@ export async function setControl(
 ): Promise<{ before: SecurityControl; change: SecurityControlChange }> {
   await requireCapability(api, "security set");
   const list = await api.listSecurityControls(organization);
-  if (!list.availableModes.includes(request.mode)) {
-    throw new SecurityControlsError(
-      `varlatch security set: this server does not offer the mode ${request.mode} yet ` +
-        `(it offers ${list.availableModes.join(", ")}). Nothing was changed.`,
-    );
-  }
   const current = list.items.find((c) => c.control === request.control);
   if (!current) throw new SecurityControlsError(`varlatch security set: this server has no control ${request.control}. Nothing was changed.`);
+  const offered = modesOf(list, current);
+  if (!offered.includes(request.mode)) {
+    throw new SecurityControlsError(
+      `varlatch security set: this server does not offer the mode ${request.mode} for ${request.control} yet ` +
+        `(it offers ${offered.join(", ")}). Nothing was changed.`,
+    );
+  }
   const change = await api.changeSecurityControl(organization, request.control, changeInput(request, current));
   return { before: current, change };
 }
@@ -174,10 +189,11 @@ export function controlsLines(organization: string, list: SecurityControlList): 
     const config = configWords(c.config);
     lines.push(`  ${c.control.padEnd(width)}  ${c.mode.padEnd(7)}${config ? `  ${config}` : ""}  (version ${c.version}, ${changedWords(c)})`);
   }
+  const enforcing = enforceable(list);
   lines.push(
     "",
-    `Modes this server offers: ${list.availableModes.join(", ")}.` +
-      (list.availableModes.includes("enforce") ? "" : " enforce is not available yet."),
+    `Modes this server offers: ${list.availableModes.join(", ")}` +
+      (enforcing.length > 0 ? `, and enforce for ${enforcing.join(", ")}.` : ". enforce is not available yet."),
     "Loosening a control (a mode towards off, a longer lifetime, cleared settings) needs your approval with a trusted passkey.",
   );
   return lines;

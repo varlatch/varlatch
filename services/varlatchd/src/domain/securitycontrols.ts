@@ -31,15 +31,34 @@ import { lockLiveScope, openFreeze } from "./liveness.js";
  * protected write either commits before a control change or sees the new
  * mode.
  *
- * `enforce` is refused with CONTROL_MODE_UNAVAILABLE until the enforcement
- * step ships. What `report` counts, where and when: securityreport.ts.
+ * `enforce` is offered per control, by the release, never by a setting
+ * (ADR-0054 step 4): a control is unlocked (ENFORCEABLE_CONTROLS, and the
+ * capability security.enforce.<control> in /v1/meta) in the release that
+ * builds its full guarantee. For every other control, enforce is refused
+ * with CONTROL_MODE_UNAVAILABLE. What `report` counts, where and when:
+ * securityreport.ts; what `enforce` does: protected.ts.
  */
 
 export const SECURITY_CONTROLS = ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"] as const;
 export type SecurityControlName = (typeof SECURITY_CONTROLS)[number];
 export type ControlMode = "off" | "report" | "enforce";
-/** The modes a change may set in this release. */
+/** The modes a change may set for every control in this release. */
 export const AVAILABLE_MODES: readonly ControlMode[] = ["off", "report"];
+
+/**
+ * The controls this release can enforce: each one unlocked in the pull
+ * request that completes its guarantee (ADR-0054 step 4). Nothing changes
+ * this at runtime.
+ */
+export const ENFORCEABLE_CONTROLS: ReadonlySet<SecurityControlName> = new Set<SecurityControlName>(["requirement-protection"]);
+
+/** The modes a change may set for this control in this release. */
+export function availableModesOf(control: SecurityControlName): ControlMode[] {
+  return ENFORCEABLE_CONTROLS.has(control) ? [...AVAILABLE_MODES, "enforce"] : [...AVAILABLE_MODES];
+}
+
+/** The /v1/meta capability that says a control can be enforced. */
+export const enforceCapability = (control: SecurityControlName) => `security.enforce.${control}` as const;
 
 const MODE_RANK: Record<ControlMode, number> = { off: 0, report: 1, enforce: 2 };
 
@@ -156,10 +175,11 @@ function stateMetadata(prefix: "from" | "to", state: Pick<ControlState, "mode" |
 }
 
 export function controlModeUnavailable(control: SecurityControlName, mode: ControlMode): DomainError {
+  const availableModes = availableModesOf(control);
   return new DomainError(
     "CONTROL_MODE_UNAVAILABLE",
-    `This server does not offer ${mode} yet: a control can be off or report`,
-    { control, mode, availableModes: [...AVAILABLE_MODES] },
+    `This server does not offer ${mode} for ${control} yet: it can be ${availableModes.join(" or ")}`,
+    { control, mode, availableModes },
   );
 }
 
@@ -194,7 +214,7 @@ export async function changeControl(
     authorizeIn: (db: Querier) => Promise<void>;
   },
 ): Promise<ControlChange> {
-  if (input.mode === "enforce") throw controlModeUnavailable(input.control, input.mode);
+  if (input.mode !== undefined && !availableModesOf(input.control).includes(input.mode)) throw controlModeUnavailable(input.control, input.mode);
   if (input.config && input.control !== "credential-lifetime") {
     throw new DomainError("VALIDATION_FAILED", `config: ${input.control} has no configuration`);
   }

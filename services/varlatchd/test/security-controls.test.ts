@@ -161,7 +161,7 @@ afterEach(async () => {
 });
 
 describe("reading the controls", () => {
-  it("lists all four off at version 0, offers off and report, and is advertised", async () => {
+  it("lists all four off at version 0, offers off and report (and enforce where unlocked), and is advertised", async () => {
     expect((await call("GET", "/v1/meta", admin.cli)).body.capabilities).toContain("security.controls");
     const res = await call("GET", CONTROLS, admin.cli);
     expect(res.status).toBe(200);
@@ -169,6 +169,7 @@ describe("reading the controls", () => {
       availableModes: ["off", "report"],
       items: ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"].map((control) => ({
         control, mode: "off", config: null, version: 0, changedAt: null, changedBy: null,
+        availableModes: control === "requirement-protection" ? ["off", "report", "enforce"] : ["off", "report"],
       })),
     });
   });
@@ -200,7 +201,7 @@ describe("changing a control", () => {
     });
   });
 
-  it("refuses enforce with CONTROL_MODE_UNAVAILABLE and stores nothing", async () => {
+  it("refuses enforce for a control this release cannot enforce, with CONTROL_MODE_UNAVAILABLE, and stores nothing", async () => {
     const res = await set(admin.cli, "admin-step-up", { mode: "enforce", expectedVersion: 0 });
     expect(res.status).toBe(422);
     expect(res.body.error).toMatchObject({ code: "CONTROL_MODE_UNAVAILABLE", details: { control: "admin-step-up", mode: "enforce", availableModes: ["off", "report"] } });

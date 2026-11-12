@@ -25,6 +25,9 @@ const FIELD_LABELS: Record<string, string> = {
   defaultTtlSeconds: "Default lifetime",
   maxTtlSeconds: "Maximum lifetime",
   passkey: "Passkey",
+  // A Tailnet Requirement (requirement-protection).
+  target: "Applies to",
+  selector: "Devices allowed",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */

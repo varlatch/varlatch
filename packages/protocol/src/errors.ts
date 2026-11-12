@@ -37,7 +37,8 @@ export const ERROR_CODES = [
   // with an operation that cannot use it (details.reason).
   "STEP_UP_REQUIRED",
   "APPROVAL_INVALID",
-  // Security Controls (ADR-0054 Decision 1): a mode this server does not offer yet.
+  // Security Controls (ADR-0054 Decision 1): a mode this server does not
+  // offer for that control (details: control, mode, availableModes).
   "CONTROL_MODE_UNAVAILABLE",
   // The incident freeze (ADR-0055): refused while the Organization is
   // frozen (details: freezeId, frozenAt). Final for the request: do not retry.
@@ -112,6 +113,9 @@ export const CAPABILITIES = [
   "cli.download",
   "security.refused-destinations",
   "organizations.incident-freeze",
+  // Security Controls this server can enforce (ADR-0054 step 4), one per
+  // control, unlocked by the release that builds its full guarantee.
+  "security.enforce.requirement-protection",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

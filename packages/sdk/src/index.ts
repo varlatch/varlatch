@@ -863,6 +863,11 @@ export class VarlatchClient {
     return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/requirements`);
   }
 
+  /**
+   * Edit a Requirement in place. While the Organization enforces
+   * requirement-protection, an edit that changes anything needs a step-up
+   * approval: STEP_UP_REQUIRED, which onStepUp handles.
+   */
   updateRequirement(
     org: string,
     requirementId: string,
@@ -892,6 +897,11 @@ export class VarlatchClient {
     });
   }
 
+  /**
+   * Revoke a Requirement. While the Organization enforces
+   * requirement-protection, the server answers STEP_UP_REQUIRED, which
+   * onStepUp handles (or the error surfaces).
+   */
   deleteRequirement(org: string, requirementId: string): Promise<void> {
     return this.request(
       "DELETE",
@@ -1063,7 +1073,10 @@ export class VarlatchClient {
   /**
    * Change one Security Control. Loosening needs a step-up approval: the
    * server answers STEP_UP_REQUIRED, which onStepUp handles (or the error
-   * surfaces). enforce is refused with CONTROL_MODE_UNAVAILABLE for now.
+   * surfaces). enforce is accepted only for a control this server can
+   * enforce (capability security.enforce.<control>, the control's
+   * availableModes); for the others it is refused with
+   * CONTROL_MODE_UNAVAILABLE.
    */
   changeSecurityControl(
     org: string,

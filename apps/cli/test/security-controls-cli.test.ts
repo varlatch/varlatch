@@ -245,7 +245,27 @@ describe("varlatch security set", () => {
   it("refuses a mode the server does not offer before sending anything", async () => {
     const r = await cli(["security", "set", "admin-step-up", "enforce"]);
     expect(r.code).toBe(EXIT.failure);
-    expect(r.stderr).toContain("does not offer the mode enforce yet (it offers off, report)");
+    expect(r.stderr).toContain("does not offer the mode enforce for admin-step-up yet (it offers off, report)");
+    expect(patches()).toEqual([]);
+  });
+
+  it("sends enforce for a control the server can enforce, and lists which ones can", async () => {
+    controls = controls.map((c) => ({
+      ...c,
+      availableModes: c.control === "requirement-protection" ? ["off", "report", "enforce"] : ["off", "report"],
+    }));
+    const listed = await cli(["security", "controls"]);
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(listed.stdout).toContain("Modes this server offers: off, report, and enforce for requirement-protection.\n");
+    requests = [];
+    const r = await cli(["security", "set", "requirement-protection", "enforce"]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toBe("requirement-protection in acme: off -> enforce, version 1.\n");
+    expect(JSON.parse(patches()[0]!.body)).toEqual({ mode: "enforce", expectedVersion: 0 });
+    requests = [];
+    const refused = await cli(["security", "set", "admin-step-up", "enforce"]);
+    expect(refused.code).toBe(EXIT.failure);
+    expect(refused.stderr).toContain("does not offer the mode enforce for admin-step-up yet (it offers off, report)");
     expect(patches()).toEqual([]);
   });
 

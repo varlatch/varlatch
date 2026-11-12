@@ -17,7 +17,8 @@ import { lockedQuery } from "../db/locks.js";
  * actor, reason, hour) goes up by one. A worker turns each hour's rows
  * into `security_control.would_block` audit events once the hour has been
  * over for 10 minutes. Nothing is counted for a control that is `off`, and
- * `enforce` (not offered yet) will refuse instead of counting.
+ * `enforce` refuses or asks for an approval instead of counting
+ * (protected.ts).
  *
  * What is counted, and when:
  *
@@ -292,9 +293,10 @@ export async function reportProtectedWrite(
     if (check.control === "credential-lifetime") {
       reason = lifetimeReason(control.config, check.ttlSeconds);
     } else {
-      // No operation of Decision 5 accepts an approval yet, so each one is
-      // done without one. A machine credential can never pass an approval:
-      // it is told apart, as enforce will refuse it outright.
+      // An operation that counts here was done without an approval (one
+      // whose control enforces goes through prepareProtectedOperation,
+      // protected.ts). A machine credential can never pass an approval: it
+      // is told apart, as enforce refuses it outright.
       approvalReason ??= await actorKind(db, input.actorIdentityId) === "human" ? "no-approval" : "machine-credential";
       reason = approvalReason;
     }

@@ -24,6 +24,7 @@ import { useIdentities } from "./shared";
 import { useAccessNames } from "./useAccessNames";
 import { matchParts, requirementSentence, targetParts, type MatchPart, type TargetPart } from "./requirements";
 import { RequirementEditor } from "./RequirementEditor";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 
 /**
  * Advanced: mechanisms that never grant. Network requirements narrow where
@@ -57,7 +58,8 @@ function RequirementsSection({ org }: { org: string }) {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteRequirement(org, id),
     onSuccess: invalidate,
-    onError: (err) => toast.error("Could not remove the requirement", { description: errorMessage(err) }),
+    // With requirement-protection enforced, removing one needs an approval (ADR-0054).
+    onError: (err) => toast.error("Could not remove the requirement", { description: approvalOutcomeMessage(err) ?? errorMessage(err) }),
   });
   const items = reqs.data?.items ?? [];
   const editingGone = editing !== null && reqs.data !== undefined && !items.some((r) => r.id === editing.id);
