@@ -77,8 +77,9 @@ fixes.
   asks. It cannot be enforced yet (`CONTROL_MODE_UNAVAILABLE`), so nothing
   changes now, and with every control off nothing changes at all. In
   report mode, a Grant replacement or a role edit that only reorders
-  actions is no longer counted. Every approval summary of
-  `admin-step-up` names each item by its quoted name and its id. See
+  actions is no longer counted. Every approval summary, Tailnet
+  Requirement edits and removals included, quotes every name and value and
+  names each existing item by its id. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Dashboard: adding or removing a group or team member, and giving a
   team a project or taking it away, now show an error when they fail.**

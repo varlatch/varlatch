@@ -711,13 +711,14 @@ groups and teams, their members, and the projects a team owns.
 A team is always a team: one reached through a `/groups/` route asks for
 the `team.*` operation.
 
-What you approve names every machine, person, group, team, role, project
-and environment by its name in quotes followed by its id, for example
-`"Bob" (idn_...)`, and every character you could not see (a zero-width
-space, a direction override, a no-break space) written as `\u{XXXX}`. Two
-things with the same name, or names that differ only by such a character,
-never read the same. Removing an OIDC binding or revoking or replacing a
-Grant names its id too. Report mode counts these operations, except
+What you approve never shows text that is not in quotes: every name,
+action, tag, issuer, subject or other value appears in quotes, lists in
+brackets (`["config.value.read", "project.read"]`) and claims as
+`{"ref": "main"}`, with every character you could not see (a zero-width
+space, a direction override, a no-break space) written as `\u{XXXX}`.
+Everything that already exists is named with its id, for example
+`"Bob" (idn_...)`, a Grant, an OIDC binding or a Tailnet Requirement by its
+id. Two different requests never read the same. Report mode counts these operations, except
 requests that change nothing (a current member, an owned project, an
 identical Grant, a role whose actions only change order).
 
