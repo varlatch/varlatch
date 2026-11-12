@@ -27,6 +27,10 @@ import { registerSoftPasskey } from "./helpers/soft-authenticator.js";
  * - a retrieval decides in its snapshot;
  * - report mode counts the decision the write took under its lock, once;
  * - an Idempotency-Key replay is checked against the current mode;
+ * - a protected external effect runs in a transaction holding the
+ *   Organization row from its checkpoint until the effect is done: a
+ *   control change waits for it, and once enforce committed the request is
+ *   refused before any outbound call;
  * - a missing nested target keeps its not-found.
  *
  * The races are made deterministic by holding a row lock in a connection
@@ -50,6 +54,23 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
   const P = `${ORG}/projects/api`;
   const E = `${P}/environments/production`;
   const CONTROL = `${ORG}/security/controls/passkey-verification`;
+
+  /** A platform the access check calls, held at its first request until `release` (the external effect). */
+  const platform = {
+    calls: 0,
+    hold: null as Promise<void> | null,
+    release: () => undefined as void,
+    fetch: (async () => {
+      platform.calls++;
+      if (platform.hold) await platform.hold;
+      return new Response("4.0.0", { status: 200 });
+    }) as unknown as typeof fetch,
+    holdNext() {
+      platform.hold = new Promise<void>((r) => { platform.release = () => { platform.hold = null; r(); }; });
+    },
+  };
+  const CHECK = "/v1/organizations/acme/platform-connections/check";
+  const checkBody = { platform: "coolify", baseIdentity: "https://coolify.example.com", credential: "tok" };
 
   const call = async (method: string, path: string, token: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await app.request(path, {
@@ -84,7 +105,9 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     );
     await db.query("INSERT INTO auth_session_evidence (session_id, ceremony, user_verified, passkey_id) VALUES ('ses_verified', 'sign-in', true, $1)", [key.passkeyId]);
     verified = (await issueCredential(db, { identityId: adminId, kind: "browser", expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), authSessionId: "ses_verified" })).token;
-    app = buildApp(ctx);
+    platform.calls = 0;
+    platform.hold = null;
+    app = buildApp(ctx, { syncFetch: platform.fetch });
     for (const [path, body] of [
       ["/v1/organizations", { name: "Acme", slug: "acme" }],
       [`${ORG}/projects`, { name: "API", slug: "api", contractAuthority: "git" }],
@@ -190,6 +213,40 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     const next = await call("PATCH", P, cli, { name: "Again" });
     expect(next.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
     expect(await projectName()).toBe("Renamed");
+  }, 30_000);
+
+  it("an external effect holds the Organization row from its checkpoint until it is done: a control change waits for it", async () => {
+    platform.holdNext();
+    const checking = call("POST", CHECK, cli, checkBody);
+    // The check passed its checkpoint (off) and is at the platform.
+    for (let i = 0; i < 400 && platform.calls === 0; i++) await new Promise((r) => setTimeout(r, 25));
+    expect(platform.calls).toBeGreaterThan(0);
+    const change = call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 });
+    await waiters(1);
+    // While the effect is in progress, the change has not committed.
+    expect((await one<{ n: number }>("SELECT count(*)::int AS n FROM security_controls WHERE mode = 'enforce'")).n).toBe(0);
+    platform.release();
+    const checked = await checking;
+    expect(checked.status, JSON.stringify(checked.body)).toBe(200);
+    expect((await change).status).toBe(200);
+    // The next one is refused before the platform is called.
+    const calls = platform.calls;
+    const refused = await call("POST", CHECK, cli, checkBody);
+    expect(refused.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    expect(platform.calls).toBe(calls);
+  }, 30_000);
+
+  it("an external operation that locks after enforce committed is refused before any outbound call, and records nothing", async () => {
+    const change = await changeInFlight("enforce");
+    const checking = call("POST", CHECK, cli, checkBody);
+    await waiters(1);
+    await change.commit();
+    const refused = await checking;
+    expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+    expect(refused.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    expect(platform.calls).toBe(0);
+    expect(await n("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'sync.connection_checked'")).toBe(0);
+    expect(await passkeyDenials()).toBe(1);
   }, 30_000);
 
   it("a SERIALIZABLE writer whose snapshot predates the change runs again and is refused; without the epoch it would commit under the old mode", async () => {
