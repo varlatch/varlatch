@@ -2,6 +2,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import ts from "typescript";
 import { parse as parseYaml } from "yaml";
 import { CAPABILITIES } from "@varlatch/protocol";
 import { issueCredential } from "../src/auth/credentials.js";
@@ -183,9 +184,11 @@ const UNPROTECTED_WRITES: Record<string, string> = {
  * (identities, credentials, OIDC bindings, Grants, roles, groups, their
  * members and Team-Project links, memberships, invitations, webhooks,
  * Connections, GitHub Apps and their registrations, Projects,
- * Organization deletions), by file and function (app.ts: by route), each
- * protected by the named operations or exempt for a reason. A new writer
- * fails until it is classified.
+ * Organization deletions), attributed by the syntax tree (attribute): by
+ * file and route or function, a helper that is not exported resolved to
+ * its callers ("caller via helper"). Each is protected by the named
+ * operations or exempt for a reason. A new writer fails until it is
+ * classified.
  */
 const WRITERS: Record<string, string> = {
   "auth/credentials.ts authenticateBearer": "exempt: a credential's use count and last use",
@@ -198,9 +201,13 @@ const WRITERS: Record<string, string> = {
   "domain/bootstrap.ts issueRecoveryGrant": "exempt: host command (admin recover)",
   "domain/bootstrap.ts issueReenrollmentGrants": "exempt: host command (admin reenroll)",
   "domain/contracts.ts activateRevision": "exempt: a Contract Revision",
-  "domain/githubapps.ts attachInTx": "protected: github_app.register (called by completeRegistration and attachRegistration only)",
+  "domain/githubapps.ts attachRegistration via attachInTx": "protected: github_app.register",
+  "domain/githubapps.ts attachRegistration via endRefused > endRefusedIn > endPending": "exempt: ends a pending registration refused for good (amendment D)",
   "domain/githubapps.ts completeRegistration": "protected: github_app.register (its conversion is not, amendment D)",
-  "domain/githubapps.ts endPending": "exempt: ends a pending registration (discard, terminal refusal)",
+  "domain/githubapps.ts completeRegistration via attachInTx": "protected: github_app.register",
+  "domain/githubapps.ts completeRegistration via endPending": "exempt: ends a pending registration (amendment D)",
+  "domain/githubapps.ts completeRegistration via endRefusedIn > endPending": "exempt: ends a pending registration refused for good (amendment D)",
+  "domain/githubapps.ts discardRegistration via endPending": "exempt: discarding a pending registration only restricts",
   "domain/githubapps.ts importGitHubApp": "protected: github_app.import",
   "domain/githubapps.ts startRegistration": "exempt: starting a registration (amendment D)",
   "domain/githubapps.ts sweepExpiredRegistrations": "exempt: background sweep of expired pending registrations",
@@ -240,7 +247,7 @@ const WRITERS: Record<string, string> = {
   "domain/sync.ts revokeConnection": "protected: connection.delete",
   "domain/sync.ts rotateGitHubAppKey": "protected: github_app.replace_key",
   "domain/webhooks.ts createWebhook": "protected: webhook.create",
-  "domain/webhooks.ts deliverOne": "exempt: the delivery worker's state",
+  "domain/webhooks.ts deliverWebhooksOnce via deliverOne": "exempt: the delivery worker's state",
   "domain/webhooks.ts revokeWebhook": "protected: webhook.delete",
   "domain/webhooks.ts updateWebhook": "protected: webhook.update",
   [`http/app.ts DELETE ${ORG}/grants/:grant`]: "protected: grant.revoke",
@@ -251,11 +258,13 @@ const WRITERS: Record<string, string> = {
 };
 
 /**
- * Every caller in src/ of the protected domain functions, of the route
- * helpers that call them, and of the credential primitive, each by file and
- * enclosing route ("METHOD /path"), helper closure or function (annotate).
- * Never by file alone: a call added to any other route, helper or function,
- * an exempt one included, is a new entry and fails until it is classified
+ * Every use in src/ of the protected domain functions and of the
+ * credential primitive, each attributed by the syntax tree (attribute) to
+ * its file and enclosing route ("METHOD /path") or function, a helper that
+ * is not exported resolved to the routes or functions that use it
+ * ("ROUTE via helper"). Never by file alone: a call added to any other
+ * route, helper or function, an exempt one included, however it is
+ * formatted, is a new entry and fails until it is classified
  * (and the runtime sweep below exercises the protected routes). A host
  * command reaching a protected function would pass noApprovalGate, which
  * throws ApprovalNeeded under enforce and so cannot bypass it.
@@ -264,8 +273,7 @@ const inApp = (route: string) => `http/app.ts ${route}`;
 const CALLERS: Record<string, string[]> = {
   createMachineIdentity: [inApp(`POST ${ORG}/identities`)],
   // Through the non-broker branch of the credentials route (the broker's mints an agent-run credential: exempt).
-  issueMachineCredential: [inApp("issueServiceCredential")],
-  issueServiceCredential: [inApp(`POST ${ORG}/identities/:identity/credentials`)],
+  issueMachineCredential: [inApp(`POST ${ORG}/identities/:identity/credentials via issueServiceCredential`)],
   reactivateIdentity: [inApp(`POST ${ORG}/identities/:identity/reactivate`)],
   createOidcBinding: [inApp(`POST ${ORG}/identities/:identity/oidc-bindings`)],
   revokeOidcBinding: [inApp(`DELETE ${ORG}/identities/:identity/oidc-bindings/:binding`)],
@@ -273,16 +281,14 @@ const CALLERS: Record<string, string[]> = {
   updateRole: [inApp(`PATCH ${ORG}/roles/:role`)],
   deleteRole: [inApp(`DELETE ${ORG}/roles/:role`)],
   // Groups and teams share their writers through one helper per operation.
-  createGroup: [inApp("createGroupRoute")],
-  createGroupRoute: [inApp(`POST ${ORG}/groups`), inApp(`POST ${ORG}/teams`)],
-  updateGroup: [inApp("updateGroupRoute")],
-  updateGroupRoute: [inApp(`PATCH ${ORG}/groups/:group`), inApp(`PATCH ${ORG}/teams/:team`)],
-  deleteGroup: [inApp("deleteGroupRoute")],
-  deleteGroupRoute: [inApp(`DELETE ${ORG}/groups/:group`), inApp(`DELETE ${ORG}/teams/:team`)],
-  addGroupMember: [inApp("addMemberRoute")],
-  addMemberRoute: [inApp(`POST ${ORG}/groups/:group/members`), inApp(`POST ${ORG}/teams/:team/members`)],
-  removeGroupMember: [inApp("removeMemberRoute")],
-  removeMemberRoute: [inApp(`DELETE ${ORG}/groups/:group/members/:identity`), inApp(`DELETE ${ORG}/teams/:team/members/:identity`)],
+  createGroup: [inApp(`POST ${ORG}/groups via createGroupRoute`), inApp(`POST ${ORG}/teams via createGroupRoute`)],
+  updateGroup: [inApp(`PATCH ${ORG}/groups/:group via updateGroupRoute`), inApp(`PATCH ${ORG}/teams/:team via updateGroupRoute`)],
+  deleteGroup: [inApp(`DELETE ${ORG}/groups/:group via deleteGroupRoute`), inApp(`DELETE ${ORG}/teams/:team via deleteGroupRoute`)],
+  addGroupMember: [inApp(`POST ${ORG}/groups/:group/members via addMemberRoute`), inApp(`POST ${ORG}/teams/:team/members via addMemberRoute`)],
+  removeGroupMember: [
+    inApp(`DELETE ${ORG}/groups/:group/members/:identity via removeMemberRoute`),
+    inApp(`DELETE ${ORG}/teams/:team/members/:identity via removeMemberRoute`),
+  ],
   addTeamProject: [inApp(`POST ${ORG}/teams/:team/projects`)],
   removeTeamProject: [inApp(`DELETE ${ORG}/teams/:team/projects/:project`)],
   issueInviteGrant: [inApp(`POST ${ORG}/invitations`)],
@@ -293,8 +299,8 @@ const CALLERS: Record<string, string[]> = {
   createWebhook: [inApp(`POST ${ORG}/webhooks`)],
   updateWebhook: [inApp(`PATCH ${ORG}/webhooks/:webhook`)],
   revokeWebhook: [inApp(`DELETE ${ORG}/webhooks/:webhook`)],
-  // net/outbound.ts's createConnection is node:net's, for tests' outbound resolver: another function.
-  createConnection: [inApp(`POST ${ORG}/platform-connections`), "net/outbound.ts setOutboundResolverForTests"],
+  // net/outbound.ts's createConnection is node:net's, in its HTTP agent: another function.
+  createConnection: [inApp(`POST ${ORG}/platform-connections`), "net/outbound.ts PolicyAgent.createConnection"],
   createAppConnection: [inApp(`POST ${ORG}/platform-connections`)],
   replaceConnectionCredential: [inApp(`POST ${ORG}/platform-connections/:connection/credential`)],
   revokeConnection: [inApp(`DELETE ${ORG}/platform-connections/:connection`)],
@@ -313,8 +319,8 @@ const CALLERS: Record<string, string[]> = {
   // dashboard bearer), an OIDC-exchanged one, or an agent-run one: the
   // broker's branch of the credentials route (exempt by Decision 5).
   issueCredential: [
-    "cli.ts adminCommand",
-    "domain/device-sign-in.ts pollOnce",
+    "cli.ts (top level) via main > adminCommand",
+    "domain/device-sign-in.ts pollDeviceSignIn via pollOnce",
     "domain/identities.ts createMachineIdentity",
     "domain/identities.ts issueMachineCredential",
     "domain/oidc.ts exchangeOidcToken",
@@ -349,61 +355,155 @@ function srcFiles(): Source[] {
   return out;
 }
 
-/** A top-level function: `function f(`, `export async function f(`, `export const f = (`. */
-const DECLARATION = /^(?:export )?(?:async )?function\*? (\w+)|^(?:export )?const (\w+) = (?:async )?\(/;
-/** A route registered on one line: `app.post("/v1/...", ...`. */
-const ROUTE = /^\s*app\.(get|post|put|patch|delete)\(\s*"([^"]+)"/;
-/** A route registered over several lines: `app.post(` with its path on the next line. */
-const ROUTE_OPEN = /^\s*app\.(get|post|put|patch|delete)\($/;
 /**
- * A helper closure inside a route file's builder (http/app.ts buildApp),
- * at its two-space indent: `const issueServiceCredential = async (`,
- * `const createGroupRoute = (kind: ...) => async (c) => {`. Several
- * routes may share one; its callers are listed in CALLERS like any
- * function's.
+ * Attribution by the TypeScript compiler API (Codex's review of #135: a
+ * line-based scanner let a multiline helper declaration fall into the
+ * route above it). Each use of a name resolves to what encloses it in the
+ * syntax tree: the nearest route registration (`app.get/post/put/patch/
+ * delete/all/use(...)`, as "METHOD /path"), or else the nearest named
+ * function: a function declaration, a method, or a function or arrow
+ * function bound to a variable; at the module's own top level, "(top
+ * level)". A helper that is not exported is resolved
+ * through its own uses in its file, the same way, up to a depth bound and
+ * with a cycle guard, and is shown as "ROUTE via outer > inner". Fail
+ * closed: a registration whose path is not a string literal ("??"), a
+ * cycle, the depth bound and a helper nobody uses each produce an entry
+ * no expected list contains.
  */
-const HELPER = /^  const (\w+) = (?:async )?(?:<[^>]*>)?\((?!await\b)|^  (?:async )?function (\w+)\(/;
+interface Parsed {
+  file: string;
+  sf: ts.SourceFile;
+}
+type Scope =
+  | { kind: "route"; label: string }
+  | { kind: "function"; name: string; exported: boolean; decl: ts.Node }
+  | { kind: "module" }
+  | { kind: "error"; reason: string };
 
-/**
- * Each line of a source with what encloses it: its top-level function, or
- * in a route file (src/http/) the route registration or helper closure it
- * belongs to, as "METHOD /path" or the helper's name. Line-based: the
- * nearest such start above the line.
- */
-function annotate(src: Source): { text: string; within: string }[] {
-  const raw = src.text.split("\n");
-  const routeFile = src.file.startsWith("http/");
-  let within = "(top)";
-  return raw.map((text, i) => {
-    const d = text.match(DECLARATION);
-    const r = routeFile ? text.match(ROUTE) : null;
-    const open = routeFile ? ROUTE_OPEN.exec(text) : null;
-    const h = routeFile ? text.match(HELPER) : null;
-    if (d) within = (d[1] ?? d[2])!;
-    else if (r) within = `${r[1]!.toUpperCase()} ${r[2]}`;
-    else if (open) within = `${open[1]!.toUpperCase()} ${raw[i + 1]?.match(/"([^"]+)"/)?.[1] ?? "?"}`;
-    else if (h) within = (h[1] ?? h[2])!;
-    return { text, within };
-  });
+const REGISTRATION_METHODS = new Set(["get", "post", "put", "patch", "delete", "all", "use", "on"]);
+const MAX_HELPER_DEPTH = 8;
+
+const parseSource = (src: Source): Parsed => ({ file: src.file, sf: ts.createSourceFile(src.file, src.text, ts.ScriptTarget.Latest, true) });
+
+/** `app.<method>(...)`: a route or middleware registration. */
+function isRegistration(n: ts.Node): n is ts.CallExpression & { expression: ts.PropertyAccessExpression } {
+  return ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) &&
+    n.expression.expression.text === "app" && REGISTRATION_METHODS.has(n.expression.name.text);
 }
 
-/**
- * Every call of each named function in `sources`, as "file enclosing"
- * (annotate): never collapsed to the file, so a call added to any other
- * route, helper or function is a new entry. A definition and comments are
- * not calls.
- */
+/** "POST /v1/..." for a registration, or null when its path is not a string literal. */
+function registrationLabel(call: ts.CallExpression & { expression: ts.PropertyAccessExpression }): string | null {
+  const [path] = call.arguments;
+  if (!path || !(ts.isStringLiteral(path) || ts.isNoSubstitutionTemplateLiteral(path))) return null;
+  return `${call.expression.name.text.toUpperCase()} ${path.text}`;
+}
+
+const hasExport = (n: ts.Node) => ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+
+/** What encloses `node`: the nearest registration or named function, walking up the tree. */
+function scopeOf(node: ts.Node): Scope {
+  let child: ts.Node = node;
+  for (let n: ts.Node | undefined = node.parent; n; child = n, n = n.parent) {
+    if (isRegistration(n) && child !== n.expression) {
+      const label = registrationLabel(n);
+      return label ? { kind: "route", label } : { kind: "error", reason: "a route registration whose path is not a string literal" };
+    }
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      return { kind: "function", name: n.name.text, exported: hasExport(n) && ts.isSourceFile(n.parent), decl: n };
+    }
+    if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name)) {
+      const owner = ts.isClassLike(n.parent) && n.parent.name ? `${n.parent.name.text}.` : "";
+      return { kind: "function", name: `${owner}${n.name.text}`, exported: true, decl: n };
+    }
+    if ((ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && ts.isVariableDeclaration(n.parent) && ts.isIdentifier(n.parent.name)) {
+      const statement = n.parent.parent.parent;
+      const exported = ts.isVariableStatement(statement) && hasExport(statement) && ts.isSourceFile(statement.parent);
+      return { kind: "function", name: n.parent.name.text, exported, decl: n.parent };
+    }
+    if (ts.isFunctionExpression(n) && n.name) return { kind: "function", name: n.name.text, exported: false, decl: n };
+  }
+  // A statement of the module itself, such as an entry point's main().
+  return { kind: "module" };
+}
+
+/** Whether an identifier is a use of its name: not a declaration, an import or export, a property key or a type query. */
+function isUse(id: ts.Identifier): boolean {
+  const p = id.parent;
+  if (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isExportSpecifier(p) || ts.isTypeQueryNode(p)) return false;
+  if ((ts.isFunctionDeclaration(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isMethodDeclaration(p) ||
+    ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) ||
+    ts.isBindingElement(p) || ts.isFunctionExpression(p) || ts.isClassDeclaration(p) || ts.isInterfaceDeclaration(p) ||
+    ts.isTypeAliasDeclaration(p) || ts.isEnumMember(p)) && (p as { name?: ts.Node }).name === id) return false;
+  if (ts.isBindingElement(p) && p.propertyName === id) return false;
+  return true;
+}
+
+/** Every use of any of `names` in a parsed file (a call, or the name passed as a value). */
+function usesOf(parsed: Parsed, names: ReadonlySet<string>): ts.Identifier[] {
+  const out: ts.Identifier[] = [];
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && names.has(n.text) && isUse(n)) out.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(parsed.sf);
+  return out;
+}
+
+const isWithin = (n: ts.Node, outer: ts.Node) => n.pos >= outer.pos && n.end <= outer.end;
+
+/** Who `node` runs for: "file ROUTE", "file function", "file ROUTE via helper", or a fail-closed entry. */
+function attribute(parsed: Parsed, node: ts.Node, chain: readonly string[] = []): string[] {
+  const scope = scopeOf(node);
+  const via = chain.length > 0 ? ` via ${[...chain].reverse().join(" > ")}` : "";
+  if (scope.kind === "error") return [`${parsed.file} ?? ${scope.reason}${via}`];
+  if (scope.kind === "route") return [`${parsed.file} ${scope.label}${via}`];
+  if (scope.kind === "module") return [`${parsed.file} (top level)${via}`];
+  if (scope.exported) return [`${parsed.file} ${scope.name}${via}`];
+  if (chain.includes(scope.name)) return [`${parsed.file} ${scope.name} (cycle)${via}`];
+  if (chain.length >= MAX_HELPER_DEPTH) return [`${parsed.file} ${scope.name} (too deep)${via}`];
+  // A helper: resolved through its uses in its file, outside its own body.
+  const uses = usesOf(parsed, new Set([scope.name])).filter((u) => !isWithin(u, scope.decl));
+  if (uses.length === 0) return [`${parsed.file} ${scope.name} (no caller)${via}`];
+  return uses.flatMap((u) => attribute(parsed, u, [...chain, scope.name]));
+}
+
+/** Every use of each named function across `sources`, attributed (attribute), sorted. */
 function callersIn(sources: readonly Source[], fns: readonly string[]): Record<string, string[]> {
   const found: Record<string, Set<string>> = Object.fromEntries(fns.map((f) => [f, new Set<string>()]));
-  for (const src of sources) {
-    for (const { text, within } of annotate(src)) {
-      if (/^\s*(?:\/\/|\*|\/\*)/.test(text) || /^import\b/.test(text)) continue;
-      for (const fn of fns) {
-        if (new RegExp(`(?<![\\w.])${fn}\\(`).test(text) && !new RegExp(`function ${fn}\\(`).test(text)) found[fn]!.add(`${src.file} ${within}`);
-      }
-    }
+  const names = new Set(fns);
+  for (const parsed of sources.map(parseSource)) {
+    for (const use of usesOf(parsed, names)) for (const entry of attribute(parsed, use)) found[use.text]!.add(entry);
   }
   return Object.fromEntries(Object.entries(found).map(([fn, set]) => [fn, [...set].sort()]));
+}
+
+/** Every string or template literal that writes one of the tables, attributed as above. */
+function writersIn(sources: readonly Source[], write: RegExp): string[] {
+  const found = new Set<string>();
+  for (const parsed of sources.map(parseSource)) {
+    const visit = (n: ts.Node) => {
+      if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) && write.test(n.getText(parsed.sf))) {
+        for (const entry of attribute(parsed, n)) found.add(entry);
+        return;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(parsed.sf);
+  }
+  return [...found].sort();
+}
+
+/** Every registration in a route file whose path is not a string literal. */
+function unlabelledRegistrations(sources: readonly Source[]): string[] {
+  const out: string[] = [];
+  for (const parsed of sources.filter((s) => s.file.startsWith("http/")).map(parseSource)) {
+    const visit = (n: ts.Node) => {
+      if (isRegistration(n) && registrationLabel(n) === null) out.push(`${parsed.file}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
+      ts.forEachChild(n, visit);
+    };
+    visit(parsed.sf);
+  }
+  return out;
 }
 
 const WRITTEN_TABLES =
@@ -836,42 +936,76 @@ describe("alternate callers", () => {
 
   it("every writer in src/ of what the operations change is classified", () => {
     const write = new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`);
-    const found = new Set<string>();
-    for (const src of srcFiles()) {
-      for (const { text, within } of annotate(src)) if (write.test(text)) found.add(`${src.file} ${within}`);
-    }
-    expect([...found].sort()).toEqual(Object.keys(WRITERS).sort());
+    expect(writersIn(srcFiles(), write)).toEqual(Object.keys(WRITERS).sort());
   });
 
-  it("every caller of a protected domain function is known, by its route, helper or function", () => {
-    const expected = Object.fromEntries(Object.entries(CALLERS).map(([fn, list]) => [fn, [...list].sort()]));
-    expect(callersIn(srcFiles(), Object.keys(CALLERS))).toEqual(expected);
-  });
-
-  it("would fail if a route gained a call to a protected function, which a file-level inventory would not see", () => {
+  it("every caller of a protected domain function is known, by its route or function (helpers resolved to their routes)", () => {
     const sources = srcFiles();
-    const appTs = sources.find((s) => s.file === "http/app.ts")!;
-    // An exempt route (renaming a machine identity) that also issues a raw credential and creates a role.
-    const route = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
-    expect(appTs.text).toContain(route);
-    const injected = appTs.text.replace(
-      route,
-      `${route}\n    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});`,
-    );
-    const tampered = sources.map((s) => (s === appTs ? { ...s, text: injected } : s));
-    const fns = Object.keys(CALLERS);
-    const before = callersIn(sources, fns);
-    const after = callersIn(tampered, fns);
+    expect(unlabelledRegistrations(sources)).toEqual([]);
+    const expected = Object.fromEntries(Object.entries(CALLERS).map(([fn, list]) => [fn, [...list].sort()]));
+    expect(callersIn(sources, Object.keys(CALLERS))).toEqual(expected);
+  });
+
+  describe("would fail on an added caller (in-memory copies of app.ts)", () => {
+    const RENAME = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
     const rename = `http/app.ts PATCH ${ORG}/identities/:identity`;
-    expect(before.issueCredential).not.toContain(rename);
-    expect(after.issueCredential).toContain(rename);
-    expect(after.createRole).toContain(rename);
-    expect(after).not.toEqual(before);
-    // The inventory before this fix collapsed every app.ts caller into one
-    // entry: the same tampering left it unchanged.
-    const byFile = (m: Record<string, string[]>) =>
-      Object.fromEntries(Object.entries(m).map(([fn, list]) => [fn, [...new Set(list.map((c) => (c.startsWith("http/app.ts ") ? "http/app.ts" : c)))].sort()]));
-    expect(byFile(after)).toEqual(byFile(before));
+    const fns = Object.keys(CALLERS);
+    /** The inventory of the real sources, and of a copy of app.ts edited by `edit`. */
+    function tamper(edit: (text: string) => string) {
+      const sources = srcFiles();
+      const appTs = sources.find((s) => s.file === "http/app.ts")!;
+      const edited = edit(appTs.text);
+      expect(edited, "the edit applies").not.toBe(appTs.text);
+      return { before: callersIn(sources, fns), after: callersIn(sources.map((s) => (s === appTs ? { ...s, text: edited } : s)), fns) };
+    }
+    const intoRename = (code: string) => (text: string) => {
+      expect(text).toContain(RENAME);
+      return text.replace(RENAME, `${RENAME}\n${code}`);
+    };
+
+    it("a direct call to the credential primitive and to a protected function in an exempt route; a file-level view would not see it", () => {
+      const { before, after } = tamper(intoRename('    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});'));
+      expect(before.issueCredential).not.toContain(rename);
+      expect(after.issueCredential).toContain(rename);
+      expect(after.createRole).toContain(rename);
+      const byFile = (m: Record<string, string[]>) =>
+        Object.fromEntries(Object.entries(m).map(([fn, list]) => [fn, [...new Set(list.map((c) => (c.startsWith("http/app.ts ") ? "http/app.ts" : c)))].sort()]));
+      expect(byFile(after)).toEqual(byFile(before));
+    });
+
+    it("a multiline helper declared just before another route's helper, then called from an exempt route", () => {
+      const anchor = "  const passkeyOwner = (c: Context) => {";
+      const { before, after } = tamper((text) => {
+        expect(text).toContain(anchor);
+        const helper = '  const mintForIdentity =\n    async (identityId: string) => {\n      return issueCredential(ctx.db, { identityId, kind: "service" });\n    };\n';
+        return intoRename("    await mintForIdentity(\"x\");")(text.replace(anchor, `${helper}${anchor}`));
+      });
+      expect(after.issueCredential).toContain(`${rename} via mintForIdentity`);
+      expect(after.issueCredential.filter((e) => !before.issueCredential.includes(e))).toEqual([`${rename} via mintForIdentity`]);
+    });
+
+    it("a helper declared inside buildApp between two routes, then called from an exempt route", () => {
+      const anchor = '  app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {';
+      const { after } = tamper((text) => {
+        expect(text).toContain(anchor);
+        const helper = "  function quietRole(c: Context) {\n    return createRole(ctx, c.get(\"gate\"), \"org\", { name: \"x\", actions: [] }, {});\n  }\n";
+        return intoRename("    await quietRole(c);")(text.replace(anchor, `${helper}${anchor}`));
+      });
+      expect(after.createRole).toContain(`${rename} via quietRole`);
+    });
+
+    it("a call split over several lines", () => {
+      const { after } = tamper(intoRename('    await issueCredential\n      (\n        ctx.db,\n        { identityId: "x", kind: "service" },\n      );'));
+      expect(after.issueCredential).toContain(rename);
+    });
+
+    it("fails closed: a helper nobody calls, and a registration whose path is not a literal", () => {
+      const anchor = "  const passkeyOwner = (c: Context) => {";
+      const { after } = tamper((text) =>
+        text.replace(anchor, `  const unused = async () => issueCredential(ctx.db, { identityId: "x", kind: "service" });\n  app.post(somePath, async (c) => createRole(ctx, gate, "o", {}, {}));\n${anchor}`));
+      expect(after.issueCredential).toContain("http/app.ts unused (no caller)");
+      expect(after.createRole).toContain("http/app.ts ?? a route registration whose path is not a string literal");
+    });
   });
 });
 
