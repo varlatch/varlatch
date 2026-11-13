@@ -110,6 +110,13 @@ jobs:
       # twice that bound, so the WAL-peak criterion is the one failure
       # allowed; the stand-in and the scaled plan are the only reasons
       # allowed for an inconclusive verdict.
+      # The smoke checks the harness's mechanics, not latency: a hosted
+      # runner's disk stalls on fsync now and then (warm-up p95 3.5 ms on one
+      # run, 60 to 120 ms on another, before any backup or checkpoint), and
+      # G9a's latency verdict holds only on the gate's VPS. So a p95 over the
+      # threshold, for a phase or for a window with no failed request, is
+      # tolerated here; failed, dropped or busy requests are not, nor is any
+      # other failure but the smoke bound's WAL peak.
       - name: The G9a harness runs and judges a smoke run
         env:
           CGO_ENABLED: "0"
@@ -133,7 +140,11 @@ jobs:
             and ([.walTriggeredBackups[] | (.attempts | length) >= 1 and .heldOffByAttempt > 0] | all)
             and .memoryMaxMiB > 0 and .memoryMaxMiB < 300
             and .deferredTruncates > 0 and .converges == .convergesPlanned
-            and ([.fails[] | select(startswith("the WAL peaked") | not)] == [])
+            and ([.fails[]
+                  | select(startswith("the WAL peaked") | not)
+                  | select(test("^phase [a-z0-9]+: p95 [0-9.]+ ms over [0-9]+ ms$") | not)
+                  | select(test("^[a-z-]+ window at [-+0-9.]+s: p95 [0-9.]+ ms, 0 failed of [0-9]+$") | not)
+                 ] == [])
             and ([.inconclusive[] | select(startswith("the load ran against") or startswith("the plan differs from G9a") | not)] == [])
           ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
 
