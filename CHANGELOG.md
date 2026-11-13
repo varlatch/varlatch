@@ -32,7 +32,7 @@ fixes.
   retention and Object Lock, the last write and heartbeat, what is pending,
   the last error, and a short checklist. Nothing changes for an
   organization until an admin creates an export: its Security page only
-  says it is not set up.
+  says it is not set up. See [Audit export](docs/reference/audit-export.md).
 - **Incident freeze: stop all access to an organization at once.** During
   an incident an admin can freeze an organization from its Security page
   (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
@@ -355,6 +355,12 @@ fixes.
 
 ### Documentation
 
+- **[Audit export](docs/reference/audit-export.md):** setting it up with
+  AWS S3 and Backblaze B2 (Object Lock, a key that can only write and set
+  retention), what the destination check does, watching the hourly
+  heartbeat, what a coding agent may do with it, and its limits.
+  `VARLATCH_AUDIT_EXPORT` is in
+  [Configuration](docs/self-hosting/configuration.md#varlatch_audit_export).
 - **Getting started is split by reader.** It now sends you to a short
   page for where you are: [Join a team](docs/join-a-team.md) when you
   were invited, [Set up a project](docs/set-up-a-project.md), or
