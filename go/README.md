@@ -1,9 +1,11 @@
-# Go rewrite (groundwork)
+# Go rewrite
 
-The Go rewrite of `varlatchd` and the `varlatch` CLI (ADR-0059). This
-directory lives on the `rewrite/go` branch until the next TypeScript
-release is tagged; until then it holds only the groundwork ADR-0059
-amendment 2 allows, and nothing here ships.
+The Go rewrite of `varlatchd` and the `varlatch` CLI (ADR-0059). The
+groundwork ADR-0059 amendment 2 allowed was built on the `rewrite/go`
+branch and merged into `main` after the TypeScript release v0.22.0, as the
+start of step 1 (ADR-0059 "Order"). Nothing here ships until the first Go
+release. CI routes by path: `.github/workflows/go.yml` checks `go/`, and
+`scripts/ci-changes.sh` keeps a Go-only change out of the TypeScript tests.
 
 - `cmd/varlatchd/`, `server/`: the server, AGPL-3.0-or-later.
 - `lib/storage/`: the SQLite storage engine (Decision 2): the single
@@ -12,11 +14,16 @@ amendment 2 allows, and nothing here ships.
 - `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
   under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
 - `lib/envelope/`: the encryption envelope (ADR-0011, unchanged by
-  Decision 2): AES-256-GCM, canonical-JSON associated data, the nine
-  purposes in use, Root KEK parsing and the canary. `testdata/` holds
-  fixtures the TypeScript server's own code sealed (opened by the Go tests)
-  and fixtures Go sealed (opened by that code in CI, `tsfixtures.mjs`).
-  Regenerate the TypeScript fixtures from the next release before step 3.
+  Decision 2): AES-256-GCM, canonical-JSON associated data, the purposes
+  in use (`context.go`, including ADR-0056's audit export credential and
+  its drain copy since 0.22.0), Root KEK parsing and the canary.
+  `testdata/` holds fixtures the TypeScript server's own code sealed
+  (opened by the Go tests) and fixtures Go sealed (opened by that code in
+  CI, `tsfixtures.mjs`). `ts-v0.22.0.json` comes from v0.22.0 and supplies
+  the vectors; `ts-v0.21.0.json` stays, since what 0.21.0 sealed must still
+  open. A TypeScript release that adds a purpose gets a fixture of its own
+  (`node tsfixtures.mjs generate --ref v<release> ts-v<release>.json`,
+  listed in `tsFixtures` in `envelope_test.go`).
 - `lib/release/`: the embedded release verifier (Decision 8): a release's
   SHA256SUMS must be signed by the release workflow for its tag (Sigstore,
   pinned identity and issuer; cosign's earlier bundle format and the newer
@@ -57,16 +64,8 @@ go test ./...
 CGO_ENABLED=1 go test -race ./...
 ```
 
-## Before `rewrite/go` merges into `main`
+## Before the first Go release
 
-- `scripts/ci-changes.sh classify` counts a Go-only change as code with
-  every TypeScript test (`code=true`, `tests=all`). Classify Go-only
-  changes separately, keeping the checks for shared files, licenses and
-  notices, and run the Go checks on `main` (go.yml's triggers).
-- Drop the `rewrite/go` guard from ci.yml's `hosted-runner` job.
-- Regenerate `lib/envelope/testdata/ts-*.json` from the next TypeScript
-  release (`node tsfixtures.mjs generate --ref v<next> ts-v<next>.json`),
-  including any envelope purpose it adds (ADR-0056's audit export).
 - When varlatchd itself is written: configuration errors that a retry
   cannot fix (an unparsable file, a missing key, conflicting options;
   nothing touching DNS, network, disk or the database) exit 78, and the
