@@ -68,8 +68,35 @@ jobs:
 
       # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
       # go/install's tests above.
-      - name: install.sh passes shellcheck
-        run: shellcheck -s sh go/install/install.sh
+      - name: install.sh and the G9a runner pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh
+
+      # The G9a harness end to end at 5 % of the profile's length: k6 (the
+      # pinned image), the stand-in server under G9's memory limits in a
+      # scope of its own, and the report. A smoke run checks the harness,
+      # not the gate: the bound is 512 KiB so the size trigger fires in two
+      # minutes, and a converge run alone writes more than twice that, so
+      # the WAL-peak criterion is expected to fail here; the stand-in makes
+      # the verdict inconclusive at best. Everything else must hold.
+      - name: The G9a harness runs and judges a smoke run
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          out="$RUNNER_TEMP/g9a-smoke"
+          (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a)
+          "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 > "$RUNNER_TEMP/smoke-plan.json"
+          status=0
+          G9A_BIN="$RUNNER_TEMP/g9a" \
+            G9A_SCOPE="sudo systemd-run --scope --quiet --uid=$(id -u) --gid=$(id -g) -p MemoryMax=1G -p MemorySwapMax=0" \
+            go/bench/g9a/run.sh "$out" "$RUNNER_TEMP/smoke-plan.json" || status=$?
+          [ "$status" -le 2 ] || { cat "$out/server.log" "$out/k6.log" || true; exit 1; }
+          jq -e '
+            ([.phases[] | select(.warmup | not) | .stats.n >= .expected - 1 and .stats.failed == 0] | all)
+            and .droppedIterations == 0 and .serverBusy == 0
+            and .sizeTruncates > 0 and .backups == (.plan.backups | length)
+            and .memoryMaxMiB > 0 and .memoryMaxMiB < 300
+            and ([.fails[] | select(startswith("the WAL peaked") | not)] == [])
+          ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
 
       # The varlatchd unit: systemd accepts it, its exposure score stays at
       # or under 2.0 (1.6 when written), and the shipped sandbox lets

@@ -66,6 +66,12 @@ type Options struct {
 	WALBound int64
 	// JournalSizeLimit is PRAGMA journal_size_limit (64 MiB).
 	JournalSizeLimit int64
+	// OnCheckpoint, if set, is called after every checkpoint, and each time
+	// a snapshot defers the size trigger (Deferred), on the goroutine that
+	// ran it (the checkpointer, a snapshot or Close), possibly with the
+	// checkpoint lock held: it must return quickly and must not call into
+	// the DB. The G9a harness logs every checkpoint through it.
+	OnCheckpoint func(CheckpointResult, error)
 }
 
 func (o *Options) setDefaults() {
@@ -271,7 +277,7 @@ func (db *DB) Close() error {
 	db.loops.Wait()
 	if db.cconn != nil {
 		db.ckptMu.Lock()
-		_, _ = db.checkpointLocked(context.Background(), "TRUNCATE")
+		_, _ = db.checkpointLocked(context.Background(), "TRUNCATE", TriggerClose)
 		db.ckptMu.Unlock()
 	}
 	return db.closeConns()

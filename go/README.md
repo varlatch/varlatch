@@ -36,6 +36,12 @@ amendment 2 allows, and nothing here ships.
   Root KEK and BEK as systemd credentials, user `varlatch`, a strict
   sandbox). CI checks it with `systemd-analyze verify` and `security`, and
   runs `install/unitprobe` under it (`install/test-unit.sh`).
+- `bench/g9a/`: the G9a storage benchmark harness (`run.sh`, the k6
+  script, the `g9a` command): G9a's load profile, every checkpoint and the
+  WAL size logged, paced backups, converge runs, the disk record, and a
+  report that judges a run by G9a's criteria. Until step 3 builds
+  varlatchd it serves the load from a stand-in workload on `lib/storage`,
+  whose runs are inconclusive by design; see `bench/g9a/README.md`.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
@@ -71,5 +77,7 @@ CGO_ENABLED=1 go test -race ./...
   `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
   `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
   latest one with a `Content-Length`.
+- Step 3 points the G9a harness at varlatchd (`bench/g9a/README.md`,
+  "Against varlatchd") before G9a is run as the gate.
 - List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
   and its own) in THIRD-PARTY-NOTICES.md and its generator.

@@ -7,9 +7,23 @@ import (
 	"time"
 )
 
+// Why a checkpoint ran (CheckpointResult.Trigger).
+const (
+	TriggerInterval = "interval" // the periodic PASSIVE checkpoint
+	TriggerSize     = "size"     // the WAL was over WALBound
+	TriggerSnapshot = "snapshot" // a snapshot finished
+	TriggerClose    = "close"    // Close
+)
+
 // CheckpointResult is what one PRAGMA wal_checkpoint returned.
 type CheckpointResult struct {
-	Mode string
+	Mode    string
+	Trigger string
+	Start   time.Time
+	// Deferred means the size trigger found a snapshot holding TRUNCATE off:
+	// no checkpoint ran, and the snapshot truncates the WAL when it ends.
+	// Only Options.OnCheckpoint sees such a result.
+	Deferred bool
 	// Busy is SQLite's first result column: the checkpoint could not finish
 	// (a TRUNCATE could not reset the WAL).
 	Busy bool
@@ -34,36 +48,38 @@ func (db *DB) checkpointLoop() {
 			return
 		case <-t.C:
 		}
-		_, _ = db.checkpoint(bg, "PASSIVE")
-		if db.walSize() > db.opts.WALBound {
+		_, _ = db.checkpointLocked(bg, "PASSIVE", TriggerInterval)
+		if wal := db.walSize(); wal > db.opts.WALBound {
 			if db.ckptMu.TryLock() {
-				_, _ = db.checkpointLocked(bg, "TRUNCATE")
+				_, _ = db.checkpointLocked(bg, "TRUNCATE", TriggerSize)
 				db.ckptMu.Unlock()
 			} else {
 				db.m.truncateDeferred()
+				db.notify(CheckpointResult{Mode: "TRUNCATE", Trigger: TriggerSize, Start: time.Now(), Deferred: true,
+					LogFrames: -1, Checkpointed: -1, WALBefore: wal, WALAfter: wal}, nil)
 			}
 		}
 	}
 }
 
-// checkpoint runs a PASSIVE checkpoint (which needs no lock) or takes the
-// checkpoint lock for any other mode.
-func (db *DB) checkpoint(ctx context.Context, mode string) (CheckpointResult, error) {
-	if mode != "PASSIVE" {
-		db.ckptMu.Lock()
-		defer db.ckptMu.Unlock()
-	}
-	return db.checkpointLocked(ctx, mode)
-}
-
-func (db *DB) checkpointLocked(ctx context.Context, mode string) (CheckpointResult, error) {
-	r := CheckpointResult{Mode: mode, WALBefore: db.walSize()}
-	t0 := time.Now()
+// checkpointLocked runs one checkpoint on the checkpointer's connection.
+// Any mode but PASSIVE needs ckptMu held.
+func (db *DB) checkpointLocked(ctx context.Context, mode, trigger string) (CheckpointResult, error) {
+	r := CheckpointResult{Mode: mode, Trigger: trigger, WALBefore: db.walSize()}
+	r.Start = time.Now()
 	var busy int
 	err := db.cconn.QueryRowContext(ctx, "PRAGMA wal_checkpoint("+mode+")").Scan(&busy, &r.LogFrames, &r.Checkpointed)
-	r.Duration = time.Since(t0)
+	r.Duration = time.Since(r.Start)
 	r.Busy = busy != 0
 	r.WALAfter = db.walSize()
 	db.m.checkpoint(r, err)
+	db.notify(r, err)
 	return r, err
+}
+
+// notify hands a checkpoint to Options.OnCheckpoint, if set.
+func (db *DB) notify(r CheckpointResult, err error) {
+	if db.opts.OnCheckpoint != nil {
+		db.opts.OnCheckpoint(r, err)
+	}
 }
