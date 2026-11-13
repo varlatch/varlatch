@@ -515,17 +515,39 @@ func TestReportWALTriggered(t *testing.T) {
 				}
 			}
 			r.attempt(2, 2, 19, 20)
-		}, Inconclusive, "no backup overlapped the bound (none held a size-triggered TRUNCATE off); the WAL-triggered backup in phase p50 made 2 of 5 attempts at 95 % of the bound", 0, 2},
+		}, Inconclusive, "the WAL-triggered backup in phase p50 held no size-triggered TRUNCATE off in 2 of 5 attempts at 95 % of the bound", 0, 2},
 		{"never started", func(r *fakeRun) {
 			r.eventsWithout(func(e Event) bool {
 				return e.Ev == EvBackupStart || e.Ev == EvBackupEnd || e.Ev == EvWALBackup || e.Deferred || e.Trigger == "snapshot"
 			})
 		}, Inconclusive, "the WAL-triggered backup in phase p50 never started: the WAL did not cross 95 % of the bound (950 bytes)", 0, 0},
-		{"never started names the attempts", func(r *fakeRun) {
+		{"never started, so nothing overlapped", func(r *fakeRun) {
 			r.eventsWithout(func(e Event) bool {
 				return e.Ev == EvBackupStart || e.Ev == EvBackupEnd || e.Ev == EvWALBackup || e.Deferred || e.Trigger == "snapshot"
 			})
-		}, Inconclusive, "made 0 of 5 attempts at 95 %", 0, 0},
+		}, Inconclusive, "no backup overlapped the bound", 0, 0},
+		// Attempt 1 ends at 15.8 s, attempt 2 starts at 16 s and defers a
+		// size trigger at 16.5 s, inside attempt 1's padded window: only
+		// attempt 2 gets the credit, and starting it was right.
+		{"back-to-back attempts", func(r *fakeRun) {
+			for i, e := range r.events {
+				if e.Attempt == 1 {
+					r.events[i].Attempt, r.events[i].Backup = 2, 2
+				}
+			}
+			r.attempt(1, 1, 14.8, 15.8)
+		}, Pass, "", 2, 2},
+		// A deferral stamped after its backup's end belongs to none.
+		{"a deferral outside every backup", func(r *fakeRun) {
+			for i, e := range r.events {
+				if e.Deferred {
+					r.events[i].StartUs, r.events[i].T = at(17.3), at(17.3)
+				}
+				if e.Ev == EvWALBackup {
+					r.events[i].HeldOff = false
+				}
+			}
+		}, Inconclusive, "a size trigger deferred at +17.3s fell outside every backup's interval", 0, 1},
 		{"more attempts than the plan's", func(r *fakeRun) {
 			second(r)
 			r.plan.Backups[0].WALTriggered.MaxAttempts = 1
@@ -597,29 +619,77 @@ func TestReportWALTriggered(t *testing.T) {
 	}
 }
 
+// The timed backup overlaps the bound and the WAL-triggered attempts hold
+// nothing off: the run as a whole showed an overlap, but the WAL-triggered
+// schedule did not, and that alone leaves it inconclusive (amendment 4).
+func TestReportWALTriggeredJudgedAlone(t *testing.T) {
+	run := walRun()
+	run.plan.Backups = []Backup{{Phase: "p10", AtSeconds: 3}, run.plan.Backups[0]}
+	saved := gatePlan
+	gatePlan = func() Plan { return run.plan }
+	t.Cleanup(func() { gatePlan = saved })
+	for i, e := range run.events {
+		switch {
+		case e.Deferred: // now the timed backup's, at 5.5 s
+			run.events[i].StartUs, run.events[i].T = at(5.5), at(5.5)
+		case e.Ev == EvWALBackup:
+			run.events[i].HeldOff = false
+		}
+	}
+	run.events = append(run.events,
+		Event{T: at(5), Ev: EvBackupStart, Backup: 3, Phase: "p10", WALBefore: 900},
+		Event{T: at(6.3), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "snapshot", StartUs: at(6.3), DurUs: 20_000, LogFrames: 10, Checkpointed: 10, WALBefore: 1100},
+		Event{T: at(6.4), Ev: EvBackupEnd, Backup: 3, Phase: "p10", Pages: 3000, Steps: 3, DurUs: 1_400_000},
+	)
+	rep, err := WriteReport(run.write(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := strings.Join(slices.Concat(rep.Fails, rep.Missing), "\n")
+	want := "the WAL-triggered backup in phase p50 held no size-triggered TRUNCATE off in 1 of 5 attempts at 95 % of the bound"
+	if rep.Verdict != Inconclusive || len(rep.Missing) != 1 || !strings.Contains(reasons, want) {
+		t.Fatalf("verdict %s, want inconclusive with only %q; reasons:\n%s", rep.Verdict, want, reasons)
+	}
+	if rep.Deferred != 1 || rep.TimedBackups != 1 || rep.WALBackups[0].HeldOffBy != 0 {
+		t.Fatalf("deferred %d, timed %d, WAL %+v", rep.Deferred, rep.TimedBackups, rep.WALBackups)
+	}
+	var timed Window
+	for _, w := range rep.Windows {
+		if w.Kind == "backup" && w.Attempt == 0 {
+			timed = w
+		}
+	}
+	if !strings.Contains(timed.Note, "held TRUNCATE off 1 times") {
+		t.Fatalf("the timed backup did not overlap: %+v", timed)
+	}
+}
+
 func TestWALWatch(t *testing.T) {
 	w := newWALWatch(WALTrigger{Fraction: 0.95, MaxAttempts: 3}, 1000)
+	// slotTaken: another backup holds the slot, so the caller cannot use
+	// the crossing.
 	type step struct {
-		size             int64
-		running          bool
-		crossed, started bool
+		size               int64
+		crossed, slotTaken bool
 	}
 	run := func(steps ...step) {
 		t.Helper()
 		for i, s := range steps {
-			c, st := w.observe(s.size, s.running)
-			if c != s.crossed || st != s.started {
-				t.Fatalf("step %d (%d bytes, running %v): crossed %v started %v", i, s.size, s.running, c, st)
+			if c := w.observe(s.size); c != s.crossed {
+				t.Fatalf("step %d (%d bytes): crossed %v", i, s.size, c)
+			}
+			if s.crossed && !s.slotTaken {
+				w.started()
 			}
 		}
 	}
 	run(
-		step{size: 980}, // over the threshold from the start: not a crossing
-		step{size: 999}, //
-		step{size: 0},   // reset
-		step{size: 949}, // under 950 (95 % of 1000)
-		step{size: 950, crossed: true, started: true}, // at it, from below: attempt 1
-		step{size: 1500}, // still over: no new crossing
+		step{size: 980},                // over the threshold from the start: not a crossing
+		step{size: 999},                //
+		step{size: 0},                  // reset
+		step{size: 949},                // under 950 (95 % of 1000)
+		step{size: 950, crossed: true}, // at it, from below: attempt 1
+		step{size: 1500},               // still over: no new crossing
 	)
 	if w.attempts != 1 || w.done() {
 		t.Fatalf("after attempt 1: %+v", w)
@@ -627,10 +697,10 @@ func TestWALWatch(t *testing.T) {
 	w.finished(false)
 	run(
 		step{size: 0}, // the snapshot's TRUNCATE reset the WAL
-		step{size: 960, running: true, crossed: true}, // a backup is running: no attempt
+		step{size: 960, crossed: true, slotTaken: true}, // another backup runs: no attempt
 		step{size: 970}, // and no retry until the next crossing
 		step{size: 10},
-		step{size: 951, crossed: true, started: true}, // attempt 2
+		step{size: 951, crossed: true}, // attempt 2
 	)
 	w.finished(true)
 	if !w.done() || w.attempts != 2 {
@@ -641,7 +711,7 @@ func TestWALWatch(t *testing.T) {
 	// The cap: no attempt holds one off.
 	w = newWALWatch(WALTrigger{Fraction: 0.5, MaxAttempts: 2}, 1000)
 	for i := range 2 {
-		run(step{size: 0}, step{size: 500, crossed: true, started: true})
+		run(step{size: 0}, step{size: 500, crossed: true})
 		if w.attempts != i+1 {
 			t.Fatalf("attempt %d: %+v", i+1, w)
 		}

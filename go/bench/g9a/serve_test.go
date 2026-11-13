@@ -5,13 +5,18 @@ package g9a
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/varlatch/varlatch/go/lib/storage"
 )
 
 // The server end to end, without k6: seed, a handful of retrievals (one
@@ -26,7 +31,9 @@ func TestServe(t *testing.T) {
 	// The converge runs write past the small bound, so the WAL crosses
 	// half of it from below after the timed backup's TRUNCATE.
 	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
-	p.ConvergeEverySeconds = 1.5
+	// 2.5 s: under load a converge run can take more than 1.5 s, and the next
+	// one is then refused ("previous converge still running").
+	p.ConvergeEverySeconds = 2.5
 	p.Targets = 3
 	p.IdleProbeSeconds = 3
 	p.WALBound = 64 << 10
@@ -121,7 +128,9 @@ func TestServe(t *testing.T) {
 	var attempts []Event
 	for _, e := range events {
 		if e.Ev == EvBackupStart {
-			if _, dup := starts[e.Backup]; dup || e.Backup == 0 || e.WALBefore == 0 {
+			// A timed backup may start just after an attempt's TRUNCATE
+			// reset the WAL, so only an attempt's size is checked (below).
+			if _, dup := starts[e.Backup]; dup || e.Backup == 0 {
 				t.Errorf("backup_start: %+v", e)
 			}
 			starts[e.Backup] = e
@@ -194,4 +203,197 @@ func TestServe(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fresh database") {
 		t.Fatalf("reused database: %v", err)
 	}
+}
+
+// slotRig is a server with the backup scheduling of a run but a fake
+// database: the WAL size is set by the test, and each snapshot (by backup
+// number) sleeps and may report a size trigger it deferred, while the rig
+// counts how many run at once.
+type slotRig struct {
+	s       *server
+	wal     atomic.Int64
+	seen    atomic.Int64 // the last size a sample read
+	running atomic.Int32
+	most    atomic.Int32
+}
+
+func newSlotRig(t *testing.T, snap map[int]struct {
+	d      time.Duration
+	defers bool
+}) *slotRig {
+	t.Helper()
+	out := t.TempDir()
+	ev, err := newEventLog(filepath.Join(out, FileEvents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := DefaultPlan()
+	p.WALBound = 1000
+	r := &slotRig{}
+	r.seen.Store(-1)
+	r.s = &server{opts: ServeOptions{DataDir: t.TempDir(), OutDir: out, Plan: p}, ev: ev, slot: newBackupSlot()}
+	r.s.walSize = func() int64 { v := r.wal.Load(); r.seen.Store(v); return v }
+	r.s.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
+		n := r.running.Add(1)
+		defer r.running.Add(-1)
+		for m := r.most.Load(); n > m && !r.most.CompareAndSwap(m, n); m = r.most.Load() {
+		}
+		var id int
+		_, _ = fmt.Sscanf(filepath.Base(dest), "snapshot-%d.db", &id)
+		b := snap[id]
+		if b.defers {
+			r.s.onCheckpoint(storage.CheckpointResult{Mode: "TRUNCATE", Trigger: storage.TriggerSize, Start: time.Now(), Deferred: true}, nil)
+		}
+		time.Sleep(b.d)
+		return storage.SnapshotStats{Pages: 1, Steps: 1, Duration: b.d}, nil
+	}
+	return r
+}
+
+// setWAL sets the WAL size and waits until a sample has read it (the
+// sizes a test sets in a row differ). The watcher acts on it just after.
+func (r *slotRig) setWAL(t *testing.T, v int64) {
+	t.Helper()
+	r.wal.Store(v)
+	waitFor(t, fmt.Sprintf("a sample of %d bytes", v), func() bool { return r.seen.Load() == v })
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); !ok(); {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// events closes the rig's log and checks that no two backups overlapped.
+func (r *slotRig) events(t *testing.T) []Event {
+	t.Helper()
+	if err := r.s.ev.close(); err != nil {
+		t.Fatal(err)
+	}
+	events, err := ReadEvents(filepath.Join(r.s.opts.OutDir, FileEvents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := r.most.Load(); m != 1 {
+		t.Errorf("%d snapshots ran at once", m)
+	}
+	var spans [][2]int64
+	starts := map[int]int64{}
+	for _, e := range events {
+		switch e.Ev {
+		case EvBackupStart:
+			starts[e.Backup] = e.T
+		case EvBackupEnd:
+			spans = append(spans, [2]int64{starts[e.Backup], e.T})
+		case EvError:
+			t.Errorf("server error: %s", e.Err)
+		}
+	}
+	for i := range spans {
+		for j := range i {
+			if spans[i][0] <= spans[j][1] && spans[j][0] <= spans[i][1] {
+				t.Errorf("backups overlapped: %v and %v", spans[j], spans[i])
+			}
+		}
+	}
+	return events
+}
+
+// The timed and the WAL-triggered backups share one slot, with real
+// goroutines on both paths.
+func TestBackupSlot(t *testing.T) {
+	wal := Backup{Phase: "p50", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 3}}
+
+	// A timed backup due while a WAL-triggered attempt runs waits for it.
+	// Its snapshot defers a size trigger, which the attempt must not take
+	// credit for: the watcher retries, and attempt 2 holds one off.
+	t.Run("timed waits", func(t *testing.T) {
+		type snap = struct {
+			d      time.Duration
+			defers bool
+		}
+		r := newSlotRig(t, map[int]snap{1: {d: 300 * time.Millisecond}, 2: {d: 50 * time.Millisecond, defers: true}, 3: {d: 50 * time.Millisecond, defers: true}})
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() { defer wg.Done(); r.s.walBackups(ctx, context.Background(), time.Now().Add(time.Minute), wal) }()
+		r.setWAL(t, 0)
+		r.setWAL(t, 600) // attempt 1 (backup 1)
+		waitFor(t, "attempt 1", func() bool { return r.running.Load() == 1 })
+		wg.Add(1)
+		go func() { defer wg.Done(); r.s.timedBackup(context.Background(), Backup{Phase: "p10"}) }() // backup 2
+		waitFor(t, "the timed backup", func() bool { return r.s.backups.Load() == 2 && r.running.Load() == 0 })
+		r.setWAL(t, 0)
+		r.setWAL(t, 700) // attempt 2 (backup 3)
+		waitFor(t, "attempt 2", func() bool { return r.s.backups.Load() == 3 && r.running.Load() == 0 })
+		// Attempt 2 held one off: the watcher ends on its own.
+		wg.Wait()
+		cancel()
+
+		var waited, timedStart Event
+		var attempts []Event
+		for _, e := range r.events(t) {
+			switch {
+			case e.Ev == EvBackupWait:
+				waited = e
+			case e.Ev == EvBackupStart && e.Attempt == 0:
+				timedStart = e
+			case e.Ev == EvWALBackup:
+				attempts = append(attempts, e)
+			}
+		}
+		if waited.Phase != "p10" || timedStart.Backup != 2 || timedStart.WaitUs < 100_000 {
+			t.Errorf("the timed backup did not wait: %+v, then %+v", waited, timedStart)
+		}
+		if len(attempts) != 2 || attempts[0].HeldOff || !attempts[1].HeldOff || attempts[0].Bytes != 600 || attempts[1].Backup != 3 {
+			t.Errorf("WAL-triggered attempts: %+v", attempts)
+		}
+	})
+
+	// A crossing while a timed backup holds the slot is skipped and logged;
+	// the next crossing starts the attempt.
+	t.Run("crossing skipped", func(t *testing.T) {
+		type snap = struct {
+			d      time.Duration
+			defers bool
+		}
+		r := newSlotRig(t, map[int]snap{1: {d: 400 * time.Millisecond}, 2: {d: 50 * time.Millisecond, defers: true}})
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); r.s.walBackups(ctx, context.Background(), time.Now().Add(time.Minute), wal) }()
+		r.setWAL(t, 0)
+		go func() { defer wg.Done(); r.s.timedBackup(context.Background(), Backup{Phase: "p10"}) }() // backup 1
+		waitFor(t, "the timed backup", func() bool { return r.running.Load() == 1 })
+		r.setWAL(t, 600) // skipped
+		waitFor(t, "the timed backup's end", func() bool { return r.running.Load() == 0 })
+		r.setWAL(t, 0)
+		r.setWAL(t, 650) // attempt 1 (backup 2)
+		waitFor(t, "attempt 1", func() bool { return r.s.backups.Load() == 2 && r.running.Load() == 0 })
+		// Attempt 1 held one off: the watcher ends on its own.
+		wg.Wait()
+		cancel()
+
+		var skipped, attempts []Event
+		for _, e := range r.events(t) {
+			switch e.Ev {
+			case EvWALCrossing:
+				skipped = append(skipped, e)
+			case EvWALBackup:
+				attempts = append(attempts, e)
+			case EvBackupWait:
+				t.Errorf("the timed backup waited: %+v", e)
+			}
+		}
+		if len(skipped) != 1 || skipped[0].Bytes != 600 || skipped[0].Note != "a backup was running" {
+			t.Errorf("skipped crossings: %+v", skipped)
+		}
+		if len(attempts) != 1 || attempts[0].Attempt != 1 || attempts[0].Bytes != 650 || !attempts[0].HeldOff {
+			t.Errorf("WAL-triggered attempts: %+v", attempts)
+		}
+	})
 }

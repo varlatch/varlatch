@@ -371,6 +371,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	backupStarts := map[int]Event{}
 	var backups []Window
 	var backupEnds []Event
+	var backupSpans [][2]int64 // each backup from backup_start to backup_end, unpadded
 	var convergeDur []Request
 	var convergeStart []int64
 	fullConverges := 0
@@ -419,8 +420,13 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			if e.Err != "" {
 				r.fail("backup at %+.1fs failed: %s", off(b.T, start), e.Err)
 			}
-			backups = append(backups, Window{Kind: "backup", StartUs: b.T - pad, EndUs: e.T + pad, Offset: off(b.T, start), Phase: b.Phase, Attempt: b.Attempt})
+			w := Window{Kind: "backup", StartUs: b.T - pad, EndUs: e.T + pad, Offset: off(b.T, start), Phase: b.Phase, Attempt: b.Attempt}
+			if b.WaitUs > 0 {
+				w.Note = fmt.Sprintf("started %.1fs late, after waiting for a running backup", float64(b.WaitUs)/1e6)
+			}
+			backups = append(backups, w)
 			backupEnds = append(backupEnds, e)
+			backupSpans = append(backupSpans, [2]int64{b.T, e.T})
 		case EvConvergeStart:
 			convergeStart = append(convergeStart, e.T)
 		case EvConvergeEnd:
@@ -464,34 +470,49 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 
 	// A backup overlapped the bound when the size trigger was deferred
 	// while it ran; its own TRUNCATE then has to complete (checked above).
+	// A deferral or snapshot TRUNCATE belongs to the backup running when it
+	// started, by the backup's actual interval: backup_start is logged
+	// before the snapshot takes the checkpoint lock and backup_end after it
+	// has released it, so the interval holds the engine's own. Backups never
+	// overlap (the server runs one at a time), so each checkpoint belongs to
+	// one backup at most; the windows' padding is for latency and CPU only.
 	overlapped := 0
 	deferredIn := make([]int, len(backups))
-	for i, b := range backups {
-		deferred, truncated := 0, false
-		for _, e := range events {
-			if e.Ev != EvCheckpoint || e.StartUs < b.StartUs || e.StartUs > b.EndUs {
-				continue
-			}
-			if e.Deferred {
-				deferred++
-			} else if e.Trigger == "snapshot" {
-				truncated = true
-			}
+	truncatedIn := make([]bool, len(backups))
+	for _, e := range events {
+		if e.Ev != EvCheckpoint || !(e.Deferred || e.Trigger == "snapshot") || e.Err != "" {
+			continue
 		}
-		deferredIn[i] = deferred
+		i := runningAt(backupSpans, e.StartUs)
+		switch {
+		case i < 0 && e.Deferred && e.StartUs >= start && e.StartUs <= end:
+			r.note("a size trigger deferred at %+.1fs fell outside every backup's interval", off(e.StartUs, start))
+		case i < 0:
+		case e.Deferred:
+			deferredIn[i]++
+		default:
+			truncatedIn[i] = true
+		}
+	}
+	for i, b := range backups {
+		deferred, truncated := deferredIn[i], truncatedIn[i]
+		var note string
 		switch {
 		case deferred > 0 && truncated:
 			overlapped++
-			backups[i].Note = fmt.Sprintf("held TRUNCATE off %d times, then truncated", deferred)
+			note = fmt.Sprintf("held TRUNCATE off %d times, then truncated", deferred)
 		case deferred > 0:
 			r.fail("the backup at %+.1fs held TRUNCATE off but no TRUNCATE followed it", b.Offset)
 		default:
-			backups[i].Note = "did not overlap the bound"
+			note = "did not overlap the bound"
 		}
+		backups[i].Note = strings.Trim(backups[i].Note+"; "+note, "; ")
 	}
-	walTried := r.walBackups(events, backups, backupEnds, deferredIn)
+	// Each WAL-triggered backup must show its own overlap, whatever the
+	// timed backups did (amendment 4); this is the run as a whole.
+	r.walBackups(events, backups, backupEnds, backupSpans, deferredIn)
 	if overlapped == 0 {
-		r.missing("no backup overlapped the bound (none held a size-triggered TRUNCATE off)%s: G9a needs a TRUNCATE right after such a backup", walTried)
+		r.missing("no backup overlapped the bound (none held a size-triggered TRUNCATE off): G9a needs a TRUNCATE right after such a backup")
 	}
 	r.Windows = append(r.Windows, backups...)
 	slices.SortFunc(r.Windows, func(a, b Window) int { return cmp.Compare(a.StartUs, b.StartUs) })
@@ -514,10 +535,23 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	r.finish()
 }
 
-// walBackups judges the plan's WAL-triggered backups from their windows
-// (deferredIn: the size triggers each window deferred) and returns what
-// they tried, for the reason when no backup overlapped the bound.
-func (r *Report) walBackups(events []Event, backups []Window, ends []Event, deferredIn []int) string {
+// runningAt is the backup whose interval holds t (the latest started, if a
+// malformed log has them overlap), or -1.
+func runningAt(spans [][2]int64, t int64) int {
+	at := -1
+	for i, s := range spans {
+		if s[0] <= t && t <= s[1] && (at < 0 || s[0] > spans[at][0]) {
+			at = i
+		}
+	}
+	return at
+}
+
+// walBackups judges the plan's WAL-triggered backups from their windows,
+// their intervals and the size triggers each deferred. A schedule with no
+// attempt that held a TRUNCATE off leaves the run inconclusive on its own,
+// even when a timed backup overlapped the bound.
+func (r *Report) walBackups(events []Event, backups []Window, ends []Event, spans [][2]int64, deferredIn []int) {
 	p := r.Plan
 	r.WALBackups = []WALBackupResult{}
 	// What the server decided for each attempt (wal_backup), by backup.
@@ -538,7 +572,6 @@ func (r *Report) walBackups(events []Event, backups []Window, ends []Event, defe
 		byStart[i] = i
 	}
 	slices.SortStableFunc(byStart, func(i, j int) int { return cmp.Compare(backups[i].StartUs, backups[j].StartUs) })
-	var tried []string
 	for _, b := range p.Backups {
 		w := b.WALTriggered
 		if !w.Set() {
@@ -551,7 +584,7 @@ func (r *Report) walBackups(events []Event, backups []Window, ends []Event, defe
 				continue
 			}
 			a := WALAttempt{Attempt: win.Attempt, Offset: win.Offset, WALBytes: walBytes[ends[i].Backup], Deferred: deferredIn[i], HeldOff: deferredIn[i] > 0,
-				Seconds: float64(ends[i].T-(win.StartUs+seconds(p.Thresholds.WindowPadSeconds).Microseconds())) / 1e6}
+				Seconds: float64(spans[i][1]-spans[i][0]) / 1e6}
 			if res.HeldOffBy != 0 {
 				r.fail("WAL-triggered backup %d in phase %s started after attempt %d had held a TRUNCATE off", a.Attempt, b.Phase, res.HeldOffBy)
 			}
@@ -569,21 +602,18 @@ func (r *Report) walBackups(events []Event, backups []Window, ends []Event, defe
 		switch {
 		case n == 0:
 			r.missing("the WAL-triggered backup in phase %s never started: the WAL did not cross %s %% of the bound (%d bytes) from below during the phase", b.Phase, pct(w.Fraction), res.ThresholdBytes)
+		case res.HeldOffBy == 0:
+			r.missing("the WAL-triggered backup in phase %s held no size-triggered TRUNCATE off in %d of %d attempts at %s %% of the bound: another run may raise the fraction (ADR-0059 amendment 4)", b.Phase, n, w.MaxAttempts, pct(w.Fraction))
+		}
+		switch {
 		case n > w.MaxAttempts:
 			r.fail("phase %s: %d WAL-triggered backups, over the plan's %d attempts", b.Phase, n, w.MaxAttempts)
 		}
 		if w.Fraction != DefaultWALFraction {
 			r.note("the WAL-triggered backup in phase %s started at %s %% of the bound, not G9a's default %s %% (the plan records it; ADR-0059 amendment 4)", b.Phase, pct(w.Fraction), pct(DefaultWALFraction))
 		}
-		if res.HeldOffBy == 0 {
-			tried = append(tried, fmt.Sprintf("the WAL-triggered backup in phase %s made %d of %d attempts at %s %% of the bound, none held one off; another run may raise the fraction (ADR-0059 amendment 4)", b.Phase, n, w.MaxAttempts, pct(w.Fraction)))
-		}
 		r.WALBackups = append(r.WALBackups, res)
 	}
-	if len(tried) == 0 {
-		return ""
-	}
-	return "; " + strings.Join(tried, "; ")
 }
 
 // cpu reports the cgroup's CPU limit and its throttling over the run and

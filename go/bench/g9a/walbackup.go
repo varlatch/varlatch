@@ -17,11 +17,12 @@ import (
 // stat calls a second cost nothing next to the load.
 const walWatchEvery = 100 * time.Millisecond
 
-// walWatch decides when a WAL-triggered backup starts: at a crossing of the
-// threshold from below (a sample under it, then one at or over it), while
-// no backup is running, until an attempt has held a size-triggered
-// TRUNCATE off or the attempts are used up. A WAL already over the
-// threshold when the watch begins has not crossed it.
+// walWatch decides when a WAL-triggered backup may start: at a crossing of
+// the threshold from below (a sample under it, then one at or over it),
+// until an attempt has held a size-triggered TRUNCATE off or the attempts
+// are used up. A WAL already over the threshold when the watch begins has
+// not crossed it. Whether the backup slot is free is the caller's to find
+// out; a crossing it could not use is gone.
 type walWatch struct {
 	threshold   int64
 	maxAttempts int
@@ -34,39 +35,37 @@ func newWALWatch(w WALTrigger, bound int64) *walWatch {
 	return &walWatch{threshold: w.Threshold(bound), maxAttempts: w.MaxAttempts}
 }
 
-// observe takes one WAL size; running says a backup is in progress. crossed
-// is a crossing from below; start says to start attempt w.attempts now.
-func (w *walWatch) observe(size int64, running bool) (crossed, start bool) {
+// observe takes one WAL size and says whether it crossed the threshold from
+// below while attempts remain.
+func (w *walWatch) observe(size int64) (crossed bool) {
 	if w.done() {
-		return false, false
+		return false
 	}
 	if size < w.threshold {
 		w.armed = true
-		return false, false
+		return false
 	}
-	if !w.armed {
-		return false, false
-	}
-	w.armed = false
-	if running {
-		return true, false
-	}
-	w.attempts++
-	return true, true
+	crossed, w.armed = w.armed, false
+	return crossed
 }
 
-// finished records the outcome of the attempt observe started.
+// started counts an attempt, begun at a crossing.
+func (w *walWatch) started() { w.attempts++ }
+
+// finished records the outcome of the attempt last started.
 func (w *walWatch) finished(heldOff bool) { w.heldOff = w.heldOff || heldOff }
 
 // done: an attempt held a TRUNCATE off, or none is left.
 func (w *walWatch) done() bool { return w.heldOff || w.attempts >= w.maxAttempts }
 
 // walBackups runs b's WAL-triggered backups from now until end (its
-// phase's end) or ctx (/run/stop). Each attempt runs on this goroutine, so
-// none starts while the last is running; one in progress at end or at
-// /run/stop finishes under work. Every attempt is logged as wal_backup with
-// the WAL size that started it and whether it held a TRUNCATE off, and
-// every crossing that started none as wal_crossing.
+// phase's end) or ctx (/run/stop). At a crossing it takes the backup slot
+// if it is free (a crossing while another backup holds it is logged as
+// wal_crossing and skipped), and holds it until the attempt's deferrals are
+// counted, so no other backup's can be credited to it. One in progress at
+// end or at /run/stop finishes under work. Every attempt is logged as
+// wal_backup with the WAL size that started it and whether it held a
+// TRUNCATE off.
 func (s *server) walBackups(ctx, work context.Context, end time.Time, b Backup) {
 	w := newWALWatch(b.WALTriggered, s.opts.Plan.WALBound)
 	t := time.NewTicker(walWatchEvery)
@@ -80,23 +79,30 @@ func (s *server) walBackups(ctx, work context.Context, end time.Time, b Backup) 
 				return
 			}
 		}
-		size := s.db.Metrics().WALBytes
-		crossed, start := w.observe(size, s.running.Load() > 0)
-		if crossed && !start {
-			s.ev.emit(Event{Ev: EvWALCrossing, Phase: b.Phase, Bytes: size, Note: "a backup was running"})
-		}
-		if !start {
+		size := s.walSize()
+		if !w.observe(size) {
 			continue
 		}
-		before := s.deferred.Load()
-		started := s.backup(work, Event{Phase: b.Phase, Attempt: w.attempts, WALBefore: size})
-		// The checkpointer reports a deferral just after it found the
-		// snapshot holding TRUNCATE off, so the report can arrive just after
-		// the snapshot returns: count deferrals one sampling interval on.
-		time.Sleep(walWatchEvery)
-		held := s.deferred.Load() > before
-		w.finished(held)
-		s.ev.emit(Event{Ev: EvWALBackup, Phase: b.Phase, Attempt: started.Attempt, Backup: started.Backup, StartUs: started.T,
-			Bytes: size, HeldOff: held})
+		if !s.slot.tryAcquire() {
+			s.ev.emit(Event{Ev: EvWALCrossing, Phase: b.Phase, Bytes: size, Note: "a backup was running"})
+			continue
+		}
+		w.started()
+		w.finished(s.walAttempt(work, b.Phase, w.attempts, size))
 	}
+}
+
+// walAttempt runs one WAL-triggered backup in the slot the caller took,
+// releases it, logs wal_backup and says whether it held a TRUNCATE off.
+func (s *server) walAttempt(work context.Context, phase string, attempt int, size int64) bool {
+	defer s.slot.release()
+	before := s.deferred.Load()
+	started := s.backup(work, Event{Phase: phase, Attempt: attempt, WALBefore: size})
+	// The checkpointer reports a deferral just after it found the snapshot
+	// holding TRUNCATE off, so the report can arrive just after the snapshot
+	// returns: count deferrals one sampling interval on, still in the slot.
+	time.Sleep(walWatchEvery)
+	held := s.deferred.Load() > before
+	s.ev.emit(Event{Ev: EvWALBackup, Phase: phase, Attempt: attempt, Backup: started.Backup, StartUs: started.T, Bytes: size, HeldOff: held})
+	return held
 }

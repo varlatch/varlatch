@@ -79,11 +79,15 @@ type server struct {
 	cg   Cgroup
 
 	requests, errs atomic.Int64
-	// backups numbers the backups; running counts those in progress;
-	// deferred counts the size triggers a snapshot held off.
+	// backups numbers the backups; slot lets one run at a time (both the
+	// timed and the WAL-triggered ones take it before they start); deferred
+	// counts the size triggers a snapshot held off.
 	backups  atomic.Int64
-	running  atomic.Int32
+	slot     backupSlot
 	deferred atomic.Int64
+	// walSize and snapshot are the database's, replaced in tests.
+	walSize  func() int64
+	snapshot func(ctx context.Context, dest string) (storage.SnapshotStats, error)
 
 	startOnce sync.Once
 	started   atomic.Int64 // run start, µs
@@ -127,7 +131,7 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	if err != nil {
 		return err
 	}
-	s := &server{opts: opts, ev: ev, stop: make(chan struct{}), cg: ownCgroup()}
+	s := &server{opts: opts, ev: ev, stop: make(chan struct{}), cg: ownCgroup(), slot: newBackupSlot()}
 	defer func() { _ = ev.close() }()
 
 	s.db, err = storage.Open(ctx, storage.Options{
@@ -137,6 +141,11 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+	s.walSize = func() int64 { return s.db.Metrics().WALBytes }
+	s.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
+		p := opts.Plan
+		return s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
 	}
 	dbClosed := false
 	defer func() {
@@ -353,7 +362,7 @@ func (s *server) runBackground(t0 time.Time) {
 	// TRUNCATE window lasts about two seconds, and one-second samples place
 	// its throttling more closely than the five-second memory samples.
 	s.every(ctx, t0, time.Second, func() {
-		e := Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes}
+		e := Event{Ev: EvWAL, Bytes: s.walSize()}
 		if c, err := s.cg.cpuStat(); err == nil {
 			e.CPU = &c
 		}
@@ -405,7 +414,7 @@ func (s *server) runBackground(t0 time.Time) {
 				s.walBackups(ctx, work, t0.Add(offsets[i]+seconds(p.PhaseSeconds(b.Phase))), b)
 				return
 			}
-			s.backup(work, Event{Phase: b.Phase})
+			s.timedBackup(work, b)
 		}()
 	}
 }
@@ -455,16 +464,61 @@ func (s *server) every(ctx context.Context, first time.Time, period time.Duratio
 	}()
 }
 
-// backup takes a paced snapshot, as the backup job will, and removes it.
-// start is its backup_start event, numbered and timed here and given the
-// WAL size unless it has one; backup returns it.
+// backupSlot lets one backup run at a time: the storage engine would
+// serialize two snapshots anyway, and the report credits each deferred
+// size trigger to the one backup running at the time.
+type backupSlot chan struct{}
+
+func newBackupSlot() backupSlot { return make(backupSlot, 1) }
+
+// tryAcquire takes the slot if it is free.
+func (b backupSlot) tryAcquire() bool {
+	select {
+	case b <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// acquire waits for the slot.
+func (b backupSlot) acquire(ctx context.Context) error {
+	select {
+	case b <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (b backupSlot) release() { <-b }
+
+// timedBackup runs b at its offset. If another backup holds the slot, it
+// logs backup_wait, waits for it and then starts, with the wait on its
+// backup_start; a wait still unfinished when work ends is an error.
+func (s *server) timedBackup(work context.Context, b Backup) {
+	start := Event{Phase: b.Phase}
+	if !s.slot.tryAcquire() {
+		t := time.Now()
+		s.ev.emit(Event{Ev: EvBackupWait, Phase: b.Phase, Note: "a backup was running: waiting for it"})
+		if err := s.slot.acquire(work); err != nil {
+			s.ev.emit(Event{Ev: EvError, Err: fmt.Sprintf("the timed backup in phase %s never started: %v", b.Phase, err)})
+			return
+		}
+		start.WaitUs = max(1, time.Since(t).Microseconds())
+	}
+	defer s.slot.release()
+	s.backup(work, start)
+}
+
+// backup takes a paced snapshot, as the backup job will, and removes it;
+// the caller holds the slot. start is its backup_start event, numbered and
+// timed here and given the WAL size unless it has one; backup returns it.
 func (s *server) backup(ctx context.Context, start Event) Event {
-	s.running.Add(1)
-	defer s.running.Add(-1)
 	t := time.Now()
 	start.Ev, start.T, start.Backup = EvBackupStart, us(t), int(s.backups.Add(1))
 	if start.WALBefore == 0 {
-		start.WALBefore = s.db.Metrics().WALBytes
+		start.WALBefore = s.walSize()
 	}
 	dir := filepath.Join(s.opts.DataDir, "backups")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -473,8 +527,7 @@ func (s *server) backup(ctx context.Context, start Event) Event {
 	}
 	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", start.Backup))
 	s.ev.emit(start)
-	p := s.opts.Plan
-	st, err := s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
+	st, err := s.snapshot(ctx, dest)
 	e := Event{Ev: EvBackupEnd, Backup: start.Backup, Phase: start.Phase, Attempt: start.Attempt,
 		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
 	if err != nil {

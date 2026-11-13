@@ -49,12 +49,15 @@ type Event struct {
 	// wal_backup and wal_crossing, is the WAL size that started it.
 	// wal_backup closes an attempt: HeldOff says a size-triggered TRUNCATE
 	// was deferred while it ran. wal_crossing is a crossing that started no
-	// attempt (Note says why).
+	// attempt (Note says why). backup_wait is a timed backup that found
+	// another running and waits for it; WaitUs on its backup_start is how
+	// long it waited.
 	Backup  int    `json:"backup,omitempty"`
 	Phase   string `json:"phase,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
 	HeldOff bool   `json:"heldOff,omitempty"`
 	Note    string `json:"note,omitempty"`
+	WaitUs  int64  `json:"waitUs,omitempty"`
 
 	// backup_end, converge_end
 	Pages    int    `json:"pages,omitempty"`
@@ -83,6 +86,7 @@ const (
 	EvBackupEnd     = "backup_end"
 	EvWALBackup     = "wal_backup"
 	EvWALCrossing   = "wal_crossing"
+	EvBackupWait    = "backup_wait"
 	EvConvergeStart = "converge_start"
 	EvConvergeEnd   = "converge_end"
 	EvError         = "error"
