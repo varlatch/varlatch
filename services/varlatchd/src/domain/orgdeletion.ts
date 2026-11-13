@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { abandonExpiredDrains, rewrapForDrain } from "./auditexport.js";
 import { recordAuditEvent, recordAuditEvents, type AuditEventInput } from "../audit/events.js";
 import { evaluate, type OrgRole } from "../authz/evaluate.js";
 import { newId } from "../db/ids.js";
@@ -557,6 +558,12 @@ export async function finalizeDeletion(ctx: AppCtx, deletionId: string, organiza
     );
     await db.query("UPDATE oidc_bindings SET revoked_at = now() WHERE organization_id = $1 AND revoked_at IS NULL", [organizationId]);
 
+    // The audit export (ADR-0056 Decision 10), the last domain row: its key
+    // is encrypted again under the Root KEK, before the Organization KEK
+    // is destroyed below, so the final events can still be delivered. Only
+    // that key; the export drains, and its deadline is fixed now.
+    await rewrapForDrain(ctx, db, organizationId);
+
     // Step 11: report counters (ADR-0054 Decision 9) go with the
     // Organization, in key order, after its domain rows and before the
     // audit: no increment can come in (they hold this row FOR KEY SHARE
@@ -661,6 +668,13 @@ export function startDeletionLoop(ctx: AppCtx, intervalMs = 60_000): () => void 
       await runDueDeletions(ctx);
     } catch (err) {
       console.error("deletion loop error:", err);
+    }
+    // Audit export drains past their fixed deadline lose their key (ADR-0056
+    // Decision 10), whatever VARLATCH_AUDIT_EXPORT says.
+    try {
+      await abandonExpiredDrains(ctx.db);
+    } catch (err) {
+      console.error("audit export drain cleanup error:", err);
     } finally {
       busy = false;
       leave?.();

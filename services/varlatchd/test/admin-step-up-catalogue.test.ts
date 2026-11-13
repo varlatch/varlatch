@@ -740,7 +740,13 @@ describe("the catalogue's 40 operations", () => {
     expect(new Set(operations).size).toBe(40);
     expect(CONTROL_APPROVAL_OPERATIONS["admin-step-up"]).toEqual(operations);
     expect([...ADMIN_STEP_UP_OPERATIONS]).toEqual(operations);
-    const others = ["security_control.change", "passkey.remove", "organization.unfreeze", ...CONTROL_APPROVAL_OPERATIONS["requirement-protection"]!];
+    // Asked whatever the controls' modes, or by another control. The audit
+    // export's two (ADR-0056 Decision 9) are always asked and are not
+    // admin-step-up operations.
+    const others = [
+      "security_control.change", "passkey.remove", "organization.unfreeze", ...CONTROL_APPROVAL_OPERATIONS["requirement-protection"]!,
+      "audit_export.change", "audit_export.remove",
+    ];
     expect(APPROVAL_OPERATIONS.filter((op) => !others.includes(op))).toEqual(operations);
     expect(CATALOGUE.filter((c) => c.duringFreeze).map((c) => c.operation)).toEqual(
       operations.filter((op) => OPERATIONS_DURING_FREEZE.has(op)),

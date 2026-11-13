@@ -205,3 +205,39 @@ export function decryptValue(
     payloadContext(organizationId, secretId, versionId),
   );
 }
+
+/**
+ * The audit export's S3 key (ADR-0056 Decision 8): under the Organization
+ * KEK while the export is active, bound to the Organization and the export,
+ * like a Platform Credential. Never displayed or returned.
+ */
+function auditExportCredentialContext(organizationId: string, exportId: string): AadContext {
+  return { purpose: "audit-export-credential", organizationId, exportId };
+}
+
+/**
+ * The same key re-encrypted under the Root KEK at the Organization's
+ * deletion (ADR-0056 Decision 10), so the final events can still be
+ * delivered after the Organization KEK is destroyed. Only this key: the
+ * Organization KEK is never kept. Cleared when the drain ends, at most 30
+ * days after finalization.
+ */
+function auditExportDrainContext(organizationId: string, exportId: string): AadContext {
+  return { purpose: "audit-export-drain", organizationId, exportId };
+}
+
+export function encryptAuditExportCredential(orgKek: Buffer, organizationId: string, exportId: string, credential: string): Envelope {
+  return encrypt(orgKek, Buffer.from(credential, "utf8"), auditExportCredentialContext(organizationId, exportId));
+}
+
+export function decryptAuditExportCredential(orgKek: Buffer, organizationId: string, exportId: string, envelope: Envelope): string {
+  return decrypt(orgKek, envelope, auditExportCredentialContext(organizationId, exportId)).toString("utf8");
+}
+
+export function encryptAuditExportDrainCredential(rootKek: Buffer, organizationId: string, exportId: string, credential: string): Envelope {
+  return encrypt(rootKek, Buffer.from(credential, "utf8"), auditExportDrainContext(organizationId, exportId));
+}
+
+export function decryptAuditExportDrainCredential(rootKek: Buffer, organizationId: string, exportId: string, envelope: Envelope): string {
+  return decrypt(rootKek, envelope, auditExportDrainContext(organizationId, exportId)).toString("utf8");
+}

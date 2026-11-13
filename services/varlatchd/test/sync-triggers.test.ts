@@ -13,6 +13,17 @@ import { NON_TRIGGERING_EVENTS } from "../src/domain/syncdelivery.js";
  */
 
 const TRIGGERING = [
+  // The audit export (ADR-0056 Decision 13): state changes of the export,
+  // which name no environment and mark no Target.
+  "audit_export.abandoned",
+  "audit_export.changed",
+  "audit_export.completed",
+  "audit_export.created",
+  "audit_export.credential_replaced",
+  "audit_export.failing",
+  "audit_export.recovered",
+  "audit_export.removed",
+  "audit_export.stream_started",
   "audit_tombstone.reader_removed",
   "bootstrap.completed",
   "group.created",
