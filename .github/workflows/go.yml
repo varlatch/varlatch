@@ -63,7 +63,13 @@ jobs:
         working-directory: go
         env:
           CGO_ENABLED: "1"
-        run: go test -race ./...
+        # The installer tests run shells, not Go concurrency; once is enough.
+        run: go test -race $(go list ./... | grep -v '/go/install$')
+
+      # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
+      # go/install's tests above.
+      - name: install.sh passes shellcheck
+        run: shellcheck -s sh go/install/install.sh
 
       # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
       # and Windows, each on amd64 and arm64; static, no cgo. Every package

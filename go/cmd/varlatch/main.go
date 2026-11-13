@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command varlatch is the Varlatch CLI of the Go rewrite (ADR-0059). It is a
-// skeleton: only the version works so far.
+// skeleton: only the version and verify-release (used by the installers)
+// work so far.
 package main
 
 import (
@@ -21,6 +22,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "varlatch", buildinfo.Version)
 		return 0
 	}
-	fmt.Fprintln(stderr, "varlatch: this Go build is not usable yet; only --version works")
+	if len(args) > 0 && args[0] == "verify-release" {
+		return verifyRelease(args[1:], stdout, stderr)
+	}
+	fmt.Fprintln(stderr, "varlatch: this Go build is not usable yet; only --version and verify-release work")
 	return 2
 }

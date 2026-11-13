@@ -21,6 +21,11 @@ amendment 2 allows, and nothing here ships.
   SHA256SUMS must be signed by the release workflow for its tag (Sigstore,
   pinned identity and issuer; cosign's earlier bundle format and the newer
   Sigstore bundle both read), and every asset must match it.
+- `install/install.sh`: the installer of Decision 8 (CLI for the current
+  user, or `--server` as root), and its tests: every prefix under sh, dash
+  and bash runs nothing or the whole script (G8), and end-to-end runs
+  against a local HTTPS server. The downloaded CLI checks the signature
+  (`varlatch verify-release`) before anything is put in place.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
@@ -46,5 +51,10 @@ CGO_ENABLED=1 go test -race ./...
 - Regenerate `lib/envelope/testdata/ts-*.json` from the next TypeScript
   release (`node tsfixtures.mjs generate --ref v<next> ts-v<next>.json`),
   including any envelope purpose it adds (ADR-0056's audit export).
+- The Go release workflow: binaries named `varlatch-<version>-<os>-<arch>`
+  (`.exe` on Windows) and `varlatchd-<version>-linux-<arch>`, plus
+  `varlatchd.service`, all in `SHA256SUMS`; `install.sh` attached with
+  `@VARLATCH_VERSION@` replaced by the version; varlatch.com serving the
+  latest one with a `Content-Length`.
 - List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
   and its own) in THIRD-PARTY-NOTICES.md and its generator.
