@@ -133,6 +133,16 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "GET /v1/organizations/:org/webhooks": "read",
   "PATCH /v1/organizations/:org/webhooks/:webhook": "transaction",
   "DELETE /v1/organizations/:org/webhooks/:webhook": "transaction",
+  // The audit export (ADR-0056): creating, the check and a destination
+  // change probe the destination with the key inside an external effect; a
+  // retention-only change, a new key and removal are decided in their
+  // transaction, after their not-found.
+  "GET /v1/organizations/:org/audit-export": "read",
+  "POST /v1/organizations/:org/audit-export": "external",
+  "PATCH /v1/organizations/:org/audit-export": "external",
+  "DELETE /v1/organizations/:org/audit-export": "transaction",
+  "PUT /v1/organizations/:org/audit-export/credential": "transaction",
+  "POST /v1/organizations/:org/audit-export/check": "external",
   "GET /v1/organizations/:org/platform-connections": "read",
   "POST /v1/organizations/:org/platform-connections": "external",
   "POST /v1/organizations/:org/platform-connections/check": "external",

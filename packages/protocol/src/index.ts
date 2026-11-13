@@ -142,6 +142,19 @@ export type AdminApprovalKeys = components["schemas"]["AdminApprovalKeys"];
 export type ApprovalKey = components["schemas"]["ApprovalKey"];
 /** The caller's own organization-level permissions (capability organizations.permissions). */
 export type OrganizationPermissions = components["schemas"]["OrganizationPermissions"];
+/** An Organization's audit export to object storage (capability audit.storage-export, ADR-0056). */
+export type AuditExport = components["schemas"]["AuditExport"];
+export type AuditExportStatus = components["schemas"]["AuditExportStatus"];
+export type AuditExportDestination = components["schemas"]["AuditExportDestination"];
+export type AuditExportDestinationInput = components["schemas"]["AuditExportDestinationInput"];
+export type AuditExportCredentialInput = components["schemas"]["AuditExportCredentialInput"];
+export type AuditExportRetention = components["schemas"]["AuditExportRetention"];
+export type AuditExportCreateInput = components["schemas"]["AuditExportCreateInput"];
+export type AuditExportChangeInput = components["schemas"]["AuditExportChangeInput"];
+export type AuditExportCredentialChange = components["schemas"]["AuditExportCredentialChange"];
+export type AuditExportCheckInput = components["schemas"]["AuditExportCheckInput"];
+export type AuditExportCheck = components["schemas"]["AuditExportCheck"];
+export type AuditExportChange = components["schemas"]["AuditExportChange"];
 /** An Organization's destinations the outbound policy refuses (capability security.refused-destinations, ADR-0057 Decision 8). */
 export type RefusedDestinations = components["schemas"]["RefusedDestinations"];
 export type RefusedDestination = components["schemas"]["RefusedDestination"];

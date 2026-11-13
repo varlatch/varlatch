@@ -759,6 +759,48 @@ export async function auditExportLag(ctx: AppCtx, exportId: string): Promise<{ p
   return { pending: Number(row.n), oldestPendingAt: iso(row.oldest) };
 }
 
+/**
+ * The live export's id, or null. The routes pass it to the operation, which
+ * answers a missing export with its not-found after the deletion and freeze
+ * refusals, as every protected operation does.
+ */
+export async function liveAuditExportId(ctx: AppCtx, organizationId: string): Promise<string | null> {
+  const res = await ctx.db.query("SELECT id FROM audit_exports WHERE organization_id = $1 AND state IN ('active', 'draining')", [organizationId]);
+  return (res.rows[0] as { id: string } | undefined)?.id ?? null;
+}
+
+/** An export with what the Security page shows of it (Decision 11). Never the key. */
+export interface AuditExportStatusView extends AuditExportView {
+  /** Events of the Organization not yet exported, and the oldest's time; null once the export ended. */
+  lag: { pending: number; oldestPendingAt: string | null } | null;
+  /** "verified" (a verified provider, or the retention read back), "accepted" (headers accepted, not verified), "not-set" (no retention). */
+  objectLock: "verified" | "accepted" | "not-set";
+  /** The pending plan's format when this release cannot upload it (Decision 2); null otherwise. */
+  unsupportedPlanFormat: number | null;
+}
+
+/**
+ * The Organization's export for the API and the Security page: the live
+ * one, else the most recent, else null; and whether the host operator left
+ * the export on (VARLATCH_AUDIT_EXPORT). Reads only.
+ */
+export async function auditExportStatus(ctx: AppCtx, organizationId: string): Promise<{ enabled: boolean; export: AuditExportStatusView | null }> {
+  const enabled = ctx.auditExport !== false;
+  const view = await getAuditExport(ctx, organizationId);
+  if (!view) return { enabled, export: null };
+  const live = view.state === "active" || view.state === "draining";
+  const plan = live ? await readPlan(ctx.db, view.id) : null;
+  return {
+    enabled,
+    export: {
+      ...view,
+      lag: live ? await auditExportLag(ctx, view.id) : null,
+      objectLock: view.retention === null ? "not-set" : view.lockVerified ? "verified" : "accepted",
+      unsupportedPlanFormat: plan && !UPLOADABLE_FORMATS.has(plan.format_version) ? plan.format_version : null,
+    },
+  };
+}
+
 async function lockExport(db: Querier, exportId: string): Promise<ExportRow | null> {
   const res = await lockedQuery(db, { table: "audit_exports", mode: "update" }, `SELECT ${EXPORT_COLUMNS} FROM audit_exports WHERE id = $1 FOR UPDATE`, [exportId]);
   return (res.rows[0] as ExportRow | undefined) ?? null;
@@ -967,7 +1009,8 @@ function storedCredential(ctx: AppCtx, org: OrgRow, row: ExportRow): AuditExport
 // Change, credential replacement, removal (approval always for loosening, Decision 9)
 
 export interface ChangeInput {
-  destination?: Partial<AuditExportDestination> | undefined;
+  /** The destination fields that change; a field absent or undefined keeps its value. */
+  destination?: { [K in keyof AuditExportDestination]?: AuditExportDestination[K] | undefined } | undefined;
   /** undefined keeps the retention; null removes it. */
   retention?: AuditExportRetention | null | undefined;
   expectedVersion: number;
@@ -1063,7 +1106,10 @@ export async function changeAuditExport(
   const seen = (await ctx.db.query(`SELECT ${EXPORT_COLUMNS} FROM audit_exports WHERE id = $1 AND organization_id = $2`, [exportId, org.id])).rows[0] as ExportRow | undefined;
   if (!seen || seen.state !== "active") throw new DomainError("RESOURCE_NOT_FOUND", "Audit export not found");
   const nextOf = (row: ExportRow) => ({
-    destination: normalizeDestination({ ...destinationOf(row), ...(input.destination ?? {}) }),
+    destination: normalizeDestination({
+      ...destinationOf(row),
+      ...Object.fromEntries(Object.entries(input.destination ?? {}).filter(([, v]) => v !== undefined)),
+    }),
     retention: input.retention === undefined ? retentionOf(row) : validateRetention(input.retention),
   });
   const planned = nextOf(seen);

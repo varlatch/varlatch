@@ -2,6 +2,14 @@
 import type {
   Approval,
   ApprovalOptions,
+  AuditExport,
+  AuditExportChange,
+  AuditExportChangeInput,
+  AuditExportCheck,
+  AuditExportCheckInput,
+  AuditExportCreateInput,
+  AuditExportCredentialChange,
+  AuditExportStatus,
   SecurityControlChange,
   SecurityControlChangeInput,
   SecurityControlList,
@@ -266,6 +274,20 @@ export interface AuditEventPage extends Page<Record<string, unknown>> {
   credentials?: Record<string, AuditCredential>;
 }
 
+export type {
+  AuditExport,
+  AuditExportChange,
+  AuditExportChangeInput,
+  AuditExportCheck,
+  AuditExportCheckInput,
+  AuditExportCreateInput,
+  AuditExportCredentialChange,
+  AuditExportCredentialInput,
+  AuditExportDestination,
+  AuditExportDestinationInput,
+  AuditExportRetention,
+  AuditExportStatus,
+} from "@varlatch/protocol";
 export type { Approval, ApprovalChange, ApprovalOptions, CredentialLifetimeConfig, SecurityControl, SecurityControlChange, SecurityControlChangeInput, SecurityControlList, SecurityControlMode, SecurityControlName } from "@varlatch/protocol";
 export type { SecurityControlCounts, SecurityControlReport, SecurityReportEntry, SecurityReportReason } from "@varlatch/protocol";
 export type { AuditCredential, AuditEventFilters, DeviceSignInLookup, DeviceSignInStarted, ExposureConfirmation, ExposureReport, Invitation, MachineReach, ReachAction, MemberRemoval, MemberReview, OrganizationDeletion, IncidentFreeze, IncidentFreezeLift, IncidentFreezeState, ResumingTarget, OwnCredential, OwnPasskey, PasskeyConfirmationOptions, IssuedCliCredential, Profile, TailnetDevice, TailnetEndpoint, WhoAmI } from "@varlatch/protocol";
@@ -1121,6 +1143,44 @@ export class VarlatchClient {
       `/v1/organizations/${encodeURIComponent(org)}/security/controls/${encodeURIComponent(control)}`,
       input,
     );
+  }
+
+  /**
+   * The Organization's audit export to object storage and its status, and
+   * whether the host operator left audit export on (organization.manage;
+   * capability audit.storage-export, ADR-0056). Never the key.
+   */
+  getAuditExport(org: string): Promise<AuditExportStatus> {
+    return this.request("GET", `/v1/organizations/${encodeURIComponent(org)}/audit-export`);
+  }
+
+  /** Create the Organization's audit export; the destination is probed first. Needs no approval. */
+  createAuditExport(org: string, input: AuditExportCreateInput): Promise<AuditExport> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/audit-export`, input);
+  }
+
+  /**
+   * Change the export's destination or retention. A destination change, a
+   * shorter or removed retention, or compliance to governance always needs
+   * a step-up approval (STEP_UP_REQUIRED, handled by onStepUp).
+   */
+  changeAuditExport(org: string, input: AuditExportChangeInput): Promise<AuditExportChange> {
+    return this.request("PATCH", `/v1/organizations/${encodeURIComponent(org)}/audit-export`, input);
+  }
+
+  /** Replace the export's key: always needs a step-up approval. */
+  replaceAuditExportCredential(org: string, input: AuditExportCredentialChange): Promise<AuditExport> {
+    return this.request("PUT", `/v1/organizations/${encodeURIComponent(org)}/audit-export/credential`, input);
+  }
+
+  /** Remove the export: always needs a step-up approval. What was delivered stays at the destination. */
+  removeAuditExport(org: string, expectedVersion: number): Promise<AuditExport> {
+    return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/audit-export?expectedVersion=${encodeURIComponent(String(expectedVersion))}`);
+  }
+
+  /** Probe a destination without saving anything: with the key given, or the live export's own key for its own destination. */
+  checkAuditExport(org: string, input: AuditExportCheckInput): Promise<AuditExportCheck> {
+    return this.request("POST", `/v1/organizations/${encodeURIComponent(org)}/audit-export/check`, input);
   }
 
   /**

@@ -9,6 +9,24 @@ fixes.
 
 ### Security
 
+- **Audit export to object storage.** An organization can keep a copy of
+  its whole audit log in an S3-compatible bucket it controls (AWS S3,
+  Backblaze B2 or another provider that honours conditional writes), with
+  Object Lock retention nobody on the Varlatch side can shorten: `varlatch
+  audit-export create`, or the API. Every event of the organization is
+  copied once, in order, as gzipped NDJSON batches, with an hourly
+  heartbeat object that shows at the bucket when the copy stops. Before
+  saving, Varlatch writes a test object and checks that the bucket refuses
+  to overwrite it, and reads its retention back where the key may. Creating
+  an export and lengthening or strengthening its retention need no
+  approval; a new destination, a new key, a shorter or removed retention
+  and removal always need the approval of the person asking, with a trusted
+  passkey, whatever the security controls' modes, and machine credentials
+  can never make them. The key is never shown, logged or audited. Changes
+  are refused while the organization is frozen or being deleted; delivery
+  continues. When an organization is deleted, its export delivers the final
+  events for up to 30 days, then its key is cleared. Nothing changes for an
+  organization until an admin creates an export.
 - **Incident freeze: stop all access to an organization at once.** During
   an incident an admin can freeze an organization from its Security page
   (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
@@ -214,6 +232,16 @@ fixes.
 
 ### Scripts and API
 
+- `GET`, `POST`, `PATCH` and `DELETE /v1/organizations/{org}/audit-export`,
+  `PUT /v1/organizations/{org}/audit-export/credential` and `POST
+  /v1/organizations/{org}/audit-export/check` (capability
+  `audit.storage-export`; all need `organization.manage`). `PATCH`, `PUT`
+  and `DELETE` can answer `403 STEP_UP_REQUIRED` with the approval
+  operations `audit_export.change` and `audit_export.remove`, which the
+  `Approval.operation` enum gains. Writes from a machine credential are
+  refused with `PERMISSION_DENIED` (`details.reason`
+  `machine-credential`); creating while the host operator turned audit
+  export off is refused with `details.reason` `audit-export-off`.
 - `GET /v1/meta` lists `security.enforce.<control>` for each control the
   server can enforce (`security.enforce.requirement-protection`,
   `security.enforce.credential-lifetime`,
@@ -246,6 +274,12 @@ fixes.
 
 ### CLI
 
+- `varlatch audit-export show|create|change|remove|check`: an
+  organization's audit export to object storage. The secret access key is
+  read from `--secret-stdin`, `--secret-file <path>` or a hidden prompt,
+  never from the command line. `remove` names the organization again with
+  `--confirm`; in assisted mode a coding agent is told to leave that to the
+  person.
 - **A default server, so you type the address once.** The first server you
   sign in to becomes your default server. Outside a repository, commands
   that need no Project (`org create`, `org list`, `project create`, `org
@@ -281,6 +315,14 @@ fixes.
 
 ### Self-hosting
 
+- `VARLATCH_AUDIT_EXPORT=off` turns audit export off on an installation
+  (it is on by default, like `VARLATCH_SYNC`): nothing is delivered and no
+  export can be created; organizations see that the host operator stopped
+  it, and can still remove theirs. A destination on a private network
+  needs the outbound allow list (`VARLATCH_OUTBOUND_ALLOW`), as webhooks
+  do. `varlatchd admin audit-export discard-plan --export <id> --reason
+  <expired|unsupported-format>` restarts an export whose pending object can
+  no longer be uploaded; it refuses any other.
 - **An installation can serve its own CLI.** With `VARLATCH_SERVE_CLI=on`,
   people install the CLI the installation runs with one line:
   `curl -fsSL https://vault.example.com/install.sh | sh`, or
@@ -318,6 +360,8 @@ fixes.
 
 ### Upgrading
 
+- Migration 52 adds the audit export tables and lets approvals cover
+  audit export changes. Nothing changes until an admin creates an export.
 - `varlatch init` with no server to write (no `--server`, no
   `VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
   It used to write a `varlatch.toml` without a server, which every later
