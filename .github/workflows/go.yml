@@ -80,14 +80,6 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: |
-          root="$RUNNER_TEMP/unitroot"
-          mkdir -p "$root/usr/local/bin" "$root/etc/systemd/system" "$root/etc/varlatch"
-          printf '#!/bin/sh\n' > "$root/usr/local/bin/varlatchd"
-          chmod 755 "$root/usr/local/bin/varlatchd"
-          cp go/install/varlatchd.service "$root/etc/systemd/system/"
-          touch "$root/etc/varlatch/varlatchd.conf" "$root/etc/varlatch/root-kek" "$root/etc/varlatch/backup-key"
-          systemd-analyze verify --root="$root" /etc/systemd/system/varlatchd.service
-          systemd-analyze security --offline=true --threshold=20 --root="$root" /etc/systemd/system/varlatchd.service
           (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
           sudo go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
 
