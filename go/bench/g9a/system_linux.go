@@ -152,6 +152,36 @@ func (c Cgroup) anonBytes() (int64, error) {
 	return 0, fmt.Errorf("%s has no anon line", c.statPath)
 }
 
+// memoryEvents reads the cgroup's memory.events counters that G9 requires
+// to stay at zero (high, max, oom, oom_kill), and memory.current.
+func (c Cgroup) memoryEvents() (MemoryEvents, error) {
+	if !c.usablePath {
+		return MemoryEvents{}, fmt.Errorf("no cgroup memory: %s", c.Note)
+	}
+	dir := filepath.Dir(c.statPath)
+	var m MemoryEvents
+	b, err := os.ReadFile(dir + "/memory.events")
+	if err != nil {
+		return m, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		k, v, _ := strings.Cut(line, " ")
+		n, _ := strconv.ParseInt(v, 10, 64)
+		switch k {
+		case "high":
+			m.High = n
+		case "max":
+			m.Max = n
+		case "oom":
+			m.OOM = n
+		case "oom_kill":
+			m.OOMKill = n
+		}
+	}
+	m.Current, err = strconv.ParseInt(readTrim(dir+"/memory.current"), 10, 64)
+	return m, err
+}
+
 // rssBytes is this process's resident set (VmRSS), reported alongside.
 func rssBytes() int64 {
 	for _, line := range strings.Split(readTrim("/proc/self/status"), "\n") {

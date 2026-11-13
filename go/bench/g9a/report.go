@@ -108,15 +108,18 @@ type Report struct {
 	Passives      int     `json:"passiveCheckpoints"`
 	MaxPassiveMs  float64 `json:"maxPassiveMs"`
 
-	Converges      int      `json:"converges"`
-	ConvergeMs     Stats    `json:"convergeDurations"`
-	Backups        int      `json:"backups"`
-	MemoryMaxMiB   float64  `json:"memoryMaxMiB"`
-	RSSMaxMiB      float64  `json:"rssMaxMiB"`
-	FsyncIdle      []string `json:"fsyncIdle"`
-	FsyncUnderLoad []string `json:"fsyncUnderLoad"`
-	Dropped        float64  `json:"droppedIterations"`
-	ServerBusy     int64    `json:"serverBusy"`
+	Converges      int          `json:"converges"`
+	ConvergesWant  int          `json:"convergesPlanned"`
+	MemoryEvents   MemoryEvents `json:"memoryEvents"`
+	CurrentMaxMiB  float64      `json:"memoryCurrentMaxMiB"`
+	ConvergeMs     Stats        `json:"convergeDurations"`
+	Backups        int          `json:"backups"`
+	MemoryMaxMiB   float64      `json:"memoryMaxMiB"`
+	RSSMaxMiB      float64      `json:"rssMaxMiB"`
+	FsyncIdle      []string     `json:"fsyncIdle"`
+	FsyncUnderLoad []string     `json:"fsyncUnderLoad"`
+	Dropped        float64      `json:"droppedIterations"`
+	ServerBusy     int64        `json:"serverBusy"`
 }
 
 func (r *Report) fail(format string, args ...any) {
@@ -177,6 +180,9 @@ type k6Summary struct {
 	Dropped *struct {
 		Count float64 `json:"count"`
 	} `json:"dropped_iterations"`
+	Iterations *struct {
+		Count float64 `json:"count"`
+	} `json:"iterations"`
 }
 
 // Analyze judges the run in dir.
@@ -212,8 +218,11 @@ func Analyze(dir string) (*Report, error) {
 func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	p := r.Plan
 	th := p.Thresholds
-	if r.System.Target != "" && r.System.Target != "varlatchd" {
+	if r.System.Target != "varlatchd" {
 		r.missing("the load ran against %s: a run of the stand-in does not pass G9a (ADR-0059, Order)", r.System.Target)
+	}
+	if d := p.NotGate(); len(d) > 0 {
+		r.missing("the plan differs from G9a's profile (%s): a diagnostic run, not the gate", strings.Join(d, ", "))
 	}
 
 	var start, end int64
@@ -253,8 +262,10 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 		if ph.Warmup {
 			continue
 		}
-		if pr.Stats.N < pr.Expected-1 {
-			r.fail("phase %s: %d of %d requests in the log", ph.Name, pr.Stats.N, pr.Expected)
+		// k6 starts rate × duration iterations, or one more when the last
+		// falls on the phase's end.
+		if pr.Stats.N < pr.Expected || pr.Stats.N > pr.Expected+1 {
+			r.fail("phase %s: %d requests in the log for %d scheduled", ph.Name, pr.Stats.N, pr.Expected)
 		}
 		if pr.Stats.Failed > 0 {
 			r.fail("phase %s: %d failed requests (%d SQLITE_BUSY)", ph.Name, pr.Stats.Failed, pr.Busy)
@@ -272,6 +283,25 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	if r.Dropped > 0 {
 		r.fail("k6 dropped %.0f requests (not sent on time)", r.Dropped)
 	}
+	// The log, k6 and the server must agree on every request.
+	answered, refused := 0, 0
+	for _, q := range reqs {
+		if q.Status != 0 {
+			answered++
+			if q.Status != 200 {
+				refused++
+			}
+		}
+	}
+	switch {
+	case sum.Iterations == nil:
+		r.fail("k6's summary has no iteration count")
+	case int(sum.Iterations.Count) != len(reqs):
+		r.fail("k6 completed %.0f requests but the log has %d", sum.Iterations.Count, len(reqs))
+	}
+	if runEnd.Requests != int64(answered) || runEnd.Errors != int64(refused) {
+		r.fail("the server answered %d requests (%d refused); the log has %d answered (%d refused)", runEnd.Requests, runEnd.Errors, answered, refused)
+	}
 	r.ServerBusy = runEnd.BusyErrs
 	if r.ServerBusy > 0 {
 		r.fail("the server saw SQLITE_BUSY %d times", r.ServerBusy)
@@ -283,6 +313,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	var backups []Window
 	var convergeDur []Request
 	var convergeStart []int64
+	fullConverges := 0
 	for _, e := range events {
 		// Seeding writes before the run are not part of it; a checkpoint
 		// error anywhere still fails it.
@@ -329,10 +360,16 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			}
 			if n := len(convergeStart); n > 0 {
 				convergeDur = append(convergeDur, Request{Lat: time.Duration(e.T-convergeStart[n-1]) * time.Microsecond})
+				if e.Err == "" && e.Targets == p.Targets && convergeStart[n-1] >= start && convergeStart[n-1] <= loadEnd {
+					fullConverges++
+				}
 			}
 		}
 	}
-	r.Converges, r.ConvergeMs = len(convergeDur), stats(convergeDur)
+	r.Converges, r.ConvergeMs, r.ConvergesWant = len(convergeDur), stats(convergeDur), p.Converges()
+	if fullConverges < r.ConvergesWant {
+		r.missing("%d of the plan's %d converge runs ran over all %d targets during the load", fullConverges, r.ConvergesWant, p.Targets)
+	}
 	r.Backups = len(backups)
 	if r.Backups != len(p.Backups) {
 		r.missing("%d of the plan's %d backups ran", r.Backups, len(p.Backups))
@@ -407,19 +444,26 @@ func (r *Report) inWarmup(t, start int64) bool {
 
 func (r *Report) memory(events []Event, start int64) {
 	after := start + seconds(r.Plan.Thresholds.MemoryAfterSeconds).Microseconds()
-	var anon, rss int64
+	var anon, rss, current int64
 	samples := 0
+	var me MemoryEvents
 	for _, e := range events {
 		if e.Ev != EvMemory {
 			continue
 		}
 		rss = max(rss, e.RSSBytes)
+		if m := e.MemEvents; m != nil {
+			me = MemoryEvents{High: max(me.High, m.High), Max: max(me.Max, m.Max), OOM: max(me.OOM, m.OOM), OOMKill: max(me.OOMKill, m.OOMKill)}
+			current = max(current, m.Current)
+		}
 		if e.T >= after && e.AnonBytes > 0 {
 			anon = max(anon, e.AnonBytes)
 			samples++
 		}
 	}
-	r.MemoryMaxMiB, r.RSSMaxMiB = float64(anon)/(1<<20), float64(rss)/(1<<20)
+	r.MemoryMaxMiB, r.RSSMaxMiB, r.CurrentMaxMiB = float64(anon)/(1<<20), float64(rss)/(1<<20), float64(current)/(1<<20)
+	me.Current = current
+	r.MemoryEvents = me
 	// Without G9's limits the server is not in a cgroup of its own, so the
 	// cgroup's memory is not the server's: reported, not judged.
 	cg := r.System.Cgroup
@@ -428,8 +472,15 @@ func (r *Report) memory(events []Event, start int64) {
 		r.missing("no cgroup memory samples (%s): run the server under G9A_SCOPE (memory.max 1 GiB, memory.swap.max 0)", cg.Note)
 	case cg.MemoryMax != strconv.Itoa(1<<30) || cg.SwapMax != "0":
 		r.missing("memory.max %q and memory.swap.max %q, not G9's 1 GiB and 0: the cgroup is not the server's alone (run under G9A_SCOPE)", cg.MemoryMax, cg.SwapMax)
-	case r.MemoryMaxMiB > r.Plan.Thresholds.MemoryMiB:
+	case current == 0:
+		r.missing("no memory.events or memory.current samples")
+	}
+	own := samples > 0 && cg.MemoryMax == strconv.Itoa(1<<30) && cg.SwapMax == "0"
+	if own && r.MemoryMaxMiB > r.Plan.Thresholds.MemoryMiB {
 		r.fail("anon memory reached %.1f MiB, over %.0f MiB", r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB)
+	}
+	if own && (me.High > 0 || me.Max > 0 || me.OOM > 0 || me.OOMKill > 0) {
+		r.fail("the cgroup reported memory.events high %d, max %d, oom %d, oom_kill %d", me.High, me.Max, me.OOM, me.OOMKill)
 	}
 }
 
@@ -521,9 +572,10 @@ func (r *Report) Markdown() string {
 	}
 	fmt.Fprintf(&b, "\nWindows are widened by %gs on both sides.\n\n", r.Plan.Thresholds.WindowPadSeconds)
 
-	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d (duration p50 %.0f ms, max %.0f ms). Backups: %d.\n\n", r.Converges, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups)
-	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB); RSS max %.1f MiB. memory.max %q, memory.swap.max %q.\n\n",
-		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
+	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups)
+	me := r.MemoryEvents
+	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
+		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
 
 	d := r.System.Disk
 	fmt.Fprintf(&b, "## Disk\n\nThe verdict holds for this class of disk only.\n\n- directory %s on %s (%s, %s), mounted at %s\n- device %s %s %s, model %q, rotational %q, under %v\n- %d CPUs, %s\n",

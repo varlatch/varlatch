@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -28,6 +29,11 @@ type Plan struct {
 	WALBound int64 `json:"walBound"`
 	// ProbeIntervalMs paces the fsync probe that runs through the load.
 	ProbeIntervalMs int `json:"probeIntervalMs"`
+	// BackupStepPages and BackupPauseMs pace the snapshot (0: the engine's
+	// defaults, which a gate run uses). A smoke run slows its backups so
+	// that they overlap the bound.
+	BackupStepPages int `json:"backupStepPages,omitempty"`
+	BackupPauseMs   int `json:"backupPauseMs,omitempty"`
 	// IdleProbeSeconds is the fsync probe before the load starts.
 	IdleProbeSeconds float64    `json:"idleProbeSeconds"`
 	Thresholds       Thresholds `json:"thresholds"`
@@ -151,12 +157,51 @@ func (p Plan) Validate() error {
 		return errors.New("plan: walBound must be positive")
 	case p.ProbeIntervalMs <= 0:
 		return errors.New("plan: probeIntervalMs must be positive")
+	case p.BackupStepPages < 0 || p.BackupPauseMs < 0:
+		return errors.New("plan: backup pacing must not be negative")
 	case p.IdleProbeSeconds < 3:
 		return errors.New("plan: idleProbeSeconds must be at least 3 (a p99 needs 100 samples of each kind)")
 	case p.Thresholds.P95Ms <= 0 || p.Thresholds.MemoryMiB <= 0 || p.Thresholds.WALPeakFactor <= 0:
 		return errors.New("plan: thresholds must be positive")
 	}
 	return nil
+}
+
+// gatePlan is the profile a run must follow to count for G9a (a variable so
+// that tests can judge short runs as gate runs).
+var gatePlan = DefaultPlan
+
+// NotGate lists how p differs from G9a's profile; empty means a run of it
+// can count for the gate. The fsync probe's pacing may differ.
+func (p Plan) NotGate() []string {
+	g := gatePlan()
+	var d []string
+	if !slices.Equal(p.Phases, g.Phases) {
+		d = append(d, "phases")
+	}
+	if !slices.Equal(p.Backups, g.Backups) || p.BackupStepPages != g.BackupStepPages || p.BackupPauseMs != g.BackupPauseMs {
+		d = append(d, "backups")
+	}
+	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets {
+		d = append(d, "converge")
+	}
+	if p.WALBound != g.WALBound {
+		d = append(d, "WAL bound")
+	}
+	if p.Thresholds != g.Thresholds {
+		d = append(d, "thresholds")
+	}
+	return d
+}
+
+// Converges is how many converge runs the plan schedules during the load
+// (one every period, the last before the load ends).
+func (p Plan) Converges() int {
+	period, n := seconds(p.ConvergeEverySeconds), 0
+	for t := period; t < p.Duration(); t += period {
+		n++
+	}
+	return n
 }
 
 // PhaseStart is the offset of a phase from the start of the run.

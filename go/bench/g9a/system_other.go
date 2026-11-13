@@ -14,4 +14,8 @@ func ownCgroup() Cgroup { return Cgroup{Note: "cgroups are Linux only"} }
 
 func (c Cgroup) anonBytes() (int64, error) { return 0, errors.New("no cgroup memory: " + c.Note) }
 
+func (c Cgroup) memoryEvents() (MemoryEvents, error) {
+	return MemoryEvents{}, errors.New("no cgroup memory: " + c.Note)
+}
+
 func rssBytes() int64 { return 0 }

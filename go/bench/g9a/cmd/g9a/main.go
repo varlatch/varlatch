@@ -2,7 +2,8 @@
 
 // Command g9a runs ADR-0059's storage benchmark (gate G9a) with k6:
 //
-//	g9a plan [-scale f] [-wal-bound bytes]   print a plan (the G9a profile)
+//	g9a plan [-scale f] [-wal-bound b] [-backup-step-pages n -backup-pause-ms ms]
+//	                                         print a plan (the G9a profile)
 //	g9a serve -plan p -data d -out o         seed, record the disk, serve the load
 //	g9a report dir                           judge a run: exit 0 pass, 1 fail, 2 inconclusive
 //
@@ -33,6 +34,8 @@ func main() {
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
 		scale := fs.Float64("scale", 1, "multiply every duration and offset (a smoke run: < 1)")
 		bound := fs.Int64("wal-bound", 0, "WAL bound in bytes (default: the shipped 64 MiB)")
+		stepPages := fs.Int("backup-step-pages", 0, "pages per backup step (default: the engine's)")
+		pauseMs := fs.Int("backup-pause-ms", 0, "pause between backup steps in ms (default: the engine's)")
 		_ = fs.Parse(os.Args[2:])
 		p := g9a.DefaultPlan()
 		if *scale != 1 {
@@ -41,6 +44,7 @@ func main() {
 		if *bound > 0 {
 			p.WALBound = *bound
 		}
+		p.BackupStepPages, p.BackupPauseMs = *stepPages, *pauseMs
 		if err := p.Validate(); err != nil {
 			log.Fatal(err)
 		}

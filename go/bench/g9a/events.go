@@ -30,10 +30,11 @@ type Event struct {
 	WALAfter     int64  `json:"walAfter,omitempty"`
 
 	// wal, memory
-	Bytes      int64  `json:"bytes,omitempty"`
-	AnonBytes  int64  `json:"anonBytes,omitempty"`
-	RSSBytes   int64  `json:"rssBytes,omitempty"`
-	CgroupNote string `json:"cgroupNote,omitempty"`
+	Bytes      int64         `json:"bytes,omitempty"`
+	AnonBytes  int64         `json:"anonBytes,omitempty"`
+	MemEvents  *MemoryEvents `json:"memoryEvents,omitempty"`
+	RSSBytes   int64         `json:"rssBytes,omitempty"`
+	CgroupNote string        `json:"cgroupNote,omitempty"`
 
 	// fsync
 	Kind string `json:"kind,omitempty"`

@@ -21,6 +21,16 @@ type Disk struct {
 	Note       string   `json:"note,omitempty"`
 }
 
+// MemoryEvents are the cgroup's memory.events counters G9 requires to stay
+// at zero, and memory.current (page cache included; reported only).
+type MemoryEvents struct {
+	High    int64 `json:"high,omitempty"`
+	Max     int64 `json:"max,omitempty"`
+	OOM     int64 `json:"oom,omitempty"`
+	OOMKill int64 `json:"oomKill,omitempty"`
+	Current int64 `json:"currentBytes,omitempty"`
+}
+
 // Cgroup is the memory limits the run was under, as G9 requires them
 // (memory.max 1 GiB, memory.swap.max 0).
 type Cgroup struct {

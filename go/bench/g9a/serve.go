@@ -297,12 +297,20 @@ func (s *server) handleStart(w http.ResponseWriter, _ *http.Request) {
 }
 
 // runBackground starts the plan's work, counted from t0: the WAL and memory
-// samplers, the fsync probe under load, converge runs and backups. All of
-// it ends at /run/stop.
+// samplers, the fsync probe under load, converge runs and backups. The
+// samplers end at /run/stop. Converge runs are scheduled only inside the
+// load, and a converge run or backup in progress at /run/stop finishes
+// (cancelled only if it is still running two minutes later), so stopping
+// never turns into a failed run.
 func (s *server) runBackground(t0 time.Time) {
 	p := s.opts.Plan
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { <-s.stop; cancel() }()
+	work, cancelWork := context.WithCancel(context.Background())
+	go func() {
+		<-s.stop
+		cancel()
+		time.AfterFunc(2*time.Minute, cancelWork)
+	}()
 
 	s.every(ctx, t0, time.Second, func() {
 		s.ev.emit(Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes})
@@ -313,6 +321,9 @@ func (s *server) runBackground(t0 time.Time) {
 			e.AnonBytes = anon
 		} else {
 			e.CgroupNote = err.Error()
+		}
+		if m, err := s.cg.memoryEvents(); err == nil {
+			e.MemEvents = &m
 		}
 		s.ev.emit(e)
 	})
@@ -330,12 +341,16 @@ func (s *server) runBackground(t0 time.Time) {
 		}
 	}()
 	period := seconds(p.ConvergeEverySeconds)
+	loadEnd := t0.Add(p.Duration())
 	s.every(ctx, t0.Add(period), period, func() {
+		if !time.Now().Before(loadEnd) {
+			return
+		}
 		s.bg.Add(1)
 		go func() {
 			defer s.bg.Done()
 			s.ev.emit(Event{Ev: EvConvergeStart})
-			r := s.w.Converge(ctx)
+			r := s.w.Converge(work)
 			e := Event{Ev: EvConvergeEnd, Targets: r.Targets, Values: r.Values, Failed: r.PushFailed}
 			if r.Err != nil {
 				e.Err = r.Err.Error()
@@ -352,7 +367,7 @@ func (s *server) runBackground(t0 time.Time) {
 			case <-ctx.Done():
 				return
 			}
-			s.backup(ctx, i)
+			s.backup(work, i)
 		}()
 	}
 }
@@ -387,7 +402,8 @@ func (s *server) backup(ctx context.Context, n int) {
 	}
 	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", n))
 	s.ev.emit(Event{Ev: EvBackupStart})
-	st, err := s.db.Snapshot(ctx, dest, storage.SnapshotOptions{})
+	p := s.opts.Plan
+	st, err := s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
 	e := Event{Ev: EvBackupEnd, Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
 	if err != nil {
 		e.Err = err.Error()

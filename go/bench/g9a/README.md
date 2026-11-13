@@ -25,8 +25,10 @@ harness failed.
 Without a plan the G9a profile runs: one minute of warm-up at 10/s, then
 10/s for 15 minutes with a backup at 7 minutes, 30/s for 5 minutes, and
 50/s for 15 minutes with a backup in its middle (36 minutes of load). A
-smoke run scales it (`g9a plan -scale 0.05 -wal-bound 524288`; CI runs
-that, see `.github/workflows/go.yml`).
+smoke run scales it (`g9a plan -scale 0.05 -wal-bound 524288
+-backup-step-pages 256`; CI runs that, see `.github/workflows/go.yml`).
+Any plan but the profile is a diagnostic run: the report judges it by the
+same criteria but never calls it a pass.
 
 On the benchmark host, run the server in a cgroup of its own with G9's
 limits, so the memory criterion is measured and judged:
@@ -60,23 +62,32 @@ load test.
 
 ## What the report judges
 
-A run **fails** when any of these is broken: in every judged phase, every
-scheduled request present, none failed or dropped, p95 at most 100 ms; no
-`SQLITE_BUSY` seen by a client or the server; every size or snapshot
-`TRUNCATE` completed (not busy, every frame checkpointed, the WAL reset);
-the WAL peak under twice the bound; in every `TRUNCATE` and backup window
-(plus one second either side) p95 at most 100 ms and no failure; the
-cgroup's `anon` at most 300 MiB after the first minute; no backup,
-converge run or checkpoint failed.
+A run **fails** when any of these is broken:
+
+- in every judged phase, every scheduled request present (k6 starts
+  rate × duration of them, or one more), none failed or dropped, p95 at
+  most 100 ms;
+- every request accounted for alike by the log, k6 and the server;
+- no `SQLITE_BUSY` seen by a client or the server;
+- every size or snapshot `TRUNCATE` completed (not busy, every frame
+  checkpointed, the WAL reset), and the WAL peak under twice the bound;
+- in every `TRUNCATE` and backup window (plus one second either side), p95
+  at most 100 ms and no failure;
+- in the server's own cgroup, `anon` at most 300 MiB after the first
+  minute and no `memory.events` high, max or OOM (`memory.current` and the
+  RSS are reported);
+- no backup, converge run or checkpoint failed.
 
 It is **inconclusive** when it did not show what G9a requires: the size
-trigger firing under load, a backup overlapping it (a deferred trigger)
-followed by its `TRUNCATE`, every planned backup, memory measured under
-`memory.max` 1 GiB and `memory.swap.max` 0, the fsync distribution idle
-and under load, the filesystem; or when the target was the stand-in. If
-the shipped bound is never reached, either a separate run at that bound
-raises the write rate until the trigger fires, or the bound is lowered to
-one that was shown and Decision 2 is updated to it (ADR-0059, G9a).
+trigger firing under load; every planned converge run, over all targets;
+a backup overlapping the bound (a deferred trigger) followed by its
+`TRUNCATE`; every planned backup; memory measured under `memory.max`
+1 GiB and `memory.swap.max` 0; the fsync distribution idle and under load;
+the filesystem. It is also inconclusive when the target was the stand-in
+or the plan was not the profile. If the shipped bound is never reached,
+either a separate run at that bound raises the write rate until the
+trigger fires, or the bound is lowered to one that was shown and
+Decision 2 is updated to it (ADR-0059, G9a).
 
 ## Against varlatchd (step 3)
 
