@@ -266,17 +266,49 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     expect(await passkeyDenials()).toBe(1);
   }, 30_000);
 
-  it("stops outbound work at the effect's deadline, while the lock still holds; the control change waiting on it commits after, and no call starts later", async () => {
+  const listDestinations = () => call("POST", `${ORG}/platform-connections/destinations`, cli, { platform: "github-actions", baseIdentity: "acme-gh", credential: "tok" });
+
+  it("with the control off, an external effect has no deadline: a slow listing completes and keeps its audit, and a control change waits for it", async () => {
+    const saved = { ...EXTERNAL_EFFECT_LIMITS };
+    // A deadline and idle cap far shorter than the listing: neither applies with the control off.
+    EXTERNAL_EFFECT_LIMITS.deadlineMs = 400;
+    EXTERNAL_EFFECT_LIMITS.idleMs = 1_000;
+    platform.github = { paceMs: 60, starts: [] };
+    try {
+      const began = Date.now();
+      let listed = 0;
+      const listing = listDestinations().then((r) => { listed = Date.now(); return r; });
+      for (let i = 0; i < 400 && platform.github.starts.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+      let changed = 0;
+      const change = call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 }).then((r) => { changed = Date.now(); return r; });
+      await waiters(1);
+      const done = await listing;
+      expect(done.status, JSON.stringify(done.body)).toBe(200);
+      expect(done.body.truncated).toBe(true);
+      expect((await change).status).toBe(200);
+      // Every page was asked for, well past the deadline and the idle cap.
+      expect(platform.github.starts.length).toBe(31);
+      expect(Date.now() - began).toBeGreaterThan(EXTERNAL_EFFECT_LIMITS.idleMs);
+      // The change committed after the listing, which keeps its audit.
+      expect(changed).toBeGreaterThanOrEqual(listed);
+      expect(await n("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'sync.destinations_listed'")).toBe(1);
+    } finally {
+      Object.assign(EXTERNAL_EFFECT_LIMITS, saved);
+    }
+  }, 30_000);
+
+  it("under report, stops outbound work at the effect's deadline, while the lock still holds; the control change waiting on it commits after, and no call starts later", async () => {
     const saved = { ...EXTERNAL_EFFECT_LIMITS };
     // Shortened for the test; the idle cap stays above the deadline, as in production.
     EXTERNAL_EFFECT_LIMITS.deadlineMs = 400;
     EXTERNAL_EFFECT_LIMITS.idleMs = 1_000;
+    expect((await call("PATCH", CONTROL, verified, { mode: "report", expectedVersion: 0 })).status).toBe(200);
     platform.github = { paceMs: 120, starts: [] };
     try {
       const began = Date.now();
-      const listing = call("POST", `${ORG}/platform-connections/destinations`, cli, { platform: "github-actions", baseIdentity: "acme-gh", credential: "tok" });
+      const listing = listDestinations();
       for (let i = 0; i < 400 && platform.github.starts.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
-      const change = call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 });
+      const change = call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 1 });
       await waiters(1);
       const stopped = await listing;
       const ended = Date.now();
@@ -284,8 +316,9 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
       expect(stopped.body.error).toMatchObject({ code: "STATE_CHANGED", details: { reason: "external-effect-deadline" } });
       expect((await change).status).toBe(200);
       const starts = [...platform.github.starts];
-      // No call started after the deadline, and the listing never got far.
-      expect(starts.every((t) => t - began <= EXTERNAL_EFFECT_LIMITS.deadlineMs)).toBe(true);
+      // No call started after the deadline (counted from the decision under
+      // the lock, so from after the request began), and the listing never got far.
+      expect(starts.every((t) => t - began <= EXTERNAL_EFFECT_LIMITS.deadlineMs + 100)).toBe(true);
       expect(starts.length).toBeLessThan(30);
       // Nothing starts after the effect ended and the change committed.
       await new Promise((r) => setTimeout(r, 300));

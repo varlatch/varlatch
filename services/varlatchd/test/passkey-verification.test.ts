@@ -8,6 +8,7 @@ import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { ENFORCEABLE_CONTROLS, enforceCapability, resetControls } from "../src/domain/securitycontrols.js";
+import { EXTERNAL_EFFECT_LIMITS } from "../src/domain/externaleffect.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
@@ -441,6 +442,40 @@ describe("where it decides", () => {
       expect(await refusals()).toBe(1);
     } finally {
       resolver.restore();
+    }
+  });
+
+  it("answers the deadline when an App Connection's GitHub call is stopped there, under report, whatever the connection made of it", async () => {
+    await insertGitHubApp(ctx, "acme", adminId);
+    await setMode("report");
+    const saved = { ...EXTERNAL_EFFECT_LIMITS };
+    EXTERNAL_EFFECT_LIMITS.deadlineMs = 150;
+    let calls = 0;
+    // GitHub slower than the deadline; the call honours its abort signal.
+    const slowGitHub = (async (_input: unknown, init?: RequestInit) => {
+      calls++;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 2_000);
+        init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); });
+      });
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const slowApp = buildApp(ctx, { publicUrl: PUBLIC_URL, syncFetch: slowGitHub });
+      const res = await slowApp.request(`${ORG}/platform-connections`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ credentialKind: "github-app", installationId: 4244, name: "Actions" }),
+      });
+      const body = (await res.json()) as { error: { code: string; details?: { reason?: string }; message: string } };
+      // Not the VALIDATION_FAILED ("unreachable") the connection makes of an aborted call.
+      expect(res.status, JSON.stringify(body)).toBe(409);
+      expect(body.error).toMatchObject({ code: "STATE_CHANGED", details: { reason: "external-effect-deadline" } });
+      expect(body.error.message).toContain("rolled back");
+      expect(calls).toBe(1);
+      expect(await rows("SELECT count(*)::int AS n FROM platform_connections")).toEqual([{ n: 0 }]);
+    } finally {
+      Object.assign(EXTERNAL_EFFECT_LIMITS, saved);
     }
   });
 
