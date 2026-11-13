@@ -96,7 +96,8 @@ mode that is off in production:
 
 - the retrieval route k6 calls (`k6/g9a.js`, one line to change) and a
   manifest of tokens and secrets after seeding W1;
-- `POST /run/start` and `POST /run/stop`, the converge and backup schedule
+- `GET /run/plan` and `GET /run/manifest` (for a k6 on another host),
+  `POST /run/start` and `POST /run/stop`, the converge and backup schedule
   of the plan, and the event log, written as `serve.go` writes it (the
   checkpoint events come from `storage.Options.OnCheckpoint`);
 - `system.json` with `"target": "varlatchd"`.

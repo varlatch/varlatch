@@ -49,6 +49,19 @@ func TestServe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A k6 on another host fetches the same files.
+	for path, file := range map[string]string{"/run/plan": FilePlan, "/run/manifest": FileManifest} {
+		resp, err := http.Get(base + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		served, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		want, _ := os.ReadFile(filepath.Join(out, file))
+		if resp.StatusCode != 200 || string(served) != string(want) {
+			t.Fatalf("GET %s: %d, %d bytes, want the %d bytes of %s", path, resp.StatusCode, len(served), len(want), file)
+		}
+	}
 	if err := json.Unmarshal(b, &manifest); err != nil || len(manifest) != 3*w1SecretsPerEnv {
 		t.Fatalf("manifest: %v, %d entries", err, len(manifest))
 	}
