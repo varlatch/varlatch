@@ -25,6 +25,11 @@ func unit(t *testing.T) map[string]map[string][]string {
 		case line == "" || strings.HasPrefix(line, "#"):
 		case strings.HasPrefix(line, "["):
 			section = strings.Trim(line, "[]")
+			// systemd merges a repeated section; a second one could hide
+			// settings from the checks below.
+			if _, dup := out[section]; dup {
+				t.Fatalf("section [%s] appears twice", section)
+			}
 			out[section] = map[string][]string{}
 		default:
 			k, v, ok := strings.Cut(line, "=")
@@ -74,6 +79,7 @@ var securitySettings = map[string][]string{
 	"SystemCallErrorNumber":   {"EPERM"},
 	"DevicePolicy":            {"closed"},
 	"KeyringMode":             {"private"},
+	"LimitCORE":               {"0"},
 }
 
 // How the service starts, stops and restarts.
@@ -101,6 +107,11 @@ func TestUnitSettings(t *testing.T) {
 			if _, ok := lifecycleSettings[k]; !ok {
 				t.Errorf("[Service] has %s, which neither list covers: add it to one, as a reviewed change", k)
 			}
+		}
+	}
+	for k, v := range map[string][]string{"StartLimitIntervalSec": {"5min"}, "StartLimitBurst": {"10"}} {
+		if !slices.Equal(u["Unit"][k], v) {
+			t.Errorf("[Unit] %s = %q, want %q", k, u["Unit"][k], v)
 		}
 	}
 	for _, p := range []string{"/etc/varlatch/varlatchd.conf", "/etc/varlatch/root-kek", "/etc/varlatch/backup-key"} {

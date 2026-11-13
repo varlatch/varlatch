@@ -50,6 +50,7 @@ done
 
 cleanup() {
   systemctl stop "$UNIT" >/dev/null 2>&1 || true
+  systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
   rm -f "/etc/systemd/system/$UNIT"
   systemctl daemon-reload || true
   rm -rf "$ETC" "$STATE" "/var/lib/private/$T" "$LIBDIR" "$HOMEDIR"
@@ -57,6 +58,7 @@ cleanup() {
   userdel "$T" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 
 # The renamed copy: these substitutions and no other change.
 rename() {
@@ -68,15 +70,26 @@ rename() {
 }
 renamed=$(rename)
 changed=$(printf '%s\n' "$renamed" | diff "$unit" - | grep -c '^>' || true)
-[ "$changed" = 10 ] || { echo "the renamed unit changes $changed lines, not the expected 10" >&2; exit 1; }
-if printf '%s\n' "$renamed" | grep -q '/etc/varlatch/\|=varlatch$\|/usr/local/bin/varlatchd '; then
-  echo "the renamed unit still names the real installation" >&2
+if [ "$changed" != 10 ]; then
+  echo "the renamed unit changes $changed lines, not the expected 10:" >&2
+  printf '%s\n' "$renamed" | diff "$unit" - >&2 || true
+  exit 1
+fi
+# Outside comments and the Description and Documentation lines, no
+# "varlatch" may remain but in the test names and the configuration's
+# file name.
+left=$(printf '%s\n' "$renamed" | grep -v '^#\|^Description=\|^Documentation=' \
+  | sed -e "s|$T||g" -e 's|varlatchd-unittest||g' -e 's|varlatchd\.conf||g' | grep varlatch || true)
+if [ -n "$left" ]; then
+  echo "the renamed unit still names the real installation:" >&2
+  printf '%s\n' "$left" >&2
   exit 1
 fi
 
 useradd --system --no-create-home --shell /usr/sbin/nologin "$T"
 install -d -m 755 "$ETC"
-: > "$ETC/varlatchd.conf"
+# As setup will write it: root's, readable by the service, no secrets.
+install -m 644 /dev/null "$ETC/varlatchd.conf"
 for key in root-kek backup-key; do
   ( umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$ETC/$key" )
 done
@@ -102,15 +115,28 @@ install -d -m 755 "$HOMEDIR"
 echo readable > "$HOMEDIR/readable"
 chmod 644 "$HOMEDIR/readable"
 
+# Positive controls: outside the sandbox the service user can change its
+# fixtures and read the /home file, so the probe's refusals below come
+# from the sandbox and nothing else.
+for f in "$ro" "$LIBDIR/owned-by-service"; do
+  # shellcheck disable=SC2016 # $1 is expanded by the inner shell, on purpose
+  runuser -u "$T" -- sh -c ': >> "$1"' sh "$f" || { echo "control failed: $T cannot write $f" >&2; exit 1; }
+done
+runuser -u "$T" -- test -r "$HOMEDIR/readable" || { echo "control failed: $T cannot read $HOMEDIR/readable" >&2; exit 1; }
+
 # The same unit starting the probe, without restarts.
 install -m 755 "$probe" "$BIN-probe"
 printf '%s\n' "$renamed" | sed \
-  -e "s|^ExecStart=.*|ExecStart=$BIN-probe -state-dir $STATE -key-file $ETC/root-kek -ro-files $ro,$LIBDIR/owned-by-service -home-file $HOMEDIR/readable|" \
+  -e "s|^ExecStart=.*|ExecStart=$BIN-probe -state-dir $STATE -key-file $ETC/root-kek -config $ETC/varlatchd.conf -ro-files $ro,$LIBDIR/owned-by-service -home-file $HOMEDIR/readable|" \
   -e 's|^Restart=on-failure$|Restart=no|' > "/etc/systemd/system/$UNIT"
 systemctl daemon-reload
-systemctl start "$UNIT"
+show_logs() {
+  systemctl status "$UNIT" --no-pager || true
+  journalctl -u "$UNIT" --no-pager -o cat || true
+}
+systemctl start "$UNIT" || { show_logs; exit 1; }
 i=0
-while state=$(systemctl show -p ActiveState --value "$UNIT") && { [ "$state" = active ] || [ "$state" = activating ]; }; do
+while state=$(systemctl show -p ActiveState --value "$UNIT") && [ "$state" != inactive ] && [ "$state" != failed ]; do
   i=$((i + 1))
   [ $i -lt 120 ] || { echo "the probe did not finish" >&2; exit 1; }
   sleep 1

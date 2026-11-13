@@ -30,6 +30,10 @@ After=network-online.target
 AssertPathExists=/etc/varlatch/varlatchd.conf
 AssertPathExists=/etc/varlatch/root-kek
 AssertPathExists=/etc/varlatch/backup-key
+# A bad configuration stops after ten tries in five minutes instead of
+# restarting forever.
+StartLimitIntervalSec=5min
+StartLimitBurst=10
 
 [Service]
 Type=exec
@@ -89,6 +93,8 @@ DevicePolicy=closed
 KeyringMode=private
 
 LimitNOFILE=65536
+# A core dump would hold the Root KEK.
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target

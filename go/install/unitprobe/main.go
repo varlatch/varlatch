@@ -30,10 +30,11 @@ import (
 func main() {
 	stateDir := flag.String("state-dir", "", "the unit's StateDirectory")
 	keyFile := flag.String("key-file", "", "the Root KEK file on disk (root-only)")
+	config := flag.String("config", "", "the configuration file the unit points at")
 	roFiles := flag.String("ro-files", "", "comma-separated files owned by the service user under protected mounts")
 	homeFile := flag.String("home-file", "", "a world-readable file under /home")
 	flag.Parse()
-	if *stateDir == "" || *keyFile == "" || *roFiles == "" || *homeFile == "" {
+	if *stateDir == "" || *keyFile == "" || *config == "" || *roFiles == "" || *homeFile == "" {
 		fmt.Println("FAIL usage: every flag is required")
 		os.Exit(2)
 	}
@@ -66,13 +67,17 @@ func main() {
 		}
 		check("reads its credential "+c, err)
 	}
+	// A permission check, not a sandbox one: the file is root's, mode 0600.
 	_, err := os.ReadFile(*keyFile)
-	refused("cannot read the key file itself", err, syscall.EACCES)
+	refused("cannot read the key file itself (file permissions)", err, syscall.EACCES)
+	_, err = os.ReadFile(*config)
+	check("reads its configuration", err)
 	if os.Getuid() == 0 || os.Geteuid() == 0 {
 		check("does not run as root", errors.New("uid 0"))
 	} else {
 		check("does not run as root", nil)
 	}
+	check("holds CAP_NET_BIND_SERVICE only, with no_new_privs", capabilities())
 
 	ctx := context.Background()
 	db, err := storage.Open(ctx, storage.Options{Path: filepath.Join(*stateDir, "probe.db")})
@@ -129,7 +134,7 @@ func main() {
 
 	// A file anyone may read under /home: only ProtectHome hides it.
 	_, err = os.ReadFile(*homeFile)
-	refused("cannot read "+*homeFile, err, syscall.ENOENT, syscall.EACCES)
+	refused("cannot read "+*homeFile, err, syscall.EACCES)
 	if entries, err := os.ReadDir("/home"); err == nil && len(entries) > 0 {
 		check("sees nothing in /home", fmt.Errorf("%d entries", len(entries)))
 	} else if err != nil && !errors.Is(err, fs.ErrPermission) {
@@ -142,4 +147,34 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("all checks passed")
+}
+
+// capabilities checks the process holds exactly CAP_NET_BIND_SERVICE (bit
+// 10) in every set, and that no_new_privs is on: binding port 443 alone
+// would also pass where unprivileged ports start lower.
+func capabilities() error {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return err
+	}
+	want := map[string]string{
+		"CapEff:": "0000000000000400", "CapPrm:": "0000000000000400",
+		"CapBnd:": "0000000000000400", "CapAmb:": "0000000000000400",
+		"CapInh:": "0000000000000400", "NoNewPrivs:": "1",
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 {
+			if w, ok := want[f[0]]; ok {
+				if f[1] != w {
+					return fmt.Errorf("%s %s, want %s", f[0], f[1], w)
+				}
+				delete(want, f[0])
+			}
+		}
+	}
+	if len(want) != 0 {
+		return fmt.Errorf("missing from /proc/self/status: %v", want)
+	}
+	return nil
 }
