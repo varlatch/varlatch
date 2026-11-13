@@ -32,7 +32,7 @@ Otherwise, install the release your installation runs. The dashboard
 shows it under Settings, then Server. On Linux:
 
 ```sh
-V=0.21.0  # the release your installation runs
+V=0.22.0  # the release your installation runs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS

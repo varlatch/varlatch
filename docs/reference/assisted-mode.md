@@ -274,6 +274,15 @@ varlatch --assisted org delete <slug> --cancel <request-id>
 - `org deletion` shows the open request and needs no `--confirm`. The MCP
   server has no tool for either deletion.
 
+## `audit-export remove`
+
+`varlatch audit-export remove` needs `--confirm <organization>` in every
+mode; in assisted mode, without it, the command refuses with status 78 and
+gives the human's command. Removing an export also always needs the
+person's passkey approval. Setting one up needs neither: see
+[Audit export](audit-export.md#changes-and-approvals) for what that allows
+a coding agent working with a person's credential.
+
 ## Changes that need your approval
 
 ```

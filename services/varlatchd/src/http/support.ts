@@ -320,8 +320,10 @@ export async function enforce(ctx: AppCtx, decision: Decision): Promise<Evaluati
 
 /**
  * The denial an authorization recheck found inside a transaction that the
- * refusal then rolls back (deferDenial), recorded once the transaction
- * ended (auditDeferredDenial, from app.onError).
+ * refusal then rolls back, kept on the request by
+ * {@link authorizeInTransaction} or {@link authorizeInControlledTransaction}
+ * and recorded once the transaction ended ({@link auditDeferredDenial},
+ * from app.onError).
  */
 export const DEFERRED_DENIAL = "deferredDenial";
 
@@ -375,6 +377,13 @@ export async function authorizeInTransaction(
  * recorded in the transaction ({@link authorize} against `db`), which the
  * refusal rolls back. Nothing observable changes: no audit event, the same
  * answer. The read of the controls happens only on a denial.
+ *
+ * If that read fails (a database fault after the denial), the request gets
+ * main's answer all the same: the denial's own error, never a 500, and
+ * nothing kept for app.onError. Main's in-transaction audit event would be
+ * rolled back with the refusal, so main records nothing for it either; and
+ * on PostgreSQL the failed read has already aborted the transaction, where
+ * a further insert could only fail.
  */
 export async function authorizeInControlledTransaction(
   ctx: AppCtx,
@@ -388,7 +397,14 @@ export async function authorizeInControlledTransaction(
   const txCtx = { ...ctx, db };
   const decision = await decide(txCtx, c, principal, action, resource, opts);
   if (decision.allowed) return decision.evaluation;
-  if (!(await anyControlOn(db, resource.organizationId))) return enforce(txCtx, decision);
+  let on: boolean;
+  try {
+    on = await anyControlOn(db, resource.organizationId);
+  } catch (e) {
+    console.error("could not read the security controls after an authorization denial:", e);
+    throw decision.error;
+  }
+  if (!on) return enforce(txCtx, decision);
   if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
   throw decision.error;
 }

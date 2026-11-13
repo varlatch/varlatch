@@ -919,15 +919,15 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
   );
   console.log(tombstoneExportLine(organizationId));
   for (const line of deletionLimits("organization")) console.log(line);
-  // ADR-0056 Decision 10: an audit export's key outlives the deletion, for its final events.
+  // ADR-0056 Decision 10: an audit export's key outlives the deletion, for
+  // its final events. Said after scheduling (the --confirm prompt sends no
+  // request), and never left out because the state could not be read.
   if (meta.capabilities.includes("audit.storage-export")) {
+    const drain = "key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.";
     const status = await api.getAuditExport(slug).catch(() => null);
     const state = status?.export?.state;
-    if (state === "active" || state === "draining") {
-      console.log(
-        "The audit export's key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.",
-      );
-    }
+    if (status === null) console.log(`The audit export's state could not be read. If this organization has one, its ${drain}`);
+    else if (state === "active" || state === "draining") console.log(`The audit export's ${drain}`);
   }
 }
 

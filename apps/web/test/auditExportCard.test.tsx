@@ -42,7 +42,7 @@ vi.mock("../src/components/Dialog", () => ({
   useConfirm: () => fake.confirm,
 }));
 
-import { AuditExportCard, exportHealth, retentionLoosens } from "../src/features/security-controls/AuditExportCard";
+import { AuditExportCard, exportHealth, normalizedDestination, normalizedEndpoint, retentionLoosens } from "../src/features/security-controls/AuditExportCard";
 
 const NOW = Date.now();
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
@@ -79,17 +79,24 @@ function exportOf(over: Partial<AuditExport> = {}): AuditExport {
 }
 
 let root: ReactTestRenderer;
+let client: QueryClient;
+const tree = (status: AuditExportStatus) => (
+  <QueryClientProvider client={client}>
+    <MemoryRouter>
+      <AuditExportCard org="acme" status={status} />
+    </MemoryRouter>
+  </QueryClientProvider>
+);
 async function mount(status: AuditExportStatus) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   await act(async () => {
-    root = create(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <AuditExportCard org="acme" status={status} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    root = create(tree(status));
   });
+  await settle();
+}
+/** The page's query answering again, with a newer export. */
+async function rerender(status: AuditExportStatus) {
+  await act(async () => root.update(tree(status)));
   await settle();
 }
 const settle = async () => {
@@ -158,7 +165,8 @@ describe("a live export", () => {
     expect(text(one("audit-export-lag"))).toContain("over an hour ago");
     expect(text(one("audit-export-heartbeat"))).toContain("none in the last two hours");
     expect(text(one("audit-export-retention"))).toBe("Retentionnone; no retention; versioning not verified");
-    expect(text(one("audit-export-key-flags"))).toBe("The keyread access not determined");
+    // No retention configured: nothing to say about reading it.
+    expect(text(one("audit-export-key-flags"))).toBe("The keyobject read not determined");
   });
 
   it("names a stop that needs a person: an object conflict, a format this release cannot upload", async () => {
@@ -235,6 +243,128 @@ describe("a live export", () => {
     await click("audit-export-key-save");
     expect(fake.api.replaceAuditExportCredential).toHaveBeenCalledWith("acme", { expectedVersion: 3, credential: { accessKeyId: "AKIA0002", secretAccessKey: "new-secret-value" } });
     expect(all("audit-export-key-dialog")).toHaveLength(0);
+  });
+});
+
+describe("after the review of #147", () => {
+  it("a check result goes once the export changes: a new destination, or a new key", async () => {
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-check");
+    expect(all("audit-export-check-result")).toHaveLength(1);
+    expect(one("audit-export-check-result").props.role).toBe("status");
+    // Re-read with the same export: the result stays.
+    await rerender({ enabled: true, export: exportOf() });
+    expect(all("audit-export-check-result")).toHaveLength(1);
+    // A new key (a new version, the same destination): gone.
+    await rerender({ enabled: true, export: exportOf({ version: 4 }) });
+    expect(all("audit-export-check-result")).toHaveLength(0);
+    await click("audit-export-check");
+    expect(all("audit-export-check-result")).toHaveLength(1);
+    // A new destination: gone.
+    await rerender({ enabled: true, export: exportOf({ version: 5, destination: { ...exportOf().destination, bucket: "acme-audit-2" } }) });
+    expect(all("audit-export-check-result")).toHaveLength(0);
+  });
+
+  it("compares what the server would store: an endpoint's trailing slash or a prefix without one is no change, and needs no approval", async () => {
+    expect(normalizedDestination({ endpoint: "https://S3.eu-central-1.amazonaws.com/", region: " eu-central-1 ", bucket: "acme-audit", prefix: "acme", pathStyle: false }))
+      .toEqual({ endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", bucket: "acme-audit", prefix: "acme/", pathStyle: false });
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-change");
+    await type("audit-export-endpoint", "https://s3.eu-central-1.amazonaws.com/");
+    await type("audit-export-prefix", "acme");
+    expect(all("audit-export-needs-approval")).toHaveLength(0);
+    expect(one("audit-export-save").props.disabled).toBe(true);
+    // A real change still asks, and sends the stored form.
+    await type("audit-export-prefix", "audit");
+    expect(all("audit-export-needs-approval")).toHaveLength(1);
+    await click("audit-export-save");
+    expect(fake.api.changeAuditExport).toHaveBeenCalledWith("acme", { expectedVersion: 3, destination: { prefix: "audit/" } });
+  });
+
+  it("marks the lag as a live status and the checklist marks as images", async () => {
+    await mount({ enabled: true, export: exportOf({ lag: { pending: 3, oldestPendingAt: iso(2 * 3_600_000) } }) });
+    expect(one("audit-export-lag").props.role).toBe("status");
+    const marks = root.root.findAll((n) => n.props["aria-label"] === "Done" || n.props["aria-label"] === "Varlatch cannot check this");
+    expect(marks.length).toBeGreaterThan(0);
+    for (const m of marks) expect(m.props.role).toBe("img");
+  });
+
+  it("a new export waits for its first heartbeat; an older one without any is flagged", async () => {
+    await mount({ enabled: true, export: exportOf({ createdAt: iso(10 * 60_000), lastHeartbeatAt: null }) });
+    expect(text(one("audit-export-heartbeat"))).toContain("waiting for the first heartbeat");
+    expect(text(one("audit-export-heartbeat"))).not.toContain("none in the last two hours");
+    await mount({ enabled: true, export: exportOf({ createdAt: iso(3 * 3_600_000), lastHeartbeatAt: null }) });
+    expect(text(one("audit-export-heartbeat"))).toContain("none yet (none in the last two hours)");
+  });
+
+  it("the secret is on screen only while typed: gone after saving, and in no error", async () => {
+    const SECRET = "the-secret-access-key-0001";
+    fake.api.createAuditExport.mockRejectedValueOnce(new Error("The test write failed (S3 error AccessDenied, HTTP 403): the key may not do this"));
+    await mount({ enabled: true, export: null });
+    await click("audit-export-create");
+    await type("audit-export-endpoint", "https://s3.eu-central-1.amazonaws.com");
+    await type("audit-export-region", "eu-central-1");
+    await type("audit-export-bucket", "acme-audit");
+    await type("audit-export-key-id", "AKIA0001");
+    await type("audit-export-secret", SECRET);
+    // The test below is not vacuous: the typed secret is in the tree now.
+    expect(JSON.stringify(root.toJSON())).toContain(SECRET);
+    // A refused save: the error is shown, without the secret.
+    await click("audit-export-save");
+    expect(text(one("audit-export-save-error"))).toContain("The test write failed");
+    expect(text(one("audit-export-save-error"))).not.toContain(SECRET);
+    // A save that works: the dialog closes and the secret is nowhere.
+    await click("audit-export-save");
+    expect(fake.api.createAuditExport).toHaveBeenCalledTimes(2);
+    expect(all("audit-export-dialog")).toHaveLength(0);
+    expect(JSON.stringify(root.toJSON())).not.toContain(SECRET);
+    // Opening the dialog again starts empty.
+    await click("audit-export-create");
+    expect(one("audit-export-secret").props.value).toBe("");
+  });
+});
+
+describe("after the review of #150", () => {
+  it("uses an endpoint's origin only where the server would accept it; otherwise sends what was typed", () => {
+    expect(normalizedEndpoint(" https://S3.eu-central-1.amazonaws.com/ ")).toBe("https://s3.eu-central-1.amazonaws.com");
+    expect(normalizedEndpoint("http://127.0.0.1:9000")).toBe("http://127.0.0.1:9000");
+    // The server refuses these; its message must reach the person, unchanged.
+    for (const typed of ["https://u:p@s3.example.com", "https://s3.example.com/x", "https://s3.example.com/?q=1", "https://s3.example.com/#f", "localhost:9000", "ftp://s3.example.com", "not a url"]) {
+      expect(normalizedEndpoint(typed), typed).toBe(typed);
+    }
+  });
+
+  it("the change dialog sends an endpoint it cannot normalize as typed, so the server's refusal is shown", async () => {
+    fake.api.changeAuditExport.mockRejectedValueOnce(new Error("endpoint: must not carry user info"));
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-change");
+    await type("audit-export-endpoint", "https://u:p@s3.eu-central-1.amazonaws.com");
+    expect(all("audit-export-needs-approval")).toHaveLength(1);
+    await click("audit-export-save");
+    expect(fake.api.changeAuditExport).toHaveBeenCalledWith("acme", { expectedVersion: 3, destination: { endpoint: "https://u:p@s3.eu-central-1.amazonaws.com" } });
+    expect(text(one("audit-export-save-error"))).toContain("must not carry user info");
+    await type("audit-export-endpoint", "localhost:9000");
+    await click("audit-export-save");
+    expect(fake.api.changeAuditExport).toHaveBeenLastCalledWith("acme", { expectedVersion: 3, destination: { endpoint: "localhost:9000" } });
+  });
+
+  it("waits for a first heartbeat only while the export is active", async () => {
+    await mount({ enabled: true, export: exportOf({ state: "draining", drainDeadline: "2026-12-13T10:00:00.000Z", createdAt: iso(10 * 60_000), lastHeartbeatAt: null }) });
+    expect(text(one("audit-export-heartbeat"))).not.toContain("waiting for the first heartbeat");
+  });
+
+  it("says what the key may read about retention only when retention is configured", async () => {
+    await mount({ enabled: true, export: exportOf({ retention: null, objectLock: "not-set", keyCanRead: true, retentionReadable: null }) });
+    expect(text(one("audit-export-key-flags"))).toBe("The keycan read objects");
+    await mount({ enabled: true, export: exportOf({ keyCanRead: true, retentionReadable: null }) });
+    expect(text(one("audit-export-key-flags"))).toBe("The keycan read objects, retention read not determined");
+  });
+
+  it("announces a failed check as an alert", async () => {
+    fake.api.checkAuditExport.mockResolvedValueOnce({ ok: false, message: "This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)", conditionalCreation: false, objectLock: null, keyCanRead: null, retentionReadable: null });
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-check");
+    expect(one("audit-export-check-result").props.role).toBe("alert");
   });
 });
 

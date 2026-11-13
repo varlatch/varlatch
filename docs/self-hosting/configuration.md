@@ -146,6 +146,7 @@ recorded one, and a `publicUrl` edited into the file.
 | `VARLATCH_TAILNET_BROWSER_ORIGINS` | [Tailnet browser endpoint](#tailnet-browser-endpoint) | no | no |
 | `VARLATCH_TRUSTED_PROXIES` | [Client addresses](#client-addresses) | no | no |
 | `VARLATCH_SYNC`, `VARLATCH_SYNC_ADAPTERS` | [Sync Targets](#sync-targets) | no | no |
+| `VARLATCH_AUDIT_EXPORT` | [Audit export](#audit-export) | no | no |
 | `VARLATCH_OUTBOUND_ALLOW` | [Outbound destinations](#outbound-destinations) | no | no |
 | `VARLATCH_SERVE_CLI` | [Serving the CLI](#serving-the-cli) | when setup asked (new installations) | no |
 
@@ -562,6 +563,24 @@ must not reach out from, or when your policy forbids it.
 A comma-separated list of the platforms Sync Targets may use. varlatchd
 refuses to connect another platform and delivers only through the listed
 adapters. Set it to allow only the platforms you use.
+
+## Audit export
+
+### `VARLATCH_AUDIT_EXPORT`
+
+- **Read by:** `varlatchd`.
+- **Default:** `on`.
+- **Setup:** does not write it.
+
+With `on`, an organization's admins may copy its audit log to a bucket
+they control ([Audit export](../reference/audit-export.md)); nothing is
+sent anywhere until one does. With `off`, varlatchd delivers nothing for
+the whole installation and refuses to set up or change an export, and the
+Security page says that the host operator stopped it. An organization can
+still remove its export, and a deleted organization's export key is still
+cleared at its 30-day deadline. Any other value stops varlatchd from
+starting. A destination on a private network needs
+[`VARLATCH_OUTBOUND_ALLOW`](#varlatch_outbound_allow).
 
 ## Outbound destinations
 

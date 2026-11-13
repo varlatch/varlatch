@@ -16,7 +16,7 @@ import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { buildGraph, declaredSymbol, functionLabels, reach, srcPath, unlabelledRegistrations, writers, type Graph, type RootClass } from "./helpers/caller-graph.js";
+import { buildGraph, declaredSymbol, functionLabels, otherRouterCalls, reach, srcPath, unlabelledRegistrations, writePattern, writers, type Graph, type RootClass } from "./helpers/caller-graph.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 
@@ -369,7 +369,7 @@ function callersOf(g: Graph): Record<string, string[]> {
 
 /** Every writer of a protected table in a graph, with the classes of the roots reaching it ("route" for a route's own body). */
 function writersOf(g: Graph): Record<string, RootClass[] | string[]> {
-  return Object.fromEntries(writers(g, new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`)).map((w) => {
+  return Object.fromEntries(writers(g, writePattern(WRITTEN_TABLES)).map((w) => {
     if (!w.symbol) return [w.label, ["route"]];
     const r = reach(g, w.symbol, ROOTS);
     const failed = r.entries.filter((e) => e.startsWith("??"));
@@ -823,10 +823,11 @@ describe("alternate callers", () => {
       graph = buildGraph(PACKAGE_DIR);
     }, GRAPH_TIMEOUT);
 
-    it("names only roots that exist, and every registration has a literal path", () => {
+    it("names only roots that exist, every registration has a literal path, and only app registers routes", () => {
       const labels = functionLabels(graph);
       expect([...ROOTS.keys()].filter((root) => !labels.has(root))).toEqual([]);
       expect(unlabelledRegistrations(graph)).toEqual([]);
+      expect(otherRouterCalls(graph)).toEqual([]);
     }, GRAPH_TIMEOUT);
 
     it("every writer in src/ of what the operations change is classified, and reached only by the roots its classification allows", () => {
@@ -1093,6 +1094,126 @@ describe("alternate callers", () => {
           { "domain/reexport-probe.ts": 'export { issueCredential as issue } from "../auth/credentials.js";\n' },
         );
         expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
+      }, GRAPH_TIMEOUT);
+
+      // ---- Step 4.10's review P3s: SQL that is not one literal, and routers other than app.
+      const WRITER_PROBE = "domain/writer-probe.ts";
+      /** The writers a tampered graph adds to the real graph's. */
+      const addedWriters = (g: Graph) => {
+        const base = writersOf(graph);
+        return Object.fromEntries(Object.entries(writersOf(g)).filter(([label]) => !(label in base)));
+      };
+
+      it("a writer whose SQL is a concatenation, a parenthesized one, or a template with a literal table", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          'export async function concatWriter(db: Querier) { await db.query("UPDATE gr" + "ants SET revoked_at = now() WHERE id = $1", ["x"]); }',
+          'export async function nestedWriter(db: Querier) { await db.query(("DELETE " + "FROM ") + ("webhooks" + " WHERE id = $1"), ["x"]); }',
+          "export async function templateWriter(db: Querier, column: string) { await db.query(`DELETE FROM roles WHERE ${column} = $1`, [\"x\"]); }",
+          "",
+        ].join("\n");
+        const g = tampered(
+          (text) => intoRename("    await concatWriter(ctx.db);\n    await nestedWriter(ctx.db);\n    await templateWriter(ctx.db, \"id\");")(
+            `import { concatWriter, nestedWriter, templateWriter } from "../domain/writer-probe.js";\n${text}`),
+          { [WRITER_PROBE]: probeFile },
+        );
+        expect(addedWriters(g)).toEqual({
+          [`${WRITER_PROBE} concatWriter`]: ["route"],
+          [`${WRITER_PROBE} nestedWriter`]: ["route"],
+          [`${WRITER_PROBE} templateWriter`]: ["route"],
+        });
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a write whose table is a template substitution, a concatenated variable, or a keyword alone; lock clauses and upserts are not writes", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function substituted(db: Querier, table: string) { await db.query(`UPDATE ${table} SET revoked_at = now()`); }",
+          'export async function concatenated(db: Querier, table: string) { await db.query("DELETE FROM " + table + " WHERE id = $1", ["x"]); }',
+          'export async function joined(db: Querier) { await db.query(["INSERT INTO", "grants (id) VALUES ($1)"].join(" "), ["x"]); }',
+          'export async function locks(db: Querier) { await db.query("SELECT id FROM grants WHERE id = $1 FOR UPDATE", ["x"]); await db.query("SELECT id FROM roles FOR NO KEY UPDATE"); }',
+          'export async function upsert(db: Querier) { await db.query("INSERT INTO report_counters (k) VALUES (1) ON CONFLICT (k) DO UPDATE SET n = 1"); }',
+          "",
+        ].join("\n");
+        const g = tampered((text) => `${text}\n// probe\n`, { [WRITER_PROBE]: probeFile });
+        const fresh = addedWriters(g);
+        expect(Object.keys(fresh).sort()).toEqual([
+          expect.stringMatching(/^\?\? domain\/writer-probe\.ts:2 a write whose table is not a literal$/),
+          expect.stringMatching(/^\?\? domain\/writer-probe\.ts:3 a write whose table is not a literal$/),
+          expect.stringMatching(/^\?\? domain\/writer-probe\.ts:4 a write whose table is not a literal$/),
+        ]);
+      }, GRAPH_TIMEOUT);
+
+      it("a writer with any whitespace before its table, a quoted or schema-qualified table, and UPDATE ONLY", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function newlineWriter(db: Querier) { await db.query(`UPDATE\n      grants SET revoked_at = now() WHERE id = $1`, [\"x\"]); }",
+          'export async function quotedWriter(db: Querier) { await db.query("DELETE FROM \\"roles\\" WHERE id = $1", ["x"]); }',
+          'export async function onlyWriter(db: Querier) { await db.query("UPDATE ONLY webhooks SET revoked_at = now() WHERE id = $1", ["x"]); }',
+          'export async function schemaWriter(db: Querier) { await db.query("INSERT INTO public.grants (id) VALUES ($1)", ["x"]); }',
+          "",
+        ].join("\n");
+        const g = tampered(
+          (text) => intoRename("    await newlineWriter(ctx.db);\n    await quotedWriter(ctx.db);\n    await onlyWriter(ctx.db);\n    await schemaWriter(ctx.db);")(
+            `import { newlineWriter, onlyWriter, quotedWriter, schemaWriter } from "../domain/writer-probe.js";\n${text}`),
+          { [WRITER_PROBE]: probeFile },
+        );
+        expect(addedWriters(g)).toEqual({
+          [`${WRITER_PROBE} newlineWriter`]: ["route"],
+          [`${WRITER_PROBE} onlyWriter`]: ["route"],
+          [`${WRITER_PROBE} quotedWriter`]: ["route"],
+          [`${WRITER_PROBE} schemaWriter`]: ["route"],
+        });
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a table hole after a newline, in quotes, after ONLY, or after a schema", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function afterNewline(db: Querier, t: string) { await db.query(`DELETE FROM\n  ${t} WHERE id = $1`, [\"x\"]); }",
+          "export async function quoted(db: Querier, t: string) { await db.query(`UPDATE \"${t}\" SET revoked_at = now()`); }",
+          "export async function only(db: Querier, t: string) { await db.query(`UPDATE ONLY ${t} SET revoked_at = now()`); }",
+          "export async function schema(db: Querier, t: string) { await db.query(`INSERT INTO public.${t} (id) VALUES ($1)`, [\"x\"]); }",
+          "",
+        ].join("\n");
+        const g = tampered((text) => `${text}\n// probe\n`, { [WRITER_PROBE]: probeFile });
+        expect(Object.keys(addedWriters(g)).sort()).toEqual([2, 4, 5, 6].map((n) =>
+          expect.stringMatching(new RegExp(`^\\?\\? domain/writer-probe\\.ts:${n} a write whose table is not a literal$`))));
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a named handler passed to a router other than app", () => {
+        const g = tampered((text) =>
+          text.replace(PASSKEY_OWNER, [
+            '  const probeHandler = async (c: Context) => createRole(ctx, c.get("gate"), "o", {}, {});',
+            "  const router = new Hono();",
+            '  router.post("/v1/organizations/:org/probe", probeHandler);',
+            PASSKEY_OWNER,
+          ].join("\n")));
+        expect(added(callersOf(g))["domain/policy.ts createRole"]).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ probeHandler: a registration on a router other than app \(router\.post\) via probeHandler$/),
+        ]);
+        expect(otherRouterCalls(g)).toEqual([expect.stringMatching(/^http\/app\.ts:\d+ router\.post$/)]);
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a route registered on another router, mounted, or chained after an app registration", () => {
+        const g = tampered((text) =>
+          text.replace(PASSKEY_OWNER, [
+            "  const router = new Hono();",
+            '  router.post("/v1/organizations/:org/probe", async (c) => createRole(ctx, gate, "o", {}, {}));',
+            '  app.route("/", router);',
+            '  app.get("/v1/probe", (c) => c.text("ok")).post("/v1/probe", async (c) => deleteRole(ctx, gate, "o", "r"));',
+            PASSKEY_OWNER,
+          ].join("\n")));
+        const after = added(callersOf(g));
+        expect(after["domain/policy.ts createRole"]).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ a registration on a router other than app \(router\.post\)$/),
+        ]);
+        expect(after["domain/policy.ts deleteRole"]).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ a registration on a router other than app \(app\.get\(.*\)\.post\)$/),
+        ]);
+        expect(otherRouterCalls(g)).toEqual([
+          expect.stringMatching(/^http\/app\.ts:\d+ router\.post$/),
+          expect.stringMatching(/^http\/app\.ts:\d+ app\.route$/),
+          expect.stringMatching(/^http\/app\.ts:\d+ app\.get\(.*\)\.post$/),
+        ]);
       }, GRAPH_TIMEOUT);
     });
   });

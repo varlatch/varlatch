@@ -239,7 +239,7 @@ import {
 import { installationOutbound, organizationRefusedDestinations } from "../domain/refuseddestinations.js";
 import { exportControl, exportGuard } from "../domain/exportstepup.js";
 
-export const SERVER_VERSION = "0.21.0";
+export const SERVER_VERSION = "0.22.0";
 
 import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 

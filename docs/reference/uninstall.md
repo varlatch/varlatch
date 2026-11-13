@@ -27,7 +27,10 @@ platforms stay there, and copies people revealed or downloaded stay where
 they are: rotate those at their provider. A GitHub App stays installed on
 GitHub until you uninstall or delete it there. After an organization is
 deleted, the people who could read its audit log export it with
-`varlatch audit export --deleted-org <organization-id>`.
+`varlatch audit export --deleted-org <organization-id>`. An organization
+with an [audit export](audit-export.md) keeps delivering its final audit
+events after the deletion: the export's key stays readable by the
+installation for up to 30 days for that, and nothing else does.
 
 ## What Varlatch puts on your machine
 
