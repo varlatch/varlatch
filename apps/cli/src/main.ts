@@ -912,6 +912,152 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
  * unfreezing asks for the person's approval with a trusted passkey and
  * waits for it.
  */
+/**
+ * ADR-0056: `varlatch audit-export create|show|change|remove|check`. The
+ * secret access key comes from standard input, a file or a hidden prompt,
+ * never the command line; assisted mode never prompts and refuses removal
+ * without --confirm. Approvals go through the shared step-up handling.
+ */
+async function auditExportCommand(args: string[], assisted: AssistedMode): Promise<void> {
+  const ae = await import("./auditExport.js");
+  const sub = args[0];
+  if (!sub || !(ae.AUDIT_EXPORT_SUBCOMMANDS as readonly string[]).includes(sub)) usageError(ae.AUDIT_EXPORT_USAGE);
+  const destinationValues = ["--endpoint", "--region", "--bucket", "--prefix"];
+  const keyValues = ["--access-key-id", "--secret-file"];
+  const scope = ["--server", "--org"];
+  const specs: Record<string, OptionSpec> = {
+    show: { values: scope, booleans: ["--json"], positionals: 1 },
+    create: { values: [...scope, ...destinationValues, ...keyValues, "--retention", "--from"], booleans: ["--json", "--path-style", "--no-path-style", "--secret-stdin", "--no-retention"], positionals: 1 },
+    change: { values: [...scope, ...destinationValues, ...keyValues, "--retention"], booleans: ["--json", "--path-style", "--no-path-style", "--secret-stdin", "--no-retention"], positionals: 1 },
+    remove: { values: [...scope, "--confirm"], booleans: ["--json"], positionals: 1 },
+    check: { values: [...scope, ...destinationValues, ...keyValues, "--retention"], booleans: ["--json", "--path-style", "--no-path-style", "--secret-stdin"], positionals: 1 },
+  };
+  const parsed = strictOptions(`audit-export ${sub}`, args, specs[sub as string]!, ae.AUDIT_EXPORT_USAGE);
+  const usage = (err: unknown): never => {
+    if (err instanceof ae.AuditExportUsageError) usageError(`varlatch audit-export ${sub}: ${err.message}\n${ae.AUDIT_EXPORT_USAGE}`);
+    throw err;
+  };
+  // Everything the command line can get wrong, before any request.
+  let create: ReturnType<typeof ae.createInput> | null = null;
+  let change: ReturnType<typeof ae.changeRequest> | null = null;
+  let withKey = false;
+  try {
+    if (sub === "create") create = ae.createInput(parsed.values, parsed.booleans);
+    if (sub === "change") change = ae.changeRequest(parsed.values, parsed.booleans);
+    if (sub === "create" || sub === "change" || sub === "check") withKey = ae.keyRequested(parsed.values, parsed.booleans);
+    if (sub === "check" && parsed.values.has("--retention")) ae.parseRetention(parsed.values.get("--retention")!);
+  } catch (err) {
+    usage(err);
+  }
+  const known = organizationTarget(parsed, parsed.values.get("--org"), true);
+  if (sub === "remove") {
+    const confirm = parsed.values.get("--confirm");
+    const org = known.organization;
+    if (confirm !== undefined && org !== undefined && confirm !== org) {
+      usageError(`varlatch audit-export remove: --confirm names ${confirm}, but this removes the audit export of ${org}.\n${ae.AUDIT_EXPORT_USAGE}`);
+    }
+    if (confirm === undefined) {
+      const named = org ? shellWord(org) : "<organization>";
+      const command = `varlatch audit-export remove --confirm ${named} --org ${named}${known.serverOption}`;
+      const what =
+        `Removing the audit export of ${org ?? "the organization"} stops the copy of its audit log; ` +
+        "what was delivered stays in the bucket, and a new export starts with no history unless it backfills";
+      if (assisted.on) {
+        fail(
+          `varlatch audit-export remove: ${what}. That is the human's decision. With their approval, add --confirm ${org ?? "<organization>"}. ` +
+            `Or the human runs, in their own terminal:\n  ${command}\nNothing was changed.`,
+          EXIT.config,
+        );
+      }
+      usageError(`${what}. Name the organization again to confirm:\n  ${command}\nNothing was changed.`);
+    }
+  }
+  // The secret access key: never from the command line.
+  let secretAccessKey: string | undefined;
+  if (withKey) {
+    try {
+      if (parsed.booleans.has("--secret-stdin")) secretAccessKey = valueFromBytes(await readAll(process.stdin), "standard input");
+      else if (parsed.values.has("--secret-file")) secretAccessKey = readValueFile(parsed.values.get("--secret-file")!);
+      else if (assisted.on || !process.stdin.isTTY) {
+        usageError(
+          `varlatch audit-export ${sub}: give the secret access key with --secret-stdin or --secret-file <path>` +
+            `${assisted.on ? "; assisted mode never prompts" : ""}. Nothing was sent.\n${ae.AUDIT_EXPORT_USAGE}`,
+        );
+      } else secretAccessKey = await promptHidden("Secret access key (input hidden): ");
+    } catch (err) {
+      if (err instanceof SecretInputError) fail(`varlatch audit-export ${sub}: ${err.message}. Nothing was sent.`, err.usage ? EXIT.usage : EXIT.failure);
+      throw err;
+    }
+  }
+  const credential = withKey ? { accessKeyId: parsed.values.get("--access-key-id")!, secretAccessKey: secretAccessKey! } : undefined;
+  const target = requiredTarget(parsed, parsed.values.get("--org"));
+  const api = client(target);
+  const meta = await api.meta();
+  if (!meta.capabilities.includes(ae.AUDIT_EXPORT_CAPABILITY)) {
+    fail(`This server (${meta.serverVersion ?? "an older release"}) has no audit export to object storage; upgrade the server. Nothing was changed.`);
+  }
+  const org = target.organization;
+  const json = parsed.booleans.has("--json");
+  try {
+    if (sub === "show") {
+      const status = await api.getAuditExport(org);
+      if (json) printJson({ organization: org, ...status });
+      else console.log(ae.statusLines(org, status).join("\n"));
+      return;
+    }
+    if (sub === "create") {
+      const created = await api.createAuditExport(org, { ...create!, credential: credential! });
+      if (json) printJson({ organization: org, export: created });
+      else {
+        console.log(`Audit export of ${org} created: it ${create!.from === "now" ? "starts at its creation" : "backfills the whole audit log"}, then copies every new event within about a minute.`);
+        console.log(ae.statusLines(org, { enabled: true, export: created }).slice(1).join("\n"));
+      }
+      return;
+    }
+    if (sub === "check") {
+      const status = credential ? null : await api.getAuditExport(org);
+      const current = status ? ae.liveExport(status, org) : null;
+      let input: ReturnType<typeof ae.checkInput>;
+      try {
+        input = ae.checkInput(parsed.values, parsed.booleans, current);
+      } catch (err) {
+        return usage(err);
+      }
+      const checked = await api.checkAuditExport(org, { ...input, ...(credential ? { credential } : {}) });
+      if (json) printJson({ organization: org, ...checked });
+      else console.log(ae.checkLines(checked).join("\n"));
+      if (!checked.ok) process.exitCode = EXIT.failure;
+      return;
+    }
+    const current = ae.liveExport(await api.getAuditExport(org), org);
+    if (sub === "remove") {
+      const removed = await api.removeAuditExport(org, current.version);
+      if (json) printJson({ organization: org, export: removed });
+      else console.log(`The audit export of ${org} was removed; its key was cleared. What it delivered stays in the bucket.`);
+      return;
+    }
+    if (change!.kind === "key") {
+      const replaced = await api.replaceAuditExportCredential(org, { expectedVersion: current.version, credential: credential! });
+      if (json) printJson({ organization: org, export: replaced });
+      else console.log(`The key of the audit export of ${org} was replaced; delivery continues with it (version ${replaced.version}).`);
+      return;
+    }
+    const result = await api.changeAuditExport(org, ae.changeInput(change!, current));
+    if (json) printJson({ organization: org, ...result });
+    else if (!result.changed) console.log(`The audit export of ${org} already has these settings. Nothing was changed.`);
+    else {
+      console.log(`The audit export of ${org} was changed (version ${result.export.version})${result.loosened ? "; your approval was used" : ""}.`);
+      if (result.export.streamId !== current.streamId) console.log(`It now writes a new stream, ${result.export.streamId}, from position ${result.export.cursor}; the old bucket keeps what it received.`);
+    }
+  } catch (err) {
+    if (err instanceof ae.AuditExportError) fail(`varlatch audit-export ${sub}: ${err.message}`);
+    if (err instanceof VarlatchApiError && err.code === "VERSION_CONFLICT") {
+      fail(`varlatch audit-export ${sub}: the export changed while this ran: ${err.message}. Nothing was changed; run the command again.`);
+    }
+    throw err;
+  }
+}
+
 async function orgFreeze(sub: "freeze" | "unfreeze", args: string[], assisted: AssistedMode): Promise<void> {
   const parsed = strictOptions(
     `org ${sub}`,
@@ -2900,6 +3046,11 @@ async function main(): Promise<void> {
           return;
         }
         usageError("Usage: varlatch credential <list|revoke|issue>");
+        return;
+      }
+
+      case "audit-export": {
+        await auditExportCommand(args, assisted);
         return;
       }
 

@@ -182,6 +182,27 @@ Usage:
   varlatch credential issue <identity-id> --name <name> [--ttl <s>] [--max-uses <n>] --out <file> [--json]
                (another credential for a service, workload, or broker identity, such as one per program;
                 the token goes only to --out, a new file readable by you only, never to the output)
+  varlatch audit-export show [--json] [--org <organization>] [--server <url>]
+               (the organization's audit export to object storage: destination, retention and Object Lock, how far it
+                delivered, what is pending, the last error; needs organization.manage; never the key)
+  varlatch audit-export create --endpoint <url> --region <region> --bucket <bucket> [--prefix <prefix>] [--path-style]
+                               --access-key-id <id> [--secret-stdin | --secret-file <path>]
+                               [--retention <compliance|governance>:<days>] [--from <beginning|now>] [--json]
+               (copies every audit event of the organization to an S3-compatible bucket you control, with optional
+                Object Lock retention; the destination is checked first, including that it refuses to overwrite;
+                the secret access key comes from standard input, a file or a hidden prompt, never the command line;
+                needs organization.manage and a person's credential)
+  varlatch audit-export change [--endpoint <url>] [--region <region>] [--bucket <bucket>] [--prefix <prefix>]
+                               [--path-style | --no-path-style] [--retention <mode>:<days> | --no-retention] [--json]
+  varlatch audit-export change --access-key-id <id> [--secret-stdin | --secret-file <path>] [--json]
+               (a new destination, a new key, or a shorter or removed retention always needs your approval with a
+                trusted passkey; a longer or stronger retention does not; a new destination starts a new stream)
+  varlatch audit-export remove --confirm <organization> [--json]
+               (stops the copy and clears its key; what was delivered stays in the bucket; always needs your
+                approval; in assisted mode only with --confirm, the human's decision)
+  varlatch audit-export check [destination options] [--access-key-id <id> ...] [--retention <mode>:<days>] [--json]
+               (checks a destination without saving anything: conditional writes, Object Lock, what the key may read;
+                without a key, the export's own key against its own destination; exit 1 when the check fails)
   varlatch security status [--json] [--org <organization>] [--server <url>]
                (the organization's security at a glance, as on the dashboard's Security page: each control's mode,
                 what it counts and what enforce would change, its counts of the last 30 days, the admins' trusted and
