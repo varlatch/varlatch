@@ -11,6 +11,12 @@ amendment 2 allows, and nothing here ships.
   snapshots, metrics.
 - `lib/diskprobe/`: the fsync probe (Decision 2's disk requirement, p99
   under 10 ms) that setup, `varlatch doctor` and the G9a harness run.
+- `lib/envelope/`: the encryption envelope (ADR-0011, unchanged by
+  Decision 2): AES-256-GCM, canonical-JSON associated data, the nine
+  purposes in use, Root KEK parsing and the canary. `testdata/` holds
+  fixtures the TypeScript server's own code sealed (opened by the Go tests)
+  and fixtures Go sealed (opened by that code in CI, `tsfixtures.mjs`).
+  Regenerate the TypeScript fixtures from the next release before step 3.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
@@ -33,5 +39,8 @@ CGO_ENABLED=1 go test -race ./...
   changes separately, keeping the checks for shared files, licenses and
   notices, and run the Go checks on `main` (go.yml's triggers).
 - Drop the `rewrite/go` guard from ci.yml's `hosted-runner` job.
+- Regenerate `lib/envelope/testdata/ts-*.json` from the next TypeScript
+  release (`node tsfixtures.mjs generate --ref v<next> ts-v<next>.json`),
+  including any envelope purpose it adds (ADR-0056's audit export).
 - List the Go module's dependencies (`go list -m all`, modernc.org/sqlite
   and its own) in THIRD-PARTY-NOTICES.md and its generator.
