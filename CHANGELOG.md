@@ -315,6 +315,14 @@ fixes.
   [Removing Varlatch](docs/reference/uninstall.md). Links to the old
   sections on docs.varlatch.com, including those in earlier releases' CLI
   and dashboard, lead to the new places.
+- **Installing the CLI by hand on Windows keeps your `PATH` as it was.** The
+  steps in [Install the CLI](docs/reference/install-the-cli.md) wrote the
+  user `PATH` back with its variables expanded and as a plain string
+  (`REG_SZ`): an entry such as `%JAVA_HOME%\bin` stopped following
+  `JAVA_HOME`, and variables in entries added later were no longer
+  expanded. They now change it in the registry as it is stored. If you
+  followed the earlier steps, open "Edit environment variables for your
+  account" and restore the variables in the user `Path` entries.
 
 ### Upgrading
 
