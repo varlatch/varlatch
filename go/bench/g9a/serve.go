@@ -405,16 +405,21 @@ func (s *server) runBackground(t0 time.Time) {
 		s.bg.Add(1)
 		go func() {
 			defer s.bg.Done()
+			phaseStart, _ := p.PhaseStart(b.Phase)
+			phaseEnd := t0.Add(phaseStart + seconds(p.PhaseSeconds(b.Phase)))
 			select {
 			case <-time.After(time.Until(t0.Add(offsets[i]))):
 			case <-ctx.Done():
+				if !b.WALTriggered.Set() {
+					s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped before its time"})
+				}
 				return
 			}
 			if b.WALTriggered.Set() {
-				s.walBackups(ctx, work, t0.Add(offsets[i]+seconds(p.PhaseSeconds(b.Phase))), b)
+				s.walBackups(ctx, work, phaseEnd, b)
 				return
 			}
-			s.timedBackup(work, b)
+			s.timedBackup(ctx, work, phaseEnd, b)
 		}()
 	}
 }
@@ -481,33 +486,38 @@ func (b backupSlot) tryAcquire() bool {
 	}
 }
 
-// acquire waits for the slot.
-func (b backupSlot) acquire(ctx context.Context) error {
-	select {
-	case b <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 func (b backupSlot) release() { <-b }
 
-// timedBackup runs b at its offset. If another backup holds the slot, it
-// logs backup_wait, waits for it and then starts, with the wait on its
-// backup_start; a wait still unfinished when work ends is an error.
-func (s *server) timedBackup(work context.Context, b Backup) {
+// timedBackup runs b, now due. If another backup holds the slot, it logs
+// backup_wait and waits for it, with the wait on its backup_start, but only
+// until its phase ends (phaseEnd) or the run stops (ctx): a backup labelled
+// with a phase starts inside it. If it cannot, it logs backup_missed with
+// the reason, and the report counts it as a planned backup that did not
+// run. The snapshot runs under work, so one that started finishes.
+func (s *server) timedBackup(ctx, work context.Context, phaseEnd time.Time, b Backup) {
 	start := Event{Phase: b.Phase}
 	if !s.slot.tryAcquire() {
 		t := time.Now()
 		s.ev.emit(Event{Ev: EvBackupWait, Phase: b.Phase, Note: "a backup was running: waiting for it"})
-		if err := s.slot.acquire(work); err != nil {
-			s.ev.emit(Event{Ev: EvError, Err: fmt.Sprintf("the timed backup in phase %s never started: %v", b.Phase, err)})
+		end := time.NewTimer(time.Until(phaseEnd))
+		defer end.Stop()
+		select {
+		case s.slot <- struct{}{}:
+		case <-end.C:
+			s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "its phase ended while it waited for a running backup"})
+			return
+		case <-ctx.Done():
+			s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped while it waited for a running backup"})
 			return
 		}
 		start.WaitUs = max(1, time.Since(t).Microseconds())
 	}
 	defer s.slot.release()
+	// The slot and the phase's end can come at the same instant.
+	if !time.Now().Before(phaseEnd) {
+		s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "its phase ended while it waited for a running backup"})
+		return
+	}
 	s.backup(work, start)
 }
 

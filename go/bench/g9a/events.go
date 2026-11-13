@@ -51,7 +51,8 @@ type Event struct {
 	// was deferred while it ran. wal_crossing is a crossing that started no
 	// attempt (Note says why). backup_wait is a timed backup that found
 	// another running and waits for it; WaitUs on its backup_start is how
-	// long it waited.
+	// long it waited. backup_missed is a timed backup that never started
+	// (Note says why: its phase ended or the run stopped first).
 	Backup  int    `json:"backup,omitempty"`
 	Phase   string `json:"phase,omitempty"`
 	Attempt int    `json:"attempt,omitempty"`
@@ -87,6 +88,7 @@ const (
 	EvWALBackup     = "wal_backup"
 	EvWALCrossing   = "wal_crossing"
 	EvBackupWait    = "backup_wait"
+	EvBackupMissed  = "backup_missed"
 	EvConvergeStart = "converge_start"
 	EvConvergeEnd   = "converge_end"
 	EvError         = "error"

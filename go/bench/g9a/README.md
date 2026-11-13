@@ -51,8 +51,11 @@ checkpointer deferred one while it ran), up to `maxAttempts` in the phase.
 One backup runs at a time: the timed and the WAL-triggered ones take the
 same slot before they start. A crossing while another backup holds it is
 logged (`wal_crossing`) and skipped; a timed backup that comes due while
-another runs logs `backup_wait`, waits for it and then starts, and its
-window notes the delay. An attempt keeps the slot until its deferrals are
+another runs logs `backup_wait` and waits for it, then starts, and its
+window notes the delay. It waits only until its phase ends or the run
+stops: then it logs `backup_missed` with the reason and never starts, so
+no backup starts outside the phase it names. A WAL-triggered attempt
+likewise starts only inside its phase. An attempt keeps the slot until its deferrals are
 counted, so it never takes credit for another backup's. 100 ms, not the once a second the WAL is logged: on the VPS
 the last 5 % of the 64 MiB bound filled in about 3 s, and a one-second
 sample would start the backup up to a third of that margin late.
@@ -97,8 +100,9 @@ load test.
   WAL-triggered attempt, `wal_backup` (its start, the WAL size that
   started it, whether it held a `TRUNCATE` off) and for every crossing that
   started none, `wal_crossing`; `backup_wait` when a timed backup waits
-  for a running one (its `backup_start` then carries `waitUs`); every
-  fsync probe sample, idle and under load.
+  for a running one (its `backup_start` then carries `waitUs`) and
+  `backup_missed` when one never started (its phase ended or the run
+  stopped first); every fsync probe sample, idle and under load.
 - `system.json`: the target, the disk (mount, filesystem, options, block
   device, device mapper and the devices under it, model, rotational), the
   cgroup's limits (`memory.max`, `memory.swap.max`, and `cpu.max` read
@@ -128,9 +132,12 @@ A run **fails** when any of these is broken:
 It is **inconclusive** when it did not show what G9a requires: the size
 trigger firing under load; every planned converge run, over all targets;
 a backup overlapping the bound (a deferred trigger) followed by its
-`TRUNCATE`; every timed backup; for each WAL-triggered backup, an attempt
-that held a size-triggered `TRUNCATE` off, whatever the timed backups did
-(the reason names its fraction and how many attempts ran); memory
+`TRUNCATE`; every timed backup, started inside the phase it names (one
+logged as `backup_missed`, or started elsewhere, did not run for the
+plan, though its window is still judged); for each WAL-triggered backup,
+an attempt, started inside its phase, that held a size-triggered
+`TRUNCATE` off, whatever the timed backups did (the reason names its
+fraction and how many attempts ran); memory
 measured under `memory.max` 1 GiB and `memory.swap.max` 0; the fsync
 distribution idle and under load; the filesystem.
 

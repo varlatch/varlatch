@@ -306,6 +306,7 @@ func (r *slotRig) events(t *testing.T) []Event {
 // The timed and the WAL-triggered backups share one slot, with real
 // goroutines on both paths.
 func TestBackupSlot(t *testing.T) {
+	bg, far := context.Background(), time.Now().Add(time.Hour)
 	wal := Backup{Phase: "p50", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 3}}
 
 	// A timed backup due while a WAL-triggered attempt runs waits for it.
@@ -325,7 +326,7 @@ func TestBackupSlot(t *testing.T) {
 		r.setWAL(t, 600) // attempt 1 (backup 1)
 		waitFor(t, "attempt 1", func() bool { return r.running.Load() == 1 })
 		wg.Add(1)
-		go func() { defer wg.Done(); r.s.timedBackup(context.Background(), Backup{Phase: "p10"}) }() // backup 2
+		go func() { defer wg.Done(); r.s.timedBackup(bg, bg, far, Backup{Phase: "p10"}) }() // backup 2
 		waitFor(t, "the timed backup", func() bool { return r.s.backups.Load() == 2 && r.running.Load() == 0 })
 		r.setWAL(t, 0)
 		r.setWAL(t, 700) // attempt 2 (backup 3)
@@ -367,7 +368,7 @@ func TestBackupSlot(t *testing.T) {
 		wg.Add(2)
 		go func() { defer wg.Done(); r.s.walBackups(ctx, context.Background(), time.Now().Add(time.Minute), wal) }()
 		r.setWAL(t, 0)
-		go func() { defer wg.Done(); r.s.timedBackup(context.Background(), Backup{Phase: "p10"}) }() // backup 1
+		go func() { defer wg.Done(); r.s.timedBackup(bg, bg, far, Backup{Phase: "p10"}) }() // backup 1
 		waitFor(t, "the timed backup", func() bool { return r.running.Load() == 1 })
 		r.setWAL(t, 600) // skipped
 		waitFor(t, "the timed backup's end", func() bool { return r.running.Load() == 0 })
@@ -396,4 +397,67 @@ func TestBackupSlot(t *testing.T) {
 			t.Errorf("WAL-triggered attempts: %+v", attempts)
 		}
 	})
+
+	// A timed backup queued behind a running one waits only until its
+	// phase ends or the run stops; then it logs backup_missed and never
+	// starts. The running one finishes.
+	for _, c := range []struct {
+		name, note string
+		stop       bool
+	}{
+		{"phase ends while queued", "its phase ended while it waited for a running backup", false},
+		{"shutdown while queued", "the run stopped while it waited for a running backup", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			type snap = struct {
+				d      time.Duration
+				defers bool
+			}
+			r := newSlotRig(t, map[int]snap{1: {d: 600 * time.Millisecond}})
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() { defer wg.Done(); r.s.timedBackup(bg, bg, far, Backup{Phase: "p10"}) }() // backup 1
+			waitFor(t, "backup 1", func() bool { return r.running.Load() == 1 })
+			ctx, cancel := context.WithCancel(bg)
+			defer cancel()
+			phaseEnd := far
+			t0 := time.Now()
+			if c.stop {
+				time.AfterFunc(100*time.Millisecond, cancel)
+			} else {
+				phaseEnd = t0.Add(100 * time.Millisecond)
+			}
+			r.s.timedBackup(ctx, bg, phaseEnd, Backup{Phase: "p30"})
+			if d := time.Since(t0); d < 100*time.Millisecond || d > 450*time.Millisecond {
+				t.Errorf("the queued backup gave up after %s, want 100 ms (backup 1 runs 600 ms)", d)
+			}
+			if r.running.Load() != 1 {
+				t.Error("backup 1 is no longer running")
+			}
+			wg.Wait()
+
+			var waited, missed []Event
+			starts := 0
+			for _, e := range r.events(t) {
+				switch e.Ev {
+				case EvBackupWait:
+					waited = append(waited, e)
+				case EvBackupMissed:
+					missed = append(missed, e)
+				case EvBackupStart:
+					starts++
+					if e.Phase != "p10" {
+						t.Errorf("the queued backup started: %+v", e)
+					}
+				}
+			}
+			if len(waited) != 1 || waited[0].Phase != "p30" || len(missed) != 1 || missed[0].Phase != "p30" || missed[0].Note != c.note || starts != 1 {
+				t.Errorf("waited %+v, missed %+v, %d backups started", waited, missed, starts)
+			}
+			// The slot is free again.
+			if !r.s.slot.tryAcquire() {
+				t.Error("the slot is still taken")
+			}
+		})
+	}
 }

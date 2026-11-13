@@ -100,6 +100,7 @@ jobs:
             and .droppedIterations == 0 and .serverBusy == 0
             and .sizeTruncates > 0
             and .timedBackups == ([.plan.backups[] | select(.walTriggered | not)] | length)
+            and .missedBackups == 0
             and (.walTriggeredBackups | length) > 0
             and (.walTriggeredBackups | length) == ([.plan.backups[] | select(.walTriggered)] | length)
             and ([.walTriggeredBackups[] | (.attempts | length) >= 1 and .heldOffByAttempt > 0] | all)

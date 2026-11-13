@@ -76,10 +76,10 @@ func good() *fakeRun {
 		Event{T: at(12.5), Ev: EvConvergeEnd, Targets: 20, Values: 2500},
 		Event{T: at(20), Ev: EvConvergeStart},
 		Event{T: at(22.5), Ev: EvConvergeEnd, Targets: 20, Values: 2500},
-		Event{T: at(16), Ev: EvBackupStart},
+		Event{T: at(16), Ev: EvBackupStart, Backup: 1, Phase: "p50"},
 		Event{T: at(16.5), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "size", Deferred: true, StartUs: at(16.5), LogFrames: -1, Checkpointed: -1, WALBefore: 1500, WALAfter: 1500},
 		Event{T: at(17.1), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "snapshot", StartUs: at(17), DurUs: 40_000, LogFrames: 60, Checkpointed: 60, WALBefore: 1700},
-		Event{T: at(17.2), Ev: EvBackupEnd, Pages: 3000, Steps: 3, DurUs: 1_200_000},
+		Event{T: at(17.2), Ev: EvBackupEnd, Backup: 1, Phase: "p50", Pages: 3000, Steps: 3, DurUs: 1_200_000},
 		Event{T: at(22.9), Ev: EvMemory, Final: true, AnonBytes: 50 << 20, RSSBytes: 40 << 20, MemEvents: &MemoryEvents{Current: 200 << 20}},
 		Event{T: at(23), Ev: EvRunEnd},
 		// Close, after the run: not judged.
@@ -146,6 +146,25 @@ func (r *fakeRun) eventsWithout(match func(Event) bool) {
 }
 
 func ptr(n int) *int { return &n }
+
+// missedBackup replaces good()'s backup by the server's backup_missed.
+func missedBackup(r *fakeRun) {
+	r.eventsWithout(func(e Event) bool {
+		return e.Ev == EvBackupStart || e.Ev == EvBackupEnd || e.Deferred || e.Trigger == "snapshot"
+	})
+	r.events = append(r.events,
+		Event{T: at(16), Ev: EvBackupWait, Phase: "p50", Note: "a backup was running: waiting for it"},
+		Event{T: at(22), Ev: EvBackupMissed, Phase: "p50", Note: "its phase ended while it waited for a running backup"})
+}
+
+// relabel names another phase on good()'s backup.
+func relabel(r *fakeRun, phase string) {
+	for i, e := range r.events {
+		if e.Ev == EvBackupStart || e.Ev == EvBackupEnd {
+			r.events[i].Phase = phase
+		}
+	}
+}
 
 func setMemory(r *fakeRun, f func(*Event)) {
 	for i := range r.events {
@@ -266,6 +285,11 @@ func TestReportVerdicts(t *testing.T) {
 		{"no backup overlapped", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Deferred }) }, Inconclusive, "no backup overlapped"},
 		{"deferred, then no TRUNCATE", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Trigger == "snapshot" }) }, Fail, "no TRUNCATE followed"},
 		{"backup missing", func(r *fakeRun) { r.plan.Backups = append(r.plan.Backups, Backup{Phase: "p10", AtSeconds: 1}) }, Inconclusive, "1 of the plan's 2 timed backups"},
+		{"backup missed", missedBackup, Inconclusive, "the timed backup in phase p50 did not run: its phase ended while it waited for a running backup"},
+		{"a missed backup did not run", missedBackup, Inconclusive, "0 of the plan's 1 timed backups ran"},
+		{"backup outside its phase", func(r *fakeRun) { relabel(r, "p10") }, Inconclusive, "the backup at +16.0s started outside its phase p10 (+2.0s to +12.0s): not counted"},
+		{"backup outside its phase does not count", func(r *fakeRun) { relabel(r, "p10") }, Inconclusive, "0 of the plan's 1 timed backups ran"},
+		{"backup without a phase", func(r *fakeRun) { relabel(r, "") }, Inconclusive, `the backup at +16.0s names no phase of the plan ("")`},
 		{"backup failed", func(r *fakeRun) {
 			for i := range r.events {
 				if r.events[i].Ev == EvBackupEnd {
@@ -538,6 +562,14 @@ func TestReportWALTriggered(t *testing.T) {
 			r.attempt(1, 1, 14.8, 15.8)
 		}, Pass, "", 2, 2},
 		// A deferral stamped after its backup's end belongs to none.
+		// Started before p50, though labelled with it: not an attempt.
+		{"an attempt outside its phase", func(r *fakeRun) {
+			for i, e := range r.events {
+				if e.Ev == EvBackupStart {
+					r.events[i].T = at(11.5)
+				}
+			}
+		}, Inconclusive, "the backup at +11.5s started outside its phase p50 (+12.0s to +22.0s): not counted", 0, 0},
 		{"a deferral outside every backup", func(r *fakeRun) {
 			for i, e := range r.events {
 				if e.Deferred {
@@ -588,7 +620,7 @@ func TestReportWALTriggered(t *testing.T) {
 			if w.HeldOffBy != c.heldBy || len(w.Attempts) != c.tries || w.ThresholdBytes != int64(math.Ceil(w.Fraction*1000)) {
 				t.Fatalf("held off by %d of %d attempts (threshold %d), want %d of %d", w.HeldOffBy, len(w.Attempts), w.ThresholdBytes, c.heldBy, c.tries)
 			}
-			if rep.TimedBackups != 0 || rep.Backups != c.tries {
+			if rep.TimedBackups != 0 || rep.Backups < c.tries {
 				t.Fatalf("%d backups, %d timed", rep.Backups, rep.TimedBackups)
 			}
 		})

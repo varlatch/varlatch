@@ -162,9 +162,12 @@ type Report struct {
 	Passives      int     `json:"passiveCheckpoints"`
 	MaxPassiveMs  float64 `json:"maxPassiveMs"`
 
-	WALBackups   []WALBackupResult `json:"walTriggeredBackups"`
-	TimedBackups int               `json:"timedBackups"`
-	CPU          CPUReport         `json:"cpu"`
+	WALBackups []WALBackupResult `json:"walTriggeredBackups"`
+	// TimedBackups counts the timed backups that started inside their
+	// phase; MissedBackups those the server logged as never started.
+	TimedBackups  int       `json:"timedBackups"`
+	MissedBackups int       `json:"missedBackups"`
+	CPU           CPUReport `json:"cpu"`
 
 	Converges      int          `json:"converges"`
 	ConvergesWant  int          `json:"convergesPlanned"`
@@ -427,6 +430,9 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			backups = append(backups, w)
 			backupEnds = append(backupEnds, e)
 			backupSpans = append(backupSpans, [2]int64{b.T, e.T})
+		case EvBackupMissed:
+			r.MissedBackups++
+			r.missing("the timed backup in phase %s did not run: %s", e.Phase, e.Note)
 		case EvConvergeStart:
 			convergeStart = append(convergeStart, e.T)
 		case EvConvergeEnd:
@@ -452,8 +458,19 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			timed++
 		}
 	}
-	for _, b := range backups {
-		if b.Attempt == 0 {
+	// A backup counts for the plan only if it started inside the phase it
+	// names (the server never starts one elsewhere); its window is judged
+	// either way.
+	inPhase := make([]bool, len(backups))
+	for i, b := range backups {
+		from, to, ok := r.phaseSpan(b.Phase, start)
+		inPhase[i] = ok && backupSpans[i][0] >= from && backupSpans[i][0] < to
+		switch {
+		case !ok:
+			r.missing("the backup at %+.1fs names no phase of the plan (%q): not counted", b.Offset, b.Phase)
+		case !inPhase[i]:
+			r.missing("the backup at %+.1fs started outside its phase %s (%+.1fs to %+.1fs): not counted", b.Offset, b.Phase, off(from, start), off(to, start))
+		case b.Attempt == 0:
 			r.TimedBackups++
 		}
 	}
@@ -510,7 +527,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	}
 	// Each WAL-triggered backup must show its own overlap, whatever the
 	// timed backups did (amendment 4); this is the run as a whole.
-	r.walBackups(events, backups, backupEnds, backupSpans, deferredIn)
+	r.walBackups(events, backups, backupEnds, backupSpans, deferredIn, inPhase)
 	if overlapped == 0 {
 		r.missing("no backup overlapped the bound (none held a size-triggered TRUNCATE off): G9a needs a TRUNCATE right after such a backup")
 	}
@@ -551,7 +568,7 @@ func runningAt(spans [][2]int64, t int64) int {
 // their intervals and the size triggers each deferred. A schedule with no
 // attempt that held a TRUNCATE off leaves the run inconclusive on its own,
 // even when a timed backup overlapped the bound.
-func (r *Report) walBackups(events []Event, backups []Window, ends []Event, spans [][2]int64, deferredIn []int) {
+func (r *Report) walBackups(events []Event, backups []Window, ends []Event, spans [][2]int64, deferredIn []int, inPhase []bool) {
 	p := r.Plan
 	r.WALBackups = []WALBackupResult{}
 	// What the server decided for each attempt (wal_backup), by backup.
@@ -580,7 +597,7 @@ func (r *Report) walBackups(events []Event, backups []Window, ends []Event, span
 		res := WALBackupResult{Phase: b.Phase, Fraction: w.Fraction, MaxAttempts: w.MaxAttempts, ThresholdBytes: w.Threshold(p.WALBound), Attempts: []WALAttempt{}}
 		for _, i := range byStart {
 			win := backups[i]
-			if win.Attempt == 0 || win.Phase != b.Phase {
+			if win.Attempt == 0 || win.Phase != b.Phase || !inPhase[i] {
 				continue
 			}
 			a := WALAttempt{Attempt: win.Attempt, Offset: win.Offset, WALBytes: walBytes[ends[i].Backup], Deferred: deferredIn[i], HeldOff: deferredIn[i] > 0,
@@ -670,6 +687,16 @@ func cpuIn(samples []Event, from, to, start int64) *CPUWindow {
 	a, b := samples[lo].CPU, samples[hi].CPU
 	return &CPUWindow{Periods: b.NrPeriods - a.NrPeriods, Throttled: b.NrThrottled - a.NrThrottled, ThrottledMs: float64(b.ThrottledUs-a.ThrottledUs) / 1000,
 		FromOffset: off(samples[lo].T, start), ToOffset: off(samples[hi].T, start)}
+}
+
+// phaseSpan is a phase's start and end in µs, for a run started at start.
+func (r *Report) phaseSpan(name string, start int64) (from, to int64, ok bool) {
+	at, ok := r.Plan.PhaseStart(name)
+	if !ok {
+		return 0, 0, false
+	}
+	from = start + at.Microseconds()
+	return from, from + seconds(r.Plan.PhaseSeconds(name)).Microseconds(), true
 }
 
 func (r *Report) inWarmup(t, start int64) bool {
@@ -859,7 +886,7 @@ func (r *Report) Markdown() string {
 		fmt.Fprintf(&b, "Over the run (%d cpu.stat samples): %d of %d periods throttled, %.1f ms throttled; %.1f ms throttled before the first sample.\n\n", c.Samples, c.Throttled, c.Periods, c.ThrottledMs, c.ThrottledBeforeMs)
 	}
 
-	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed).\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups)
+	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed, inside their phase); missed: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups, r.MissedBackups)
 	me := r.MemoryEvents
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
 		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
