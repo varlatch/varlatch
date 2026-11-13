@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import ts from "typescript";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseYaml } from "yaml";
 import { CAPABILITIES } from "@varlatch/protocol";
 import { issueCredential } from "../src/auth/credentials.js";
@@ -17,6 +16,7 @@ import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { buildGraph, declaredSymbol, functionLabels, reach, srcPath, unlabelledRegistrations, writers, type Graph, type RootClass } from "./helpers/caller-graph.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 
@@ -180,330 +180,195 @@ const UNPROTECTED_WRITES: Record<string, string> = {
 };
 
 /**
+ * The roots of the caller graph (test/helpers/caller-graph.ts) besides
+ * the route registrations ("route"), each named "file function" and
+ * classified. A chain that ends anywhere else (a module's top level, a
+ * function passed on as a value, a function nothing references) fails.
+ */
+const ROOTS = new Map<string, RootClass>([
+  // varlatchd's host commands (cli.ts main dispatches to them).
+  ["cli.ts adminCommand", "host-command"],
+  ["cli.ts migrateCommand", "host-command"],
+  // Server startup.
+  ["cli.ts serveCommand", "startup"],
+  // Background workers: each loop's tick, which its timer calls.
+  ["domain/webhooks.ts tick", "worker"],
+  ["domain/orgdeletion.ts tick", "worker"],
+  ["domain/githubapps.ts tick", "worker"],
+  ["domain/syncdelivery.ts tick", "worker"],
+  // Better Auth calls it during an enrollment ceremony: a request to /auth/* or /enroll.
+  ["auth/humanauth.ts {}.afterVerification", "route"],
+]);
+
+type Writer = { why: string; roots: RootClass[] };
+const protectedBy = (why: string): Writer => ({ why: `protected: ${why}`, roots: ["route"] });
+const exempt = (why: string, ...roots: RootClass[]): Writer => ({ why: `exempt: ${why}`, roots: roots.length > 0 ? roots : ["route"] });
+
+/**
  * Every function in src/ that writes the rows the 40 operations change
  * (identities, credentials, OIDC bindings, Grants, roles, groups, their
  * members and Team-Project links, memberships, invitations, webhooks,
  * Connections, GitHub Apps and their registrations, Projects,
- * Organization deletions), attributed by the syntax tree (attribute): by
- * file and route or function, a helper that is not exported resolved to
- * its callers ("caller via helper"). Each is protected by the named
- * operations or exempt for a reason. A new writer fails until it is
- * classified.
+ * Organization deletions), by file and function (app.ts: by route), each
+ * protected by the named operations or exempt for a reason, with the
+ * classes of every root that reaches it in the caller graph. A writer
+ * exempt as a host command holds only while host commands alone reach it:
+ * a new route caller fails. A new writer fails until it is classified.
  */
-const WRITERS: Record<string, string> = {
-  "auth/credentials.ts authenticateBearer": "exempt: a credential's use count and last use",
-  "auth/credentials.ts issueCredential": "the credential primitive: its callers are in CALLERS",
-  "auth/credentials.ts revokeCredential": "exempt: revoking a credential only restricts",
-  "domain/bootstrap.ts completePublicUrlChange": "exempt: host command, revokes browser credentials",
-  "domain/bootstrap.ts consumeSetupGrant": "exempt: enrollment through a setup grant (an invitation, bootstrap or recovery)",
-  "domain/bootstrap.ts issueBootstrapGrant": "exempt: host command",
-  "domain/bootstrap.ts issueInviteGrant": "protected: member.invite_admin (a member invitation is exempt)",
-  "domain/bootstrap.ts issueRecoveryGrant": "exempt: host command (admin recover)",
-  "domain/bootstrap.ts issueReenrollmentGrants": "exempt: host command (admin reenroll)",
-  "domain/contracts.ts activateRevision": "exempt: a Contract Revision",
-  "domain/githubapps.ts attachRegistration via attachInTx": "protected: github_app.register",
-  "domain/githubapps.ts attachRegistration via endRefused > endRefusedIn > endPending": "exempt: ends a pending registration refused for good (amendment D)",
-  "domain/githubapps.ts completeRegistration": "protected: github_app.register (its conversion is not, amendment D)",
-  "domain/githubapps.ts completeRegistration via attachInTx": "protected: github_app.register",
-  "domain/githubapps.ts completeRegistration via endPending": "exempt: ends a pending registration (amendment D)",
-  "domain/githubapps.ts completeRegistration via endRefusedIn > endPending": "exempt: ends a pending registration refused for good (amendment D)",
-  "domain/githubapps.ts discardRegistration via endPending": "exempt: discarding a pending registration only restricts",
-  "domain/githubapps.ts importGitHubApp": "protected: github_app.import",
-  "domain/githubapps.ts startRegistration": "exempt: starting a registration (amendment D)",
-  "domain/githubapps.ts sweepExpiredRegistrations": "exempt: background sweep of expired pending registrations",
-  "domain/identities.ts createMachineIdentity": "protected: identity.create",
-  "domain/identities.ts reactivateIdentity": "protected: identity.reactivate",
-  "domain/identities.ts renameIdentity": "exempt: renaming",
-  "domain/identities.ts retireIdentity": "exempt: retiring only restricts",
-  "domain/invitations.ts revokeInvitation": "exempt: revoking an invitation only restricts",
-  "domain/members.ts changeMemberRole": "protected: member.promote, member.demote",
-  "domain/members.ts endMembership": "protected through its callers: member.remove (removeMember); leaving and the deletion's finalization are exempt",
-  "domain/oidc.ts createOidcBinding": "protected: oidc_binding.create",
-  "domain/oidc.ts revokeOidcBinding": "protected: oidc_binding.delete",
-  "domain/orgdeletion.ts approveDeletion": "exempt: the second admin's approval (amendment B)",
-  "domain/orgdeletion.ts cancelDeletion": "exempt: cancelling only restricts",
-  "domain/orgdeletion.ts finalizeDeletion": "exempt: the deletion worker, after the approved scheduling and its waiting period",
-  "domain/orgdeletion.ts scheduleDeletion": "protected: organization.delete",
-  "domain/orgs.ts createOrganization": "exempt: a new Organization's first admin",
-  "domain/orgs.ts pinLiveMembership": "exempt: a membership's version for a concurrent writer (amendment E)",
-  "domain/policy.ts addGroupMember": "protected: group.member_add, team.member_add",
-  "domain/policy.ts addTeamProject": "protected: team.project_add",
-  "domain/policy.ts createGroup": "protected: group.create, team.create",
-  "domain/policy.ts createRole": "protected: role.create",
-  "domain/policy.ts deleteGroup": "protected: group.delete, team.delete",
-  "domain/policy.ts deleteRole": "protected: role.delete",
-  "domain/policy.ts removeGroupMember": "protected: group.member_remove, team.member_remove",
-  "domain/policy.ts removeTeamProject": "protected: team.project_remove",
-  "domain/policy.ts updateGroup": "protected: group.update, team.update",
-  "domain/policy.ts updateRole": "protected: role.update",
-  "domain/projects.ts createProject": "exempt: creating a Project",
-  "domain/projects.ts deleteProject": "protected: project.delete",
-  "domain/projects.ts renameProject": "exempt: renaming",
-  "domain/sync.ts createAppConnection": "protected: connection.create (App shape)",
-  "domain/sync.ts createConnection": "protected: connection.create (token shape)",
-  "domain/sync.ts recordCredentialExpiry": "exempt: the expiry a credential check reports (catalogue, credential checks)",
-  "domain/sync.ts removeGitHubApp": "protected: github_app.remove",
-  "domain/sync.ts replaceConnectionCredential": "protected: connection.replace_credential",
-  "domain/sync.ts revokeConnection": "protected: connection.delete",
-  "domain/sync.ts rotateGitHubAppKey": "protected: github_app.replace_key",
-  "domain/webhooks.ts createWebhook": "protected: webhook.create",
-  "domain/webhooks.ts deliverWebhooksOnce via deliverOne": "exempt: the delivery worker's state",
-  "domain/webhooks.ts revokeWebhook": "protected: webhook.delete",
-  "domain/webhooks.ts updateWebhook": "protected: webhook.update",
-  [`http/app.ts DELETE ${ORG}/grants/:grant`]: "protected: grant.revoke",
-  "http/app.ts PATCH /v1/me/profile": "exempt: a person's own display name",
-  "http/app.ts POST /v1/me/credentials/cli": "exempt: a person's own CLI credential (CLI handoff)",
-  [`http/app.ts POST ${ORG}/grants/:grant/replace`]: "protected: grant.replace",
-  [`http/app.ts POST ${ORG}/grants`]: "protected: grant.create",
+const WRITERS: Record<string, Writer> = {
+  "auth/credentials.ts authenticateBearer": exempt("a credential's use count and last use"),
+  "auth/credentials.ts issueCredential": exempt("the credential primitive: its callers are in CALLERS", "host-command", "route"),
+  "auth/credentials.ts revokeCredential": exempt("revoking a credential only restricts"),
+  "domain/bootstrap.ts completePublicUrlChange": exempt("host command: revokes browser credentials on a public URL change", "host-command"),
+  "domain/bootstrap.ts consumeSetupGrant": exempt("enrollment through a setup grant (an invitation, bootstrap or recovery)", "host-command", "route"),
+  "domain/bootstrap.ts issueBootstrapGrant": exempt("host command (admin bootstrap)", "host-command"),
+  "domain/bootstrap.ts issueInviteGrant": protectedBy("member.invite_admin (a member invitation is exempt)"),
+  "domain/bootstrap.ts issueRecoveryGrant": exempt("host command (admin recover)", "host-command"),
+  "domain/bootstrap.ts issueReenrollmentGrants": exempt("host command (admin reenroll)", "host-command"),
+  "domain/contracts.ts activateRevision": exempt("a Contract Revision"),
+  "domain/githubapps.ts attachInTx": protectedBy("github_app.register"),
+  "domain/githubapps.ts completeRegistration": protectedBy("github_app.register (its conversion is not, amendment D)"),
+  "domain/githubapps.ts endPending": exempt("ends a pending registration: discard, terminal refusal (amendment D)"),
+  "domain/githubapps.ts importGitHubApp": protectedBy("github_app.import"),
+  "domain/githubapps.ts startRegistration": exempt("starting a registration (amendment D)"),
+  "domain/githubapps.ts sweepExpiredRegistrations": exempt("the sweep of expired pending registrations", "worker"),
+  "domain/identities.ts createMachineIdentity": protectedBy("identity.create"),
+  "domain/identities.ts reactivateIdentity": protectedBy("identity.reactivate"),
+  "domain/identities.ts renameIdentity": exempt("renaming"),
+  "domain/identities.ts retireIdentity": exempt("retiring only restricts"),
+  "domain/invitations.ts revokeInvitation": exempt("revoking an invitation only restricts"),
+  "domain/members.ts changeMemberRole": protectedBy("member.promote, member.demote"),
+  "domain/members.ts endMembership": exempt("reached through member.remove (protected), leaving, and the deletion worker's finalization", "route", "worker"),
+  "domain/oidc.ts createOidcBinding": protectedBy("oidc_binding.create"),
+  "domain/oidc.ts revokeOidcBinding": protectedBy("oidc_binding.delete"),
+  "domain/orgdeletion.ts approveDeletion": exempt("the second admin's approval (amendment B)"),
+  "domain/orgdeletion.ts cancelDeletion": exempt("cancelling only restricts"),
+  "domain/orgdeletion.ts finalizeDeletion": exempt("the deletion worker, after the approved scheduling and its waiting period", "worker"),
+  "domain/orgdeletion.ts scheduleDeletion": protectedBy("organization.delete"),
+  "domain/orgs.ts createOrganization": exempt("a new Organization's first admin"),
+  "domain/orgs.ts pinLiveMembership": exempt("a membership's version for a concurrent writer (amendment E)"),
+  "domain/policy.ts addGroupMember": protectedBy("group.member_add, team.member_add"),
+  "domain/policy.ts addTeamProject": protectedBy("team.project_add"),
+  "domain/policy.ts createGroup": protectedBy("group.create, team.create"),
+  "domain/policy.ts createRole": protectedBy("role.create"),
+  "domain/policy.ts deleteGroup": protectedBy("group.delete, team.delete"),
+  "domain/policy.ts deleteRole": protectedBy("role.delete"),
+  "domain/policy.ts removeGroupMember": protectedBy("group.member_remove, team.member_remove"),
+  "domain/policy.ts removeTeamProject": protectedBy("team.project_remove"),
+  "domain/policy.ts updateGroup": protectedBy("group.update, team.update"),
+  "domain/policy.ts updateRole": protectedBy("role.update"),
+  "domain/projects.ts createProject": exempt("creating a Project"),
+  "domain/projects.ts deleteProject": protectedBy("project.delete"),
+  "domain/projects.ts renameProject": exempt("renaming"),
+  "domain/sync.ts createAppConnection": protectedBy("connection.create (App shape)"),
+  "domain/sync.ts createConnection": protectedBy("connection.create (token shape)"),
+  "domain/sync.ts recordCredentialExpiry": exempt("the expiry a credential check or a push reports (catalogue, credential checks)", "route", "worker"),
+  "domain/sync.ts removeGitHubApp": protectedBy("github_app.remove"),
+  "domain/sync.ts replaceConnectionCredential": protectedBy("connection.replace_credential"),
+  "domain/sync.ts revokeConnection": protectedBy("connection.delete"),
+  "domain/sync.ts rotateGitHubAppKey": protectedBy("github_app.replace_key"),
+  "domain/webhooks.ts createWebhook": protectedBy("webhook.create"),
+  "domain/webhooks.ts deliverOne": exempt("the delivery worker's state", "worker"),
+  "domain/webhooks.ts revokeWebhook": protectedBy("webhook.delete"),
+  "domain/webhooks.ts updateWebhook": protectedBy("webhook.update"),
+  [`http/app.ts DELETE ${ORG}/grants/:grant`]: protectedBy("grant.revoke"),
+  "http/app.ts PATCH /v1/me/profile": exempt("a person's own display name"),
+  "http/app.ts POST /v1/me/credentials/cli": exempt("a person's own CLI credential (CLI handoff)"),
+  [`http/app.ts POST ${ORG}/grants/:grant/replace`]: protectedBy("grant.replace"),
+  [`http/app.ts POST ${ORG}/grants`]: protectedBy("grant.create"),
 };
 
 /**
- * Every use in src/ of the protected domain functions and of the
- * credential primitive, each attributed by the syntax tree (attribute) to
- * its file and enclosing route ("METHOD /path") or function, a helper that
- * is not exported resolved to the routes or functions that use it
- * ("ROUTE via helper"). Never by file alone: a call added to any other
- * route, helper or function, an exempt one included, however it is
- * formatted, is a new entry and fails until it is classified
- * (and the runtime sweep below exercises the protected routes). A host
- * command reaching a protected function would pass noApprovalGate, which
- * throws ApprovalNeeded under enforce and so cannot bypass it.
+ * Every root that reaches each protected domain function and the
+ * credential primitive, through the caller graph (by symbol: renamed
+ * imports, re-exports, aliases, destructuring and object methods
+ * followed), as "ROOT via outer > ... > inner". A new caller anywhere, an
+ * exempt route included, adds an entry and fails until it is classified;
+ * the runtime sweep below exercises the protected routes. A host command
+ * reaching a protected function would pass noApprovalGate, which throws
+ * ApprovalNeeded under enforce and so cannot bypass it.
  */
 const inApp = (route: string) => `http/app.ts ${route}`;
 const CALLERS: Record<string, string[]> = {
-  createMachineIdentity: [inApp(`POST ${ORG}/identities`)],
-  // Through the non-broker branch of the credentials route (the broker's mints an agent-run credential: exempt).
-  issueMachineCredential: [inApp(`POST ${ORG}/identities/:identity/credentials via issueServiceCredential`)],
-  reactivateIdentity: [inApp(`POST ${ORG}/identities/:identity/reactivate`)],
-  createOidcBinding: [inApp(`POST ${ORG}/identities/:identity/oidc-bindings`)],
-  revokeOidcBinding: [inApp(`DELETE ${ORG}/identities/:identity/oidc-bindings/:binding`)],
-  createRole: [inApp(`POST ${ORG}/roles`)],
-  updateRole: [inApp(`PATCH ${ORG}/roles/:role`)],
-  deleteRole: [inApp(`DELETE ${ORG}/roles/:role`)],
+  "domain/identities.ts createMachineIdentity": [inApp(`POST ${ORG}/identities`)],
+  // The non-broker branch of the credentials route (the broker's mints an agent-run credential: exempt).
+  "domain/identities.ts issueMachineCredential": [inApp(`POST ${ORG}/identities/:identity/credentials via issueServiceCredential`)],
+  "domain/identities.ts reactivateIdentity": [inApp(`POST ${ORG}/identities/:identity/reactivate`)],
+  "domain/oidc.ts createOidcBinding": [inApp(`POST ${ORG}/identities/:identity/oidc-bindings`)],
+  "domain/oidc.ts revokeOidcBinding": [inApp(`DELETE ${ORG}/identities/:identity/oidc-bindings/:binding`)],
+  "domain/policy.ts createRole": [inApp(`POST ${ORG}/roles`)],
+  "domain/policy.ts updateRole": [inApp(`PATCH ${ORG}/roles/:role`)],
+  "domain/policy.ts deleteRole": [inApp(`DELETE ${ORG}/roles/:role`)],
   // Groups and teams share their writers through one helper per operation.
-  createGroup: [inApp(`POST ${ORG}/groups via createGroupRoute`), inApp(`POST ${ORG}/teams via createGroupRoute`)],
-  updateGroup: [inApp(`PATCH ${ORG}/groups/:group via updateGroupRoute`), inApp(`PATCH ${ORG}/teams/:team via updateGroupRoute`)],
-  deleteGroup: [inApp(`DELETE ${ORG}/groups/:group via deleteGroupRoute`), inApp(`DELETE ${ORG}/teams/:team via deleteGroupRoute`)],
-  addGroupMember: [inApp(`POST ${ORG}/groups/:group/members via addMemberRoute`), inApp(`POST ${ORG}/teams/:team/members via addMemberRoute`)],
-  removeGroupMember: [
+  "domain/policy.ts createGroup": [inApp(`POST ${ORG}/groups via createGroupRoute`), inApp(`POST ${ORG}/teams via createGroupRoute`)],
+  "domain/policy.ts updateGroup": [inApp(`PATCH ${ORG}/groups/:group via updateGroupRoute`), inApp(`PATCH ${ORG}/teams/:team via updateGroupRoute`)],
+  "domain/policy.ts deleteGroup": [inApp(`DELETE ${ORG}/groups/:group via deleteGroupRoute`), inApp(`DELETE ${ORG}/teams/:team via deleteGroupRoute`)],
+  "domain/policy.ts addGroupMember": [inApp(`POST ${ORG}/groups/:group/members via addMemberRoute`), inApp(`POST ${ORG}/teams/:team/members via addMemberRoute`)],
+  "domain/policy.ts removeGroupMember": [
     inApp(`DELETE ${ORG}/groups/:group/members/:identity via removeMemberRoute`),
     inApp(`DELETE ${ORG}/teams/:team/members/:identity via removeMemberRoute`),
   ],
-  addTeamProject: [inApp(`POST ${ORG}/teams/:team/projects`)],
-  removeTeamProject: [inApp(`DELETE ${ORG}/teams/:team/projects/:project`)],
-  issueInviteGrant: [inApp(`POST ${ORG}/invitations`)],
-  changeMemberRole: [inApp(`PATCH ${ORG}/members/:member`)],
-  removeMember: [inApp(`DELETE ${ORG}/members/:member`)],
-  // Leaving (removeMember's exempt branch) and the deletion worker's finalization.
-  endMembership: ["domain/members.ts removeMember", "domain/orgdeletion.ts finalizeDeletion"],
-  createWebhook: [inApp(`POST ${ORG}/webhooks`)],
-  updateWebhook: [inApp(`PATCH ${ORG}/webhooks/:webhook`)],
-  revokeWebhook: [inApp(`DELETE ${ORG}/webhooks/:webhook`)],
-  // net/outbound.ts's createConnection is node:net's, in its HTTP agent: another function.
-  createConnection: [inApp(`POST ${ORG}/platform-connections`), "net/outbound.ts PolicyAgent.createConnection"],
-  createAppConnection: [inApp(`POST ${ORG}/platform-connections`)],
-  replaceConnectionCredential: [inApp(`POST ${ORG}/platform-connections/:connection/credential`)],
-  revokeConnection: [inApp(`DELETE ${ORG}/platform-connections/:connection`)],
-  attachInTx: ["domain/githubapps.ts attachRegistration", "domain/githubapps.ts completeRegistration"],
-  attachRegistration: [inApp(`POST ${ORG}/github-app/registrations/:registration/attach`)],
-  completeRegistration: [inApp(`POST ${ORG}/github-app/registrations/complete`)],
-  importGitHubApp: [inApp(`POST ${ORG}/github-app/import`)],
-  rotateGitHubAppKey: [inApp(`POST ${ORG}/github-app/key`)],
-  removeGitHubApp: [inApp(`DELETE ${ORG}/github-app`)],
-  deleteProject: [inApp(`DELETE ${ORG}/projects/:project`)],
-  scheduleDeletion: [inApp(`POST ${ORG}/deletion`)],
-  exportGuard: [inApp(`POST ${ORG}/projects/:project/environments/:environment/disclosures`)],
+  "domain/policy.ts addTeamProject": [inApp(`POST ${ORG}/teams/:team/projects`)],
+  "domain/policy.ts removeTeamProject": [inApp(`DELETE ${ORG}/teams/:team/projects/:project`)],
+  "domain/bootstrap.ts issueInviteGrant": [inApp(`POST ${ORG}/invitations`)],
+  "domain/members.ts changeMemberRole": [inApp(`PATCH ${ORG}/members/:member`)],
+  "domain/members.ts removeMember": [inApp(`DELETE ${ORG}/members/:member`)],
+  // member.remove (protected) and leaving through removeMember; the deletion worker's finalization.
+  "domain/members.ts endMembership": ["domain/orgdeletion.ts tick via runDueDeletions > finalizeDeletion", inApp(`DELETE ${ORG}/members/:member via removeMember`)],
+  "domain/webhooks.ts createWebhook": [inApp(`POST ${ORG}/webhooks`)],
+  "domain/webhooks.ts updateWebhook": [inApp(`PATCH ${ORG}/webhooks/:webhook`)],
+  "domain/webhooks.ts revokeWebhook": [inApp(`DELETE ${ORG}/webhooks/:webhook`)],
+  "domain/sync.ts createConnection": [inApp(`POST ${ORG}/platform-connections`)],
+  "domain/sync.ts createAppConnection": [inApp(`POST ${ORG}/platform-connections`)],
+  "domain/sync.ts replaceConnectionCredential": [inApp(`POST ${ORG}/platform-connections/:connection/credential`)],
+  "domain/sync.ts revokeConnection": [inApp(`DELETE ${ORG}/platform-connections/:connection`)],
+  "domain/sync.ts rotateGitHubAppKey": [inApp(`POST ${ORG}/github-app/key`)],
+  "domain/sync.ts removeGitHubApp": [inApp(`DELETE ${ORG}/github-app`)],
+  "domain/githubapps.ts attachInTx": [
+    inApp(`POST ${ORG}/github-app/registrations/:registration/attach via attachRegistration`),
+    inApp(`POST ${ORG}/github-app/registrations/complete via completeRegistration`),
+  ],
+  "domain/githubapps.ts attachRegistration": [inApp(`POST ${ORG}/github-app/registrations/:registration/attach`)],
+  "domain/githubapps.ts completeRegistration": [inApp(`POST ${ORG}/github-app/registrations/complete`)],
+  "domain/githubapps.ts importGitHubApp": [inApp(`POST ${ORG}/github-app/import`)],
+  "domain/projects.ts deleteProject": [inApp(`DELETE ${ORG}/projects/:project`)],
+  "domain/orgdeletion.ts scheduleDeletion": [inApp(`POST ${ORG}/deletion`)],
+  "domain/exportstepup.ts exportGuard": [inApp(`POST ${ORG}/projects/:project/environments/:environment/disclosures`)],
   // A service credential is issued only through createMachineIdentity and
   // issueMachineCredential (protected). The others issue a person's
   // credential (host commands, device sign-in, the CLI handoff, the
   // dashboard bearer), an OIDC-exchanged one, or an agent-run one: the
   // broker's branch of the credentials route (exempt by Decision 5).
-  issueCredential: [
-    "cli.ts (top level) via main > adminCommand",
-    "domain/device-sign-in.ts pollDeviceSignIn via pollOnce",
-    "domain/identities.ts createMachineIdentity",
-    "domain/identities.ts issueMachineCredential",
-    "domain/oidc.ts exchangeOidcToken",
+  "auth/credentials.ts issueCredential": [
+    "cli.ts adminCommand",
     inApp("POST /auth/varlatch-token"),
+    inApp("POST /v1/auth/device/token via pollDeviceSignIn > pollOnce"),
     inApp("POST /v1/me/credentials/cli"),
+    inApp("POST /v1/oidc/token via exchangeOidcToken"),
+    inApp(`POST ${ORG}/identities via createMachineIdentity`),
     inApp(`POST ${ORG}/identities/:identity/credentials`),
+    inApp(`POST ${ORG}/identities/:identity/credentials via issueServiceCredential > issueMachineCredential`),
   ],
 };
 
-const SRC = fileURLToPath(new URL("../src/", import.meta.url));
+const PACKAGE_DIR = fileURLToPath(new URL("..", import.meta.url));
 
-/** A source file under src/: its path there and its text. */
-interface Source {
-  file: string;
-  text: string;
+/** The callers of every CALLERS target in a graph. */
+function callersOf(g: Graph): Record<string, string[]> {
+  return Object.fromEntries(Object.keys(CALLERS).map((key) => {
+    const [file, name] = key.split(" ") as [string, string];
+    return [key, reach(g, declaredSymbol(g, file, name), ROOTS).entries];
+  }));
 }
 
-/** Every .ts file under src/, migrations aside. */
-function srcFiles(): Source[] {
-  const out: Source[] = [];
-  const walk = (dir: string) => {
-    for (const e of readdirSync(`${SRC}${dir}`, { withFileTypes: true })) {
-      const rel = dir ? `${dir}/${e.name}` : e.name;
-      if (e.isDirectory()) {
-        if (rel !== "db/migrations") walk(rel);
-      } else if (rel.endsWith(".ts")) {
-        out.push({ file: rel, text: readFileSync(`${SRC}${rel}`, "utf8") });
-      }
-    }
-  };
-  walk("");
-  return out;
-}
-
-/**
- * Attribution by the TypeScript compiler API (Codex's review of #135: a
- * line-based scanner let a multiline helper declaration fall into the
- * route above it). Each use of a name resolves to what encloses it in the
- * syntax tree: the nearest route registration (`app.get/post/put/patch/
- * delete/all/use(...)`, as "METHOD /path"), or else the nearest named
- * function: a function declaration, a method, or a function or arrow
- * function bound to a variable; at the module's own top level, "(top
- * level)". A helper that is not exported is resolved
- * through its own uses in its file, the same way, up to a depth bound and
- * with a cycle guard, and is shown as "ROUTE via outer > inner". Fail
- * closed: a registration whose path is not a string literal ("??"), a
- * cycle, the depth bound and a helper nobody uses each produce an entry
- * no expected list contains.
- */
-interface Parsed {
-  file: string;
-  sf: ts.SourceFile;
-}
-type Scope =
-  | { kind: "route"; label: string }
-  | { kind: "function"; name: string; exported: boolean; decl: ts.Node }
-  | { kind: "module" }
-  | { kind: "error"; reason: string };
-
-const REGISTRATION_METHODS = new Set(["get", "post", "put", "patch", "delete", "all", "use", "on"]);
-const MAX_HELPER_DEPTH = 8;
-
-const parseSource = (src: Source): Parsed => ({ file: src.file, sf: ts.createSourceFile(src.file, src.text, ts.ScriptTarget.Latest, true) });
-
-/** `app.<method>(...)`: a route or middleware registration. */
-function isRegistration(n: ts.Node): n is ts.CallExpression & { expression: ts.PropertyAccessExpression } {
-  return ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) &&
-    n.expression.expression.text === "app" && REGISTRATION_METHODS.has(n.expression.name.text);
-}
-
-/** "POST /v1/..." for a registration, or null when its path is not a string literal. */
-function registrationLabel(call: ts.CallExpression & { expression: ts.PropertyAccessExpression }): string | null {
-  const [path] = call.arguments;
-  if (!path || !(ts.isStringLiteral(path) || ts.isNoSubstitutionTemplateLiteral(path))) return null;
-  return `${call.expression.name.text.toUpperCase()} ${path.text}`;
-}
-
-const hasExport = (n: ts.Node) => ts.canHaveModifiers(n) && (ts.getModifiers(n) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-
-/** What encloses `node`: the nearest registration or named function, walking up the tree. */
-function scopeOf(node: ts.Node): Scope {
-  let child: ts.Node = node;
-  for (let n: ts.Node | undefined = node.parent; n; child = n, n = n.parent) {
-    if (isRegistration(n) && child !== n.expression) {
-      const label = registrationLabel(n);
-      return label ? { kind: "route", label } : { kind: "error", reason: "a route registration whose path is not a string literal" };
-    }
-    if (ts.isFunctionDeclaration(n) && n.name) {
-      return { kind: "function", name: n.name.text, exported: hasExport(n) && ts.isSourceFile(n.parent), decl: n };
-    }
-    if (ts.isMethodDeclaration(n) && ts.isIdentifier(n.name)) {
-      const owner = ts.isClassLike(n.parent) && n.parent.name ? `${n.parent.name.text}.` : "";
-      return { kind: "function", name: `${owner}${n.name.text}`, exported: true, decl: n };
-    }
-    if ((ts.isArrowFunction(n) || ts.isFunctionExpression(n)) && ts.isVariableDeclaration(n.parent) && ts.isIdentifier(n.parent.name)) {
-      const statement = n.parent.parent.parent;
-      const exported = ts.isVariableStatement(statement) && hasExport(statement) && ts.isSourceFile(statement.parent);
-      return { kind: "function", name: n.parent.name.text, exported, decl: n.parent };
-    }
-    if (ts.isFunctionExpression(n) && n.name) return { kind: "function", name: n.name.text, exported: false, decl: n };
-  }
-  // A statement of the module itself, such as an entry point's main().
-  return { kind: "module" };
-}
-
-/** Whether an identifier is a use of its name: not a declaration, an import or export, a property key or a type query. */
-function isUse(id: ts.Identifier): boolean {
-  const p = id.parent;
-  if (ts.isImportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p) || ts.isExportSpecifier(p) || ts.isTypeQueryNode(p)) return false;
-  if ((ts.isFunctionDeclaration(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isMethodDeclaration(p) ||
-    ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p) || ts.isPropertySignature(p) || ts.isMethodSignature(p) ||
-    ts.isBindingElement(p) || ts.isFunctionExpression(p) || ts.isClassDeclaration(p) || ts.isInterfaceDeclaration(p) ||
-    ts.isTypeAliasDeclaration(p) || ts.isEnumMember(p)) && (p as { name?: ts.Node }).name === id) return false;
-  if (ts.isBindingElement(p) && p.propertyName === id) return false;
-  return true;
-}
-
-/** Every use of any of `names` in a parsed file (a call, or the name passed as a value). */
-function usesOf(parsed: Parsed, names: ReadonlySet<string>): ts.Identifier[] {
-  const out: ts.Identifier[] = [];
-  const visit = (n: ts.Node) => {
-    if (ts.isIdentifier(n) && names.has(n.text) && isUse(n)) out.push(n);
-    ts.forEachChild(n, visit);
-  };
-  visit(parsed.sf);
-  return out;
-}
-
-const isWithin = (n: ts.Node, outer: ts.Node) => n.pos >= outer.pos && n.end <= outer.end;
-
-/** Who `node` runs for: "file ROUTE", "file function", "file ROUTE via helper", or a fail-closed entry. */
-function attribute(parsed: Parsed, node: ts.Node, chain: readonly string[] = []): string[] {
-  const scope = scopeOf(node);
-  const via = chain.length > 0 ? ` via ${[...chain].reverse().join(" > ")}` : "";
-  if (scope.kind === "error") return [`${parsed.file} ?? ${scope.reason}${via}`];
-  if (scope.kind === "route") return [`${parsed.file} ${scope.label}${via}`];
-  if (scope.kind === "module") return [`${parsed.file} (top level)${via}`];
-  if (scope.exported) return [`${parsed.file} ${scope.name}${via}`];
-  if (chain.includes(scope.name)) return [`${parsed.file} ${scope.name} (cycle)${via}`];
-  if (chain.length >= MAX_HELPER_DEPTH) return [`${parsed.file} ${scope.name} (too deep)${via}`];
-  // A helper: resolved through its uses in its file, outside its own body.
-  const uses = usesOf(parsed, new Set([scope.name])).filter((u) => !isWithin(u, scope.decl));
-  if (uses.length === 0) return [`${parsed.file} ${scope.name} (no caller)${via}`];
-  return uses.flatMap((u) => attribute(parsed, u, [...chain, scope.name]));
-}
-
-/** Every use of each named function across `sources`, attributed (attribute), sorted. */
-function callersIn(sources: readonly Source[], fns: readonly string[]): Record<string, string[]> {
-  const found: Record<string, Set<string>> = Object.fromEntries(fns.map((f) => [f, new Set<string>()]));
-  const names = new Set(fns);
-  for (const parsed of sources.map(parseSource)) {
-    for (const use of usesOf(parsed, names)) for (const entry of attribute(parsed, use)) found[use.text]!.add(entry);
-  }
-  return Object.fromEntries(Object.entries(found).map(([fn, set]) => [fn, [...set].sort()]));
-}
-
-/** Every string or template literal that writes one of the tables, attributed as above. */
-function writersIn(sources: readonly Source[], write: RegExp): string[] {
-  const found = new Set<string>();
-  for (const parsed of sources.map(parseSource)) {
-    const visit = (n: ts.Node) => {
-      if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) && write.test(n.getText(parsed.sf))) {
-        for (const entry of attribute(parsed, n)) found.add(entry);
-        return;
-      }
-      ts.forEachChild(n, visit);
-    };
-    visit(parsed.sf);
-  }
-  return [...found].sort();
-}
-
-/** Every registration in a route file whose path is not a string literal. */
-function unlabelledRegistrations(sources: readonly Source[]): string[] {
-  const out: string[] = [];
-  for (const parsed of sources.filter((s) => s.file.startsWith("http/")).map(parseSource)) {
-    const visit = (n: ts.Node) => {
-      if (isRegistration(n) && registrationLabel(n) === null) out.push(`${parsed.file}:${parsed.sf.getLineAndCharacterOfPosition(n.getStart(parsed.sf)).line + 1}`);
-      ts.forEachChild(n, visit);
-    };
-    visit(parsed.sf);
-  }
-  return out;
+/** Every writer of a protected table in a graph, with the classes of the roots reaching it ("route" for a route's own body). */
+function writersOf(g: Graph): Record<string, RootClass[] | string[]> {
+  return Object.fromEntries(writers(g, new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`)).map((w) => {
+    if (!w.symbol) return [w.label, ["route"]];
+    const r = reach(g, w.symbol, ROOTS);
+    const failed = r.entries.filter((e) => e.startsWith("??"));
+    return [w.label, failed.length > 0 ? failed : r.classes];
+  }));
 }
 
 const WRITTEN_TABLES =
@@ -934,77 +799,135 @@ describe("alternate callers", () => {
     expect([...writes].sort()).toEqual([...classified].sort());
   });
 
-  it("every writer in src/ of what the operations change is classified", () => {
-    const write = new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`);
-    expect(writersIn(srcFiles(), write)).toEqual(Object.keys(WRITERS).sort());
-  });
+  describe("by the caller graph (the TypeScript type checker over src/)", () => {
+    // Built once for these tests: about 5 to 15 s and 700 MB on the test
+    // machine (createProgram over src/ and a symbol lookup for each of its
+    // identifiers). The self-tests build edited copies from it.
+    let graph: Graph;
+    beforeAll(() => {
+      graph = buildGraph(PACKAGE_DIR);
+    }, 120_000);
 
-  it("every caller of a protected domain function is known, by its route or function (helpers resolved to their routes)", () => {
-    const sources = srcFiles();
-    expect(unlabelledRegistrations(sources)).toEqual([]);
-    const expected = Object.fromEntries(Object.entries(CALLERS).map(([fn, list]) => [fn, [...list].sort()]));
-    expect(callersIn(sources, Object.keys(CALLERS))).toEqual(expected);
-  });
-
-  describe("would fail on an added caller (in-memory copies of app.ts)", () => {
-    const RENAME = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
-    const rename = `http/app.ts PATCH ${ORG}/identities/:identity`;
-    const fns = Object.keys(CALLERS);
-    /** The inventory of the real sources, and of a copy of app.ts edited by `edit`. */
-    function tamper(edit: (text: string) => string) {
-      const sources = srcFiles();
-      const appTs = sources.find((s) => s.file === "http/app.ts")!;
-      const edited = edit(appTs.text);
-      expect(edited, "the edit applies").not.toBe(appTs.text);
-      return { before: callersIn(sources, fns), after: callersIn(sources.map((s) => (s === appTs ? { ...s, text: edited } : s)), fns) };
-    }
-    const intoRename = (code: string) => (text: string) => {
-      expect(text).toContain(RENAME);
-      return text.replace(RENAME, `${RENAME}\n${code}`);
-    };
-
-    it("a direct call to the credential primitive and to a protected function in an exempt route; a file-level view would not see it", () => {
-      const { before, after } = tamper(intoRename('    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});'));
-      expect(before.issueCredential).not.toContain(rename);
-      expect(after.issueCredential).toContain(rename);
-      expect(after.createRole).toContain(rename);
-      const byFile = (m: Record<string, string[]>) =>
-        Object.fromEntries(Object.entries(m).map(([fn, list]) => [fn, [...new Set(list.map((c) => (c.startsWith("http/app.ts ") ? "http/app.ts" : c)))].sort()]));
-      expect(byFile(after)).toEqual(byFile(before));
+    it("names only roots that exist, and every registration has a literal path", () => {
+      const labels = functionLabels(graph);
+      expect([...ROOTS.keys()].filter((root) => !labels.has(root))).toEqual([]);
+      expect(unlabelledRegistrations(graph)).toEqual([]);
     });
 
-    it("a multiline helper declared just before another route's helper, then called from an exempt route", () => {
-      const anchor = "  const passkeyOwner = (c: Context) => {";
-      const { before, after } = tamper((text) => {
-        expect(text).toContain(anchor);
-        const helper = '  const mintForIdentity =\n    async (identityId: string) => {\n      return issueCredential(ctx.db, { identityId, kind: "service" });\n    };\n';
-        return intoRename("    await mintForIdentity(\"x\");")(text.replace(anchor, `${helper}${anchor}`));
-      });
-      expect(after.issueCredential).toContain(`${rename} via mintForIdentity`);
-      expect(after.issueCredential.filter((e) => !before.issueCredential.includes(e))).toEqual([`${rename} via mintForIdentity`]);
+    it("every writer in src/ of what the operations change is classified, and reached only by the roots its classification allows", () => {
+      const expected = Object.fromEntries(Object.entries(WRITERS).map(([label, w]) => [label, [...w.roots].sort()]));
+      expect(writersOf(graph)).toEqual(expected);
     });
 
-    it("a helper declared inside buildApp between two routes, then called from an exempt route", () => {
-      const anchor = '  app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {';
-      const { after } = tamper((text) => {
-        expect(text).toContain(anchor);
-        const helper = "  function quietRole(c: Context) {\n    return createRole(ctx, c.get(\"gate\"), \"org\", { name: \"x\", actions: [] }, {});\n  }\n";
-        return intoRename("    await quietRole(c);")(text.replace(anchor, `${helper}${anchor}`));
-      });
-      expect(after.createRole).toContain(`${rename} via quietRole`);
+    it("every root reaching a protected domain function, or the credential primitive, is known", () => {
+      const expected = Object.fromEntries(Object.entries(CALLERS).map(([key, list]) => [key, [...list].sort()]));
+      expect(callersOf(graph)).toEqual(expected);
     });
 
-    it("a call split over several lines", () => {
-      const { after } = tamper(intoRename('    await issueCredential\n      (\n        ctx.db,\n        { identityId: "x", kind: "service" },\n      );'));
-      expect(after.issueCredential).toContain(rename);
-    });
+    describe("would fail on an added caller (in-memory sources through a CompilerHost)", () => {
+      const RENAME = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
+      const rename = `http/app.ts PATCH ${ORG}/identities/:identity`;
+      const PASSKEY_OWNER = "  const passkeyOwner = (c: Context) => {";
+      const appText = () => readFileSync(srcPath(graph, "http/app.ts"), "utf8");
+      /** A graph of src/ with http/app.ts edited by `edit`, and `more` files added (relative to src/). */
+      function tampered(edit: (text: string) => string, more: Record<string, string> = {}) {
+        const original = appText();
+        const edited = edit(original);
+        expect(edited, "the edit applies").not.toBe(original);
+        const edits: Record<string, string> = { [srcPath(graph, "http/app.ts")]: edited };
+        for (const [file, text] of Object.entries(more)) edits[srcPath(graph, file)] = text;
+        return buildGraph(PACKAGE_DIR, edits, graph.program);
+      }
+      const intoRename = (code: string) => (text: string) => {
+        expect(text).toContain(RENAME);
+        return text.replace(RENAME, `${RENAME}\n${code}`);
+      };
+      const before = () => callersOf(graph);
+      /** The entries `after` has that the real graph has not, per target. */
+      const added = (after: Record<string, string[]>) => {
+        const base = before();
+        const out: Record<string, string[]> = {};
+        for (const [k, list] of Object.entries(after)) {
+          const fresh = list.filter((e) => !(base[k] ?? []).includes(e));
+          if (fresh.length > 0) out[k] = fresh;
+        }
+        return out;
+      };
 
-    it("fails closed: a helper nobody calls, and a registration whose path is not a literal", () => {
-      const anchor = "  const passkeyOwner = (c: Context) => {";
-      const { after } = tamper((text) =>
-        text.replace(anchor, `  const unused = async () => issueCredential(ctx.db, { identityId: "x", kind: "service" });\n  app.post(somePath, async (c) => createRole(ctx, gate, "o", {}, {}));\n${anchor}`));
-      expect(after.issueCredential).toContain("http/app.ts unused (no caller)");
-      expect(after.createRole).toContain("http/app.ts ?? a route registration whose path is not a string literal");
+      it("a direct call to the credential primitive and to a protected function in an exempt route", () => {
+        const g = tampered(intoRename('    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});'));
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename], "domain/policy.ts createRole": [rename] });
+      }, 120_000);
+
+      it("a multiline helper declared just before another route's helper, then called from an exempt route", () => {
+        const g = tampered((text) => {
+          expect(text).toContain(PASSKEY_OWNER);
+          const helper = '  const mintForIdentity =\n    async (identityId: string) => {\n      return issueCredential(ctx.db, { identityId, kind: "service" });\n    };\n';
+          return intoRename('    await mintForIdentity("x");')(text.replace(PASSKEY_OWNER, `${helper}${PASSKEY_OWNER}`));
+        });
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [`${rename} via mintForIdentity`] });
+      }, 120_000);
+
+      it("a helper declared inside buildApp between two routes, then called from an exempt route", () => {
+        const anchor = '  app.post("/v1/organizations/:org/identities/:identity/retire", async (c) => {';
+        const g = tampered((text) => {
+          expect(text).toContain(anchor);
+          const helper = '  function quietRole(c: Context) {\n    return createRole(ctx, c.get("gate"), "org", { name: "x", actions: [] }, {});\n  }\n';
+          return intoRename("    await quietRole(c);")(text.replace(anchor, `${helper}${anchor}`));
+        });
+        expect(added(callersOf(g))).toEqual({ "domain/policy.ts createRole": [`${rename} via quietRole`] });
+      }, 120_000);
+
+      it("a call split over several lines", () => {
+        const g = tampered(intoRename('    await issueCredential\n      (\n        ctx.db,\n        { identityId: "x", kind: "service" },\n      );'));
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
+      }, 120_000);
+
+      it("fails closed: a helper nobody calls, a registration whose path is not a literal, a function passed on as a value", () => {
+        const g = tampered((text) =>
+          text.replace(PASSKEY_OWNER, [
+            '  const unused = async () => issueCredential(ctx.db, { identityId: "x", kind: "service" });',
+            '  app.post(String("/v1/x"), async (c) => createRole(ctx, gate, "o", {}, {}));',
+            "  const later: unknown[] = [deleteRole];",
+            PASSKEY_OWNER,
+          ].join("\n")));
+        const after = added(callersOf(g));
+        expect(after["auth/credentials.ts issueCredential"]).toEqual(["?? unused: nothing references it via unused"]);
+        expect(after["domain/policy.ts createRole"]![0]).toMatch(/^\?\? http\/app\.ts:\d+ a registration whose path is not a string literal$/);
+        expect(after["domain/policy.ts deleteRole"]![0]).toMatch(/^\?\? http\/app\.ts:\d+ deleteRole: a value passed on \(ArrayLiteralExpression\)$/);
+        expect(unlabelledRegistrations(g)).toHaveLength(1);
+      }, 120_000);
+
+      it("a renamed import", () => {
+        const g = tampered((text) =>
+          intoRename('    await mint(ctx.db, { identityId: "x", kind: "service" });')(
+            `import { issueCredential as mint } from "../auth/credentials.js";\n${text}`));
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
+      }, 120_000);
+
+      it("an exported host-command helper called from an exempt route: its host-command exemption no longer holds", () => {
+        const g = tampered((text) =>
+          intoRename('    await issueReenrollmentGrants(ctx, { identities: [] } as never);')(
+            `import { issueReenrollmentGrants } from "../domain/bootstrap.js";\n${text}`));
+        expect(writersOf(graph)["domain/bootstrap.ts issueReenrollmentGrants"]).toEqual(["host-command"]);
+        expect(writersOf(g)["domain/bootstrap.ts issueReenrollmentGrants"]).toEqual(["host-command", "route"]);
+      }, 120_000);
+
+      it("an object method reused from an exempt route", () => {
+        const g = tampered((text) => {
+          const helper = '  const tools = {\n    mint(identityId: string) {\n      return issueCredential(ctx.db, { identityId, kind: "service" });\n    },\n  };\n';
+          return intoRename('    await tools.mint("x");')(text.replace(PASSKEY_OWNER, `${helper}${PASSKEY_OWNER}`));
+        });
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [`${rename} via tools.mint`] });
+      }, 120_000);
+
+      it("a re-export through another module", () => {
+        const g = tampered(
+          (text) => intoRename('    await issue(ctx.db, { identityId: "x", kind: "service" });')(`import { issue } from "../domain/reexport-probe.js";\n${text}`),
+          { "domain/reexport-probe.ts": 'export { issueCredential as issue } from "../auth/credentials.js";\n' },
+        );
+        expect(added(callersOf(g))).toEqual({ "auth/credentials.ts issueCredential": [rename] });
+      }, 120_000);
     });
   });
 });
