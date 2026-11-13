@@ -658,6 +658,7 @@ async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
     if (base && JSON.stringify(record) !== JSON.stringify(base)) out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify(record)}`);
     // Then under enforce, on the same state (offRun undid any change).
     await s.setMode("enforce");
+    await s.prepare(v);
     const before = await s.state();
     const denied = await s.denials();
     const enforced = await s.send(v);

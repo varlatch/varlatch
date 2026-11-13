@@ -790,6 +790,56 @@ Role changes and removals need a live admin of the organization, which a
 machine credential never is; an admin invitation by a machine credential
 that holds `identity.manage` is refused.
 
+The approvals for integrations are built too: webhooks, connections and the
+GitHub App.
+
+| Operation | What the approval covers |
+| --- | --- |
+| `webhook.create` | The full address and the set of event types (every event when none is given). The signing secret is created when the approved request runs, and is not part of the approval. |
+| `webhook.update` | The webhook, its resulting address and set of event types, and the version you edited. Leaving a field out and sending its current value mean the same; `null` event types means every event. Reordering the event types, or keeping both, needs no approval. |
+| `webhook.delete` | The webhook, at the version the server read. Not allowed during an incident freeze. |
+| `connection.create` | A token connection: the platform, the base identity as Varlatch normalizes it, the name and the credential. A GitHub App connection: the App, the installation and the name. |
+| `connection.replace_credential` | The connection, the new credential and the version you edited. Every Sync Target on it must still pass its disclosure check, as before. |
+| `connection.delete` | The connection, at the version the server read: a connection whose credential was replaced since needs a new approval. During an incident freeze, revoking a connection is still allowed and still asks. |
+| `github_app.register` | The registration and the App GitHub handed over: its id, slug, client id and owner. |
+| `github_app.import` | The App id and the private key. |
+| `github_app.replace_key` | The App, the new private key and the version you edited. |
+| `github_app.remove` | The App, at the version the server read. |
+
+**Secrets in an approval.** A webhook address (it may carry a token), a
+connection's credential and a GitHub App's private key are part of what an
+approval covers, so an approval given for one value never works for
+another. The approval stores only a keyed hash of the request, never the
+value. The summary you approve says that a credential or key is set or
+replaced, and shows a webhook address with its path and query hidden, as
+the audit log does.
+
+**Nothing goes to GitHub before the approval.** Importing an App, replacing
+its key and connecting one of its installations ask GitHub something first.
+Each runs as one transaction that holds the organization from its checks
+until the change is saved. Under enforce, Varlatch sends nothing to GitHub
+until it has found your approval for exactly that request; the approval is
+used only after GitHub answered, when the change is saved. If GitHub then
+refuses the key or the installation, nothing changes and the approval stays
+usable until it expires.
+
+**Registering a GitHub App** runs in stages. GitHub creates the App when you
+submit its manifest, before Varlatch is involved, and hands it over when it
+sends you back. With no approval needed, the App is attached in the same
+step, as before. When one is needed, Varlatch keeps what GitHub handed over
+as pending for one hour, with the private key encrypted. Under enforce, the dashboard asks for your
+approval and then attaches it; if you close the approval, the page offers
+**Approve and attach** and **Discard**. Only the person who started the
+registration can attach or discard it. A pending App that is discarded,
+not attached within the hour, or refused (the organization got another
+App meanwhile, or another organization uses this one) loses its key, and
+the audit log records `sync.github_app_registration_abandoned` or
+`sync.github_app_registration_refused`. The App stays on GitHub; the
+dashboard links to where its owner deletes it.
+
+Checking a credential or listing destinations before saving a connection
+never asks.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an

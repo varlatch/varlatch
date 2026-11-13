@@ -201,6 +201,17 @@ export const APPROVAL_OPERATIONS = [
   "member.promote",
   "member.demote",
   "member.remove",
+  // admin-step-up: integrations (step 4.8).
+  "webhook.create",
+  "webhook.update",
+  "webhook.delete",
+  "connection.create",
+  "connection.replace_credential",
+  "connection.delete",
+  "github_app.register",
+  "github_app.import",
+  "github_app.replace_key",
+  "github_app.remove",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
@@ -219,6 +230,9 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
     "team.create", "team.update", "team.delete", "team.member_add", "team.member_remove",
     "team.project_add", "team.project_remove",
     "member.invite_admin", "member.promote", "member.demote", "member.remove",
+    "webhook.create", "webhook.update", "webhook.delete",
+    "connection.create", "connection.replace_credential", "connection.delete",
+    "github_app.register", "github_app.import", "github_app.replace_key", "github_app.remove",
   ],
 };
 
@@ -227,10 +241,12 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
  * Organization is frozen for an incident (ADR-0055 Decision 3): the lift,
  * and the operations under `recovery` that ask for an approval (ADR-0055
  * Decision 6: admin-step-up still asks for them, such as removing an OIDC
- * binding, revoking a Grant, removing a member or demoting an admin).
- * Account intents (passkey.remove) are not Organization-bound and are
- * unaffected. Promoting a member and inviting an admin add authority: they
- * stay refused while frozen, so no intent is created for them.
+ * binding, revoking a Grant, removing a member or demoting an admin,
+ * revoking a Connection). Account intents (passkey.remove) are not
+ * Organization-bound and are unaffected. Promoting a member and inviting an
+ * admin add authority: they stay refused while frozen, so no intent is
+ * created for them. Webhook configuration, its revocation included, and
+ * every GitHub App change stay refused too (ADR-0055 Decision 3).
  */
 export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set([
   "organization.unfreeze",
@@ -239,6 +255,7 @@ export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set(
   "grant.revoke",
   "member.remove",
   "member.demote",
+  "connection.delete",
 ]);
 
 export interface ApprovalChange {
@@ -374,6 +391,13 @@ export interface ProtectedGate extends ApprovalGate {
   readonly requester: Requester;
   /** The Varlatch-Approval header as the request sent it (checked only when consumed), or null. */
   readonly approvalId: string | null;
+  /**
+   * Before an operation asks anything outside Varlatch (amendment D): find
+   * an approved intent for exactly `binding` without consuming it, or, when
+   * the request carries none, throw ApprovalNeeded. A gate without it (a
+   * test's) skips the precheck; consumption still checks everything.
+   */
+  precheck?(db: Querier, binding: ApprovalBinding): Promise<void>;
 }
 
 /**
@@ -396,6 +420,12 @@ export async function withApproval<T>(
       const approvalId = parseApprovalId(input.approvalId);
       if (!approvalId) throw approvalInvalid("not-found", null);
       return consumeApproval(db, ctx.rootKek, input.requester, approvalId, binding);
+    },
+    precheck: async (db, binding) => {
+      if (input.approvalId === null) throw new ApprovalNeeded(binding);
+      const approvalId = parseApprovalId(input.approvalId);
+      if (!approvalId) throw approvalInvalid("not-found", null);
+      await precheckApproval(db, ctx.rootKek, input.requester, approvalId, binding);
     },
   };
   try {
@@ -667,29 +697,7 @@ export async function consumeApproval(
   )).rows[0] as
     | { id: string; approved_with_passkey_id: string; approval_user_verified: boolean; auth_session_id: string | null }
     | undefined;
-  if (!consumed) {
-    const row = (await db.query(
-      `SELECT credential_id, origin, auth_session_id, operation, organization_id, target = $3::jsonb AS same_target, body_hash, query_hash,
-              expected_version, approved_at, consumed_at, closed_at, expires_at <= clock_timestamp() AS lapsed
-       FROM approval_intents WHERE id = $1 AND identity_id = $2`,
-      [approvalId, requester.identityId, canonicalJson(binding.target)],
-    )).rows[0] as
-      | (Pick<IntentRow, "credential_id" | "operation" | "organization_id" | "approved_at" | "consumed_at" | "closed_at" | "lapsed"> & {
-          same_target: boolean; body_hash: string; query_hash: string; expected_version: number | null;
-          origin: "dashboard" | "cli"; auth_session_id: string | null;
-        })
-      | undefined;
-    if (!row) throw approvalInvalid("not-found", approvalId);
-    if (row.closed_at || row.consumed_at || row.lapsed || !row.approved_at) {
-      throw approvalInvalid(unusableReason(row), approvalId);
-    }
-    const sameRequester = row.origin === "cli"
-      ? row.credential_id === requester.credentialId
-      : requester.credentialKind === "browser" && row.auth_session_id === (requester.authSessionId ?? null);
-    const sameRequest = sameRequester && row.operation === binding.operation &&
-      row.organization_id === binding.organizationId && row.same_target && row.body_hash === bodyHash && row.query_hash === queryHash;
-    throw approvalInvalid(sameRequest && row.expected_version !== binding.expectedVersion ? "stale" : "mismatch", approvalId);
-  }
+  if (!consumed) throw await refusalOf(db, requester, approvalId, binding, bodyHash, queryHash);
   // A dashboard intent needs its Better Auth session alive: it exists (sign
   // out deletes it, which also revokes its browser bearers, migration 43),
   // it has not expired, and it is the requesting person's. Taken FOR KEY
@@ -726,6 +734,72 @@ export async function consumeApproval(
   )).rows[0];
   if (!live) throw new DomainError("INVALID_CREDENTIAL", "Credential is invalid, revoked, or expired");
   return { id: consumed.id, passkeyId: consumed.approved_with_passkey_id, userVerified: consumed.approval_user_verified };
+}
+
+/** Why an approval does not fit this request now: APPROVAL_INVALID with its reason. */
+async function refusalOf(
+  db: Querier,
+  requester: Requester,
+  approvalId: string,
+  binding: ApprovalBinding,
+  bodyHash: string,
+  queryHash: string,
+): Promise<DomainError> {
+  const row = (await db.query(
+    `SELECT credential_id, origin, auth_session_id, operation, organization_id, target = $3::jsonb AS same_target, body_hash, query_hash,
+            expected_version, approved_at, consumed_at, closed_at, expires_at <= clock_timestamp() AS lapsed
+     FROM approval_intents WHERE id = $1 AND identity_id = $2`,
+    [approvalId, requester.identityId, canonicalJson(binding.target)],
+  )).rows[0] as
+    | (Pick<IntentRow, "credential_id" | "operation" | "organization_id" | "approved_at" | "consumed_at" | "closed_at" | "lapsed"> & {
+        same_target: boolean; body_hash: string; query_hash: string; expected_version: number | null;
+        origin: "dashboard" | "cli"; auth_session_id: string | null;
+      })
+    | undefined;
+  if (!row) return approvalInvalid("not-found", approvalId);
+  if (row.closed_at || row.consumed_at || row.lapsed || !row.approved_at) {
+    return approvalInvalid(unusableReason(row), approvalId);
+  }
+  const sameRequester = row.origin === "cli"
+    ? row.credential_id === requester.credentialId
+    : requester.credentialKind === "browser" && row.auth_session_id === (requester.authSessionId ?? null);
+  const sameRequest = sameRequester && row.operation === binding.operation &&
+    row.organization_id === binding.organizationId && row.same_target && row.body_hash === bodyHash && row.query_hash === queryHash;
+  return approvalInvalid(sameRequest && row.expected_version !== binding.expectedVersion ? "stale" : "mismatch", approvalId);
+}
+
+/**
+ * The precheck of an operation that asks something outside Varlatch before
+ * its final transaction (ADR-0054 amendment D: a GitHub App import, its key
+ * replacement, an App Connection). It finds an approved, unexpired intent
+ * that matches this request's binding exactly, from this requester, as
+ * consumption would, and consumes nothing: consumption stays in the final
+ * transaction, which checks everything again. Refuses with APPROVAL_INVALID
+ * and a reason, as consumption does. Reads without a lock.
+ */
+export async function precheckApproval(
+  db: Querier,
+  key: Buffer,
+  requester: Requester,
+  approvalId: string,
+  binding: ApprovalBinding,
+): Promise<void> {
+  const bodyHash = approvalHash(key, "body", binding.body);
+  const queryHash = approvalHash(key, "query", binding.query);
+  const usable = (await db.query(
+    `SELECT 1 FROM approval_intents
+     WHERE id = $1 AND approved_at IS NOT NULL AND consumed_at IS NULL AND closed_at IS NULL
+       AND expires_at > clock_timestamp()
+       AND identity_id = $3 AND operation = $4
+       AND ((origin = 'cli' AND credential_id = $2)
+            OR (origin = 'dashboard' AND $10::text = 'browser' AND auth_session_id = $11::text))
+       AND organization_id IS NOT DISTINCT FROM $5 AND target = $6::jsonb
+       AND body_hash = $7 AND query_hash = $8 AND expected_version IS NOT DISTINCT FROM $9`,
+    [approvalId, requester.credentialId, requester.identityId, binding.operation, binding.organizationId,
+      canonicalJson(binding.target), bodyHash, queryHash, binding.expectedVersion, requester.credentialKind,
+      requester.authSessionId ?? null],
+  )).rows[0];
+  if (!usable) throw await refusalOf(db, requester, approvalId, binding, bodyHash, queryHash);
 }
 
 /**

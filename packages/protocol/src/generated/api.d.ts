@@ -1858,9 +1858,46 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Complete a registration with the state and GitHub's code. The state is consumed once, by the caller who started it (CONSUMED and EXPIRED answer 410). The App is stored only when GitHub created it on the intended account: GitHub creates it on the person's own account when they may not register Apps on the intended one, and then the App is refused, nothing is kept, and the answer says where to delete it (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the state is released for another attempt. */
+        /**
+         * Complete a registration with the state and GitHub's code. The state is consumed once, by the caller who started it (CONSUMED and EXPIRED answer 410). The App is stored only when GitHub created it on the intended account: GitHub creates it on the person's own account when they may not register Apps on the intended one, and then the App is refused, nothing is kept, and the answer says where to delete it (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the state is released for another attempt.
+         *     Registration is staged (ADR-0054 amendment D): GitHub's answer is stored as a pending conversion on the registration, then attached in the same request when no approval is needed. When the Organization's admin-step-up control asks for one, the answer is STEP_UP_REQUIRED for the registration (github_app.register), its details naming `registrationId`; the client repeats the attachment (`…/registrations/{registration}/attach`) with the approval, never this callback. A repeat of the callback answers CONSUMED with `registrationId` and `pending` in its details.
+         */
         post: operations["completeGitHubAppRegistration"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations/{registration}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach a pending registration (ADR-0054 amendment D): the App GitHub handed over is stored for the Organization and the pending key is deleted. A protected operation, github_app.register: under admin-step-up's enforce it needs the caller's approval, bound to the registration and the App's id, slug, client id and owner. Only the person who started the registration may attach it; for anyone else it is not found. A pending conversion that expired, was discarded or already ended, an Organization that got another App, or an App another Organization uses end the registration: its key is deleted and the answer is the refusal. Calls nothing outside Varlatch. */
+        post: operations["attachGitHubAppRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations/{registration}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard a pending registration: its key is deleted and sync.github_app_registration_abandoned recorded. The App stays on GitHub; `deleteUrl` is where its owner deletes it. One that is no longer pending changes nothing (`discarded: false`), and `state` says why, decided under the registration's lock: `attached` (the App is this Organization's, so there is no `deleteUrl`), `ended` (discarded, expired or refused before) or `waiting` (GitHub has not handed it over yet). Only the person who started it may discard it. */
+        delete: operations["discardGitHubAppRegistration"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3365,7 +3402,7 @@ export interface components {
              * @description The semantic operation, not the HTTP route.
              * @enum {string}
              */
-            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke" | "identity.create" | "credential.issue" | "identity.reactivate" | "oidc_binding.create" | "oidc_binding.delete" | "grant.create" | "grant.replace" | "grant.revoke" | "role.create" | "role.update" | "role.delete" | "group.create" | "group.update" | "group.delete" | "group.member_add" | "group.member_remove" | "team.create" | "team.update" | "team.delete" | "team.member_add" | "team.member_remove" | "team.project_add" | "team.project_remove" | "member.invite_admin" | "member.promote" | "member.demote" | "member.remove";
+            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke" | "identity.create" | "credential.issue" | "identity.reactivate" | "oidc_binding.create" | "oidc_binding.delete" | "grant.create" | "grant.replace" | "grant.revoke" | "role.create" | "role.update" | "role.delete" | "group.create" | "group.update" | "group.delete" | "group.member_add" | "group.member_remove" | "team.create" | "team.update" | "team.delete" | "team.member_add" | "team.member_remove" | "team.project_add" | "team.project_remove" | "member.invite_admin" | "member.promote" | "member.demote" | "member.remove" | "webhook.create" | "webhook.update" | "webhook.delete" | "connection.create" | "connection.replace_credential" | "connection.delete" | "github_app.register" | "github_app.import" | "github_app.replace_key" | "github_app.remove";
             /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
             organization: {
                 id: string;
@@ -3556,6 +3593,8 @@ export interface components {
             updatedAt: string | null;
         };
         GitHubAppRegistrationStart: {
+            /** @description The registration's stable id: what an attachment's approval is bound to (ADR-0054 amendment D) */
+            id: string;
             /** @description Single-use; only its hash is stored */
             state: string;
             /**
@@ -3580,10 +3619,10 @@ export interface components {
             /** @enum {string} */
             outcome: "refused";
             /**
-             * @description owner-mismatch: GitHub created the App on another account (the person's own, when they may not register Apps on the intended one). organization-has-app: the Organization got an App meanwhile. app-in-use: another Organization has this App.
+             * @description owner-mismatch: GitHub created the App on another account (the person's own, when they may not register Apps on the intended one). organization-has-app: the Organization got an App meanwhile. app-in-use: another Organization has this App. expired: a pending conversion was not attached within its hour (ADR-0054 amendment D). registration-ended: the registration was already attached, discarded or refused.
              * @enum {string}
              */
-            reason: "owner-mismatch" | "organization-has-app" | "app-in-use";
+            reason: "owner-mismatch" | "organization-has-app" | "app-in-use" | "expired" | "registration-ended";
             app: {
                 githubAppId: number;
                 slug: string;
@@ -3592,9 +3631,9 @@ export interface components {
             account: components["schemas"]["GitHubAccount"];
             /**
              * Format: uri
-             * @description Where the App's owner deletes it on GitHub
+             * @description Where the App's owner deletes it on GitHub. Null for registration-ended: its App may be the one this Organization attached (an attachment repeated after a lost answer).
              */
-            deleteUrl: string;
+            deleteUrl: string | null;
             message: string;
         };
         GitHubAppRegistrationFailed: {
@@ -8094,6 +8133,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    attachGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                registration: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refused (Cache-Control no-store); the pending key was deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRefused"];
+                };
+            };
+            /** @description Attached (Cache-Control no-store) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    discardGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                registration: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded, or nothing to discard */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Whether this request deleted the pending key */
+                        discarded: boolean;
+                        /** @enum {string} */
+                        state: "discarded" | "attached" | "ended" | "waiting";
+                        /** @description Null for an attached registration (its App is this Organization's) and for one not converted yet */
+                        deleteUrl: string | null;
+                        app: {
+                            githubAppId: number;
+                            slug: string;
+                        } | null;
+                    };
                 };
             };
             default: components["responses"]["Error"];

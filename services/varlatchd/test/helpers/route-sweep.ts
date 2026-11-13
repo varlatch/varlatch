@@ -36,6 +36,38 @@ export async function insertGitHubApp(ctx: AppCtx, organization: string, created
   return id;
 }
 
+/** The pending GitHub App registration the attach and discard routes find (fixture id). */
+export const PENDING_REGISTRATION = "ghr_sweeppendingregistration01";
+
+/**
+ * A GitHub App registration of the admin, converted and waiting to be
+ * attached (ADR-0054 amendment D), its key wrapped under the Organization
+ * KEK and bound to the registration id, with no call to GitHub. Written
+ * only for the routes on a registration (`prepare`), so every other
+ * variant runs on exactly the fixtures main's baseline was recorded on.
+ */
+export async function insertPendingRegistration(ctx: AppCtx, organization: string, startedBy: string): Promise<void> {
+  const org = await getOrganization(ctx, organization);
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
+  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, PENDING_REGISTRATION, pem);
+  await ctx.db.query(
+    `INSERT INTO github_app_registrations (id, state_hash, organization_id, actor_identity_id, account_login, account_type, expires_at, consumed_at,
+       converted_at, pending_expires_at, pending_github_app_id, pending_slug, pending_client_id, pending_owner_login, pending_owner_id,
+       pending_owner_type, pending_key_envelope)
+     VALUES ($1, 'sweep-pending', $2, $3, 'acme', 'organization', now() + interval '1 hour', now(),
+       now(), now() + interval '1 hour', 4245, 'acme-pending', 'Iv1.pending', 'acme', 4243, 'organization', $4)
+     ON CONFLICT DO NOTHING`,
+    [PENDING_REGISTRATION, org.id, startedBy, JSON.stringify(envelope)],
+  );
+}
+
+/** Routes on a pending registration: their fixture is written per variant (Sweeper.prepare). */
+const ON_REGISTRATION = new Set([
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach",
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration",
+]);
+
 /**
  * The test resolver with api.github.com on a private address, which the
  * outbound policy refuses: a call to GitHub is refused, and recorded,
@@ -75,7 +107,7 @@ export async function fixtureDb(data?: Blob) {
   return { pg, db: mode === "off" ? raw : lockTraced(raw, mode) };
 }
 
-export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: Fixtures; tokens: { admin: string; verified: string } }> {
+export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: Fixtures; tokens: { admin: string; verified: string }; admin: string }> {
   const { pg, db } = await fixtureDb();
   const fctx: AppCtx = { db, rootKek };
   await ensureInstallation(fctx);
@@ -135,11 +167,13 @@ export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: F
   return {
     data,
     tokens: { admin: adminToken, verified: verifiedToken },
+    admin: adminIdentity,
     f: {
       org: "acme", project: "api", environment: "production", item: "DB_PASS", revision: revision.id,
       identity: bot.id, credential: botCredential, member: bob, invitation: invitation.id, grant: grant.id,
       role: role.id, group: group.id, team: team.id, requirement: requirement.id, webhook: webhook.id,
       binding: binding.id, control: "requirement-protection", projectId: project.id, githubApp,
+      registration: PENDING_REGISTRATION,
     },
   };
 }
@@ -249,6 +283,12 @@ export interface Variant { key: string; label: string; method: string; path: str
 export interface Sweeper {
   variants(): Variant[];
   setMode(mode: "off" | "enforce"): Promise<void>;
+  /**
+   * What the variant's route needs beyond the fixtures, written before its
+   * state is taken (a pending registration for the routes on one). Nothing
+   * for every other route.
+   */
+  prepare(v: Variant): Promise<void>;
   send(v: Variant): Promise<Answer>;
   state(): Promise<Map<string, string>>;
   denials(): Promise<number>;
@@ -262,7 +302,7 @@ const R = "/v1/organizations/:org";
 /** The sweep over a fixture database: one route variant at a time, the blocked admin's requests. */
 export async function sweeper(rootKek: Buffer): Promise<Sweeper> {
   const resolver = githubOnPrivateAddress();
-  const { data, f, tokens } = await buildFixtures(rootKek);
+  const { data, f, tokens, admin } = await buildFixtures(rootKek);
   let current = await fixtureDb(data);
   let sctx: AppCtx = { db: current.db, rootKek };
   let sapp = buildApp(sctx, { publicUrl: PUBLIC_URL });
@@ -305,6 +345,9 @@ export async function sweeper(rootKek: Buffer): Promise<Sweeper> {
       await accessCountsSettled();
       return { status: res.status, code: parsed?.error?.code ?? null, shape: shapeOf(parsed) };
     },
+    prepare: async (v) => {
+      if (ON_REGISTRATION.has(v.key)) await insertPendingRegistration(sctx, "acme", admin);
+    },
     state: () => fingerprint(sctx.db),
     denials: async () =>
       ((await sctx.db.query("SELECT count(*)::int AS n FROM audit_events WHERE metadata::jsonb->>'reason' = 'passkey_verification_required'")).rows[0] as { n: number }).n,
@@ -332,6 +375,7 @@ export interface OffRecord { status: number; code: string | null; shape: unknown
  */
 export async function offRun(s: Sweeper, v: Variant): Promise<{ answer: Answer; record: OffRecord }> {
   await s.setMode("off");
+  await s.prepare(v);
   const before = await s.state();
   const answer = await s.send(v);
   const tables = changedTables(before, await s.state());

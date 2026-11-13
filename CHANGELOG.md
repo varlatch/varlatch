@@ -96,6 +96,30 @@ fixes.
   (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
   control off nothing changes at all. See
   [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **Admin step-up: approvals for integrations are built.** Creating,
+  changing or deleting a webhook; creating a connection, replacing its
+  credential or revoking it; and registering, importing, replacing the key
+  of or removing the GitHub App will each need the approval of the person
+  asking, for exactly that request, once `admin-step-up` can be enforced; a
+  machine credential will be refused. A webhook address, a credential and
+  a private key are covered by the approval without being stored in it.
+  Importing an App, replacing its key and connecting an installation send
+  nothing to GitHub before the approval. Revoking a connection stays
+  possible during an incident freeze and still asks. It cannot be enforced
+  yet (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
+  control off nothing changes at all. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
+- **GitHub App registration is staged.** When an approval is needed, the
+  App GitHub hands over is kept as pending, its key encrypted, until it is
+  attached; with none needed, it is attached in the same transaction, as
+  before. A registration start now returns its `id`. New routes attach
+  (`POST …/github-app/registrations/{registration}/attach`) or discard
+  (`DELETE …/github-app/registrations/{registration}`) a pending
+  registration; one not attached within an hour loses its key, recorded as
+  `sync.github_app_registration_abandoned`. A registration that already
+  ended is refused without a link to delete its App, which may be the one
+  attached. Migration 50. With every control off, the registration start's
+  `id` and the two new routes are the only visible changes.
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection`,
   `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey

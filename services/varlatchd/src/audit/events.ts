@@ -115,6 +115,7 @@ export const AUDIT_EVENT_TYPES = [
   "sync.github_app_installations_listed",
   "sync.github_app_key_rotated",
   "sync.github_app_registered",
+  "sync.github_app_registration_abandoned",
   "sync.github_app_registration_refused",
   "sync.github_app_removed",
   "sync.push_attempted",

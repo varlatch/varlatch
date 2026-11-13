@@ -139,6 +139,13 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "GET /v1/organizations/:org/github-app": "read",
   "POST /v1/organizations/:org/github-app/registrations": "transaction",
   "POST /v1/organizations/:org/github-app/registrations/complete": "external",
+  // A pending registration's attachment (ADR-0054 amendment D): a write in
+  // one transaction through prepareProtectedOperation, which decides after
+  // finding the registration; the pending key is decrypted only after that
+  // checkpoint, in the same transaction. It calls nothing outside Varlatch.
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach": "transaction",
+  // Discarding one: a write, decided after the registration is found.
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration": "transaction",
   "POST /v1/organizations/:org/github-app/import": "external",
   "POST /v1/organizations/:org/github-app/key": "external",
   "DELETE /v1/organizations/:org/github-app": "transaction",

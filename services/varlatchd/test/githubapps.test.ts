@@ -14,6 +14,7 @@ import { completeRegistration } from "../src/domain/githubapps.js";
 import { getOrganization, orgKekOf } from "../src/domain/orgs.js";
 import { buildApp, type BuildAppOptions } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * GitHub App registration (ADR-0047 Decision 1 and its 2026-10-09
@@ -316,7 +317,7 @@ describe("completing a registration", () => {
 
     await ctx.db.query("INSERT INTO identities(id,kind,name) VALUES ('idn_other','human','Other')");
     const org = await getOrganization(ctx, "acme");
-    await expect(completeRegistration(ctx, org, { state: fresh.state, code: "code-1" }, "idn_other", github.fetchImpl)).rejects.toMatchObject({
+    await expect(completeRegistration(ctx, personGate("idn_other"), org, { state: fresh.state, code: "code-1" }, github.fetchImpl)).rejects.toMatchObject({
       code: "RESOURCE_NOT_FOUND",
     });
     expect(github.calls).toEqual([]);

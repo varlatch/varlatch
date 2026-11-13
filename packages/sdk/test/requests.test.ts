@@ -180,3 +180,51 @@ describe("credential expiry notice", () => {
     expect(seen).toEqual(["2026-11-12T08:00:00.000Z", "2026-11-12T08:00:00.000Z"]);
   });
 });
+
+describe("GitHub App registration under a step-up (ADR-0054 amendment D)", () => {
+  const approval = { id: "apr_aaaaaaaaaaaaaaaaaaaaaaaaaa", operation: "github_app.register" };
+  const stepUp = () =>
+    new Response(
+      JSON.stringify({ error: { code: "STEP_UP_REQUIRED", message: "approve", requestId: "r", details: { approval, registrationId: "ghr_1" } } }),
+      { status: 403 },
+    );
+
+  function client(onStepUp?: () => Promise<boolean>) {
+    const requests: { method: string; url: string; headers: Record<string, string> }[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ method: init?.method ?? "GET", url, headers: { ...(init?.headers as Record<string, string> | undefined) } });
+      if (url.endsWith("/registrations/complete")) return stepUp();
+      return new Response(JSON.stringify({ outcome: "registered", app: { id: "gha_1" } }), { status: 201 });
+    };
+    return { requests, client: new VarlatchClient({ server: "https://v.example", token: "t", fetch: fetchImpl, ...(onStepUp ? { onStepUp } : {}) }) };
+  }
+
+  it("never repeats the callback: once approved, it attaches the registration with the approval", async () => {
+    const { requests, client: c } = client(async () => true);
+    await expect(c.completeGitHubAppRegistration("acme", { state: "s", code: "c" })).resolves.toMatchObject({ outcome: "registered" });
+    expect(requests.map((r) => [r.method, r.url, r.headers["Varlatch-Approval"] ?? null])).toEqual([
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/complete", null],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1/attach", approval.id],
+    ]);
+  });
+
+  it("surfaces STEP_UP_REQUIRED, naming the registration, when the approval is not given", async () => {
+    const { requests, client: c } = client(async () => false);
+    await expect(c.completeGitHubAppRegistration("acme", { state: "s", code: "c" })).rejects.toMatchObject({
+      code: "STEP_UP_REQUIRED",
+      details: { registrationId: "ghr_1" },
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("attaches and discards on the registration's routes", async () => {
+    const { requests, client: c } = client();
+    await c.attachGitHubAppRegistration("acme", "ghr_1");
+    await c.discardGitHubAppRegistration("acme", "ghr_1");
+    expect(requests.map((r) => [r.method, r.url])).toEqual([
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1/attach"],
+      ["DELETE", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1"],
+    ]);
+  });
+});

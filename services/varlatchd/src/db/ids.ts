@@ -30,6 +30,7 @@ const PREFIXES = {
   deviceSignIn: "dsi",
   deviceSignInChallenge: "dsc",
   githubApp: "gha",
+  githubAppRegistration: "ghr",
   membershipRemoval: "mrm",
   organizationDeletion: "odl",
   organizationFreeze: "ofz",

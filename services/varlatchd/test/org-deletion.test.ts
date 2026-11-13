@@ -15,6 +15,7 @@ import { deliverWebhooksOnce } from "../src/domain/webhooks.js";
 import { latestEventCursor, syncNewMirrorEvents } from "../src/mirror/publisher.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * Deleting an Organization (ADR-0051 Decisions 4 to 8): a request that
@@ -186,8 +187,8 @@ describe("while frozen", () => {
     expect(renamed.body.error?.code).toBe("ORGANIZATION_DELETING");
     expect((await getOrganization(ctx, "acme")).name).not.toBe("Renamed");
     const outcome = (p: Promise<unknown>) => p.then(() => "done", (err: unknown) => (err as { code?: string }).code);
-    expect(await outcome(createAppConnection(ctx, org, { installationId, name: "App" }, adminId, null, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
-    expect(await outcome(importGitHubApp(ctx, org, { appId: 5254113, privateKey: pem }, adminId, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
+    expect(await outcome(createAppConnection(ctx, personGate(adminId), org, { installationId, name: "App" }, null, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
+    expect(await outcome(importGitHubApp(ctx, personGate(adminId), org, { appId: 5254113, privateKey: pem }, github.fetchImpl))).toBe("ORGANIZATION_DELETING");
     expect(github.calls).toEqual([]);
   });
 

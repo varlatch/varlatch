@@ -16,6 +16,7 @@ import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
+import { startRegistrationSweepLoop } from "./domain/githubapps.js";
 import { ACCESS_COUNTS, startSecurityReportLoop } from "./domain/securityreport.js";
 import { DomainError } from "./domain/errors.js";
 import { ConfigError, loadConfig, type VarlatchdConfig } from "./config.js";
@@ -198,6 +199,8 @@ async function serveCommand(): Promise<void> {
   startExposureBackfillLoop(ctx);
   // Runs Organization deletions that are due (ADR-0051), in every process.
   startDeletionLoop(ctx);
+  // Pending GitHub App conversions past their hour lose their key (ADR-0054 amendment D).
+  startRegistrationSweepLoop(ctx);
   // Summarizes Security Control report counters an hour at a time, and
   // deletes them 35 days later (ADR-0054 Decision 9); one process at a time.
   startSecurityReportLoop(ctx);
