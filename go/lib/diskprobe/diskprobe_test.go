@@ -22,7 +22,7 @@ type fakeClock struct {
 	samples int
 	latency func(i int) time.Duration
 	onSync  func(i int)
-	files   map[string]int64 // file name -> size seen at each sync
+	files   map[string][]int64 // file name -> its size at each sync
 }
 
 func (c *fakeClock) env(appendCap int64) env {
@@ -43,7 +43,7 @@ func (c *fakeClock) env(appendCap int64) env {
 				if err != nil {
 					return err
 				}
-				c.files[f.Name()] = max(c.files[f.Name()], st.Size())
+				c.files[f.Name()] = append(c.files[f.Name()], st.Size())
 			}
 			c.t = c.t.Add(c.latency(i))
 			return nil
@@ -113,23 +113,44 @@ func TestRunVerdictPerKind(t *testing.T) {
 }
 
 // The append file grows by one block per append sample and starts over at
-// the cap; the rewrite file never grows past its allocated area.
+// the cap; the rewrite file stays at its allocated size.
 func TestRunFileSizes(t *testing.T) {
-	c := &fakeClock{t: time.Unix(0, 0), latency: constant(0), files: map[string]int64{}}
-	if _, err := run(context.Background(), Options{Dir: t.TempDir(), Duration: 4 * time.Second}, c.env(64*blockSize)); err != nil {
+	const capBlocks = 64
+	c := &fakeClock{t: time.Unix(0, 0), latency: constant(0), files: map[string][]int64{}}
+	if _, err := run(context.Background(), Options{Dir: t.TempDir(), Duration: 4 * time.Second}, c.env(capBlocks*blockSize)); err != nil {
 		t.Fatal(err)
 	}
-	var sizes []int64
-	for _, s := range c.files {
-		sizes = append(sizes, s)
+	if len(c.files) != 2 {
+		t.Fatalf("%d files synced", len(c.files))
 	}
-	if len(sizes) != 2 {
-		t.Fatalf("files %v", c.files)
-	}
-	for _, s := range sizes {
-		if s != 64*blockSize && s != rewriteSpan {
-			t.Fatalf("file sizes %v: want the append file capped at %d and the rewrite file at %d", sizes, 64*blockSize, rewriteSpan)
+	var appendSizes, rewriteSizes []int64
+	for _, sizes := range c.files {
+		if sizes[0] == rewriteSpan {
+			rewriteSizes = sizes
+		} else {
+			appendSizes = sizes
 		}
+	}
+	if len(rewriteSizes) != 200 || len(appendSizes) != 200 {
+		t.Fatalf("%d rewrite and %d append syncs, want 200 each", len(rewriteSizes), len(appendSizes))
+	}
+	for _, s := range rewriteSizes {
+		if s != rewriteSpan {
+			t.Fatalf("the rewrite file changed size: %d", s)
+		}
+	}
+	resets := 0
+	for i, s := range appendSizes {
+		want := int64(i%capBlocks+1) * blockSize // grows a block per sample, back to one block after the cap
+		if s != want {
+			t.Fatalf("append sync %d: size %d, want %d", i, s, want)
+		}
+		if i > 0 && s < appendSizes[i-1] {
+			resets++
+		}
+	}
+	if resets != 3 {
+		t.Fatalf("%d resets at the cap, want 3", resets)
 	}
 }
 
