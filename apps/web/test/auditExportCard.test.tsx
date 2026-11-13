@@ -42,7 +42,7 @@ vi.mock("../src/components/Dialog", () => ({
   useConfirm: () => fake.confirm,
 }));
 
-import { AuditExportCard, exportHealth, normalizedDestination, retentionLoosens } from "../src/features/security-controls/AuditExportCard";
+import { AuditExportCard, exportHealth, normalizedDestination, normalizedEndpoint, retentionLoosens } from "../src/features/security-controls/AuditExportCard";
 
 const NOW = Date.now();
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
@@ -165,7 +165,8 @@ describe("a live export", () => {
     expect(text(one("audit-export-lag"))).toContain("over an hour ago");
     expect(text(one("audit-export-heartbeat"))).toContain("none in the last two hours");
     expect(text(one("audit-export-retention"))).toBe("Retentionnone; no retention; versioning not verified");
-    expect(text(one("audit-export-key-flags"))).toBe("The keyobject read not determined, retention read not determined");
+    // No retention configured: nothing to say about reading it.
+    expect(text(one("audit-export-key-flags"))).toBe("The keyobject read not determined");
   });
 
   it("names a stop that needs a person: an object conflict, a format this release cannot upload", async () => {
@@ -320,6 +321,50 @@ describe("after the review of #147", () => {
     // Opening the dialog again starts empty.
     await click("audit-export-create");
     expect(one("audit-export-secret").props.value).toBe("");
+  });
+});
+
+describe("after the review of #150", () => {
+  it("uses an endpoint's origin only where the server would accept it; otherwise sends what was typed", () => {
+    expect(normalizedEndpoint(" https://S3.eu-central-1.amazonaws.com/ ")).toBe("https://s3.eu-central-1.amazonaws.com");
+    expect(normalizedEndpoint("http://127.0.0.1:9000")).toBe("http://127.0.0.1:9000");
+    // The server refuses these; its message must reach the person, unchanged.
+    for (const typed of ["https://u:p@s3.example.com", "https://s3.example.com/x", "https://s3.example.com/?q=1", "https://s3.example.com/#f", "localhost:9000", "ftp://s3.example.com", "not a url"]) {
+      expect(normalizedEndpoint(typed), typed).toBe(typed);
+    }
+  });
+
+  it("the change dialog sends an endpoint it cannot normalize as typed, so the server's refusal is shown", async () => {
+    fake.api.changeAuditExport.mockRejectedValueOnce(new Error("endpoint: must not carry user info"));
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-change");
+    await type("audit-export-endpoint", "https://u:p@s3.eu-central-1.amazonaws.com");
+    expect(all("audit-export-needs-approval")).toHaveLength(1);
+    await click("audit-export-save");
+    expect(fake.api.changeAuditExport).toHaveBeenCalledWith("acme", { expectedVersion: 3, destination: { endpoint: "https://u:p@s3.eu-central-1.amazonaws.com" } });
+    expect(text(one("audit-export-save-error"))).toContain("must not carry user info");
+    await type("audit-export-endpoint", "localhost:9000");
+    await click("audit-export-save");
+    expect(fake.api.changeAuditExport).toHaveBeenLastCalledWith("acme", { expectedVersion: 3, destination: { endpoint: "localhost:9000" } });
+  });
+
+  it("waits for a first heartbeat only while the export is active", async () => {
+    await mount({ enabled: true, export: exportOf({ state: "draining", drainDeadline: "2026-12-13T10:00:00.000Z", createdAt: iso(10 * 60_000), lastHeartbeatAt: null }) });
+    expect(text(one("audit-export-heartbeat"))).not.toContain("waiting for the first heartbeat");
+  });
+
+  it("says what the key may read about retention only when retention is configured", async () => {
+    await mount({ enabled: true, export: exportOf({ retention: null, objectLock: "not-set", keyCanRead: true, retentionReadable: null }) });
+    expect(text(one("audit-export-key-flags"))).toBe("The keycan read objects");
+    await mount({ enabled: true, export: exportOf({ keyCanRead: true, retentionReadable: null }) });
+    expect(text(one("audit-export-key-flags"))).toBe("The keycan read objects, retention read not determined");
+  });
+
+  it("announces a failed check as an alert", async () => {
+    fake.api.checkAuditExport.mockResolvedValueOnce({ ok: false, message: "This destination overwrote an existing object; audit export needs conditional writes (If-None-Match)", conditionalCreation: false, objectLock: null, keyCanRead: null, retentionReadable: null });
+    await mount({ enabled: true, export: exportOf() });
+    await click("audit-export-check");
+    expect(one("audit-export-check-result").props.role).toBe("alert");
   });
 });
 

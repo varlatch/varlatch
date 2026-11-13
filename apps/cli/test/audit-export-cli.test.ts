@@ -335,6 +335,13 @@ describe("the command line, before any request", () => {
     expect(() => checkInput(values({}), flags(), null)).toThrow(/no export to check/);
   });
 
+  it("says nothing about reading retention when none is configured", () => {
+    const key = (over: Partial<AuditExport>) => statusLines("acme", { enabled: true, export: exportOf(over) }).find((l) => l.startsWith("  key "));
+    expect(key({ retention: null, objectLock: "not-set", keyCanRead: true, retentionReadable: null })).toBe("  key           can read objects");
+    expect(key({ keyCanRead: null, retentionReadable: null })).toBe("  key           object read not determined, retention read not determined");
+    expect(key({ keyCanRead: false, retentionReadable: false })).toBe("  key           write-only, cannot read retention");
+  });
+
   it("words the status and the check without the key", () => {
     const stopped = statusLines("acme", { enabled: false, export: exportOf({ stoppedReason: "object_conflict", lastError: "An object with this name exists with other content; nothing was overwritten", unsupportedPlanFormat: 2 }) });
     expect(stopped[0]).toContain("stopped by the host operator");

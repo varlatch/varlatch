@@ -9,30 +9,32 @@ fixes.
 
 ### Security
 
-- **Audit export to object storage.** An organization can keep a copy of
-  its whole audit log in an S3-compatible bucket it controls (AWS S3,
-  Backblaze B2 or another provider that honours conditional writes), with
-  Object Lock retention nobody on the Varlatch side can shorten: `varlatch
-  audit-export create`, the Security page, or the API. Every event of the organization is
-  copied once, in order, as gzipped NDJSON batches, with an hourly
-  heartbeat object that shows at the bucket when the copy stops. Before
-  saving, Varlatch writes a test object and checks that the bucket refuses
-  to overwrite it, and reads its retention back where the key may. Creating
-  an export and lengthening or strengthening its retention need no
-  approval; a new destination, a new key, a shorter or removed retention
-  and removal always need the approval of the person asking, with a trusted
-  passkey, whatever the security controls' modes, and machine credentials
-  can never make them. The key is never shown, logged or audited. Changes
-  are refused while the organization is frozen or being deleted; delivery
-  continues. When an organization is deleted, its export delivers the final
-  events for up to 30 days, then its key is cleared; the deletion
-  confirmation, in the dashboard and in `varlatch org delete`, says so when
-  an export exists, or that the export's state could not be read. The Security page and `varlatch security status` show
-  the export to admins: whether it is delivering, its destination,
-  retention and Object Lock, the last write and heartbeat, what is pending,
-  the last error, and a short checklist. Nothing changes for an
-  organization until an admin creates an export: its Security page only
-  says it is not set up. See [Audit export](docs/reference/audit-export.md).
+- **Audit export to object storage.** An organization can keep a copy of its
+  whole audit log in an S3-compatible bucket it controls (AWS S3, Backblaze
+  B2 or another provider that honours conditional writes), with Object Lock
+  retention nobody on the Varlatch side can shorten: `varlatch audit-export
+  create`, the Security page, or the API. Every event of the organization is
+  copied once, in order, as gzipped NDJSON batches, with an hourly heartbeat
+  object that shows at the bucket when the copy stops. Before saving,
+  Varlatch writes a test object and checks that the bucket refuses to
+  overwrite it, and reads its retention back where the key may. Creating an
+  export and lengthening or strengthening its retention need no approval; a
+  new destination, a new key, a shorter or removed retention and removal
+  always need the approval of the person asking, with a trusted passkey,
+  whatever the security controls' modes, and machine credentials can never
+  make them. The key is never shown, logged or audited. Changes are refused
+  while the organization is frozen or being deleted; delivery continues.
+  When an organization is deleted, its export delivers the final events for
+  up to 30 days, then its key is cleared; the deletion confirmation, in the
+  dashboard and in `varlatch org delete`, says so when an export exists, or
+  that the export's state could not be read; the CLI says it after
+  scheduling, since its `--confirm` prompt sends no request. The Security
+  page and `varlatch security status` show the export to admins: whether it
+  is delivering, its destination, retention and Object Lock, the last write
+  and heartbeat, what is pending, the last error, and a short checklist.
+  Nothing changes for an organization until an admin creates an export: its
+  Security page only says it is not set up. See
+  [Audit export](docs/reference/audit-export.md).
 - **Incident freeze: stop all access to an organization at once.** During
   an incident an admin can freeze an organization from its Security page
   (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every

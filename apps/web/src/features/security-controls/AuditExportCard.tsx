@@ -63,12 +63,7 @@ const retentionWords = (r: AuditExportRetention | null) => (r ? `${r.mode}, ${r.
  * approval for a change the server would find empty.
  */
 export function normalizedDestination(d: AuditExportDestinationInput): AuditExportDestinationInput {
-  let endpoint = d.endpoint.trim();
-  try {
-    endpoint = new URL(endpoint).origin;
-  } catch {
-    // Not a URL: left as typed; the server refuses it.
-  }
+  const endpoint = normalizedEndpoint(d.endpoint);
   const prefix = (d.prefix ?? "").trim();
   return {
     endpoint,
@@ -77,6 +72,29 @@ export function normalizedDestination(d: AuditExportDestinationInput): AuditExpo
     prefix: prefix !== "" && !prefix.endsWith("/") ? `${prefix}/` : prefix,
     pathStyle: d.pathStyle ?? false,
   };
+}
+
+/**
+ * The endpoint's origin, as the server stores it, but only for an endpoint
+ * the server accepts: http or https, with no user info, path, query or
+ * fragment. Anything else is sent as typed, so the server's refusal says
+ * what is wrong (`https://u:p@host/x` is not quietly made `https://host`,
+ * and `localhost:9000`, whose origin is "null", is not sent as "null").
+ */
+export function normalizedEndpoint(typed: string): string {
+  const text = typed.trim();
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch {
+    return text;
+  }
+  const plain =
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    !url.username && !url.password && !url.search && !url.hash &&
+    (url.pathname === "/" || url.pathname === "") &&
+    url.origin !== "null";
+  return plain ? url.origin : text;
 }
 
 /** Whether going from `a` to `b` weakens retention: removed, shorter, or compliance to governance. */
@@ -232,7 +250,7 @@ function ExportStatus({
 }) {
   const health = exportHealth(e, enabled, now);
   // A new export has had no time for one yet: waiting, not stale.
-  const awaitingFirst = !e.lastHeartbeatAt && now - Date.parse(e.createdAt) <= HEARTBEAT_STALE_MS;
+  const awaitingFirst = e.state === "active" && !e.lastHeartbeatAt && now - Date.parse(e.createdAt) <= HEARTBEAT_STALE_MS;
   const heartbeatStale = e.state === "active" && enabled && !awaitingFirst && (!e.lastHeartbeatAt || now - Date.parse(e.lastHeartbeatAt) > HEARTBEAT_STALE_MS);
   const draining = e.state === "draining";
   return (
@@ -311,7 +329,7 @@ function ExportStatus({
         </Row>
         <Row label="The key" testId="audit-export-key-flags">
           {e.keyCanRead === null ? "object read not determined" : e.keyCanRead ? "can read objects" : "write-only"}
-          {e.retentionReadable === null ? ", retention read not determined" : e.retentionReadable ? ", can read retention" : ", cannot read retention"}
+          {e.retention === null ? "" : e.retentionReadable === null ? ", retention read not determined" : e.retentionReadable ? ", can read retention" : ", cannot read retention"}
         </Row>
         <Row label="Stream">
           <span className="font-mono text-xs">{e.streamId}</span>, delivered up to position {e.cursor}
@@ -325,7 +343,7 @@ function ExportStatus({
 function CheckResult({ result }: { result: AuditExportCheck }) {
   if (!result.ok) {
     return (
-      <Callout tone="danger" icon={<OctagonX size={16} />} title="The destination check failed" role="status" data-testid="audit-export-check-result">
+      <Callout tone="danger" icon={<OctagonX size={16} />} title="The destination check failed" role="alert" data-testid="audit-export-check-result">
         {result.message ?? "No reason given."} Nothing was saved.
       </Callout>
     );
