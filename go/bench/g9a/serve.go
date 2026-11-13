@@ -162,14 +162,15 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	})
 	// Every sample is in the event log, which the report judges from. A
 	// disk too slow for enough samples in the time given is what G9a must
-	// record, not a reason to stop: only the summary is missing then.
+	// record, not a reason to stop: only the summary is missing then. Any
+	// other error (a failed write or sync) stops the run.
 	idleSummary := idle.String()
-	if err != nil {
-		if ctx.Err() != nil {
-			return err
-		}
+	switch {
+	case errors.Is(err, diskprobe.ErrTooFewSamples):
 		idleSummary = "no summary: " + err.Error()
 		opts.Logf("idle fsync probe: %v", err)
+	case err != nil:
+		return fmt.Errorf("idle fsync probe: %w", err)
 	}
 	sys := System{
 		Target: StandInTarget,
@@ -223,6 +224,11 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	defer cancel()
 	_ = hs.Shutdown(sctx)
 	s.bg.Wait()
+	// Memory pressure up to the end counts, including during work that
+	// finished after /run/stop.
+	if s.started.Load() != 0 {
+		s.ev.emit(s.memorySample(true))
+	}
 	s.ev.emit(Event{Ev: EvRunEnd, Requests: s.requests.Load(), Errors: s.errs.Load(), BusyErrs: s.w.busy.Load()})
 	dbClosed = true
 	if err := s.db.Close(); err != nil {
@@ -323,18 +329,7 @@ func (s *server) runBackground(t0 time.Time) {
 	s.every(ctx, t0, time.Second, func() {
 		s.ev.emit(Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes})
 	})
-	s.every(ctx, t0, 5*time.Second, func() {
-		e := Event{Ev: EvMemory, RSSBytes: rssBytes()}
-		if anon, err := s.cg.anonBytes(); err == nil {
-			e.AnonBytes = anon
-		} else {
-			e.CgroupNote = err.Error()
-		}
-		if m, err := s.cg.memoryEvents(); err == nil {
-			e.MemEvents = &m
-		}
-		s.ev.emit(e)
-	})
+	s.every(ctx, t0, 5*time.Second, func() { s.ev.emit(s.memorySample(false)) })
 	s.bg.Add(1)
 	go func() {
 		defer s.bg.Done()
@@ -344,7 +339,7 @@ func (s *server) runBackground(t0 time.Time) {
 			Interval: time.Duration(p.ProbeIntervalMs) * time.Millisecond,
 			OnSample: s.fsyncSample(false),
 		})
-		if err != nil && ctx.Err() == nil {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, diskprobe.ErrTooFewSamples) {
 			s.ev.emit(Event{Ev: EvError, Err: "fsync probe under load: " + err.Error()})
 		}
 	}()
@@ -378,6 +373,25 @@ func (s *server) runBackground(t0 time.Time) {
 			s.backup(work, i)
 		}()
 	}
+}
+
+// memorySample reads the cgroup's anon memory and memory.events, and the
+// RSS. The final one is taken once the run's work has finished.
+func (s *server) memorySample(final bool) Event {
+	e := Event{Ev: EvMemory, Final: final, RSSBytes: rssBytes()}
+	var errs []string
+	if anon, err := s.cg.anonBytes(); err == nil {
+		e.AnonBytes = anon
+	} else {
+		errs = append(errs, err.Error())
+	}
+	if m, err := s.cg.memoryEvents(); err == nil {
+		e.MemEvents = &m
+	} else {
+		errs = append(errs, err.Error())
+	}
+	e.CgroupNote = strings.Join(errs, "; ")
+	return e
 }
 
 // every calls fn at first and then every period until ctx ends.

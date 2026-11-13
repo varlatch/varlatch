@@ -33,6 +33,7 @@ type Event struct {
 	Bytes      int64         `json:"bytes,omitempty"`
 	AnonBytes  int64         `json:"anonBytes,omitempty"`
 	MemEvents  *MemoryEvents `json:"memoryEvents,omitempty"`
+	Final      bool          `json:"final,omitempty"`
 	RSSBytes   int64         `json:"rssBytes,omitempty"`
 	CgroupNote string        `json:"cgroupNote,omitempty"`
 

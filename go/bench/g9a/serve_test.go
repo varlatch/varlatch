@@ -109,6 +109,9 @@ func TestServe(t *testing.T) {
 		if e.Ev == EvFsync && e.Idle {
 			seen["fsync idle"]++
 		}
+		if e.Ev == EvMemory && e.Final {
+			seen["memory final"]++
+		}
 		if e.Ev == EvConvergeEnd && e.Err != "" {
 			t.Errorf("converge: %s", e.Err)
 		}
@@ -123,7 +126,7 @@ func TestServe(t *testing.T) {
 		}
 	}
 	for _, want := range []string{EvRunStart, EvRunEnd, EvWAL, EvMemory, EvBackupStart, EvBackupEnd, EvConvergeEnd,
-		"checkpoint interval", "checkpoint snapshot", "checkpoint close", "fsync idle"} {
+		"checkpoint interval", "checkpoint snapshot", "checkpoint close", "fsync idle", "memory final"} {
 		if seen[want] == 0 {
 			t.Errorf("no %s event (saw %v)", want, seen)
 		}

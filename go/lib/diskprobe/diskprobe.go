@@ -36,6 +36,11 @@ const (
 	minSamples = 100
 )
 
+// ErrTooFewSamples means the probe ran without error but made fewer than
+// 100 samples of a kind in its time, too few for a p99: the disk is slower
+// than the interval allows. The samples were still passed to OnSample.
+var ErrTooFewSamples = errors.New("diskprobe: too few samples for a p99")
+
 // Kind is the kind of durable write a sample made.
 type Kind int
 
@@ -225,7 +230,7 @@ func run(ctx context.Context, opts Options, e env) (Result, error) {
 	}
 	for _, k := range []Kind{Append, Rewrite} {
 		if n := len(lats[k]); n < minSamples {
-			return Result{}, fmt.Errorf("diskprobe: only %d %s samples in %s; at least %d of each kind are needed for a p99", n, k, opts.Duration, minSamples)
+			return Result{}, fmt.Errorf("%w: only %d %s samples in %s; at least %d of each kind are needed", ErrTooFewSamples, n, k, opts.Duration, minSamples)
 		}
 	}
 	r := Result{Append: summarize(lats[Append]), Rewrite: summarize(lats[Rewrite]), Limit: opts.Limit}

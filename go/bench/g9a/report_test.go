@@ -79,6 +79,7 @@ func good() *fakeRun {
 		Event{T: at(16.5), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "size", Deferred: true, StartUs: at(16.5), LogFrames: -1, Checkpointed: -1, WALBefore: 1500, WALAfter: 1500},
 		Event{T: at(17.1), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "snapshot", StartUs: at(17), DurUs: 40_000, LogFrames: 60, Checkpointed: 60, WALBefore: 1700},
 		Event{T: at(17.2), Ev: EvBackupEnd, Pages: 3000, Steps: 3, DurUs: 1_200_000},
+		Event{T: at(22.9), Ev: EvMemory, Final: true, AnonBytes: 50 << 20, RSSBytes: 40 << 20, MemEvents: &MemoryEvents{Current: 200 << 20}},
 		Event{T: at(23), Ev: EvRunEnd},
 		// Close, after the run: not judged.
 		Event{T: at(24), Ev: EvCheckpoint, Mode: "TRUNCATE", Trigger: "close", StartUs: at(24), DurUs: 1000, WALBefore: 99_999},
@@ -225,6 +226,14 @@ func TestReportVerdicts(t *testing.T) {
 			r.sys.Cgroup.SwapMax = "max"
 			setMemory(r, func(e *Event) { e.MemEvents.High = 9 })
 		}, Inconclusive, "not the server's alone"},
+		{"pressure in the final reading only", func(r *fakeRun) {
+			for i := range r.events {
+				if r.events[i].Final {
+					r.events[i].MemEvents = &MemoryEvents{Max: 1, Current: 1 << 20}
+				}
+			}
+		}, Fail, "memory.events high 0, max 1"},
+		{"no final memory reading", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Final }) }, Inconclusive, "no final memory.events reading"},
 		{"no memory.current", func(r *fakeRun) { setMemory(r, func(e *Event) { e.MemEvents = nil }) }, Inconclusive, "no memory.events"},
 		{"unknown phase", func(r *fakeRun) { r.reqs[0].Phase = "other" }, Fail, `phase "other"`},
 		{"no run end", func(r *fakeRun) { r.eventsWithout(func(e Event) bool { return e.Ev == EvRunEnd }) }, Fail, "did not finish"},

@@ -194,17 +194,19 @@ func TestRunCancelledBefore(t *testing.T) {
 func TestRunTooFewSamples(t *testing.T) {
 	c := &fakeClock{t: time.Unix(0, 0), latency: constant(time.Second)}
 	_, err := run(context.Background(), Options{Dir: t.TempDir(), Duration: 50 * time.Second}, c.env(appendCap))
-	if err == nil || !strings.Contains(err.Error(), "samples") {
+	if !errors.Is(err, ErrTooFewSamples) || !strings.Contains(err.Error(), "only 25 append samples") {
 		t.Fatalf("got %v", err)
 	}
 }
 
+// Operational errors are not ErrTooFewSamples, which the G9a harness
+// tolerates.
 func TestRunErrors(t *testing.T) {
-	if _, err := Run(context.Background(), Options{}); err == nil {
-		t.Fatal("ran without a directory")
+	if _, err := Run(context.Background(), Options{}); err == nil || errors.Is(err, ErrTooFewSamples) {
+		t.Fatalf("ran without a directory: %v", err)
 	}
-	if _, err := Run(context.Background(), Options{Dir: filepath.Join(t.TempDir(), "missing")}); err == nil {
-		t.Fatal("ran in a missing directory")
+	if _, err := Run(context.Background(), Options{Dir: filepath.Join(t.TempDir(), "missing")}); err == nil || errors.Is(err, ErrTooFewSamples) {
+		t.Fatalf("ran in a missing directory: %v", err)
 	}
 }
 

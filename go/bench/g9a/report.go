@@ -446,12 +446,16 @@ func (r *Report) memory(events []Event, start int64) {
 	after := start + seconds(r.Plan.Thresholds.MemoryAfterSeconds).Microseconds()
 	var anon, rss, current int64
 	samples := 0
+	final := false
 	var me MemoryEvents
 	for _, e := range events {
 		if e.Ev != EvMemory {
 			continue
 		}
 		rss = max(rss, e.RSSBytes)
+		if e.Final && e.MemEvents != nil {
+			final = true
+		}
 		if m := e.MemEvents; m != nil {
 			me = MemoryEvents{High: max(me.High, m.High), Max: max(me.Max, m.Max), OOM: max(me.OOM, m.OOM), OOMKill: max(me.OOMKill, m.OOMKill)}
 			current = max(current, m.Current)
@@ -476,6 +480,9 @@ func (r *Report) memory(events []Event, start int64) {
 		r.missing("no memory.events or memory.current samples")
 	}
 	own := samples > 0 && cg.MemoryMax == strconv.Itoa(1<<30) && cg.SwapMax == "0"
+	if own && !final {
+		r.missing("no final memory.events reading after the run's work finished")
+	}
 	if own && r.MemoryMaxMiB > r.Plan.Thresholds.MemoryMiB {
 		r.fail("anon memory reached %.1f MiB, over %.0f MiB", r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB)
 	}
