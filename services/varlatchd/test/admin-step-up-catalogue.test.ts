@@ -251,98 +251,159 @@ const WRITERS: Record<string, string> = {
 };
 
 /**
- * Every caller in src/ of the protected domain functions, and of the
- * credential primitive. app.ts callers are its routes, which the runtime
- * sweep below covers: `http/app.ts` stands for any of them. A new caller
- * fails until it is classified (a host command reaching a protected
- * function would pass noApprovalGate, which throws ApprovalNeeded under
- * enforce and so cannot bypass it).
+ * Every caller in src/ of the protected domain functions, of the route
+ * helpers that call them, and of the credential primitive, each by file and
+ * enclosing route ("METHOD /path"), helper closure or function (annotate).
+ * Never by file alone: a call added to any other route, helper or function,
+ * an exempt one included, is a new entry and fails until it is classified
+ * (and the runtime sweep below exercises the protected routes). A host
+ * command reaching a protected function would pass noApprovalGate, which
+ * throws ApprovalNeeded under enforce and so cannot bypass it.
  */
+const inApp = (route: string) => `http/app.ts ${route}`;
 const CALLERS: Record<string, string[]> = {
-  createMachineIdentity: ["http/app.ts"],
-  issueMachineCredential: ["http/app.ts"],
-  reactivateIdentity: ["http/app.ts"],
-  createOidcBinding: ["http/app.ts"],
-  revokeOidcBinding: ["http/app.ts"],
-  createRole: ["http/app.ts"],
-  updateRole: ["http/app.ts"],
-  deleteRole: ["http/app.ts"],
-  createGroup: ["http/app.ts"],
-  updateGroup: ["http/app.ts"],
-  deleteGroup: ["http/app.ts"],
-  addGroupMember: ["http/app.ts"],
-  removeGroupMember: ["http/app.ts"],
-  addTeamProject: ["http/app.ts"],
-  removeTeamProject: ["http/app.ts"],
-  issueInviteGrant: ["http/app.ts"],
-  changeMemberRole: ["http/app.ts"],
-  removeMember: ["http/app.ts"],
+  createMachineIdentity: [inApp(`POST ${ORG}/identities`)],
+  // Through the non-broker branch of the credentials route (the broker's mints an agent-run credential: exempt).
+  issueMachineCredential: [inApp("issueServiceCredential")],
+  issueServiceCredential: [inApp(`POST ${ORG}/identities/:identity/credentials`)],
+  reactivateIdentity: [inApp(`POST ${ORG}/identities/:identity/reactivate`)],
+  createOidcBinding: [inApp(`POST ${ORG}/identities/:identity/oidc-bindings`)],
+  revokeOidcBinding: [inApp(`DELETE ${ORG}/identities/:identity/oidc-bindings/:binding`)],
+  createRole: [inApp(`POST ${ORG}/roles`)],
+  updateRole: [inApp(`PATCH ${ORG}/roles/:role`)],
+  deleteRole: [inApp(`DELETE ${ORG}/roles/:role`)],
+  // Groups and teams share their writers through one helper per operation.
+  createGroup: [inApp("createGroupRoute")],
+  createGroupRoute: [inApp(`POST ${ORG}/groups`), inApp(`POST ${ORG}/teams`)],
+  updateGroup: [inApp("updateGroupRoute")],
+  updateGroupRoute: [inApp(`PATCH ${ORG}/groups/:group`), inApp(`PATCH ${ORG}/teams/:team`)],
+  deleteGroup: [inApp("deleteGroupRoute")],
+  deleteGroupRoute: [inApp(`DELETE ${ORG}/groups/:group`), inApp(`DELETE ${ORG}/teams/:team`)],
+  addGroupMember: [inApp("addMemberRoute")],
+  addMemberRoute: [inApp(`POST ${ORG}/groups/:group/members`), inApp(`POST ${ORG}/teams/:team/members`)],
+  removeGroupMember: [inApp("removeMemberRoute")],
+  removeMemberRoute: [inApp(`DELETE ${ORG}/groups/:group/members/:identity`), inApp(`DELETE ${ORG}/teams/:team/members/:identity`)],
+  addTeamProject: [inApp(`POST ${ORG}/teams/:team/projects`)],
+  removeTeamProject: [inApp(`DELETE ${ORG}/teams/:team/projects/:project`)],
+  issueInviteGrant: [inApp(`POST ${ORG}/invitations`)],
+  changeMemberRole: [inApp(`PATCH ${ORG}/members/:member`)],
+  removeMember: [inApp(`DELETE ${ORG}/members/:member`)],
   // Leaving (removeMember's exempt branch) and the deletion worker's finalization.
   endMembership: ["domain/members.ts removeMember", "domain/orgdeletion.ts finalizeDeletion"],
-  createWebhook: ["http/app.ts"],
-  updateWebhook: ["http/app.ts"],
-  revokeWebhook: ["http/app.ts"],
+  createWebhook: [inApp(`POST ${ORG}/webhooks`)],
+  updateWebhook: [inApp(`PATCH ${ORG}/webhooks/:webhook`)],
+  revokeWebhook: [inApp(`DELETE ${ORG}/webhooks/:webhook`)],
   // net/outbound.ts's createConnection is node:net's, for tests' outbound resolver: another function.
-  createConnection: ["http/app.ts", "net/outbound.ts setOutboundResolverForTests"],
-  createAppConnection: ["http/app.ts"],
-  replaceConnectionCredential: ["http/app.ts"],
-  revokeConnection: ["http/app.ts"],
+  createConnection: [inApp(`POST ${ORG}/platform-connections`), "net/outbound.ts setOutboundResolverForTests"],
+  createAppConnection: [inApp(`POST ${ORG}/platform-connections`)],
+  replaceConnectionCredential: [inApp(`POST ${ORG}/platform-connections/:connection/credential`)],
+  revokeConnection: [inApp(`DELETE ${ORG}/platform-connections/:connection`)],
   attachInTx: ["domain/githubapps.ts attachRegistration", "domain/githubapps.ts completeRegistration"],
-  attachRegistration: ["http/app.ts"],
-  completeRegistration: ["http/app.ts"],
-  importGitHubApp: ["http/app.ts"],
-  rotateGitHubAppKey: ["http/app.ts"],
-  removeGitHubApp: ["http/app.ts"],
-  deleteProject: ["http/app.ts"],
-  scheduleDeletion: ["http/app.ts"],
-  exportGuard: ["http/app.ts"],
+  attachRegistration: [inApp(`POST ${ORG}/github-app/registrations/:registration/attach`)],
+  completeRegistration: [inApp(`POST ${ORG}/github-app/registrations/complete`)],
+  importGitHubApp: [inApp(`POST ${ORG}/github-app/import`)],
+  rotateGitHubAppKey: [inApp(`POST ${ORG}/github-app/key`)],
+  removeGitHubApp: [inApp(`DELETE ${ORG}/github-app`)],
+  deleteProject: [inApp(`DELETE ${ORG}/projects/:project`)],
+  scheduleDeletion: [inApp(`POST ${ORG}/deletion`)],
+  exportGuard: [inApp(`POST ${ORG}/projects/:project/environments/:environment/disclosures`)],
   // A service credential is issued only through createMachineIdentity and
-  // issueMachineCredential (protected); the others issue a person's
+  // issueMachineCredential (protected). The others issue a person's
   // credential (host commands, device sign-in, the CLI handoff, the
-  // dashboard bearer), an OIDC-exchanged or an agent-run one (exempt by
-  // Decision 5; the broker's call to the credentials route).
+  // dashboard bearer), an OIDC-exchanged one, or an agent-run one: the
+  // broker's branch of the credentials route (exempt by Decision 5).
   issueCredential: [
     "cli.ts adminCommand",
     "domain/device-sign-in.ts pollOnce",
     "domain/identities.ts createMachineIdentity",
     "domain/identities.ts issueMachineCredential",
     "domain/oidc.ts exchangeOidcToken",
-    "http/app.ts",
+    inApp("POST /auth/varlatch-token"),
+    inApp("POST /v1/me/credentials/cli"),
+    inApp(`POST ${ORG}/identities/:identity/credentials`),
   ],
 };
 
 const SRC = fileURLToPath(new URL("../src/", import.meta.url));
-const DECLARATION = /^(?:export )?(?:async )?function\*? (\w+)|^(?:export )?const (\w+) = (?:async )?\(/;
-const ROUTE = /^\s*app\.(get|post|put|patch|delete)\(\s*"([^"]+)"/;
 
-/** Every .ts file under src/ (migrations aside), with its lines and, per line, the enclosing function (app.ts: its route). */
-function sources(): { file: string; lines: { text: string; within: string }[] }[] {
-  const out: { file: string; lines: { text: string; within: string }[] }[] = [];
+/** A source file under src/: its path there and its text. */
+interface Source {
+  file: string;
+  text: string;
+}
+
+/** Every .ts file under src/, migrations aside. */
+function srcFiles(): Source[] {
+  const out: Source[] = [];
   const walk = (dir: string) => {
     for (const e of readdirSync(`${SRC}${dir}`, { withFileTypes: true })) {
       const rel = dir ? `${dir}/${e.name}` : e.name;
       if (e.isDirectory()) {
         if (rel !== "db/migrations") walk(rel);
       } else if (rel.endsWith(".ts")) {
-        let within = "(top)";
-        const raw = readFileSync(`${SRC}${rel}`, "utf8").split("\n");
-        out.push({
-          file: rel,
-          lines: raw.map((text, i) => {
-            const d = text.match(DECLARATION);
-            const r = text.match(ROUTE);
-            const multi = /^\s*app\.(get|post|put|patch|delete)\($/.exec(text);
-            if (d) within = (d[1] ?? d[2])!;
-            else if (r) within = `${r[1]!.toUpperCase()} ${r[2]}`;
-            else if (multi) within = `${multi[1]!.toUpperCase()} ${raw[i + 1]?.match(/"([^"]+)"/)?.[1] ?? "?"}`;
-            return { text, within };
-          }),
-        });
+        out.push({ file: rel, text: readFileSync(`${SRC}${rel}`, "utf8") });
       }
     }
   };
   walk("");
   return out;
+}
+
+/** A top-level function: `function f(`, `export async function f(`, `export const f = (`. */
+const DECLARATION = /^(?:export )?(?:async )?function\*? (\w+)|^(?:export )?const (\w+) = (?:async )?\(/;
+/** A route registered on one line: `app.post("/v1/...", ...`. */
+const ROUTE = /^\s*app\.(get|post|put|patch|delete)\(\s*"([^"]+)"/;
+/** A route registered over several lines: `app.post(` with its path on the next line. */
+const ROUTE_OPEN = /^\s*app\.(get|post|put|patch|delete)\($/;
+/**
+ * A helper closure inside a route file's builder (http/app.ts buildApp),
+ * at its two-space indent: `const issueServiceCredential = async (`,
+ * `const createGroupRoute = (kind: ...) => async (c) => {`. Several
+ * routes may share one; its callers are listed in CALLERS like any
+ * function's.
+ */
+const HELPER = /^  const (\w+) = (?:async )?(?:<[^>]*>)?\((?!await\b)|^  (?:async )?function (\w+)\(/;
+
+/**
+ * Each line of a source with what encloses it: its top-level function, or
+ * in a route file (src/http/) the route registration or helper closure it
+ * belongs to, as "METHOD /path" or the helper's name. Line-based: the
+ * nearest such start above the line.
+ */
+function annotate(src: Source): { text: string; within: string }[] {
+  const raw = src.text.split("\n");
+  const routeFile = src.file.startsWith("http/");
+  let within = "(top)";
+  return raw.map((text, i) => {
+    const d = text.match(DECLARATION);
+    const r = routeFile ? text.match(ROUTE) : null;
+    const open = routeFile ? ROUTE_OPEN.exec(text) : null;
+    const h = routeFile ? text.match(HELPER) : null;
+    if (d) within = (d[1] ?? d[2])!;
+    else if (r) within = `${r[1]!.toUpperCase()} ${r[2]}`;
+    else if (open) within = `${open[1]!.toUpperCase()} ${raw[i + 1]?.match(/"([^"]+)"/)?.[1] ?? "?"}`;
+    else if (h) within = (h[1] ?? h[2])!;
+    return { text, within };
+  });
+}
+
+/**
+ * Every call of each named function in `sources`, as "file enclosing"
+ * (annotate): never collapsed to the file, so a call added to any other
+ * route, helper or function is a new entry. A definition and comments are
+ * not calls.
+ */
+function callersIn(sources: readonly Source[], fns: readonly string[]): Record<string, string[]> {
+  const found: Record<string, Set<string>> = Object.fromEntries(fns.map((f) => [f, new Set<string>()]));
+  for (const src of sources) {
+    for (const { text, within } of annotate(src)) {
+      if (/^\s*(?:\/\/|\*|\/\*)/.test(text) || /^import\b/.test(text)) continue;
+      for (const fn of fns) {
+        if (new RegExp(`(?<![\\w.])${fn}\\(`).test(text) && !new RegExp(`function ${fn}\\(`).test(text)) found[fn]!.add(`${src.file} ${within}`);
+      }
+    }
+  }
+  return Object.fromEntries(Object.entries(found).map(([fn, set]) => [fn, [...set].sort()]));
 }
 
 const WRITTEN_TABLES =
@@ -776,27 +837,41 @@ describe("alternate callers", () => {
   it("every writer in src/ of what the operations change is classified", () => {
     const write = new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`);
     const found = new Set<string>();
-    for (const { file, lines } of sources()) {
-      for (const { text, within } of lines) if (write.test(text)) found.add(`${file} ${within}`);
+    for (const src of srcFiles()) {
+      for (const { text, within } of annotate(src)) if (write.test(text)) found.add(`${src.file} ${within}`);
     }
     expect([...found].sort()).toEqual(Object.keys(WRITERS).sort());
   });
 
-  it("every caller of a protected domain function is known", () => {
-    const callers: Record<string, Set<string>> = Object.fromEntries(Object.keys(CALLERS).map((f) => [f, new Set<string>()]));
-    for (const { file, lines } of sources()) {
-      for (const { text, within } of lines) {
-        if (/^\s*(?:\/\/|\*|\/\*)/.test(text) || /^import\b/.test(text)) continue;
-        for (const fn of Object.keys(CALLERS)) {
-          if (new RegExp(`(?<![\\w.])${fn}\\(`).test(text) && !new RegExp(`function ${fn}\\(`).test(text)) {
-            callers[fn]!.add(file === "http/app.ts" ? "http/app.ts" : `${file} ${within}`);
-          }
-        }
-      }
-    }
-    expect(Object.fromEntries(Object.entries(callers).map(([fn, s]) => [fn, [...s].sort()]))).toEqual(
-      Object.fromEntries(Object.entries(CALLERS).map(([fn, list]) => [fn, [...list].sort()])),
+  it("every caller of a protected domain function is known, by its route, helper or function", () => {
+    const expected = Object.fromEntries(Object.entries(CALLERS).map(([fn, list]) => [fn, [...list].sort()]));
+    expect(callersIn(srcFiles(), Object.keys(CALLERS))).toEqual(expected);
+  });
+
+  it("would fail if a route gained a call to a protected function, which a file-level inventory would not see", () => {
+    const sources = srcFiles();
+    const appTs = sources.find((s) => s.file === "http/app.ts")!;
+    // An exempt route (renaming a machine identity) that also issues a raw credential and creates a role.
+    const route = 'app.patch("/v1/organizations/:org/identities/:identity", async (c) => {';
+    expect(appTs.text).toContain(route);
+    const injected = appTs.text.replace(
+      route,
+      `${route}\n    await issueCredential(ctx.db, { identityId: "x", kind: "service" });\n    await createRole(ctx, gate, org.id, body, {});`,
     );
+    const tampered = sources.map((s) => (s === appTs ? { ...s, text: injected } : s));
+    const fns = Object.keys(CALLERS);
+    const before = callersIn(sources, fns);
+    const after = callersIn(tampered, fns);
+    const rename = `http/app.ts PATCH ${ORG}/identities/:identity`;
+    expect(before.issueCredential).not.toContain(rename);
+    expect(after.issueCredential).toContain(rename);
+    expect(after.createRole).toContain(rename);
+    expect(after).not.toEqual(before);
+    // The inventory before this fix collapsed every app.ts caller into one
+    // entry: the same tampering left it unchanged.
+    const byFile = (m: Record<string, string[]>) =>
+      Object.fromEntries(Object.entries(m).map(([fn, list]) => [fn, [...new Set(list.map((c) => (c.startsWith("http/app.ts ") ? "http/app.ts" : c)))].sort()]));
+    expect(byFile(after)).toEqual(byFile(before));
   });
 });
 
