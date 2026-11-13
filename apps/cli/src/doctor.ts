@@ -5,6 +5,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { EMBEDDED_RELEASE } from "@varlatch/backup";
 import { compareVersions, parseManifest, type ReleaseManifest } from "./upgrade.js";
+import { printable, safeVersion } from "./safeText.js";
 
 /**
  * `varlatch doctor` (ADR-0035 Decision 8): read-only Installation Health for
@@ -536,7 +537,7 @@ export function formatGate(verdict: GateVerdict): string {
     : ["Upgrade gate: BLOCKED — these must pass (unknown blocks like fail):", ...verdict.blocking.flatMap(line)];
   if (verdict.outsideGate.length) lines.push("Not measurable from this host (check after the upgrade):", ...verdict.outsideGate.map((c) => `  ? ${c.title}: ${c.detail ?? c.status}`));
   if (verdict.advisory.length) lines.push("Advisory (never blocks):", ...verdict.advisory.map((c) => `  ! ${c.title}: ${c.detail ?? c.status}`));
-  return lines.join("\n");
+  return lines.map(printable).join("\n");
 }
 
 export function doctorExitCode(report: DoctorReport): number {
@@ -545,7 +546,7 @@ export function doctorExitCode(report: DoctorReport): number {
 
 export function formatDoctor(report: DoctorReport): string {
   const lines = [
-    `Varlatch doctor — ${report.dir}${report.facts ? ` (server ${report.facts.serverVersion})` : ""}`,
+    `Varlatch doctor — ${report.dir}${report.facts ? ` (server ${safeVersion(report.facts.serverVersion) ?? "an older release"})` : ""}`,
     "",
   ];
   const mark = (c: Check) => (c.status === "pass" ? "✓" : c.status === "unknown" ? "?" : c.class === "mandatory" ? "✗" : "!");
@@ -561,5 +562,6 @@ export function formatDoctor(report: DoctorReport): string {
   const advisory = report.checks.filter((c) => c.status === "fail" && c.class === "advisory").length;
   const unknown = report.checks.filter((c) => c.status === "unknown").length;
   lines.push("", `${failed} mandatory failure(s), ${advisory} advisory finding(s), ${unknown} unknown. Read-only: nothing was changed.`);
-  return lines.join("\n");
+  // Checks come from varlatchd as well as from here, one line each: escaped (issue #119).
+  return lines.map(printable).join("\n");
 }

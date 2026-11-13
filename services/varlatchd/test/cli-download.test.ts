@@ -71,7 +71,10 @@ describe("the scripts", () => {
     const ps1 = installPs1(download);
     expect(ps1).toContain("$Origin = 'https://vault.example.com'");
     expect(ps1).toContain("-MaximumRedirection 0");
-    expect(ps1).toContain("[Environment]::GetEnvironmentVariable('Path', 'User')");
+    // The user PATH is edited as stored (ADR-0058; see test-installers.mjs).
+    expect(ps1).toContain("$Key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)");
+    expect(ps1).not.toContain("SetEnvironmentVariable('Path'");
+    expect(ps1).toContain("[Environment]::SetEnvironmentVariable($Refresh, [NullString]::Value, 'User')");
   });
 
   it("refuse a value that could break out of its quotes", () => {

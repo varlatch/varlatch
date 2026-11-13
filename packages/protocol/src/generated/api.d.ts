@@ -673,6 +673,60 @@ export interface paths {
         patch: operations["changeSecurityControl"];
         trace?: never;
     };
+    "/organizations/{org}/audit-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's audit export to object storage (capability audit.storage-export, ADR-0056): the live one, else the most recent, else null, with its status (lag, last write and error, failing since, the destination's checks, Object Lock "verified" or "accepted"), and whether the host operator left audit export on (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no export can be created). Never the key. Needs organization.manage. Allowed while the Organization is frozen for an incident. */
+        get: operations["getAuditExport"];
+        put?: never;
+        /** Create the Organization's audit export (ADR-0056 Decisions 1, 6 and 9): every audit event of the Organization, in order, copied to an S3-compatible bucket with conditional writes and optional Object Lock retention. Before saving, a probe writes a test object under the prefix, checks that a second write of its name is refused (If-None-Match), and reads it and its retention back where the key may; a failing probe is VALIDATION_FAILED with fixed wording and saves nothing. The endpoint is checked against the outbound policy first. from "beginning" (the default) backfills the whole log; "now" starts at the creation event. At most one live export per Organization. Needs no approval: creating only adds protection. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Refused with PERMISSION_DENIED (details.reason audit-export-off) when the host operator turned audit export off. Records audit_export.created and audit_export.stream_started. */
+        post: operations["createAuditExport"];
+        /** Remove the live export (ADR-0056 Decision 9): always needs the requester's step-up approval (operation audit_export.remove). In one transaction the export becomes removed, its pending object is dropped and its key is cleared; what was delivered stays at the destination. expectedVersion (query) must be the export's current version. Allowed when the host operator turned audit export off. RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.removed. */
+        delete: operations["removeAuditExport"];
+        options?: never;
+        head?: never;
+        /** Change the live export's destination or retention (ADR-0056 Decision 9). The change is compared field by field: a destination change, a shorter or removed retention, or compliance to governance needs the requester's step-up approval (operation audit_export.change), always, whatever the Security Controls' modes; without the Varlatch-Approval header the answer is STEP_UP_REQUIRED, and the client repeats the identical request with it once the person approved. Setting, lengthening or strengthening retention needs none. A destination change must pass the probe (checked only after the approval is found, so an unapproved request sends nothing) and starts a new stream at the current position. expectedVersion must be the export's current version (VERSION_CONFLICT otherwise). RESOURCE_NOT_FOUND when the Organization has no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.changed (metadata.loosened). */
+        patch: operations["changeAuditExport"];
+        trace?: never;
+    };
+    "/organizations/{org}/audit-export/credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the live export's key (ADR-0056 Decision 8): always needs the requester's step-up approval (operation audit_export.change; the approver's summary never names the key). The stream and any pending object are kept and delivered with the new key. Not probed: run the check with the new key first. The key is never returned. RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.credential_replaced. */
+        put: operations["replaceAuditExportCredential"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/audit-export/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the destination probe without saving anything (ADR-0056 Decision 6), as connection checks do: with the key given, or without one with the live export's stored key, which is only sent to that export's own destination. A probe that does not pass answers 200 with ok false and fixed wording; an endpoint the outbound policy refuses too. Records nothing (an outbound refusal is recorded by the policy). Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. */
+        post: operations["checkAuditExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/identities/{identity}/credentials/{credential}": {
         parameters: {
             query?: never;
@@ -1858,9 +1912,46 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Complete a registration with the state and GitHub's code. The state is consumed once, by the caller who started it (CONSUMED and EXPIRED answer 410). The App is stored only when GitHub created it on the intended account: GitHub creates it on the person's own account when they may not register Apps on the intended one, and then the App is refused, nothing is kept, and the answer says where to delete it (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the state is released for another attempt. */
+        /**
+         * Complete a registration with the state and GitHub's code. The state is consumed once, by the caller who started it (CONSUMED and EXPIRED answer 410). The App is stored only when GitHub created it on the intended account: GitHub creates it on the person's own account when they may not register Apps on the intended one, and then the App is refused, nothing is kept, and the answer says where to delete it (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the state is released for another attempt.
+         *     Registration is staged (ADR-0054 amendment D): GitHub's answer is stored as a pending conversion on the registration, then attached in the same request when no approval is needed. When the Organization's admin-step-up control asks for one, the answer is STEP_UP_REQUIRED for the registration (github_app.register), its details naming `registrationId`; the client repeats the attachment (`…/registrations/{registration}/attach`) with the approval, never this callback. A repeat of the callback answers CONSUMED with `registrationId` and `pending` in its details.
+         */
         post: operations["completeGitHubAppRegistration"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations/{registration}/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach a pending registration (ADR-0054 amendment D): the App GitHub handed over is stored for the Organization and the pending key is deleted. A protected operation, github_app.register: under admin-step-up's enforce it needs the caller's approval, bound to the registration and the App's id, slug, client id and owner. Only the person who started the registration may attach it; for anyone else it is not found. A pending conversion that expired, was discarded or already ended, an Organization that got another App, or an App another Organization uses end the registration: its key is deleted and the answer is the refusal. Calls nothing outside Varlatch. */
+        post: operations["attachGitHubAppRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/github-app/registrations/{registration}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard a pending registration: its key is deleted and sync.github_app_registration_abandoned recorded. The App stays on GitHub; `deleteUrl` is where its owner deletes it. One that is no longer pending changes nothing (`discarded: false`), and `state` says why, decided under the registration's lock: `attached` (the App is this Organization's, so there is no `deleteUrl`), `ended` (discarded, expired or refused before) or `waiting` (GitHub has not handed it over yet). Only the person who started it may discard it. */
+        delete: operations["discardGitHubAppRegistration"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3351,6 +3442,153 @@ export interface components {
             /** @description The change weakened the control and used an approval. */
             loosened: boolean;
         };
+        /** @description Where an audit export writes (ADR-0056 Decision 1). The endpoint is a scheme, host and optional port. */
+        AuditExportDestination: {
+            /** @example https://s3.eu-central-1.amazonaws.com */
+            endpoint: string;
+            region: string;
+            bucket: string;
+            /** @description Empty, or ending with /. Objects go under <prefix>varlatch-audit/<organization>/<stream>/. */
+            prefix: string;
+            pathStyle: boolean;
+        };
+        AuditExportDestinationInput: {
+            /** @description https; plain http only to a destination the host operator's outbound allow list names. */
+            endpoint: string;
+            region: string;
+            bucket: string;
+            /** @default  */
+            prefix: string;
+            /** @default false */
+            pathStyle: boolean;
+        };
+        /** @description An S3 access key. Write-only; never returned, logged or audited. */
+        AuditExportCredentialInput: {
+            accessKeyId: string;
+            secretAccessKey: string;
+        };
+        /** @description Object Lock retention for every object written, from when it was planned (ADR-0056 Decision 7). */
+        AuditExportRetention: {
+            /** @enum {string} */
+            mode: "compliance" | "governance";
+            days: number;
+        };
+        AuditExportCreateInput: {
+            destination: components["schemas"]["AuditExportDestinationInput"];
+            credential: components["schemas"]["AuditExportCredentialInput"];
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+            /**
+             * @default beginning
+             * @enum {string}
+             */
+            from: "beginning" | "now";
+        };
+        AuditExportChangeInput: {
+            expectedVersion: number;
+            /** @description Only the fields given change. */
+            destination?: {
+                endpoint?: string;
+                region?: string;
+                bucket?: string;
+                prefix?: string;
+                pathStyle?: boolean;
+            };
+            /** @description Absent keeps the retention; null removes it. */
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+        };
+        AuditExportCredentialChange: {
+            expectedVersion: number;
+            credential: components["schemas"]["AuditExportCredentialInput"];
+        };
+        AuditExportCheckInput: {
+            destination: components["schemas"]["AuditExportDestinationInput"];
+            credential?: components["schemas"]["AuditExportCredentialInput"];
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+        };
+        /** @description What the destination probe found (ADR-0056 Decision 6). message is fixed wording, never the store's own text. */
+        AuditExportCheck: {
+            ok: boolean;
+            message: string | null;
+            /** @description A second write of the same name was refused (If-None-Match). */
+            conditionalCreation: boolean | null;
+            /**
+             * @description verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
+             * @enum {string|null}
+             */
+            objectLock: "verified" | "accepted" | "not-set" | null;
+            /** @description The key read the test object (HEAD); null when undetermined. */
+            keyCanRead: boolean | null;
+            /** @description The key read the test object's retention; null when undetermined or no retention was asked. */
+            retentionReadable: boolean | null;
+        };
+        /** @description An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key. */
+        AuditExport: {
+            id: string;
+            organizationId: string;
+            destination: components["schemas"]["AuditExportDestination"];
+            retention: components["schemas"]["AuditExportRetention"] | null;
+            /**
+             * @description draining after the Organization's deletion, until the final events are delivered (completed) or the 30-day deadline passes (abandoned).
+             * @enum {string}
+             */
+            state: "active" | "draining" | "removed" | "completed" | "abandoned";
+            streamId: string;
+            /** @description The audit position delivered up to (installation-wide positions, as a decimal string). */
+            cursor: string;
+            version: number;
+            /** Format: date-time */
+            lastAttemptAt: string | null;
+            /** Format: date-time */
+            lastSuccessAt: string | null;
+            /**
+             * Format: date-time
+             * @description The hour of the last heartbeat object delivered. No newer heartbeat in the bucket for two hours means the copy stopped.
+             */
+            lastHeartbeatAt: string | null;
+            /** @description Fixed wording only (the storage error table or the outbound policy). */
+            lastError: string | null;
+            /** Format: date-time */
+            failingSince: string | null;
+            keyCanRead: boolean | null;
+            retentionReadable: boolean | null;
+            /**
+             * @description The export stopped until a person acts.
+             * @enum {string|null}
+             */
+            stoppedReason: "object_conflict" | "unsupported_format" | null;
+            /** Format: date-time */
+            conditionalCheckedAt: string | null;
+            lockVerified: boolean | null;
+            /** Format: date-time */
+            drainDeadline: string | null;
+            createdBy: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            removedAt: string | null;
+            /** @description Events of the Organization not yet exported and the oldest's time; null once the export ended. */
+            lag: {
+                pending: number;
+                /** Format: date-time */
+                oldestPendingAt: string | null;
+            } | null;
+            /** @enum {string} */
+            objectLock: "verified" | "accepted" | "not-set";
+            /** @description A pending object's format this release cannot upload (varlatchd admin audit-export discard-plan). */
+            unsupportedPlanFormat: number | null;
+        };
+        AuditExportStatus: {
+            /** @description False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off). */
+            enabled: boolean;
+            export: components["schemas"]["AuditExport"] | null;
+        };
+        AuditExportChange: {
+            export: components["schemas"]["AuditExport"];
+            /** @description False when the request matched the current state; nothing was recorded. */
+            changed: boolean;
+            /** @description The change needed and used an approval. */
+            loosened: boolean;
+        };
         ApprovalChange: {
             /** @description What changes, such as mode or maxTtlSeconds. */
             field: string;
@@ -3365,7 +3603,7 @@ export interface components {
              * @description The semantic operation, not the HTTP route.
              * @enum {string}
              */
-            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke" | "identity.create" | "credential.issue" | "identity.reactivate" | "oidc_binding.create" | "oidc_binding.delete" | "grant.create" | "grant.replace" | "grant.revoke" | "role.create" | "role.update" | "role.delete" | "group.create" | "group.update" | "group.delete" | "group.member_add" | "group.member_remove" | "team.create" | "team.update" | "team.delete" | "team.member_add" | "team.member_remove" | "team.project_add" | "team.project_remove" | "member.invite_admin" | "member.promote" | "member.demote" | "member.remove";
+            operation: "security_control.change" | "passkey.remove" | "organization.unfreeze" | "requirement.update" | "requirement.revoke" | "identity.create" | "credential.issue" | "identity.reactivate" | "oidc_binding.create" | "oidc_binding.delete" | "grant.create" | "grant.replace" | "grant.revoke" | "role.create" | "role.update" | "role.delete" | "group.create" | "group.update" | "group.delete" | "group.member_add" | "group.member_remove" | "team.create" | "team.update" | "team.delete" | "team.member_add" | "team.member_remove" | "team.project_add" | "team.project_remove" | "member.invite_admin" | "member.promote" | "member.demote" | "member.remove" | "webhook.create" | "webhook.update" | "webhook.delete" | "connection.create" | "connection.replace_credential" | "connection.delete" | "github_app.register" | "github_app.import" | "github_app.replace_key" | "github_app.remove" | "project.delete" | "organization.delete" | "secret.export" | "audit_export.change" | "audit_export.remove";
             /** @description The Organization it acts in; null for an account operation such as passkey.remove. */
             organization: {
                 id: string;
@@ -3556,6 +3794,8 @@ export interface components {
             updatedAt: string | null;
         };
         GitHubAppRegistrationStart: {
+            /** @description The registration's stable id: what an attachment's approval is bound to (ADR-0054 amendment D) */
+            id: string;
             /** @description Single-use; only its hash is stored */
             state: string;
             /**
@@ -3580,10 +3820,10 @@ export interface components {
             /** @enum {string} */
             outcome: "refused";
             /**
-             * @description owner-mismatch: GitHub created the App on another account (the person's own, when they may not register Apps on the intended one). organization-has-app: the Organization got an App meanwhile. app-in-use: another Organization has this App.
+             * @description owner-mismatch: GitHub created the App on another account (the person's own, when they may not register Apps on the intended one). organization-has-app: the Organization got an App meanwhile. app-in-use: another Organization has this App. expired: a pending conversion was not attached within its hour (ADR-0054 amendment D). registration-ended: the registration was already attached, discarded or refused.
              * @enum {string}
              */
-            reason: "owner-mismatch" | "organization-has-app" | "app-in-use";
+            reason: "owner-mismatch" | "organization-has-app" | "app-in-use" | "expired" | "registration-ended";
             app: {
                 githubAppId: number;
                 slug: string;
@@ -3592,9 +3832,9 @@ export interface components {
             account: components["schemas"]["GitHubAccount"];
             /**
              * Format: uri
-             * @description Where the App's owner deletes it on GitHub
+             * @description Where the App's owner deletes it on GitHub. Null for registration-ended: its App may be the one this Organization attached (an attachment repeated after a lost answer).
              */
-            deleteUrl: string;
+            deleteUrl: string | null;
             message: string;
         };
         GitHubAppRegistrationFailed: {
@@ -3797,6 +4037,15 @@ export interface components {
         };
     };
     responses: {
+        /** @description STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the Organization at enforce (admin-step-up, capability security.enforce.admin-step-up; requirement-protection), a loosening Security Control change, or the removal of a trusted passkey needs the requester's step-up approval of exactly this request, and the request carried none. Nothing was changed, and no Idempotency-Key claim was kept. details.approval is the Approval Intent (schema Approval: its id, operation, summary, url and expiresAt). The person who asked approves it with a trusted passkey that verifies them (the dashboard's approval dialog, or its url; the CLI prints the url and polls GET /v1/me/approvals/{approval}), then repeats the identical request with the Varlatch-Approval header set to its id (parameter approvalHeader). Only that person can approve it, within its lifetime: 2 minutes for a dashboard request, 10 for a CLI one. A machine credential can never give an approval: under enforce it is refused with PERMISSION_DENIED (details.reason machine-credential), and no intent is created. Refusals that do not depend on the approval (validation, not-found, conflicts, a frozen or deleting Organization, passkey-verification) come first. The error envelope is the same as every other error's. */
+        StepUpRequired: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["ApiError"];
+            };
+        };
         /** @description Error envelope */
         Error: {
             headers: {
@@ -4281,7 +4530,10 @@ export interface operations {
     deleteProject: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -4311,6 +4563,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -4687,7 +4940,10 @@ export interface operations {
     discloseSecrets: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -4736,6 +4992,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5127,7 +5384,10 @@ export interface operations {
     createServiceIdentity: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5157,6 +5417,7 @@ export interface operations {
                     "application/json": components["schemas"]["CreatedIdentity"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5191,7 +5452,10 @@ export interface operations {
     issueIdentityCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5218,6 +5482,7 @@ export interface operations {
                     "application/json": components["schemas"]["IssuedAgentCredential"] | components["schemas"]["IssuedMachineCredential"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5397,6 +5662,181 @@ export interface operations {
                     "application/json": components["schemas"]["SecurityControlChange"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export and the installation switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCreateInput"];
+            };
+        };
+        responses: {
+            /** @description The export created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeAuditExport: {
+        parameters: {
+            query: {
+                expectedVersion: number;
+            };
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    changeAuditExport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportChangeInput"];
+            };
+        };
+        responses: {
+            /** @description The export after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportChange"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    replaceAuditExportCredential: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCredentialChange"];
+            };
+        };
+        responses: {
+            /** @description The export with its new key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    checkAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCheckInput"];
+            };
+        };
+        responses: {
+            /** @description What the probe found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportCheck"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
@@ -5490,7 +5930,10 @@ export interface operations {
     reactivateIdentity: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5512,6 +5955,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5571,7 +6015,10 @@ export interface operations {
     createOidcBinding: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5602,13 +6049,17 @@ export interface operations {
                     "application/json": components["schemas"]["OidcBinding"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     revokeOidcBinding: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5626,6 +6077,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5695,7 +6147,10 @@ export interface operations {
     createInvitation: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5727,6 +6182,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5782,7 +6238,10 @@ export interface operations {
     scheduleOrganizationDeletion: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -5806,6 +6265,7 @@ export interface operations {
                     "application/json": components["schemas"]["OrganizationDeletion"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -5948,6 +6408,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6066,7 +6527,10 @@ export interface operations {
     removeMember: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6086,13 +6550,17 @@ export interface operations {
                     "application/json": components["schemas"]["MemberRemoval"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     changeMemberRole: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6125,6 +6593,7 @@ export interface operations {
                     };
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6410,6 +6879,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6730,7 +7200,10 @@ export interface operations {
     createGrant: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6758,6 +7231,7 @@ export interface operations {
                     "application/json": components["schemas"]["Grant"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6791,7 +7265,10 @@ export interface operations {
     createRole: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6816,13 +7293,17 @@ export interface operations {
                     "application/json": components["schemas"]["Role"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     deleteRole: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6839,6 +7320,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6848,6 +7330,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */
@@ -6875,6 +7359,7 @@ export interface operations {
                     "application/json": components["schemas"]["Role"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6908,7 +7393,10 @@ export interface operations {
     createGroup: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6932,13 +7420,17 @@ export interface operations {
                     "application/json": components["schemas"]["Group"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     deleteGroup: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -6955,6 +7447,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -6964,6 +7457,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */
@@ -6990,6 +7485,7 @@ export interface operations {
                     "application/json": components["schemas"]["Group"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7026,7 +7522,10 @@ export interface operations {
     addGroupMember: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7049,13 +7548,17 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     removeGroupMember: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7073,6 +7576,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7106,7 +7610,10 @@ export interface operations {
     createTeam: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7130,13 +7637,17 @@ export interface operations {
                     "application/json": components["schemas"]["Group"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     deleteTeam: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7153,6 +7664,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7162,6 +7674,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */
@@ -7188,6 +7702,7 @@ export interface operations {
                     "application/json": components["schemas"]["Group"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7224,7 +7739,10 @@ export interface operations {
     addTeamMember: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7247,13 +7765,17 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     removeTeamMember: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7271,6 +7793,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7307,7 +7830,10 @@ export interface operations {
     addTeamProject: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7330,13 +7856,17 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     removeTeamProject: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7355,13 +7885,17 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     deleteGrant: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7378,6 +7912,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7387,6 +7922,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */
@@ -7416,6 +7953,7 @@ export interface operations {
                     "application/json": components["schemas"]["GrantReplacement"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7506,6 +8044,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7544,6 +8083,7 @@ export interface operations {
                     "application/json": components["schemas"]["Requirement"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7673,7 +8213,10 @@ export interface operations {
     createWebhook: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7699,13 +8242,17 @@ export interface operations {
                     "application/json": components["schemas"]["CreatedWebhook"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     revokeWebhook: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7722,6 +8269,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7731,6 +8279,8 @@ export interface operations {
             header?: {
                 /** @description Optional. Retrying with the same key and identical body returns the original result; the same key with a materially different body fails with IDEMPOTENCY_CONFLICT. */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
             };
             path: {
                 /** @description Organization slug or ID */
@@ -7758,6 +8308,7 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7791,7 +8342,10 @@ export interface operations {
     createPlatformConnection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7825,6 +8379,7 @@ export interface operations {
                     "application/json": components["schemas"]["PlatformConnection"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -7928,7 +8483,10 @@ export interface operations {
     revokePlatformConnection: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7945,13 +8503,17 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     replacePlatformCredential: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -7977,6 +8539,7 @@ export interface operations {
                     "application/json": components["schemas"]["PlatformConnection"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -8010,7 +8573,10 @@ export interface operations {
                 /** @description The id of the App being removed (GitHubApp.id), as the caller saw it */
                 appId: string;
             };
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -8026,6 +8592,7 @@ export interface operations {
                 };
                 content?: never;
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
@@ -8096,13 +8663,99 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
                 };
             };
+            /** @description STEP_UP_REQUIRED for the attachment of the App GitHub handed over (operation github_app.register, ADR-0054 amendment D), while the Organization enforces admin-step-up. details.approval is the Approval Intent and details.registrationId the pending registration. This callback is never repeated: once the person approved, the client repeats the attachment, POST .../github-app/registrations/{registration}/attach, with the Varlatch-Approval header. Any other error envelope is the default response's. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiError"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    attachGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                registration: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refused (Cache-Control no-store); the pending key was deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRefused"];
+                };
+            };
+            /** @description Attached (Cache-Control no-store) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    discardGitHubAppRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+                registration: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded, or nothing to discard */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Whether this request deleted the pending key */
+                        discarded: boolean;
+                        /** @enum {string} */
+                        state: "discarded" | "attached" | "ended" | "waiting";
+                        /** @description Null for an attached registration (its App is this Organization's) and for one not converted yet */
+                        deleteUrl: string | null;
+                        app: {
+                            githubAppId: number;
+                            slug: string;
+                        } | null;
+                    };
+                };
+            };
             default: components["responses"]["Error"];
         };
     };
     importGitHubApp: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -8137,13 +8790,17 @@ export interface operations {
                     "application/json": components["schemas"]["GitHubAppRegistrationRegistered"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };
     rotateGitHubAppKey: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
             path: {
                 /** @description Organization slug or ID */
                 org: components["parameters"]["org"];
@@ -8173,6 +8830,7 @@ export interface operations {
                     } | components["schemas"]["GitHubAppImportFailed"];
                 };
             };
+            403: components["responses"]["StepUpRequired"];
             default: components["responses"]["Error"];
         };
     };

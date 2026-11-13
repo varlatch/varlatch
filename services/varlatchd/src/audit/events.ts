@@ -30,6 +30,15 @@ export type AuditDecision = "allow" | "deny" | "info";
  * makes it decide whether it marks Sync Targets for a converge.
  */
 export const AUDIT_EVENT_TYPES = [
+  "audit_export.abandoned",
+  "audit_export.changed",
+  "audit_export.completed",
+  "audit_export.created",
+  "audit_export.credential_replaced",
+  "audit_export.failing",
+  "audit_export.recovered",
+  "audit_export.removed",
+  "audit_export.stream_started",
   "audit_tombstone.reader_removed",
   "authentication.device_approved",
   "authentication.device_code_locked",
@@ -115,6 +124,7 @@ export const AUDIT_EVENT_TYPES = [
   "sync.github_app_installations_listed",
   "sync.github_app_key_rotated",
   "sync.github_app_registered",
+  "sync.github_app_registration_abandoned",
   "sync.github_app_registration_refused",
   "sync.github_app_removed",
   "sync.push_attempted",

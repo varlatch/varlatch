@@ -122,11 +122,14 @@ export const CAPABILITIES = [
   "cli.download",
   "security.refused-destinations",
   "organizations.incident-freeze",
+  // An Organization's audit export to object storage (ADR-0056).
+  "audit.storage-export",
   // Security Controls this server can enforce (ADR-0054 step 4), one per
   // control, unlocked by the release that builds its full guarantee.
   "security.enforce.requirement-protection",
   "security.enforce.credential-lifetime",
   "security.enforce.passkey-verification",
+  "security.enforce.admin-step-up",
 ] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];

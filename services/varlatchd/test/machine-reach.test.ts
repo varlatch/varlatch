@@ -7,6 +7,7 @@ import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInvite
 import { scheduleDeletion } from "../src/domain/orgdeletion.js";
 import { buildApp } from "../src/http/app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * Machine reach (ADR-0054 Decision 8): a machine's Grants per Project and
@@ -200,7 +201,7 @@ describe("machine reach", () => {
   });
 
   it("says when a machine is suspended by the Organization's deletion", async () => {
-    await scheduleDeletion(ctx, orgId, { id: admin.id, kind: "human" }, {});
+    await scheduleDeletion(ctx, personGate(admin.id), orgId, {});
     const r = await reach(deployer.id);
     expect(r.identity).toMatchObject({ state: "disabled", disabledReason: "organization-deletion" });
   });

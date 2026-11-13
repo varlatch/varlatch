@@ -26,6 +26,7 @@ import { useOrgEnvironments, type EnvironmentRef } from "./useOrgEnvironments";
 import { useFrozen } from "../security-controls/IncidentFreeze";
 import { useRefusedDestinations } from "../security-controls/RefusedDestinationsCard";
 import { refusedDestinationsKey } from "../security-controls/keys";
+import { approvalOutcomeMessage } from "../security-controls/approval";
 
 /**
  * Platform connections: one credential per platform account or instance.
@@ -302,7 +303,7 @@ export function ConnectionCard({
       onChanged();
       toast.success("Connection revoked", { description: `${targets.length} integration${targets.length === 1 ? "" : "s"} stopped.` });
     },
-    onError: (err) => toast.error("Could not revoke the connection", { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) => toast.error("Could not revoke the connection", { description: approvalOutcomeMessage(err) ?? (err instanceof Error ? err.message : String(err)) }),
   });
 
   const askRevoke = async () => {
@@ -459,7 +460,7 @@ export function NewConnectionDialog({
       toast.success("Connection created", { description: `${c.name} is ready for integrations.` });
       onCreated();
     },
-    onError: (err) => toast.error("Could not create the connection", { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) => toast.error("Could not create the connection", { description: approvalOutcomeMessage(err) ?? (err instanceof Error ? err.message : String(err)) }),
   });
   // Checked, read-only, before saving, and saved as checked. A failed check
   // (or one that could not run) shows until an input changes; meanwhile the
@@ -588,7 +589,7 @@ export function ReplaceCredentialDialog({
       toast.success("Credential replaced", { description: "Failing integrations retry with it now." });
       onReplaced();
     },
-    onError: (err) => toast.error("The credential was not replaced", { description: err instanceof Error ? err.message : String(err) }),
+    onError: (err) => toast.error("The credential was not replaced", { description: approvalOutcomeMessage(err) ?? (err instanceof Error ? err.message : String(err)) }),
   });
   // The new credential is checked, read-only, against every destination
   // that will use it (or the account or instance when none does yet), and

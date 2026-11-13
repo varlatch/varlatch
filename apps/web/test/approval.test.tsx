@@ -257,6 +257,25 @@ describe("words", () => {
     expect(changeValue("role", "admin")).toBe("admin");
     expect(changeValue("role", null)).toBe("none");
   });
+
+  it("names the fields of an integration's approval, and shows a secret's placeholder as it is (admin-step-up)", () => {
+    expect(fieldLabel("url")).toBe("Address");
+    expect(fieldLabel("eventTypes")).toBe("Events");
+    expect(fieldLabel("baseIdentity")).toBe("Base identity");
+    expect(fieldLabel("credential")).toBe("Credential");
+    expect(fieldLabel("privateKey")).toBe("Private key");
+    expect(fieldLabel("installationId")).toBe("Installation");
+    expect(changeValue("credential", "a new value (not shown)")).toBe("a new value (not shown)");
+  });
+
+  it("names the fields of a deletion's and an export's approval (admin-step-up)", () => {
+    expect(fieldLabel("afterDays")).toBe("Waiting period");
+    expect(changeValue("afterDays", "7 days")).toBe("7 days");
+    expect(fieldLabel("selection")).toBe("Secrets chosen");
+    expect(fieldLabel("requested")).toBe("Secrets requested");
+    expect(fieldLabel("disclosed")).toBe("Secrets exported");
+    expect(changeValue("disclosed", '["API_KEY"]')).toBe('["API_KEY"]');
+  });
 });
 
 describe("the inline approval dialog", () => {

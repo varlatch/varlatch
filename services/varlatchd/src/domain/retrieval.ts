@@ -180,22 +180,24 @@ export async function captureState(
  *
  * `beforeAudit` runs in the same transaction, before the exposure rows and
  * the first audit insert: a report counter (ADR-0054 Decision 9) commits
- * with the disclosure's audit or not at all.
+ * with the disclosure's audit or not at all, and an export's phase 2
+ * (exportstepup.ts) consumes its approval there. Metadata it returns is
+ * added to each event.
  */
 export async function auditThenDecrypt(
   ctx: AppCtx,
   state: CapturedState,
   events: AuditEventInput[],
   versionIds: string[],
-  beforeAudit?: (db: Querier) => Promise<void>,
+  beforeAudit?: (db: Querier) => Promise<NonNullable<AuditEventInput["metadata"]> | void>,
 ): Promise<Map<string, string>> {
   // The request's passkey-verification checkpoint ran in its snapshot,
   // before this (ADR-0054 Decision 7); reaching here without it is a gap.
   await assertOrganizationAccessChecked(ctx.db, state.org.id, "a disclosure audit and decryption");
   if (events.length > 0 && beforeAudit) {
     await withTx(ctx.db, async (db) => {
-      await beforeAudit(db);
-      await recordAuditEvents(db, events);
+      const added = await beforeAudit(db);
+      await recordAuditEvents(db, added ? events.map((e) => ({ ...e, metadata: { ...e.metadata, ...added } })) : events);
     });
   } else if (events.length > 0) {
     // One call: every event's exposure rows before the first audit insert.

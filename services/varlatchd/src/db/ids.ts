@@ -30,12 +30,16 @@ const PREFIXES = {
   deviceSignIn: "dsi",
   deviceSignInChallenge: "dsc",
   githubApp: "gha",
+  githubAppRegistration: "ghr",
   membershipRemoval: "mrm",
   organizationDeletion: "odl",
   organizationFreeze: "ofz",
   passkeyConfirmationChallenge: "pcc",
   approvalIntent: "apr",
   approvalIntentChallenge: "apc",
+  auditExport: "aex",
+  auditExportPlan: "aep",
+  auditExportStream: "aes",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;

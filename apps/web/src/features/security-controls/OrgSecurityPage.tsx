@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, Ban, BookOpen, Fingerprint, KeyRound, ListChecks, RefreshCw, ShieldCheck, ShieldOff, TriangleAlert, Wifi } from "lucide-react";
+import { Archive, ArrowUpRight, Ban, BookOpen, Fingerprint, KeyRound, ListChecks, RefreshCw, ShieldCheck, ShieldOff, TriangleAlert, Wifi } from "lucide-react";
 import type { OrganizationPermissions, SecurityControl } from "@varlatch/sdk";
 import { useOrgRealtime } from "../../lib/realtime";
 import { useSession } from "../../lib/session";
@@ -17,13 +17,15 @@ import { RefusedDestinationsCard } from "./RefusedDestinationsCard";
 import { myPermissionsKey, refusedDestinationsKey } from "./keys";
 import { CHECKLIST, SECURITY_PAGE_DOCS } from "./checklist";
 import { IncidentFreezeCard } from "./IncidentFreeze";
+import { AuditExportCard, auditExportKey } from "./AuditExportCard";
 
 /**
  * The Organization's Security page (ADR-0054 Decision 11), next to
  * Settings: the controls with what each counts and would change, their
  * counts, the admins' approval keys, the credential review with expiry
  * warnings, the destinations this installation's outbound policy refuses
- * (ADR-0057 Decision 8), the Tailnet Requirements, and a short checklist. It is where an
+ * (ADR-0057 Decision 8), the audit export (ADR-0056 Decision 11), the
+ * Tailnet Requirements, and a short checklist. It is where an
  * admin decides which controls to turn on. (The account's own passkeys live
  * on /account/security.)
  *
@@ -43,6 +45,7 @@ const NEEDS = {
   "approval-keys": "organization.manage",
   credentials: "identity.manage",
   "refused-destinations": "organization.manage",
+  "audit-export": "organization.manage",
   requirements: "policy.read",
   checklist: null,
 } as const;
@@ -52,6 +55,7 @@ const SECTIONS = [
   { id: "approval-keys", label: "Approval keys", icon: Fingerprint },
   { id: "credentials", label: "Machine credentials", icon: KeyRound },
   { id: "refused-destinations", label: "Refused destinations", icon: Ban },
+  { id: "audit-export", label: "Audit export", icon: Archive },
   { id: "requirements", label: "Tailnet Requirements", icon: Wifi },
   { id: "checklist", label: "Checklist", icon: ListChecks },
 ] as const;
@@ -67,6 +71,7 @@ export function OrgSecurityPage() {
   const hasKeys = useCapability("security.approval-keys");
   const hasReview = useCapability("security.credential-review");
   const hasRefused = useCapability("security.refused-destinations");
+  const hasAuditExport = useCapability("audit.storage-export");
   useOrgRealtime(
     org,
     ["security_control", "membership", "identity", "credential", "requirement", "grant", "role", "group", "team"],
@@ -90,6 +95,13 @@ export function OrgSecurityPage() {
   // Checked when asked (DNS lookups on the server), so not refreshed on a timer.
   const refused = useQuery({ queryKey: refusedDestinationsKey(org), queryFn: () => api.refusedDestinations(org), enabled: supported && canManage && hasRefused });
   const requirements = useQuery({ queryKey: ["requirements", org], queryFn: () => api.listRequirements(org), enabled: supported && canPolicy });
+  // The export's lag and last write move on their own: refresh while the page is open.
+  const auditExport = useQuery({
+    queryKey: auditExportKey(org),
+    queryFn: () => api.getAuditExport(org),
+    enabled: supported && canManage && hasAuditExport,
+    refetchInterval: 60_000,
+  });
 
   // The whole page waits for the controls and the caller's permissions, so sections never pop in.
   const settled = !controls.isLoading && !permissions.isLoading;
@@ -98,6 +110,7 @@ export function OrgSecurityPage() {
     "approval-keys": canManage && hasKeys,
     credentials: canReview && hasReview,
     "refused-destinations": canManage && hasRefused,
+    "audit-export": canManage && hasAuditExport,
     requirements: canPolicy,
     checklist: true,
   };
@@ -122,7 +135,7 @@ export function OrgSecurityPage() {
     );
     els.forEach((el) => io.observe(el));
     return () => io.disconnect();
-  }, [settled, sections.length, keys.data, review.data, refused.data, requirements.data]);
+  }, [settled, sections.length, keys.data, review.data, refused.data, auditExport.data, requirements.data]);
 
   const header = (
     <PageHeader
@@ -228,6 +241,9 @@ export function OrgSecurityPage() {
               </Part>
               <Part query={refused} enabled={allowed["refused-destinations"]} title="Refused destinations" id="refused-destinations">
                 {(data) => <RefusedDestinationsCard refused={data} />}
+              </Part>
+              <Part query={auditExport} enabled={allowed["audit-export"]} title="Audit export" id="audit-export">
+                {(data) => <AuditExportCard org={org} status={data} />}
               </Part>
               <Part query={requirements} enabled={allowed.requirements} title="Tailnet Requirements" id="requirements">
                 {(data) => (

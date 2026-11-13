@@ -19,4 +19,10 @@ export interface AppCtx {
    * plain fetch.
    */
   outbound?: OutboundPolicy;
+  /**
+   * The audit export's installation switch (ADR-0056 Decision 6,
+   * VARLATCH_AUDIT_EXPORT): false refuses creating and changing exports.
+   * Absent: on, its default.
+   */
+  auditExport?: boolean;
 }

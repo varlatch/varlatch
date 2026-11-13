@@ -2,6 +2,7 @@
 import { closeSync, constants, fchmodSync, fsyncSync, lstatSync, openSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
+import { rememberSecret, requestNote, safe, safeVersion } from "./safeText.js";
 import { lifetime } from "./securityControls.js";
 
 /**
@@ -126,7 +127,7 @@ export async function issueCredentialToFile(api: CredentialIssueApi, opts: Crede
   const meta = await api.meta();
   if (!meta.capabilities.includes(ISSUE_CAPABILITY)) {
     throw new CredentialIssueError(
-      `${PREFIX} this server (${meta.serverVersion}) cannot issue a credential for an existing machine identity ` +
+      `${PREFIX} this server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot issue a credential for an existing machine identity ` +
         `(it lacks the ${ISSUE_CAPABILITY} capability); upgrade the server. Nothing was issued.`,
     );
   }
@@ -143,7 +144,7 @@ export async function issueCredentialToFile(api: CredentialIssueApi, opts: Crede
     if (err instanceof VarlatchApiError && err.code === "RESOURCE_NOT_FOUND") {
       throw new CredentialIssueError(
         `${PREFIX} ${opts.organization} has no machine identity ${opts.identityId} that can hold a service credential ` +
-          `(a service, workload, or broker identity that is not retired). Nothing was issued. (request ${err.requestId})`,
+          `(a service, workload, or broker identity that is not retired). Nothing was issued.${requestNote(err)}`,
       );
     }
     if (err instanceof VarlatchApiError && err.code === "CREDENTIAL_LIFETIME_EXCEEDED") {
@@ -151,11 +152,12 @@ export async function issueCredentialToFile(api: CredentialIssueApi, opts: Crede
       const limit = Number.isInteger(max) && max > 0 ? `at most ${lifetime(max)} (--ttl ${max})` : "a shorter lifetime";
       throw new CredentialIssueError(
         `${PREFIX} ${opts.organization} enforces credential-lifetime: a machine credential may last ${limit}. ` +
-          `Give a shorter --ttl, or none for the organization's default lifetime. Nothing was issued. (request ${err.requestId})`,
+          `Give a shorter --ttl, or none for the organization's default lifetime. Nothing was issued.${requestNote(err)}`,
       );
     }
     throw err;
   }
+  rememberSecret(issued.token);
   try {
     const bytes = Buffer.from(`${issued.token}\n`, "utf8");
     let written = 0;
@@ -173,8 +175,8 @@ export async function issueCredentialToFile(api: CredentialIssueApi, opts: Crede
     throw new CredentialIssueError(
       `${PREFIX} cannot write ${opts.out} (${code}). ` +
         (revoked
-          ? `Credential ${issued.id} was issued and then revoked: nothing is live.`
-          : `Credential ${issued.id} was issued, and revoking it failed: revoke it with varlatch credential revoke ${opts.identityId} ${issued.id}`),
+          ? safe`Credential ${issued.id} was issued and then revoked: nothing is live.`
+          : safe`Credential ${issued.id} was issued, and revoking it failed: revoke it with varlatch credential revoke ${opts.identityId} ${issued.id}`),
     );
   }
   return { id: issued.id, kind: "service", name: issued.name, expiresAt: issued.expiresAt, maxUses: issued.maxUses, out: opts.out };

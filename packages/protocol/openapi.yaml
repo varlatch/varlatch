@@ -7,7 +7,7 @@ info:
     pagination, idempotency semantics and the audit NDJSON schema are part of
     the compatibility contract. Pre-product-1.0 releases may still contain
     breaking changes while the contract is being established.
-  version: 0.21.0
+  version: 0.22.0
 servers:
   - url: /v1
 security:
@@ -411,6 +411,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "200":
           description: Deleted
@@ -428,6 +429,7 @@ paths:
                   capabilitiesRevoked: { type: integer }
                   targetsRevoked: { type: integer }
                   teamLinksRemoved: { type: integer }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments:
@@ -720,6 +722,7 @@ paths:
         - $ref: "#/components/parameters/org"
         - $ref: "#/components/parameters/project"
         - $ref: "#/components/parameters/environment"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -775,6 +778,7 @@ paths:
                     description: Present when the caller also holds config.metadata.read.
                   stateDigest: { $ref: "#/components/schemas/StateDigest" }
                   callerView: { $ref: "#/components/schemas/CallerView" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/projects/{project}/environments/{environment}/capabilities:
@@ -1182,7 +1186,7 @@ paths:
         maxTtlSeconds is refused with CREDENTIAL_LIFETIME_EXCEEDED before
         anything is created. A ci or agent identity gets no credential and
         is never affected.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -1221,6 +1225,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreatedIdentity" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/credentials:
@@ -1281,6 +1286,7 @@ paths:
           required: true
           description: Machine identity ID (an Agent Identity on the Broker path)
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -1303,6 +1309,7 @@ paths:
                 oneOf:
                   - $ref: "#/components/schemas/IssuedAgentCredential"
                   - $ref: "#/components/schemas/IssuedMachineCredential"
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/security/credential-review:
@@ -1519,6 +1526,195 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SecurityControlChange" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-export:
+    get:
+      tags: [organizations]
+      operationId: getAuditExport
+      summary: >
+        The Organization's audit export to object storage (capability
+        audit.storage-export, ADR-0056): the live one, else the most recent,
+        else null, with its status (lag, last write and error, failing since,
+        the destination's checks, Object Lock "verified" or "accepted"), and
+        whether the host operator left audit export on
+        (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no
+        export can be created). Never the key. Needs organization.manage.
+        Allowed while the Organization is frozen for an incident.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The export and the installation switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportStatus" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [organizations]
+      operationId: createAuditExport
+      summary: >
+        Create the Organization's audit export (ADR-0056 Decisions 1, 6 and
+        9): every audit event of the Organization, in order, copied to an
+        S3-compatible bucket with conditional writes and optional Object Lock
+        retention. Before saving, a probe writes a test object under the
+        prefix, checks that a second write of its name is refused
+        (If-None-Match), and reads it and its retention back where the key
+        may; a failing probe is VALIDATION_FAILED with fixed wording and
+        saves nothing. The endpoint is checked against the outbound policy
+        first. from "beginning" (the default) backfills the whole log; "now"
+        starts at the creation event. At most one live export per
+        Organization. Needs no approval: creating only adds protection.
+        Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Refused with PERMISSION_DENIED (details.reason audit-export-off)
+        when the host operator turned audit export off. Records
+        audit_export.created and audit_export.stream_started.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCreateInput" }
+      responses:
+        "201":
+          description: The export created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [organizations]
+      operationId: changeAuditExport
+      summary: >
+        Change the live export's destination or retention (ADR-0056 Decision
+        9). The change is compared field by field: a destination change, a
+        shorter or removed retention, or compliance to governance needs the
+        requester's step-up approval (operation audit_export.change), always,
+        whatever the Security Controls' modes; without the Varlatch-Approval
+        header the answer is STEP_UP_REQUIRED, and the client repeats the
+        identical request with it once the person approved. Setting,
+        lengthening or strengthening retention needs none. A destination
+        change must pass the probe (checked only after the approval is found,
+        so an unapproved request sends nothing) and starts a new stream at
+        the current position. expectedVersion must be the export's current
+        version (VERSION_CONFLICT otherwise). RESOURCE_NOT_FOUND when the
+        Organization has no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile. Records
+        audit_export.changed (metadata.loosened).
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/approvalHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportChangeInput" }
+      responses:
+        "200":
+          description: The export after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportChange" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [organizations]
+      operationId: removeAuditExport
+      summary: >
+        Remove the live export (ADR-0056 Decision 9): always needs the
+        requester's step-up approval (operation audit_export.remove). In one
+        transaction the export becomes removed, its pending object is
+        dropped and its key is cleared; what was delivered stays at the
+        destination. expectedVersion (query) must be the export's current
+        version. Allowed when the host operator turned audit export off.
+        RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Records audit_export.removed.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: expectedVersion
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - $ref: "#/components/parameters/approvalHeader"
+      responses:
+        "200":
+          description: The export, removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-export/credential:
+    put:
+      tags: [organizations]
+      operationId: replaceAuditExportCredential
+      summary: >
+        Replace the live export's key (ADR-0056 Decision 8): always needs the
+        requester's step-up approval (operation audit_export.change; the
+        approver's summary never names the key). The stream and any pending
+        object are kept and delivered with the new key. Not probed: run the
+        check with the new key first. The key is never returned.
+        RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Records audit_export.credential_replaced.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/approvalHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCredentialChange" }
+      responses:
+        "200":
+          description: The export with its new key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-export/check:
+    post:
+      tags: [organizations]
+      operationId: checkAuditExport
+      summary: >
+        Run the destination probe without saving anything (ADR-0056 Decision
+        6), as connection checks do: with the key given, or without one with
+        the live export's stored key, which is only sent to that export's own
+        destination. A probe that does not pass answers 200 with ok false
+        and fixed wording; an endpoint the outbound policy refuses too.
+        Records nothing (an outbound refusal is recorded by the policy).
+        Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCheckInput" }
+      responses:
+        "200":
+          description: What the probe found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportCheck" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/credentials/{credential}:
@@ -1630,6 +1826,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "200":
           description: Reactivated identity
@@ -1641,6 +1838,7 @@ paths:
                 properties:
                   id: { type: string }
                   disabled: { type: boolean }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/reach:
@@ -1716,6 +1914,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -1737,6 +1936,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OidcBinding" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/identities/{identity}/oidc-bindings/{binding}:
@@ -1754,8 +1954,10 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /oidc/token:
@@ -1830,7 +2032,7 @@ paths:
         Mint a one-time human enrollment invitation. The caller composes the
         browser URL as <dashboard-origin>/enroll#<token>; the invitee enrolls
         a passkey on their own device — no shared secret ever exists.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -1857,6 +2059,7 @@ paths:
                       servers without invitations.manage).
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/invitations/{invitation}:
@@ -1922,6 +2125,7 @@ paths:
         (STATE_CHANGED otherwise).
       parameters:
         - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -1937,6 +2141,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrganizationDeletion" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/deletion/{deletion}/approve:
@@ -2095,6 +2300,7 @@ paths:
                     type: [array, "null"]
                     description: Null for a caller without config.sync.manage; the approval's summary then gives their number only.
                     items: { $ref: "#/components/schemas/ResumingTarget" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /deleted-organizations/{organization}/audit-events:
@@ -2226,12 +2432,14 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "200":
           description: Removed
           content:
             application/json:
               schema: { $ref: "#/components/schemas/MemberRemoval" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     patch:
       tags: [identities]
@@ -2246,6 +2454,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: member, in: path, required: true, schema: { type: string }, description: An identity ID, or "me" }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -2268,6 +2477,7 @@ paths:
                   identityId: { type: string }
                   role: { type: string, enum: [admin, member] }
                   previousRole: { type: string, enum: [admin, member] }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/members/{member}/review:
@@ -2537,6 +2747,7 @@ paths:
         - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Removed }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /me/passkeys/{passkey}/confirmation/options:
@@ -2873,7 +3084,7 @@ paths:
     post:
       tags: [grants]
       operationId: createGrant
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -2899,6 +3110,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Grant" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/roles:
@@ -2922,7 +3134,7 @@ paths:
       tags: [grants]
       operationId: createRole
       summary: Create a reusable Role — a named Action bundle (ADR-0028).
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -2942,6 +3154,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Role" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/roles/{role}:
@@ -2957,6 +3170,7 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: role, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -2977,6 +3191,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Role" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -2984,8 +3199,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: role, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups:
@@ -3009,7 +3226,7 @@ paths:
       tags: [grants]
       operationId: createGroup
       summary: Create a Group — an identity set usable as a Grant subject (ADR-0028).
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -3025,6 +3242,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}:
@@ -3039,6 +3257,7 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: group, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3055,6 +3274,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3062,8 +3282,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: group, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}/members:
@@ -3096,6 +3318,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: group, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3106,6 +3329,7 @@ paths:
               properties: { identityId: { type: string } }
       responses:
         "204": { description: Added }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/groups/{group}/members/{identity}:
@@ -3116,8 +3340,10 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: group, in: path, required: true, schema: { type: string } }
         - { name: identity, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Removed }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams:
@@ -3141,7 +3367,7 @@ paths:
       tags: [grants]
       operationId: createTeam
       summary: Create a Team — a Group that owns Projects, targetable by a team scope (ADR-0028).
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -3157,6 +3383,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}:
@@ -3171,6 +3398,7 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3187,6 +3415,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Group" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3194,8 +3423,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Deleted }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/members:
@@ -3228,6 +3459,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3238,6 +3470,7 @@ paths:
               properties: { identityId: { type: string } }
       responses:
         "204": { description: Added }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/members/{identity}:
@@ -3248,8 +3481,10 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
         - { name: identity, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Removed }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/projects:
@@ -3282,6 +3517,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3292,6 +3528,7 @@ paths:
               properties: { projectId: { type: string } }
       responses:
         "204": { description: Added }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/teams/{team}/projects/{project}:
@@ -3302,8 +3539,10 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: team, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/project"
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Removed }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/grants/{grant}:
@@ -3316,8 +3555,10 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/grants/{grant}/replace:
@@ -3339,6 +3580,7 @@ paths:
           required: true
           schema: { type: string }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3366,6 +3608,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GrantReplacement" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/requirements:
@@ -3457,6 +3700,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Requirement" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [grants]
@@ -3477,6 +3721,7 @@ paths:
         - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/audit-events:
@@ -3586,7 +3831,7 @@ paths:
         "t=<unix-seconds>,v1=<hex>" where v1 is HMAC-SHA256(secret,
         "<t>.<raw-body>"); receivers should verify the signature and reject
         stale timestamps. The signing secret is returned exactly once.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -3608,6 +3853,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CreatedWebhook" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/webhooks/{webhook}:
@@ -3628,6 +3874,7 @@ paths:
         - $ref: "#/components/parameters/org"
         - { name: webhook, in: path, required: true, schema: { type: string } }
         - $ref: "#/components/parameters/idempotencyKey"
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3649,6 +3896,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Webhook" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     delete:
       tags: [audit]
@@ -3660,8 +3908,10 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections:
@@ -3694,7 +3944,7 @@ paths:
         Organization KEK, never displayed again after entry. A Connection
         alone discloses nothing; disclosure authority lives on the Sync
         Targets that use it.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -3728,6 +3978,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/check:
@@ -3833,8 +4084,10 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: connection, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Revoked }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/platform-connections/{connection}/credential:
@@ -3850,6 +4103,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/org"
         - { name: connection, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
       requestBody:
         required: true
         content:
@@ -3866,6 +4120,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PlatformConnection" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app:
@@ -3889,8 +4144,10 @@ paths:
           required: true
           description: The id of the App being removed (GitHubApp.id), as the caller saw it
           schema: { type: string, minLength: 1, maxLength: 100 }
+        - $ref: "#/components/parameters/approvalHeader"
       responses:
         "204": { description: Removed }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
     get:
       tags: [sync]
@@ -3951,6 +4208,16 @@ paths:
         refused, nothing is kept, and the answer says where to delete it
         (ADR-0047, amendment 2026-10-09). If GitHub cannot be reached, the
         state is released for another attempt.
+
+        Registration is staged (ADR-0054 amendment D): GitHub's answer is
+        stored as a pending conversion on the registration, then attached
+        in the same request when no approval is needed. When the
+        Organization's admin-step-up control asks for one, the answer is
+        STEP_UP_REQUIRED for the registration (github_app.register), its
+        details naming `registrationId`; the client repeats the attachment
+        (`…/registrations/{registration}/attach`) with the approval, never
+        this callback. A repeat of the callback answers CONSUMED with
+        `registrationId` and `pending` in its details.
       parameters: [{ $ref: "#/components/parameters/org" }]
       requestBody:
         required: true
@@ -3976,6 +4243,89 @@ paths:
                 oneOf:
                   - { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
                   - { $ref: "#/components/schemas/GitHubAppRegistrationFailed" }
+        "403":
+          description: >
+            STEP_UP_REQUIRED for the attachment of the App GitHub handed over
+            (operation github_app.register, ADR-0054 amendment D), while the
+            Organization enforces admin-step-up. details.approval is the
+            Approval Intent and details.registrationId the pending
+            registration. This callback is never repeated: once the person
+            approved, the client repeats the attachment, POST
+            .../github-app/registrations/{registration}/attach, with the
+            Varlatch-Approval header. Any other error envelope is the
+            default response's.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiError" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations/{registration}/attach:
+    post:
+      tags: [sync]
+      operationId: attachGitHubAppRegistration
+      summary: >
+        Attach a pending registration (ADR-0054 amendment D): the App GitHub
+        handed over is stored for the Organization and the pending key is
+        deleted. A protected operation, github_app.register: under
+        admin-step-up's enforce it needs the caller's approval, bound to the
+        registration and the App's id, slug, client id and owner. Only the
+        person who started the registration may attach it; for anyone else
+        it is not found. A pending conversion that expired, was discarded or
+        already ended, an Organization that got another App, or an App
+        another Organization uses end the registration: its key is deleted
+        and the answer is the refusal. Calls nothing outside Varlatch.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - { name: registration, in: path, required: true, schema: { type: string } }
+        - $ref: "#/components/parameters/approvalHeader"
+      responses:
+        "201":
+          description: Attached (Cache-Control no-store)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRegistered" }
+        "200":
+          description: Refused (Cache-Control no-store); the pending key was deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GitHubAppRegistrationRefused" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/github-app/registrations/{registration}:
+    delete:
+      tags: [sync]
+      operationId: discardGitHubAppRegistration
+      summary: >
+        Discard a pending registration: its key is deleted and
+        sync.github_app_registration_abandoned recorded. The App stays on
+        GitHub; `deleteUrl` is where its owner deletes it. One that is no
+        longer pending changes nothing (`discarded: false`), and `state`
+        says why, decided under the registration's lock: `attached` (the
+        App is this Organization's, so there is no `deleteUrl`), `ended`
+        (discarded, expired or refused before) or `waiting` (GitHub has not
+        handed it over yet). Only the person who started it may discard it.
+      parameters:
+        - { $ref: "#/components/parameters/org" }
+        - { name: registration, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Discarded, or nothing to discard
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [discarded, state, deleteUrl, app]
+                properties:
+                  discarded: { type: boolean, description: Whether this request deleted the pending key }
+                  state: { type: string, enum: [discarded, attached, ended, waiting] }
+                  deleteUrl: { type: [string, "null"], description: "Null for an attached registration (its App is this Organization's) and for one not converted yet" }
+                  app:
+                    type: [object, "null"]
+                    required: [githubAppId, slug]
+                    properties:
+                      githubAppId: { type: integer }
+                      slug: { type: string }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/import:
@@ -3995,7 +4345,7 @@ paths:
         time claims against GitHub's Date header: the key, or this server's
         clock. Refused (409) when the Organization already has a live App,
         or another Organization has this one.
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -4017,6 +4367,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GitHubAppImportFailed" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/key:
@@ -4035,7 +4386,7 @@ paths:
         Every Target is then queued to converge with the new key, and the
         audit event records each Target's gate decisions (Grants, applied
         Roles and Groups, Requirements).
-      parameters: [{ $ref: "#/components/parameters/org" }]
+      parameters: [{ $ref: "#/components/parameters/org" }, { $ref: "#/components/parameters/approvalHeader" }]
       requestBody:
         required: true
         content:
@@ -4059,6 +4410,7 @@ paths:
                       outcome: { type: string, enum: [rotated] }
                       app: { $ref: "#/components/schemas/GitHubApp" }
                   - { $ref: "#/components/schemas/GitHubAppImportFailed" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/installations:
@@ -4495,6 +4847,31 @@ components:
       schema: { type: string, format: date-time, examples: ["2026-11-17T12:00:00.000Z"] }
 
   responses:
+    StepUpRequired:
+      description: >
+        STEP_UP_REQUIRED (ADR-0054 Decision 3): a Security Control of the
+        Organization at enforce (admin-step-up, capability
+        security.enforce.admin-step-up; requirement-protection), a loosening
+        Security Control change, or the removal of a trusted passkey needs the
+        requester's step-up approval of exactly this request, and the request
+        carried none. Nothing was changed, and no Idempotency-Key claim was
+        kept. details.approval is the Approval Intent (schema Approval: its
+        id, operation, summary, url and expiresAt). The person who asked
+        approves it with a trusted passkey that verifies them (the dashboard's
+        approval dialog, or its url; the CLI prints the url and polls GET
+        /v1/me/approvals/{approval}), then repeats the identical request with
+        the Varlatch-Approval header set to its id (parameter
+        approvalHeader). Only that person can approve it, within its
+        lifetime: 2 minutes for a dashboard request, 10 for a CLI one. A
+        machine credential can never give an approval: under enforce it is
+        refused with PERMISSION_DENIED (details.reason machine-credential),
+        and no intent is created. Refusals that do not depend on the
+        approval (validation, not-found, conflicts, a frozen or deleting
+        Organization, passkey-verification) come first. The error envelope
+        is the same as every other error's.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ApiError" }
     Error:
       description: Error envelope
       content:
@@ -6625,6 +7002,187 @@ components:
           type: boolean
           description: The change weakened the control and used an approval.
 
+    AuditExportDestination:
+      type: object
+      description: Where an audit export writes (ADR-0056 Decision 1). The endpoint is a scheme, host and optional port.
+      required: [endpoint, region, bucket, prefix, pathStyle]
+      properties:
+        endpoint: { type: string, examples: ["https://s3.eu-central-1.amazonaws.com"] }
+        region: { type: string }
+        bucket: { type: string }
+        prefix: { type: string, description: "Empty, or ending with /. Objects go under <prefix>varlatch-audit/<organization>/<stream>/." }
+        pathStyle: { type: boolean }
+
+    AuditExportDestinationInput:
+      type: object
+      additionalProperties: false
+      required: [endpoint, region, bucket]
+      properties:
+        endpoint: { type: string, maxLength: 2048, description: "https; plain http only to a destination the host operator's outbound allow list names." }
+        region: { type: string, maxLength: 64 }
+        bucket: { type: string, minLength: 3, maxLength: 63 }
+        prefix: { type: string, maxLength: 256, default: "" }
+        pathStyle: { type: boolean, default: false }
+
+    AuditExportCredentialInput:
+      type: object
+      description: An S3 access key. Write-only; never returned, logged or audited.
+      additionalProperties: false
+      required: [accessKeyId, secretAccessKey]
+      properties:
+        accessKeyId: { type: string, maxLength: 128 }
+        secretAccessKey: { type: string, maxLength: 256, writeOnly: true }
+
+    AuditExportRetention:
+      type: object
+      description: Object Lock retention for every object written, from when it was planned (ADR-0056 Decision 7).
+      additionalProperties: false
+      required: [mode, days]
+      properties:
+        mode: { type: string, enum: [compliance, governance] }
+        days: { type: integer, minimum: 1, maximum: 3650 }
+
+    AuditExportCreateInput:
+      type: object
+      additionalProperties: false
+      required: [destination, credential]
+      properties:
+        destination: { $ref: "#/components/schemas/AuditExportDestinationInput" }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+        from: { type: string, enum: [beginning, now], default: beginning }
+
+    AuditExportChangeInput:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        destination:
+          type: object
+          description: Only the fields given change.
+          additionalProperties: false
+          properties:
+            endpoint: { type: string, maxLength: 2048 }
+            region: { type: string, maxLength: 64 }
+            bucket: { type: string, minLength: 3, maxLength: 63 }
+            prefix: { type: string, maxLength: 256 }
+            pathStyle: { type: boolean }
+        retention:
+          description: Absent keeps the retention; null removes it.
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+
+    AuditExportCredentialChange:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, credential]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+
+    AuditExportCheckInput:
+      type: object
+      additionalProperties: false
+      required: [destination]
+      properties:
+        destination: { $ref: "#/components/schemas/AuditExportDestinationInput" }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+
+    AuditExportCheck:
+      type: object
+      description: What the destination probe found (ADR-0056 Decision 6). message is fixed wording, never the store's own text.
+      required: [ok, message, conditionalCreation, objectLock, keyCanRead, retentionReadable]
+      properties:
+        ok: { type: boolean }
+        message: { type: [string, "null"] }
+        conditionalCreation: { type: [boolean, "null"], description: "A second write of the same name was refused (If-None-Match)." }
+        objectLock:
+          type: [string, "null"]
+          enum: [verified, accepted, not-set, null]
+          description: verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
+        keyCanRead: { type: [boolean, "null"], description: "The key read the test object (HEAD); null when undetermined." }
+        retentionReadable: { type: [boolean, "null"], description: "The key read the test object's retention; null when undetermined or no retention was asked." }
+
+    AuditExport:
+      type: object
+      description: An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key.
+      required: [id, organizationId, destination, retention, state, streamId, cursor, version, lastAttemptAt, lastSuccessAt, lastHeartbeatAt, lastError,
+        failingSince, keyCanRead, retentionReadable, stoppedReason, conditionalCheckedAt, lockVerified, drainDeadline, createdBy, createdAt,
+        removedAt, lag, objectLock, unsupportedPlanFormat]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        destination: { $ref: "#/components/schemas/AuditExportDestination" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+        state:
+          type: string
+          enum: [active, draining, removed, completed, abandoned]
+          description: draining after the Organization's deletion, until the final events are delivered (completed) or the 30-day deadline passes (abandoned).
+        streamId: { type: string }
+        cursor: { type: string, description: "The audit position delivered up to (installation-wide positions, as a decimal string)." }
+        version: { type: integer }
+        lastAttemptAt: { type: [string, "null"], format: date-time }
+        lastSuccessAt: { type: [string, "null"], format: date-time }
+        lastHeartbeatAt:
+          type: [string, "null"]
+          format: date-time
+          description: The hour of the last heartbeat object delivered. No newer heartbeat in the bucket for two hours means the copy stopped.
+        lastError: { type: [string, "null"], description: "Fixed wording only (the storage error table or the outbound policy)." }
+        failingSince: { type: [string, "null"], format: date-time }
+        keyCanRead: { type: [boolean, "null"] }
+        retentionReadable: { type: [boolean, "null"] }
+        stoppedReason:
+          type: [string, "null"]
+          enum: [object_conflict, unsupported_format, null]
+          description: The export stopped until a person acts.
+        conditionalCheckedAt: { type: [string, "null"], format: date-time }
+        lockVerified: { type: [boolean, "null"] }
+        drainDeadline: { type: [string, "null"], format: date-time }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        removedAt: { type: [string, "null"], format: date-time }
+        lag:
+          description: Events of the Organization not yet exported and the oldest's time; null once the export ended.
+          oneOf:
+            - type: object
+              required: [pending, oldestPendingAt]
+              properties:
+                pending: { type: integer }
+                oldestPendingAt: { type: [string, "null"], format: date-time }
+            - type: "null"
+        objectLock: { type: string, enum: [verified, accepted, not-set] }
+        unsupportedPlanFormat: { type: [integer, "null"], description: "A pending object's format this release cannot upload (varlatchd admin audit-export discard-plan)." }
+
+    AuditExportStatus:
+      type: object
+      required: [enabled, export]
+      properties:
+        enabled: { type: boolean, description: "False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off)." }
+        export:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExport"
+            - type: "null"
+
+    AuditExportChange:
+      type: object
+      required: [export, changed, loosened]
+      properties:
+        export: { $ref: "#/components/schemas/AuditExport" }
+        changed: { type: boolean, description: "False when the request matched the current state; nothing was recorded." }
+        loosened: { type: boolean, description: "The change needed and used an approval." }
+
     ApprovalChange:
       type: object
       required: [field, from, to, loosens]
@@ -6645,7 +7203,7 @@ components:
         id: { type: string }
         operation:
           type: string
-          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete, grant.create, grant.replace, grant.revoke, role.create, role.update, role.delete, group.create, group.update, group.delete, group.member_add, group.member_remove, team.create, team.update, team.delete, team.member_add, team.member_remove, team.project_add, team.project_remove, member.invite_admin, member.promote, member.demote, member.remove]
+          enum: [security_control.change, passkey.remove, organization.unfreeze, requirement.update, requirement.revoke, identity.create, credential.issue, identity.reactivate, oidc_binding.create, oidc_binding.delete, grant.create, grant.replace, grant.revoke, role.create, role.update, role.delete, group.create, group.update, group.delete, group.member_add, group.member_remove, team.create, team.update, team.delete, team.member_add, team.member_remove, team.project_add, team.project_remove, member.invite_admin, member.promote, member.demote, member.remove, webhook.create, webhook.update, webhook.delete, connection.create, connection.replace_credential, connection.delete, github_app.register, github_app.import, github_app.replace_key, github_app.remove, project.delete, organization.delete, secret.export, audit_export.change, audit_export.remove]
           description: The semantic operation, not the HTTP route.
         organization:
           description: The Organization it acts in; null for an account operation such as passkey.remove.
@@ -6880,8 +7438,9 @@ components:
 
     GitHubAppRegistrationStart:
       type: object
-      required: [state, action, manifest, account, expiresAt]
+      required: [id, state, action, manifest, account, expiresAt]
       properties:
+        id: { type: string, description: "The registration's stable id: what an attachment's approval is bound to (ADR-0054 amendment D)" }
         state: { type: string, description: Single-use; only its hash is stored }
         action: { type: string, format: uri, description: Where the browser posts the manifest }
         manifest:
@@ -6905,12 +7464,15 @@ components:
         outcome: { type: string, enum: [refused] }
         reason:
           type: string
-          enum: [owner-mismatch, organization-has-app, app-in-use]
+          enum: [owner-mismatch, organization-has-app, app-in-use, expired, registration-ended]
           description: >
             owner-mismatch: GitHub created the App on another account (the
             person's own, when they may not register Apps on the intended
             one). organization-has-app: the Organization got an App
             meanwhile. app-in-use: another Organization has this App.
+            expired: a pending conversion was not attached within its hour
+            (ADR-0054 amendment D). registration-ended: the registration was
+            already attached, discarded or refused.
         app:
           type: object
           required: [githubAppId, slug, owner]
@@ -6919,7 +7481,13 @@ components:
             slug: { type: string }
             owner: { $ref: "#/components/schemas/GitHubAccount" }
         account: { $ref: "#/components/schemas/GitHubAccount" }
-        deleteUrl: { type: string, format: uri, description: Where the App's owner deletes it on GitHub }
+        deleteUrl:
+          type: [string, "null"]
+          format: uri
+          description: >
+            Where the App's owner deletes it on GitHub. Null for
+            registration-ended: its App may be the one this Organization
+            attached (an attachment repeated after a lost answer).
         message: { type: string }
 
     GitHubAppRegistrationFailed:

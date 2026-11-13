@@ -56,6 +56,7 @@ import {
   DISCLOSURE_PURPOSES,
   discloseSecrets,
   effectiveConfiguration,
+  selectDisclosure,
   setValue,
   validateEnvironment,
   type ValidationAccess,
@@ -72,6 +73,15 @@ import {
 } from "../domain/identities.js";
 import { credentialReview } from "../domain/credentialReview.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
+import {
+  auditExportStatus,
+  changeAuditExport,
+  checkAuditExport,
+  createAuditExport,
+  liveAuditExportId,
+  removeAuditExport,
+  replaceAuditExportCredential,
+} from "../domain/auditexport.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
@@ -110,7 +120,9 @@ import {
 import { liveRunStarts } from "../domain/syncdelivery.js";
 import {
   GITHUB_WEB,
+  attachRegistration,
   completeRegistration,
+  discardRegistration,
   getGitHubApp,
   importGitHubApp,
   listAppInstallations,
@@ -159,6 +171,7 @@ import {
   parseApprovalId,
   startApproval,
   withApproval,
+  ApprovalNeeded,
   type ProtectedGate,
   type Requester,
 } from "../domain/approvals.js";
@@ -184,6 +197,9 @@ import { lockPeople, lockPerson, type PersonRef } from "../domain/personlocks.js
 import {
   STATUS_BY_CODE,
   authorize,
+  authorizeInTransaction,
+  authorizeInControlledTransaction,
+  auditDeferredDenial,
   bodyHash,
   decide,
   recordDenial,
@@ -216,14 +232,14 @@ import {
 import { captureOrganizationAccess, requireOrganizationAccess, withRequester } from "../domain/requestaccess.js";
 import {
   queueAccessCount,
-  reportingControls,
   securityControlReport,
   type PendingAccessReport,
   type WouldBlock,
 } from "../domain/securityreport.js";
 import { installationOutbound, organizationRefusedDestinations } from "../domain/refuseddestinations.js";
+import { exportControl, exportGuard } from "../domain/exportstepup.js";
 
-export const SERVER_VERSION = "0.21.0";
+export const SERVER_VERSION = "0.22.0";
 
 import { auditAuthz, evaluate, requirementsCovering, type Action, type TailnetContext } from "../authz/evaluate.js";
 
@@ -677,6 +693,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
 
   app.onError(async (err, c) => {
     const reqId = (c.get("requestId") as string) ?? requestId();
+    // A denial found by a protected operation's recheck inside its
+    // transaction (ADR-0054 Decision 3), which the refusal rolled back:
+    // recorded now, once (support.ts authorizeInTransaction). Freezing,
+    // lifting and a control change keep theirs only while a control is on
+    // (authorizeInControlledTransaction).
+    await auditDeferredDenial(ctx, c);
     if (err instanceof OrganizationFrozenError) {
       // Final for this request: clients back off (ADR-0055 Decision 8). One
       // audit event per refusal, after the transaction or snapshot ended.
@@ -1598,7 +1620,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(z.object({ afterDays: z.number().int().min(1).max(30).optional() }).strict(), await c.req.json());
-    return c.json(await scheduleDeletion(ctx, org.id, principal.identity, body), 201);
+    // admin-step-up's organization.delete (ADR-0054 amendment B): under
+    // enforce, the requester's approval of exactly this waiting period. It
+    // adds to the checks above and replaces none.
+    const scheduled = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      scheduleDeletion(ctx, gate, org.id, body));
+    return c.json(scheduled, 201);
   });
 
   app.post("/v1/organizations/:org/deletion/:deletion/approve", async (c) => {
@@ -1652,8 +1679,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       credentialKind: principal.credentialKind,
       reason: body.reason,
       requestId: c.get("requestId"),
+      // A denial here is audited only while a control is on (ADR-0054
+      // follow-up (f), support.ts authorizeInControlledTransaction).
       authorizeIn: async (db) => {
-        await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+        await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
       },
     });
     return c.json(freeze, 201);
@@ -1673,8 +1702,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         actor: principal.identity,
         credentialKind: principal.credentialKind,
         requestId: c.get("requestId"),
+        // As for freezing: a denial is audited only while a control is on.
         authorizeIn: async (db) => {
-          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+          await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
         },
       }));
     return c.json(result);
@@ -1999,7 +2029,15 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org, project } = await projectScope(ctx, c);
     await authorize(ctx, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
-    const deleted = await deleteProject(ctx, org.id, project.id, principal.identity.id);
+    // admin-step-up's project.delete (ADR-0054 amendment B): under enforce,
+    // the requester's approval, consumed in the deletion's transaction;
+    // project.manage is checked again there.
+    const deleted = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      deleteProject(ctx, gate, org.id, project.id, {
+        authorizeIn: async (db) => {
+          await authorizeInTransaction(ctx, db, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+        },
+      }));
     return c.json({ projectId: project.id, slug: project.slug, ...deleted });
   });
 
@@ -2299,11 +2337,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const state = await captureState(sctx, scope, now, (item) =>
           item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
         );
-        // admin-step-up in report mode (ADR-0054 Decision 5): an export,
-        // the dashboard's .env download, is done without an approval.
-        // Decided on the snapshot; counted with the disclosure's audit.
-        const stepUp = body.purpose === "export" ? (await reportingControls(sctx.db, scope.org.id)).get("admin-step-up") : undefined;
-        const report: WouldBlock[] = stepUp
+        // admin-step-up (ADR-0054 Decision 5): an export, the dashboard's
+        // .env download. In report mode it is done without an approval,
+        // decided on the snapshot and counted with the disclosure's audit.
+        // Under enforce it needs one, consumed in phase 2 (amendment C,
+        // exportstepup.ts): nothing is written in this snapshot.
+        const stepUp = body.purpose === "export" ? await exportControl(sctx.db, scope.org.id) : null;
+        const report: WouldBlock[] = stepUp?.mode === "report"
           ? [{
               control: "admin-step-up",
               configVersion: stepUp.version,
@@ -2317,10 +2357,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // the request, as it did; recorded after the snapshot (reject).
         if (!plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
         // passkey-verification, decided in this snapshot after every
-        // existence check and before any disclosure audit or decryption
-        // (ADR-0054 Decision 7); not read again after the snapshot.
+        // existence check and before any disclosure audit, decryption or
+        // approval intent (ADR-0054 Decision 7). Not read again after the
+        // snapshot, except by an export's phase 2 under admin-step-up's
+        // enforce, which consumes an approval under the Organization lock
+        // (exportstepup.ts).
         await requireOrganizationAccess(sctx.db, scope.org.id);
-        return { state, body, reveal, plain, metadata, report: { attempts: report, at: now } };
+        return { state, body, reveal, plain, metadata, resource, enforce: stepUp?.mode === "enforce", report: { attempts: report, at: now } };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
       const { state, body, plain, metadata } = phase;
@@ -2328,13 +2371,25 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await recordDenial(ctx, plain);
         if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-      const { unexpanded, ...result } = await discloseSecrets(ctx, state, body, {
-        actorIdentityId: principal.identity.id,
-        requestId: c.get("requestId"),
-        mayReadPlain: plain.allowed,
-        authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
-        report: phase.report,
-      });
+      const disclose = (guard?: (db: Querier) => Promise<Record<string, string | boolean>>) =>
+        discloseSecrets(ctx, state, body, {
+          actorIdentityId: principal.identity.id,
+          requestId: c.get("requestId"),
+          mayReadPlain: plain.allowed,
+          authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
+          report: phase.report,
+          guard,
+        });
+      // Phase 2 of an export under enforce: the approval is consumed, and
+      // secret.reveal decided again, in the disclosure's audit transaction,
+      // before anything is decrypted. The Varlatch-Approval header is read
+      // only then, so with the control off a malformed one changes nothing.
+      const { unexpanded, ...result } = phase.enforce
+        ? await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+            disclose(exportGuard(ctx, gate, state, body, selectDisclosure(state, body).selected, async (db) => {
+              await authorizeInTransaction(ctx, db, c, principal, "secret.reveal", phase.resource);
+            })))
+        : await disclose();
       c.header("Cache-Control", "no-store");
       return c.json(
         metadata.allowed
@@ -2674,7 +2729,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
    * once its approval was consumed (ADR-0054 Decision 3).
    */
   const identityManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
-    await authorize({ ...ctx, db }, c, principal, "identity.manage", { organizationId }, { hideExistence: true });
+    await authorizeInTransaction(ctx, db, c, principal, "identity.manage", { organizationId }, { hideExistence: true });
   };
 
   app.post("/v1/organizations/:org/identities", async (c) => {
@@ -3000,9 +3055,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         expectedVersion: body.expectedVersion,
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
-        // Rechecked inside the change's transaction, after the Organization lock.
+        // Rechecked inside the change's transaction, after the Organization
+        // lock and before the new state is written. A denial is audited only
+        // when a control is on in the state before this change (ADR-0054
+        // follow-up (f), support.ts authorizeInControlledTransaction): from
+        // all off, off to report audits nothing; report to off audits it.
         authorizeIn: async (db) => {
-          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+          await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
         },
       }));
     return c.json(result);
@@ -3368,7 +3427,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
    * once its approval was consumed (ADR-0054 Decision 3).
    */
   const policyManageIn = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
-    await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
+    await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId }, { hideExistence: true });
+  };
+  /**
+   * An action rechecked inside a protected operation's transaction, once its
+   * approval was consumed (ADR-0054 Decision 3).
+   */
+  const actionIn = (c: Context, principal: Principal, organizationId: string, action: Action) => async (db: Querier) => {
+    await authorizeInTransaction(ctx, db, c, principal, action, { organizationId }, { hideExistence: true });
   };
   /** A protected operation's gate (ADR-0054): the header is read only when a control at enforce asks for an approval. */
   const approvalGate = <T>(c: Context, run: (gate: ProtectedGate) => Promise<T>) =>
@@ -3915,7 +3981,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             return requirementUpdateBinding(db, org, current, next, body.expectedVersion);
           },
           authorizeIn: async (db) => {
-            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+            await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
           },
         });
         const res = await lockedQuery(
@@ -4005,7 +4071,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
             return requirementRevokeBinding(db, org, current);
           },
           authorizeIn: async (db) => {
-            await authorize({ ...ctx, db }, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
+            await authorizeInTransaction(ctx, db, c, principal, "policy.manage", { organizationId: org.id }, { hideExistence: true });
           },
         });
         const locked = (await lockedQuery(
@@ -4063,7 +4129,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const { webhook, secret } = await createWebhook(ctx, org, body, principal.identity.id);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+    // requester's approval (webhook.create); organization.manage is
+    // rechecked once it is consumed.
+    const { webhook, secret } = await approvalGate(c, (gate) =>
+      createWebhook(ctx, gate, org, body, { authorizeIn: actionIn(c, principal, org.id, "organization.manage") }));
     c.header("Cache-Control", "no-store");
     return c.json({ ...serializeWebhook(webhook), secret }, 201);
   });
@@ -4089,12 +4159,19 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       await c.req.json(),
     );
     const endpoint = `PATCH webhooks ${c.req.param("webhook")}`;
-    const { status, payload } = await withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: [] }, async (ctx) => ({
-      status: 200,
-      payload: serializeWebhook(
-        await updateWebhook(ctx, org.id, c.req.param("webhook"), body, principal.identity.id),
-      ),
-    }));
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for the
+    // requester's approval (webhook.update). The Idempotency-Key claim
+    // (step 2.5) holds the requester FOR UPDATE when the request carries an
+    // approval, and rolls back with a STEP_UP_REQUIRED answer.
+    const { status, payload } = await approvalGate(c, (gate) =>
+      withIdempotency(ctx, c, principal, endpoint, body, { organizationId: org.id, people: claimPeople(c, principal) }, async (ctx) => ({
+        status: 200,
+        payload: serializeWebhook(
+          await updateWebhook(ctx, gate, org.id, c.req.param("webhook"), body, {
+            authorizeIn: actionIn(c, principal, org.id, "organization.manage"),
+          }),
+        ),
+      })));
     return c.json(payload as Record<string, unknown>, status as 200);
   });
 
@@ -4102,8 +4179,171 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
-    await revokeWebhook(ctx, org.id, c.req.param("webhook"), principal.identity.id);
+    // A protected operation (ADR-0054): webhook.delete. Refused while the
+    // Organization is frozen for an incident (not a recovery operation).
+    await approvalGate(c, (gate) =>
+      revokeWebhook(ctx, gate, org.id, c.req.param("webhook"), { authorizeIn: actionIn(c, principal, org.id, "organization.manage") }));
     return c.body(null, 204);
+  });
+
+  // ---- Audit export to object storage (ADR-0056; capability
+  // audit.storage-export). One export per Organization. Reading needs
+  // organization.manage (it names the destination and its failures), as the
+  // Security page's other admin reads do, and is allowed while frozen
+  // (inspection). Every write needs organization.manage and a person's
+  // credential: machine credentials are always refused. Creating and the
+  // check need no approval; a destination change, a new key, a shorter or
+  // removed retention, compliance to governance, and removal always need
+  // the requester's step-up approval (audit_export.change,
+  // audit_export.remove), whatever the Security Controls' modes, as a
+  // loosening Security Control change does. Writes are refused while the
+  // Organization is frozen or being deleted; delivery continues.
+  const auditExportDestination = z.object({
+    endpoint: z.string().min(1).max(2048),
+    region: z.string().min(1).max(64),
+    bucket: z.string().min(3).max(63),
+    prefix: z.string().max(256).default(""),
+    pathStyle: z.boolean().default(false),
+  }).strict();
+  const auditExportCredential = z.object({
+    accessKeyId: z.string().min(1).max(128),
+    secretAccessKey: z.string().min(1).max(256),
+  }).strict();
+  const auditExportRetention = z.object({
+    mode: z.enum(["compliance", "governance"]),
+    days: z.number().int().min(1).max(3650),
+  }).strict();
+  /** A write's person: a browser or cli credential of a human, never a machine (ADR-0056 Decision 9). */
+  const auditExportPerson = (principal: Principal) => {
+    if (principal.identity.kind !== "human" || (principal.credentialKind !== "browser" && principal.credentialKind !== "cli")) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person can change the audit export; machine credentials never can", { reason: "machine-credential" });
+    }
+  };
+  /**
+   * organization.manage rechecked inside the operation's transaction. These
+   * operations run whatever the Security Controls' modes, so a denial is
+   * audited after the rollback only when a control is on (ADR-0054
+   * follow-up (f), support.ts authorizeInControlledTransaction).
+   */
+  const auditExportRecheck = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
+    await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId }, { hideExistence: true });
+  };
+  /** The live export's id, or a placeholder no row has: the operation answers its not-found after the freeze and deletion refusals. */
+  const auditExportTarget = async (orgId: string) => (await liveAuditExportId(ctx, orgId)) ?? "aex_none";
+
+  app.get("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c, INSPECTION);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await auditExportStatus(ctx, org.id));
+  });
+
+  app.post("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        destination: auditExportDestination,
+        credential: auditExportCredential,
+        retention: auditExportRetention.nullable().default(null),
+        from: z.enum(["beginning", "now"]).default("beginning"),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    await createAuditExport(ctx, requesterOf(c), org, body, {
+      authorizeIn: auditExportRecheck(c, principal, org.id),
+      requestId: c.get("requestId"),
+    });
+    c.header("Cache-Control", "no-store");
+    return c.json((await auditExportStatus(ctx, org.id)).export, 201);
+  });
+
+  app.post("/v1/organizations/:org/audit-export/check", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        destination: auditExportDestination,
+        credential: auditExportCredential.optional(),
+        retention: auditExportRetention.nullable().default(null),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    c.header("Cache-Control", "no-store");
+    return c.json(await checkAuditExport(ctx, requesterOf(c), org, body, { authorizeIn: auditExportRecheck(c, principal, org.id) }));
+  });
+
+  app.patch("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        expectedVersion: z.number().int().min(1),
+        // Only the fields named change: no defaults here, unlike creation.
+        destination: z.object({
+          endpoint: z.string().min(1).max(2048).optional(),
+          region: z.string().min(1).max(64).optional(),
+          bucket: z.string().min(3).max(63).optional(),
+          prefix: z.string().max(256).optional(),
+          pathStyle: z.boolean().optional(),
+        }).strict().optional(),
+        retention: auditExportRetention.nullable().optional(),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    const exportId = await auditExportTarget(org.id);
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      changeAuditExport(ctx, gate, org, exportId, body, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json({ export: (await auditExportStatus(ctx, org.id)).export, changed: result.changed, loosened: result.loosened });
+  });
+
+  app.put("/v1/organizations/:org/audit-export/credential", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({ expectedVersion: z.number().int().min(1), credential: auditExportCredential }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    const exportId = await auditExportTarget(org.id);
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      replaceAuditExportCredential(ctx, gate, org, exportId, body, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json((await auditExportStatus(ctx, org.id)).export);
+  });
+
+  app.delete("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const raw = c.req.query("expectedVersion");
+    if (raw === undefined || !/^[1-9]\d{0,9}$/.test(raw)) {
+      throw new DomainError("VALIDATION_FAILED", "expectedVersion: the export's current version, a whole number from 1, as a query parameter");
+    }
+    const exportId = await auditExportTarget(org.id);
+    const removed = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      removeAuditExport(ctx, gate, org, exportId, { expectedVersion: Number(raw) }, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json({ ...removed, lag: null, objectLock: removed.retention === null ? "not-set" : removed.lockVerified ? "verified" : "accepted", unsupportedPlanFormat: null });
   });
 
   // ---- Sync Targets (ADR-0031): opt-in integrations pushing an
@@ -4250,7 +4490,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         }),
         raw,
       );
-      const connection = await createAppConnection(ctx, org, appBody, principal.identity.id, syncEnabled.adapters, options.syncFetch);
+      // A protected operation (ADR-0054): connection.create on the App.
+      // Under enforce, GitHub is asked for the installation only after the
+      // precheck found an approved intent (amendment D).
+      const connection = await approvalGate(c, (gate) =>
+        createAppConnection(ctx, gate, org, appBody, syncEnabled.adapters, options.syncFetch, {
+          authorizeIn: actionIn(c, principal, org.id, "config.sync.manage"),
+        }));
       c.header("Cache-Control", "no-store");
       return c.json(serializeConnection(connection), 201);
     }
@@ -4270,7 +4516,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         "This Installation does not allow the requested platform adapter",
       );
     }
-    const connection = await createConnection(ctx, org, body, principal.identity.id);
+    // A protected operation (ADR-0054): connection.create, bound to the
+    // credential itself (the intent keeps only its keyed hash).
+    const connection = await approvalGate(c, (gate) =>
+      createConnection(ctx, gate, org, body, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     c.header("Cache-Control", "no-store");
     return c.json(serializeConnection(connection), 201);
   });
@@ -4386,19 +4635,22 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // Replacement is a new disclosure grant for every non-revoked
     // referencing Target at once, atomically (§2): each Target's write-time
     // gate must pass for THIS actor, or the whole replacement is refused.
-    const connection = await replaceConnectionCredential(
-      ctx,
-      org,
-      c.req.param("connection"),
-      body,
-      reauthorizationGate(
-        c,
-        principal,
+    // A protected operation (ADR-0054): connection.replace_credential.
+    const connection = await approvalGate(c, (gate) =>
+      replaceConnectionCredential(
+        ctx,
+        gate,
         org,
-        "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
-      ),
-      principal.identity.id,
-    );
+        c.req.param("connection"),
+        body,
+        reauthorizationGate(
+          c,
+          principal,
+          org,
+          "Replacing this credential re-authorizes every referencing Sync Target; you lack disclosure authority for at least one",
+        ),
+        { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") },
+      ));
     c.header("Cache-Control", "no-store");
     return c.json(serializeConnection(connection));
   });
@@ -4407,7 +4659,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
-    await revokeConnection(ctx, org, c.req.param("connection"), principal.identity.id);
+    // A protected operation (ADR-0054): connection.delete. A recovery
+    // operation during an incident freeze (ADR-0055), where its approval
+    // may still be asked for.
+    await approvalGate(c, (gate) =>
+      revokeConnection(ctx, gate, org, c.req.param("connection"), { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     return c.body(null, 204);
   });
 
@@ -4481,12 +4737,57 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       z.object({ state: z.string().min(1).max(200), code: z.string().min(1).max(200) }),
       await c.req.json(),
     );
-    const result = await completeRegistration(ctx, org, body, principal.identity.id, options.syncFetch);
+    // The callback (amendment D): conversion, then the attachment
+    // (github_app.register) in the same request. Its gate never carries an
+    // approval: the callback is never repeated. When the attachment needs
+    // one, the answer is STEP_UP_REQUIRED for the registration, which names
+    // it, and the client repeats the attachment on its own route.
+    let registrationId: string | null = null;
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: null, publicUrl: options.publicUrl }, (gate) =>
+      completeRegistration(ctx, gate, org, body, options.syncFetch, {
+        authorizeIn: actionIn(c, principal, org.id, "config.sync.manage"),
+      }).catch((err: unknown) => {
+        // The attachment's binding targets the registration.
+        if (err instanceof ApprovalNeeded) registrationId = err.binding.target.registrationId ?? null;
+        throw err;
+      })).catch((err: unknown) => {
+      if (err instanceof DomainError && err.code === "STEP_UP_REQUIRED" && registrationId !== null) {
+        throw new DomainError(err.code, err.message, { ...(err.details ?? {}), registrationId });
+      }
+      throw err;
+    });
     c.header("Cache-Control", "no-store");
+    return registrationAnswer(c, result);
+  });
+
+  const registrationAnswer = (c: Context, result: Awaited<ReturnType<typeof attachRegistration>>) => {
     if (result.outcome === "registered") {
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
     }
     return c.json(result);
+  };
+
+  // The attachment of a pending registration (amendment D step 3):
+  // github_app.register, protected. Only the person who started it may
+  // attach it; anyone else gets not-found.
+  app.post("/v1/organizations/:org/github-app/registrations/:registration/attach", async (c) => {
+    assertSyncEnabled();
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    assertGitHubAppsAllowed();
+    const result = await approvalGate(c, (gate) =>
+      attachRegistration(ctx, gate, org, c.req.param("registration"), { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
+    c.header("Cache-Control", "no-store");
+    return registrationAnswer(c, result);
+  });
+
+  // Discarding a pending registration: its key is deleted; the App stays on GitHub.
+  app.delete("/v1/organizations/:org/github-app/registrations/:registration", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
+    return c.json(await discardRegistration(ctx, org, c.req.param("registration"), principal.identity.id));
   });
 
   app.post("/v1/organizations/:org/github-app/import", async (c) => {
@@ -4502,7 +4803,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       }),
       await c.req.json(),
     );
-    const result = await importGitHubApp(ctx, org, body, principal.identity.id, options.syncFetch);
+    // A protected operation (ADR-0054): github_app.import. Under enforce the
+    // key goes to GitHub only after the precheck found an approved intent.
+    const result = await approvalGate(c, (gate) =>
+      importGitHubApp(ctx, gate, org, body, options.syncFetch, undefined, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     c.header("Cache-Control", "no-store");
     if (result.outcome === "registered") {
       return c.json({ outcome: "registered", app: serializeGitHubApp(result.app) }, 201);
@@ -4520,19 +4824,24 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       z.object({ privateKey: z.string().min(1).max(10_000), expectedVersion: z.number().int().min(1) }),
       await c.req.json(),
     );
-    const result = await rotateGitHubAppKey(
-      ctx,
-      org,
-      body,
-      reauthorizationGate(
-        c,
-        principal,
+    // A protected operation (ADR-0054): github_app.replace_key. Under
+    // enforce the key goes to GitHub only after the precheck.
+    const result = await approvalGate(c, (gate) =>
+      rotateGitHubAppKey(
+        ctx,
+        gate,
         org,
-        "Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one",
-      ),
-      principal.identity.id,
-      options.syncFetch,
-    );
+        body,
+        reauthorizationGate(
+          c,
+          principal,
+          org,
+          "Rotating the GitHub App's key re-authorizes every Sync Target on its Connections; you lack disclosure authority for at least one",
+        ),
+        options.syncFetch,
+        undefined,
+        { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") },
+      ));
     c.header("Cache-Control", "no-store");
     return result.outcome === "rotated" ? c.json({ outcome: "rotated", app: serializeGitHubApp(result.app) }) : c.json(result);
   });
@@ -4542,7 +4851,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "config.sync.manage", { organizationId: org.id }, { hideExistence: true });
     const { appId } = parseBody(z.object({ appId: z.string().min(1).max(100) }), { appId: c.req.query("appId") });
-    await removeGitHubApp(ctx, org, appId, principal.identity.id);
+    // A protected operation (ADR-0054): github_app.remove.
+    await approvalGate(c, (gate) =>
+      removeGitHubApp(ctx, gate, org, appId, { authorizeIn: actionIn(c, principal, org.id, "config.sync.manage") }));
     return c.body(null, 204);
   });
 

@@ -180,3 +180,86 @@ describe("credential expiry notice", () => {
     expect(seen).toEqual(["2026-11-12T08:00:00.000Z", "2026-11-12T08:00:00.000Z"]);
   });
 });
+
+describe("GitHub App registration under a step-up (ADR-0054 amendment D)", () => {
+  const approval = { id: "apr_aaaaaaaaaaaaaaaaaaaaaaaaaa", operation: "github_app.register" };
+  const stepUp = () =>
+    new Response(
+      JSON.stringify({ error: { code: "STEP_UP_REQUIRED", message: "approve", requestId: "r", details: { approval, registrationId: "ghr_1" } } }),
+      { status: 403 },
+    );
+
+  function client(onStepUp?: () => Promise<boolean>) {
+    const requests: { method: string; url: string; headers: Record<string, string> }[] = [];
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      requests.push({ method: init?.method ?? "GET", url, headers: { ...(init?.headers as Record<string, string> | undefined) } });
+      if (url.endsWith("/registrations/complete")) return stepUp();
+      return new Response(JSON.stringify({ outcome: "registered", app: { id: "gha_1" } }), { status: 201 });
+    };
+    return { requests, client: new VarlatchClient({ server: "https://v.example", token: "t", fetch: fetchImpl, ...(onStepUp ? { onStepUp } : {}) }) };
+  }
+
+  it("never repeats the callback: once approved, it attaches the registration with the approval", async () => {
+    const { requests, client: c } = client(async () => true);
+    await expect(c.completeGitHubAppRegistration("acme", { state: "s", code: "c" })).resolves.toMatchObject({ outcome: "registered" });
+    expect(requests.map((r) => [r.method, r.url, r.headers["Varlatch-Approval"] ?? null])).toEqual([
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/complete", null],
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1/attach", approval.id],
+    ]);
+  });
+
+  it("surfaces STEP_UP_REQUIRED, naming the registration, when the approval is not given", async () => {
+    const { requests, client: c } = client(async () => false);
+    await expect(c.completeGitHubAppRegistration("acme", { state: "s", code: "c" })).rejects.toMatchObject({
+      code: "STEP_UP_REQUIRED",
+      details: { registrationId: "ghr_1" },
+    });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("attaches and discards on the registration's routes", async () => {
+    const { requests, client: c } = client();
+    await c.attachGitHubAppRegistration("acme", "ghr_1");
+    await c.discardGitHubAppRegistration("acme", "ghr_1");
+    expect(requests.map((r) => [r.method, r.url])).toEqual([
+      ["POST", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1/attach"],
+      ["DELETE", "https://v.example/v1/organizations/acme/github-app/registrations/ghr_1"],
+    ]);
+  });
+});
+
+describe("an export whose read went stale under its approval (ADR-0054 amendment C)", () => {
+  const error = (status: number, code: string, details: Record<string, unknown>) =>
+    new Response(JSON.stringify({ error: { code, message: code, requestId: "req_1", details } }), { status });
+  const approval = { id: "apr_aaaaaaaaaaaaaaaaaaaaaaaaaa", operation: "secret.export" };
+  const disclosed = () => new Response(JSON.stringify({ items: [{ name: "API_KEY", versionId: "ver_2", value: "v" }], withheld: [] }));
+  const scripted = (answers: (() => Response)[]) => {
+    const requests: Record<string, string>[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requests.push({ ...(init?.headers as Record<string, string> | undefined) });
+      return answers.shift()!();
+    };
+    const client = new VarlatchClient({ server: "https://v.example", token: "vlt_x", fetch: fetchImpl, onStepUp: async () => true });
+    return { requests, client };
+  };
+  const stale = () => error(409, "STATE_CHANGED", { reason: "stale-capture", approvalId: approval.id });
+
+  it("repeats the request with the same approval, which reads afresh", async () => {
+    const { requests, client } = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), stale, disclosed]);
+    await expect(client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).resolves.toMatchObject({ items: [{ name: "API_KEY" }] });
+    expect(requests.map((h) => h["Varlatch-Approval"] ?? null)).toEqual([null, approval.id, approval.id]);
+  });
+
+  it("gives up after two repeats, and never repeats another STATE_CHANGED or a request without an approval", async () => {
+    const twice = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), stale, stale, stale]);
+    await expect(twice.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(twice.requests).toHaveLength(4);
+    const other = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), () => error(409, "STATE_CHANGED", {})]);
+    await expect(other.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(other.requests).toHaveLength(2);
+    const plain = scripted([stale]);
+    await expect(plain.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"] })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(plain.requests).toHaveLength(1);
+  });
+});

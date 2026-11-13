@@ -14,7 +14,7 @@ import type { ResolvedContext } from "@varlatch/context";
 import { VarlatchApiError, type VarlatchClient } from "@varlatch/sdk";
 import { DotenvParseError, parseDotenv, type DotenvEntry } from "./dotenv.js";
 import { EXIT, apiErrorExit, networkFailure } from "./exitCodes.js";
-import { safeApiCode } from "./safeText.js";
+import { rememberSecret, safe, safeApiCode } from "./safeText.js";
 
 /**
  * `varlatch import <file>` (ADR-0043 Decision 2): the CLI reads a dotenv file
@@ -229,6 +229,8 @@ export async function storeValues(
   entries: DotenvEntry[],
 ): Promise<{ stored: string[]; failure: { name: string; reason: string; exitCode: number; skipped: string[] } | null }> {
   const stored: string[] = [];
+  // A server echoing a value back in an error message gets it masked (issue #119).
+  for (const entry of entries) rememberSecret(entry.value);
   for (const [index, entry] of entries.entries()) {
     try {
       await api.setValue(ctx.organization, ctx.project, ctx.environment, entry.name, { value: entry.value });
@@ -402,8 +404,8 @@ export async function runImport(opts: ImportOptions, target: ImportTarget, strea
       provenance: { adapter: "varlatch-import" },
     });
     pushed = { id: revision.id, contentHash: revision.contentHash, active: revision.active };
-    io.out(`Contract revision ${revision.id} (${revision.contentHash})${revision.active ? " [active]" : ""}`);
-    if (!revision.active) io.out(`Activate with: varlatch contract activate ${revision.id}`);
+    io.out(`${safe`Contract revision ${revision.id} (${revision.contentHash})`}${revision.active ? " [active]" : ""}`);
+    if (!revision.active) io.out(safe`Activate with: varlatch contract activate ${revision.id}`);
   }
 
   const result = await storeValues(api, ctx, rows.map((r) => r.entry));

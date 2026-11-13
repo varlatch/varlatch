@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ContextError, resolveServer } from "@varlatch/context";
 import type { TailnetDevice, VarlatchClient, WhoAmI } from "@varlatch/sdk";
+import { printable, safeTime, safeVersion } from "./safeText.js";
 
 /**
  * `varlatch whoami` (capability identity.whoami): which identity, human or
@@ -27,7 +28,7 @@ export async function fetchWhoami(api: WhoamiApi): Promise<WhoAmI> {
   const meta = await api.meta();
   if (!meta.capabilities.includes(WHOAMI_CAPABILITY)) {
     throw new WhoamiUnsupportedError(
-      `varlatch whoami: this server (${meta.serverVersion}) cannot say which identity a credential belongs to ` +
+      `varlatch whoami: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) cannot say which identity a credential belongs to ` +
         `(it lacks the ${WHOAMI_CAPABILITY} capability); upgrade the server. ` +
         "varlatch status --probe still says whether a stored credential is valid.",
     );
@@ -78,9 +79,10 @@ export function formatWhoamiHuman(server: string, caller: WhoAmI): string {
     ...(identity.email ? [`Email         ${identity.email}`] : []),
     `Organization  ${org}`,
     `Credential    ${credential.name ?? "unnamed"} (${credential.kind}, ${credential.id}), ` +
-      (credential.expiresAt ? `expires ${credential.expiresAt}` : "no expiry"),
+      (credential.expiresAt ? `expires ${safeTime(credential.expiresAt)}` : "no expiry"),
     `Server        ${server} (${caller.listener} listener)`,
     ...(caller.tailnet ? [`Device        ${describeDevice(caller.tailnet)}`] : []),
   ];
-  return lines.join("\n");
+  // Names, IDs and the device's details come from the server: escaped (issue #119).
+  return lines.map(printable).join("\n");
 }

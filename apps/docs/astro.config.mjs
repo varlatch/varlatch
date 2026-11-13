@@ -83,6 +83,7 @@ export default defineConfig({
           items: [
             { label: "Security controls", slug: "reference/security-controls" },
             { label: "Incident freeze", slug: "reference/incident-freeze" },
+            { label: "Audit export", slug: "reference/audit-export" },
             { label: "Outbound policy", slug: "reference/outbound-policy" },
             { label: "Threat model", slug: "threat-model" },
           ],

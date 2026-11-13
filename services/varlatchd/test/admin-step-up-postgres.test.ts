@@ -74,7 +74,7 @@ describe.skipIf(!url)("admin-step-up on real PostgreSQL", () => {
     }
   });
 
-  /** admin-step-up at enforce, written directly: the API refuses it until step 4.9. */
+  /** admin-step-up at enforce, written directly in the database (the API accepts it since step 4.9). */
   const enforceAdminStepUp = () =>
     db.query(
       `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
@@ -100,7 +100,7 @@ describe.skipIf(!url)("admin-step-up on real PostgreSQL", () => {
     const created = await call("POST", "/v1/organizations/acme/identities", cli.token, { name: "worker", kind: "workload" });
     expect(created.status).toBe(201);
     const identityId = created.body.id as string;
-    // admin-step-up at enforce, written directly: the API refuses it until step 4.9.
+    // admin-step-up at enforce, written directly in the database (the API accepts it since step 4.9).
     await db.query(
       `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
        VALUES ($1, 'admin-step-up', 'enforce', NULL, 1, $2, now())`,

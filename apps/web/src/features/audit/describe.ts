@@ -594,6 +594,20 @@ export function describeEvent(event: AuditEventLike, names: NameResolver = empty
         ],
       };
     }
+    case "sync.github_app_registration_abandoned":
+      return {
+        icon: "alert",
+        title: "GitHub App registration abandoned",
+        segments: [
+          "deleted the key of the pending GitHub App ",
+          { kind: "mono", text: str(m.slug) ?? "an App" },
+          str(m.reason) === "discarded"
+            ? ": discarded before it was attached"
+            : str(m.reason) === "machine-credential"
+              ? ": a machine credential cannot approve attaching it"
+              : ": not attached within the hour",
+        ],
+      };
     case "sync.github_app_registration_refused":
       return {
         icon: "alert",

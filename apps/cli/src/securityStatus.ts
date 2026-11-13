@@ -2,6 +2,7 @@
 import {
   VarlatchApiError,
   type ApprovalKeys,
+  type AuditExportStatus,
   type CredentialReview,
   type IncidentFreeze,
   type SecurityControl,
@@ -15,6 +16,8 @@ import {
 import type { Requirement } from "@varlatch/protocol";
 import { enforceable, lifetime } from "./securityControls.js";
 import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
+import { printable, safeTime, safeVersion, serverMessage } from "./safeText.js";
+import { statusLines as auditExportLines } from "./auditExport.js";
 
 /**
  * `varlatch security status` (ADR-0054 Decision 11): what the dashboard's
@@ -22,7 +25,8 @@ import { ago, expiryLine, usagePolicyLine } from "./securityReport.js";
  * Security Controls with what each one counts in report mode and what
  * enforce would change, their counts of the last 30 days, the approval keys
  * of the admins, the credential review with expiry warnings, the Tailnet
- * Requirements, and a short checklist with links to the docs.
+ * Requirements, the audit export (ADR-0056 Decision 11), and a short
+ * checklist with links to the docs.
  *
  * Read-only. Each part needs its own permission: the controls need
  * organization.read (every member); the counts and approval keys
@@ -129,6 +133,13 @@ export interface SecurityStatus {
   approvalKeys: ApprovalKeys | null;
   credentialReview: CredentialReview | null;
   requirements: { count: number; protectedBy: "requirement-protection"; items: Requirement[] } | null;
+  /**
+   * The audit export and the installation switch (capability
+   * audit.storage-export), for whoever may manage the organization; null
+   * otherwise. Not listed in `unavailable`: a member's text is unchanged,
+   * and their JSON gains only this key, as null.
+   */
+  auditExport: AuditExportStatus | null;
   checklist: readonly ChecklistItem[];
   unavailable: Unavailable[];
 }
@@ -136,7 +147,7 @@ export interface SecurityStatus {
 export type SecurityStatusApi = Pick<
   VarlatchClient,
   "meta" | "myOrganizationPermissions" | "listSecurityControls" | "securityControlReport" | "securityApprovalKeys" | "credentialReview" | "listRequirements"
-> & Partial<Pick<VarlatchClient, "incidentFreeze">>;
+> & Partial<Pick<VarlatchClient, "incidentFreeze" | "getAuditExport">>;
 
 /** The server cannot answer at all: it has no Security Controls. */
 export class SecurityStatusUnsupportedError extends Error {
@@ -152,7 +163,7 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
   const meta = await api.meta();
   if (!meta.capabilities.includes("security.controls")) {
     throw new SecurityStatusUnsupportedError(
-      `varlatch security status: this server (${meta.serverVersion}) has no security controls ` +
+      `varlatch security status: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no security controls ` +
         "(it lacks the security.controls capability); upgrade the server.",
     );
   }
@@ -191,6 +202,16 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
       : await part("approvalKeys", "security.approval-keys", () => api.securityApprovalKeys(organization));
   const review = await part("credentialReview", "security.credential-review", () => api.credentialReview(organization));
   const requirements = await part("requirements", null, () => api.listRequirements(organization));
+  // The audit export: asked only where the server has it and the caller may manage the organization.
+  const mayManage = held ? held.has("organization.manage") : true;
+  let auditExport: AuditExportStatus | null = null;
+  if (has("audit.storage-export") && api.getAuditExport && mayManage) {
+    try {
+      auditExport = await api.getAuditExport(organization);
+    } catch (err) {
+      if (!notPermitted(err)) throw err;
+    }
+  }
 
   const items = [...list.items]
     .sort((a, b) => CONTROL_ORDER.indexOf(a.control) - CONTROL_ORDER.indexOf(b.control))
@@ -217,6 +238,8 @@ export async function fetchSecurityStatus(api: SecurityStatusApi, organization: 
     checklist: CHECKLIST,
     unavailable,
     incidentFreeze,
+    // Last, so every earlier key keeps its place.
+    auditExport,
   };
 }
 
@@ -255,7 +278,7 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
   if (s.incidentFreeze) {
     const f = s.incidentFreeze;
     lines.push(
-      `FROZEN for an incident since ${f.frozenAt} by ${f.frozenBy.name ?? f.frozenBy.id}: ${f.reason}`,
+      `FROZEN for an incident since ${safeTime(f.frozenAt)} by ${f.frozenBy.name ?? f.frozenBy.id}: ${serverMessage(f.reason)}`,
       `  Every read and write is refused except inspection, audit and recovery. Lift it: varlatch org unfreeze ${s.organization}`,
     );
   }
@@ -320,7 +343,7 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
     if (expiry) {
       lines.push(`  ${expiryLine(expiry)}`);
       for (const c of expiry.items) {
-        const when = !c.expiresAt ? "" : c.state === "expired" ? `expired ${ago(c.expiresAt, now)}` : `expires ${until(c.expiresAt, now)} (${c.expiresAt})`;
+        const when = !c.expiresAt ? "" : c.state === "expired" ? `expired ${ago(c.expiresAt, now)}` : `expires ${until(c.expiresAt, now)} (${safeTime(c.expiresAt)})`;
         lines.push(`  ${c.id}  ${c.name ?? "unnamed"}  for ${c.identity.name}: ${when}`);
       }
     }
@@ -340,6 +363,27 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
     );
   }
 
+  // The audit export.
+  if (s.auditExport) {
+    const e = s.auditExport.export;
+    const shown = e && (e.state === "active" || e.state === "draining");
+    lines.push("", "Audit export");
+    if (!shown) {
+      if (!s.auditExport.enabled) lines.push("  Stopped by the host operator on this installation (VARLATCH_AUDIT_EXPORT=off).");
+      lines.push(
+        `  Not set up${e ? `; the last export was ${e.state}` : ""}. The audit log stays in this installation only.`,
+        "  Copy it to a bucket you control: varlatch audit-export create (see varlatch audit-export --help).",
+      );
+    } else {
+      // The same lines as varlatch audit-export show, under this heading.
+      for (const line of auditExportLines(s.organization, s.auditExport)) lines.push(line.startsWith("  ") ? line : `  ${line}`);
+      lines.push(
+        "  Checklist: compliance retention for at least 400 days; a bucket in an account the host operator does not control;",
+        "  someone watching the heartbeat. Details: varlatch audit-export show.",
+      );
+    }
+  }
+
   // Checklist.
   lines.push("", "Checklist");
   for (const item of s.checklist) lines.push(`  - ${item.title}: ${item.why}`, `    ${item.url}`);
@@ -354,5 +398,6 @@ export function securityStatusLines(s: SecurityStatus, now: number): string[] {
       );
     }
   }
-  return lines;
+  // Every line holds names, IDs, reasons and counts from the server: escaped (issue #119).
+  return lines.map(printable);
 }

@@ -1,5 +1,5 @@
 {
- "source": "main 71570de",
+ "source": "main 71570de; the attach and discard routes of a pending GitHub App registration (ADR-0054 4.8) recorded on feat/admin-step-up-integrations, which adds them; the audit export routes (ADR-0056) recorded on feat/audit-export-api, which adds them",
  "variants": {
   "GET /v1/organizations/:org (fixtures)": {
    "status": 200,
@@ -5784,6 +5784,238 @@
    "tables": []
   },
   "GET /v1/organizations/:org/audit-events/export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "account": {
+     "login": "string",
+     "type": "string"
+    },
+    "app": {
+     "githubAppId": "number",
+     "owner": {
+      "login": "string",
+      "type": "string"
+     },
+     "slug": "string"
+    },
+    "deleteUrl": "string",
+    "message": "string",
+    "outcome": "string",
+    "reason": "string"
+   },
+   "tables": [
+    "audit_events",
+    "github_app_registrations"
+   ]
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/:registration/attach (missing registration)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "app": {
+     "githubAppId": "number",
+     "slug": "string"
+    },
+    "deleteUrl": "string",
+    "discarded": "boolean",
+    "state": "string"
+   },
+   "tables": [
+    "audit_events",
+    "github_app_registrations"
+   ]
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app/registrations/:registration (missing registration)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-export (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "enabled": "boolean",
+    "export": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/audit-export (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/audit-export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/audit-export/check (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/audit-export/check (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/audit-export (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/audit-export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/audit-export/credential (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/audit-export/credential (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/audit-export (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/audit-export (missing org)": {
    "status": 404,
    "code": "RESOURCE_NOT_FOUND",
    "shape": {
