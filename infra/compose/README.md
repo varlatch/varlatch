@@ -500,6 +500,8 @@ Entries are compose service or container names, which are resolved again every 1
 
 `VARLATCH_SYNC=off` disables outbound sync. `VARLATCH_SYNC_ADAPTERS=github-actions,coolify` restricts adapters; an empty value allows the built-in set. Both settings are forwarded by canonical Compose.
 
+`VARLATCH_AUDIT_EXPORT=off` turns off the audit export to object storage for the whole installation: nothing is delivered, no export can be set up or changed, and organizations can still remove theirs. It is on by default and forwarded by canonical Compose; nothing is sent anywhere until an organization's admin sets up an export. See [Audit export](../../docs/reference/audit-export.md).
+
 `varlatch upgrade` writes a pending manifest while applying a release and promotes it only when the upgrade gate passes. If it fails, retry the same target version; the original `*.pre-<version>` files are preserved.
 
 `./scripts/ci-e2e.sh` from the repository root creates a disposable Compose project with temporary credentials, loopback ports, and volumes, then removes that project on exit. It does not reset an existing installation.
