@@ -223,10 +223,11 @@
     if ($Added) {
       # Setting a user variable broadcasts the change, so new terminals and
       # Explorer see the new PATH; this one, named so that it cannot be one
-      # the user has, is set and removed again.
+      # the user has, is set and removed again (removed with a real null:
+      # PowerShell would pass $null as "", which leaves it set and empty).
       $Refresh = 'VARLATCH_INSTALL_REFRESH_' + [Guid]::NewGuid().ToString('N')
       [Environment]::SetEnvironmentVariable($Refresh, '1', 'User')
-      [Environment]::SetEnvironmentVariable($Refresh, $null, 'User')
+      [Environment]::SetEnvironmentVariable($Refresh, [NullString]::Value, 'User')
       $env:Path = "$env:Path;$Dir"
       Write-Host "Added $Dir to your user PATH. Open a new terminal to use varlatch."
     }
