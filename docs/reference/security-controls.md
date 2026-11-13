@@ -51,8 +51,10 @@ At a glance:
 - **Approvals that do not depend on a control.** Turning a control down
   needs an approval whatever its mode, and so does lengthening or clearing
   the lifetimes `credential-lifetime` keeps while it is off (it keeps them
-  when turned off without `--clear-config`, or by the operator's reset). Lifting an [incident freeze](incident-freeze.md)
-  always needs one, and so do the changes that weaken an [audit
+  when turned off without `--clear-config` or by the operator's reset, or
+  saved while it was off: `security set credential-lifetime off
+  --default-ttl <s> --max-ttl <s>` is tightening and needs no approval).
+  Lifting an [incident freeze](incident-freeze.md) always needs one, and so do the changes that weaken an [audit
   export](audit-export.md). These exist only once someone turns a control
   on, freezes the organization or creates an export.
 
@@ -182,7 +184,8 @@ as coming in a later release for the others.
 
 At the top it shows the organization's [incident
 freeze](incident-freeze.md) (freeze it, or the freeze in force) and which
-controls are on. Then:
+controls are on. Then seven sections, each shown to whoever may read it
+(see "Who sees what" below):
 
 - **Controls.** Each control with its mode, what `report` counts and what
   `enforce` would change, and its counts of the last 30 days per
@@ -204,6 +207,8 @@ controls are on. Then:
 - **Refused destinations.** The webhooks, connections and OIDC issuers
   this installation's [outbound policy](outbound-policy.md) refuses, so
   their deliveries and checks fail.
+- **Audit export.** The organization's [audit export](audit-export.md),
+  on a server that offers it (capability `audit.storage-export`).
 - **Tailnet Requirements.** How many there are, with a link to their
   editor (**Access**, **Advanced**) and the mode of
   `requirement-protection`, which protects them.
@@ -217,8 +222,8 @@ controls are on. Then:
   and the [threat model](../THREAT-MODEL.md).
 
 Who sees what: every member sees the controls and their modes
-(`organization.read`). The counts, the approval keys and the refused
-destinations need `organization.manage`, the credential review
+(`organization.read`). The counts, the approval keys, the refused
+destinations and the audit export need `organization.manage`, the credential review
 `identity.manage`, and the requirements `policy.read`; organization admins hold all of them, and a
 grant can give any of them to someone else. The page first asks the
 server which of these you hold (`GET
@@ -1203,7 +1208,9 @@ it expires. What the audit log records:
   event an ordinary refusal records, written after the refused
   transaction rolled back. Only a request that used an approval gets this
   far, so this happens only while a control asks for approvals.
-- **Freezing, lifting a freeze and changing a control** run this check
+- **Freezing, lifting a freeze, changing a control, and the audit
+  export's writes** (creating, checking, changing, replacing the key of
+  and removing an [audit export](audit-export.md)) run this check
   whatever the controls are set to. The refusal is recorded once, the same
   way, only while at least one control of the organization is at `report`
   or `enforce`. That is read under the same organization lock, so it is

@@ -637,11 +637,29 @@ export function sqlText(n: ts.Node): string | null {
 }
 
 /**
- * A write whose table cannot be read from the text: the table is a hole, or
- * nothing follows the keyword. A lock clause (`FOR UPDATE`, `FOR NO KEY
- * UPDATE`) and an upsert's `DO UPDATE` are not writes of a named table.
+ * A write's keyword: `INSERT INTO`, `UPDATE [ONLY]` or `DELETE FROM [ONLY]`,
+ * with any whitespace (newlines included) between its words. A lock clause
+ * (`FOR UPDATE`, `FOR NO KEY UPDATE`) and an upsert's `DO UPDATE` are not
+ * writes of a named table, and neither is `ON UPDATE`.
  */
-const UNNAMED_WRITE = new RegExp(`(?<!\\b(?:FOR|KEY|DO|ON) )\\b(?:INSERT INTO|UPDATE|DELETE FROM)\\s*(?:${SQL_HOLE}|$)`);
+const WRITE_KEYWORD = String.raw`(?<!\b(?:FOR|KEY|DO|ON)\s+)\b(?:INSERT\s+INTO|UPDATE(?:\s+ONLY)?|DELETE\s+FROM(?:\s+ONLY)?)`;
+/** An optional schema before the table (`public.`, `"public".`). */
+const SCHEMA = String.raw`(?:"?\w+"?\s*\.\s*)?`;
+
+/**
+ * The regular expression of a write to one of `tables` (an alternation of
+ * table names): the keyword, any whitespace, an optional schema, and the
+ * table, quoted or not.
+ */
+export function writePattern(tables: string): RegExp {
+  return new RegExp(String.raw`${WRITE_KEYWORD}\s+${SCHEMA}"?(?:${tables})"?(?![\w$])`);
+}
+
+/**
+ * A write whose table cannot be read from the text: the table (after an
+ * optional schema and quote) is a hole, or nothing follows the keyword.
+ */
+const UNNAMED_WRITE = new RegExp(String.raw`${WRITE_KEYWORD}\s*${SCHEMA}"?\s*(?:${SQL_HOLE}|$)`);
 
 /** The outermost expression of a `+` chain (through parentheses) that `n` is part of. */
 const inConcatenation = (n: ts.Node): boolean => {

@@ -6,6 +6,7 @@ import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInvite
 import type { AppCtx } from "../src/domain/ctx.js";
 import { getOrgRole } from "../src/domain/orgs.js";
 import { buildApp } from "../src/http/app.js";
+import { OutboundPolicy } from "../src/net/outbound.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
@@ -14,7 +15,12 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  * ADR-0054 follow-up (f): freezing, lifting a freeze and changing a
  * security control recheck the requester's organization.manage inside
  * their transaction, after the Organization row FOR UPDATE, whatever the
- * controls' modes. A denial there rolls the transaction back.
+ * controls' modes. A denial there rolls the transaction back. The audit
+ * export's five writes (create, check, change, new key, removal; ADR-0056)
+ * recheck through the same authorizeInControlledTransaction
+ * (auditExportRecheck in http/app.ts), so the same rules hold for them:
+ * the check with a supplied key is raced here, its recheck coming before
+ * any probe.
  *
  * - While at least one control is at report or enforce, in the state the
  *   decision was made on, the denial is audited once after the rollback,
@@ -142,7 +148,8 @@ async function demotedInTransaction(send: () => Promise<Answer>) {
   let demoted = 0;
   ctx.db.query = (async (text: string, params?: unknown[]) => {
     if (text.trim() === "BEGIN") inside = true;
-    if (inside && /FROM organizations WHERE id = \$1 FOR UPDATE/.test(text)) locked = true;
+    // FOR UPDATE (freeze, lift, control change) or FOR KEY SHARE (the audit export's external effect).
+    if (inside && /FROM organizations WHERE id = \$1 FOR (?:UPDATE|KEY SHARE)/.test(text)) locked = true;
     const res = await original(text, params);
     if (text.trim() === "ROLLBACK" || text.trim() === "COMMIT") inside = locked = false;
     return res;
@@ -214,7 +221,8 @@ async function race(send: () => Promise<Answer>, audited: boolean): Promise<Answ
 
 beforeEach(async () => {
   const db = await migratedTestDb();
-  ctx = { db, rootKek: generateKey(), close: db.close };
+  // Loopback allowed, so the audit export check's endpoint passes the outbound policy; nothing listens on it.
+  ctx = { db, rootKek: generateKey(), close: db.close, outbound: new OutboundPolicy("127.0.0.1/32:*") };
   await ensureInstallation(ctx);
   const { identityId } = await consumeSetupGrant(ctx, (await issueBootstrapGrant(ctx)).token, { adminName: "Admin" });
   app = buildApp(ctx, { publicUrl: PUBLIC_URL, clientAddress: () => "203.0.113.7" });
@@ -348,5 +356,21 @@ describe("changing a control, when the recheck in its transaction denies", () =>
     await race(() => change(carol.cli, "admin-step-up", "off", 1, approval), true);
     expect(await modes()).toEqual({ "admin-step-up": "report@1" });
     expect((await rows("SELECT consumed_at FROM approval_intents WHERE id = $1", [approval]))[0].consumed_at).toBeNull();
+  });
+});
+
+describe("checking an audit export with a supplied key, when the recheck in its transaction denies", () => {
+  const check = (token: string) =>
+    call("POST", `${ORG}/audit-export/check`, token, {
+      destination: { endpoint: "http://127.0.0.1:1", region: "us-east-1", bucket: "audit-bucket", prefix: "acme", pathStyle: true },
+      credential: { accessKeyId: "AKIARECHECK0001", secretAccessKey: "recheck-secret-not-used" },
+    });
+
+  it("with every control off: main's answer, no audit event; with a control on: the same answer, the denial audited once", async () => {
+    const off = await race(() => check(carol.cli), false);
+    await turnOn("admin-step-up", "report");
+    const on = await race(() => check(carol.cli), true);
+    expect(withoutRequestId(on)).toEqual(withoutRequestId(off));
+    expect(await rows("SELECT id FROM audit_exports")).toEqual([]);
   });
 });

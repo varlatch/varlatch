@@ -16,7 +16,7 @@ import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { fakeGitHubApps } from "./helpers/fake-github-app.js";
 import { migratedTestDb } from "./helpers/pglite.js";
-import { buildGraph, declaredSymbol, functionLabels, otherRouterCalls, reach, srcPath, unlabelledRegistrations, writers, type Graph, type RootClass } from "./helpers/caller-graph.js";
+import { buildGraph, declaredSymbol, functionLabels, otherRouterCalls, reach, srcPath, unlabelledRegistrations, writePattern, writers, type Graph, type RootClass } from "./helpers/caller-graph.js";
 import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
 
@@ -369,7 +369,7 @@ function callersOf(g: Graph): Record<string, string[]> {
 
 /** Every writer of a protected table in a graph, with the classes of the roots reaching it ("route" for a route's own body). */
 function writersOf(g: Graph): Record<string, RootClass[] | string[]> {
-  return Object.fromEntries(writers(g, new RegExp(`\\b(?:INSERT INTO|UPDATE|DELETE FROM) (?:${WRITTEN_TABLES})\\b`)).map((w) => {
+  return Object.fromEntries(writers(g, writePattern(WRITTEN_TABLES)).map((w) => {
     if (!w.symbol) return [w.label, ["route"]];
     const r = reach(g, w.symbol, ROOTS);
     const failed = r.entries.filter((e) => e.startsWith("??"));
@@ -1141,6 +1141,56 @@ describe("alternate callers", () => {
           expect.stringMatching(/^\?\? domain\/writer-probe\.ts:3 a write whose table is not a literal$/),
           expect.stringMatching(/^\?\? domain\/writer-probe\.ts:4 a write whose table is not a literal$/),
         ]);
+      }, GRAPH_TIMEOUT);
+
+      it("a writer with any whitespace before its table, a quoted or schema-qualified table, and UPDATE ONLY", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function newlineWriter(db: Querier) { await db.query(`UPDATE\n      grants SET revoked_at = now() WHERE id = $1`, [\"x\"]); }",
+          'export async function quotedWriter(db: Querier) { await db.query("DELETE FROM \\"roles\\" WHERE id = $1", ["x"]); }',
+          'export async function onlyWriter(db: Querier) { await db.query("UPDATE ONLY webhooks SET revoked_at = now() WHERE id = $1", ["x"]); }',
+          'export async function schemaWriter(db: Querier) { await db.query("INSERT INTO public.grants (id) VALUES ($1)", ["x"]); }',
+          "",
+        ].join("\n");
+        const g = tampered(
+          (text) => intoRename("    await newlineWriter(ctx.db);\n    await quotedWriter(ctx.db);\n    await onlyWriter(ctx.db);\n    await schemaWriter(ctx.db);")(
+            `import { newlineWriter, onlyWriter, quotedWriter, schemaWriter } from "../domain/writer-probe.js";\n${text}`),
+          { [WRITER_PROBE]: probeFile },
+        );
+        expect(addedWriters(g)).toEqual({
+          [`${WRITER_PROBE} newlineWriter`]: ["route"],
+          [`${WRITER_PROBE} onlyWriter`]: ["route"],
+          [`${WRITER_PROBE} quotedWriter`]: ["route"],
+          [`${WRITER_PROBE} schemaWriter`]: ["route"],
+        });
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a table hole after a newline, in quotes, after ONLY, or after a schema", () => {
+        const probeFile = [
+          'import type { Querier } from "../db/migrate.js";',
+          "export async function afterNewline(db: Querier, t: string) { await db.query(`DELETE FROM\n  ${t} WHERE id = $1`, [\"x\"]); }",
+          "export async function quoted(db: Querier, t: string) { await db.query(`UPDATE \"${t}\" SET revoked_at = now()`); }",
+          "export async function only(db: Querier, t: string) { await db.query(`UPDATE ONLY ${t} SET revoked_at = now()`); }",
+          "export async function schema(db: Querier, t: string) { await db.query(`INSERT INTO public.${t} (id) VALUES ($1)`, [\"x\"]); }",
+          "",
+        ].join("\n");
+        const g = tampered((text) => `${text}\n// probe\n`, { [WRITER_PROBE]: probeFile });
+        expect(Object.keys(addedWriters(g)).sort()).toEqual([2, 4, 5, 6].map((n) =>
+          expect.stringMatching(new RegExp(`^\\?\\? domain/writer-probe\\.ts:${n} a write whose table is not a literal$`))));
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a named handler passed to a router other than app", () => {
+        const g = tampered((text) =>
+          text.replace(PASSKEY_OWNER, [
+            '  const probeHandler = async (c: Context) => createRole(ctx, c.get("gate"), "o", {}, {});',
+            "  const router = new Hono();",
+            '  router.post("/v1/organizations/:org/probe", probeHandler);',
+            PASSKEY_OWNER,
+          ].join("\n")));
+        expect(added(callersOf(g))["domain/policy.ts createRole"]).toEqual([
+          expect.stringMatching(/^\?\? http\/app\.ts:\d+ probeHandler: a registration on a router other than app \(router\.post\) via probeHandler$/),
+        ]);
+        expect(otherRouterCalls(g)).toEqual([expect.stringMatching(/^http\/app\.ts:\d+ router\.post$/)]);
       }, GRAPH_TIMEOUT);
 
       it("fails closed: a route registered on another router, mounted, or chained after an app registration", () => {
