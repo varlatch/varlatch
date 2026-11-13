@@ -748,7 +748,9 @@ describe("under enforce", () => {
     const envGrant = await make(envDecl(f.project, [prodA]));
     const projectGrant = await make(projectDecl(f.project));
     // Project A (slug api) deleted; Project B takes the slug, with its own prod and staging.
-    expect((await call("DELETE", `${ORG}/projects/api`, admin.cli)).status).toBe(200);
+    // Deleting a Project is itself protected under enforce (step 4.9).
+    const deletion = await approved(admin, await call("DELETE", `${ORG}/projects/api`, admin.cli));
+    expect((await call("DELETE", `${ORG}/projects/api`, admin.cli, undefined, { "Varlatch-Approval": deletion })).status).toBe(200);
     const projectB = (await ok("POST", `${ORG}/projects`, admin.cli, { name: "API", slug: "api", contractAuthority: "managed" })).id as string;
     const prodB = (await ok("POST", `${ORG}/projects/api/environments`, admin.cli, { name: "prod", tier: "production" })).id as string;
     const stagingB = (await ok("POST", `${ORG}/projects/api/environments`, admin.cli, { name: "staging", tier: "staging" })).id as string;

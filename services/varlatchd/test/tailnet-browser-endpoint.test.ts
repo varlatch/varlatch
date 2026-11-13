@@ -212,7 +212,7 @@ describe("tailnet browser endpoint", () => {
     expect(preflight.status).toBe(204);
     expect(preflight.headers["access-control-allow-origin"]).toBe(ORIGIN);
     expect(preflight.headers["access-control-allow-methods"]).toBe("GET, POST");
-    expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type");
+    expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type, Varlatch-Approval");
     expect(preflight.headers["access-control-allow-credentials"]).toBeUndefined();
     expect(preflight.headers["vary"]).toContain("Origin");
     // A preflight costs no WhoIs lookup.

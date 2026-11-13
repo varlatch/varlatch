@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Context, Next } from "hono";
+import { APPROVAL_HEADER } from "@varlatch/protocol";
 import { CREDENTIAL_EXPIRES_HEADER } from "../auth/credentials.js";
 import { errorBody } from "./support.js";
 
@@ -61,7 +62,9 @@ export function tailnetBrowserGate(opts: TailnetBrowserOptions) {
       return c.body(null, 204, {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST",
-        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        // Varlatch-Approval: an export the dashboard repeats with its
+        // step-up approval (ADR-0054 amendment C).
+        "Access-Control-Allow-Headers": `Authorization, Content-Type, ${APPROVAL_HEADER}`,
         "Access-Control-Max-Age": "300",
         Vary: "Origin",
       });

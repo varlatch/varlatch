@@ -56,6 +56,7 @@ import {
   DISCLOSURE_PURPOSES,
   discloseSecrets,
   effectiveConfiguration,
+  selectDisclosure,
   setValue,
   validateEnvironment,
   type ValidationAccess,
@@ -219,12 +220,12 @@ import {
 import { captureOrganizationAccess, requireOrganizationAccess, withRequester } from "../domain/requestaccess.js";
 import {
   queueAccessCount,
-  reportingControls,
   securityControlReport,
   type PendingAccessReport,
   type WouldBlock,
 } from "../domain/securityreport.js";
 import { installationOutbound, organizationRefusedDestinations } from "../domain/refuseddestinations.js";
+import { exportControl, exportGuard } from "../domain/exportstepup.js";
 
 export const SERVER_VERSION = "0.21.0";
 
@@ -1601,7 +1602,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(z.object({ afterDays: z.number().int().min(1).max(30).optional() }).strict(), await c.req.json());
-    return c.json(await scheduleDeletion(ctx, org.id, principal.identity, body), 201);
+    // admin-step-up's organization.delete (ADR-0054 amendment B): under
+    // enforce, the requester's approval of exactly this waiting period. It
+    // adds to the checks above and replaces none.
+    const scheduled = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      scheduleDeletion(ctx, gate, org.id, body));
+    return c.json(scheduled, 201);
   });
 
   app.post("/v1/organizations/:org/deletion/:deletion/approve", async (c) => {
@@ -2002,7 +2008,15 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const principal = c.get("principal");
     const { org, project } = await projectScope(ctx, c);
     await authorize(ctx, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
-    const deleted = await deleteProject(ctx, org.id, project.id, principal.identity.id);
+    // admin-step-up's project.delete (ADR-0054 amendment B): under enforce,
+    // the requester's approval, consumed in the deletion's transaction;
+    // project.manage is checked again there.
+    const deleted = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+      deleteProject(ctx, gate, org.id, project.id, {
+        authorizeIn: async (db) => {
+          await authorize({ ...ctx, db }, c, principal, "project.manage", { organizationId: org.id, projectId: project.id }, { hideExistence: true });
+        },
+      }));
     return c.json({ projectId: project.id, slug: project.slug, ...deleted });
   });
 
@@ -2302,11 +2316,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const state = await captureState(sctx, scope, now, (item) =>
           item.sensitive ? (requested?.has(item.name) ?? true) : plain.allowed,
         );
-        // admin-step-up in report mode (ADR-0054 Decision 5): an export,
-        // the dashboard's .env download, is done without an approval.
-        // Decided on the snapshot; counted with the disclosure's audit.
-        const stepUp = body.purpose === "export" ? (await reportingControls(sctx.db, scope.org.id)).get("admin-step-up") : undefined;
-        const report: WouldBlock[] = stepUp
+        // admin-step-up (ADR-0054 Decision 5): an export, the dashboard's
+        // .env download. In report mode it is done without an approval,
+        // decided on the snapshot and counted with the disclosure's audit.
+        // Under enforce it needs one, consumed in phase 2 (amendment C,
+        // exportstepup.ts): nothing is written in this snapshot.
+        const stepUp = body.purpose === "export" ? await exportControl(sctx.db, scope.org.id) : null;
+        const report: WouldBlock[] = stepUp?.mode === "report"
           ? [{
               control: "admin-step-up",
               configVersion: stepUp.version,
@@ -2320,10 +2336,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // the request, as it did; recorded after the snapshot (reject).
         if (!plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
         // passkey-verification, decided in this snapshot after every
-        // existence check and before any disclosure audit or decryption
-        // (ADR-0054 Decision 7); not read again after the snapshot.
+        // existence check and before any disclosure audit, decryption or
+        // approval intent (ADR-0054 Decision 7). Not read again after the
+        // snapshot, except by an export's phase 2 under admin-step-up's
+        // enforce, which consumes an approval under the Organization lock
+        // (exportstepup.ts).
         await requireOrganizationAccess(sctx.db, scope.org.id);
-        return { state, body, reveal, plain, metadata, report: { attempts: report, at: now } };
+        return { state, body, reveal, plain, metadata, resource, enforce: stepUp?.mode === "enforce", report: { attempts: report, at: now } };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
       const { state, body, plain, metadata } = phase;
@@ -2331,13 +2350,26 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         await recordDenial(ctx, plain);
         if (plain.error.code.startsWith("TAILNET_")) throw plain.error;
       }
-      const { unexpanded, ...result } = await discloseSecrets(ctx, state, body, {
-        actorIdentityId: principal.identity.id,
-        requestId: c.get("requestId"),
-        mayReadPlain: plain.allowed,
-        authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
-        report: phase.report,
-      });
+      const disclose = (guard?: (db: Querier) => Promise<Record<string, string | boolean>>) =>
+        discloseSecrets(ctx, state, body, {
+          actorIdentityId: principal.identity.id,
+          requestId: c.get("requestId"),
+          mayReadPlain: plain.allowed,
+          authz: { secret: allowedAuthz(phase.reveal), plain: allowedAuthz(plain) },
+          report: phase.report,
+          guard,
+        });
+      // Phase 2 of an export under enforce: the approval is consumed, and
+      // secret.reveal decided again, in the disclosure's audit transaction,
+      // before anything is decrypted. The Varlatch-Approval header is read
+      // only then, so with the control off a malformed one changes nothing.
+      const { unexpanded, ...result } = phase.enforce
+        ? await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+            disclose(exportGuard(ctx, gate, state, body, selectDisclosure(state, body).selected, async (db) => {
+              const again = await decide({ ...ctx, db }, c, principal, "secret.reveal", phase.resource);
+              if (!again.allowed) throw again.error;
+            })))
+        : await disclose();
       c.header("Cache-Control", "no-store");
       return c.json(
         metadata.allowed

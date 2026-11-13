@@ -5,8 +5,11 @@ import { withTx } from "../db/tx.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError, notFound } from "./errors.js";
 import { lockLiveScope } from "./liveness.js";
-import { reportAdminStepUp } from "./securityreport.js";
 import { lockedQuery } from "../db/locks.js";
+import type { Querier } from "../db/migrate.js";
+import type { ProtectedGate } from "./approvals.js";
+import { projectDeleteBinding, readProjectForDeletion } from "./deletionstepup.js";
+import { approvalMetadata, prepareProtectedOperation } from "./protected.js";
 
 export interface ProjectRow {
   id: string;
@@ -146,15 +149,39 @@ export interface ProjectDeletion {
  * environment; then its values and their versions, its Targets, its
  * Capabilities and its Team links, each in key order, before any of them
  * is updated; the audit event last.
+ *
+ * A protected operation (ADR-0054 amendment B): admin-step-up's
+ * project.delete. Under enforce it needs the requester's approval, bound to
+ * the Project (deletionstepup.ts), consumed in this transaction after the
+ * Organization and the requester and before the Project (steps 4, 6 and 7),
+ * then `project.manage` is checked again here. A machine credential is
+ * refused without an intent. A deleting or frozen Organization refuses
+ * before an approval is asked for.
  */
 export async function deleteProject(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
   projectId: string,
-  actorIdentityId: string,
+  options: { authorizeIn?: ((db: Querier) => Promise<void>) | undefined } = {},
 ): Promise<ProjectDeletion> {
+  const actorIdentityId = gate.requester.identityId;
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, people: [actorIdentityId], projectId, projectMode: "update" });
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, people: [actorIdentityId], projectId, projectMode: "update" },
+      checks: [{ control: "admin-step-up", operation: "project.delete" }],
+      // A Project deleted since the route resolved it keeps its not-found,
+      // ahead of the passkey-verification checkpoint, as before.
+      preflight: async (db) => {
+        if (!(await readProjectForDeletion(db, organizationId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Project not found");
+      },
+      binding: async (db) => {
+        const project = await readProjectForDeletion(db, organizationId, projectId);
+        if (!project) throw new DomainError("RESOURCE_NOT_FOUND", "Project not found");
+        return projectDeleteBinding({ id: organizationId }, project);
+      },
+      authorizeIn: options.authorizeIn,
+    });
     const project = (await db.query("SELECT slug, name FROM projects WHERE id = $1", [projectId])).rows[0] as { slug: string; name: string };
     const envs = (
       await lockedQuery(db, { table: "environments", mode: "update" }, "SELECT id, deleted_at FROM environments WHERE project_id = $1 ORDER BY id FOR UPDATE", [projectId])
@@ -235,7 +262,8 @@ export async function deleteProject(
       targetsRevoked: targets.length,
       teamLinksRemoved: teamLinks.rows.length,
     };
-    await reportAdminStepUp(db, organizationId, actorIdentityId, "project.delete");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "project.deleted",
       decision: "info",
@@ -243,7 +271,7 @@ export async function deleteProject(
       organizationId,
       action: "project.manage",
       resource: { projectId, projectSlug: project.slug },
-      metadata: { name: project.name, ...counts },
+      metadata: { name: project.name, ...counts, ...approvalMetadata(prepared.approval) },
     });
     return counts;
   });

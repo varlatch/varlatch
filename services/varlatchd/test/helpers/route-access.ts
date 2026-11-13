@@ -59,6 +59,10 @@ export const ROUTE_ACCESS: Record<string, AccessCheckpoint> = {
   "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations": "transaction",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete": "transaction",
   "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration": "snapshot",
+  // An export under admin-step-up's enforce is decided in its snapshot too,
+  // then again in its phase-2 transaction under the Organization lock,
+  // before its approval is consumed or an intent created
+  // (domain/exportstepup.ts).
   "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures": "snapshot",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals": "snapshot",
   "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities": "transaction",

@@ -56,6 +56,11 @@ const FIELD_LABELS: Record<string, string> = {
   owner: "Owner",
   appId: "GitHub App id",
   privateKey: "Private key",
+  // Deletion and export (admin-step-up).
+  afterDays: "Waiting period",
+  selection: "Secrets chosen",
+  requested: "Secrets requested",
+  disclosed: "Secrets exported",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */
