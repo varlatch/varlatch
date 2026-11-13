@@ -87,7 +87,7 @@ var lifecycleSettings = map[string][]string{
 	"Type":           {"exec"},
 	"ExecStart":      {"/usr/local/bin/varlatchd serve --config /etc/varlatch/varlatchd.conf"},
 	"Restart":        {"on-failure"},
-	"RestartSec":     {"5s"},
+	"RestartSec":     {"15s"},
 	"TimeoutStopSec": {"30s"},
 	"LimitNOFILE":    {"65536"},
 }
@@ -109,7 +109,7 @@ func TestUnitSettings(t *testing.T) {
 			}
 		}
 	}
-	for k, v := range map[string][]string{"StartLimitIntervalSec": {"5min"}, "StartLimitBurst": {"10"}} {
+	for k, v := range map[string][]string{"StartLimitIntervalSec": {"0"}, "StartLimitBurst": nil} {
 		if !slices.Equal(u["Unit"][k], v) {
 			t.Errorf("[Unit] %s = %q, want %q", k, u["Unit"][k], v)
 		}

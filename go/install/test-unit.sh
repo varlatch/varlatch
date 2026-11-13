@@ -49,6 +49,7 @@ for u in varlatch "$T"; do
 done
 
 cleanup() {
+  trap '' HUP INT TERM
   systemctl stop "$UNIT" >/dev/null 2>&1 || true
   systemctl reset-failed "$UNIT" >/dev/null 2>&1 || true
   rm -f "/etc/systemd/system/$UNIT"
@@ -138,7 +139,7 @@ systemctl start "$UNIT" || { show_logs; exit 1; }
 i=0
 while state=$(systemctl show -p ActiveState --value "$UNIT") && [ "$state" != inactive ] && [ "$state" != failed ]; do
   i=$((i + 1))
-  [ $i -lt 120 ] || { echo "the probe did not finish" >&2; exit 1; }
+  [ $i -lt 120 ] || { echo "the probe did not finish" >&2; show_logs; exit 1; }
   sleep 1
 done
 journalctl -u "$UNIT" --no-pager -o cat

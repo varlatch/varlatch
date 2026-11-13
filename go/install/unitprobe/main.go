@@ -78,6 +78,7 @@ func main() {
 		check("does not run as root", nil)
 	}
 	check("holds CAP_NET_BIND_SERVICE only, with no_new_privs", capabilities())
+	check("cannot write a core dump (LimitCORE=0)", noCoreDumps())
 
 	ctx := context.Background()
 	db, err := storage.Open(ctx, storage.Options{Path: filepath.Join(*stateDir, "probe.db")})
@@ -147,6 +148,25 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println("all checks passed")
+}
+
+// noCoreDumps checks the core file size limit is 0, soft and hard: a core
+// dump would hold the Root KEK.
+func noCoreDumps() error {
+	b, err := os.ReadFile("/proc/self/limits")
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "Max core file size") {
+			f := strings.Fields(strings.TrimPrefix(line, "Max core file size"))
+			if len(f) >= 2 && f[0] == "0" && f[1] == "0" {
+				return nil
+			}
+			return fmt.Errorf("limit is %q", strings.TrimSpace(line))
+		}
+	}
+	return errors.New("no core file size limit in /proc/self/limits")
 }
 
 // capabilities checks the process holds exactly CAP_NET_BIND_SERVICE (bit
