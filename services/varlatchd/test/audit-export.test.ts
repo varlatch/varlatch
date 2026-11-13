@@ -231,7 +231,8 @@ afterAll(() => {
       /* gone */
     }
   }
-});
+  // Stopping MinIO can take longer than the default hook time on a busy host.
+}, 60_000);
 
 beforeEach(async () => {
   const db = await migratedTestDb();
@@ -386,10 +387,15 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     const cursor = String((await exportRow(view.id)).cursor_order);
     await call("POST", `${ORG}/projects`, person.cli, { name: "late", slug: "late", contractAuthority: "managed" });
     const newPrefix = `${prefix}moved/`;
-    const change = (gate: ProtectedGate) => changeAuditExport(ctx, gate, org, view.id, { destination: { bucket: OTHER, prefix: newPrefix }, expectedVersion: 1 });
+    // The new destination answers its HEAD and its retention read with 500:
+    // the probe cannot tell what the key may read there.
+    const undetermined = await filteringProxy((req) => req.method === "HEAD" || /[?&]retention\b/.test(req.url ?? ""), 500);
+    const change = (gate: ProtectedGate) =>
+      changeAuditExport(ctx, gate, org, view.id, { destination: { endpoint: undetermined.url, bucket: OTHER, prefix: newPrefix }, expectedVersion: 1 });
     const approvalId = await askApproval(change);
     await approve(approvalId);
-    // What the old destination's probe found does not carry over: both read flags come from the new probe.
+    // What the old destination's probe found does not carry over: both read
+    // flags become what the new probe found, here null for both.
     await ctx.db.query("UPDATE audit_exports SET key_can_read = false, retention_readable = false WHERE id = $1", [view.id]);
     let landed = "";
     setAuditExportTestHooks({
@@ -401,7 +407,7 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     });
     expect(await exportOnce(ctx, view.id)).toMatchObject({ outcome: "lost" });
     const moved = await exportRow(view.id);
-    expect(moved).toMatchObject({ bucket: OTHER, prefix: newPrefix, version: 2, key_can_read: true, retention_readable: true });
+    expect(moved).toMatchObject({ endpoint: undetermined.url, bucket: OTHER, prefix: newPrefix, version: 2, key_can_read: null, retention_readable: null });
     expect(String(moved.cursor_order)).toBe(cursor);
     expect(moved.stream_id).not.toBe(view.streamId);
     // The old object stays in the old stream.
@@ -416,6 +422,7 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
       expect(lines.map((l) => l.position)).toEqual((await orgEvents()).filter((e) => BigInt(e.position) > BigInt(cursor)).map((e) => e.position));
     } finally {
       prefix = savedPrefix;
+      await undetermined.close();
     }
     expect((await events("audit_export.changed"))[0]!.metadata).toMatchObject({ loosened: true, approvalId });
   });
@@ -1067,11 +1074,16 @@ async function fakeStore(options: {
 
 /**
  * A proxy in front of MinIO that refuses the requests `deny` picks with 403
- * AccessDenied, as a key without that permission is refused, and forwards
+ * AccessDenied, as a key without that permission is refused (or with 500,
+ * which says nothing about the key), and forwards
  * every other request unchanged (its Host header included, so MinIO's
  * signature check passes).
  */
-async function filteringProxy(deny: (req: IncomingMessage) => boolean): Promise<{ url: string; denied: number; heads: number; close: () => Promise<void> }> {
+async function filteringProxy(
+  deny: (req: IncomingMessage) => boolean,
+  /** 403 AccessDenied (a key without the permission), or 500 InternalError (an answer that decides nothing). */
+  status: 403 | 500 = 403,
+): Promise<{ url: string; denied: number; heads: number; close: () => Promise<void> }> {
   const target = new URL(endpoint);
   const counted = { denied: 0, heads: 0 };
   const server: Server = createServer((req, res) => {
@@ -1080,8 +1092,9 @@ async function filteringProxy(deny: (req: IncomingMessage) => boolean): Promise<
       counted.denied++;
       req.resume();
       req.on("end", () => {
-        res.writeHead(403, { "content-type": "application/xml" });
-        res.end(req.method === "HEAD" ? undefined : '<?xml version="1.0"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>');
+        const code = status === 403 ? "AccessDenied" : "InternalError";
+        res.writeHead(status, { "content-type": "application/xml" });
+        res.end(req.method === "HEAD" ? undefined : `<?xml version="1.0"?><Error><Code>${code}</Code><Message>${code}.</Message></Error>`);
       });
       return;
     }

@@ -533,6 +533,8 @@ export interface AuditExportTestHooks {
   afterUpload?: (plan: PlanRow) => void | Promise<void>;
   /** Called before a commit transaction. */
   beforeCommit?: (plan: PlanRow) => void | Promise<void>;
+  /** Called in the commit transaction once it holds the export row FOR UPDATE: what races it waits or skips. */
+  whileCommitLocked?: (exportId: string) => void | Promise<void>;
   /** Treat this endpoint as a verified Object Lock provider (MinIO in the test suite, Decision 7). */
   verifiedProvider?: (endpoint: string) => boolean;
 }
@@ -1423,6 +1425,7 @@ export async function commitPlan(ctx: AppCtx, binding: WorkerBinding, plan: Plan
   await testHooks.beforeCommit?.(plan);
   return withTx(ctx.db, async (tx) => {
     const locked = await lockExport(tx, binding.exportId);
+    await testHooks.whileCommitLocked?.(binding.exportId);
     if (!bound(locked, binding)) return "lost";
     // A drain whose deadline passed during the upload never completes: it
     // is abandoned here, under the same row lock (Decision 10).
@@ -1832,6 +1835,11 @@ async function abandonLocked(tx: Querier, rows: Pick<ExportRow, "id" | "organiza
     [ids],
   )).rows as { id: string }[];
   if (plans.length > 0) await tx.query("DELETE FROM audit_export_plans WHERE id = ANY($1)", [plans.map((p) => p.id)]);
+  // No state guard in this UPDATE, on purpose: every caller holds these
+  // rows FOR UPDATE and has just checked, under that lock, that each is
+  // still draining past its deadline (abandonExpiredDrains' locking SELECT,
+  // abandonIfExpired and commitPlan through drainExpired). Nobody else can
+  // have moved them since, so the event below is recorded once per drain.
   await tx.query(
     `UPDATE audit_exports SET state = 'abandoned', credential_envelope = NULL, generation = generation + 1, lease_expires_at = NULL, updated_at = now()
      WHERE id = ANY($1)`,

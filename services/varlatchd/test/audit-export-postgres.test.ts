@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { abandonExpiredDrains, commitPlan, exportOnce, recordRestore, restartStream, type PlanRow, type WorkerBinding } from "../src/domain/auditexport.js";
+import { abandonExpiredDrains, commitPlan, exportOnce, recordRestore, restartStream, setAuditExportTestHooks, type PlanRow, type WorkerBinding } from "../src/domain/auditexport.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 
 /**
@@ -113,6 +113,48 @@ describe.skipIf(!url)("audit export races on real PostgreSQL", () => {
       expect(await rows("SELECT state, credential_envelope FROM audit_exports WHERE id = $1", [id])).toEqual([{ state: "abandoned", credential_envelope: null }]);
       expect(await rows("SELECT count(*)::int AS n FROM audit_export_plans WHERE export_id = $1", [id])).toEqual([{ n: 0 }]);
       expect(await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'audit_export.abandoned' AND resource->>'exportId' = $1", [id])).toEqual([{ n: 1 }]);
+    }
+  });
+
+  it("a worker that leased before the deadline commits while the deletion loop runs: the loop skips the locked row, the commit abandons it, once", async () => {
+    // The worker's binding was taken before the deadline; the deadline passes before it commits.
+    const plan = await exportWithExpiredPlan("aex_w", "draining");
+    const binding: WorkerBinding = { exportId: "aex_w", organizationId: orgId, generation: "0", version: 1, streamId: "aes_old" };
+    let swept: string[] | null = null;
+    setAuditExportTestHooks({
+      // The commit holds the export row FOR UPDATE: the loop's SKIP LOCKED passes it by.
+      whileCommitLocked: async () => {
+        swept = await abandonExpiredDrains(db);
+      },
+    });
+    try {
+      expect(await commitPlan(ctx, binding, plan, null)).toBe("abandoned");
+    } finally {
+      setAuditExportTestHooks(null);
+    }
+    expect(swept).toEqual([]);
+    expect(await abandonExpiredDrains(db)).toEqual([]);
+    expect(await rows("SELECT state, credential_envelope, cursor_order::text AS cursor FROM audit_exports WHERE id = 'aex_w'"))
+      .toEqual([{ state: "abandoned", credential_envelope: null, cursor: "0" }]);
+    expect(await rows("SELECT count(*)::int AS n FROM audit_export_plans WHERE export_id = 'aex_w'")).toEqual([{ n: 0 }]);
+    expect(await rows("SELECT event_type FROM audit_events WHERE event_type LIKE 'audit_export.%' AND resource->>'exportId' = 'aex_w'"))
+      .toEqual([{ event_type: "audit_export.abandoned" }]);
+  });
+
+  it("a commit and the deletion loop racing on an expired drain, unforced: one abandons it, never both, never a completion", async () => {
+    for (let i = 0; i < 5; i++) {
+      const id = `aex_r${i}`;
+      await db.query(`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ($1, $2, 'R', '{}')`, [`org_r${i}`, `r${i}`]);
+      orgId = `org_r${i}`;
+      const plan = await exportWithExpiredPlan(id, "draining");
+      const binding: WorkerBinding = { exportId: id, organizationId: orgId, generation: "0", version: 1, streamId: "aes_old" };
+      const [committed, swept] = await Promise.all([commitPlan(ctx, binding, plan, null), abandonExpiredDrains(db)]);
+      // The loop first: the commit finds its binding gone. The commit first: it abandons, and the loop skips or finds nothing.
+      const outcome = `round ${i}: commit ${committed}, loop [${swept.join(",")}]`;
+      if (committed === "abandoned") expect(swept, outcome).toEqual([]);
+      else expect({ committed, swept }, outcome).toEqual({ committed: "lost", swept: [id] });
+      expect(await rows("SELECT event_type FROM audit_events WHERE event_type LIKE 'audit_export.%' AND resource->>'exportId' = $1", [id]))
+        .toEqual([{ event_type: "audit_export.abandoned" }]);
     }
   });
 
