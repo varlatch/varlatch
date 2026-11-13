@@ -57,8 +57,18 @@ jobs:
           CGO_ENABLED: "0"
         run: go test ./...
 
+      # The storage engine is concurrent (writer, checkpointer, snapshots);
+      # the race detector needs cgo, which only this step uses.
+      - name: Test with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
+
       # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
-      # and Windows, each on amd64 and arm64; static, no cgo.
+      # and Windows, each on amd64 and arm64; static, no cgo. Every package
+      # builds and vets on every platform, since the CLI may use any of the
+      # shared ones.
       - name: Both binaries build for every platform
         working-directory: go
         env:
@@ -69,7 +79,11 @@ jobs:
             echo "built $1 for $2"
           }
           for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
-          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do build varlatch "$p"; done
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            build varlatch "$p"
+            GOOS=${p%/*} GOARCH=${p#*/} go vet ./...
+            GOOS=${p%/*} GOARCH=${p#*/} go build ./...
+          done
 
       # ADR-0021's split, SPDX headers and LICENSE files included, for go/
       # too. The script uses Node's standard library only.
