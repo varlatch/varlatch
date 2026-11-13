@@ -37,6 +37,9 @@ const PREFIXES = {
   passkeyConfirmationChallenge: "pcc",
   approvalIntent: "apr",
   approvalIntentChallenge: "apc",
+  auditExport: "aex",
+  auditExportPlan: "aep",
+  auditExportStream: "aes",
 } as const;
 
 export type IdKind = keyof typeof PREFIXES;

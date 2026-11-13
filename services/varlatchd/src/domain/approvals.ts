@@ -219,6 +219,10 @@ export const APPROVAL_OPERATIONS = [
   "project.delete",
   "organization.delete",
   "secret.export",
+  // The audit export (ADR-0056 Decision 9): always asked for, whatever the
+  // Security Controls' modes, so no control lists them.
+  "audit_export.change",
+  "audit_export.remove",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
