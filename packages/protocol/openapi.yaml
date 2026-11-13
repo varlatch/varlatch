@@ -4027,8 +4027,11 @@ paths:
         Discard a pending registration: its key is deleted and
         sync.github_app_registration_abandoned recorded. The App stays on
         GitHub; `deleteUrl` is where its owner deletes it. One that is no
-        longer pending changes nothing (`discarded: false`). Only the person
-        who started it may discard it.
+        longer pending changes nothing (`discarded: false`), and `state`
+        says why, decided under the registration's lock: `attached` (the
+        App is this Organization's, so there is no `deleteUrl`), `ended`
+        (discarded, expired or refused before) or `waiting` (GitHub has not
+        handed it over yet). Only the person who started it may discard it.
       parameters:
         - { $ref: "#/components/parameters/org" }
         - { name: registration, in: path, required: true, schema: { type: string } }
@@ -4039,10 +4042,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [discarded, deleteUrl]
+                required: [discarded, state, deleteUrl, app]
                 properties:
-                  discarded: { type: boolean }
-                  deleteUrl: { type: [string, "null"] }
+                  discarded: { type: boolean, description: Whether this request deleted the pending key }
+                  state: { type: string, enum: [discarded, attached, ended, waiting] }
+                  deleteUrl: { type: [string, "null"], description: "Null for an attached registration (its App is this Organization's) and for one not converted yet" }
+                  app:
+                    type: [object, "null"]
+                    required: [githubAppId, slug]
+                    properties:
+                      githubAppId: { type: integer }
+                      slug: { type: string }
         default: { $ref: "#/components/responses/Error" }
 
   /organizations/{org}/github-app/import:

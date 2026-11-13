@@ -1427,8 +1427,20 @@ export class VarlatchClient {
     return this.request("POST", this.attachPath(org, registrationId));
   }
 
-  /** Discard a pending registration: its key is deleted; the App stays on GitHub. */
-  discardGitHubAppRegistration(org: string, registrationId: string): Promise<{ discarded: boolean; deleteUrl: string | null }> {
+  /**
+   * Discard a pending registration: its key is deleted; the App stays on
+   * GitHub. `state` says what the server found under the registration's
+   * lock: `attached` means the App is this organization's (no `deleteUrl`).
+   */
+  discardGitHubAppRegistration(
+    org: string,
+    registrationId: string,
+  ): Promise<{
+    discarded: boolean;
+    state: "discarded" | "attached" | "ended" | "waiting";
+    deleteUrl: string | null;
+    app: { githubAppId: number; slug: string } | null;
+  }> {
     return this.request("DELETE", `/v1/organizations/${encodeURIComponent(org)}/github-app/registrations/${encodeURIComponent(registrationId)}`);
   }
 

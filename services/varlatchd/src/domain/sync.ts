@@ -502,18 +502,15 @@ export async function createAppConnection(
   if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
     throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
   }
-  // The App this request is about: the one its first read finds (the
-  // existence preflight). Every later read, the key's included, must find
-  // that App: one replaced in between is refused.
+  // The App row an approval is bound to, pinned by the binding (only when a
+  // control asks for an approval): the key read for the installation and
+  // the locked write must name that same row. An App replaced meanwhile is
+  // refused with STATE_CHANGED before anything is consumed. With no
+  // approval, nothing is pinned and the App is read as before.
   let boundAppId: string | null = null;
-  const sameApp = (id: string) => {
-    boundAppId ??= id;
-    if (id !== boundAppId) throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was replaced meanwhile");
-  };
   const liveAppOf = async (db: Querier) => {
     const app = await readApp(db, org.id);
     if (!app) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
-    sameApp(app.id);
     return app;
   };
   const protectedInput: ProtectedOperationInput = {
@@ -523,7 +520,11 @@ export async function createAppConnection(
     preflight: async (db) => {
       await liveAppOf(db);
     },
-    binding: async (db) => appConnectionCreateBinding(org, await liveAppOf(db), input),
+    binding: async (db) => {
+      const app = await liveAppOf(db);
+      boundAppId = app.id;
+      return appConnectionCreateBinding(org, app, input);
+    },
     authorizeIn: options.authorizeIn,
   };
   // The external-effect contract (liveness.ts withExternalEffect): from
@@ -538,7 +539,9 @@ export async function createAppConnection(
     const tctx: AppCtx = { ...ctx, db: tx };
     const started = await startProtectedOperation(tx, gate, protectedInput, { precheck: true });
     const { app, pem } = await appWithKey(tctx, org);
-    sameApp(app.id);
+    if (boundAppId !== null && app.id !== boundAppId) {
+      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was replaced since the approval was asked for; nothing was changed. Reload and try again");
+    }
     const installation = await readInstallation(
       guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tx, organizationId: org.id, resource: {} })),
       { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
@@ -648,6 +651,16 @@ export async function rotateGitHubAppKey(
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
+  // The App row an approval is bound to, pinned by the binding (only when a
+  // control asks for an approval): the key GitHub verifies and the locked
+  // write must name that same row. An App removed and imported again
+  // meanwhile (a new row, even of the same GitHub App and version) is
+  // refused with STATE_CHANGED before anything is consumed, so an approval
+  // given for one row is never used on another. With no approval, nothing
+  // is pinned and the rotation reads the App as before.
+  let pinnedAppId: string | null = null;
+  const replaced = () =>
+    new DomainError("STATE_CHANGED", "The Organization's GitHub App was replaced or removed since the approval was asked for; nothing was changed. Reload and try again");
   const protectedInput: ProtectedOperationInput = {
     scope: { organizationId: org.id, people: [actorIdentityId] },
     checks: [{ control: "admin-step-up", operation: "github_app.replace_key" }],
@@ -661,6 +674,7 @@ export async function rotateGitHubAppKey(
       // checked again under the App's row lock.
       const app = await readApp(db, org.id);
       if (!app) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+      pinnedAppId = app.id;
       if (app.version !== input.expectedVersion) {
         throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
       }
@@ -679,7 +693,10 @@ export async function rotateGitHubAppKey(
   return withExternalEffect(ctx.db, { organizationId: org.id, people: [effectRequester(approvalGate)] }, async (tx) => {
     const tctx: AppCtx = { ...ctx, db: tx };
     const started = await startProtectedOperation(tx, approvalGate, protectedInput, { precheck: true });
+    // The App GitHub verifies the key for: the one the binding and the
+    // precheck named, when they named one.
     const seen = await getGitHubApp(tctx, org.id);
+    if (pinnedAppId !== null && seen.id !== pinnedAppId) throw replaced();
     const githubAppId = Number(seen.github_app_id);
     const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tx, organizationId: org.id, resource: {} })), "/app", seen.client_id, input.privateKey, now);
     if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
@@ -705,7 +722,10 @@ export async function rotateGitHubAppKey(
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
       [seen.id, org.id],
     )).rows[0] as { id: string; version: number } | undefined;
-    if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    // The row under its lock: with an approval bound to it, one removed
+    // since is refused as replaced (the transaction rolls back, consumption
+    // included); without one, as before.
+    if (!locked) throw pinnedAppId !== null ? replaced() : new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
     if (locked.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
     }

@@ -346,6 +346,61 @@ export function RegisterAppDialog({ org, onClose }: { org: string; onClose: () =
   );
 }
 
+/**
+ * What a discard found, said as it is (the server decides it under the
+ * registration's lock). Only a registration whose App was not kept links
+ * to GitHub's delete page: an attached one is this organization's working
+ * App, whose attachment's answer was lost.
+ */
+export function DiscardOutcome({
+  outcome,
+  actions,
+}: {
+  outcome: Awaited<ReturnType<import("@varlatch/sdk").VarlatchClient["discardGitHubAppRegistration"]>>;
+  actions?: React.ReactNode;
+}) {
+  const slug = outcome.app?.slug ?? "the App";
+  const deleteLink = outcome.deleteUrl ? (
+    <>
+      {": "}
+      <ExternalAnchor href={outcome.deleteUrl} testId="github-app-delete">
+        delete it there
+      </ExternalAnchor>
+      .
+    </>
+  ) : (
+    "."
+  );
+  switch (outcome.state) {
+    case "discarded":
+      return (
+        <Callout tone="neutral" title="Registration discarded" actions={actions} data-testid="github-app-callback" data-status="discarded">
+          Varlatch deleted the key GitHub handed over for <span className="font-mono">{slug}</span>. The App stays on GitHub{deleteLink}
+        </Callout>
+      );
+    case "attached":
+      return (
+        <Callout tone="success" title="This GitHub App was already attached" actions={actions} data-testid="github-app-callback" data-status="attached">
+          <span className="font-mono">{slug}</span> is this organization's GitHub App: an earlier attempt attached it. Nothing was discarded. Keep it on
+          GitHub.
+        </Callout>
+      );
+    case "ended":
+      return (
+        <Callout tone="neutral" title="This registration already ended" actions={actions} data-testid="github-app-callback" data-status="ended">
+          Nothing was discarded now: <span className="font-mono">{slug}</span> was discarded, expired or refused before, and Varlatch did not keep it.
+          It stays on GitHub{deleteLink}
+        </Callout>
+      );
+    case "waiting":
+      return (
+        <Callout tone="neutral" title="Nothing to discard yet" actions={actions} data-testid="github-app-callback" data-status="waiting">
+          GitHub has not handed this App over to Varlatch, so nothing was discarded.
+        </Callout>
+      );
+  }
+}
+
 /** Where GitHub sends the browser back: completes the registration with this session's bearer. */
 export function GitHubAppCallbackPage() {
   const { org } = useParams() as { org: string };
@@ -380,7 +435,13 @@ export function GitHubAppCallbackPage() {
       if (result.outcome === "registered") void qc.invalidateQueries({ queryKey: githubAppKey(org) });
     },
   });
-  const discard = useMutation({ mutationFn: () => api.discardGitHubAppRegistration(org, pendingId!) });
+  const discard = useMutation({
+    mutationFn: () => api.discardGitHubAppRegistration(org, pendingId!),
+    onSuccess: (outcome) => {
+      // An attachment whose answer was lost: the App is this organization's.
+      if (outcome.state === "attached") void qc.invalidateQueries({ queryKey: githubAppKey(org) });
+    },
+  });
   const result = attach.data ?? complete.data;
   const needsAppCheck = pendingId === null && (errorCode === "CONSUMED" || errorCode === "EXPIRED");
   const current = useGitHubApp(org, needsAppCheck);
@@ -413,17 +474,7 @@ export function GitHubAppCallbackPage() {
     );
   } else if (pendingId !== null && !attach.data) {
     body = discard.data ? (
-      <Callout tone="neutral" title="Registration discarded" actions={back} data-testid="github-app-callback" data-status="discarded">
-        Varlatch deleted the key GitHub handed over. The App stays on GitHub
-        {discard.data.deleteUrl ? (
-          <>
-            {": "}
-            <ExternalAnchor href={discard.data.deleteUrl} testId="github-app-delete">delete it there</ExternalAnchor>.
-          </>
-        ) : (
-          "."
-        )}
-      </Callout>
+      <DiscardOutcome outcome={discard.data} actions={back} />
     ) : (
       <Callout
         tone="warn"

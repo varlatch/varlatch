@@ -5849,8 +5849,13 @@
    "status": 200,
    "code": null,
    "shape": {
+    "app": {
+     "githubAppId": "number",
+     "slug": "string"
+    },
     "deleteUrl": "string",
-    "discarded": "boolean"
+    "discarded": "boolean",
+    "state": "string"
    },
    "tables": [
     "audit_events",

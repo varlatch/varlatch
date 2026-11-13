@@ -1896,7 +1896,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Discard a pending registration: its key is deleted and sync.github_app_registration_abandoned recorded. The App stays on GitHub; `deleteUrl` is where its owner deletes it. One that is no longer pending changes nothing (`discarded: false`). Only the person who started it may discard it. */
+        /** Discard a pending registration: its key is deleted and sync.github_app_registration_abandoned recorded. The App stays on GitHub; `deleteUrl` is where its owner deletes it. One that is no longer pending changes nothing (`discarded: false`), and `state` says why, decided under the registration's lock: `attached` (the App is this Organization's, so there is no `deleteUrl`), `ended` (discarded, expired or refused before) or `waiting` (GitHub has not handed it over yet). Only the person who started it may discard it. */
         delete: operations["discardGitHubAppRegistration"];
         options?: never;
         head?: never;
@@ -8192,8 +8192,16 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** @description Whether this request deleted the pending key */
                         discarded: boolean;
+                        /** @enum {string} */
+                        state: "discarded" | "attached" | "ended" | "waiting";
+                        /** @description Null for an attached registration (its App is this Organization's) and for one not converted yet */
                         deleteUrl: string | null;
+                        app: {
+                            githubAppId: number;
+                            slug: string;
+                        } | null;
                     };
                 };
             };

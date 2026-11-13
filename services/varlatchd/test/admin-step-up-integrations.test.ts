@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { CONTROL_APPROVAL_OPERATIONS, OPERATIONS_DURING_FREEZE } from "../src/domain/approvals.js";
+import { CONTROL_APPROVAL_OPERATIONS, OPERATIONS_DURING_FREEZE, withApproval, type ProtectedGate } from "../src/domain/approvals.js";
+import { encryptGitHubAppKey } from "../src/crypto/hierarchy.js";
+import type { Querier } from "../src/db/migrate.js";
+import { getOrganization, orgKekOf } from "../src/domain/orgs.js";
+import { rotateGitHubAppKey } from "../src/domain/sync.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { sweepExpiredRegistrations } from "../src/domain/githubapps.js";
 import { labelWithId } from "../src/domain/approvallabels.js";
@@ -49,12 +53,15 @@ let conversions: string[];
 /** The PEM each converted App's key has, by GitHub App id. */
 let convertedKeys: Map<number, string>;
 let nextAppId: number;
+/** GitHub, as the app reaches it: the manifest conversion and the fake's App calls. */
+let syncFetch: typeof fetch;
 /** Runs when GitHub hands over an App, before the answer returns (a test hook). */
 let onConversion: (() => Promise<void>) | null;
 
 interface Person {
   id: string;
   cli: string;
+  cliId: string;
   web: string;
   key: SoftAuthenticator;
 }
@@ -99,7 +106,7 @@ async function person(identityId: string): Promise<Person> {
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     authSessionId: sessionId,
   });
-  return { id: identityId, cli: cli.token, web: web.token, key };
+  return { id: identityId, cli: cli.token, cliId: cli.credentialId, web: web.token, key };
 }
 
 async function controlOf(control: string) {
@@ -225,7 +232,7 @@ beforeEach(async () => {
   onConversion = null;
   // GitHub's manifest conversion: each code hands over a new App on acme-gh,
   // which the fake then knows (its key answers GET /app).
-  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchImpl = (syncFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const m = url.pathname.match(/^\/app-manifests\/([^/]+)\/conversions$/);
     if (m && init?.method === "POST") {
@@ -238,7 +245,7 @@ beforeEach(async () => {
       return Response.json({ id, slug: `varlatch-acme-${id}`, client_id: `Iv23li${id}`, client_secret: "not-kept", pem, owner: OWNER, permissions: PERMISSIONS }, { status: 201 });
     }
     return github.fetchImpl(input, init);
-  }) as typeof fetch;
+  }) as typeof fetch);
   app = buildApp(ctx, { publicUrl: PUBLIC_URL, clientAddress: () => "203.0.113.7", syncFetch: fetchImpl });
   admin = await person(identityId);
   orgId = (await ok("POST", "/v1/organizations", admin.cli, { name: "Acme", slug: "acme" })).id;
@@ -788,11 +795,17 @@ describe("GitHub App registration, staged (amendment D)", () => {
     const started = await startRegistration(admin.cli);
     const asked = await approved(admin, await completeRegistration(admin.cli, started.state));
     const res = await discard(admin.cli, started.id);
-    expect(res.body).toEqual({ discarded: true, deleteUrl: expect.stringContaining("/organizations/acme-gh/settings/apps/varlatch-acme-") });
+    expect(res.body).toEqual({
+      discarded: true,
+      state: "discarded",
+      deleteUrl: expect.stringContaining("/organizations/acme-gh/settings/apps/varlatch-acme-"),
+      app: { githubAppId: expect.any(Number), slug: expect.stringMatching(/^varlatch-acme-/) },
+    });
     expect(await registration(started.id)).toEqual({ converted: true, ended: true, end_reason: "discarded", has_key: false });
     expect((await events("sync.github_app_registration_abandoned")).map((e) => e.metadata.reason)).toEqual(["discarded"]);
     expect((await attach(admin.cli, started.id, asked)).body).toMatchObject({ outcome: "refused", reason: "registration-ended" });
-    expect((await discard(admin.cli, started.id)).body).toMatchObject({ discarded: false });
+    // Discarded before: nothing now, and the App was not kept, so its delete link stays.
+    expect((await discard(admin.cli, started.id)).body).toMatchObject({ discarded: false, state: "ended", deleteUrl: expect.stringContaining("/settings/apps/") });
   });
 });
 
@@ -862,5 +875,69 @@ describe("GitHub App registration, staged: more terminal cases (amendment D)", (
     expect(await intents()).toBe(0);
     expect(await registration(started.id)).toEqual({ converted: true, ended: true, end_reason: "refused", has_key: false });
     expect((await events("sync.github_app_registration_abandoned")).map((e) => [e.actor, e.metadata.reason])).toEqual([[bot.id, "machine-credential"]]);
+  });
+});
+
+describe("second review round (Codex, at 0bd56ee)", () => {
+  beforeEach(async () => {
+    await enforceAdminStepUp();
+  });
+
+  it("an attached registration discarded afterwards (the attach's answer lost): nothing discarded, no delete link, the App still attached", async () => {
+    const started = await startRegistration(admin.cli);
+    const asked = await approved(admin, await completeRegistration(admin.cli, started.state, "code-lost"));
+    expect((await attach(admin.cli, started.id, asked)).status).toBe(201);
+    const app = await liveApp();
+    const res = await discard(admin.cli, started.id);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ discarded: false, state: "attached", deleteUrl: null, app: { githubAppId: Number(app.github_app_id), slug: expect.any(String) } });
+    expect(await liveApp()).toEqual(app);
+    expect(await registration(started.id)).toEqual({ converted: true, ended: true, end_reason: "attached", has_key: false });
+    expect(await events("sync.github_app_registration_abandoned")).toEqual([]);
+  });
+
+  it("a key rotation refuses an App removed and imported again under it, before GitHub or after consumption, and consumes nothing", async () => {
+    await ctx.db.query("UPDATE security_controls SET mode = 'off' WHERE organization_id = $1", [orgId]);
+    const registered = await registerApp();
+    await enforceAdminStepUp();
+    const newKey = github.addKey(registered.githubAppId);
+    const asked = await approved(admin, await replaceKey(admin.cli, newKey, registered.version));
+    const org = await getOrganization(ctx, "acme");
+    const requester = { identityId: admin.id, identityKind: "human", credentialId: admin.cliId, credentialKind: "cli" } as const;
+    // Another admin removes the App and imports the same GitHub App again:
+    // a new row, at the same version. Written in the request's transaction,
+    // at the point given, as a concurrent commit would be seen there.
+    const replacement = async (db: Querier) => {
+      await db.query("UPDATE github_apps SET removed_at = now(), key_envelope = NULL, version = version + 1 WHERE id = $1", [registered.id]);
+      const id = "gha_replacementrow00000000000";
+      const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, convertedKeys.get(registered.githubAppId)!);
+      await db.query(
+        `INSERT INTO github_apps (id, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, key_envelope, created_by, version)
+         SELECT $1, organization_id, github_app_id, slug, client_id, owner_login, owner_id, owner_type, $2, created_by, $3 FROM github_apps WHERE id = $4`,
+        [id, JSON.stringify(envelope), registered.version, registered.id],
+      );
+    };
+    const rotate = (wrap: (gate: ProtectedGate) => ProtectedGate) =>
+      withApproval(ctx, { requester, approvalId: asked, publicUrl: PUBLIC_URL }, (gate) =>
+        rotateGitHubAppKey(ctx, wrap(gate), org, { privateKey: newKey, expectedVersion: registered.version }, async () => undefined, syncFetch));
+    const appCalls = () => github.calls.filter((c) => c.path === "/app").length;
+
+    // Between the binding (and its precheck) and GitHub's verification.
+    const before = appCalls();
+    await expect(rotate((gate) => ({ ...gate, precheck: async (db, b) => { await gate.precheck!(db, b); await replacement(db); } })))
+      .rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(appCalls()).toBe(before);
+    await unconsumed(asked);
+
+    // Between consumption and the locked write: the consumption rolls back.
+    await expect(rotate((gate) => ({ ...gate, require: async (db, b) => { const used = await gate.require(db, b); await replacement(db); return used; } })))
+      .rejects.toMatchObject({ code: "STATE_CHANGED" });
+    await unconsumed(asked);
+    // Nothing changed: the App is the one the approval named, at its version, with its key.
+    expect(await liveApp()).toMatchObject({ id: registered.id, version: registered.version });
+    expect(await count("SELECT count(*)::int AS n FROM github_apps")).toBe(1);
+    expect(await events("sync.github_app_key_rotated")).toEqual([]);
+    // And the approval still works for the App it names.
+    expect((await replaceKey(admin.cli, newKey, registered.version, asked)).body).toMatchObject({ outcome: "rotated" });
   });
 });

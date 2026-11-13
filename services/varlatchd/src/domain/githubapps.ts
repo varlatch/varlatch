@@ -817,27 +817,54 @@ function abandonedEvent(
 }
 
 /**
+ * What a discard found, decided under the registration row's lock:
+ * - `discarded`: it was pending; its key is deleted now;
+ * - `attached`: it was attached (an attachment whose answer was lost):
+ *   nothing is discarded, and the App works; no delete link;
+ * - `ended`: it ended before (discarded, expired or refused): its key was
+ *   already deleted, and the App was not kept;
+ * - `waiting`: GitHub has not handed the App over yet: nothing to discard.
+ */
+export type DiscardState = "discarded" | "attached" | "ended" | "waiting";
+
+export interface DiscardOutcome {
+  /** Whether this request deleted the pending key. */
+  discarded: boolean;
+  state: DiscardState;
+  /** Where the App's owner deletes it on GitHub; null when the App is the attached one, or there is none yet. */
+  deleteUrl: string | null;
+  app: { githubAppId: number; slug: string } | null;
+}
+
+/**
  * Discard a pending registration (its person's): the key is deleted and
  * sync.github_app_registration_abandoned recorded. The App stays on
- * GitHub. One that is no longer pending changes nothing. Not protected: it
- * only deletes a key Varlatch holds.
+ * GitHub. The state is decided under the registration row's lock (step
+ * 10), after the existence read and the checkpoint: one no longer pending
+ * changes nothing, and one that was attached never gets a delete link (its
+ * App is the one this Organization uses). Not protected: it only deletes a
+ * key Varlatch holds.
  */
-export async function discardRegistration(ctx: AppCtx, org: OrgRow, registrationId: string, actorIdentityId: string): Promise<{ discarded: boolean; deleteUrl: string | null }> {
+export async function discardRegistration(ctx: AppCtx, org: OrgRow, registrationId: string, actorIdentityId: string): Promise<DiscardOutcome> {
   return withTx(ctx.db, async (db) => {
     await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
-    const row = (await db.query(
-      `SELECT ${REGISTRATION_COLUMNS} FROM github_app_registrations WHERE id = $1 AND organization_id = $2 AND actor_identity_id = $3`,
-      [registrationId, org.id, actorIdentityId],
-    )).rows[0] as RegistrationRow | undefined;
-    if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this id");
+    if (!(await readRegistration(db, org, registrationId, actorIdentityId, false))) {
+      throw new DomainError("RESOURCE_NOT_FOUND", "No GitHub App registration of yours in this Organization has this id");
+    }
     // Existence first, then passkey-verification (ADR-0054 Decision 7).
     await requireOrganizationAccess(db, org.id);
-    if (row.converted_at === null) return { discarded: false, deleteUrl: null };
+    // The row under its lock, then its state: an attachment or the sweep
+    // in flight either committed first or waits for this.
+    const row = (await readRegistration(db, org, registrationId, actorIdentityId, true))!;
+    if (row.converted_at === null) return { discarded: false, state: "waiting", deleteUrl: null, app: null };
     const pending = pendingFrom(row);
+    const app = { githubAppId: pending.githubAppId, slug: pending.slug };
+    if (row.end_reason === "attached") return { discarded: false, state: "attached", deleteUrl: null, app };
     const deleteUrl = githubAppDeleteUrl(pending.slug, { login: pending.owner.login, type: pending.owner.type });
-    if (!(await endPending(db, registrationId, "discarded"))) return { discarded: false, deleteUrl };
+    if (row.ended_at !== null) return { discarded: false, state: "ended", deleteUrl, app };
+    await endPending(db, registrationId, "discarded");
     await recordAuditEvent(db, abandonedEvent(org.id, actorIdentityId, "discarded", pending));
-    return { discarded: true, deleteUrl };
+    return { discarded: true, state: "discarded", deleteUrl, app };
   });
 }
 
