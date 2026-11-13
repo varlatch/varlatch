@@ -953,6 +953,17 @@ export async function checkConnectionAccess(
   // Stored external credentials are not used while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
+  // Validation first, without a lock: the request's checks in their order,
+  // then the outbound policy (ADR-0057 Decision 6): a refused base identity
+  // is reported in the policy's words, and no credential is sent. Its DNS
+  // lookup is validation, never inside the effect's transaction.
+  const checked0 = await checkCredentialInput(ctx, org, input, allowedAdapters);
+  // No destination fields: the check stops at the base identity.
+  const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
+  const destination = named
+    ? canonicalizeOrValidationError(() => checked0.adapter.canonicalizeDestination(input.destination ?? {}))
+    : null;
+  const refusal = await baseIdentityRefusal(ctx, org.id, checked0.baseIdentity, "sync_check", checked0.connectionId, actorIdentityId);
   // The external-effect contract (liveness.ts withExternalEffect): from
   // here to the end, one transaction holding the Organization row and the
   // actor, with passkey-verification after the lookups and before the
@@ -961,15 +972,6 @@ export async function checkConnectionAccess(
     const tctx: AppCtx = { ...ctx, db: tx };
     const resolved = await resolveCredential(tctx, org, input, allowedAdapters);
     const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
-    // No destination fields: the check stops at the base identity.
-    const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
-    const destination = named
-      ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
-      : null;
-
-    // The outbound policy first (ADR-0057 Decision 6): a refused base identity
-    // is reported in the policy's words, and no credential is sent.
-    const refusal = await baseIdentityRefusal(tctx, org.id, baseIdentity, "sync_check", connectionId, actorIdentityId);
     const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_check", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
     const credential = refusal
       ? { ok: false as const, check: refusedCheck(refusal) }
@@ -1025,6 +1027,17 @@ export async function listConnectionDestinations(
 ): Promise<DestinationListing> {
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
+  // Validation first, without a lock, then the outbound policy (ADR-0057
+  // Decision 6), as for a check: its DNS lookup never runs inside the
+  // effect's transaction.
+  const checked0 = await checkCredentialInput(ctx, org, input, allowedAdapters);
+  if (!checked0.adapter.listDestinations) {
+    throw new DomainError(
+      "VALIDATION_FAILED",
+      "This platform has no destinations to list: the Connection's base identity is the destination",
+    );
+  }
+  const refusal = await baseIdentityRefusal(ctx, org.id, checked0.baseIdentity, "sync_listing", checked0.connectionId, actorIdentityId);
   // The external-effect contract (liveness.ts withExternalEffect): from
   // here to the end, one transaction holding the Organization row and the
   // actor, with passkey-verification after the lookups and before the
@@ -1033,20 +1046,13 @@ export async function listConnectionDestinations(
     const tctx: AppCtx = { ...ctx, db: tx };
     const resolved = await resolveCredential(tctx, org, input, allowedAdapters);
     const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
-    if (!adapter.listDestinations) {
-      throw new DomainError(
-        "VALIDATION_FAILED",
-        "This platform has no destinations to list: the Connection's base identity is the destination",
-      );
-    }
-    // The outbound policy first (ADR-0057 Decision 6), as for a check.
-    const refusal = await baseIdentityRefusal(tctx, org.id, baseIdentity, "sync_listing", connectionId, actorIdentityId);
     const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_listing", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
     const credential = refusal
       ? { ok: false as const, check: refusedCheck(refusal) }
       : await credentialForUse(resolved, "listing", {}, send);
     const listing: DestinationListing = credential.ok
-      ? await adapter.listDestinations({
+      // The same platform as checked before the transaction: it lists.
+      ? await adapter.listDestinations!({
           baseIdentity,
           destination: {},
           credential: credential.credential,
@@ -1141,6 +1147,49 @@ async function credentialForUse(
  * Connection has none of its own: its App's key and installation, to mint
  * from; a supplied credential is refused for it.
  */
+/**
+ * What resolveCredential checks before it decrypts anything, in the same
+ * order and with the same answers: the Connection exists, an App
+ * Connection takes no credential, the adapter is allowed and the base
+ * identity canonical, a supplied credential is not empty. Read without a
+ * lock, before an external effect's transaction: so the outbound policy's
+ * check of the base identity (a DNS lookup) runs before it, as validation
+ * (ADR-0054 Decision 7, the external-effect contract).
+ */
+async function checkCredentialInput(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: CredentialInput,
+  allowedAdapters: string[] | null,
+): Promise<{ adapter: ReturnType<typeof getAdapter>; baseIdentity: string; connectionId: string | null }> {
+  let platform: string;
+  let baseIdentity: string;
+  let connectionId: string | null = null;
+  let app = false;
+  if ("connectionId" in input) {
+    const connection = await getConnection(ctx, org.id, input.connectionId);
+    connectionId = connection.id;
+    platform = connection.platform;
+    baseIdentity = connection.base_identity;
+    if (connection.credential_kind === "github-app") {
+      if (input.credential !== undefined) throw appHasNoCredential();
+      app = true;
+    }
+  } else {
+    platform = input.platform;
+    baseIdentity = input.baseIdentity;
+  }
+  if (allowedAdapters && !allowedAdapters.includes(platform)) {
+    throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
+  }
+  const adapter = canonicalizeOrValidationError(() => getAdapter(platform));
+  baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(baseIdentity));
+  if (!app && input.credential !== undefined && input.credential.trim().length === 0) {
+    throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
+  }
+  return { adapter, baseIdentity, connectionId };
+}
+
 async function resolveCredential(
   ctx: AppCtx,
   org: OrgRow,

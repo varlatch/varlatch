@@ -7,6 +7,8 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { getOrganization } from "../src/domain/orgs.js";
 import { EXTERNAL_EFFECT_LIMITS } from "../src/domain/externaleffect.js";
+import { OUTBOUND_RESOLVE, setOutboundResolverForTests } from "../src/net/outbound.js";
+import { TEST_PUBLIC_ADDRESS } from "./helpers/outbound-resolver.js";
 import { requireOrganizationAccess, withRequester } from "../src/domain/requestaccess.js";
 import { inSnapshot } from "../src/domain/retrieval.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
@@ -251,6 +253,42 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     const refused = await call("POST", CHECK, cli, checkBody);
     expect(refused.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
     expect(platform.calls).toBe(calls);
+  }, 30_000);
+
+  it("never holds the Organization on DNS: a stalled lookup of the base identity runs before the effect's lock, bounded, and a control change does not wait for it", async () => {
+    const saved = OUTBOUND_RESOLVE.timeoutMs;
+    OUTBOUND_RESOLVE.timeoutMs = 1_500;
+    let lookups = 0;
+    // The base identity's name never resolves; everything else as usual.
+    setOutboundResolverForTests(async (name) => {
+      if (name === "coolify.example.com") {
+        lookups++;
+        return new Promise(() => undefined);
+      }
+      return name === "localhost" ? [{ address: "127.0.0.1", family: 4 }] : [{ address: TEST_PUBLIC_ADDRESS, family: 4 }];
+    });
+    try {
+      let checkedAt = 0;
+      const checking = call("POST", CHECK, cli, checkBody).then((r) => { checkedAt = Date.now(); return r; });
+      for (let i = 0; i < 200 && lookups === 0; i++) await new Promise((r) => setTimeout(r, 10));
+      expect(lookups).toBe(1);
+      // While the lookup stalls, the control change commits at once.
+      const changing = Date.now();
+      const change = await call("PATCH", CONTROL, verified, { mode: "enforce", expectedVersion: 0 });
+      expect(change.status).toBe(200);
+      expect(Date.now() - changing).toBeLessThan(1_000);
+      expect(checkedAt).toBe(0);
+      // The lookup gives up at its bound; the check then takes the lock and
+      // decides under the new mode: refused, before any platform call.
+      const refused = await checking;
+      expect(refused.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+      expect(platform.calls).toBe(0);
+    } finally {
+      OUTBOUND_RESOLVE.timeoutMs = saved;
+      setOutboundResolverForTests(async (name) =>
+        name === "localhost" ? [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] : [{ address: TEST_PUBLIC_ADDRESS, family: 4 }],
+      );
+    }
   }, 30_000);
 
   it("an external operation that locks after enforce committed is refused before any outbound call, and records nothing", async () => {
