@@ -1,0 +1,6 @@
+# The installers are published as checked in, with LF line endings, and
+# their tests cut and edit them by byte; a Windows checkout must not turn
+# them into CRLF.
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.service text eol=lf
