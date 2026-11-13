@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 // Command unitprobe checks, from inside varlatchd.service's sandbox, that
 // the sandbox lets varlatchd do what it needs and nothing it should not.
 // go/install/test-unit.sh runs it as the unit's ExecStart (CI, as root, on
