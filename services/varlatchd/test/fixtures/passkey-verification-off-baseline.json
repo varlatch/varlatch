@@ -1,0 +1,5799 @@
+{
+ "source": "main 71570de",
+ "variants": {
+  "GET /v1/organizations/:org (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "id": "string",
+    "incidentFreeze": "null",
+    "name": "string",
+    "slug": "string"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/me/permissions (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "actions": [
+     "string"
+    ],
+    "organizationId": "string",
+    "role": "string"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/me/permissions (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "id": "string",
+    "name": "string",
+    "slug": "string"
+   },
+   "tables": [
+    "audit_events",
+    "organizations"
+   ]
+  },
+  "PATCH /v1/organizations/:org (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/deletion (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "deletion": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/deletion (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "approvalRequired": "boolean",
+    "approvedAt": "null",
+    "approvedBy": "null",
+    "cancelledAt": "null",
+    "completedAt": "null",
+    "id": "string",
+    "requestedBy": "string",
+    "runAfter": "string",
+    "scheduledAt": "string"
+   },
+   "tables": [
+    "audit_events",
+    "identities",
+    "organization_deletions",
+    "setup_grants",
+    "webhooks"
+   ]
+  },
+  "POST /v1/organizations/:org/deletion (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/approve (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/approve (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/approve (missing deletion)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/cancel (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/cancel (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/deletion/:deletion/cancel (missing deletion)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/incident-freeze (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "freeze": "null",
+    "history": [],
+    "resumingTargets": []
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/incident-freeze (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/incident-freeze (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "frozenAt": "string",
+    "frozenBy": {
+     "id": "string",
+     "name": "string"
+    },
+    "id": "string",
+    "liftMethod": "null",
+    "liftedAt": "null",
+    "liftedBy": "null",
+    "reason": "string"
+   },
+   "tables": [
+    "audit_events",
+    "organization_freezes"
+   ]
+  },
+  "POST /v1/organizations/:org/incident-freeze (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/incident-freeze/:freeze/lift (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/incident-freeze/:freeze/lift (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/incident-freeze/:freeze/lift (missing freeze)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/config-items (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/config-items (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "activeContractRevisionId": "string",
+      "contractAuthority": "string",
+      "createdAt": "string",
+      "id": "string",
+      "name": "string",
+      "organizationId": "string",
+      "slug": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "activeContractRevisionId": "null",
+    "contractAuthority": "string",
+    "createdAt": "string",
+    "id": "string",
+    "name": "string",
+    "organizationId": "string",
+    "slug": "string"
+   },
+   "tables": [
+    "audit_events",
+    "projects"
+   ]
+  },
+  "POST /v1/organizations/:org/projects (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "activeContractRevisionId": "string",
+    "contractAuthority": "string",
+    "createdAt": "string",
+    "id": "string",
+    "name": "string",
+    "organizationId": "string",
+    "slug": "string"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "activeContractRevisionId": "string",
+    "contractAuthority": "string",
+    "createdAt": "string",
+    "id": "string",
+    "name": "string",
+    "organizationId": "string",
+    "slug": "string"
+   },
+   "tables": [
+    "audit_events",
+    "projects"
+   ]
+  },
+  "PATCH /v1/organizations/:org/projects/:project (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "capabilitiesRevoked": "number",
+    "environments": "number",
+    "projectId": "string",
+    "slug": "string",
+    "targetsRevoked": "number",
+    "teamLinksRemoved": "number",
+    "values": "number",
+    "versionsErased": "number"
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "environments",
+    "projects",
+    "team_projects",
+    "value_versions"
+   ]
+  },
+  "DELETE /v1/organizations/:org/projects/:project (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "createdAt": "string",
+      "expiresAt": "null",
+      "id": "string",
+      "kind": "string",
+      "name": "string",
+      "ownerIdentityId": "null",
+      "parentEnvironmentId": "null",
+      "projectId": "string",
+      "tailnetRequired": "boolean",
+      "tailnetRequirementIds": [
+       "string"
+      ],
+      "tier": "string"
+     },
+     {
+      "createdAt": "string",
+      "expiresAt": "null",
+      "id": "string",
+      "kind": "string",
+      "name": "string",
+      "ownerIdentityId": "null",
+      "parentEnvironmentId": "null",
+      "projectId": "string",
+      "tailnetRequired": "boolean",
+      "tier": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "expiresAt": "null",
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "ownerIdentityId": "null",
+    "parentEnvironmentId": "null",
+    "projectId": "string",
+    "tailnetRequired": "boolean",
+    "tier": "string"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "expiresAt": "null",
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "ownerIdentityId": "null",
+    "parentEnvironmentId": "null",
+    "projectId": "string",
+    "tailnetRequired": "boolean",
+    "tailnetRequirementIds": [
+     "string"
+    ],
+    "tier": "string"
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "env_values",
+    "environments"
+   ]
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment (tailnet environment)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "env_values",
+    "environments"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "complete": "boolean",
+    "contractRevisionId": "string",
+    "environmentId": "string",
+    "invalid": [],
+    "missing": [],
+    "notEvaluated": [],
+    "unresolved": [],
+    "valid": "boolean"
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/validate (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "complete": "boolean",
+    "contractRevisionId": "string",
+    "environmentId": "string",
+    "invalid": [],
+    "missing": [],
+    "notEvaluated": [
+     {
+      "name": "string",
+      "reason": "string",
+      "requires": "string"
+     }
+    ],
+    "unresolved": [],
+    "valid": "boolean"
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "environmentId": "string",
+    "itemName": "string",
+    "previousVersionId": "string",
+    "sensitive": "boolean",
+    "versionId": "string"
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing item)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PUT /v1/organizations/:org/projects/:project/environments/:environment/values/:item (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "environmentId": "string",
+    "itemName": "string",
+    "previousVersionId": "string",
+    "sensitive": "boolean",
+    "versionId": "string"
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "env_values"
+   ]
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (missing item)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/values/:item (tailnet environment)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "env_values"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "environmentId": "string",
+    "itemName": "string",
+    "primaryVersionId": "string",
+    "retiringVersionId": "string",
+    "rotationDeadline": "string",
+    "sensitive": "boolean"
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (missing item)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations (tailnet environment)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "environmentId": "string",
+    "itemName": "string",
+    "primaryVersionId": "string",
+    "retiringVersionId": "string",
+    "rotationDeadline": "string",
+    "sensitive": "boolean"
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "environmentId": "string",
+    "itemName": "string",
+    "primaryVersionId": "string",
+    "sensitive": "boolean"
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (missing item)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/values/:item/rotations/complete (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "environmentId": "string",
+    "itemName": "string",
+    "primaryVersionId": "string",
+    "sensitive": "boolean"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "callerView": {
+     "unexpanded": [],
+     "withheld": []
+    },
+    "environmentId": "string",
+    "items": [
+     {
+      "name": "string",
+      "sensitive": "boolean",
+      "source": "string",
+      "value": "null",
+      "versionId": "string"
+     }
+    ],
+    "manifest": {
+     "contract": {
+      "contentHash": "string",
+      "revisionId": "string",
+      "semanticsVersion": "number"
+     },
+     "environment": {
+      "expiresAt": "null",
+      "id": "string",
+      "parentId": "null",
+      "rootId": "string",
+      "tier": "string"
+     },
+     "items": [
+      {
+       "name": "string",
+       "source": "string",
+       "valueRowId": "string",
+       "versionId": "string"
+      }
+     ],
+     "manifestVersion": "number",
+     "projectId": "string"
+    },
+    "stateDigest": "string"
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (tailnet environment)": {
+   "status": 403,
+   "code": "TAILNET_CONTEXT_REQUIRED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "callerView": {
+     "unexpanded": [],
+     "withheld": []
+    },
+    "items": [
+     {
+      "name": "string",
+      "value": "string",
+      "versionId": "string"
+     }
+    ],
+    "manifest": {
+     "contract": {
+      "contentHash": "string",
+      "revisionId": "string",
+      "semanticsVersion": "number"
+     },
+     "environment": {
+      "expiresAt": "null",
+      "id": "string",
+      "parentId": "null",
+      "rootId": "string",
+      "tier": "string"
+     },
+     "items": [
+      {
+       "name": "string",
+       "source": "string",
+       "valueRowId": "string",
+       "versionId": "string"
+      }
+     ],
+     "manifestVersion": "number",
+     "projectId": "string"
+    },
+    "stateDigest": "string",
+    "withheld": []
+   },
+   "tables": [
+    "audit_events",
+    "member_exposure"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (tailnet environment)": {
+   "status": 403,
+   "code": "TAILNET_CONTEXT_REQUIRED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "callerView": {
+     "contractWithheld": "boolean",
+     "unexpanded": [],
+     "withheld": []
+    },
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "environmentId": "string",
+    "items": [
+     {
+      "name": "string",
+      "sensitive": "boolean",
+      "source": "string",
+      "value": "string",
+      "versionId": "string"
+     }
+    ],
+    "manifest": {
+     "contract": {
+      "contentHash": "string",
+      "revisionId": "string",
+      "semanticsVersion": "number"
+     },
+     "environment": {
+      "expiresAt": "null",
+      "id": "string",
+      "parentId": "null",
+      "rootId": "string",
+      "tier": "string"
+     },
+     "items": [
+      {
+       "name": "string",
+       "source": "string",
+       "valueRowId": "string",
+       "versionId": "string"
+      }
+     ],
+     "manifestVersion": "number",
+     "projectId": "string"
+    },
+    "mode": "string",
+    "stateDigest": "string",
+    "stateDigests": {
+     "contract": "string",
+     "environment": "string",
+     "items": "string",
+     "rotation": "string"
+    },
+    "validation": {
+     "complete": "boolean",
+     "contractRevisionId": "string",
+     "environmentId": "string",
+     "invalid": [],
+     "missing": [],
+     "notEvaluated": [],
+     "unresolved": [],
+     "valid": "boolean"
+    }
+   },
+   "tables": [
+    "audit_events",
+    "member_exposure"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/retrievals (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "callerView": {
+     "contractWithheld": "boolean",
+     "unexpanded": [],
+     "withheld": [
+      {
+       "name": "string",
+       "reason": "string",
+       "requires": "string"
+      }
+     ]
+    },
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "environmentId": "string",
+    "items": [
+     {
+      "name": "string",
+      "sensitive": "boolean",
+      "source": "string",
+      "value": "null",
+      "versionId": "string"
+     }
+    ],
+    "manifest": {
+     "contract": {
+      "contentHash": "string",
+      "revisionId": "string",
+      "semanticsVersion": "number"
+     },
+     "environment": {
+      "expiresAt": "null",
+      "id": "string",
+      "parentId": "null",
+      "rootId": "string",
+      "tier": "string"
+     },
+     "items": [
+      {
+       "name": "string",
+       "source": "string",
+       "valueRowId": "string",
+       "versionId": "string"
+      }
+     ],
+     "manifestVersion": "number",
+     "projectId": "string"
+    },
+    "mode": "string",
+    "stateDigest": "string",
+    "stateDigests": {
+     "contract": "string",
+     "environment": "string",
+     "items": "string",
+     "rotation": "string"
+    },
+    "validation": {
+     "complete": "boolean",
+     "contractRevisionId": "string",
+     "environmentId": "string",
+     "invalid": [],
+     "missing": [],
+     "notEvaluated": [
+      {
+       "name": "string",
+       "reason": "string",
+       "requires": "string"
+      }
+     ],
+     "unresolved": [],
+     "valid": "boolean"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/capabilities (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (missing capability)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (missing capability)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "changeSetId": "string",
+    "results": [
+     {
+      "item": "string",
+      "op": "string",
+      "versionId": "string"
+     }
+    ]
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/changes (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "changeSetId": "string",
+    "results": [
+     {
+      "item": "string",
+      "op": "string",
+      "versionId": "string"
+     }
+    ]
+   },
+   "tables": [
+    "audit_events",
+    "env_values",
+    "member_exposure",
+    "value_versions"
+   ]
+  },
+  "GET /v1/organizations/:org/projects/:project/contract (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "active": "boolean",
+    "contentHash": "string",
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "createdAt": "string",
+    "id": "string",
+    "projectId": "string",
+    "semanticsVersion": "number"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "active": "boolean",
+    "contentHash": "string",
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "createdAt": "string",
+    "id": "string",
+    "projectId": "string",
+    "semanticsVersion": "number"
+   },
+   "tables": [
+    "audit_events",
+    "contract_revisions"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract/revisions/:revision (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "active": "boolean",
+    "contentHash": "string",
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "createdAt": "string",
+    "id": "string",
+    "projectId": "string",
+    "semanticsVersion": "number"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract/revisions/:revision (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract/revisions/:revision (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/contract/revisions/:revision (missing revision)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions/:revision/activate (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "active": "boolean",
+    "contentHash": "string",
+    "contract": {
+     "items": [
+      {
+       "name": "string",
+       "required": {
+        "kind": "string"
+       },
+       "sensitive": "boolean",
+       "type": "string"
+      }
+     ],
+     "schemaVersion": "number",
+     "semanticsVersion": "number"
+    },
+    "createdAt": "string",
+    "id": "string",
+    "projectId": "string",
+    "semanticsVersion": "number"
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions/:revision/activate (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions/:revision/activate (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/contract/revisions/:revision/activate (missing revision)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "disabled": "boolean",
+      "email": "null",
+      "id": "string",
+      "image": "null",
+      "kind": "string",
+      "lastSeenAt": "null",
+      "name": "string",
+      "orgRole": "null",
+      "removedAt": "null"
+     },
+     {
+      "disabled": "boolean",
+      "email": "null",
+      "id": "string",
+      "image": "null",
+      "kind": "string",
+      "lastSeenAt": "null",
+      "name": "string",
+      "orgRole": "string",
+      "removedAt": "null"
+     },
+     {
+      "disabled": "boolean",
+      "email": "string",
+      "id": "string",
+      "image": "null",
+      "kind": "string",
+      "lastSeenAt": "string",
+      "name": "string",
+      "orgRole": "string",
+      "removedAt": "null"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "credential": "string",
+    "credentialExpiresAt": "null",
+    "disabled": "boolean",
+    "id": "string",
+    "kind": "string",
+    "name": "string"
+   },
+   "tables": [
+    "audit_events",
+    "credentials",
+    "identities"
+   ]
+  },
+  "POST /v1/organizations/:org/identities (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/credentials (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "expiresAt": "null",
+    "id": "string",
+    "kind": "string",
+    "maxUses": "null",
+    "name": "string",
+    "token": "string"
+   },
+   "tables": [
+    "audit_events",
+    "credentials"
+   ]
+  },
+  "POST /v1/organizations/:org/identities/:identity/credentials (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/credentials (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/credentials/:credential (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "credentials"
+   ]
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/credentials/:credential (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/credentials/:credential (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/credentials/:credential (missing credential)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/credentials (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "client": "null",
+      "createdAt": "string",
+      "expiresAt": "null",
+      "id": "string",
+      "kind": "string",
+      "lastUsedAt": "null",
+      "name": "string",
+      "revokedAt": "null"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/credentials (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/credentials (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/credential-review (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "expiry": {
+     "items": [],
+     "summary": {
+      "expired": "number",
+      "soon": "number"
+     },
+     "warningDays": "number"
+    },
+    "generatedAt": "string",
+    "idleDays": "number",
+    "items": [
+     {
+      "createdAt": "string",
+      "expiresAt": "null",
+      "id": "string",
+      "identity": {
+       "disabledReason": "null",
+       "id": "string",
+       "kind": "string",
+       "name": "string",
+       "state": "string"
+      },
+      "issuedBy": {
+       "id": "string",
+       "name": "string"
+      },
+      "kind": "string",
+      "lastUsedAt": "null",
+      "name": "string",
+      "reasons": [
+       "string"
+      ]
+     }
+    ],
+    "summary": {
+     "idle": "number",
+     "listed": "number",
+     "neverUsed": "number",
+     "noExpiry": "number",
+     "reviewed": "number"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/credential-review (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/retire (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "disabled": "boolean",
+    "id": "string"
+   },
+   "tables": [
+    "audit_events",
+    "credentials",
+    "identities"
+   ]
+  },
+  "POST /v1/organizations/:org/identities/:identity/retire (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/retire (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/reactivate (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "disabled": "boolean",
+    "id": "string"
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "POST /v1/organizations/:org/identities/:identity/reactivate (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/reactivate (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/controls (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "availableModes": [
+     "string"
+    ],
+    "items": [
+     {
+      "availableModes": [
+       "string"
+      ],
+      "changedAt": "null",
+      "changedBy": "null",
+      "config": "null",
+      "control": "string",
+      "mode": "string",
+      "version": "number"
+     },
+     {
+      "availableModes": [
+       "string"
+      ],
+      "changedAt": "string",
+      "changedBy": "null",
+      "config": "null",
+      "control": "string",
+      "mode": "string",
+      "version": "number"
+     }
+    ]
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/controls (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/control-report (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "controls": [
+     {
+      "control": "string",
+      "currentHour": "number",
+      "entries": [],
+      "mode": "string",
+      "pending": "number",
+      "total": "number",
+      "version": "number"
+     }
+    ],
+    "days": "number",
+    "generatedAt": "string",
+    "organizationId": "string",
+    "since": "string",
+    "summaryDelayMinutes": "number"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/control-report (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/approval-keys (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "generatedAt": "string",
+    "items": [
+     {
+      "identity": {
+       "id": "string",
+       "name": "string"
+      },
+      "lastConfirmedAt": "null",
+      "passkeys": [
+       {
+        "createdAt": "string",
+        "name": "string",
+        "trust": "string",
+        "trustedAt": "string",
+        "trustedVia": "string"
+       }
+      ],
+      "trusted": "number",
+      "unconfirmed": "number"
+     }
+    ],
+    "summary": {
+     "admins": "number",
+     "withTrustedKey": "number",
+     "withoutTrustedKey": "number"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/approval-keys (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/refused-destinations (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "checked": "number",
+    "generatedAt": "string",
+    "items": [],
+    "sinceDays": "number",
+    "unresolved": "number"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/security/refused-destinations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/security/controls/:control (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "changed": "boolean",
+    "control": {
+     "changedAt": "string",
+     "changedBy": {
+      "id": "string",
+      "name": "string"
+     },
+     "config": "null",
+     "control": "string",
+     "mode": "string",
+     "version": "number"
+    },
+    "loosened": "boolean"
+   },
+   "tables": [
+    "audit_events",
+    "security_controls"
+   ]
+  },
+  "PATCH /v1/organizations/:org/security/controls/:control (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/security/controls/:control (missing control)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/reach (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "identity": {
+     "disabledReason": "null",
+     "id": "string",
+     "kind": "string",
+     "liveCredentials": "number",
+     "name": "string",
+     "state": "string"
+    },
+    "notes": [],
+    "organizationActions": [
+     {
+      "action": "string",
+      "conditions": [],
+      "grants": [
+       {
+        "grantId": "string",
+        "roleId": "null",
+        "viaGroupId": "null"
+       }
+      ]
+     }
+    ],
+    "projects": [],
+    "requirements": []
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/reach (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/reach (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/identities/:identity (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "name": "string"
+   },
+   "tables": [
+    "audit_events",
+    "identities"
+   ]
+  },
+  "PATCH /v1/organizations/:org/identities/:identity (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/identities/:identity (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/oidc-bindings (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "audience": "string",
+    "claims": "null",
+    "createdAt": "string",
+    "id": "string",
+    "identityId": "string",
+    "issuer": "string",
+    "subject": "string"
+   },
+   "tables": [
+    "audit_events",
+    "oidc_bindings"
+   ]
+  },
+  "POST /v1/organizations/:org/identities/:identity/oidc-bindings (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/identities/:identity/oidc-bindings (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/oidc-bindings (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "audience": "string",
+      "claims": "null",
+      "createdAt": "string",
+      "id": "string",
+      "identityId": "string",
+      "issuer": "string",
+      "subject": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/oidc-bindings (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/identities/:identity/oidc-bindings (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "oidc_bindings"
+   ]
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/identities/:identity/oidc-bindings/:binding (missing binding)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/review (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "connections": [],
+    "credentials": [],
+    "oidcBindings": [],
+    "personalEnvironments": [],
+    "syncTargets": [],
+    "webhooks": []
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/review (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/review (missing member)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/members/:member (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "grantsRevoked": "number",
+    "groupsLeft": "number",
+    "identityId": "string",
+    "invitationsRevoked": "number",
+    "left": "boolean",
+    "removalId": "string",
+    "removedAt": "string",
+    "review": {
+     "connections": [],
+     "credentials": [],
+     "oidcBindings": [],
+     "personalEnvironments": [],
+     "syncTargets": [],
+     "webhooks": []
+    },
+    "role": "string"
+   },
+   "tables": [
+    "audit_events",
+    "group_members",
+    "membership_removals",
+    "org_memberships",
+    "removal_authority",
+    "removal_conditions",
+    "removal_requirements"
+   ]
+  },
+  "DELETE /v1/organizations/:org/members/:member (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/members/:member (missing member)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/members/:member (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "identityId": "string",
+    "previousRole": "string",
+    "role": "string"
+   },
+   "tables": [
+    "audit_events",
+    "org_memberships"
+   ]
+  },
+  "PATCH /v1/organizations/:org/members/:member (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/members/:member (missing member)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/exposure (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "authorityAtRemoval": "null",
+    "coverage": {
+     "complete": "boolean"
+    },
+    "indirect": {
+     "connections": [],
+     "credentials": [],
+     "oidcBindings": [],
+     "personalEnvironments": [],
+     "syncTargets": [],
+     "webhooks": []
+    },
+    "member": {
+     "identityId": "string",
+     "name": "string",
+     "removedAt": "null",
+     "role": "string"
+    },
+    "received": []
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/exposure (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/members/:member/exposure (missing member)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/members/:member/exposure/confirmations (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/members/:member/exposure/confirmations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/members/:member/exposure/confirmations (missing member)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/invitations (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "expiresAt": "string",
+    "id": "string",
+    "token": "string"
+   },
+   "tables": [
+    "audit_events",
+    "org_memberships",
+    "setup_grants"
+   ]
+  },
+  "POST /v1/organizations/:org/invitations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/invitations (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "consumedAt": "null",
+      "createdAt": "string",
+      "createdByIdentityId": "string",
+      "expiresAt": "string",
+      "id": "string",
+      "name": "string",
+      "orgRole": "string",
+      "revokedAt": "null",
+      "status": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/invitations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/invitations/:invitation (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "setup_grants"
+   ]
+  },
+  "DELETE /v1/organizations/:org/invitations/:invitation (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/invitations/:invitation (missing invitation)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/grants (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "actions": [
+       "string"
+      ],
+      "createdAt": "string",
+      "id": "string",
+      "organizationId": "string",
+      "roleId": "null",
+      "scope": {
+       "kind": "string"
+      },
+      "subjectGroupId": "null",
+      "subjectIdentityId": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/grants (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/grants (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "actions": [
+     "string"
+    ],
+    "createdAt": "string",
+    "id": "string",
+    "organizationId": "string",
+    "roleId": "null",
+    "scope": {
+     "kind": "string"
+    },
+    "subjectGroupId": "null",
+    "subjectIdentityId": "string"
+   },
+   "tables": [
+    "audit_events",
+    "grants"
+   ]
+  },
+  "POST /v1/organizations/:org/grants (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/grants/:grant (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "grants"
+   ]
+  },
+  "DELETE /v1/organizations/:org/grants/:grant (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/grants/:grant (missing grant)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/grants/:grant/replace (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "grant": {
+     "actions": [
+      "string"
+     ],
+     "createdAt": "string",
+     "id": "string",
+     "organizationId": "string",
+     "roleId": "null",
+     "scope": {
+      "kind": "string"
+     },
+     "subjectGroupId": "null",
+     "subjectIdentityId": "string"
+    },
+    "replacedGrantId": "string"
+   },
+   "tables": [
+    "audit_events",
+    "grants"
+   ]
+  },
+  "POST /v1/organizations/:org/grants/:grant/replace (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/grants/:grant/replace (missing grant)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/roles (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "actions": [
+       "string"
+      ],
+      "id": "string",
+      "name": "string",
+      "updatedAt": "null",
+      "version": "number"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/roles (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/roles (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "actions": [
+     "string"
+    ],
+    "id": "string",
+    "name": "string",
+    "updatedAt": "null",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "roles"
+   ]
+  },
+  "POST /v1/organizations/:org/roles (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/roles/:role (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "actions": [
+     "string"
+    ],
+    "id": "string",
+    "name": "string",
+    "updatedAt": "string",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "roles"
+   ]
+  },
+  "PATCH /v1/organizations/:org/roles/:role (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/roles/:role (missing role)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/roles/:role (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "roles"
+   ]
+  },
+  "DELETE /v1/organizations/:org/roles/:role (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/roles/:role (missing role)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/groups (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "id": "string",
+      "kind": "string",
+      "name": "string",
+      "updatedAt": "null",
+      "version": "number"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/groups (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/groups (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "updatedAt": "null",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "POST /v1/organizations/:org/groups (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/groups/:group (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "updatedAt": "string",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "PATCH /v1/organizations/:org/groups/:group (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/groups/:group (missing group)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "DELETE /v1/organizations/:org/groups/:group (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group (missing group)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/groups/:group/members (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "identityId": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/groups/:group/members (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/groups/:group/members (missing group)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/groups/:group/members (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "group_members"
+   ]
+  },
+  "POST /v1/organizations/:org/groups/:group/members (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/groups/:group/members (missing group)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group/members/:identity (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group/members/:identity (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group/members/:identity (missing group)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/groups/:group/members/:identity (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "id": "string",
+      "kind": "string",
+      "name": "string",
+      "updatedAt": "null",
+      "version": "number"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/teams (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "updatedAt": "null",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "POST /v1/organizations/:org/teams (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/teams/:team (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "kind": "string",
+    "name": "string",
+    "updatedAt": "string",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "PATCH /v1/organizations/:org/teams/:team (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/teams/:team (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "groups"
+   ]
+  },
+  "DELETE /v1/organizations/:org/teams/:team (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/members (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "identityId": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/members (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/members (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/teams/:team/members (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "group_members"
+   ]
+  },
+  "POST /v1/organizations/:org/teams/:team/members (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/teams/:team/members (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/members/:identity (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/members/:identity (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/members/:identity (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/members/:identity (missing identity)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/projects (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "projectId": "string"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/projects (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/teams/:team/projects (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/teams/:team/projects (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "POST /v1/organizations/:org/teams/:team/projects (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/teams/:team/projects (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/projects/:project (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/projects/:project (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/projects/:project (missing team)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/teams/:team/projects/:project (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/requirements (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "createdAt": "string",
+      "id": "string",
+      "kind": "string",
+      "selector": {
+       "tags": [
+        "string"
+       ],
+       "tailnet": "string"
+      },
+      "target": {
+       "kind": "string",
+       "tier": "string"
+      },
+      "updatedAt": "null",
+      "version": "number"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/requirements (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/requirements (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "id": "string",
+    "kind": "string",
+    "selector": {
+     "tags": [
+      "string"
+     ],
+     "tailnet": "string"
+    },
+    "target": {
+     "kind": "string",
+     "tier": "string"
+    },
+    "updatedAt": "null",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "requirements"
+   ]
+  },
+  "POST /v1/organizations/:org/requirements (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/requirements/:requirement (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "id": "string",
+    "kind": "string",
+    "selector": {
+     "tags": [
+      "string"
+     ],
+     "tailnet": "string"
+    },
+    "target": {
+     "kind": "string",
+     "tier": "string"
+    },
+    "updatedAt": "string",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "requirements"
+   ]
+  },
+  "PATCH /v1/organizations/:org/requirements/:requirement (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/requirements/:requirement (missing requirement)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/requirements/:requirement (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "requirements"
+   ]
+  },
+  "DELETE /v1/organizations/:org/requirements/:requirement (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/requirements/:requirement (missing requirement)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/webhooks (fixtures)": {
+   "status": 201,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "eventTypes": "null",
+    "failureCount": "number",
+    "id": "string",
+    "lastAttemptAt": "null",
+    "lastStatus": "null",
+    "secret": "string",
+    "updatedAt": "null",
+    "url": "string",
+    "version": "number"
+   },
+   "tables": [
+    "audit_events",
+    "webhooks"
+   ]
+  },
+  "POST /v1/organizations/:org/webhooks (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/webhooks (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [
+     {
+      "createdAt": "string",
+      "eventTypes": "null",
+      "failureCount": "number",
+      "id": "string",
+      "lastAttemptAt": "null",
+      "lastStatus": "null",
+      "updatedAt": "null",
+      "url": "string",
+      "version": "number"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/webhooks (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/webhooks/:webhook (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "createdAt": "string",
+    "eventTypes": "null",
+    "failureCount": "number",
+    "id": "string",
+    "lastAttemptAt": "null",
+    "lastStatus": "null",
+    "updatedAt": "null",
+    "url": "string",
+    "version": "number"
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/webhooks/:webhook (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/webhooks/:webhook (missing webhook)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/webhooks/:webhook (fixtures)": {
+   "status": 204,
+   "code": null,
+   "shape": "null",
+   "tables": [
+    "audit_events",
+    "webhooks"
+   ]
+  },
+  "DELETE /v1/organizations/:org/webhooks/:webhook (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/webhooks/:webhook (missing webhook)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/platform-connections (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/platform-connections (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "details": {
+      "check": {
+       "message": "string",
+       "status": "string",
+       "where": "string"
+      }
+     },
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "POST /v1/organizations/:org/platform-connections (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/check (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/check (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/destinations (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/destinations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/platform-connections/:connection (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/platform-connections/:connection (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/platform-connections/:connection (missing connection)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/:connection/credential (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/:connection/credential (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/platform-connections/:connection/credential (missing connection)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/platform-connections/:connection (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/platform-connections/:connection (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/platform-connections/:connection (missing connection)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/github-app (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "clientId": "string",
+    "createdAt": "string",
+    "githubAppId": "number",
+    "htmlUrl": "string",
+    "id": "string",
+    "organizationId": "string",
+    "owner": {
+     "id": "number",
+     "login": "string",
+     "type": "string"
+    },
+    "slug": "string",
+    "updatedAt": "null",
+    "version": "number"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/github-app (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/complete (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/registrations/complete (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/import (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/import (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/key (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/github-app/key (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/github-app (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/github-app/installations (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "check": {
+     "message": "string",
+     "status": "string",
+     "where": "string"
+    },
+    "items": [],
+    "truncated": "boolean"
+   },
+   "tables": [
+    "audit_events"
+   ]
+  },
+  "GET /v1/organizations/:org/github-app/installations (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/sync-targets (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/sync-targets (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (tailnet environment)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "items": [],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (fixtures)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets (tailnet environment)": {
+   "status": 422,
+   "code": "VALIDATION_FAILED",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "PATCH /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/push (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/pause (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "POST /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target/resume (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (fixtures)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing project)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (missing target)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "DELETE /v1/organizations/:org/projects/:project/environments/:environment/sync-targets/:target (tailnet environment)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-events (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": {
+    "credentials": {
+     "<id>": [
+      {
+       "client": "null",
+       "kind": "string",
+       "name": "null"
+      },
+      {
+       "client": "null",
+       "kind": "string",
+       "name": "string"
+      }
+     ]
+    },
+    "items": [
+     {
+      "action": "null",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "null",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "null",
+      "metadata": "null",
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "identityId": "string",
+       "invitationId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "null",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": "null",
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "organizationSlug": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "null",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "contractAuthority": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "projectId": "string",
+       "projectSlug": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "null",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "derived": "boolean",
+       "kind": "string",
+       "tier": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "environmentId": "string",
+       "environmentName": "string",
+       "projectId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "null",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "kind": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "identityId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "null",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "null",
+      "metadata": {
+       "expiresAt": "string",
+       "inviteeName": "string",
+       "role": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "invitationId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": "null",
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "groupId": "string",
+       "identityId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": "null",
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "groupId": "string",
+       "projectId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "actions": "string",
+       "name": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "roleId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "actions": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "grantId": "string",
+       "subjectIdentityId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "audience": "string",
+       "issuer": "string",
+       "subject": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "identityId": "string",
+       "oidcBindingId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "contentHash": "string",
+       "itemCount": "number",
+       "semanticsVersion": "number"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "contractRevisionId": "string",
+       "projectId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "expiresAt": "string",
+       "inviteeName": "string",
+       "role": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "invitationId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "initial": "boolean"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "contractRevisionId": "string",
+       "projectId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "kind": "string",
+       "tailnet": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "requirementId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "kind": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "identityId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "name": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "groupId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "sensitive": "boolean"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "environmentId": "string",
+       "itemName": "string",
+       "previousVersionId": "null",
+       "projectId": "string",
+       "versionId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     },
+     {
+      "action": "string",
+      "actorIdentityId": "string",
+      "authenticationMethodId": "null",
+      "authorization": "null",
+      "client": "null",
+      "credentialId": "string",
+      "decision": "string",
+      "eventId": "string",
+      "eventType": "string",
+      "listener": "string",
+      "metadata": {
+       "url": "string"
+      },
+      "occurredAt": "string",
+      "organizationId": "string",
+      "requestId": "null",
+      "resource": {
+       "webhookId": "string"
+      },
+      "schemaVersion": "number",
+      "tailnetContext": "null"
+     }
+    ],
+    "nextCursor": "null"
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-events (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-events/export (fixtures)": {
+   "status": 200,
+   "code": null,
+   "shape": "null",
+   "tables": []
+  },
+  "GET /v1/organizations/:org/audit-events/export (missing org)": {
+   "status": 404,
+   "code": "RESOURCE_NOT_FOUND",
+   "shape": {
+    "error": {
+     "code": "string",
+     "message": "string",
+     "requestId": "string"
+    }
+   },
+   "tables": []
+  }
+ }
+}

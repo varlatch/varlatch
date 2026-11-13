@@ -11,6 +11,7 @@ import type { FreezeException } from "../src/domain/liveness.js";
 import { buildApp, type BuildAppOptions } from "../src/http/app.js";
 import { resolveOrganization } from "../src/http/organization.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { ROUTE_ACCESS } from "./helpers/route-access.js";
 
 /**
  * One place where a request's principal enters an Organization (ADR-0054
@@ -247,6 +248,48 @@ const DURING_FREEZE: Record<string, FreezeException | null> = {
 
 const LOOKUP = /\bgetOrganization\b|\blistOrganizationsFor\b|\b(?:FROM|JOIN)\s+organizations\b/;
 
+/**
+ * passkey-verification's decision points (ADR-0054 Decision 7,
+ * src/domain/requestaccess.ts) outside the routes' own checkpoints: every
+ * explicit lock of an Organization row in src/, by file, each with how a
+ * request writing under it is decided, or why none is. A new direct lock
+ * fails until it is classified here. lockLiveScope and lockScope
+ * (liveness.ts) capture the outcome under their lock for every writer that
+ * uses them.
+ */
+const ORGANIZATION_LOCKS: { file: string; count: number; reason: string }[] = [
+  { file: "domain/liveness.ts", count: 2, reason: "lockLiveScope and lockScope capture under the lock (withExternalEffect builds on lockLiveScope)" },
+  { file: "domain/approvals.ts", count: 1, reason: "createApproval: decides under the lock before an approval intent is created" },
+  { file: "domain/orgdeletion.ts", count: 1, reason: "the deletion worker's claim: background work, outside any request" },
+  { file: "domain/securityreport.ts", count: 2, reason: "report counters: the access-count worker outside any request, and a protected write's count after its checkpoint" },
+  { file: "domain/exposure.ts", count: 1, reason: "the exposure backfill worker: background work, outside any request" },
+];
+
+/**
+ * The protected effects that must come after a request's checkpoint, each
+ * guarded where it happens (assertOrganizationAccessChecked notes a gap,
+ * which fails the test, and decides then): a disclosure audit and
+ * decryption, and an outbound call for an Organization.
+ */
+const EFFECT_GUARDS: { file: string; line: string }[] = [
+  { file: "domain/retrieval.ts", line: "await assertOrganizationAccessChecked(ctx.db, state.org.id, \"a disclosure audit and decryption\");" },
+  { file: "net/outbound.ts", line: "if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`, { underLock: true });" },
+];
+
+/**
+ * Requests outside /v1/organizations/:org that reach an Organization, and
+ * how passkey-verification applies to each.
+ */
+const OUTSIDE_ORG_ROUTES: Record<string, string> = {
+  "POST /v1/tokens/convex": "decides per Organization when the token is minted, leaving a blocked one out",
+  "DELETE /v1/me/credentials/:credential": "a machine's own credential: its Organization's writer protocol (exempt by kind, checked like any writer)",
+  "POST /v1/oidc/token": "the OIDC exchange: unauthenticated, mints a machine credential (exempt by kind)",
+  "GET /v1/organizations": "the person's own memberships, no Organization's contents",
+  "POST /v1/organizations": "creates a new Organization the person then administers",
+  "/v1/me/approvals/:approval/*": "the person's own approval ceremony with a fresh passkey assertion; the operation it approves decides itself",
+  "/v1/deleted-organizations/* and /v1/installation/deleted-organizations/*": "no live Organization to enforce anything (ADR-0051 Decision 8)",
+};
+
 describe("Organization lookups in src/http/", () => {
   it("go through the resolver, except the listed ones", () => {
     const dir = fileURLToPath(new URL("../src/http/", import.meta.url));
@@ -260,6 +303,26 @@ describe("Organization lookups in src/http/", () => {
       }
     }
     expect(found.sort()).toEqual(LOOKUP_EXCEPTIONS.map((e) => `${e.file}: ${e.line}`).sort());
+  });
+
+  it("lock an Organization row only where passkey-verification is decided, or outside any request", () => {
+    const root = fileURLToPath(new URL("../src/", import.meta.url));
+    const counts = new Map<string, number>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(`${root}${dir}`, { withFileTypes: true })) {
+        const rel = dir ? `${dir}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) walk(rel);
+        else if (rel.endsWith(".ts")) {
+          const n = readFileSync(`${root}${rel}`, "utf8").split("\n").filter((l) => /table: "organizations"|\(table: "organizations" \|/.test(l)).length;
+          if (n > 0) counts.set(rel, n);
+        }
+      }
+    };
+    walk("");
+    expect(Object.fromEntries([...counts].sort())).toEqual(Object.fromEntries(ORGANIZATION_LOCKS.map((l) => [l.file, l.count]).sort()));
+    for (const guard of EFFECT_GUARDS) {
+      expect(readFileSync(`${root}${guard.file}`, "utf8"), guard.file).toContain(guard.line);
+    }
   });
 
   it("import getOrganization only in the resolver", () => {
@@ -327,6 +390,13 @@ describe("every /v1/organizations/:org route", () => {
       expect(entering.length).toBeGreaterThan(100);
 
       expect(new Set(entering.map((r) => `${r.method} ${r.path}`))).toEqual(new Set(Object.keys(DURING_FREEZE)));
+      // And where each decides passkey-verification (ADR-0054 Decision 7).
+      expect(new Set(entering.map((r) => `${r.method} ${r.path}`))).toEqual(new Set(Object.keys(ROUTE_ACCESS)));
+      // The listed requests outside /v1/organizations/:org exist.
+      const all = routes.map((r) => `${r.method} ${r.path}`);
+      for (const k of Object.keys(OUTSIDE_ORG_ROUTES).filter((k) => /^(?:GET|POST|PUT|PATCH|DELETE) /.test(k))) expect(all).toContain(k);
+      // An effect-free read decided at its answer is a GET.
+      expect(Object.entries(ROUTE_ACCESS).filter(([k, v]) => v === "read" && !k.startsWith("GET ")).map(([k]) => k)).toEqual([]);
       const skipped: string[] = [];
       const misnamed: string[] = [];
       for (const route of entering) {

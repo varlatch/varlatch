@@ -5,9 +5,16 @@ import { recordAuditEvent } from "../audit/events.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { openFreeze, organizationFrozen, type FreezeException, type OrganizationFrozenError } from "../domain/liveness.js";
 import { getOrganization, getOrgRole, type OrgRow } from "../domain/orgs.js";
-import { passkeyVerification, type EntryBlock } from "../domain/passkeyverification.js";
-import { queueAccessCount, type PendingAccessReport } from "../domain/securityreport.js";
-import { AUTHORIZED_ACTION, ENTRY_BLOCK, ENTRY_REPORT, routeParam, type Principal } from "./support.js";
+import { PasskeyVerificationRefusal } from "../domain/passkeyverification.js";
+import {
+  noteCoverageGap,
+  noteOrganizationEntered,
+  pendingAccessReports,
+  requireOrganizationAccess,
+  uncheckedOrganizations,
+} from "../domain/requestaccess.js";
+import { queueAccessCount } from "../domain/securityreport.js";
+import { AUTHORIZED_ACTION, AUTHORIZED_RESOURCE, errorBody, routeParam, STATUS_BY_CODE, type Principal } from "./support.js";
 
 /**
  * Where a request's principal enters an Organization (ADR-0054 Decision 7).
@@ -63,25 +70,14 @@ export function entryRequester(principal: Principal) {
  * requesting principal and its credential, after the Organization resolved
  * and before the route authorizes anything (ADR-0054 Decisions 7 and 9).
  *
- * passkey-verification (passkeyverification.ts): a person's credential
- * whose sign-in evidence lacks user verification or a trusted passkey is
- * checked here, against the mode and version read now (in the snapshot,
- * on a retrieval). Nothing is refused and nothing is written here: this
- * runs before authorization.
- *
- * - In report mode the check is noted, and counted at the request's
- *   outcome (queueEntryReport), only when the request succeeded, after the
- *   response, in a short transaction of its own after any retrieval
- *   snapshot ended. Counting here would count outsiders and refused
- *   requests.
- * - In enforce mode the block is noted (ENTRY_BLOCK), and the request's
- *   authorization refuses it: a decision that would have allowed the
- *   request in this Organization answers PASSKEY_VERIFICATION_REQUIRED
- *   instead (decide, http/support.ts). Throwing here would answer before
- *   the route's existence hiding, and so tell an outsider that the
- *   Organization exists; deciding at authorization, every other denial
- *   answers first, and an outsider gets exactly the answer they got
- *   before.
+ * The incident freeze refuses here (refuseFrozenEntry). passkey-verification
+ * does not decide here: this only notes that the request entered the
+ * Organization. Its outcome is captured under the writer's Organization
+ * lock, or in the retrieval's snapshot, and applied at the operation's
+ * checkpoint, after its authorized existence checks and before its first
+ * protected effect (domain/requestaccess.ts). Deciding here would read the
+ * mode before the writer's transaction, and would answer before the
+ * route's own existence checks.
  */
 export async function organizationEntryChecks(
   ctx: AppCtx,
@@ -92,26 +88,78 @@ export async function organizationEntryChecks(
 ): Promise<void> {
   if (!principal) return;
   await refuseFrozenEntry(ctx, principal, org, options.duringIncidentFreeze);
-  const outcome = await passkeyVerification(ctx.db, entryRequester(principal), [org.id]);
-  const [pending] = outcome.reports;
-  if (pending) c.set(ENTRY_REPORT, pending);
-  const reason = outcome.blocked.get(org.id);
-  if (reason) c.set(ENTRY_BLOCK, { organizationId: org.id, reason } satisfies EntryBlock);
+  noteOrganizationEntered(org.id);
 }
 
 /**
- * At the request's outcome: queue the entry check's note for counting when
- * the request succeeded (a status below 400: it was authorized, and a write
- * in it committed), as the first action it was authorized for. The count
- * runs after the response, best-effort, with bounded waits; its own
- * transaction counts only a live member of a live Organization. Nothing
- * here waits for it, and it never fails or slows the request.
+ * At the request's end, still inside its security context, before the
+ * response leaves:
+ *
+ * 1. An Organization the request entered, on a request that succeeded,
+ *    whose checkpoint never ran is checked now (read now, outside any
+ *    transaction). This is the checkpoint of an effect-free metadata read:
+ *    it decides before the loaded result is returned, after every lookup
+ *    of the route. Such a route must have no effect before it: no write,
+ *    audit, decryption or outbound call (the lock-trace harness and
+ *    assertOrganizationAccessChecked catch one that has). Any other route
+ *    left to this point is a coverage gap, noted for the tests. A refusal
+ *    replaces the response and is audited.
+ * 2. passkey-verification's report-mode counts: one per Organization, from
+ *    the request's last checkpoint there, only when the request succeeded
+ *    (a status below 400: it was authorized, and a write in it committed),
+ *    as the first action it was authorized for. Queued after the response,
+ *    best-effort, outside the request's context; nothing waits for them.
  */
-export function queueEntryReport(ctx: AppCtx, c: Context): void {
-  const pending = c.get(ENTRY_REPORT) as PendingAccessReport | undefined;
-  if (!pending || c.res.status >= 400) return;
-  const action = c.get(AUTHORIZED_ACTION) as Action | undefined;
-  queueAccessCount(ctx, pending, action ?? "organization.access");
+export async function settleOrganizationAccess(ctx: AppCtx, c: Context): Promise<void> {
+  if (c.res.status < 400) {
+    for (const organizationId of uncheckedOrganizations()) {
+      if (!["GET", "HEAD"].includes(c.req.method)) {
+        noteCoverageGap(`${c.req.method} ${c.req.path} returned without its passkey-verification checkpoint`);
+      }
+      try {
+        await requireOrganizationAccess(ctx.db, organizationId);
+      } catch (err) {
+        if (!(err instanceof PasskeyVerificationRefusal)) throw err;
+        await auditPasskeyRefusal(ctx, c, err);
+        c.res = c.json(errorBody(err.code, err.message, c.get("requestId") as string, err.details), STATUS_BY_CODE[err.code] as 403);
+        return;
+      }
+    }
+  }
+  if (c.res.status >= 400) return;
+  const action = (c.get(AUTHORIZED_ACTION) as Action | undefined) ?? "organization.access";
+  for (const pending of pendingAccessReports()) queueAccessCount(ctx, pending, action);
+}
+
+/**
+ * Record a passkey-verification refusal (ADR-0054 Decision 7):
+ * `authorization.denied`, decision deny, metadata.reason
+ * passkey_verification_required and metadata.evidence what the sign-in
+ * lacks, with the action and resource the request was authorized for in
+ * that Organization. Called once per refused request, at its
+ * outcome, after the transaction or snapshot that refused it ended, in a
+ * short transaction of its own, attributed to the request's credential.
+ * Best effort: a failure to record is logged and never changes the answer.
+ */
+export async function auditPasskeyRefusal(ctx: AppCtx, c: Context, err: PasskeyVerificationRefusal): Promise<void> {
+  const principal = c.get("principal") as Principal | undefined;
+  const authorized = c.get(AUTHORIZED_RESOURCE) as { organizationId: string; projectId: string | null; environmentId: string | null } | undefined;
+  const same = authorized?.organizationId === err.organizationId;
+  try {
+    await recordAuditEvent(ctx.db, {
+      eventType: "authorization.denied",
+      decision: "deny",
+      actorIdentityId: principal?.identity.id ?? null,
+      credentialId: principal?.credentialId ?? null,
+      organizationId: err.organizationId,
+      action: same ? ((c.get(AUTHORIZED_ACTION) as Action | undefined) ?? null) : null,
+      resource: { projectId: same ? authorized.projectId : null, environmentId: same ? authorized.environmentId : null },
+      metadata: { reason: "passkey_verification_required", evidence: err.reason },
+      requestId: c.get("requestId") as string,
+    });
+  } catch (e) {
+    console.error("could not audit a refusal by passkey-verification:", e);
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Querier } from "../../src/db/migrate.js";
+import { isSharedConnection, shareConnectionAlias } from "../../src/db/tx.js";
 
 /**
  * Records every statement a Querier runs, interleaved with decryptions
@@ -32,7 +33,7 @@ export function traceLog(): TraceLog {
 }
 
 export function traced<Q extends Querier>(db: Q, log: TraceLog): Q {
-  return {
+  const wrapper: Q = {
     ...db,
     query: async (text: string, params?: unknown[]) => {
       log.entries.push({ kind: "sql", text, params: params ?? [] });
@@ -44,6 +45,10 @@ export function traced<Q extends Querier>(db: Q, log: TraceLog): Q {
       return db.query(text, params);
     },
   };
+  // A wrapper of the lock-traced shared connection: concurrent flows'
+  // transactions stay their own through it.
+  if (isSharedConnection(db)) shareConnectionAlias(wrapper, db);
+  return wrapper;
 }
 
 const SNAPSHOT_BEGIN = /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/;

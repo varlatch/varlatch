@@ -120,6 +120,21 @@ fixes.
   operator (`admin reenroll`, or `admin security reset --control
   passkey-verification`). See [Passkey
   verification](docs/reference/security-controls.md#passkey-verification).
+- **Fixed: passkey verification decides where each request commits to
+  what it reads.** A change now decides under its lock on the
+  organization, in the transaction that makes it, so a change that
+  started while the control was off and saved after it was enforced is
+  refused and changes nothing; changes that run with the strictest
+  isolation start again when the control changed meanwhile. A retrieval,
+  validation or disclosure decides in its snapshot, and an operation that
+  calls out (access checks, destination listings, GitHub App setup) before
+  it decrypts or sends anything. Asking for something that does not exist
+  (a project, a revision, a grant, a value) answers "not found" again, as
+  with the control off, instead of the refusal. A repeated request with
+  the same `Idempotency-Key` is refused too while the control refuses the
+  sign-in, and a refused request never asks for an approval. Each refusal
+  is still recorded once. See [When it
+  decides](docs/reference/security-controls.md#when-it-decides).
 - Dependency update for published advisories: `hono` 4.13.16
   (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
   RegExpRouter for some route sets and for paths with an encoded line
@@ -240,6 +255,9 @@ fixes.
   restore.
 - Migration 45 lets approvals cover Tailnet Requirement changes. Nothing
   changes until an admin enforces `requirement-protection`.
+- Migration 49 adds a counter to each organization that a security control
+  change bumps (the organization's security epoch). Nothing reads it but
+  the server's own transactions.
 
 ## Unreleased (0.21.1)
 

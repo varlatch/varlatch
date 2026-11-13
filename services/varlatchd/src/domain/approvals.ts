@@ -11,6 +11,7 @@ import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { listOwnPasskeys } from "./passkeys.js";
 import { openFreeze, organizationFrozen } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { lockPeople, lockPerson, lockPersonPasskeys, type PersonRef } from "./personlocks.js";
 
 /**
@@ -483,6 +484,10 @@ export async function createApproval(
         const frozen = await openFreeze(db, binding.organizationId);
         if (frozen) throw organizationFrozen(frozen, binding.organizationId);
       }
+      // passkey-verification under the same lock (ADR-0054 Decision 7): a
+      // refused sign-in creates no approval intent. The operation that asked
+      // for this approval refused it already; this is its own check.
+      await requireOrganizationAccess(db, binding.organizationId);
     }
     await lockPerson(db, requester.identityId, "key share");
     const open = (await db.query(

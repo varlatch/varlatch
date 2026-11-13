@@ -432,6 +432,12 @@ export async function removeMember(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actor.id, identityId], duringIncidentFreeze: "recovery" },
       checks: left ? [] : [{ control: "admin-step-up", operation: "member.remove" }],
+      // In the order checked below, whatever the controls, before
+      // passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!left) await requireLiveAdmin(db, organizationId, actor);
+        if (!(await readMember(db, organizationId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+      },
       binding: async (db) => {
         await requireLiveAdmin(db, organizationId, actor);
         const member = await readMember(db, organizationId, identityId);
@@ -614,6 +620,12 @@ export async function changeMemberRole(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actor.id], duringIncidentFreeze: role === "member" ? "recovery" : undefined },
       checks: [{ control: "admin-step-up", operation: role === "admin" ? "member.promote" : "member.demote" }],
+      // In the order checked below, whatever the controls, before
+      // passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        await requireLiveAdmin(db, organizationId, actor);
+        if (!(await readMember(db, organizationId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Member not found");
+      },
       binding: async (db) => {
         await requireLiveAdmin(db, organizationId, actor);
         const member = await readMember(db, organizationId, identityId);

@@ -10,6 +10,7 @@ import { DomainError } from "./errors.js";
 import { closeOpenApprovals } from "./approvals.js";
 import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion, openFreeze } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { endMembership, lockMembershipRows } from "./members.js";
 import { lockedQuery } from "../db/locks.js";
@@ -221,8 +222,10 @@ export async function approveDeletion(
   actor: { id: string; kind: string },
 ): Promise<DeletionView> {
   return withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [] });
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [], accessCheck: "deferred" });
     const row = await requestRow(db, deletionId, organizationId);
+    // The request exists; then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     // Step 2 (liveness.ts), after the request (step 1): the approver, whom
     // approved_by references.
     await lockPeople(db, [actor.id]);
@@ -264,8 +267,10 @@ export async function cancelDeletion(
     // cancel and a run are serialized. Cancelling is recovery while frozen
     // for an incident (ADR-0055 Decision 7); scheduling and approving are
     // refused then.
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "recovery", people: [] });
+    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, duringIncidentFreeze: "recovery", people: [], accessCheck: "deferred" });
     await requestRow(db, deletionId, organizationId);
+    // The request exists; then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, organizationId);
     // Step 2 (liveness.ts): the canceller (cancelled_by), and the machine
     // identities this restores FOR UPDATE, in id order; then the webhooks
     // it resumes, in id order, before the bulk updates.

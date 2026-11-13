@@ -12,30 +12,23 @@ import type { EntryRequester, PendingAccessReport, ReportReason } from "./securi
  * now (Decision 4), is counted under `report` and refused under `enforce`.
  * Machine credentials are exempt by kind and read nothing here.
  *
- * This is decided for the requester only, once per request, where the
- * request enters its Organization (http/organization.ts) and, for the
- * Convex token, per Organization in it. It is not part of the authority
- * loaders (getOrgRole, loadGrants, captureAuthority), which also compute
- * other people's authority: a member's removal, the exposure report and
- * machine reach stay as they are.
+ * This is decided for the requester only, never in the authority loaders
+ * (getOrgRole, loadGrants, captureAuthority), which also compute other
+ * people's authority: a member's removal, the exposure report and machine
+ * reach stay as they are.
  *
- * Where the refusal happens: not at entry. The entry runs before the
- * route's authorization, and an outsider must keep getting the answer
- * they got before (not-found where the route hides existence). So entry
- * only notes the block; an authorization decision that would have
- * allowed the request in that Organization becomes the refusal
- * (http/support.ts, decide). Every denial, existence hiding included,
- * answers first.
+ * Where it is decided (requestaccess.ts): a write captures the outcome
+ * under its Organization lock and a retrieval inside its snapshot; the
+ * checkpoint applies it after the operation's authorized existence checks
+ * and before its first protected effect. So every denial that answered
+ * before, existence hiding and not-found included, still answers first,
+ * and a control change that committed before a writer locked the
+ * Organization applies to that writer. The Convex token decides per
+ * Organization in it when it is minted.
  */
 
 /** Why a credential's evidence does not satisfy the control. */
 export type VerificationGap = Extract<ReportReason, "no-evidence" | "not-user-verified" | "untrusted-passkey">;
-
-/** An Organization that refuses this request under `enforce`, noted at entry. */
-export interface EntryBlock {
-  organizationId: string;
-  reason: VerificationGap;
-}
 
 export interface PasskeyVerificationOutcome {
   /** Organizations in `report` mode: one pending count each, counted once the request succeeded. */
@@ -121,15 +114,35 @@ const GAP_MESSAGES: Record<VerificationGap, string> = {
 /**
  * The refusal (PASSKEY_VERIFICATION_REQUIRED, HTTP 403). It names what the
  * person's own sign-in lacks and how to get a sign-in that satisfies the
- * control; nothing about the Organization's contents.
+ * control; nothing about the Organization's contents. It carries the
+ * Organization (not in the response), so the HTTP layer audits a refusal
+ * of access once, after the transaction or snapshot it came from ended
+ * (http/app.ts onError): authorization.denied with metadata.reason
+ * passkey_verification_required and metadata.evidence the gap. The
+ * self-lockout refusal (enforceWouldRefuseYou) is not audited.
  */
-export function passkeyVerificationRequired(reason: VerificationGap): DomainError {
-  return new DomainError(
-    "PASSKEY_VERIFICATION_REQUIRED",
-    `This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and ${GAP_MESSAGES[reason]}. ` +
-      "Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.",
-    { control: "passkey-verification", reason },
-  );
+export class PasskeyVerificationRefusal extends DomainError {
+  constructor(
+    readonly organizationId: string,
+    readonly reason: VerificationGap,
+    /** Turning the control to enforce from a sign-in it would refuse (enforceWouldRefuseYou). */
+    readonly selfLockout = false,
+  ) {
+    super(
+      "PASSKEY_VERIFICATION_REQUIRED",
+      selfLockout
+        ? `Enforcing passkey-verification would refuse your own sign-in: ${GAP_MESSAGES[reason]}. ` +
+            "Sign in again with a trusted passkey that verifies you with a PIN or biometric, then turn it on. Nothing was changed."
+        : `This Organization requires a sign-in with a trusted passkey that verifies you with a PIN or biometric, and ${GAP_MESSAGES[reason]}. ` +
+            "Sign in again with such a passkey: in the dashboard, sign out and sign in; for the CLI, run varlatch login and approve it with that passkey.",
+      selfLockout ? { control: "passkey-verification", reason, change: "refused" } : { control: "passkey-verification", reason },
+    );
+  }
+}
+
+/** The refusal of an access by a blocked person's request (see PasskeyVerificationRefusal). */
+export function passkeyVerificationRequired(organizationId: string, reason: VerificationGap): PasskeyVerificationRefusal {
+  return new PasskeyVerificationRefusal(organizationId, reason);
 }
 
 /**
@@ -138,12 +151,8 @@ export function passkeyVerificationRequired(reason: VerificationGap): DomainErro
  * out of the Organization at once, and the way back would be the host
  * operator's reset (Decision 10). Nothing is changed. It protects only the
  * person making the change; report mode shows who else it would refuse.
+ * It is not an access refusal and records no audit event.
  */
-export function enforceWouldRefuseYou(reason: VerificationGap): DomainError {
-  return new DomainError(
-    "PASSKEY_VERIFICATION_REQUIRED",
-    `Enforcing passkey-verification would refuse your own sign-in: ${GAP_MESSAGES[reason]}. ` +
-      "Sign in again with a trusted passkey that verifies you with a PIN or biometric, then turn it on. Nothing was changed.",
-    { control: "passkey-verification", reason, change: "refused" },
-  );
+export function enforceWouldRefuseYou(organizationId: string, reason: VerificationGap): PasskeyVerificationRefusal {
+  return new PasskeyVerificationRefusal(organizationId, reason, true);
 }

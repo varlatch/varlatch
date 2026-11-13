@@ -184,6 +184,12 @@ export async function issueMachineCredential(
         { control: "admin-step-up", operation: "credential.issue" },
         { control: "credential-lifetime", operation: "credential.issue", ttlSeconds: input.ttlSeconds },
       ],
+      preflight: async (db) => {
+        const identity = await readMachineIdentity(db, organizationId, identityId);
+        if (!identity || !SERVICE_CREDENTIAL_KINDS.has(identity.kind) || identity.disabled) {
+          throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+        }
+      },
       binding: async (db, decided) => {
         // Refusals first (amendment A), read without a lock: the identity
         // is checked again, live and of a service kind, FOR SHARE below.
@@ -328,6 +334,9 @@ export async function reactivateIdentity(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId, { id: identityId, mode: "update" }] },
       checks: [{ control: "admin-step-up", operation: "identity.reactivate" }],
+      preflight: async (db) => {
+        if (!(await readMachineIdentity(db, organizationId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");
+      },
       binding: async (db) => {
         const identity = await readMachineIdentity(db, organizationId, identityId);
         if (!identity) throw new DomainError("RESOURCE_NOT_FOUND", "Not found");

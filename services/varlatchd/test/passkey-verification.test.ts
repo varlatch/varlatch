@@ -1,16 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { CAPABILITIES } from "@varlatch/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { issueCredential } from "../src/auth/credentials.js";
 import { generateKey } from "../src/crypto/aead.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { ENFORCEABLE_CONTROLS, enforceCapability, resetControls } from "../src/domain/securitycontrols.js";
+import { EXTERNAL_EFFECT_LIMITS } from "../src/domain/externaleffect.js";
 import { accessCountsSettled } from "../src/domain/securityreport.js";
 import { buildApp } from "../src/http/app.js";
 import { PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { migratedTestDb } from "./helpers/pglite.js";
+import { changedTables, githubOnPrivateAddress, insertGitHubApp, offRun, sweeper, type OffRecord } from "./helpers/route-sweep.js";
+import { ROUTE_ACCESS } from "./helpers/route-access.js";
 import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-authenticator.js";
+import { uncheckedOrganizations } from "../src/domain/requestaccess.js";
+
+// Which requests were decided at their answer (settleOrganizationAccess):
+// the routes the inventory calls effect-free reads, and only they.
+vi.mock("../src/domain/requestaccess.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/domain/requestaccess.js")>();
+  return { ...actual, uncheckedOrganizations: vi.fn(actual.uncheckedOrganizations) };
+});
+const settledAtAnswer = vi.mocked(uncheckedOrganizations);
 
 /**
  * passkey-verification enforced (ADR-0054 Decision 7, step 4.4), on
@@ -374,6 +388,162 @@ describe("the Convex token", () => {
   });
 });
 
+describe("where it decides", () => {
+  const counted = async () =>
+    (await rows("SELECT operation, reason, count::int AS count FROM security_control_counters WHERE control = 'passkey-verification' ORDER BY operation"));
+
+  it("answers not-found for a missing nested resource, and refuses the same request for one that exists", async () => {
+    await setMode("enforce");
+    const revision = (await rows("SELECT id FROM contract_revisions"))[0].id as string;
+    expect((await call("GET", `${P}/contract/revisions/crev_missing`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expectRefused(await call("GET", `${P}/contract/revisions/${revision}`, admin));
+    expect((await call("DELETE", `${E}/values/NOPE`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expectRefused(await call("DELETE", `${E}/values/DB_PASS`, admin));
+    expect((await rows("SELECT count(*)::int AS n FROM env_values WHERE deleted_at IS NULL"))[0].n).toBe(1);
+    // One audit event per refusal, with the action and resource it was authorized for.
+    const denials = await passkeyDenials();
+    expect(denials.map((d) => [d.action, d.metadata.evidence])).toEqual([
+      ["contract.read", "no-evidence"],
+      ["config.value.write", "no-evidence"],
+    ]);
+  });
+
+  it("answers a Tailnet denial before the refusal: effective configuration with values, and a disclosure, from off the tailnet", async () => {
+    await ok("POST", `${ORG}/requirements`, verified, {
+      kind: "tailnet", target: { kind: "tier", tier: "production" }, selector: { tailnet: "example.ts.net", tags: ["tag:prod"] },
+    });
+    const off = {
+      values: await call("GET", `${E}/effective-configuration?include=values`, admin),
+      disclosure: await call("POST", `${E}/disclosures`, admin, { scope: "all-authorized-secrets" }),
+    };
+    expect(off.values.body.error.code).toBe("TAILNET_CONTEXT_REQUIRED");
+    await setMode("enforce");
+    expect(await call("GET", `${E}/effective-configuration?include=values`, admin)).toMatchObject({ status: off.values.status, body: { error: { code: off.values.body.error.code } } });
+    expect(await call("POST", `${E}/disclosures`, admin, { scope: "all-authorized-secrets" })).toMatchObject({ status: off.disclosure.status, body: { error: { code: off.disclosure.body.error.code } } });
+    expect(await passkeyDenials()).toEqual([]);
+    // Metadata only: the request goes on, and is refused for the sign-in.
+    expectRefused(await call("GET", `${E}/effective-configuration`, admin));
+  });
+
+  it("keeps a refused GitHub call's record when the App Connection fails, with every control off, and makes no call under enforce", async () => {
+    await insertGitHubApp(ctx, "acme", adminId);
+    const resolver = githubOnPrivateAddress();
+    try {
+      const refusals = async () => (await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'outbound.refused'"))[0].n as number;
+      const body = { credentialKind: "github-app", installationId: 4244, name: "Actions" };
+      const failed = await call("POST", `${ORG}/platform-connections`, admin, body);
+      expect(failed.status, JSON.stringify(failed.body)).toBe(422);
+      // As before the effect had a transaction: the refusal stays recorded,
+      // though the Connection's transaction rolled back.
+      expect(await refusals()).toBe(1);
+      expect(await rows("SELECT count(*)::int AS n FROM platform_connections")).toEqual([{ n: 0 }]);
+      await setMode("enforce");
+      expectRefused(await call("POST", `${ORG}/platform-connections`, admin, body));
+      expect(await refusals()).toBe(1);
+    } finally {
+      resolver.restore();
+    }
+  });
+
+  it("answers the deadline when an App Connection's GitHub call is stopped there, under report, whatever the connection made of it", async () => {
+    await insertGitHubApp(ctx, "acme", adminId);
+    await setMode("report");
+    const saved = { ...EXTERNAL_EFFECT_LIMITS };
+    EXTERNAL_EFFECT_LIMITS.deadlineMs = 150;
+    let calls = 0;
+    // GitHub slower than the deadline; the call honours its abort signal.
+    const slowGitHub = (async (_input: unknown, init?: RequestInit) => {
+      calls++;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, 2_000);
+        init?.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(new Error("aborted")); });
+      });
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const slowApp = buildApp(ctx, { publicUrl: PUBLIC_URL, syncFetch: slowGitHub });
+      const res = await slowApp.request(`${ORG}/platform-connections`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${admin}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ credentialKind: "github-app", installationId: 4244, name: "Actions" }),
+      });
+      const body = (await res.json()) as { error: { code: string; details?: { reason?: string }; message: string } };
+      // Not the VALIDATION_FAILED ("unreachable") the connection makes of an aborted call.
+      expect(res.status, JSON.stringify(body)).toBe(409);
+      expect(body.error).toMatchObject({ code: "STATE_CHANGED", details: { reason: "external-effect-deadline" } });
+      expect(body.error.message).toContain("rolled back");
+      expect(calls).toBe(1);
+      expect(await rows("SELECT count(*)::int AS n FROM platform_connections")).toEqual([{ n: 0 }]);
+    } finally {
+      Object.assign(EXTERNAL_EFFECT_LIMITS, saved);
+    }
+  });
+
+  it("refuses before any approval is asked for: a refused sign-in creates no approval intent (requirement-protection)", async () => {
+    await ok("PATCH", `${ORG}/security/controls/requirement-protection`, verified, { mode: "enforce", expectedVersion: 0 });
+    const requirement = await ok("POST", `${ORG}/requirements`, verified, {
+      kind: "tailnet", target: { kind: "tier", tier: "staging" }, selector: { tailnet: "example.ts.net", tags: ["tag:ci"] },
+    });
+    await setMode("enforce");
+    const intents = async () => (await rows("SELECT count(*)::int AS n FROM approval_intents"))[0].n as number;
+    const edit = { expectedVersion: 1, selector: { tailnet: "example.ts.net", tags: ["tag:other"] } };
+    // A missing Requirement: not found, whatever the controls.
+    expect((await call("PATCH", `${ORG}/requirements/req_missing`, admin, edit)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    expect((await call("DELETE", `${ORG}/requirements/req_missing`, admin)).body.error.code).toBe("RESOURCE_NOT_FOUND");
+    // A refused sign-in: refused, and nothing asked for.
+    expectRefused(await call("PATCH", `${ORG}/requirements/${requirement.id}`, admin, edit));
+    expectRefused(await call("DELETE", `${ORG}/requirements/${requirement.id}`, admin));
+    expect(await intents()).toBe(0);
+    // An accepted sign-in is asked for its approval, as before.
+    const asked = await call("PATCH", `${ORG}/requirements/${requirement.id}`, verified, edit);
+    expect(asked.body.error.code, JSON.stringify(asked.body)).toBe("STEP_UP_REQUIRED");
+    expect(await intents()).toBe(1);
+  });
+
+  it("checks an Idempotency-Key replay against the current mode", async () => {
+    const send = (token: string) =>
+      app.request(`${E}/values/DB_PASS`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": "replay-1" },
+        body: JSON.stringify({ value: "replayed-replayed" }),
+      });
+    const first = await send(admin);
+    expect(first.status).toBe(200);
+    const stored = await first.json();
+    await setMode("enforce");
+    const refused = await send(admin);
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    await setMode("off");
+    const replayed = await send(admin);
+    expect(replayed.status).toBe(200);
+    expect(await replayed.json()).toEqual(stored);
+  });
+
+  it("report mode counts each successful request once, as its first authorized action; not-found and refused requests count nothing", async () => {
+    await setMode("report");
+    await ok("GET", P, admin);
+    await ok("PUT", `${E}/values/DB_PASS`, admin, { value: "counted-counted" });
+    expect((await call("GET", `${P}/contract/revisions/crev_missing`, admin)).status).toBe(404);
+    expect((await call("DELETE", `${E}/values/NOPE`, admin)).status).toBe(404);
+    // A verified sign-in is not counted.
+    await ok("GET", P, verified);
+    expect(await counted()).toEqual([
+      { operation: "config.value.write", reason: "no-evidence", count: 1 },
+      { operation: "project.read", reason: "no-evidence", count: 1 },
+    ]);
+  });
+
+  it("records nothing when turning it on from a sign-in it would refuse is refused, as before", async () => {
+    const events = async () => (await rows("SELECT count(*)::int AS n FROM audit_events"))[0].n as number;
+    const before = await events();
+    const res = await call("PATCH", CONTROL, admin, { mode: "enforce", expectedVersion: 0 });
+    expectRefused(res);
+    expect(res.body.error.details.change).toBe("refused");
+    expect(await events()).toBe(before);
+  });
+});
+
 describe("every /v1/organizations/:org route", () => {
   const ROUTES = "/v1/organizations/:org";
   /** Each route, with acme, its Project and environment, and placeholders for the rest. */
@@ -401,46 +571,25 @@ describe("every /v1/organizations/:org route", () => {
     return out;
   }
 
-  /** Everything a request could have changed, apart from refusals' audit events. */
-  const state = async () =>
-    JSON.stringify(await rows(
-      `SELECT (SELECT count(*)::int FROM audit_events WHERE event_type <> 'authorization.denied') AS events,
-              (SELECT count(*)::int FROM projects) AS projects, (SELECT count(*)::int FROM environments) AS environments,
-              (SELECT count(*)::int FROM value_versions) AS versions, (SELECT count(*)::int FROM grants) AS grants,
-              (SELECT count(*)::int FROM identities) AS identities, (SELECT count(*)::int FROM credentials) AS credentials,
-              (SELECT count(*)::int FROM security_controls) AS controls, (SELECT count(*)::int FROM approval_intents) AS intents`,
-    ));
-
-  it("refuses a blocked admin on each route or answers an earlier refusal, and changes nothing", async () => {
-    const bot = await machine("bot", ["organization.read"]);
-    await setMode("enforce");
-    const before = await state();
-    const refusedFirst: string[] = [];
-    const succeeded: string[] = [];
-    for (const [route, answer] of await answers(admin)) {
-      if (answer.status < 400) succeeded.push(`${route}: ${answer.status}`);
-      else if (answer.code !== "PASSKEY_VERIFICATION_REQUIRED") refusedFirst.push(`${route}: ${answer.code}`);
-    }
-    expect(succeeded).toEqual([]);
-    expect(await state()).toBe(before);
-    // Every other route answers the refusal. These four answer a refusal
-    // that came first and does not depend on the sign-in: a missing query
-    // parameter and an empty body, checked before authorization, and the
-    // broker-only Capability routes, which hide themselves from people.
-    expect(refusedFirst.sort()).toEqual([
-      "GET /v1/organizations/:org/config-items: VALIDATION_FAILED",
-      "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities/:capability/exercises: RESOURCE_NOT_FOUND",
-      "POST /v1/organizations/:org/projects/:project/environments/:environment/capabilities: RESOURCE_NOT_FOUND",
-      "POST /v1/organizations/:org/projects/:project/environments: VALIDATION_FAILED",
-    ]);
-    // config-items, which authorizes without decide, with a query it accepts.
-    expectRefused(await call("GET", `${ORG}/config-items?q=DB`, admin));
-    // The project-only route and the environment route of Decision 7.
-    expectRefused(await call("PATCH", P, admin, { name: "API gateway" }));
-    expectRefused(await call("GET", E, admin));
-    // The machine, by contrast, is never refused for it.
-    expect([...(await answers(bot.token)).values()].some((a) => a.code === "PASSKEY_VERIFICATION_REQUIRED")).toBe(false);
-  }, 60_000);
+  it("refuses a blocked admin on each route once its existence checks passed, answers every earlier refusal as before, and changes nothing", async () => {
+    const out = await sweepRoutes(ctx.rootKek);
+    // Fixtures make most routes succeed with the control off: the sweep
+    // reaches each route's checkpoint, not only its existence checks.
+    expect(out.succeededOff.length, out.succeededOff.join("\n")).toBeGreaterThan(80);
+    expect(out.wrong, "answers under enforce that break the boundary").toEqual([]);
+    expect(out.misclassified, "routes decided elsewhere than the inventory says (helpers/route-access.ts)").toEqual([]);
+    // Joined, so a difference is shown in full.
+    expect(out.offDiffers.join("\n"), `off-mode answers and effects that differ from ${OFF_BASELINE.source}`).toBe("");
+    expect(out.changed, "effects of refused or earlier-refused requests under enforce").toEqual([]);
+    // Every nesting level's missing resource was tried somewhere and kept its not-found.
+    expect(out.notFoundKept).toBeGreaterThan(150);
+    // A Tailnet denial is answered as with the control off, values read with
+    // and without a snapshot (effective configuration with values, disclosure).
+    expect(out.tailnetKept).toEqual(expect.arrayContaining([
+      "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration (tailnet environment)",
+      "POST /v1/organizations/:org/projects/:project/environments/:environment/disclosures (tailnet environment)",
+    ]));
+  }, 300_000);
 
   it("gives an outsider and a machine exactly the answers they got with the control off", async () => {
     const bot = await machine("bot", ["organization.read", "config.metadata.read"]);
@@ -456,3 +605,84 @@ describe("every /v1/organizations/:org route", () => {
     expect([...on.outsider.values()].some((a) => a.code === "PASSKEY_VERIFICATION_REQUIRED")).toBe(false);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// The behavioural sweep (ADR-0054 Decision 7): every /v1/organizations/:org
+// route, with existing fixtures, then with each path parameter in turn
+// naming something that does not exist. For each, a blocked admin's answer
+// under enforce is compared with the same admin's answer with the control
+// off, on the same state:
+//
+// - with the control off it succeeded (or asked for an approval): under
+//   enforce it is refused, with one denial audit and no effect;
+// - with the control off it was not found, or an authorization or Tailnet
+//   denial: under enforce exactly the same answer, and no denial audit;
+// - any other refusal (a validation failure, a conflict): that refusal or
+//   the passkey refusal, and no effect either way;
+// - with the control off, the status, error code, body shape and the
+//   tables changed are exactly main's before this fix: the baseline
+//   test/passkey-verification-baseline.test.ts recorded there
+//   (test/fixtures/passkey-verification-off-baseline.json).
+//
+// Each request runs under the lock-order harness, which also checks that a
+// write never comes before its checkpoint. Every variant starts from the
+// fixtures: the off-mode request runs first, and any change, or refusal
+// audit, is undone before the next.
+
+type Sweep = {
+  succeededOff: string[]; wrong: string[]; changed: string[]; notFoundKept: number; misclassified: string[]; tailnetKept: string[];
+  /** Off-mode answers or effects that differ from main's (test/fixtures/passkey-verification-off-baseline.json). */
+  offDiffers: string[];
+};
+
+const OFF_BASELINE = JSON.parse(
+  readFileSync(fileURLToPath(new URL("./fixtures/passkey-verification-off-baseline.json", import.meta.url)), "utf8"),
+) as { source: string; variants: Record<string, OffRecord> };
+
+async function sweepRoutes(rootKek: Buffer): Promise<Sweep> {
+  const s = await sweeper(rootKek);
+  const out: Sweep = { succeededOff: [], wrong: [], changed: [], notFoundKept: 0, misclassified: [], tailnetKept: [], offDiffers: [] };
+  const EARLIER = new Set(["RESOURCE_NOT_FOUND", "PERMISSION_DENIED", "TAILNET_CONTEXT_REQUIRED", "TAILNET_CONTEXT_UNAVAILABLE"]);
+  const variants = s.variants();
+  // Every variant is in main's baseline, and nothing else is.
+  const missing = variants.map((v) => v.label).filter((l) => !(l in OFF_BASELINE.variants));
+  if (missing.length > 0) out.offDiffers.push(`not in the baseline: ${missing.join(", ")}`);
+  for (const v of variants) {
+    const { key, label, variant } = v;
+    // With the control off first, on the fixtures: exactly what main
+    // answered and changed.
+    settledAtAnswer.mockClear();
+    const { answer: off, record } = await offRun(s, v);
+    const atAnswer = settledAtAnswer.mock.results.some((r) => r.type === "return" && (r.value as string[]).length > 0);
+    const base = OFF_BASELINE.variants[label];
+    if (base && JSON.stringify(record) !== JSON.stringify(base)) out.offDiffers.push(`${label}: main ${JSON.stringify(base)}, now ${JSON.stringify(record)}`);
+    // Then under enforce, on the same state (offRun undid any change).
+    await s.setMode("enforce");
+    const before = await s.state();
+    const denied = await s.denials();
+    const enforced = await s.send(v);
+    const refused = enforced.code === "PASSKEY_VERIFICATION_REQUIRED";
+    const changed = changedTables(before, await s.state()).length > 0;
+    const audits = (await s.denials()) - denied;
+    if (changed) out.changed.push(`${label}: ${enforced.status} ${enforced.code}`);
+    if (audits !== (refused ? 1 : 0)) out.wrong.push(`${label}: ${audits} denial audits for ${enforced.code}`);
+    // The next variant starts from the fixtures again.
+    if (changed || audits > 0) await s.fresh();
+    if (off.code === "PASSKEY_VERIFICATION_REQUIRED") out.wrong.push(`${label}: refused with the control off`);
+    if (off.status < 400 || off.status === 428) {
+      if (variant === "fixtures") out.succeededOff.push(`${label}: ${off.status}`);
+      if (off.status < 400 && atAnswer !== (ROUTE_ACCESS[key] === "read")) {
+        out.misclassified.push(`${label}: listed as ${ROUTE_ACCESS[key]}, ${atAnswer ? "decided at its answer" : "decided before its answer"}`);
+      }
+      if (!refused) out.wrong.push(`${label}: off ${off.status}, enforce ${enforced.status} ${enforced.code}`);
+    } else if (off.code && EARLIER.has(off.code)) {
+      if (enforced.status !== off.status || enforced.code !== off.code) out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
+      else if (off.code === "RESOURCE_NOT_FOUND") out.notFoundKept++;
+      else if (off.code.startsWith("TAILNET_")) out.tailnetKept.push(label);
+    } else if (!refused && (enforced.status !== off.status || enforced.code !== off.code)) {
+      out.wrong.push(`${label}: off ${off.status} ${off.code}, enforce ${enforced.status} ${enforced.code}`);
+    }
+  }
+  await s.close();
+  return out;
+}

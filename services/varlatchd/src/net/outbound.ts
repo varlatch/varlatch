@@ -7,8 +7,10 @@ import type { ConnectionOptions } from "node:tls";
 import { OUTBOUND_POLICY_DOCS, outboundRefusalMessage, type OutboundRefusalReason } from "@varlatch/protocol";
 import { OUTBOUND_REFUSED_CODE } from "@varlatch/sync";
 import { Agent, buildConnector, fetch as undiciFetch } from "undici";
-import { recordAuditEvent } from "../audit/events.js";
+import { recordAuditEvent, type AuditEventInput } from "../audit/events.js";
 import type { Querier } from "../db/migrate.js";
+import { assertOrganizationAccessChecked } from "../domain/requestaccess.js";
+import { currentExternalEffect, externalEffectDeadline, noteEffectRefusal } from "../domain/externaleffect.js";
 import { normalizeAddress } from "../http/client-address.js";
 
 /**
@@ -716,6 +718,14 @@ export class OutboundPolicy {
       const destination = destinationOf(url);
       if (!destination) throw new TypeError(`Outbound requests use https or http, not ${url.protocol}`);
       if (url.username || url.password) throw new TypeError("Outbound request URLs never carry credentials");
+      // A request's outbound call for an Organization runs inside its
+      // external-effect transaction, after the passkey-verification
+      // checkpoint there (ADR-0054 Decision 7, liveness.ts
+      // withExternalEffect); reaching here without one is a coverage gap.
+      if (audit) await assertOrganizationAccessChecked(audit.db, audit.organizationId, `an outbound ${purpose} call`, { underLock: true });
+      // Never after the effect's deadline (externaleffect.ts): its lock may
+      // not protect a call that starts later.
+      if (currentExternalEffect()?.signal.aborted) throw externalEffectDeadline();
       try {
         return (await undiciFetch(url, {
           ...(init as Record<string, unknown>),
@@ -791,7 +801,7 @@ export class OutboundPolicy {
       suppressed = admitted.suppressed;
       this.logRefusal(input.purpose, "connection", refusal);
     }
-    await recordAuditEvent(db, {
+    const event = {
       eventType: "outbound.refused",
       decision: "deny",
       actorIdentityId: input.actorIdentityId ?? null,
@@ -807,7 +817,10 @@ export class OutboundPolicy {
         reason: refusal.reason,
         ...(suppressed > 0 ? { suppressed } : {}),
       },
-    });
+    } satisfies AuditEventInput;
+    await recordAuditEvent(db, event);
+    // In an external effect's transaction: written again if it rolls back.
+    noteEffectRefusal(event);
   }
 
   /** Close pooled connections (tests, and a process that is stopping). */

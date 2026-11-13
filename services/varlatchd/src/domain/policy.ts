@@ -163,6 +163,10 @@ export async function updateRole(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: "role.update" }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readRole(db, organizationId, roleId))) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
+      },
       binding: async (db) => {
         // Refusals first (amendment A), read without a lock; the version is
         // checked again under the row lock below, so the state bound is the
@@ -252,6 +256,10 @@ export async function deleteRole(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: "role.delete" }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readRole(db, organizationId, roleId))) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
+      },
       binding: async (db) => {
         const role = await readRole(db, organizationId, roleId);
         if (!role) throw new DomainError("RESOURCE_NOT_FOUND", "Role not found");
@@ -383,6 +391,10 @@ export async function updateGroup(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: groupOperation(kind, "update") }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readGroup(db, organizationId, groupId, kind))) throw notFound();
+      },
       binding: async (db) => {
         // Refusals first (amendment A); the version is checked again under
         // the row lock below.
@@ -459,6 +471,10 @@ export async function deleteGroup(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: groupOperation(stored?.kind ?? "group", "delete") }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readGroup(db, organizationId, groupId))) throw new DomainError("RESOURCE_NOT_FOUND", "Group not found");
+      },
       binding: async (db) => {
         const group = await readGroup(db, organizationId, groupId);
         if (!group) throw new DomainError("RESOURCE_NOT_FOUND", "Group not found");
@@ -550,6 +566,10 @@ export async function addGroupMember(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId, identityId] },
       checks: [{ control: "admin-step-up", operation: groupOperation(group.kind, "member_add") }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readEligibleMember(db, organizationId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
+      },
       binding: async (db) => {
         const person = await readEligibleMember(db, organizationId, identityId);
         if (!person) throw new DomainError("RESOURCE_NOT_FOUND", "Identity not in this organization");
@@ -614,6 +634,10 @@ export async function removeGroupMember(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: groupOperation(group.kind, "member_remove") }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await isGroupMember(db, groupId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Membership not found");
+      },
       binding: async (db) => {
         if (!(await isGroupMember(db, groupId, identityId))) throw new DomainError("RESOURCE_NOT_FOUND", "Membership not found");
         return memberRemoveBinding({ id: organizationId }, group, await readPerson(db, identityId));
@@ -677,6 +701,10 @@ export async function addTeamProject(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId], projectId },
       checks: [{ control: "admin-step-up", operation: "team.project_add" }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await readLiveProject(db, organizationId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Project not found");
+      },
       binding: async (db) => {
         const project = await readLiveProject(db, organizationId, projectId);
         if (!project) throw new DomainError("RESOURCE_NOT_FOUND", "Project not found");
@@ -728,6 +756,10 @@ export async function removeTeamProject(
     const prepared = await prepareProtectedOperation(db, gate, {
       scope: { organizationId, people: [actorIdentityId] },
       checks: [{ control: "admin-step-up", operation: "team.project_remove" }],
+      // Existence, whatever the controls, before passkey-verification (ADR-0054 Decision 7).
+      preflight: async (db) => {
+        if (!(await isTeamProject(db, teamId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Team does not own that project");
+      },
       binding: async (db) => {
         if (!(await isTeamProject(db, teamId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Team does not own that project");
         return teamProjectRemoveBinding({ id: organizationId }, team, await readProjectName(db, organizationId, projectId));

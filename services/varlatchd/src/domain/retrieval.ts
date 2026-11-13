@@ -11,6 +11,7 @@ import type { EnvironmentRow } from "./environments.js";
 import { DomainError } from "./errors.js";
 import { refuseIfIncidentFrozen } from "./liveness.js";
 import { orgKekOf, type OrgRow } from "./orgs.js";
+import { assertOrganizationAccessChecked } from "./requestaccess.js";
 import type { ProjectRow } from "./projects.js";
 
 /**
@@ -188,6 +189,9 @@ export async function auditThenDecrypt(
   versionIds: string[],
   beforeAudit?: (db: Querier) => Promise<void>,
 ): Promise<Map<string, string>> {
+  // The request's passkey-verification checkpoint ran in its snapshot,
+  // before this (ADR-0054 Decision 7); reaching here without it is a gap.
+  await assertOrganizationAccessChecked(ctx.db, state.org.id, "a disclosure audit and decryption");
   if (events.length > 0 && beforeAudit) {
     await withTx(ctx.db, async (db) => {
       await beforeAudit(db);

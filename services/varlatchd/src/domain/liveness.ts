@@ -3,6 +3,10 @@ import { lockClause, lockedQuery } from "../db/locks.js";
 import type { Querier } from "../db/migrate.js";
 import { DomainError } from "./errors.js";
 import { lockPeople, type PersonRef } from "./personlocks.js";
+import { captureOrganizationAccess, requireOrganizationAccess } from "./requestaccess.js";
+import { withTx } from "../db/tx.js";
+import { recordAuditEvents } from "../audit/events.js";
+import { EXTERNAL_EFFECT_LIMITS, externalEffectDeadline, runExternalEffect, type ExternalEffect } from "./externaleffect.js";
 
 /**
  * THE LOCK ORDER (ADR-0054 amendment E). Every transaction that takes row
@@ -113,6 +117,21 @@ import { lockPeople, type PersonRef } from "./personlocks.js";
  *   deletion worker after its SKIP LOCKED claim of steps 1.
  */
 
+/*
+ * PASSKEY-VERIFICATION (ADR-0054 Decisions 2 and 7, requestaccess.ts). A
+ * request's outcome is captured right after the Organization row is
+ * locked and checked (its deletion and freeze checks included), in a
+ * statement of its own: a control change holds that row FOR UPDATE and
+ * bumps its security_epoch, so a writer either commits before the change
+ * or reads the new mode; a SERIALIZABLE writer whose snapshot predates the
+ * change cannot lock the row (40001) and runs again. The checkpoint that
+ * applies the outcome runs once the whole scope is locked and live, unless
+ * the writer defers it (accessCheck: "deferred") because it finds out
+ * whether its target exists only after the lock; it then calls
+ * requireOrganizationAccess itself, after that lookup and before its first
+ * write. No lock is taken for either: they only read.
+ */
+
 export type LockMode = "key share" | "no key update" | "update";
 
 export interface LiveScope {
@@ -142,6 +161,14 @@ export interface LiveScope {
   /** Environments of the Project, locked in ascending ID order. */
   environmentIds?: string[] | undefined;
   environmentMode?: LockMode | undefined;
+  /**
+   * When the request's passkey-verification checkpoint runs: by default
+   * here, once the scope is locked and live. "deferred": the writer looks
+   * its target up after the lock (so a missing one keeps its not-found)
+   * and calls requireOrganizationAccess itself before its first write.
+   * The outcome is captured here either way.
+   */
+  accessCheck?: "here" | "deferred" | undefined;
 }
 
 /**
@@ -163,6 +190,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
   if (!orgRow || orgRow.deleted_at) throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
   if (!scope.allowFrozen) await refuseIfFrozen(db, scope.organizationId);
   await refuseIfIncidentFrozen(db, scope.organizationId, scope.duringIncidentFreeze);
+  await captureOrganizationAccess(db, scope.organizationId);
 
   // Required by the type, so every writer in src names its people; a caller
   // outside the typechecked code (a test emulating a writer) may pass none.
@@ -195,6 +223,7 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
       throw new DomainError("RESOURCE_NOT_FOUND", "Environment not found");
     }
   }
+  if (scope.accessCheck !== "deferred") await requireOrganizationAccess(db, scope.organizationId);
 }
 
 /**
@@ -203,7 +232,9 @@ export async function lockLiveScope(db: Querier, scope: LiveScope): Promise<void
  * come between the people and the writer's own checks: an Idempotency-Key
  * claim (step 2.5), whose replay answers from the stored response whatever
  * the Organization's state now. The writer's lockLiveScope afterwards finds
- * these rows held (reuse) and checks liveness as before.
+ * these rows held (reuse) and checks liveness as before. The request's
+ * passkey-verification outcome is captured under the Organization lock
+ * here too, so a replay is checked against it (withIdempotency).
  */
 export async function lockScope(
   db: Querier,
@@ -216,7 +247,104 @@ export async function lockScope(
     `SELECT deleted_at FROM organizations WHERE id = $1 ${lockClause(orgMode)}`,
     [scope.organizationId],
   );
+  await captureOrganizationAccess(db, scope.organizationId);
   await lockPeople(db, scope.people ?? []);
+}
+
+/**
+ * THE EXTERNAL-EFFECT CONTRACT (ADR-0054 Decision 2 for effects;
+ * requestaccess.ts). A protected external effect (decrypting or using a
+ * stored credential, sending a request to a platform or to GitHub, spending
+ * a one-use artifact such as a registration's state and GitHub's code)
+ * runs inside one transaction that holds the Organization row FOR KEY
+ * SHARE (step 1, with the deletion and freeze checks) and the operation's
+ * people (step 2) from the passkey-verification checkpoint until the effect
+ * is done:
+ *
+ * - `fn` looks up what the operation uses (a missing one keeps its
+ *   not-found), calls requireOrganizationAccess(tx, organizationId), then
+ *   makes the effect, and makes any state change that goes with it (a
+ *   claim, a recorded expiry, the final write) in this same transaction,
+ *   so a refusal leaves nothing committed. Later locks follow amendment E.
+ * - A control change takes the Organization row FOR UPDATE: it waits for
+ *   effects in progress, and an effect either completes before the change
+ *   or reads the new mode under its lock.
+ * - The transaction holds a database connection across the outbound call;
+ *   keep it to the effect and what must commit with it.
+ * - Outbound work stops before the lock's protection can end
+ *   (externaleffect.ts). When passkey-verification is at report or enforce
+ *   for the Organization (read under the lock), every call goes through
+ *   guardEffectFetch, bound to a deadline shorter than the transaction's
+ *   idle cap, which is set explicitly here. No call starts after the
+ *   deadline and one in flight is aborted; the effect then fails with the
+ *   deadline error and the transaction rolls back. With the control off
+ *   there is no deadline and no idle timeout: the effect runs to
+ *   completion as before, holding the lock. A rollback does not undo what
+ *   a call already did outside Varlatch: the checkpoint is what keeps a
+ *   refused request from making one.
+ * - Outbound refusal records written in the transaction are written again
+ *   after a rollback, as they were committed before effects had a
+ *   transaction.
+ *
+ * Validation that only resolves a configured name (the outbound policy's
+ * DNS check of a webhook URL, an OIDC issuer or a base identity) sends no
+ * credential, changes nothing outside Varlatch and spends nothing: it is
+ * not a protected external effect, and runs before the operation's write
+ * transaction (and before an effect's transaction: sync.ts
+ * checkCredentialInput), as today, and waits on DNS exactly as today. No
+ * transaction, and no lock, waits on DNS at all.
+ */
+export async function withExternalEffect<T>(
+  db: Querier,
+  scope: { organizationId: string; people: readonly PersonRef[] },
+  fn: (tx: Querier) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const effect: ExternalEffect = { signal: controller.signal, refusals: [] };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await runExternalEffect(effect, () =>
+      withTx(db, async (tx) => {
+        await lockLiveScope(tx, { organizationId: scope.organizationId, people: scope.people, accessCheck: "deferred" });
+        // Under the lock, after the capture: whether passkey-verification
+        // decides anything here. Only then is the effect bounded, from now
+        // (waiting for the lock does not count): the deadline, and the idle
+        // cap above it. With the control off, neither: no idle timeout can
+        // release the lock, and the effect runs to completion as before,
+        // while a control change waits for it.
+        const guarded = await passkeyVerificationActive(tx, scope.organizationId);
+        if (guarded) {
+          await tx.query(`SET LOCAL idle_in_transaction_session_timeout = '${EXTERNAL_EFFECT_LIMITS.idleMs}ms'`);
+          timer = setTimeout(() => controller.abort(), EXTERNAL_EFFECT_LIMITS.deadlineMs);
+        } else {
+          await tx.query("SET LOCAL idle_in_transaction_session_timeout = 0");
+        }
+        const result = await fn(tx);
+        // A call stopped at the deadline (its caller may have reported it
+        // as unreachable): nothing of the effect is kept.
+        if (controller.signal.aborted) throw externalEffectDeadline();
+        return result;
+      }),
+    );
+  } catch (err) {
+    // Rolled back: the refused destinations are still recorded, after it.
+    if (effect.refusals.length > 0) await recordAuditEvents(db, effect.refusals);
+    // Whatever the effect made of a call stopped at the deadline (a
+    // validation failure, "unreachable"), the answer is the deadline.
+    if (controller.signal.aborted) throw externalEffectDeadline();
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Whether the Organization's passkey-verification is at report or enforce, read in `db`. */
+async function passkeyVerificationActive(db: Querier, organizationId: string): Promise<boolean> {
+  const res = await db.query(
+    "SELECT 1 FROM security_controls WHERE organization_id = $1 AND control = 'passkey-verification' AND mode IN ('report', 'enforce')",
+    [organizationId],
+  );
+  return res.rows.length > 0;
 }
 
 /**

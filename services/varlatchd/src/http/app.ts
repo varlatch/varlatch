@@ -187,7 +187,6 @@ import {
   bodyHash,
   decide,
   recordDenial,
-  refuseBlockedEntry,
   reject,
   type Decision,
   decodeCursor,
@@ -201,13 +200,20 @@ import {
 } from "./support.js";
 import {
   auditFrozenRefusal,
+  auditPasskeyRefusal,
   entryRequester,
   FROZEN_RETRY_AFTER_SECONDS,
-  queueEntryReport,
   resolveOrganization,
+  settleOrganizationAccess,
   type ResolveOptions,
 } from "./organization.js";
-import { enforceWouldRefuseYou, passkeyVerification, verificationGap } from "../domain/passkeyverification.js";
+import {
+  enforceWouldRefuseYou,
+  passkeyVerification,
+  PasskeyVerificationRefusal,
+  verificationGap,
+} from "../domain/passkeyverification.js";
+import { captureOrganizationAccess, requireOrganizationAccess, withRequester } from "../domain/requestaccess.js";
 import {
   queueAccessCount,
   reportingControls,
@@ -560,6 +566,9 @@ async function withIdempotency(
   if (key.length > 200) throw new DomainError("VALIDATION_FAILED", "Idempotency-Key exceeds 200 characters");
   const digest = bodyHash(body, ctx.rootKek);
   return withTx(ctx.db, async (db) => {
+    // Step 2.5's locks; the request's passkey-verification outcome is
+    // captured under the Organization lock (lockScope), checked for a
+    // replay here and for a first run by the mutation's own scope locking.
     await lockScope(db, { organizationId: scope.organizationId, people: [principal.identity.id, ...scope.people] });
     // INSERT's unique constraint waits for the first owner's transaction.
     // Both the mutation and cached response roll back if either fails.
@@ -575,6 +584,9 @@ async function withIdempotency(
       );
       const row = existing.rows[0] as { body_hash: string; response: unknown };
       if (row.body_hash !== digest) throw new DomainError("IDEMPOTENCY_CONFLICT", "Idempotency key reused with a different request body");
+      // A cached response is still access to the Organization: checked
+      // against the outcome captured under this lock (ADR-0054 Decision 7).
+      await requireOrganizationAccess(db, scope.organizationId);
       return (typeof row.response === "string" ? JSON.parse(row.response) : row.response) as { status: number; payload: unknown };
     }
     const result = await run({ ...ctx, db });
@@ -670,6 +682,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // audit event per refusal, after the transaction or snapshot ended.
       c.header("Retry-After", String(FROZEN_RETRY_AFTER_SECONDS));
       await auditFrozenRefusal(ctx, c, err);
+    }
+    if (err instanceof PasskeyVerificationRefusal && !err.selfLockout) {
+      // One audit event per refusal of access, after the transaction or
+      // snapshot that refused it ended (ADR-0054 Decision 7). Refusing to
+      // turn the control on from a sign-in it would refuse is not an
+      // access refusal and records nothing, as before.
+      await auditPasskeyRefusal(ctx, c, err);
     }
     if (err instanceof DomainError) {
       return c.json(
@@ -868,24 +887,30 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       credentialExpiresAt: result.credential.expires_at,
       authSessionId: result.credential.auth_session_id ?? null,
     });
-    // The rest of the request is attributed to this credential and client:
-    // every audit event its identity records names them (ADR-0016 §9).
-    await withAttribution(
-      {
-        identityId: result.identity.id,
-        credentialId: result.credential.id,
-        client: clientLabel(c.req.header("User-Agent")),
-        // And which listener it came in on, with the device or the reason
-        // there is none (ADR-0046 Decision 8).
-        listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
-        tailnet: (c.get("tailnetResolution") as Record<string, unknown> | undefined) ?? null,
-      },
-      () => next(),
-    );
-    // A passkey-verification report noted where the request entered an
-    // Organization is counted at its outcome: only when it succeeded, after
-    // the response, best-effort (ADR-0054 Decision 9). Not awaited.
-    queueEntryReport(ctx, c);
+    // The rest of the request runs in its requester's security context
+    // (identifiers only, ADR-0054 Decision 7; domain/requestaccess.ts), and
+    // is attributed to this credential and client: every audit event its
+    // identity records names them (ADR-0016 §9).
+    await withRequester(entryRequester(c.get("principal")), async () => {
+      await withAttribution(
+        {
+          identityId: result.identity.id,
+          credentialId: result.credential.id,
+          client: clientLabel(c.req.header("User-Agent")),
+          // And which listener it came in on, with the device or the reason
+          // there is none (ADR-0046 Decision 8).
+          listener: options.resolveTailnetContext ? "tailnet" : "ordinary",
+          tailnet: (c.get("tailnetResolution") as Record<string, unknown> | undefined) ?? null,
+        },
+        async () => {
+          await next();
+          // Before the response leaves: an effect-free read's
+          // passkey-verification checkpoint, and report mode's counts
+          // (queued, only when the request succeeded; ADR-0054 Decision 9).
+          await settleOrganizationAccess(ctx, c);
+        },
+      );
+    });
     if (expiring) c.res.headers.set(CREDENTIAL_EXPIRES_HEADER, expiring);
   });
 
@@ -1789,9 +1814,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       // Zero visibility: not-found-equivalent (anti-enumeration, ADR-0018 §11).
       throw new DomainError("RESOURCE_NOT_FOUND", "Organization not found");
     }
-    // Authorized per item below, without decide: passkey-verification
-    // refuses here, after the visibility check (ADR-0054 Decision 7).
-    await refuseBlockedEntry(ctx, c, principal, org.id);
+    // An effect-free metadata read: passkey-verification decides before the
+    // result is returned (settleOrganizationAccess, ADR-0054 Decision 7).
 
     const envRes = await ctx.db.query(
       `SELECT e.id, e.name, e.tier, e.parent_environment_id, e.project_id,
@@ -2056,6 +2080,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const state = await captureState(sctx, scope, now, (item) =>
           decisions.metadata.allowed && (item.sensitive ? decisions.secret.allowed : decisions.plain.allowed),
         );
+        // passkey-verification, decided in this snapshot after every
+        // existence check and before any disclosure audit or decryption
+        // (ADR-0054 Decision 7); not read again after the snapshot.
+        await requireOrganizationAccess(sctx.db, scope.org.id);
         return { state, decisions };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
@@ -2195,6 +2223,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         // Secrets always require the explicit POST disclosure operation.
         const plain = includeValues ? await decide(sctx, c, principal, "config.value.read", resource) : null;
         const state = await captureState(sctx, scope, now, (item) => !item.sensitive && plain?.allowed === true);
+        // A terminal authorization denial answers before passkey-verification
+        // (ADR-0054 Decision 7): a Tailnet denial of the values read ends
+        // the request, as it did; recorded after the snapshot (reject).
+        if (plain && !plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
+        // passkey-verification, decided in this snapshot after every
+        // existence check and before any disclosure audit or decryption
+        // (ADR-0054 Decision 7); not read again after the snapshot.
+        await requireOrganizationAccess(sctx.db, scope.org.id);
         return { state, plain };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
@@ -2276,6 +2312,14 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
               reason: principal.identity.kind === "human" ? "no-approval" : "machine-credential",
             }]
           : [];
+        // A terminal authorization denial answers before passkey-verification
+        // (ADR-0054 Decision 7): a Tailnet denial of the values read ends
+        // the request, as it did; recorded after the snapshot (reject).
+        if (!plain.allowed && plain.error.code.startsWith("TAILNET_")) return { denied: plain };
+        // passkey-verification, decided in this snapshot after every
+        // existence check and before any disclosure audit or decryption
+        // (ADR-0054 Decision 7); not read again after the snapshot.
+        await requireOrganizationAccess(sctx.db, scope.org.id);
         return { state, body, reveal, plain, metadata, report: { attempts: report, at: now } };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
@@ -2323,6 +2367,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           projectId: scope.project.id,
         });
         const state = await captureState(sctx, scope, now, (item) => (item.sensitive ? secret : plain).allowed);
+        // passkey-verification, decided in this snapshot after every
+        // existence check and before any disclosure audit or decryption
+        // (ADR-0054 Decision 7); not read again after the snapshot.
+        await requireOrganizationAccess(sctx.db, scope.org.id);
         return { state, plain, secret, contract, mode };
       });
       if ("denied" in phase) return reject(ctx, phase.denied);
@@ -2479,6 +2527,8 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
           input(),
         );
         const captured = await captureExercise(sctx, scope, now, c.req.param("capability"), tailnetContext);
+        // A broker's (machine) request: exempt, but checked like any other.
+        await requireOrganizationAccess(sctx.db, scope.org.id);
         return { captured, body };
       });
       const result = await exerciseCapability(
@@ -2939,7 +2989,7 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     // the person making the change out at once: refused, nothing changed.
     if (control.data === "passkey-verification" && body.mode === "enforce") {
       const gap = await verificationGap(ctx.db, principal.credentialId, principal.credentialKind);
-      if (gap) throw enforceWouldRefuseYou(gap);
+      if (gap) throw enforceWouldRefuseYou(org.id, gap);
     }
     const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
       changeControl(ctx, gate, {
@@ -3337,6 +3387,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const prepared = await prepareProtectedOperation(db, gate, {
         scope: { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] },
         checks: [{ control: "admin-step-up", operation: "grant.create" }],
+        // The subject exists, whatever the controls, before passkey-verification.
+        preflight: async (db) => {
+          if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+        },
         binding: async (db) => {
           // Refusals first (amendment A), read without a lock; pinned below.
           if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
@@ -3406,6 +3460,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       const prepared = await prepareProtectedOperation(db, gate, {
         scope: { organizationId: org.id, duringIncidentFreeze: "recovery", people: [principal.identity.id] },
         checks: [{ control: "admin-step-up", operation: "grant.revoke" }],
+        preflight: async (db) => {
+          const grant = await readGrant(db, org.id, grantId);
+          if (!grant || grant.revoked) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+        },
         binding: async (db) => {
           const grant = await readGrant(db, org.id, grantId);
           if (!grant || grant.revoked) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
@@ -3465,6 +3523,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const prepared = await prepareProtectedOperation(db, gate, {
           scope: { organizationId: org.id, people: [principal.identity.id, body.subjectIdentityId] },
           checks: [{ control: "admin-step-up", operation: "grant.replace" }],
+          // The subject and the Grant exist, in the binding's order, whatever the controls.
+          preflight: async (db) => {
+            if (body.subjectIdentityId) await checkGrantSubject(db, org.id, body.subjectIdentityId);
+            if (!(await readGrant(db, org.id, grantId))) throw new DomainError("RESOURCE_NOT_FOUND", "Grant not found");
+          },
           binding: async (db) => {
             // Refusals first (amendment A), read without a lock, in the
             // order the locked checks below make them.
@@ -3836,6 +3899,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const prepared = await prepareProtectedOperation(db, gate, {
           scope: { organizationId: org.id, people: [principal.identity.id] },
           checks: [{ control: "requirement-protection", operation: "requirement.update" }],
+          preflight: async (db) => {
+            if (!(await readRequirement(db, org.id, requirementId))) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+          },
           binding: async (db) => {
             // Refusals first (amendment A), read without a lock; checked
             // again under the row lock below.
@@ -3930,6 +3996,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         const prepared = await prepareProtectedOperation(db, gate, {
           scope: { organizationId: org.id, people: [principal.identity.id] },
           checks: [{ control: "requirement-protection", operation: "requirement.revoke" }],
+          preflight: async (db) => {
+            if (!(await readRequirement(db, org.id, requirementId))) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
+          },
           binding: async (db) => {
             const current = await readRequirement(db, org.id, requirementId);
             if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Requirement not found");
@@ -4776,6 +4845,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await authorize(ctx, c, principal, "audit.read", { organizationId: org.id }, { hideExistence: true });
     // Validated before the stream starts, so a bad filter is an ordinary error response.
     const filters = parseAuditFilters((name) => c.req.queries(name));
+    // passkey-verification before the stream starts reading (ADR-0054
+    // Decision 7): a streamed answer cannot be replaced at its end.
+    await requireOrganizationAccess(ctx.db, org.id);
     return auditExport(org.id, filters);
   });
 

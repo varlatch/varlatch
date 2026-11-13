@@ -15,7 +15,9 @@ import { withTx } from "../db/tx.js";
 import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
-import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen } from "./liveness.js";
+import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffect } from "./liveness.js";
+import { requireOrganizationAccess } from "./requestaccess.js";
+import { guardEffectFetch } from "./externaleffect.js";
 import { reportAdminStepUp } from "./securityreport.js";
 import { recordIntegrationChange } from "./members.js";
 import { APP_COLUMNS, appWithKey, getGitHubApp, isRsaKey, type GitHubAppRow } from "./githubapps.js";
@@ -455,66 +457,73 @@ export async function createAppConnection(
   if (allowedAdapters && !allowedAdapters.includes("github-actions")) {
     throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
   }
-  const { app, pem } = await appWithKey(ctx, org);
-  const installation = await readInstallation(
-    fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }),
-    { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
-    input.installationId,
-  );
-  if (!installation.ok) {
-    throw new DomainError("VALIDATION_FAILED", installation.check.message, { check: installation.check });
-  }
-  if (installation.suspended) {
-    throw new DomainError(
-      "VALIDATION_FAILED",
-      `The GitHub App's installation on ${installation.account.login} is suspended. Unsuspend it on GitHub, then try again.`,
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const { app, pem } = await appWithKey(tctx, org);
+    const installation = await readInstallation(
+      guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })),
+      { githubAppId: Number(app.github_app_id), clientId: app.client_id, privateKeyPem: pem },
+      input.installationId,
     );
-  }
-  const adapter = getAdapter("github-actions");
-  const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
-  const id = newId("platformConnection");
-  return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
-    const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
-      [app.id, org.id],
-    );
-    if (!locked.rows[0]) {
-      throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
+    if (!installation.ok) {
+      throw new DomainError("VALIDATION_FAILED", installation.check.message, { check: installation.check });
     }
-    // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
-    await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
-    await recordIntegrationChange(db, {
-      organizationId: org.id,
-      identityId: actorIdentityId,
-      kind: "connection",
-      resourceId: id,
-      changes: ["created"],
+    if (installation.suspended) {
+      throw new DomainError(
+        "VALIDATION_FAILED",
+        `The GitHub App's installation on ${installation.account.login} is suspended. Unsuspend it on GitHub, then try again.`,
+      );
+    }
+    const adapter = getAdapter("github-actions");
+    const baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(installation.account.login));
+    const id = newId("platformConnection");
+    return withTx(tctx.db, async (db) => {
+      // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+      const locked = await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+        [app.id, org.id],
+      );
+      if (!locked.rows[0]) {
+        throw new DomainError("STATE_CHANGED", "The Organization's GitHub App was removed meanwhile");
+      }
+      // Report mode (ADR-0054 Decision 9): before the indexes and the audit.
+      await reportAdminStepUp(db, org.id, actorIdentityId, "connection.create");
+      await recordIntegrationChange(db, {
+        organizationId: org.id,
+        identityId: actorIdentityId,
+        kind: "connection",
+        resourceId: id,
+        changes: ["created"],
+      });
+      await recordAuditEvent(db, {
+        eventType: "sync.connection_created",
+        decision: "info",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { connectionId: id },
+        metadata: {
+          platform: adapter.platform,
+          baseIdentity,
+          name: input.name,
+          credentialKind: "github-app",
+          githubAppId: app.id,
+          installationId: input.installationId,
+        },
+      });
+      const res = await db.query(
+        `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
+           credential_kind, github_app_id, github_installation_id)
+         VALUES ($1,$2,$3,$4,$5,NULL,$6,'github-app',$7,$8)
+         RETURNING ${CONNECTION_COLUMNS}`,
+        [id, org.id, adapter.platform, baseIdentity, input.name, actorIdentityId, app.id, input.installationId],
+      );
+      return res.rows[0] as PlatformConnectionRow;
     });
-    await recordAuditEvent(db, {
-      eventType: "sync.connection_created",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { connectionId: id },
-      metadata: {
-        platform: adapter.platform,
-        baseIdentity,
-        name: input.name,
-        credentialKind: "github-app",
-        githubAppId: app.id,
-        installationId: input.installationId,
-      },
-    });
-    const res = await db.query(
-      `INSERT INTO platform_connections (id, organization_id, platform, base_identity, name, credential_envelope, created_by,
-         credential_kind, github_app_id, github_installation_id)
-       VALUES ($1,$2,$3,$4,$5,NULL,$6,'github-app',$7,$8)
-       RETURNING ${CONNECTION_COLUMNS}`,
-      [id, org.id, adapter.platform, baseIdentity, input.name, actorIdentityId, app.id, input.installationId],
-    );
-    return res.rows[0] as PlatformConnectionRow;
   });
 }
 
@@ -552,68 +561,80 @@ export async function rotateGitHubAppKey(
   if (!isRsaKey(input.privateKey)) {
     throw new DomainError("VALIDATION_FAILED", "privateKey: not an RSA private key in PEM, as GitHub issues them");
   }
-  const seen = await getGitHubApp(ctx, org.id);
-  const githubAppId = Number(seen.github_app_id);
-  const { res, claims, refusal } = await appRequest(fetchImpl ?? outboundOf(ctx).fetch("github", { db: ctx.db, organizationId: org.id, resource: {} }), "/app", seen.client_id, input.privateKey, now);
-  if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
-  if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
-  if (!res.ok) {
-    return {
-      outcome: "failed",
-      status: "failed",
-      where: "connection",
-      httpStatus: res.status,
-      message: `GitHub did not confirm the new key for the App ${seen.slug} (HTTP ${res.status}).`,
-    };
-  }
-  const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
-  if (!body || typeof body !== "object" || Array.isArray(body) || body.id !== githubAppId) {
-    return { outcome: "failed", ...NOT_GITHUB(res.status) };
-  }
-  const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, seen.id, input.privateKey);
-  return withTx(ctx.db, async (db) => {
-    // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
-    const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
-      [seen.id, org.id],
-    )).rows[0] as { id: string; version: number } | undefined;
-    if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
-    if (locked.version !== input.expectedVersion) {
-      throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const seen = await getGitHubApp(tctx, org.id);
+    // The App exists; then passkey-verification, before GitHub is called
+    // (ADR-0054 Decision 7).
+    await requireOrganizationAccess(tctx.db, org.id);
+    const githubAppId = Number(seen.github_app_id);
+    const { res, claims, refusal } = await appRequest(guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("github", { db: tctx.db, organizationId: org.id, resource: {} })), "/app", seen.client_id, input.privateKey, now);
+    if (!res) return { outcome: "failed", ...githubUnreachable(refusal) };
+    if (res.status === 401) return { outcome: "failed", ...readJwtRefusal(res, claims) };
+    if (!res.ok) {
+      return {
+        outcome: "failed",
+        status: "failed",
+        where: "connection",
+        httpStatus: res.status,
+        message: `GitHub did not confirm the new key for the App ${seen.slug} (HTTP ${res.status}).`,
+      };
     }
-    const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
-    const provenance: Record<string, unknown> = {};
-    for (const target of targets) provenance[target.id] = (await gate(target)) ?? null;
-    const updated = await db.query(
-      `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
-       WHERE id = $2 RETURNING ${APP_COLUMNS}`,
-      [JSON.stringify(envelope), seen.id],
-    );
-    // A rotation is a Target mutation class trigger (ADR-0031 §6): enqueue directly.
-    await db.query(
-      "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE id = ANY($1::text[])",
-      [targets.map((t) => t.id)],
-    );
-    const app = updated.rows[0] as GitHubAppRow;
-    await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.replace_key");
-    await recordAuditEvent(db, {
-      eventType: "sync.github_app_key_rotated",
-      decision: "info",
-      actorIdentityId,
-      organizationId: org.id,
-      action: "config.sync.manage",
-      resource: { githubAppId: seen.id },
-      // Decision 7: the gate's provenance for every Target in the set.
-      authz: { reauthorizedTargets: provenance },
-      metadata: {
-        appId: githubAppId,
-        slug: seen.slug,
-        version: app.version,
-        connections: connections.map((c) => c.id).join(",") || null,
-        reauthorizedTargets: targets.map((t) => t.id).join(",") || null,
-      },
+    const body = (await res.json().catch(() => undefined)) as Record<string, unknown> | undefined;
+    if (!body || typeof body !== "object" || Array.isArray(body) || body.id !== githubAppId) {
+      return { outcome: "failed", ...NOT_GITHUB(res.status) };
+    }
+    const envelope = encryptGitHubAppKey(orgKekOf(tctx, org), org.id, seen.id, input.privateKey);
+    return withTx(tctx.db, async (db) => {
+      // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
+      await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
+      const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, version FROM github_apps WHERE id = $1 AND organization_id = $2 AND removed_at IS NULL FOR UPDATE",
+        [seen.id, org.id],
+      )).rows[0] as { id: string; version: number } | undefined;
+      if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+      // Existence first, then passkey-verification (ADR-0054 Decision 7).
+      await requireOrganizationAccess(db, org.id);
+      if (locked.version !== input.expectedVersion) {
+        throw new DomainError("VERSION_CONFLICT", "The GitHub App was changed concurrently; reload and retry");
+      }
+      const { connections, targets } = await lockAppConnectionsAndTargets(db, seen.id);
+      const provenance: Record<string, unknown> = {};
+      for (const target of targets) provenance[target.id] = (await gate(target)) ?? null;
+      const updated = await db.query(
+        `UPDATE github_apps SET key_envelope = $1, version = version + 1, updated_at = now()
+         WHERE id = $2 RETURNING ${APP_COLUMNS}`,
+        [JSON.stringify(envelope), seen.id],
+      );
+      // A rotation is a Target mutation class trigger (ADR-0031 §6): enqueue directly.
+      await db.query(
+        "UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL WHERE id = ANY($1::text[])",
+        [targets.map((t) => t.id)],
+      );
+      const app = updated.rows[0] as GitHubAppRow;
+      await reportAdminStepUp(db, org.id, actorIdentityId, "github_app.replace_key");
+      await recordAuditEvent(db, {
+        eventType: "sync.github_app_key_rotated",
+        decision: "info",
+        actorIdentityId,
+        organizationId: org.id,
+        action: "config.sync.manage",
+        resource: { githubAppId: seen.id },
+        // Decision 7: the gate's provenance for every Target in the set.
+        authz: { reauthorizedTargets: provenance },
+        metadata: {
+          appId: githubAppId,
+          slug: seen.slug,
+          version: app.version,
+          connections: connections.map((c) => c.id).join(",") || null,
+          reauthorizedTargets: targets.map((t) => t.id).join(",") || null,
+        },
+      });
+      return { outcome: "rotated" as const, app };
     });
-    return { outcome: "rotated" as const, app };
   });
 }
 
@@ -629,11 +650,13 @@ export async function rotateGitHubAppKey(
 export async function removeGitHubApp(ctx: AppCtx, org: OrgRow, appRowId: string, actorIdentityId: string): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
     const locked = (await lockedQuery(db, { table: "github_apps", mode: "update" }, "SELECT id, github_app_id, slug FROM github_apps WHERE organization_id = $1 AND removed_at IS NULL FOR UPDATE",
       [org.id],
     )).rows[0] as { id: string; github_app_id: string | number; slug: string } | undefined;
     if (!locked) throw new DomainError("RESOURCE_NOT_FOUND", "This Organization has no GitHub App");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     // The App the caller confirmed, and no other: another one may have
     // replaced it since (removed, then registered or imported).
     if (locked.id !== appRowId) {
@@ -757,13 +780,15 @@ export async function replaceConnectionCredential(
   );
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, people: [actorIdentityId], accessCheck: "deferred" });
     const res = await lockedQuery(db, { table: "platform_connections", mode: "update" }, `SELECT ${CONNECTION_COLUMNS} FROM platform_connections
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [connectionId, org.id],
     );
     const row = res.rows[0] as PlatformConnectionRow | undefined;
     if (!row) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     if (row.credential_kind === "github-app") throw appHasNoCredential();
     if (row.version !== input.expectedVersion) {
       throw new DomainError("VERSION_CONFLICT", "Connection was modified concurrently; reload and retry");
@@ -860,10 +885,14 @@ export async function revokeConnection(
 ): Promise<void> {
   await withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: "recovery", people: [actorIdentityId], accessCheck: "deferred" });
     // An App Connection's App first (ADR-0047 Decision 5), then the
     // Connection, then its Targets.
     await lockConnectionsAndApps(db, org.id, [connectionId]);
+    const live = await db.query("SELECT 1 FROM platform_connections WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [connectionId, org.id]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Platform Connection not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE platform_connections SET revoked_at = now(), version = version + 1, updated_at = now()
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
@@ -924,53 +953,62 @@ export async function checkConnectionAccess(
   // Stored external credentials are not used while the Organization is being deleted (ADR-0051).
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
-  const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
+  // Validation first, without a lock: the request's checks in their order,
+  // then the outbound policy (ADR-0057 Decision 6): a refused base identity
+  // is reported in the policy's words, and no credential is sent. Its DNS
+  // lookup is validation, never inside the effect's transaction.
+  const checked0 = await checkCredentialInput(ctx, org, input, allowedAdapters);
   // No destination fields: the check stops at the base identity.
   const named = Object.values(input.destination ?? {}).some((v) => v !== undefined && v !== null && v !== "");
   const destination = named
-    ? canonicalizeOrValidationError(() => adapter.canonicalizeDestination(input.destination ?? {}))
+    ? canonicalizeOrValidationError(() => checked0.adapter.canonicalizeDestination(input.destination ?? {}))
     : null;
-
-  // The outbound policy first (ADR-0057 Decision 6): a refused base identity
-  // is reported in the policy's words, and no credential is sent.
-  const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_check", connectionId, actorIdentityId);
-  const send = fetchImpl ?? outboundOf(ctx).fetch("sync_check", { db: ctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
-  const credential = refusal
-    ? { ok: false as const, check: refusedCheck(refusal) }
-    : await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, send);
-  const checked = credential.ok
-    ? await adapter.checkAccess({
+  const refusal = await baseIdentityRefusal(ctx, org.id, checked0.baseIdentity, "sync_check", checked0.connectionId, actorIdentityId);
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const resolved = await resolveCredential(tctx, org, input, allowedAdapters);
+    const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
+    const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_check", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
+    const credential = refusal
+      ? { ok: false as const, check: refusedCheck(refusal) }
+      : await credentialForUse(resolved, destination ? "destination-check" : "connection-check", destination?.destination ?? {}, send);
+    const checked = credential.ok
+      ? await adapter.checkAccess({
+          baseIdentity,
+          destination: destination?.destination ?? {},
+          credential: credential.credential,
+          credentialKind: resolved.kind,
+          fetchImpl: send,
+        })
+      : credential.check;
+    if (resolved.kind === "token" && connectionId && storedVersion !== null && checked.credentialExpiresAt) {
+      await recordCredentialExpiry(tctx.db, connectionId, storedVersion, checked.credentialExpiresAt);
+    }
+    // An App Connection has no expiry (ADR-0047 Decision 4): none recorded, none returned.
+    const result = resolved.kind === "token" ? withKnownExpiry(checked, storedExpiresAt) : withoutExpiry(checked);
+    await recordAuditEvent(tctx.db, {
+      eventType: "sync.connection_checked",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: connectionId ? { connectionId } : null,
+      metadata: {
+        platform: adapter.platform,
         baseIdentity,
-        destination: destination?.destination ?? {},
-        credential: credential.credential,
+        destination: destination ? describeDestination(adapter.platform, destination.key) : null,
+        credential: supplied ? "supplied" : "stored",
         credentialKind: resolved.kind,
-        fetchImpl: send,
-      })
-    : credential.check;
-  if (resolved.kind === "token" && connectionId && storedVersion !== null && checked.credentialExpiresAt) {
-    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, checked.credentialExpiresAt);
-  }
-  // An App Connection has no expiry (ADR-0047 Decision 4): none recorded, none returned.
-  const result = resolved.kind === "token" ? withKnownExpiry(checked, storedExpiresAt) : withoutExpiry(checked);
-  await recordAuditEvent(ctx.db, {
-    eventType: "sync.connection_checked",
-    decision: "info",
-    actorIdentityId,
-    organizationId: org.id,
-    action: "config.sync.manage",
-    resource: connectionId ? { connectionId } : null,
-    metadata: {
-      platform: adapter.platform,
-      baseIdentity,
-      destination: destination ? describeDestination(adapter.platform, destination.key) : null,
-      credential: supplied ? "supplied" : "stored",
-      credentialKind: resolved.kind,
-      status: result.status,
-      httpStatus: result.httpStatus ?? null,
-    },
+        status: result.status,
+        httpStatus: result.httpStatus ?? null,
+      },
+    });
+    return result;
   });
-  return result;
 }
 
 /**
@@ -989,63 +1027,74 @@ export async function listConnectionDestinations(
 ): Promise<DestinationListing> {
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const resolved = await resolveCredential(ctx, org, input, allowedAdapters);
-  const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
-  if (!adapter.listDestinations) {
+  // Validation first, without a lock, then the outbound policy (ADR-0057
+  // Decision 6), as for a check: its DNS lookup never runs inside the
+  // effect's transaction.
+  const checked0 = await checkCredentialInput(ctx, org, input, allowedAdapters);
+  if (!checked0.adapter.listDestinations) {
     throw new DomainError(
       "VALIDATION_FAILED",
       "This platform has no destinations to list: the Connection's base identity is the destination",
     );
   }
-  // The outbound policy first (ADR-0057 Decision 6), as for a check.
-  const refusal = await baseIdentityRefusal(ctx, org.id, baseIdentity, "sync_listing", connectionId, actorIdentityId);
-  const send = fetchImpl ?? outboundOf(ctx).fetch("sync_listing", { db: ctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} });
-  const credential = refusal
-    ? { ok: false as const, check: refusedCheck(refusal) }
-    : await credentialForUse(resolved, "listing", {}, send);
-  const listing: DestinationListing = credential.ok
-    ? await adapter.listDestinations({
-        baseIdentity,
-        destination: {},
-        credential: credential.credential,
-        credentialKind: resolved.kind,
-        fetchImpl: send,
-      })
-    : { check: credential.check, items: [], truncated: false };
-  if (resolved.kind === "token" && connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
-    await recordCredentialExpiry(ctx.db, connectionId, storedVersion, listing.check.credentialExpiresAt);
-  }
-  const items = listing.items.filter((item) => {
-    try {
-      adapter.canonicalizeDestination(item.destination);
-      return true;
-    } catch {
-      return false;
+  const refusal = await baseIdentityRefusal(ctx, org.id, checked0.baseIdentity, "sync_listing", checked0.connectionId, actorIdentityId);
+  // The external-effect contract (liveness.ts withExternalEffect): from
+  // here to the end, one transaction holding the Organization row and the
+  // actor, with passkey-verification after the lookups and before the
+  // first decryption or call (ADR-0054 Decisions 2 and 7).
+  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actorIdentityId] }, async (tx) => {
+    const tctx: AppCtx = { ...ctx, db: tx };
+    const resolved = await resolveCredential(tctx, org, input, allowedAdapters);
+    const { adapter, baseIdentity, connectionId, supplied, storedVersion, storedExpiresAt } = resolved;
+    const send = guardEffectFetch(fetchImpl ?? outboundOf(tctx).fetch("sync_listing", { db: tctx.db, organizationId: org.id, resource: connectionId ? { connectionId } : {} }));
+    const credential = refusal
+      ? { ok: false as const, check: refusedCheck(refusal) }
+      : await credentialForUse(resolved, "listing", {}, send);
+    const listing: DestinationListing = credential.ok
+      // The same platform as checked before the transaction: it lists.
+      ? await adapter.listDestinations!({
+          baseIdentity,
+          destination: {},
+          credential: credential.credential,
+          credentialKind: resolved.kind,
+          fetchImpl: send,
+        })
+      : { check: credential.check, items: [], truncated: false };
+    if (resolved.kind === "token" && connectionId && storedVersion !== null && listing.check.credentialExpiresAt) {
+      await recordCredentialExpiry(tctx.db, connectionId, storedVersion, listing.check.credentialExpiresAt);
     }
+    const items = listing.items.filter((item) => {
+      try {
+        adapter.canonicalizeDestination(item.destination);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    await recordAuditEvent(tctx.db, {
+      eventType: "sync.destinations_listed",
+      decision: "info",
+      actorIdentityId,
+      organizationId: org.id,
+      action: "config.sync.manage",
+      resource: connectionId ? { connectionId } : null,
+      metadata: {
+        platform: adapter.platform,
+        baseIdentity,
+        credential: supplied ? "supplied" : "stored",
+        credentialKind: resolved.kind,
+        status: listing.check.status,
+        httpStatus: listing.check.httpStatus ?? null,
+        count: items.length,
+        truncated: listing.truncated,
+      },
+    });
+    return {
+      ...listing,
+      check: resolved.kind === "token" ? withKnownExpiry(listing.check, storedExpiresAt) : withoutExpiry(listing.check),
+      items,
+    };
   });
-  await recordAuditEvent(ctx.db, {
-    eventType: "sync.destinations_listed",
-    decision: "info",
-    actorIdentityId,
-    organizationId: org.id,
-    action: "config.sync.manage",
-    resource: connectionId ? { connectionId } : null,
-    metadata: {
-      platform: adapter.platform,
-      baseIdentity,
-      credential: supplied ? "supplied" : "stored",
-      credentialKind: resolved.kind,
-      status: listing.check.status,
-      httpStatus: listing.check.httpStatus ?? null,
-      count: items.length,
-      truncated: listing.truncated,
-    },
-  });
-  return {
-    ...listing,
-    check: resolved.kind === "token" ? withKnownExpiry(listing.check, storedExpiresAt) : withoutExpiry(listing.check),
-    items,
-  };
 }
 
 /**
@@ -1098,6 +1147,49 @@ async function credentialForUse(
  * Connection has none of its own: its App's key and installation, to mint
  * from; a supplied credential is refused for it.
  */
+/**
+ * What resolveCredential checks before it decrypts anything, in the same
+ * order and with the same answers: the Connection exists, an App
+ * Connection takes no credential, the adapter is allowed and the base
+ * identity canonical, a supplied credential is not empty. Read without a
+ * lock, before an external effect's transaction: so the outbound policy's
+ * check of the base identity (a DNS lookup) runs before it, as validation
+ * (ADR-0054 Decision 7, the external-effect contract).
+ */
+async function checkCredentialInput(
+  ctx: AppCtx,
+  org: OrgRow,
+  input: CredentialInput,
+  allowedAdapters: string[] | null,
+): Promise<{ adapter: ReturnType<typeof getAdapter>; baseIdentity: string; connectionId: string | null }> {
+  let platform: string;
+  let baseIdentity: string;
+  let connectionId: string | null = null;
+  let app = false;
+  if ("connectionId" in input) {
+    const connection = await getConnection(ctx, org.id, input.connectionId);
+    connectionId = connection.id;
+    platform = connection.platform;
+    baseIdentity = connection.base_identity;
+    if (connection.credential_kind === "github-app") {
+      if (input.credential !== undefined) throw appHasNoCredential();
+      app = true;
+    }
+  } else {
+    platform = input.platform;
+    baseIdentity = input.baseIdentity;
+  }
+  if (allowedAdapters && !allowedAdapters.includes(platform)) {
+    throw new DomainError("VALIDATION_FAILED", "This Installation does not allow the requested platform adapter");
+  }
+  const adapter = canonicalizeOrValidationError(() => getAdapter(platform));
+  baseIdentity = canonicalizeOrValidationError(() => adapter.canonicalizeBaseIdentity(baseIdentity));
+  if (!app && input.credential !== undefined && input.credential.trim().length === 0) {
+    throw new DomainError("VALIDATION_FAILED", "Platform Credential must not be empty");
+  }
+  return { adapter, baseIdentity, connectionId };
+}
+
 async function resolveCredential(
   ctx: AppCtx,
   org: OrgRow,
@@ -1114,6 +1206,10 @@ async function resolveCredential(
   let storedExpiresAt: string | null = null;
   if ("connectionId" in input) {
     const connection = await getConnection(ctx, org.id, input.connectionId);
+    // The Connection exists; then passkey-verification, before its
+    // credential is decrypted or used (ADR-0054 Decision 7), in the
+    // caller's external-effect transaction.
+    await requireOrganizationAccess(ctx.db, org.id);
     connectionId = connection.id;
     platform = connection.platform;
     baseIdentity = connection.base_identity;
@@ -1145,6 +1241,9 @@ async function resolveCredential(
       credential = decryptPlatformCredential(orgKekOf(ctx, org), org.id, connection.id, parseJson<Envelope>(stored.credential_envelope));
     }
   } else {
+    // A credential supplied now: passkey-verification before it is used
+    // (ADR-0054 Decision 7), in the caller's external-effect transaction.
+    await requireOrganizationAccess(ctx.db, org.id);
     platform = input.platform;
     baseIdentity = input.baseIdentity;
     credential = input.credential;
@@ -1310,6 +1409,7 @@ export async function updateTarget(
       people: [actorIdentityId],
       projectId: target.project_id,
       environmentIds: [target.environment_id],
+      accessCheck: "deferred",
     });
     // Lock order: Apps, then Connections, then the Target, as key rotation,
     // credential replacement, and Connection revocation take them, so a
@@ -1323,6 +1423,8 @@ export async function updateTarget(
     );
     const seenConnectionId = (seen.rows[0] as { connection_id: string } | undefined)?.connection_id;
     if (!seenConnectionId) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const connectionId = patch.connectionId ?? seenConnectionId;
     const lockedConnections = await lockConnectionsAndApps(db, org.id, [seenConnectionId, connectionId]);
     const connections = lockedConnections.connections;
@@ -1457,7 +1559,7 @@ export async function setTargetState(
   return withTx(ctx.db, async (db) => {
     // The writer protocol (ADR-0051): the live scope first, then Apps → Connections → Targets.
     // Pausing only stops pushes: recovery while frozen (ADR-0055); resuming and revoking are not listed.
-    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: transition === "pause" ? "recovery" : undefined, people: [actorIdentityId] });
+    await lockLiveScope(db, { organizationId: org.id, duringIncidentFreeze: transition === "pause" ? "recovery" : undefined, people: [actorIdentityId], accessCheck: "deferred" });
     const locked = await lockedQuery(db, { table: "sync_targets", mode: "update" }, `SELECT ${TARGET_COLUMNS} FROM sync_targets
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL FOR UPDATE`,
       [targetId, org.id],
@@ -1466,6 +1568,8 @@ export async function setTargetState(
       ? targetRow(locked.rows[0] as Record<string, unknown>)
       : undefined;
     if (!current) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
 
     let res;
     if (transition === "revoke") {
@@ -1587,7 +1691,11 @@ export async function requestPush(ctx: AppCtx, org: OrgRow, targetId: string): P
   // The Organization lock and the freeze check in the same transaction as
   // the update (ADR-0051): a request that waited behind a scheduling sees it.
   await withTx(ctx.db, async (db) => {
-    await lockLiveScope(db, { organizationId: org.id, people: [] });
+    await lockLiveScope(db, { organizationId: org.id, people: [], accessCheck: "deferred" });
+    const live = await db.query("SELECT 1 FROM sync_targets WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL", [targetId, org.id]);
+    if (!live.rows[0]) throw new DomainError("RESOURCE_NOT_FOUND", "Sync Target not found");
+    // Existence first, then passkey-verification (ADR-0054 Decision 7).
+    await requireOrganizationAccess(db, org.id);
     const res = await db.query(
       `UPDATE sync_targets SET needs_sync = true, next_attempt_at = NULL
        WHERE id = $1 AND organization_id = $2 AND revoked_at IS NULL RETURNING id`,
