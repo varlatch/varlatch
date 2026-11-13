@@ -19,10 +19,17 @@ import ts from "typescript";
  *   declared symbol. An element access with a literal key
  *   (`handlers["mint"]`, `ns["f"]`) is resolved like the property access it
  *   spells.
- * - **Access without a name fails closed:** an element access with a
- *   computed key (`handlers[name]`), a spread, and `Object.values`,
- *   `entries` or `assign` over an object whose type has a function on a
- *   chain as a property.
+ * - **Holders fail closed when they escape.** A holder is an object whose
+ *   type has, directly or nested, a property that is a function declared in
+ *   src/ (a method, or a property holding a function). A reference to a
+ *   holder (an identifier, `this`, a property or element access) may only
+ *   be the receiver of a resolvable member access (`h.mint`, `h["mint"]`),
+ *   the initializer of a variable (`const x = h`, `const { mint } = h`),
+ *   whose own references are held to the same rule, or a type position.
+ *   Anywhere else (an argument, to `Object.values` or any other function, a
+ *   spread, a return value, a store, a computed key `h[name]`) it is
+ *   recorded, and a function on a chain among its properties yields a "??"
+ *   entry naming the holder.
  * - **What a reference does:** a call (or `new`) is attributed to its
  *   enclosing function-like declaration, whose own references are then
  *   followed the same way, exported or not; an anonymous callback belongs to
@@ -54,11 +61,9 @@ export interface Graph {
   /** References in src/ the checker could not resolve, by text. */
   unresolved: Map<string, RefNode[]>;
   /**
-   * Accesses that may reach any of an object's properties without naming
-   * one: an element access with a computed key (`handlers[name]`), a spread
-   * (`{ ...handlers }`, `[...handlers]`), and `Object.values`, `entries` and
-   * `assign` over an object. Each with the keys of the properties declared in
-   * src/ that the object's type has.
+   * Holder references outside the allowed positions (see the top of this
+   * file): each with the keys of the functions its type holds, directly or
+   * nested.
    */
   dynamic: { node: ts.Node; what: string; keys: Set<SymbolKey> }[];
 }
@@ -116,23 +121,60 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
     else (map as Map<SymbolKey | string, RefNode[]>).set(key, [ref]);
   };
   const srcPrefix = `${srcDir}/`;
-  /** The keys of the properties, declared in src/, that `expr`'s type has. */
-  const propertyKeys = (expr: ts.Expression): Set<SymbolKey> => {
+  const inSrc = (d: ts.Node) => d.getSourceFile().fileName.startsWith(srcPrefix);
+  // A property that can carry a function: a method, an object property or class field, an accessor.
+  const CARRIER = (d: ts.Node) => ts.isMethodDeclaration(d) || ts.isPropertyAssignment(d) || ts.isShorthandPropertyAssignment(d) ||
+    ts.isPropertyDeclaration(d) || ts.isGetAccessorDeclaration(d);
+  const memo = new Map<ts.Type, Set<SymbolKey>>();
+  const NONE = new Set<SymbolKey>();
+  /** The keys of the functions a type holds as properties, directly or nested (memoized per type, cycles cut). */
+  const heldKeys = (type: ts.Type, depth = 0): Set<SymbolKey> => {
+    const known = memo.get(type);
+    if (known) return known;
+    if (depth > 4 || !(type.flags & ts.TypeFlags.Object)) return NONE;
     const keys = new Set<SymbolKey>();
-    for (const prop of checker.getPropertiesOfType(checker.getTypeAtLocation(expr))) {
+    memo.set(type, keys);
+    for (const prop of checker.getPropertiesOfType(type)) {
       const symbol = canonical(checker, prop);
       const decl = symbol.declarations?.[0];
-      if (decl && decl.getSourceFile().fileName.startsWith(srcPrefix)) keys.add(keyOf(symbol));
-      // A property holding a function declared elsewhere in src/ (`{ mint: issueCredential }`) is reached through its value.
+      if (!decl || !inSrc(decl)) continue;
+      const propType = checker.getTypeOfSymbolAtLocation(prop, decl);
+      // Only a property whose value is callable can be a function on a chain.
+      if (CARRIER(decl) && propType.getCallSignatures().length > 0) keys.add(keyOf(symbol));
+      // A property holding a function declared elsewhere (`{ mint: issueCredential }`, `{ issueCredential }`).
       const value = prop.valueDeclaration;
-      if (value && ts.isPropertyAssignment(value) && ts.isIdentifier(value.initializer)) {
-        const held = checker.getSymbolAtLocation(value.initializer);
-        if (held) keys.add(keyOf(canonical(checker, held)));
-      }
+      const held = value && ts.isPropertyAssignment(value) && ts.isIdentifier(value.initializer) ? checker.getSymbolAtLocation(value.initializer)
+        : value && ts.isShorthandPropertyAssignment(value) ? checker.getShorthandAssignmentValueSymbol(value) : undefined;
+      if (held) keys.add(keyOf(canonical(checker, held)));
+      for (const k of heldKeys(propType, depth + 1)) keys.add(k);
     }
     return keys;
   };
-  const OBJECT_SPREADERS = new Set(["values", "entries", "assign"]);
+  /** Whether an identifier is a value reference, not a name, a key or part of a type. */
+  const isValueReference = (id: ts.Identifier): boolean => {
+    const p = id.parent;
+    if (ts.isShorthandPropertyAssignment(p)) return true; // `{ h }` stores h
+    if ((p as { name?: ts.Node }).name === id || (p as { propertyName?: ts.Node }).propertyName === id) return false;
+    if (ts.isTypeNode(p) || ts.isQualifiedName(p) || ts.isImportSpecifier(p) || ts.isExportSpecifier(p) || ts.isImportClause(p) ||
+      ts.isNamespaceImport(p) || ts.isImportEqualsDeclaration(p) || ts.isLabeledStatement(p) || ts.isBreakOrContinueStatement(p)) return false;
+    return true;
+  };
+  /** Null when a holder reference is in an allowed position; otherwise what it does there. */
+  const escapeOf = (e: ts.Node, sf: ts.SourceFile): string | null => {
+    let x: ts.Node = e;
+    while (x.parent && (ts.isParenthesizedExpression(x.parent) || ts.isAsExpression(x.parent) || ts.isNonNullExpression(x.parent) ||
+      ts.isSatisfiesExpression(x.parent) || ts.isTypeAssertionExpression(x.parent))) x = x.parent;
+    const p = x.parent;
+    if (!p) return "no parent";
+    if (ts.isPropertyAccessExpression(p) && p.expression === x) return null;
+    if (ts.isElementAccessExpression(p) && p.expression === x) {
+      const arg = p.argumentExpression;
+      return ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg) ? null : `a computed access ${p.getText(sf)}`;
+    }
+    if (ts.isVariableDeclaration(p) && p.initializer === x) return null;
+    if (ts.isTypeQueryNode(p)) return null;
+    return `${e.getText(sf)} passed on (${ts.SyntaxKind[p.kind]})`;
+  };
   for (const sf of srcFiles(program, srcDir)) {
     const visit = (n: ts.Node) => {
       if (ts.isIdentifier(n)) {
@@ -143,18 +185,16 @@ export function buildGraph(packageDir: string, edits: Record<string, string> = {
           // obj["name"]: the property it names, as obj.name would.
           const raw = checker.getSymbolAtLocation(arg) ?? checker.getTypeAtLocation(n.expression).getProperty(arg.text);
           add(arg, raw ? canonical(checker, raw) : undefined);
-        } else {
-          const keys = propertyKeys(n.expression);
-          if (keys.size > 0) dynamic.push({ node: n, what: `a computed access ${n.getText(sf)}`, keys });
         }
-      } else if ((ts.isSpreadAssignment(n) || ts.isSpreadElement(n))) {
-        const keys = propertyKeys(n.expression);
-        if (keys.size > 0) dynamic.push({ node: n, what: `a spread of ${n.expression.getText(sf)}`, keys });
-      } else if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ts.isIdentifier(n.expression.expression) &&
-        n.expression.expression.text === "Object" && OBJECT_SPREADERS.has(n.expression.name.text)) {
-        for (const a of n.arguments) {
-          const keys = propertyKeys(a);
-          if (keys.size > 0) dynamic.push({ node: n, what: `Object.${n.expression.name.text}(${a.getText(sf)})`, keys });
+      }
+      // The holder rule: a reference whose type holds functions, outside the allowed positions.
+      const candidate = (ts.isIdentifier(n) && isValueReference(n)) || n.kind === ts.SyntaxKind.ThisKeyword ||
+        ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n);
+      if (candidate) {
+        const what = escapeOf(n, sf);
+        if (what !== null) {
+          const keys = heldKeys(checker.getTypeAtLocation(n));
+          if (keys.size > 0) dynamic.push({ node: n, what, keys });
         }
       }
       ts.forEachChild(n, visit);

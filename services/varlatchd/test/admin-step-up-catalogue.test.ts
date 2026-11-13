@@ -966,6 +966,31 @@ describe("alternate callers", () => {
         ]);
       }, GRAPH_TIMEOUT);
 
+      /** The handler map, called by name from the retire route, then `code` in the rename route; with a helper declared first. */
+      const withHandlers = (code: string, helper = "") => (text: string) =>
+        intoRename(code)(text.replace(PASSKEY_OWNER, `${helper}${HANDLERS}${PASSKEY_OWNER}`).replace(RETIRE, `${RETIRE}\n    await handlers.mint();`));
+      /** The one fail-closed entry a handler map passed on records, and the caller by name still listed. */
+      const handlersEscaped = (g: Graph, kind: string) => {
+        const after = added(callersOf(g))["auth/credentials.ts issueCredential"] ?? [];
+        expect(after).toContain(`${retire} via handlers.mint`);
+        expect(after.filter((e) => e.startsWith("??"))).toEqual([
+          expect.stringMatching(new RegExp(`^\\?\\? http/app\\.ts:\\d+ handlers passed on \\(${kind}\\) may reach mint via handlers\\.mint$`)),
+        ]);
+      };
+
+      it("fails closed: a handler map enumerated through Object[\"values\"]", () => {
+        handlersEscaped(tampered(withHandlers('    await Object["values"](handlers)[0]!();')), "CallExpression");
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a handler map enumerated through an alias of Object.values", () => {
+        handlersEscaped(tampered(withHandlers("    const values = Object.values;\n    await values(handlers)[0]!();")), "CallExpression");
+      }, GRAPH_TIMEOUT);
+
+      it("fails closed: a handler map passed to a user-defined function", () => {
+        const invokeAll = "  function invokeAll(h: Record<string, () => unknown>) {\n    for (const f of Object.values(h)) f();\n  }\n";
+        handlersEscaped(tampered(withHandlers("    invokeAll(handlers);", invokeAll)), "CallExpression");
+      }, GRAPH_TIMEOUT);
+
       it("a re-export through another module", () => {
         const g = tampered(
           (text) => intoRename('    await issue(ctx.db, { identityId: "x", kind: "service" });')(`import { issue } from "../domain/reexport-probe.js";\n${text}`),
