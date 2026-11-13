@@ -164,7 +164,7 @@ what the bundler includes.
 | gopd | 1.2.0 | MIT | CLI |
 | has-symbols | 1.1.0 | MIT | CLI |
 | hasown | 2.0.4 | MIT | CLI |
-| hono | 4.13.13 | MIT | varlatchd, CLI |
+| hono | 4.13.16 | MIT | varlatchd, CLI |
 | http-errors | 2.0.1 | MIT | CLI |
 | iconv-lite | 0.7.3 | MIT | CLI |
 | ieee754 | 1.2.1 | BSD-3-Clause | varlatchd, CLI |
@@ -3272,7 +3272,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ````
 
-### hono@4.13.13
+### hono@4.13.16
 
 ````text
 MIT License

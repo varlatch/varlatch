@@ -108,6 +108,11 @@ fixes.
   operator (`admin reenroll`, or `admin security reset --control
   passkey-verification`). See [Passkey
   verification](docs/reference/security-controls.md#passkey-verification).
+- Dependency update for published advisories: `hono` 4.13.16
+  (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
+  RegExpRouter for some route sets and for paths with an encoded line
+  terminator, could skip middleware; GHSA-3gg2-335m-rxc6: the `css` helper's
+  escaping). Varlatch uses neither `mount()` nor the `css` helper.
 - Dependency update for a published advisory: `@hono/node-server` 2.1.6
   (GHSA-qv5m-9pm6-hqp3: a connection reset during a WebSocket upgrade could
   crash the process). varlatchd and the MCP server accept no WebSocket
