@@ -27,7 +27,7 @@ fixes.
   continues. When an organization is deleted, its export delivers the final
   events for up to 30 days, then its key is cleared; the deletion
   confirmation, in the dashboard and in `varlatch org delete`, says so when
-  an export exists. The Security page and `varlatch security status` show
+  an export exists, or that the export's state could not be read. The Security page and `varlatch security status` show
   the export to admins: whether it is delivering, its destination,
   retention and Object Lock, the last write and heartbeat, what is pending,
   the last error, and a short checklist. Nothing changes for an

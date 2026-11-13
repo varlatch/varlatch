@@ -29,7 +29,7 @@ vi.mock("../src/components/Toast", () => ({
 }));
 vi.mock("../src/components/Dialog", () => ({ useConfirm: () => fake.confirm }));
 
-import { AUDIT_EXPORT_DRAIN, DeletionBanner, OrganizationDeletionCard, deletionState } from "../src/features/settings/OrganizationDeletion";
+import { AUDIT_EXPORT_DRAIN, AUDIT_EXPORT_UNKNOWN, DeletionBanner, OrganizationDeletionCard, deletionState } from "../src/features/settings/OrganizationDeletion";
 import { useDeleteProject } from "../src/features/projects/deleteProject";
 
 const OPEN: OrganizationDeletion = {
@@ -114,28 +114,48 @@ describe("the Settings danger zone", () => {
     expect(fake.toasts).toEqual(["Deletion scheduled"]);
   });
 
-  it("names the audit export's drain only when the organization has a live export (ADR-0056 Decision 10)", async () => {
+  it("names the audit export's drain only when the organization has a live export, read when asked (ADR-0056 Decision 10)", async () => {
     const said = async () => {
       fake.confirm.mockReset();
       fake.confirm.mockResolvedValue(false);
       await mount(<OrganizationDeletionCard org="acme" slug="acme" id="org_1" />);
+      // Nothing is read on the page's load.
+      expect(getAuditExport).not.toHaveBeenCalled();
       await act(async () => root.root.findByType("form").props.onSubmit({ preventDefault: () => {} }));
       await settle();
       return (fake.confirm.mock.calls[0]![0] as { consequences: { text: string }[] }).consequences.map((c) => c.text);
     };
-    // Without the capability, and with no export: as before.
+    const getAuditExport = vi.fn(async (): Promise<unknown> => ({ enabled: true, export: null }));
+    fake.api.getAuditExport = getAuditExport;
+    // Without the capability: as before, and never asked.
     const before = await said();
     expect(before).not.toContain(AUDIT_EXPORT_DRAIN);
     fake.api.meta = async () => ({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete", "audit.storage-export"] });
-    fake.api.getAuditExport = async () => ({ enabled: true, export: null });
     expect(await said()).toEqual(before);
-    fake.api.getAuditExport = async () => ({ enabled: true, export: { state: "removed" } });
+    expect(getAuditExport).toHaveBeenCalledTimes(1);
+    getAuditExport.mockReset();
+    getAuditExport.mockResolvedValue({ enabled: true, export: { state: "removed" } });
     expect(await said()).toEqual(before);
-    fake.api.getAuditExport = async () => ({ enabled: true, export: { state: "active" } });
+    getAuditExport.mockReset();
+    getAuditExport.mockResolvedValue({ enabled: true, export: { state: "active" } });
     expect(await said()).toEqual([...before, AUDIT_EXPORT_DRAIN]);
+    // A read that fails never leaves the disclosure out.
+    getAuditExport.mockReset();
+    getAuditExport.mockRejectedValue(new Error("network down"));
+    expect(await said()).toEqual([...before, AUDIT_EXPORT_UNKNOWN]);
     expect(AUDIT_EXPORT_DRAIN).toBe(
       "The audit export's key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.",
     );
+  });
+
+  it("a member's deletion card never asks for the audit export", async () => {
+    fake.me = "idn_eve";
+    fake.api.meta = async () => ({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete", "audit.storage-export"] });
+    const getAuditExport = vi.fn(async () => ({ enabled: true, export: { state: "active" } }));
+    fake.api.getAuditExport = getAuditExport;
+    await mount(<OrganizationDeletionCard org="acme" slug="acme" id="org_1" />);
+    expect(root.root.findAllByType("form")).toHaveLength(0);
+    expect(getAuditExport).not.toHaveBeenCalled();
   });
 
   it("refuses an out-of-range waiting period, and offers nothing to a member", async () => {

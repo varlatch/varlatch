@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { TriangleAlert } from "lucide-react";
-import type { OrganizationDeletion } from "@varlatch/protocol";
+import type { AuditExportStatus, OrganizationDeletion } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { formatDateTime, timeUntil, useNow } from "../../lib/time";
 import { Button, Callout, Input, SectionCard } from "../../components/ui";
@@ -42,8 +42,17 @@ export function useOrganizationDeletion(org: string | undefined) {
 export const AUDIT_EXPORT_DRAIN =
   "The audit export's key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.";
 
-/** What scheduling, and the deletion it leads to, do and do not reach (Decision 10). */
-export function organizationDeletionConsequences(approvalNeeded: boolean, auditExport = false): string[] {
+/** When the export's state could not be read: the disclosure never fails open. */
+export const AUDIT_EXPORT_UNKNOWN =
+  "The audit export's state could not be read. If this organization has one, its key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.";
+
+/**
+ * What scheduling, and the deletion it leads to, do and do not reach
+ * (Decision 10). `auditExport`: whether the organization has a live audit
+ * export, read when the person asks to delete; "unknown" when that read
+ * failed.
+ */
+export function organizationDeletionConsequences(approvalNeeded: boolean, auditExport: boolean | "unknown" = false): string[] {
   return [
     "Now: the organization freezes. Changes are refused and reads still work, so a last copy can be made. Machine identities and webhooks are suspended, Sync Targets paused, and pending invitations revoked.",
     `After the waiting period${approvalNeeded ? ", and another admin's approval" : ""}: every membership ends, machines are retired, values are erased and the organization's key is destroyed. There is no undo.`,
@@ -53,21 +62,23 @@ export function organizationDeletionConsequences(approvalNeeded: boolean, auditE
     "Backups taken before the deletion completes keep the data until their retention removes them, and restoring one brings it back.",
     "PostgreSQL's old row versions and write-ahead log, its replicas and volume snapshots keep the data for a while. Requests already authorized may still hold keys or values in memory, and one in flight when the deletion runs may still complete.",
     "A GitHub App stays installed on GitHub: uninstall or delete it there, and revoke copies of its private key. Installation tokens already issued stay valid until they expire.",
-    ...(auditExport ? [AUDIT_EXPORT_DRAIN] : []),
+    ...(auditExport === "unknown" ? [AUDIT_EXPORT_UNKNOWN] : auditExport ? [AUDIT_EXPORT_DRAIN] : []),
   ];
 }
 
 /**
- * Whether the organization has a live audit export, for the deletion's
- * consequences. Asked only where the server has audit export and the
- * caller may read it (an admin); false otherwise and while unknown.
+ * Whether the organization has a live audit export, read when an admin asks
+ * to delete it, so the confirmation never misses it while a read is
+ * loading: "unknown" when the read fails. Never asked of a server without
+ * audit export, nor on the page's load.
  */
-function useLiveAuditExport(org: string, admin: boolean): boolean {
-  const { api } = useSession();
-  const supported = useCapability("audit.storage-export");
-  const status = useQuery({ queryKey: auditExportKey(org), queryFn: () => api.getAuditExport(org), enabled: supported && admin, retry: false });
-  const state = status.data?.export?.state;
-  return state === "active" || state === "draining";
+async function readLiveAuditExport(fetch: () => Promise<AuditExportStatus>): Promise<boolean | "unknown"> {
+  try {
+    const state = (await fetch()).export?.state;
+    return state === "active" || state === "draining";
+  } catch {
+    return "unknown";
+  }
 }
 
 /** The request's state in words, for the card and the banner. */
@@ -101,7 +112,7 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
   const now = useNow();
   const deletion = useOrganizationDeletion(org);
   const { me, admin, admins, name } = useMembership(org);
-  const auditExport = useLiveAuditExport(org, admin);
+  const auditExportSupported = useCapability("audit.storage-export");
   const [days, setDays] = useState("7");
   const afterDays = /^\d+$/.test(days) && Number(days) >= 1 && Number(days) <= 30 ? Number(days) : null;
   const done = async (title: string, description?: string) => {
@@ -128,6 +139,9 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
 
   const askSchedule = async () => {
     if (afterDays === null) return;
+    const auditExport = auditExportSupported
+      ? await readLiveAuditExport(() => qc.fetchQuery({ queryKey: auditExportKey(org), queryFn: () => api.getAuditExport(org), staleTime: 0, retry: false }))
+      : false;
     const ok = await confirm({
       title: `Delete organization ${slug}?`,
       description: `It freezes now and is deleted no earlier than ${afterDays} ${afterDays === 1 ? "day" : "days"} from now.`,
@@ -199,7 +213,7 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
         ) : (
           <>
             <ul className="list-disc space-y-1.5 pl-5 text-[13px] text-fg/90">
-              {organizationDeletionConsequences(admins > 1, auditExport).map((text) => (
+              {organizationDeletionConsequences(admins > 1).map((text) => (
                 <li key={text}>{text}</li>
               ))}
             </ul>

@@ -293,6 +293,28 @@ describe("approvals bind the exact request", () => {
 });
 
 describe("refusals", () => {
+  it("a destination change to a refused endpoint: answered before an approval is asked for, recorded once, and not at all for a refused sign-in", async () => {
+    expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody())).status).toBe(201);
+    const refusals = async () => (await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'outbound.refused'"))[0].n as number;
+    const moveToPrivate = { expectedVersion: 1, destination: { endpoint: "https://10.1.2.3" } };
+    const refused = await call("PATCH", `${ORG}/audit-export`, admin.cli, moveToPrivate);
+    expect(refused.status, refused.text).toBe(422);
+    expect(refused.body.error).toMatchObject({ code: "VALIDATION_FAILED", details: { outbound: expect.any(String) } });
+    expect(await intents()).toBe(0);
+    expect(await refusals()).toBe(1);
+    const recorded = (await rows("SELECT metadata FROM audit_events WHERE event_type = 'outbound.refused'"))[0].metadata;
+    expect(typeof recorded === "string" ? JSON.parse(recorded) : recorded).toMatchObject({ purpose: "audit_export", phase: "configuration" });
+    await ctx.db.query(
+      `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
+       VALUES ($1, 'passkey-verification', 'enforce', NULL, 1, $2, now())`,
+      [orgId, admin.id],
+    );
+    expect((await call("PATCH", `${ORG}/audit-export`, admin.cli, moveToPrivate)).body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    expect(await refusals()).toBe(1);
+    expect(await intents()).toBe(0);
+    expect((await rows("SELECT version FROM audit_exports WHERE state = 'active'"))[0].version).toBe(1);
+  });
+
   it("a person outside the organization gets not-found on every route, sending nothing", async () => {
     expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody())).status).toBe(201);
     expect((await call("POST", "/v1/organizations", admin.cli, { name: "Beta", slug: "beta" })).status).toBe(201);
