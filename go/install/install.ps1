@@ -4,7 +4,7 @@
 # current user, in %LOCALAPPDATA%\Programs\Varlatch, and adds that folder to
 # the user PATH. A server needs Linux: see install.sh.
 #
-#   irm https://varlatch.com/install.ps1 -OutFile install.ps1; if ($?) { .\install.ps1 }
+#   irm https://varlatch.com/install.ps1 -OutFile install.ps1; if ($?) { powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 }
 #
 # Options: --version <version> (default: the release this script came
 # with), --help.
@@ -222,9 +222,12 @@
     }
     if ($Added) {
       # Setting a user variable broadcasts the change, so new terminals and
-      # Explorer see the new PATH; this one is set and removed again.
-      [Environment]::SetEnvironmentVariable('VARLATCH_INSTALL_REFRESH', '1', 'User')
-      [Environment]::SetEnvironmentVariable('VARLATCH_INSTALL_REFRESH', $null, 'User')
+      # Explorer see the new PATH; this one, named so that it cannot be one
+      # the user has, is set and removed again (removed with a real null:
+      # PowerShell would pass $null as "", which leaves it set and empty).
+      $Refresh = 'VARLATCH_INSTALL_REFRESH_' + [Guid]::NewGuid().ToString('N')
+      [Environment]::SetEnvironmentVariable($Refresh, '1', 'User')
+      [Environment]::SetEnvironmentVariable($Refresh, [NullString]::Value, 'User')
       $env:Path = "$env:Path;$Dir"
       Write-Host "Added $Dir to your user PATH. Open a new terminal to use varlatch."
     }
