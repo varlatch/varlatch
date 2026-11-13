@@ -11,7 +11,7 @@ import type { Querier } from "../db/migrate.js";
 import type { AppCtx } from "./ctx.js";
 import { DomainError } from "./errors.js";
 import { lockLiveScope, refuseIfFrozen, refuseIfIncidentFrozen, withExternalEffect } from "./liveness.js";
-import { requireOrganizationAccess } from "./requestaccess.js";
+import { assertOrganizationAccessChecked, requireOrganizationAccess } from "./requestaccess.js";
 import { guardEffectFetch } from "./externaleffect.js";
 import { ApprovalNeeded, type ProtectedGate } from "./approvals.js";
 import type { ProtectedOptions } from "./identities.js";
@@ -673,6 +673,9 @@ async function attachInTx(
   const keyEnvelope = typeof row!.pending_key_envelope === "string"
     ? (JSON.parse(row!.pending_key_envelope) as Envelope)
     : (row!.pending_key_envelope as Envelope);
+  // The checkpoint passed in this transaction (prepareProtectedOperation),
+  // under the Organization lock, before the pending key is decrypted.
+  await assertOrganizationAccessChecked(db, org.id, "decryption of a pending GitHub App key", { underLock: true });
   const pem = decryptGitHubAppKey(orgKekOf(ctx, org), org.id, registrationId, keyEnvelope);
   const id = newId("githubApp");
   const envelope = encryptGitHubAppKey(orgKekOf(ctx, org), org.id, id, pem);
