@@ -34,9 +34,12 @@ import { lockLiveScope, openFreeze } from "./liveness.js";
  * `enforce` is offered per control, by the release, never by a setting
  * (ADR-0054 step 4): a control is unlocked (ENFORCEABLE_CONTROLS, and the
  * capability security.enforce.<control> in /v1/meta) in the release that
- * builds its full guarantee. For every other control, enforce is refused
- * with CONTROL_MODE_UNAVAILABLE. What `report` counts, where and when:
- * securityreport.ts; what `enforce` does: protected.ts.
+ * builds its full guarantee. Since step 4.9b every control is unlocked; a
+ * control left out of ENFORCEABLE_CONTROLS would have enforce refused with
+ * CONTROL_MODE_UNAVAILABLE (availableModesOf, controlModeUnavailable). Unlocking
+ * changes no default: every control stays off until an admin changes it.
+ * What `report` counts, where and when: securityreport.ts; what `enforce`
+ * does: protected.ts.
  */
 
 export const SECURITY_CONTROLS = ["requirement-protection", "admin-step-up", "passkey-verification", "credential-lifetime"] as const;

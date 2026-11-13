@@ -48,6 +48,18 @@ import ts from "typescript";
  *   delete/all/use/on(...)`, "METHOD /path"), and the functions the caller
  *   names as roots (host commands, startup, background workers), each with
  *   its class.
+ * - **Only `app` registers routes.** A registration method (or `route`,
+ *   `mount`, `basePath`) called on any other Hono router, by its type (a
+ *   variable of another name, a chained `app.get(...).post(...)`, a
+ *   sub-router), fails closed: its path would not be the route's full path,
+ *   and a callback passed to it would otherwise be attributed to the
+ *   function it is written in. `otherRouterCalls` lists every such call.
+ * - **Writers by SQL text.** `writers` reads each SQL expression as one
+ *   text: a string or template literal, or a `+` concatenation of them, with
+ *   every part that is not a literal (a template substitution, a variable)
+ *   as a hole. A write (`INSERT INTO`, `UPDATE`, `DELETE FROM`) whose table
+ *   is a hole, or that ends the text with nothing after it, fails closed:
+ *   the table it writes cannot be read from the source.
  * - **Fail closed:** a reference that escapes as a value into anything
  *   else (an argument, an array, a return value), a module's top level that
  *   is not a root, a registration whose path is not a string literal, a
@@ -102,6 +114,8 @@ const MAX_DEPTH = 12;
 type SymbolKey = ts.Node | ts.Symbol;
 const keyOf = (symbol: ts.Symbol): SymbolKey => symbol.declarations?.[0] ?? symbol;
 const REGISTRATION_METHODS = new Set(["get", "post", "put", "patch", "delete", "all", "use", "on"]);
+/** Router methods that mount or derive another router: on `app` or any other router, they fail closed. */
+const ROUTER_METHODS = new Set([...REGISTRATION_METHODS, "route", "mount", "basePath"]);
 
 /**
  * The program over src/, with `edits` (absolute path -> text, new files
@@ -315,6 +329,40 @@ export function isRegistration(n: ts.Node): n is ts.CallExpression & { expressio
     n.expression.expression.text === "app" && REGISTRATION_METHODS.has(n.expression.name.text);
 }
 
+/** Whether an expression's type is one of Hono's routers (Hono, HonoBase), declared in the hono package. */
+function isHonoRouter(checker: ts.TypeChecker, e: ts.Expression): boolean {
+  const type = checker.getTypeAtLocation(e);
+  const types = type.isUnionOrIntersection() ? type.types : [type];
+  return types.some((t) => {
+    const symbol = t.getSymbol() ?? t.aliasSymbol;
+    return !!symbol && /^Hono/.test(symbol.getName()) &&
+      (symbol.declarations ?? []).some((d) => /[\\/]node_modules[\\/]hono[\\/]/.test(d.getSourceFile().fileName));
+  });
+}
+
+/**
+ * A call of a router method on a Hono router that is not an `app`
+ * registration: another variable, a chained call, `route`, `mount` or
+ * `basePath`. Such a call fails closed (see the top of this file).
+ */
+function isOtherRouterCall(checker: ts.TypeChecker, n: ts.Node): n is ts.CallExpression & { expression: ts.PropertyAccessExpression } {
+  return ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ROUTER_METHODS.has(n.expression.name.text) &&
+    !isRegistration(n) && isHonoRouter(checker, n.expression.expression);
+}
+
+/** Every call in src/ of a router method on a Hono router other than an `app` registration, as "file:line". */
+export function otherRouterCalls(g: Graph): string[] {
+  const out: string[] = [];
+  for (const sf of srcFiles(g.program, g.srcDir)) {
+    const visit = (n: ts.Node) => {
+      if (isOtherRouterCall(g.checker, n)) out.push(`${rel(g, sf)}:${line(sf, n)} ${n.expression.getText(sf)}`);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out;
+}
+
 /** "POST /v1/..." for a registration, or null when its path is not a string literal. */
 export function registrationLabel(call: ts.CallExpression & { expression: ts.PropertyAccessExpression }): string | null {
   const [path] = call.arguments;
@@ -366,6 +414,9 @@ function enclosingOf(g: Graph, sf: ts.SourceFile, node: ts.Node): Enclosing {
     if (isRegistration(p) && child !== p.expression) {
       const label = registrationLabel(p);
       return label ? { kind: "route", label: `${rel(g, sf)} ${label}` } : { kind: "error", label: `?? ${rel(g, sf)}:${line(sf, p)} a registration whose path is not a string literal` };
+    }
+    if (child !== (p as { expression?: ts.Node }).expression && isOtherRouterCall(g.checker, p)) {
+      return { kind: "error", label: `?? ${rel(g, sf)}:${line(sf, p)} a registration on a router other than app (${p.expression.getText(sf)})` };
     }
     if (FUNCTION_LIKE(p)) {
       const name = bindingName(p);
@@ -444,6 +495,9 @@ function useOfExpression(g: Graph, sf: ts.SourceFile, id: RefNode, expr: ts.Node
   if (isRegistration(q) && q.arguments.some((a) => a === e)) {
     const label = registrationLabel(q);
     return label ? { kind: "route", label: `${rel(g, sf)} ${label}` } : { kind: "escape", label: escape(g, sf, id, "a registration whose path is not a string literal") };
+  }
+  if (isOtherRouterCall(g.checker, q) && q.arguments.some((a) => a === e)) {
+    return { kind: "escape", label: escape(g, sf, id, `a registration on a router other than app (${q.expression.getText(sf)})`) };
   }
   return { kind: "escape", label: escape(g, sf, id, `a value passed on (${ts.SyntaxKind[q.kind]})`) };
 }
@@ -562,18 +616,59 @@ export function exportedSymbol(g: Graph, file: string, name: string): ts.Symbol 
   return canonical(g.checker, symbol);
 }
 
+/** A part of a SQL text that is not a literal: a template substitution, a variable, a call. */
+export const SQL_HOLE = "\u0000";
+
 /**
- * Every string or template literal in src/ that `write` matches, by its
+ * The SQL text of an expression: a string or template literal, or a `+`
+ * concatenation with at least one literal operand, each part that is not
+ * a literal read as {@link SQL_HOLE}. Null for anything else.
+ */
+export function sqlText(n: ts.Node): string | null {
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
+  if (ts.isTemplateExpression(n)) return n.head.text + n.templateSpans.map((span) => SQL_HOLE + span.literal.text).join("");
+  if (ts.isParenthesizedExpression(n)) return sqlText(n.expression);
+  if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = sqlText(n.left);
+    const right = sqlText(n.right);
+    return left === null && right === null ? null : (left ?? SQL_HOLE) + (right ?? SQL_HOLE);
+  }
+  return null;
+}
+
+/**
+ * A write whose table cannot be read from the text: the table is a hole, or
+ * nothing follows the keyword. A lock clause (`FOR UPDATE`, `FOR NO KEY
+ * UPDATE`) and an upsert's `DO UPDATE` are not writes of a named table.
+ */
+const UNNAMED_WRITE = new RegExp(`(?<!\\b(?:FOR|KEY|DO|ON) )\\b(?:INSERT INTO|UPDATE|DELETE FROM)\\s*(?:${SQL_HOLE}|$)`);
+
+/** The outermost expression of a `+` chain (through parentheses) that `n` is part of. */
+const inConcatenation = (n: ts.Node): boolean => {
+  let p = n.parent;
+  while (p && ts.isParenthesizedExpression(p)) p = p.parent;
+  return !!p && ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.PlusToken && sqlText(p) !== null;
+};
+
+/**
+ * Every SQL text in src/ (see {@link sqlText}) that `write` matches, by its
  * enclosing route or function ("file name"), with that function's symbol
- * (null for a route, a root's own body, or a fail-closed entry).
+ * (null for a route, a root's own body, or a fail-closed entry). A text
+ * with a write of an unnamed table fails closed: "?? file:line a write
+ * whose table is not a literal".
  */
 export function writers(g: Graph, write: RegExp): { label: string; symbol: ts.Symbol | null }[] {
   const out = new Map<string, ts.Symbol | null>();
   for (const sf of srcFiles(g.program, g.srcDir)) {
     const visit = (n: ts.Node) => {
-      if ((ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n) || ts.isTemplateExpression(n)) && write.test(n.getText(sf))) {
+      const text = inConcatenation(n) ? null : sqlText(n);
+      if (text !== null && write.test(text)) {
         const ctx = enclosingOf(g, sf, n);
         out.set(ctx.kind === "error" ? ctx.label : ctx.kind === "module" ? `?? ${ctx.label}` : ctx.label, ctx.kind === "function" ? ctx.symbol : null);
+        return;
+      }
+      if (text !== null && UNNAMED_WRITE.test(text)) {
+        out.set(`?? ${rel(g, sf)}:${line(sf, n)} a write whose table is not a literal`, null);
         return;
       }
       ts.forEachChild(n, visit);

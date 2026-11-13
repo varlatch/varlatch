@@ -23,6 +23,10 @@ import { registerSoftPasskey, type SoftAuthenticator } from "./helpers/soft-auth
  *   answer and no audit event at all.
  * - A control change decides on the state before the change: off to report
  *   from all off audits nothing; report to off audits the denial.
+ * - A control at enforce counts as on, like one at report.
+ * - If reading the controls fails after the denial (a database fault), the
+ *   answer is still main's PERMISSION_DENIED, never a 500, and nothing is
+ *   audited, as on main.
  *
  * The race on PGlite (one connection): Carol is an admin for the route's
  * own check and a member once the operation's transaction holds the
@@ -225,11 +229,54 @@ afterEach(async () => {
   await ctx.close();
 });
 
+/**
+ * Runs `send` with the recheck's read of the controls (anyControlOn)
+ * failing in the database: a real error, which on PostgreSQL also aborts
+ * the transaction.
+ */
+async function controlsReadFails(send: () => Promise<Answer>): Promise<Answer> {
+  const original = ctx.db.query.bind(ctx.db);
+  const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  let failed = 0;
+  ctx.db.query = (async (text: string, params?: unknown[]) => {
+    if (text.includes("SELECT 1 AS on FROM security_controls")) {
+      failed++;
+      return original("SELECT 1 / 0");
+    }
+    return original(text, params);
+  }) as typeof ctx.db.query;
+  try {
+    const res = await send();
+    expect(failed, "the controls were read after the denial").toBe(1);
+    expect(logged).toHaveBeenCalledWith("could not read the security controls after an authorization denial:", expect.anything());
+    return res;
+  } finally {
+    ctx.db.query = original;
+    logged.mockRestore();
+  }
+}
+
 describe("freezing, when the recheck in its transaction denies", () => {
   it("with a control on: refused, nothing frozen, the denial audited once as an ordinary one", async () => {
     await turnOn("admin-step-up", "report");
     await race(() => freeze(carol.cli), true);
     expect(await rows("SELECT id FROM organization_freezes")).toEqual([]);
+  });
+
+  it("with a control at enforce: refused, nothing frozen, the denial audited once as an ordinary one", async () => {
+    await turnOn("requirement-protection", "enforce");
+    await race(() => freeze(carol.cli), true);
+    expect(await rows("SELECT id FROM organization_freezes")).toEqual([]);
+  });
+
+  it("with a control on but its read failing after the denial: main's answer, not a 500, and no audit event", async () => {
+    const off = await race(() => freeze(carol.cli), false);
+    await turnOn("admin-step-up", "report");
+    const failed = await race(() => controlsReadFails(() => freeze(carol.cli)), false);
+    expect(withoutRequestId(failed)).toEqual(withoutRequestId(off));
+    expect(await rows("SELECT id FROM organization_freezes")).toEqual([]);
+    // The read works again: the same race is audited.
+    await race(() => freeze(carol.cli), true);
   });
 
   it("with every control off: the same answer as main, no audit event", async () => {
@@ -277,6 +324,22 @@ describe("changing a control, when the recheck in its transaction denies", () =>
     // The same request with a control on answers the same, audited.
     await turnOn("requirement-protection", "report");
     expect(withoutRequestId(await race(() => change(carol.cli, "admin-step-up", "report", 0), true))).toEqual(withoutRequestId(off));
+  });
+
+  it("with another control at enforce: refused, nothing changed, the denial audited once", async () => {
+    await turnOn("requirement-protection", "enforce");
+    const before = await modes();
+    await race(() => change(carol.cli, "admin-step-up", "report", 0), true);
+    expect(await modes()).toEqual(before);
+  });
+
+  it("report to off while another control stays on: the denial audited exactly once, the approval unused", async () => {
+    await turnOn("requirement-protection", "report");
+    await turnOn("admin-step-up", "report");
+    const approval = await approved(carol, () => change(carol.cli, "admin-step-up", "off", 1));
+    await race(() => change(carol.cli, "admin-step-up", "off", 1, approval), true);
+    expect(await modes()).toEqual({ "admin-step-up": "report@1", "requirement-protection": "report@1" });
+    expect((await rows("SELECT consumed_at FROM approval_intents WHERE id = $1", [approval]))[0].consumed_at).toBeNull();
   });
 
   it("report to off, turning the last control off: the state before the change has it on, so the denial is audited", async () => {
