@@ -29,6 +29,9 @@ const (
 	PurposeGitHubAppKey       = "github-app-key"
 	PurposeKEKCanary          = "kek-canary"
 	PurposeJWTSigningKey      = "jwt-signing-key"
+	// ADR-0056, since TypeScript 0.22.0.
+	PurposeAuditExportCredential = "audit-export-credential"
+	PurposeAuditExportDrain      = "audit-export-drain"
 )
 
 // OrgKEKContext binds an organization's KEK, wrapped by the Root KEK.
@@ -64,6 +67,19 @@ func PlatformCredentialContext(organizationID, connectionID string) Context {
 // pending), not GitHub's numeric app id.
 func GitHubAppKeyContext(organizationID, githubAppID string) Context {
 	return Context{"purpose": PurposeGitHubAppKey, "organizationId": organizationID, "githubAppId": githubAppID}
+}
+
+// AuditExportCredentialContext binds an audit export's S3 credential (org
+// KEK) while the export is active. exportID is the export's row id (aex_…).
+func AuditExportCredentialContext(organizationID, exportID string) Context {
+	return Context{"purpose": PurposeAuditExportCredential, "organizationId": organizationID, "exportId": exportID}
+}
+
+// AuditExportDrainContext binds the same credential re-encrypted under the
+// Root KEK when its organization is deleted, so the export can drain after
+// the org KEK is destroyed.
+func AuditExportDrainContext(organizationID, exportID string) Context {
+	return Context{"purpose": PurposeAuditExportDrain, "organizationId": organizationID, "exportId": exportID}
 }
 
 // KEKCanaryContext binds the installation's KEK canary (Root KEK).

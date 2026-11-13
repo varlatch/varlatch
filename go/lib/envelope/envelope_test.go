@@ -24,6 +24,13 @@ var (
 	writeGoFixture = flag.String("write-go-fixture", "", "write a freshly sealed Go fixture to this path")
 )
 
+// The TypeScript fixtures (tsfixtures.mjs generate --ref v<release>), oldest
+// first: envelopes every listed release sealed must keep opening in Go.
+// tsLatest also supplies the vectors and the shape of go-sealed.json.
+var tsFixtures = []string{"testdata/ts-v0.21.0.json", tsLatest}
+
+const tsLatest = "testdata/ts-v0.22.0.json"
+
 // fixture is the shape tsfixtures.mjs writes, and go-sealed.json too.
 type fixture struct {
 	Comment        string     `json:"comment"`
@@ -76,6 +83,14 @@ type org struct {
 		PrivateKeyPEM string   `json:"privateKeyPem"`
 		Envelope      Envelope `json:"envelope"`
 	} `json:"githubApps"`
+	// Since 0.22.0 (ADR-0056): Envelope under the org KEK, DrainEnvelope
+	// under the Root KEK.
+	AuditExports []struct {
+		ExportID      string   `json:"exportId"`
+		Credential    string   `json:"credential"`
+		Envelope      Envelope `json:"envelope"`
+		DrainEnvelope Envelope `json:"drainEnvelope"`
+	} `json:"auditExports,omitempty"`
 }
 
 type jwtKey struct {
@@ -166,6 +181,17 @@ func openAll(t *testing.T, f fixture) {
 			}
 			n++
 		}
+		for _, a := range o.AuditExports {
+			got, err := Open(orgKEK, a.Envelope, AuditExportCredentialContext(o.OrganizationID, a.ExportID))
+			if err != nil || string(got) != a.Credential {
+				t.Fatalf("audit export %s: %v", a.ExportID, err)
+			}
+			got, err = Open(root, a.DrainEnvelope, AuditExportDrainContext(o.OrganizationID, a.ExportID))
+			if err != nil || string(got) != a.Credential {
+				t.Fatalf("audit export drain %s: %v", a.ExportID, err)
+			}
+			n += 2
+		}
 	}
 	for _, k := range f.JWTSigningKeys {
 		got, err := Open(root, k.Envelope, JWTSigningKeyContext(k.KeyID))
@@ -186,14 +212,23 @@ func openAll(t *testing.T, f fixture) {
 	}
 }
 
-// Envelopes the TypeScript server sealed open in Go.
+// Envelopes the TypeScript server sealed open in Go, from every release
+// with a fixture.
 func TestTypeScriptFixtures(t *testing.T) {
-	openAll(t, load(t, "testdata/ts-v0.21.0.json"))
+	for _, path := range tsFixtures {
+		t.Run(path, func(t *testing.T) { openAll(t, load(t, path)) })
+	}
+	// The latest release seals every purpose Go knows.
+	for _, o := range load(t, tsLatest).Organizations {
+		if len(o.AuditExports) == 0 {
+			t.Fatalf("%s: organization %s has no audit export envelopes", tsLatest, o.OrganizationID)
+		}
+	}
 }
 
 // The AAD encoding matches the TypeScript canonicalJson byte for byte.
 func TestCanonicalJSONMatchesTypeScript(t *testing.T) {
-	f := load(t, "testdata/ts-v0.21.0.json")
+	f := load(t, tsLatest)
 	if len(f.Canonical) < 5 {
 		t.Fatal("no canonical vectors")
 	}
@@ -212,7 +247,7 @@ func TestCanonicalJSONMatchesTypeScript(t *testing.T) {
 
 // Root KEK material parses as Node parses it, and the trim set is Node's.
 func TestParseRootKEKMatchesTypeScript(t *testing.T) {
-	f := load(t, "testdata/ts-v0.21.0.json")
+	f := load(t, tsLatest)
 	if len(f.KEKMaterial) < 20 {
 		t.Fatal("no KEK vectors")
 	}
@@ -254,7 +289,7 @@ func TestParseRootKEKMatchesTypeScript(t *testing.T) {
 // code to open.
 func sealGoFixture(t *testing.T, path string) {
 	t.Helper()
-	ts := load(t, "testdata/ts-v0.21.0.json")
+	ts := load(t, tsLatest)
 	root := GenerateKey()
 	f := fixture{
 		Comment:        "Written by the Go tests (go test ./lib/envelope -update); tsfixtures.mjs verify opens it with the TypeScript code.",
@@ -287,6 +322,10 @@ func sealGoFixture(t *testing.T, path string) {
 		}
 		for i, g := range o.GitHubApps {
 			o.GitHubApps[i].Envelope = must(Seal(orgKEK, []byte(g.PrivateKeyPEM), GitHubAppKeyContext(o.OrganizationID, g.GitHubAppID)))
+		}
+		for i, a := range o.AuditExports {
+			o.AuditExports[i].Envelope = must(Seal(orgKEK, []byte(a.Credential), AuditExportCredentialContext(o.OrganizationID, a.ExportID)))
+			o.AuditExports[i].DrainEnvelope = must(Seal(root, []byte(a.Credential), AuditExportDrainContext(o.OrganizationID, a.ExportID)))
 		}
 		f.Organizations = append(f.Organizations, o)
 	}
@@ -333,7 +372,7 @@ func TestGoFixtures(t *testing.T) {
 // An envelope read from JSON and written back is re-encoded in standard
 // base64 and still opens: decoding normalizes Node's lenient forms.
 func TestLooseEnvelopesRoundTrip(t *testing.T) {
-	f := load(t, "testdata/ts-v0.21.0.json")
+	f := load(t, tsLatest)
 	root := unhex(t, f.RootKEK)
 	if len(f.LooseEnvelopes) < 4 {
 		t.Fatal("no loose envelopes")
@@ -432,6 +471,7 @@ func TestWrongKeyOrContext(t *testing.T) {
 	contexts := []Context{
 		OrgKEKContext("org_a"), DEKContext("org_a", "val_b", "ver_c"), ValueContext("org_a", "val_b", "ver_c"),
 		WebhookSecretContext("org_a", "whk_b"), PlatformCredentialContext("org_a", "pcn_b"), GitHubAppKeyContext("org_a", "gha_b"),
+		AuditExportCredentialContext("org_a", "aex_b"), AuditExportDrainContext("org_a", "aex_b"), AuditExportCredentialContext("org_a", "aex_x"),
 		KEKCanaryContext("ins_a"), JWTSigningKeyContext("key_a"),
 		ValueContext("org_x", "val_b", "ver_c"), ValueContext("org_a", "val_x", "ver_c"), ValueContext("org_a", "val_b", "ver_x"),
 		DEKContext("org_a", "ver_c", "val_b"), // identifiers swapped

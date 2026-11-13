@@ -134,10 +134,10 @@ jobs:
           done
 
       # ADR-0059 Order step 3: envelopes cross between the servers in both
-      # directions. The Go tests open what the TypeScript code sealed
-      # (ts-v0.21.0.json); here the TypeScript server's own crypto code
-      # (this checkout's, loaded with Node's type stripping) opens what Go
-      # sealed, and the TypeScript fixture too.
+      # directions. The Go tests open what TypeScript releases sealed
+      # (ts-v0.21.0.json, ts-v0.22.0.json); here the TypeScript server's own
+      # crypto code (this checkout's, loaded with Node's type stripping)
+      # opens what Go sealed, and the TypeScript fixtures too.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 26
@@ -153,6 +153,7 @@ jobs:
           node go/lib/envelope/testdata/tsfixtures.mjs verify "$fresh"
           node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/go-sealed.json
           node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/ts-v0.21.0.json
+          node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/ts-v0.22.0.json
 
       # ADR-0021's split, SPDX headers and LICENSE files included, for go/
       # too. The script uses Node's standard library only.
