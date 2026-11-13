@@ -116,7 +116,7 @@ func ueventValue(path, key string) string {
 func ownCgroup() Cgroup {
 	b, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
-		return Cgroup{Note: err.Error()}
+		return Cgroup{Note: err.Error(), CPUNote: err.Error()}
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		if rel, ok := strings.CutPrefix(line, "0::"); ok {
@@ -127,10 +127,33 @@ func ownCgroup() Cgroup {
 			} else {
 				c.usablePath = true
 			}
+			// cpu.max exists only where the cpu controller is enabled;
+			// cpu.stat always (usage only, without the controller).
+			c.CPUMax = readTrim(dir + "/cpu.max")
+			if _, err := os.Stat(dir + "/cpu.stat"); err != nil {
+				c.CPUNote = "no cpu.stat"
+			} else {
+				c.cpuStatPath = dir + "/cpu.stat"
+				if c.CPUMax == "" {
+					c.CPUNote = "no cpu.max (cpu controller not enabled here): no throttling counters"
+				}
+			}
 			return c
 		}
 	}
-	return Cgroup{Note: "not in a cgroup v2 hierarchy"}
+	return Cgroup{Note: "not in a cgroup v2 hierarchy", CPUNote: "not in a cgroup v2 hierarchy"}
+}
+
+// cpuStat reads the cgroup's cpu.stat.
+func (c Cgroup) cpuStat() (CPUStat, error) {
+	if c.cpuStatPath == "" {
+		return CPUStat{}, fmt.Errorf("no cgroup cpu.stat: %s", c.CPUNote)
+	}
+	b, err := os.ReadFile(c.cpuStatPath)
+	if err != nil {
+		return CPUStat{}, err
+	}
+	return parseCPUStat(string(b))
 }
 
 // anonBytes is the cgroup's anon memory (memory.stat), the measure G9 uses.

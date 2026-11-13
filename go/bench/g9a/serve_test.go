@@ -15,14 +15,17 @@ import (
 )
 
 // The server end to end, without k6: seed, a handful of retrievals (one
-// denied), a converge run and a backup, then the event log and the files.
+// denied), converge runs, a timed backup and a WAL-triggered one, then the
+// event log and the files.
 func TestServe(t *testing.T) {
 	if testing.Short() {
 		t.Skip("seeds W1 and probes the disk for a few seconds")
 	}
 	p := DefaultPlan()
 	p.Phases = []Phase{{Name: "warmup", Rate: 1, Seconds: 1, Warmup: true}, {Name: "p", Rate: 1, Seconds: 5}}
-	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}}
+	// The converge runs write past the small bound, so the WAL crosses
+	// half of it from below after the timed backup's TRUNCATE.
+	p.Backups = []Backup{{Phase: "p", AtSeconds: 1}, {Phase: "p", WALTriggered: WALTrigger{Fraction: 0.5, MaxAttempts: 2}}}
 	p.ConvergeEverySeconds = 1.5
 	p.Targets = 3
 	p.IdleProbeSeconds = 3
@@ -102,7 +105,7 @@ func TestServe(t *testing.T) {
 	if code, _ := get(bad); code != 403 {
 		t.Fatalf("a wrong token: %d", code)
 	}
-	time.Sleep(4 * time.Second) // a converge run and the backup
+	time.Sleep(5 * time.Second) // converge runs and the backups
 	post("/run/stop", 200)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -114,7 +117,18 @@ func TestServe(t *testing.T) {
 	}
 	seen := map[string]int{}
 	var end Event
+	starts := map[int]Event{}
+	var attempts []Event
 	for _, e := range events {
+		if e.Ev == EvBackupStart {
+			if _, dup := starts[e.Backup]; dup || e.Backup == 0 || e.WALBefore == 0 {
+				t.Errorf("backup_start: %+v", e)
+			}
+			starts[e.Backup] = e
+		}
+		if e.Ev == EvWALBackup {
+			attempts = append(attempts, e)
+		}
 		seen[e.Ev]++
 		if e.Ev == EvCheckpoint {
 			seen["checkpoint "+e.Trigger]++
@@ -147,13 +161,32 @@ func TestServe(t *testing.T) {
 	if end.Requests != 21 || end.Errors != 1 || end.BusyErrs != 0 {
 		t.Errorf("run_end: %+v", end)
 	}
+	// Every WAL-triggered attempt: numbered in order, started at or over
+	// half the bound, logged at its start with the same WAL size, and none
+	// after one held a TRUNCATE off.
+	if len(attempts) == 0 || len(attempts) > 2 {
+		t.Errorf("%d WAL-triggered attempts, want 1 or 2 (events %v)", len(attempts), seen)
+	}
+	for i, a := range attempts {
+		st := starts[a.Backup]
+		if a.Attempt != i+1 || a.Phase != "p" || a.Bytes < 32<<10 || st.Attempt != a.Attempt || st.Phase != "p" || st.WALBefore != a.Bytes || a.StartUs != st.T {
+			t.Errorf("attempt %d: %+v, its start %+v", i+1, a, st)
+		}
+		if a.HeldOff && i != len(attempts)-1 {
+			t.Errorf("an attempt after attempt %d, which held a TRUNCATE off", a.Attempt)
+		}
+	}
 	var sys System
 	b, _ = os.ReadFile(filepath.Join(out, FileSystem))
 	if err := json.Unmarshal(b, &sys); err != nil || sys.Target != StandInTarget || sys.IdleSync == "" {
 		t.Fatalf("system.json: %v %+v", err, sys)
 	}
-	if _, err := os.Stat(filepath.Join(data, "backups", "snapshot-0.db")); !os.IsNotExist(err) {
-		t.Errorf("the backup snapshot was kept: %v", err)
+	if left, err := os.ReadDir(filepath.Join(data, "backups")); err != nil || len(left) != 0 {
+		t.Errorf("backup snapshots kept: %v %v", err, left)
+	}
+	// The plan a remote k6 fetches carries the WAL-triggered backup.
+	if b, _ := os.ReadFile(filepath.Join(out, FilePlan)); !strings.Contains(string(b), `"walTriggered": {`) {
+		t.Errorf("plan.json: %s", b)
 	}
 
 	// A second run into the same directories is refused.

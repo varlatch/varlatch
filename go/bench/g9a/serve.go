@@ -79,6 +79,11 @@ type server struct {
 	cg   Cgroup
 
 	requests, errs atomic.Int64
+	// backups numbers the backups; running counts those in progress;
+	// deferred counts the size triggers a snapshot held off.
+	backups  atomic.Int64
+	running  atomic.Int32
+	deferred atomic.Int64
 
 	startOnce sync.Once
 	started   atomic.Int64 // run start, µs
@@ -269,6 +274,9 @@ func (s *server) waitStarted() <-chan struct{} {
 }
 
 func (s *server) onCheckpoint(r storage.CheckpointResult, err error) {
+	if r.Deferred && r.Trigger == storage.TriggerSize {
+		s.deferred.Add(1)
+	}
 	e := Event{
 		Ev: EvCheckpoint, Mode: r.Mode, Trigger: r.Trigger, StartUs: us(r.Start), DurUs: r.Duration.Microseconds(),
 		Busy: r.Busy, Deferred: r.Deferred, LogFrames: r.LogFrames, Checkpointed: r.Checkpointed,
@@ -324,8 +332,9 @@ func (s *server) handleStart(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]int64{"startUs": s.started.Load()})
 }
 
-// runBackground starts the plan's work, counted from t0: the WAL and memory
-// samplers, the fsync probe under load, converge runs and backups. The
+// runBackground starts the plan's work, counted from t0: the WAL, memory
+// and CPU samplers, the fsync probe under load, converge runs and backups
+// (at their offsets, or from the WAL's size). The
 // samplers end at /run/stop. Converge runs are scheduled only inside the
 // load, and a converge run or backup in progress at /run/stop finishes
 // (cancelled only if it is still running two minutes later), so stopping
@@ -340,8 +349,15 @@ func (s *server) runBackground(t0 time.Time) {
 		time.AfterFunc(2*time.Minute, cancelWork)
 	}()
 
+	// cpu.stat goes with every WAL sample as well as with memory: a
+	// TRUNCATE window lasts about two seconds, and one-second samples place
+	// its throttling more closely than the five-second memory samples.
 	s.every(ctx, t0, time.Second, func() {
-		s.ev.emit(Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes})
+		e := Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes}
+		if c, err := s.cg.cpuStat(); err == nil {
+			e.CPU = &c
+		}
+		s.ev.emit(e)
 	})
 	s.every(ctx, t0, 5*time.Second, func() { s.ev.emit(s.memorySample(false)) })
 	s.bg.Add(1)
@@ -375,16 +391,21 @@ func (s *server) runBackground(t0 time.Time) {
 			s.ev.emit(e)
 		}()
 	})
-	for i, off := range p.BackupOffsets() {
+	offsets := p.BackupOffsets()
+	for i, b := range p.Backups {
 		s.bg.Add(1)
 		go func() {
 			defer s.bg.Done()
 			select {
-			case <-time.After(time.Until(t0.Add(off))):
+			case <-time.After(time.Until(t0.Add(offsets[i]))):
 			case <-ctx.Done():
 				return
 			}
-			s.backup(work, i)
+			if b.WALTriggered.Set() {
+				s.walBackups(ctx, work, t0.Add(offsets[i]+seconds(p.PhaseSeconds(b.Phase))), b)
+				return
+			}
+			s.backup(work, Event{Phase: b.Phase})
 		}()
 	}
 }
@@ -394,6 +415,11 @@ func (s *server) runBackground(t0 time.Time) {
 func (s *server) memorySample(final bool) Event {
 	e := Event{Ev: EvMemory, Final: final, RSSBytes: rssBytes()}
 	var errs []string
+	if c, err := s.cg.cpuStat(); err == nil {
+		e.CPU = &c
+	} else {
+		errs = append(errs, err.Error())
+	}
 	if anon, err := s.cg.anonBytes(); err == nil {
 		e.AnonBytes = anon
 	} else {
@@ -430,22 +456,33 @@ func (s *server) every(ctx context.Context, first time.Time, period time.Duratio
 }
 
 // backup takes a paced snapshot, as the backup job will, and removes it.
-func (s *server) backup(ctx context.Context, n int) {
+// start is its backup_start event, numbered and timed here and given the
+// WAL size unless it has one; backup returns it.
+func (s *server) backup(ctx context.Context, start Event) Event {
+	s.running.Add(1)
+	defer s.running.Add(-1)
+	t := time.Now()
+	start.Ev, start.T, start.Backup = EvBackupStart, us(t), int(s.backups.Add(1))
+	if start.WALBefore == 0 {
+		start.WALBefore = s.db.Metrics().WALBytes
+	}
 	dir := filepath.Join(s.opts.DataDir, "backups")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		s.ev.emit(Event{Ev: EvError, Err: err.Error()})
-		return
+		return start
 	}
-	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", n))
-	s.ev.emit(Event{Ev: EvBackupStart})
+	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", start.Backup))
+	s.ev.emit(start)
 	p := s.opts.Plan
 	st, err := s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
-	e := Event{Ev: EvBackupEnd, Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
+	e := Event{Ev: EvBackupEnd, Backup: start.Backup, Phase: start.Phase, Attempt: start.Attempt,
+		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
 	if err != nil {
 		e.Err = err.Error()
 	}
 	s.ev.emit(e)
 	_ = os.Remove(dest)
+	return start
 }
 
 func writeJSON(path string, v any) error {

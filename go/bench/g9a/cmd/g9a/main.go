@@ -3,6 +3,7 @@
 // Command g9a runs ADR-0059's storage benchmark (gate G9a) with k6:
 //
 //	g9a plan [-scale f] [-wal-bound b] [-backup-step-pages n -backup-pause-ms ms]
+//	         [-wal-fraction f] [-wal-attempts n]
 //	                                         print a plan (the G9a profile)
 //	g9a serve -plan p -data d -out o         seed, record the disk, serve the load
 //	g9a report dir                           judge a run: exit 0 pass, 1 fail, 2 inconclusive
@@ -36,6 +37,8 @@ func main() {
 		bound := fs.Int64("wal-bound", 0, "WAL bound in bytes (default: the shipped 64 MiB)")
 		stepPages := fs.Int("backup-step-pages", 0, "pages per backup step (default: the engine's)")
 		pauseMs := fs.Int("backup-pause-ms", 0, "pause between backup steps in ms (default: the engine's)")
+		fraction := fs.Float64("wal-fraction", 0, "WAL-triggered backups start at this fraction of the bound (default 0.95)")
+		attempts := fs.Int("wal-attempts", 0, "most WAL-triggered backups in their phase (default 5)")
 		_ = fs.Parse(os.Args[2:])
 		p := g9a.DefaultPlan()
 		if *scale != 1 {
@@ -45,6 +48,22 @@ func main() {
 			p.WALBound = *bound
 		}
 		p.BackupStepPages, p.BackupPauseMs = *stepPages, *pauseMs
+		// Given flags apply to every WAL-triggered backup (Validate refuses
+		// a fraction outside (0, 1] or fewer than one attempt).
+		given := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+		for i := range p.Backups {
+			w := &p.Backups[i].WALTriggered
+			if !w.Set() {
+				continue
+			}
+			if given["wal-fraction"] {
+				w.Fraction = *fraction
+			}
+			if given["wal-attempts"] {
+				w.MaxAttempts = *attempts
+			}
+		}
 		if err := p.Validate(); err != nil {
 			log.Fatal(err)
 		}
@@ -93,6 +112,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] | g9a serve -plan p -data d -out o [-listen addr] | g9a report dir")
+	fmt.Fprintln(os.Stderr, "usage: g9a plan [-scale f] [-wal-bound bytes] [-wal-fraction f] [-wal-attempts n] | g9a serve -plan p -data d -out o [-listen addr] | g9a report dir")
 	os.Exit(3)
 }

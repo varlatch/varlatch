@@ -80,14 +80,68 @@ type PhaseResult struct {
 }
 
 // Window is a TRUNCATE checkpoint or a backup, widened by the plan's pad,
-// and the retrievals scheduled inside it.
+// and the retrievals scheduled inside it. A WAL-triggered backup names its
+// phase and attempt.
 type Window struct {
-	Kind    string  `json:"kind"` // "truncate-size", "truncate-snapshot", "backup"
-	StartUs int64   `json:"startUs"`
-	EndUs   int64   `json:"endUs"`
-	Offset  float64 `json:"offsetSeconds"` // from the run's start
-	Note    string  `json:"note,omitempty"`
-	Stats   Stats   `json:"stats"`
+	Kind    string     `json:"kind"` // "truncate-size", "truncate-snapshot", "backup"
+	StartUs int64      `json:"startUs"`
+	EndUs   int64      `json:"endUs"`
+	Offset  float64    `json:"offsetSeconds"` // from the run's start
+	Phase   string     `json:"phase,omitempty"`
+	Attempt int        `json:"walAttempt,omitempty"`
+	Note    string     `json:"note,omitempty"`
+	Stats   Stats      `json:"stats"`
+	CPU     *CPUWindow `json:"cpu,omitempty"`
+}
+
+// CPUWindow is the cgroup's CPU throttling across a window: the change in
+// cpu.stat between the last sample at or before the window's start and the
+// first at or after its end (FromOffset and ToOffset, from the run's start),
+// so it covers at least the window when samples bracket it. Reported only.
+type CPUWindow struct {
+	Periods     int64   `json:"periods"`
+	Throttled   int64   `json:"throttledPeriods"`
+	ThrottledMs float64 `json:"throttledMs"`
+	FromOffset  float64 `json:"fromOffsetSeconds"`
+	ToOffset    float64 `json:"toOffsetSeconds"`
+}
+
+// CPUReport is the server cgroup's CPU limit (cpu.max) and its throttling
+// over the run (cpu.stat, first sample to last). Reported only, with no
+// threshold (ADR-0059 amendment 4).
+type CPUReport struct {
+	Max         string  `json:"cpuMax"`
+	Limit       string  `json:"limit"`
+	Samples     int     `json:"samples"`
+	Periods     int64   `json:"periods"`
+	Throttled   int64   `json:"throttledPeriods"`
+	ThrottledMs float64 `json:"throttledMs"`
+	// Before the first sample: what the counters held when the run started
+	// (startup, seeding).
+	ThrottledBeforeMs float64 `json:"throttledBeforeMs"`
+	Note              string  `json:"note,omitempty"`
+}
+
+// WALBackupResult is a WAL-triggered backup of the plan: its attempts and
+// the one, if any, that held a size-triggered TRUNCATE off (0: none).
+type WALBackupResult struct {
+	Phase          string       `json:"phase"`
+	Fraction       float64      `json:"fraction"`
+	MaxAttempts    int          `json:"maxAttempts"`
+	ThresholdBytes int64        `json:"thresholdBytes"`
+	Attempts       []WALAttempt `json:"attempts"`
+	HeldOffBy      int          `json:"heldOffByAttempt"`
+}
+
+// WALAttempt is one WAL-triggered backup: when it started, the WAL size
+// that started it, and how many size triggers it deferred.
+type WALAttempt struct {
+	Attempt  int     `json:"attempt"`
+	Offset   float64 `json:"offsetSeconds"`
+	WALBytes int64   `json:"walBytes"`
+	Deferred int     `json:"deferred"`
+	HeldOff  bool    `json:"heldOff"`
+	Seconds  float64 `json:"seconds"`
 }
 
 // Report is everything a run showed and the verdict.
@@ -107,6 +161,10 @@ type Report struct {
 	Deferred      int     `json:"deferredTruncates"`
 	Passives      int     `json:"passiveCheckpoints"`
 	MaxPassiveMs  float64 `json:"maxPassiveMs"`
+
+	WALBackups   []WALBackupResult `json:"walTriggeredBackups"`
+	TimedBackups int               `json:"timedBackups"`
+	CPU          CPUReport         `json:"cpu"`
 
 	Converges      int          `json:"converges"`
 	ConvergesWant  int          `json:"convergesPlanned"`
@@ -309,8 +367,10 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 
 	// Checkpoints, backups, converge runs.
 	pad := seconds(th.WindowPadSeconds).Microseconds()
-	var backupStart int64
+	var backupStart Event
+	backupStarts := map[int]Event{}
 	var backups []Window
+	var backupEnds []Event
 	var convergeDur []Request
 	var convergeStart []int64
 	fullConverges := 0
@@ -346,12 +406,21 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 				r.Windows = append(r.Windows, Window{Kind: "truncate-" + e.Trigger, StartUs: e.StartUs - pad, EndUs: e.StartUs + e.DurUs + pad, Offset: off(e.StartUs, start)})
 			}
 		case EvBackupStart:
-			backupStart = e.T
-		case EvBackupEnd:
-			if e.Err != "" {
-				r.fail("backup at %+.1fs failed: %s", off(backupStart, start), e.Err)
+			backupStart = e
+			if e.Backup != 0 {
+				backupStarts[e.Backup] = e
 			}
-			backups = append(backups, Window{Kind: "backup", StartUs: backupStart - pad, EndUs: e.T + pad, Offset: off(backupStart, start)})
+		case EvBackupEnd:
+			// Backups are numbered; a log without numbers pairs them in order.
+			b := backupStart
+			if e.Backup != 0 {
+				b = backupStarts[e.Backup]
+			}
+			if e.Err != "" {
+				r.fail("backup at %+.1fs failed: %s", off(b.T, start), e.Err)
+			}
+			backups = append(backups, Window{Kind: "backup", StartUs: b.T - pad, EndUs: e.T + pad, Offset: off(b.T, start), Phase: b.Phase, Attempt: b.Attempt})
+			backupEnds = append(backupEnds, e)
 		case EvConvergeStart:
 			convergeStart = append(convergeStart, e.T)
 		case EvConvergeEnd:
@@ -371,8 +440,19 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 		r.missing("%d of the plan's %d converge runs ran over all %d targets during the load", fullConverges, r.ConvergesWant, p.Targets)
 	}
 	r.Backups = len(backups)
-	if r.Backups != len(p.Backups) {
-		r.missing("%d of the plan's %d backups ran", r.Backups, len(p.Backups))
+	timed := 0
+	for _, b := range p.Backups {
+		if !b.WALTriggered.Set() {
+			timed++
+		}
+	}
+	for _, b := range backups {
+		if b.Attempt == 0 {
+			r.TimedBackups++
+		}
+	}
+	if r.TimedBackups != timed {
+		r.missing("%d of the plan's %d timed backups ran", r.TimedBackups, timed)
 	}
 	bound := float64(p.WALBound)
 	if float64(r.WALPeak) >= th.WALPeakFactor*bound {
@@ -385,6 +465,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 	// A backup overlapped the bound when the size trigger was deferred
 	// while it ran; its own TRUNCATE then has to complete (checked above).
 	overlapped := 0
+	deferredIn := make([]int, len(backups))
 	for i, b := range backups {
 		deferred, truncated := 0, false
 		for _, e := range events {
@@ -397,6 +478,7 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 				truncated = true
 			}
 		}
+		deferredIn[i] = deferred
 		switch {
 		case deferred > 0 && truncated:
 			overlapped++
@@ -407,8 +489,9 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 			backups[i].Note = "did not overlap the bound"
 		}
 	}
+	walTried := r.walBackups(events, backups, backupEnds, deferredIn)
 	if overlapped == 0 {
-		r.missing("no backup overlapped the bound (none held a size-triggered TRUNCATE off): G9a needs a TRUNCATE right after such a backup")
+		r.missing("no backup overlapped the bound (none held a size-triggered TRUNCATE off)%s: G9a needs a TRUNCATE right after such a backup", walTried)
 	}
 	r.Windows = append(r.Windows, backups...)
 	slices.SortFunc(r.Windows, func(a, b Window) int { return cmp.Compare(a.StartUs, b.StartUs) })
@@ -425,9 +508,138 @@ func (r *Report) analyze(events []Event, reqs []Request, sum k6Summary) {
 		}
 	}
 
+	r.cpu(events, start, end)
 	r.memory(events, start)
 	r.fsync(events, start, end)
 	r.finish()
+}
+
+// walBackups judges the plan's WAL-triggered backups from their windows
+// (deferredIn: the size triggers each window deferred) and returns what
+// they tried, for the reason when no backup overlapped the bound.
+func (r *Report) walBackups(events []Event, backups []Window, ends []Event, deferredIn []int) string {
+	p := r.Plan
+	r.WALBackups = []WALBackupResult{}
+	// What the server decided for each attempt (wal_backup), by backup.
+	server := map[int]bool{}
+	for _, e := range events {
+		if e.Ev == EvWALBackup {
+			server[e.Backup] = e.HeldOff
+		}
+	}
+	walBytes := map[int]int64{}
+	for _, e := range events {
+		if e.Ev == EvBackupStart && e.Attempt > 0 {
+			walBytes[e.Backup] = e.WALBefore
+		}
+	}
+	byStart := make([]int, len(backups))
+	for i := range byStart {
+		byStart[i] = i
+	}
+	slices.SortStableFunc(byStart, func(i, j int) int { return cmp.Compare(backups[i].StartUs, backups[j].StartUs) })
+	var tried []string
+	for _, b := range p.Backups {
+		w := b.WALTriggered
+		if !w.Set() {
+			continue
+		}
+		res := WALBackupResult{Phase: b.Phase, Fraction: w.Fraction, MaxAttempts: w.MaxAttempts, ThresholdBytes: w.Threshold(p.WALBound), Attempts: []WALAttempt{}}
+		for _, i := range byStart {
+			win := backups[i]
+			if win.Attempt == 0 || win.Phase != b.Phase {
+				continue
+			}
+			a := WALAttempt{Attempt: win.Attempt, Offset: win.Offset, WALBytes: walBytes[ends[i].Backup], Deferred: deferredIn[i], HeldOff: deferredIn[i] > 0,
+				Seconds: float64(ends[i].T-(win.StartUs+seconds(p.Thresholds.WindowPadSeconds).Microseconds())) / 1e6}
+			if res.HeldOffBy != 0 {
+				r.fail("WAL-triggered backup %d in phase %s started after attempt %d had held a TRUNCATE off", a.Attempt, b.Phase, res.HeldOffBy)
+			}
+			if a.HeldOff && res.HeldOffBy == 0 {
+				res.HeldOffBy = a.Attempt
+			}
+			if held, ok := server[ends[i].Backup]; ok && ends[i].Backup != 0 && held != a.HeldOff {
+				r.note("WAL-triggered backup %d in phase %s: the server counted held off %v, the checkpoint log %v", a.Attempt, b.Phase, held, a.HeldOff)
+			}
+			note := fmt.Sprintf("WAL-triggered, attempt %d of %d at %s %% of the bound (WAL %d bytes)", a.Attempt, w.MaxAttempts, pct(w.Fraction), a.WALBytes)
+			backups[i].Note = note + "; " + backups[i].Note
+			res.Attempts = append(res.Attempts, a)
+		}
+		n := len(res.Attempts)
+		switch {
+		case n == 0:
+			r.missing("the WAL-triggered backup in phase %s never started: the WAL did not cross %s %% of the bound (%d bytes) from below during the phase", b.Phase, pct(w.Fraction), res.ThresholdBytes)
+		case n > w.MaxAttempts:
+			r.fail("phase %s: %d WAL-triggered backups, over the plan's %d attempts", b.Phase, n, w.MaxAttempts)
+		}
+		if w.Fraction != DefaultWALFraction {
+			r.note("the WAL-triggered backup in phase %s started at %s %% of the bound, not G9a's default %s %% (the plan records it; ADR-0059 amendment 4)", b.Phase, pct(w.Fraction), pct(DefaultWALFraction))
+		}
+		if res.HeldOffBy == 0 {
+			tried = append(tried, fmt.Sprintf("the WAL-triggered backup in phase %s made %d of %d attempts at %s %% of the bound, none held one off; another run may raise the fraction (ADR-0059 amendment 4)", b.Phase, n, w.MaxAttempts, pct(w.Fraction)))
+		}
+		r.WALBackups = append(r.WALBackups, res)
+	}
+	if len(tried) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(tried, "; ")
+}
+
+// cpu reports the cgroup's CPU limit and its throttling over the run and
+// inside each window, from the cpu.stat samples between start and end.
+func (r *Report) cpu(events []Event, start, end int64) {
+	c := &r.CPU
+	c.Max = r.System.Cgroup.CPUMax
+	c.Limit = cpuLimit(c.Max)
+	var samples []Event
+	for _, e := range events {
+		if e.CPU != nil && e.T >= start && e.T <= end {
+			samples = append(samples, e)
+		}
+	}
+	slices.SortStableFunc(samples, func(a, b Event) int { return cmp.Compare(a.T, b.T) })
+	c.Samples = len(samples)
+	switch {
+	case len(samples) == 0:
+		c.Note = "no cpu.stat samples"
+		if n := r.System.Cgroup.CPUNote; n != "" {
+			c.Note += " (" + n + ")"
+		}
+		return
+	case !samples[len(samples)-1].CPU.Throttling:
+		c.Note = "cpu.stat has no throttling counters (the cpu controller is not enabled for the server's cgroup)"
+		return
+	}
+	first, last := samples[0].CPU, samples[len(samples)-1].CPU
+	c.Periods, c.Throttled = last.NrPeriods-first.NrPeriods, last.NrThrottled-first.NrThrottled
+	c.ThrottledMs, c.ThrottledBeforeMs = float64(last.ThrottledUs-first.ThrottledUs)/1000, float64(first.ThrottledUs)/1000
+	for i, w := range r.Windows {
+		r.Windows[i].CPU = cpuIn(samples, w.StartUs, w.EndUs, start)
+	}
+}
+
+// cpuIn is the throttling between the samples that bracket [from, to]: the
+// last at or before from (else the first) and the first at or after to
+// (else the last). samples are sorted and have throttling counters.
+func cpuIn(samples []Event, from, to, start int64) *CPUWindow {
+	lo, hi := 0, len(samples)-1
+	for i, e := range samples {
+		if e.T <= from && e.CPU.Throttling {
+			lo = i
+		}
+	}
+	for i := len(samples) - 1; i >= 0; i-- {
+		if samples[i].T >= to && samples[i].CPU.Throttling {
+			hi = i
+		}
+	}
+	if hi <= lo || !samples[lo].CPU.Throttling || !samples[hi].CPU.Throttling {
+		return nil
+	}
+	a, b := samples[lo].CPU, samples[hi].CPU
+	return &CPUWindow{Periods: b.NrPeriods - a.NrPeriods, Throttled: b.NrThrottled - a.NrThrottled, ThrottledMs: float64(b.ThrottledUs-a.ThrottledUs) / 1000,
+		FromOffset: off(samples[lo].T, start), ToOffset: off(samples[hi].T, start)}
 }
 
 func (r *Report) inWarmup(t, start int64) bool {
@@ -536,9 +748,16 @@ func (r *Report) finish() {
 	if r.Missing == nil {
 		r.Missing = []string{}
 	}
+	if r.WALBackups == nil {
+		r.WALBackups = []WALBackupResult{}
+	}
 }
 
 func off(t, start int64) float64 { return float64(t-start) / 1e6 }
+
+// pct is a fraction as a percentage, to a thousandth of a percent (0.99 is
+// "99", not 98.99999999999999).
+func pct(f float64) string { return strconv.FormatFloat(math.Round(f*1e5)/1e3, 'f', -1, 64) }
 
 // Markdown renders the report for people.
 func (r *Report) Markdown() string {
@@ -572,14 +791,45 @@ func (r *Report) Markdown() string {
 
 	fmt.Fprintf(&b, "## WAL and checkpoints\n\nBound %d bytes; peak %d bytes (%.2f × the bound). Size-triggered TRUNCATEs under load: %d; deferred by a backup: %d; PASSIVE checkpoints: %d (slowest %.1f ms).\n\n",
 		r.Plan.WALBound, r.WALPeak, float64(r.WALPeak)/float64(r.Plan.WALBound), r.SizeTruncates, r.Deferred, r.Passives, r.MaxPassiveMs)
-	b.WriteString("| window | at s | requests | failed | p95 ms | p99 ms | max ms | note |\n|---|---:|---:|---:|---:|---:|---:|---|\n")
+	b.WriteString("| window | at s | requests | failed | p95 ms | p99 ms | max ms | throttled periods | throttled ms | cpu.stat span s | note |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|\n")
 	for _, w := range r.Windows {
 		s := w.Stats
-		fmt.Fprintf(&b, "| %s | %.1f | %d | %d | %.1f | %.1f | %.1f | %s |\n", w.Kind, w.Offset, s.N, s.Failed, s.P95, s.P99, s.Max, w.Note)
+		cpu := "| - | - | - "
+		if c := w.CPU; c != nil {
+			cpu = fmt.Sprintf("| %d of %d | %.1f | %.1f to %.1f ", c.Throttled, c.Periods, c.ThrottledMs, c.FromOffset, c.ToOffset)
+		}
+		fmt.Fprintf(&b, "| %s | %.1f | %d | %d | %.1f | %.1f | %.1f %s| %s |\n", w.Kind, w.Offset, s.N, s.Failed, s.P95, s.P99, s.Max, cpu, w.Note)
 	}
-	fmt.Fprintf(&b, "\nWindows are widened by %gs on both sides.\n\n", r.Plan.Thresholds.WindowPadSeconds)
+	fmt.Fprintf(&b, "\nWindows are widened by %gs on both sides. Their CPU throttling is the change in cpu.stat between the samples that bracket them (reported only).\n\n", r.Plan.Thresholds.WindowPadSeconds)
 
-	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d.\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups)
+	if len(r.WALBackups) > 0 {
+		b.WriteString("## WAL-triggered backups\n\n")
+		for _, w := range r.WALBackups {
+			held := "none held a size-triggered TRUNCATE off"
+			if w.HeldOffBy != 0 {
+				held = fmt.Sprintf("attempt %d held a size-triggered TRUNCATE off", w.HeldOffBy)
+			}
+			fmt.Fprintf(&b, "Phase %s: at %s %% of the bound (%d bytes), up to %d attempts; %d made, %s.\n\n", w.Phase, pct(w.Fraction), w.ThresholdBytes, w.MaxAttempts, len(w.Attempts), held)
+			if len(w.Attempts) == 0 {
+				continue
+			}
+			b.WriteString("| attempt | at s | WAL bytes at start | seconds | size triggers deferred | held off |\n|---:|---:|---:|---:|---:|---|\n")
+			for _, a := range w.Attempts {
+				fmt.Fprintf(&b, "| %d | %.1f | %d | %.1f | %d | %v |\n", a.Attempt, a.Offset, a.WALBytes, a.Seconds, a.Deferred, a.HeldOff)
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	c := r.CPU
+	fmt.Fprintf(&b, "## CPU\n\nReported only. Limit: %s. ", c.Limit)
+	if c.Note != "" {
+		fmt.Fprintf(&b, "%s.\n\n", c.Note)
+	} else {
+		fmt.Fprintf(&b, "Over the run (%d cpu.stat samples): %d of %d periods throttled, %.1f ms throttled; %.1f ms throttled before the first sample.\n\n", c.Samples, c.Throttled, c.Periods, c.ThrottledMs, c.ThrottledBeforeMs)
+	}
+
+	fmt.Fprintf(&b, "## Background work\n\nConverge runs: %d of %d planned (duration p50 %.0f ms, max %.0f ms). Backups: %d (%d timed).\n\n", r.Converges, r.ConvergesWant, r.ConvergeMs.P50, r.ConvergeMs.Max, r.Backups, r.TimedBackups)
 	me := r.MemoryEvents
 	fmt.Fprintf(&b, "## Memory\n\nCgroup anon after %gs: max %.1f MiB (limit %.0f MiB). Reported only: RSS max %.1f MiB, memory.current max %.1f MiB. memory.events: high %d, max %d, oom %d, oom_kill %d. memory.max %q, memory.swap.max %q.\n\n",
 		r.Plan.Thresholds.MemoryAfterSeconds, r.MemoryMaxMiB, r.Plan.Thresholds.MemoryMiB, r.RSSMaxMiB, r.CurrentMaxMiB, me.High, me.Max, me.OOM, me.OOMKill, r.System.Cgroup.MemoryMax, r.System.Cgroup.SwapMax)
