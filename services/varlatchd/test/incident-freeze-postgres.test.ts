@@ -18,6 +18,7 @@ import { setValue } from "../src/domain/values.js";
 import { buildApp } from "../src/http/app.js";
 import { deviceClient, PUBLIC_URL, RP } from "./helpers/device-sign-in.js";
 import { softAuthenticator, type UnregisteredAuthenticator } from "./helpers/soft-authenticator.js";
+import { personGate } from "./helpers/gates.js";
 
 /**
  * The incident freeze (ADR-0055) on real PostgreSQL: what PGlite's one
@@ -338,7 +339,7 @@ describe.skipIf(!url)("the incident freeze on real PostgreSQL", () => {
     });
 
     it("does not deadlock with deletion scheduling: a pending deletion can be frozen, a frozen Organization cannot be scheduled", async () => {
-      const schedule = (c: AppCtx) => scheduleDeletion(c, org.id, { id: identityId, kind: "human" }, {});
+      const schedule = (c: AppCtx) => scheduleDeletion(c, personGate(identityId), org.id, {});
       expect(await race(ORG_LOCK("FOR UPDATE"), () => schedule(pctx), () => freezeIt())).toEqual(["ok", "ok"]);
       await operatorUnfreeze(ctx, { organization: "acme", confirm: "acme" });
       await db.query("UPDATE organization_deletions SET cancelled_at = now(), cancelled_by = $1", [identityId]);

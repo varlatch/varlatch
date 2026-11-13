@@ -228,3 +228,38 @@ describe("GitHub App registration under a step-up (ADR-0054 amendment D)", () =>
     ]);
   });
 });
+
+describe("an export whose read went stale under its approval (ADR-0054 amendment C)", () => {
+  const error = (status: number, code: string, details: Record<string, unknown>) =>
+    new Response(JSON.stringify({ error: { code, message: code, requestId: "req_1", details } }), { status });
+  const approval = { id: "apr_aaaaaaaaaaaaaaaaaaaaaaaaaa", operation: "secret.export" };
+  const disclosed = () => new Response(JSON.stringify({ items: [{ name: "API_KEY", versionId: "ver_2", value: "v" }], withheld: [] }));
+  const scripted = (answers: (() => Response)[]) => {
+    const requests: Record<string, string>[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requests.push({ ...(init?.headers as Record<string, string> | undefined) });
+      return answers.shift()!();
+    };
+    const client = new VarlatchClient({ server: "https://v.example", token: "vlt_x", fetch: fetchImpl, onStepUp: async () => true });
+    return { requests, client };
+  };
+  const stale = () => error(409, "STATE_CHANGED", { reason: "stale-capture", approvalId: approval.id });
+
+  it("repeats the request with the same approval, which reads afresh", async () => {
+    const { requests, client } = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), stale, disclosed]);
+    await expect(client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).resolves.toMatchObject({ items: [{ name: "API_KEY" }] });
+    expect(requests.map((h) => h["Varlatch-Approval"] ?? null)).toEqual([null, approval.id, approval.id]);
+  });
+
+  it("gives up after two repeats, and never repeats another STATE_CHANGED or a request without an approval", async () => {
+    const twice = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), stale, stale, stale]);
+    await expect(twice.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(twice.requests).toHaveLength(4);
+    const other = scripted([() => error(403, "STEP_UP_REQUIRED", { approval }), () => error(409, "STATE_CHANGED", {})]);
+    await expect(other.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"], purpose: "export" })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(other.requests).toHaveLength(2);
+    const plain = scripted([stale]);
+    await expect(plain.client.discloseSecrets("acme", "api", "dev", { items: ["API_KEY"] })).rejects.toMatchObject({ code: "STATE_CHANGED" });
+    expect(plain.requests).toHaveLength(1);
+  });
+});

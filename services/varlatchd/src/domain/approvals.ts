@@ -130,9 +130,12 @@ import { lockPeople, lockPerson, lockPersonPasskeys, type PersonRef } from "./pe
  *     (lockLiveScope), its people, its own domain rows, then 11 (counters,
  *     indexes, audit). An export's count, in the disclosure's audit
  *     transaction after its snapshot: 1 KEY SHARE (skipped when the
- *     Organization was deleted), then 11. A passkey-verification count
- *     after a request: 1 KEY SHARE, then 11 (counters only), with lock and
- *     statement timeouts.
+ *     Organization was deleted), then 11. An export's phase 2 under enforce
+ *     (exportstepup.ts), in that same audit transaction: 1 KEY SHARE, 2
+ *     (the requester FOR UPDATE), consumption's 4, 6, 7, then 8 and 9 FOR
+ *     SHARE (the Project, the environment and its parent), then 11. A
+ *     passkey-verification count after a request: 1 KEY SHARE, then 11
+ *     (counters only), with lock and statement timeouts.
  *   The report summary worker: its advisory lock (only it takes it), then
  *     11 (counter rows SKIP LOCKED in key order, then audit).
  *   Organization deletion's finalization deletes the Organization's
@@ -212,6 +215,10 @@ export const APPROVAL_OPERATIONS = [
   "github_app.import",
   "github_app.replace_key",
   "github_app.remove",
+  // admin-step-up: deletion and export (step 4.9).
+  "project.delete",
+  "organization.delete",
+  "secret.export",
 ] as const;
 export type ApprovalOperation = (typeof APPROVAL_OPERATIONS)[number];
 
@@ -233,6 +240,7 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
     "webhook.create", "webhook.update", "webhook.delete",
     "connection.create", "connection.replace_credential", "connection.delete",
     "github_app.register", "github_app.import", "github_app.replace_key", "github_app.remove",
+    "project.delete", "organization.delete", "secret.export",
   ],
 };
 
@@ -246,7 +254,9 @@ export const CONTROL_APPROVAL_OPERATIONS: Readonly<Record<string, readonly Appro
  * Organization-bound and are unaffected. Promoting a member and inviting an
  * admin add authority: they stay refused while frozen, so no intent is
  * created for them. Webhook configuration, its revocation included, and
- * every GitHub App change stay refused too (ADR-0055 Decision 3).
+ * every GitHub App change stay refused too (ADR-0055 Decision 3), as do
+ * deleting a Project, scheduling the Organization's deletion (ADR-0055
+ * Decision 7) and an export (a value read).
  */
 export const OPERATIONS_DURING_FREEZE: ReadonlySet<ApprovalOperation> = new Set([
   "organization.unfreeze",

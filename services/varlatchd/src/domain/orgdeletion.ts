@@ -10,8 +10,10 @@ import { DomainError } from "./errors.js";
 import { closeOpenApprovals } from "./approvals.js";
 import { lockPeople } from "./personlocks.js";
 import { lockLiveScope, openDeletion, openFreeze } from "./liveness.js";
+import type { ProtectedGate } from "./approvals.js";
+import { organizationDeleteBinding } from "./deletionstepup.js";
+import { approvalMetadata, prepareProtectedOperation } from "./protected.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
-import { reportAdminStepUp } from "./securityreport.js";
 import { endMembership, lockMembershipRows } from "./members.js";
 import { lockedQuery } from "../db/locks.js";
 
@@ -93,43 +95,71 @@ export async function getDeletion(ctx: AppCtx, organizationId: string): Promise<
  * webhooks and enabled machine identities suspended under this request's
  * marker (a cancel restores exactly those), pending invitations revoked,
  * and unfinished GitHub App registrations invalidated.
+ *
+ * A protected operation (ADR-0054 amendment B): admin-step-up's
+ * organization.delete. Under enforce it needs the requester's approval,
+ * bound to the Organization and the normalized `afterDays`, consumed here
+ * after the Organization and the people (steps 4, 6 and 7). It adds to
+ * this ADR's checks and replaces none: run_after is computed from
+ * `afterDays` when this commits, and with more than one admin a different
+ * admin must still approve. An open deletion, a frozen Organization and a
+ * requester who is not a live admin are refused before an approval is
+ * asked for, and checked again once it is consumed.
  */
 export async function scheduleDeletion(
   ctx: AppCtx,
+  gate: ProtectedGate,
   organizationId: string,
-  actor: { id: string; kind: string },
   input: { afterDays?: number | undefined },
 ): Promise<DeletionView> {
+  const actor = { id: gate.requester.identityId, kind: gate.requester.identityKind };
   const days = input.afterDays ?? DEFAULT_WAIT_DAYS;
   if (!Number.isInteger(days) || days < 1 || days > 30) {
     throw new DomainError("VALIDATION_FAILED", "The waiting period is 1 to 30 days");
   }
   return withTx(ctx.db, async (db) => {
-    // FOR UPDATE: writers in progress finish first, later ones see the freeze.
-    await lockLiveScope(db, { organizationId, organizationMode: "update", allowFrozen: true, people: [] });
+    const adminCount = async () =>
+      Number(
+        (
+          (await db.query(
+            `SELECT count(*)::int AS n FROM org_memberships m JOIN identities i ON i.id = m.identity_id
+             WHERE m.organization_id = $1 AND m.role = 'admin' AND m.removed_at IS NULL AND NOT i.disabled`,
+            [organizationId],
+          )).rows[0] as { n: number }
+        ).n,
+      );
+    // Step 1: the Organization FOR UPDATE: writers in progress finish
+    // first, later ones see the freeze. Step 2 of the lock order
+    // (liveness.ts): the requester (requested_by), and the machine
+    // identities this suspends FOR UPDATE, in id order, before any domain
+    // row. A bulk UPDATE alone would take them in the order it scans them.
+    // The Organization row, held FOR UPDATE, keeps that set from changing
+    // meanwhile.
+    let suspending: string[] = [];
+    const prepared = await prepareProtectedOperation(db, gate, {
+      scope: { organizationId, organizationMode: "update", allowFrozen: true, people: [actor.id] },
+      morePeople: async (db) => {
+        suspending = (
+          (await db.query("SELECT id FROM identities WHERE organization_id = $1 AND kind <> 'human' AND NOT disabled ORDER BY id", [organizationId]))
+            .rows as { id: string }[]
+        ).map((r) => r.id);
+        return suspending.map((sid) => ({ id: sid, mode: "update" as const }));
+      },
+      checks: [{ control: "admin-step-up", operation: "organization.delete" }],
+      binding: async (db) => {
+        if (await openDeletion(db, organizationId)) {
+          throw new DomainError("STATE_CHANGED", "This Organization is already being deleted");
+        }
+        await requireLiveAdmin(db, organizationId, actor);
+        const org = (await db.query("SELECT name FROM organizations WHERE id = $1", [organizationId])).rows[0] as { name: string };
+        return organizationDeleteBinding({ id: organizationId, name: org.name }, days, await adminCount());
+      },
+    });
     if (await openDeletion(db, organizationId)) {
       throw new DomainError("STATE_CHANGED", "This Organization is already being deleted");
     }
     await requireLiveAdmin(db, organizationId, actor);
-    const admins = Number(
-      (
-        (await db.query(
-          `SELECT count(*)::int AS n FROM org_memberships m JOIN identities i ON i.id = m.identity_id
-           WHERE m.organization_id = $1 AND m.role = 'admin' AND m.removed_at IS NULL AND NOT i.disabled`,
-          [organizationId],
-        )).rows[0] as { n: number }
-      ).n,
-    );
-    // Step 2 of the lock order (liveness.ts): the requester
-    // (requested_by), and the machine identities this suspends FOR UPDATE,
-    // in id order, before any domain row. A bulk UPDATE alone would take
-    // them in the order it scans them. The Organization row, held FOR
-    // UPDATE, keeps that set from changing meanwhile.
-    const suspending = (
-      (await db.query("SELECT id FROM identities WHERE organization_id = $1 AND kind <> 'human' AND NOT disabled ORDER BY id", [organizationId]))
-        .rows as { id: string }[]
-    ).map((r) => r.id);
-    await lockPeople(db, [actor.id, ...suspending.map((sid) => ({ id: sid, mode: "update" as const }))]);
+    const admins = await adminCount();
     const id = newId("organizationDeletion");
     const inserted = await db.query(
       `INSERT INTO organization_deletions (id, organization_id, requested_by, run_after, approval_required)
@@ -190,7 +220,8 @@ export async function scheduleDeletion(
     );
     await db.query("DELETE FROM github_app_registrations WHERE organization_id = $1", [organizationId]);
     const row = inserted.rows[0] as Record<string, unknown>;
-    await reportAdminStepUp(db, organizationId, actor.id, "organization.delete");
+    // Report mode (ADR-0054 Decision 9), before the audit insert.
+    await prepared.count(db);
     await recordAuditEvent(db, {
       eventType: "organization.deletion_scheduled",
       decision: "info",
@@ -205,6 +236,7 @@ export async function scheduleDeletion(
         webhooksSuspended: webhooks.rows.length,
         identitiesSuspended: identities.rows.length,
         invitationsRevoked: invitations.rows.length,
+        ...approvalMetadata(prepared.approval),
       },
     });
     return view(row);

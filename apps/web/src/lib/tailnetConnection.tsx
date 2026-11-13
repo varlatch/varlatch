@@ -95,7 +95,7 @@ const isNetworkFailure = (err: unknown) =>
   (err instanceof DOMException && (err.name === "TimeoutError" || (err.name === "AbortError" && err.message !== "Session changed")));
 
 export function TailnetConnectionProvider({ children }: { children: React.ReactNode }) {
-  const { api, fetch: sessionFetch, identityId } = useSession();
+  const { api, fetch: sessionFetch, identityId, onStepUp } = useSession();
   const qc = useQueryClient();
   const offered = useCapability("tailnet.browser-reads");
   const endpointQuery = useQuery({
@@ -163,6 +163,10 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
     if (connection.status !== "connected") return null;
     return new VarlatchClient({
       server: connection.endpoint,
+      // An export through the endpoint may need a step-up approval
+      // (ADR-0054 amendment C): the dashboard's dialog handles it, as for
+      // the dashboard's own requests.
+      onStepUp,
       fetch: async (input, init) => {
         try {
           // The whole response, body included, within the time limit.
@@ -184,7 +188,7 @@ export function TailnetConnectionProvider({ children }: { children: React.ReactN
         }
       },
     });
-  }, [connection, sessionFetch, runProbe]);
+  }, [connection, sessionFetch, runProbe, onStepUp]);
 
   const value = useMemo(() => ({ connection, connect: () => void runProbe(), client }), [connection, client, runProbe]);
   return <TailnetConnectionContext.Provider value={value}>{children}</TailnetConnectionContext.Provider>;

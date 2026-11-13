@@ -31,8 +31,10 @@ import { personGate } from "./helpers/gates.js";
  * at step 2, before any Project, environment or domain row, so one of the
  * two waits there, holding nothing the other needs, and both finish.
  *
- * The protected side is emulated with plain SQL where its code does not
- * exist yet: an export's phase 2 (amendment C), and the approval
+ * The protected side is emulated with plain SQL here, as it was before its
+ * code existed (its real paths race the same writers in
+ * admin-step-up-deletion-export-postgres.test.ts): an export's phase 2
+ * (amendment C), and the approval
  * consumption of a protected deletion (its person FOR UPDATE, after the
  * Organization) in front of the real deletion. Each case is made
  * deterministic: the writer pauses right after it took the row the other
@@ -308,7 +310,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
     });
 
     it("recordFailure, holding the Connection, against Organization deletion's finalization", async () => {
-      const deletion = await scheduleDeletion(ctx, org.id, { id: identityId, kind: "human" }, { afterDays: 1 });
+      const deletion = await scheduleDeletion(ctx, personGate(identityId), org.id, { afterDays: 1 });
       await db.query("UPDATE organization_deletions SET scheduled_at = now() - interval '8 days', run_after = now() - interval '1 minute' WHERE id = $1", [deletion.id]);
       expect(await race(
         /FROM platform_connections WHERE id = \$1 FOR SHARE/,
@@ -345,7 +347,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       expect(await race(
         ENV_LOCK("FOR KEY SHARE"),
         () => createEnvironment(pctx, org.id, project.id, { name: "dev/alice", kind: "personal", parentEnvironmentId: env.id }, identityId),
-        () => protectedly((c) => deleteProject(c, org.id, project.id, identityId)),
+        () => protectedly((c) => deleteProject(c, personGate(identityId), org.id, project.id)),
       )).toEqual(["ok", "ok"]);
     });
 
@@ -353,7 +355,7 @@ describe.skipIf(!url)("one lock order (ADR-0054 amendment E) on real PostgreSQL"
       expect(await race(
         CONNECTION_LOCK,
         () => createTarget(pctx, org, project.id, env.id, { connectionId, destination: { repo: "api" }, mapping: { kind: "wildcard" }, removeOrphans: false, redeploy: false }, {}, identityId),
-        () => protectedly((c) => deleteProject(c, org.id, project.id, identityId)),
+        () => protectedly((c) => deleteProject(c, personGate(identityId), org.id, project.id)),
       )).toEqual(["ok", "ok"]);
     });
   });

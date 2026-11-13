@@ -50,6 +50,7 @@ import { sql as adminStepUpAccess } from "./0047_admin_step_up_access.js";
 import { sql as adminStepUpPeople } from "./0048_admin_step_up_people.js";
 import { sql as organizationSecurityEpoch } from "./0049_organization_security_epoch.js";
 import { sql as adminStepUpIntegrations } from "./0050_admin_step_up_integrations.js";
+import { sql as adminStepUpDeletionExport } from "./0051_admin_step_up_deletion_export.js";
 
 export interface Migration {
   id: number;
@@ -109,4 +110,5 @@ export const MIGRATIONS: Migration[] = [
   { id: 48, name: "admin_step_up_people", sql: adminStepUpPeople },
   { id: 49, name: "organization_security_epoch", sql: organizationSecurityEpoch },
   { id: 50, name: "admin_step_up_integrations", sql: adminStepUpIntegrations },
+  { id: 51, name: "admin_step_up_deletion_export", sql: adminStepUpDeletionExport },
 ];

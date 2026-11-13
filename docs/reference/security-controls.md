@@ -840,6 +840,30 @@ dashboard links to where its owner deletes it.
 Checking a credential or listing destinations before saving a connection
 never asks.
 
+The approvals for deletion and export are built too.
+
+| Operation | What the approval covers |
+| --- | --- |
+| `project.delete` | The project. It is deleted at once, in the request that uses the approval. |
+| `organization.delete` | The organization and the waiting period in days (7 when you leave it out). The deletion is scheduled when the approved request runs, and the waiting period starts then, in full. With more than one admin, another admin must still approve the scheduled deletion; their approval needs no passkey step-up of its own, and yours does not stand in for it. Approving and cancelling a scheduled deletion never ask. |
+| `secret.export` | The project, the environment, whether you asked for named Secrets or for every Secret you may reveal, the names you asked for, and the exact set of Secret names the file will contain. A Secret added since, or a new Grant that lets you see one more, changes that set: the dashboard then asks for a new approval. |
+
+An export (the dashboard's `.env` download) is read in one step and its
+approval is used in a second, before any value is decrypted. If a value
+changed in between (a new value, a rotation started or completed, a
+retiring value past its deadline, a value set or removed in a derived
+environment over its parent's, or a new Contract revision), the server
+answers `STATE_CHANGED`, discloses nothing and leaves the approval unused;
+the dashboard repeats the export with it, which reads the values again.
+Other Secret disclosures, `varlatch run`, and the non-secret values of the
+same file never ask. An export through the tailnet endpoint asks the same
+way.
+
+All three are refused while the organization is frozen for an incident,
+before any approval is asked for. Deleting a project is refused while the
+organization's deletion is pending; an export is not, since reading stays
+possible then.
+
 ## Removing a passkey
 
 Removing a trusted passkey needs an approval while you are a member of an

@@ -120,6 +120,19 @@ fixes.
   ended is refused without a link to delete its App, which may be the one
   attached. Migration 50. With every control off, the registration start's
   `id` and the two new routes are the only visible changes.
+- **Admin step-up: approvals for deletion and export are built.** Deleting
+  a project, scheduling an organization's deletion and exporting Secrets
+  to a `.env` file from the dashboard will each need the approval of the
+  person asking, for exactly that request, once `admin-step-up` can be
+  enforced; a machine credential will be refused. Scheduling a deletion
+  still waits the full period, and still needs a second admin's approval
+  when there is more than one admin. An export's approval covers the exact
+  set of Secret names in the file; if a value changes while the export is
+  being prepared, nothing is disclosed and the dashboard repeats it with
+  the same approval. It cannot be enforced yet
+  (`CONTROL_MODE_UNAVAILABLE`), so nothing changes now, and with every
+  control off nothing changes at all. See
+  [Admin step-up](docs/reference/security-controls.md#admin-step-up).
 - **Removing a trusted passkey needs an approval** once you are a member of
   an organization that enforces a control (`requirement-protection`,
   `credential-lifetime` or `passkey-verification`). Removing an unconfirmed passkey

@@ -3,7 +3,8 @@ import type { Querier } from "../db/migrate.js";
 import { DomainError } from "./errors.js";
 import { ApprovalNeeded, type ApprovalBinding, type ProtectedGate, type UsedApproval } from "./approvals.js";
 import { lockLiveScope, type LiveScope } from "./liveness.js";
-import { lockPeople } from "./personlocks.js";
+import { PasskeyVerificationRefusal } from "./passkeyverification.js";
+import { lockPeople, type PersonRef } from "./personlocks.js";
 import { requireOrganizationAccess } from "./requestaccess.js";
 import { countWouldBlock, lifetimeReason, type ProtectedCheck, type ReportReason, type WouldBlock } from "./securityreport.js";
 import type { ControlMode, LifetimeConfig, SecurityControlName } from "./securitycontrols.js";
@@ -97,6 +98,13 @@ export interface ProtectedOperationInput {
    * and environments (steps 8 and 9).
    */
   scope: LiveScope;
+  /**
+   * More people for step 2 that the operation can only name once the
+   * Organization is held (step 1): read without a lock under it, then locked
+   * with the scope's people, in one step. Scheduling an Organization's
+   * deletion names the machine identities it suspends this way.
+   */
+  morePeople?: ((db: Querier) => Promise<readonly PersonRef[]>) | undefined;
   /** The controls that may act on this operation, and the operation each one counts it as. */
   checks: readonly ProtectedCheck[];
   /**
@@ -119,6 +127,17 @@ export interface ProtectedOperationInput {
    * looked up before (the route's), or it has none.
    */
   preflight?: ((db: Querier) => Promise<void>) | undefined;
+  /**
+   * The target's not-found answers before the passkey-verification
+   * checkpoint, under the target's lock, as for lockLiveScope's writers,
+   * also when a concurrent writer is deleting it: the scope's people and
+   * Project (and environments) are locked before the checkpoint whenever
+   * the request consumes no approval. One that consumes locks them after
+   * the consumption (amendment E), and so after the checkpoint; when the
+   * checkpoint refuses it, it locks them then, before the refusal leaves,
+   * since its transaction ends there.
+   */
+  lockScopeBeforeCheckpoint?: boolean | undefined;
   /**
    * Rechecks the requester's authorization for the operation in this
    * transaction, after an approval was consumed ("the person still holds
@@ -291,7 +310,31 @@ async function decide(db: Querier, gate: ProtectedGate, input: ProtectedOperatio
   // The target exists (or the operation answers its not-found), then
   // passkey-verification decides: before any approval is asked for.
   await input.preflight?.(db);
-  await requireOrganizationAccess(db, scope.organizationId);
+  // A request that consumes nothing (no control asks it for an approval,
+  // or it carries none and is about to be asked for one) may take its
+  // scope's people and Project now, before the checkpoint, in steps 2, 8
+  // and 9 (lockLiveScope finds the Organization held): a target that a
+  // concurrent writer is deleting is waited for and answers its not-found,
+  // as a writer locking its scope with lockLiveScope did. A request that
+  // consumes takes them after its consumption (steps 4 to 7) in `finish`:
+  // amendment E puts the Project after the approval rows. If the
+  // checkpoint refuses it, it takes them on its way out (below).
+  const consumes = needsApproval && gate.approvalId !== null;
+  const lockScopeFirst = input.lockScopeBeforeCheckpoint === true && scope.projectId !== undefined;
+  if (lockScopeFirst && !consumes) await lockLiveScope(db, { ...scope, accessCheck: "deferred" });
+  try {
+    await requireOrganizationAccess(db, scope.organizationId);
+  } catch (err) {
+    // A request that would consume is refused here, and its transaction
+    // ends with this refusal: nothing from steps 2.5 to 7 follows, so its
+    // scope can be taken now (steps 2, 8 and 9 only go forward) for the
+    // target's not-found to answer first, after waiting for a concurrent
+    // deletion, as it does when nothing is consumed.
+    if (lockScopeFirst && consumes && err instanceof PasskeyVerificationRefusal) {
+      await lockLiveScope(db, { ...scope, accessCheck: "deferred" });
+    }
+    throw err;
+  }
 
   let binding: ApprovalBinding | null = null;
   if (needsApproval) {
@@ -366,7 +409,8 @@ export async function startProtectedOperation(
       const consuming = binding !== null;
       // Step 2: every person at once, the requester FOR UPDATE when its
       // approval is consumed (never KEY SHARE first and upgraded later).
-      await lockPeople(tx, [...scope.people, ...(consuming ? [{ id: requester.identityId, mode: "update" as const }] : [])]);
+      const more = input.morePeople ? await input.morePeople(tx) : [];
+      await lockPeople(tx, [...scope.people, ...more, ...(consuming ? [{ id: requester.identityId, mode: "update" as const }] : [])]);
       let approval: UsedApproval | null = null;
       if (binding !== null) {
         // Steps 4, 6, 7, then the action rechecked in this transaction.

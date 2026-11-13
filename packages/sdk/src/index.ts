@@ -327,14 +327,37 @@ export class VarlatchClient {
       ? { ...headers, [APPROVAL_HEADER]: this.approval }
       : headers;
     try {
-      return await this.requestRiding<T>(method, path, body, sent, signal);
+      return await this.requestApproved<T>(method, path, body, sent, signal);
     } catch (err) {
       // A step-up approval (ADR-0054 Decision 3): wait for the person, then
       // repeat the identical request once, carrying the approval.
       const approval = stepUpApproval(err);
       if (!approval || !this.onStepUp || APPROVAL_HEADER in sent) throw err;
       if (!(await this.onStepUp(approval))) throw err;
-      return this.requestRiding<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id }, signal);
+      return this.requestApproved<T>(method, path, body, { ...sent, [APPROVAL_HEADER]: approval.id }, signal);
+    }
+  }
+
+  /**
+   * A request carrying an approval whose read the server found stale (an
+   * export's values changed between its snapshot and the approval's use,
+   * ADR-0054 amendment C) left the approval unused: repeat it, with the same
+   * approval, at most twice. Each repeat reads afresh.
+   */
+  private async requestApproved<T>(
+    method: string,
+    path: string,
+    body: unknown,
+    headers: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    for (let repeats = 0; ; repeats++) {
+      try {
+        return await this.requestRiding<T>(method, path, body, headers, signal);
+      } catch (err) {
+        const stale = err instanceof VarlatchApiError && err.code === "STATE_CHANGED" && err.details?.reason === "stale-capture";
+        if (!stale || !(APPROVAL_HEADER in headers) || repeats >= 2) throw err;
+      }
     }
   }
 

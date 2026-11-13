@@ -844,7 +844,9 @@ describe("GitHub App registration, staged: more terminal cases (amendment D)", (
   it("scheduling the Organization's deletion deletes a pending registration and its key", async () => {
     const started = await startRegistration(admin.cli);
     const asked = await approved(admin, await completeRegistration(admin.cli, started.state, "code-d"));
-    expect((await call("POST", `${ORG}/deletion`, admin.cli, {})).status).toBe(201);
+    // Scheduling the deletion is itself protected under enforce (step 4.9).
+    const deletion = await approved(admin, await call("POST", `${ORG}/deletion`, admin.cli, {}));
+    expect((await call("POST", `${ORG}/deletion`, admin.cli, {}, header(deletion))).status).toBe(201);
     expect(await rows("SELECT id FROM github_app_registrations WHERE organization_id = $1", [orgId])).toEqual([]);
     expect((await attach(admin.cli, started.id, asked)).body.error.code).toBe("ORGANIZATION_DELETING");
     await unconsumed(asked);
