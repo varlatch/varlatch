@@ -32,6 +32,8 @@ const PATTERNS: { kind: Kind; pattern: RegExp }[] = [
   { kind: "agent", pattern: /new\s+[\w.]*Agent\b/ },
   { kind: "undici", pattern: /from\s*["']undici["']/ },
   { kind: "s3", pattern: /new\s+S3Client\b|from\s*["']@aws-sdk\// },
+  // @varlatch/backup/s3's client builder: the audit export's comes from the policy (OutboundPolicy.storageClient).
+  { kind: "s3", pattern: /(^|[^.\w])storageClient\s*\(/ },
   { kind: "socket", pattern: /\b(net|tls)\.connect\s*\(|import\s*\{[^}]*\bconnect\b[^}]*\}\s*from\s*["']node:(net|tls)["']/ },
 ];
 

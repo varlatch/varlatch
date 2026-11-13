@@ -611,6 +611,11 @@ describe("the freeze checks in src/ (ADR-0055 Decision 4)", () => {
    * either fails until it is listed here.
    */
   const CALLERS = [
+    // The audit export (ADR-0056 Decision 9): refused before the outbound
+    // check and the probe, as a Connection is; lockLiveScope checks again.
+    "domain/auditexport.ts changeAuditExport: deletion, incident",
+    "domain/auditexport.ts checkAuditExport: deletion, incident",
+    "domain/auditexport.ts createAuditExport: deletion, incident",
     "domain/capabilities.ts captureExercise: incident",
     "domain/githubapps.ts completeRegistration: deletion, incident",
     "domain/githubapps.ts importGitHubApp: deletion, incident",

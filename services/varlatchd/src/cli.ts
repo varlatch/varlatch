@@ -14,6 +14,7 @@ import { serveTailnetHttps, TAILNET_HTTPS_BIND, tailnetResolver } from "./tailne
 import { selfNodeResolver } from "./tailnet/whois.js";
 import { startMirrorLoop } from "./mirror/publisher.js";
 import { startWebhookLoop } from "./domain/webhooks.js";
+import { startAuditExportLoop } from "./domain/auditexport.js";
 import { startExposureBackfillLoop } from "./domain/exposure.js";
 import { startDeletionLoop } from "./domain/orgdeletion.js";
 import { startRegistrationSweepLoop } from "./domain/githubapps.js";
@@ -54,6 +55,7 @@ import { fileURLToPath } from "node:url";
  *   varlatchd admin security reset --org <org> (--control <name>... | --all): Security Controls to off (ADR-0054)
  *   varlatchd admin unfreeze --org <slug> --confirm <slug> [--json]: lift an incident freeze (ADR-0055)
  *   varlatchd admin outbound check [--allow <value>] [--org <org>] [--json]: destinations vs the outbound policy (ADR-0057)
+ *   varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format>: restart a stuck export's stream (ADR-0056)
  *   varlatchd admin kek verify [--file]  — verify a KEK candidate against the canary
  *   varlatchd admin kek export --out     — passphrase-wrapped KEK escrow blob
  *   varlatchd admin kek restore --in --out — decrypt an escrow blob back to a KEK file
@@ -116,7 +118,7 @@ async function serveCommand(): Promise<void> {
   });
   // The outbound policy (ADR-0057): VARLATCH_OUTBOUND_ALLOW, read once here.
   const outbound = new OutboundPolicy(config.outboundAllow);
-  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound };
+  const ctx: AppCtx = { db, rootKek, maintenance, accessCountDb, outbound, auditExport: config.auditExport };
   if (config.outboundAllow.length > 0) {
     console.log(`outbound allow list: ${config.outboundAllow.map((e) => e.text).join(", ")}`);
   }
@@ -195,6 +197,11 @@ async function serveCommand(): Promise<void> {
   }
 
   startWebhookLoop(ctx);
+  // The audit export (ADR-0056): finds nothing to do until an Organization
+  // creates an export. VARLATCH_AUDIT_EXPORT=off stops delivery; the
+  // deletion loop still ends drains at their deadline.
+  if (config.auditExport) startAuditExportLoop(ctx);
+  else console.log("audit export disabled by VARLATCH_AUDIT_EXPORT=off");
   // Builds the exposure and integration indexes from older audit events, then stops (ADR-0052).
   startExposureBackfillLoop(ctx);
   // Runs Organization deletions that are due (ADR-0051), in every process.
@@ -569,6 +576,22 @@ async function adminCommand(rest: string[]): Promise<void> {
         else for (const line of unfreezeReportLines(outcome)) console.log(line);
         break;
       }
+      case "audit-export": {
+        // The host's escape hatch for a pending plan that can no longer be
+        // uploaded (ADR-0056 Decision 2): the same fenced stream restart
+        // the worker runs, refused for a plan that is neither expired nor
+        // in a format this release cannot upload. Host only.
+        const usage = "Usage: varlatchd admin audit-export discard-plan --export <id> --reason <expired|unsupported-format> [--json]";
+        if (rest[1] !== "discard-plan") fail(usage);
+        const exportId = arg("--export");
+        const reason = arg("--reason");
+        if (!exportId || (reason !== "expired" && reason !== "unsupported-format")) fail(usage);
+        const { discardPlan } = await import("./domain/auditexport.js");
+        const outcome = await discardPlan(makeCtx(), exportId, reason);
+        if (has("--json")) console.log(JSON.stringify({ exportId, ...outcome }));
+        else console.log(`Discarded the pending plan of ${exportId}; the export continues in a new stream, ${outcome.streamId}, from its committed position.`);
+        break;
+      }
       case "mirror-sync": {
         if (!config.convexUrl) fail("Set VARLATCH_CONVEX_URL to enable mirror sync");
         const { syncAllMirrors } = await import("./mirror/publisher.js");
@@ -592,7 +615,7 @@ async function adminCommand(rest: string[]): Promise<void> {
       }
       default:
         fail(
-          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | outbound check | custody attest|status | security reset | unfreeze | " +
+          "Usage: varlatchd admin <bootstrap | bootstrap-status | recover | reenroll | public-url-changed | move-facts | mirror-sync | doctor [--wait <s>] | outbound check | custody attest|status | security reset | unfreeze | audit-export discard-plan | " +
             "kek verify|export|restore|split|combine>",
         );
     }
