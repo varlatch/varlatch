@@ -171,7 +171,13 @@ export async function deleteProject(
       scope: { organizationId, people: [actorIdentityId], projectId, projectMode: "update" },
       checks: [{ control: "admin-step-up", operation: "project.delete" }],
       // A Project deleted since the route resolved it keeps its not-found,
-      // ahead of the passkey-verification checkpoint, as before.
+      // ahead of the passkey-verification checkpoint, as before, also while
+      // a concurrent deletion holds it (protected.ts
+      // lockScopeBeforeCheckpoint). With an approval that the checkpoint
+      // lets through, a concurrent deletion is found under the Project lock
+      // after the consumption, which then rolls back (amendment E: the
+      // Project comes after the approval rows).
+      lockScopeBeforeCheckpoint: true,
       preflight: async (db) => {
         if (!(await readProjectForDeletion(db, organizationId, projectId))) throw new DomainError("RESOURCE_NOT_FOUND", "Project not found");
       },

@@ -265,4 +265,67 @@ describe.skipIf(!url)("admin-step-up for deletion and export on real PostgreSQL"
     expect(deleted.body).toMatchObject({ environments: 2 });
     expect(await consumed(asked)).toBe(true);
   });
+
+  describe("a Project deletion while another transaction holds the same Project's deletion uncommitted: it waits, then answers not-found before passkey-verification", () => {
+    const P = "/v1/organizations/acme/projects/api";
+    const intents = async () => ((await db.query("SELECT count(*)::int AS n FROM approval_intents")).rows[0] as { n: number }).n;
+    const setControl = (control: string, mode: string) =>
+      db.query(
+        `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
+         VALUES ($1, $2, $3, NULL, 1, $4, now())
+         ON CONFLICT (organization_id, control) DO UPDATE SET mode = $3, version = security_controls.version + 1`,
+        [org.id, control, mode, owner.id],
+      );
+    /**
+     * Transaction A deletes the Project (its row FOR UPDATE, tombstoned)
+     * and holds it uncommitted while `send` runs; once `send` waits on a
+     * lock, A commits.
+     */
+    const whileDeleting = async <T>(send: () => Promise<T>): Promise<T> => {
+      const a = await db.connect();
+      await a.query("BEGIN");
+      await a.query("SELECT id FROM organizations WHERE id = $1 FOR KEY SHARE", [org.id]);
+      await a.query("SELECT id FROM identities WHERE id = $1 FOR KEY SHARE", [owner.id]);
+      await a.query("SELECT id FROM projects WHERE id = $1 FOR UPDATE", [project.id]);
+      await a.query("UPDATE projects SET deleted_at = now() WHERE id = $1", [project.id]);
+      const sent = send();
+      try {
+        await waitingOnLock();
+      } finally {
+        await a.query("COMMIT");
+        a.release();
+      }
+      return sent;
+    };
+    const notFound = (res: { status: number; body: any }) => {
+      expect(res.status, JSON.stringify(res.body)).toBe(404);
+      expect(res.body.error.code).toBe("RESOURCE_NOT_FOUND");
+    };
+
+    it("admin-step-up off, passkey-verification at enforce, a requester without passkey evidence: 404, not 403", async () => {
+      await setControl("admin-step-up", "off");
+      await setControl("passkey-verification", "enforce");
+      notFound(await whileDeleting(() => call("DELETE", P, owner.cli)));
+    });
+
+    it("admin-step-up at enforce, asking without an approval: 404, and no intent created", async () => {
+      await setControl("passkey-verification", "enforce");
+      const before = await intents();
+      notFound(await whileDeleting(() => call("DELETE", P, owner.cli)));
+      expect(await intents()).toBe(before);
+    });
+
+    it("admin-step-up at enforce, carrying an approval, by a requester passkey-verification refuses: 404, the approval unused", async () => {
+      const asked = await approval(owner, "DELETE", P);
+      await setControl("passkey-verification", "enforce");
+      notFound(await whileDeleting(() => call("DELETE", P, owner.web, undefined, { "Varlatch-Approval": asked })));
+      expect(await consumed(asked)).toBe(false);
+    });
+
+    it("admin-step-up at enforce, carrying an approval, passkey-verification off: found missing under the Project lock after the consumption, which rolls back", async () => {
+      const asked = await approval(owner, "DELETE", P);
+      notFound(await whileDeleting(() => call("DELETE", P, owner.web, undefined, { "Varlatch-Approval": asked })));
+      expect(await consumed(asked)).toBe(false);
+    });
+  });
 });
