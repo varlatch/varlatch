@@ -13,7 +13,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [rewrite/go]
-  workflow_dispatch:
 
 permissions:
   contents: read

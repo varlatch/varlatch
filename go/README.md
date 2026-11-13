@@ -19,3 +19,11 @@ go mod tidy -diff
 go vet ./...
 go test ./...
 ```
+
+## Before `rewrite/go` merges into `main`
+
+- `scripts/ci-changes.sh classify` counts a Go-only change as code with
+  every TypeScript test (`code=true`, `tests=all`). Classify Go-only
+  changes separately, keeping the checks for shared files, licenses and
+  notices, and run the Go checks on `main` (go.yml's triggers).
+- Drop the `rewrite/go` guard from ci.yml's `hosted-runner` job.
