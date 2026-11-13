@@ -287,8 +287,7 @@ fixes.
   `irm https://vault.example.com/install.ps1 | iex` on Windows. The
   scripts install for the current user, without `sudo`, check the file's
   SHA-256, never install Node.js, ask before replacing a copy, and leave a
-  Homebrew copy to Homebrew. On Windows the user `PATH` is changed as it is
-  stored, so entries such as `%JAVA_HOME%\bin` keep their variables. It is **off by default**: installing this way
+  Homebrew copy to Homebrew. It is **off by default**: installing this way
   trusts the installation, and whoever controls its host or its address, to
   run code on the installer's machine. `varlatch setup` asks on a new
   installation; `--serve-cli` and `--no-serve-cli` change it, and
@@ -318,10 +317,12 @@ fixes.
   and dashboard, lead to the new places.
 - **Installing the CLI by hand on Windows keeps your `PATH` as it was.** The
   steps in [Install the CLI](docs/reference/install-the-cli.md) wrote the
-  user `PATH` back with its variables expanded, so an entry such as
-  `%JAVA_HOME%\bin` stopped following `JAVA_HOME`. They now change it in the
-  registry as it is stored. If you followed the earlier steps, look for
-  such entries in your user `PATH` and restore their variables.
+  user `PATH` back with its variables expanded and as a plain string
+  (`REG_SZ`): an entry such as `%JAVA_HOME%\bin` stopped following
+  `JAVA_HOME`, and variables in entries added later were no longer
+  expanded. They now change it in the registry as it is stored. If you
+  followed the earlier steps, open "Edit environment variables for your
+  account" and restore the variables in the user `Path` entries.
 
 ### Upgrading
 

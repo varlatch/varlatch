@@ -59,10 +59,14 @@ const READ_PATH =
 const WRITE_PATH =
   "$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); " +
   "if ($env:VARLATCH_PATH_KIND -eq 'None') { $k.DeleteValue('Path', $false) } else { $k.SetValue('Path', $env:VARLATCH_PATH_VALUE, $env:VARLATCH_PATH_KIND) }";
-// The user variables named like the installer's change notice.
+// The user variables named like the installer's change notice, listed and
+// removed.
 const REFRESH_VARS =
   "$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment'); " +
   "($k.GetValueNames() | Where-Object { $_ -like 'VARLATCH_INSTALL_REFRESH*' } | Sort-Object | ForEach-Object { '{0}={1}' -f $_, $k.GetValue($_) }) -join ';'";
+const DELETE_REFRESH_VARS =
+  "$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); " +
+  "$k.GetValueNames() | Where-Object { $_ -like 'VARLATCH_INSTALL_REFRESH*' } | ForEach-Object { $k.DeleteValue($_) }";
 const rawPath = async (exe, appData) => {
   const [kind, ...rest] = (await shell(exe, appData, READ_PATH)).out.trim().split("|");
   return { kind, value: rest.join("|") };
@@ -85,7 +89,11 @@ async function windowsCases(exe, origin, script, serveBody, kind) {
 
   // A %VARIABLE% entry (which must stay unexpanded) and a plain one, stored
   // as the given kind; and a user variable named like the change notice.
-  const varEntry = "%VARLATCH_TEST_UNSET_VARIABLE%\\bin";
+  // The variable is one Windows always defines: an undefined one stays as
+  // written when expanded, so its loss would not show. Expanding when read
+  // only happens to REG_EXPAND_SZ, so the 5.1 round is the one that would
+  // catch the old expand-and-write-back; the 7 round checks REG_SZ is kept.
+  const varEntry = "%SystemRoot%\\varlatch-test\\bin";
   const before = await userPath();
   await writePath(exe, appData, { kind, value: [before, "C:\\varlatch-test\\keep-me", varEntry].filter(Boolean).join(";") });
   await shell(exe, appData, "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').SetValue('VARLATCH_INSTALL_REFRESH', 'the user''s own')");
@@ -103,12 +111,22 @@ async function windowsCases(exe, origin, script, serveBody, kind) {
   check(raw.kind === kind, named(`the user PATH stays ${kind} (it is ${raw.kind})`));
   const refresh = (await shell(exe, appData, REFRESH_VARS)).out.trim();
   check(refresh === "VARLATCH_INSTALL_REFRESH=the user's own", named(`the change notice leaves no variable and keeps the user's (${refresh})`));
-  await shell(exe, appData, "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').DeleteValue('VARLATCH_INSTALL_REFRESH', $false)");
+  await shell(exe, appData, DELETE_REFRESH_VARS);
   check(first.out.includes(`Next: varlatch login --server ${origin}`), named("it names the next step"));
 
   const second = await run();
   check(second.status === 0 && second.out.includes(`varlatch ${VERSION} is already installed`), named("a rerun changes nothing"));
   check((await userPath()).split(";").filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, named("a rerun adds no second PATH entry"));
+
+  if (kind === "ExpandString") {
+    // Entries are compared expanded: the directory written with a variable
+    // is already on the PATH, and nothing is added.
+    const asVariable = afterFirst.map((e) => (e.toLowerCase() === dir.toLowerCase() ? "%LOCALAPPDATA%\\Programs\\Varlatch" : e)).join(";");
+    await writePath(exe, appData, { kind, value: asVariable });
+    const third = await run();
+    const now = await rawPath(exe, appData);
+    check(third.status === 0 && !third.out.includes("Added ") && now.value === asVariable && now.kind === kind, named("an entry written as %LOCALAPPDATA%\\Programs\\Varlatch counts: nothing is added"));
+  }
 
   writeFileSync(shim, "@echo my own launcher\r\n");
   const shimRefused = await run();
@@ -171,12 +189,14 @@ if (mode === "shellcheck") {
   if ((await shell("pwsh", join(work, "unused"), REFRESH_VARS)).out.trim() !== "") throw new Error("this machine already has VARLATCH_INSTALL_REFRESH variables");
   try {
     // Windows PowerShell 5.1 and PowerShell 7: the script must work in both;
-    // the user PATH stored as REG_EXPAND_SZ (the usual kind) and as REG_SZ.
+    // the user PATH stored as REG_EXPAND_SZ (the usual kind) and as REG_SZ,
+    // each round from the runner's own PATH.
     await windowsCases("powershell", origin, script, (b) => (body = b), "ExpandString");
+    await writePath("pwsh", join(work, "unused"), userPathBefore);
     await windowsCases("pwsh", origin, script, (b) => (body = b), "String");
   } finally {
     await writePath("pwsh", join(work, "unused"), userPathBefore);
-    await shell("pwsh", join(work, "unused"), "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').DeleteValue('VARLATCH_INSTALL_REFRESH', $false)");
+    await shell("pwsh", join(work, "unused"), DELETE_REFRESH_VARS);
     server.close();
   }
 } else {
