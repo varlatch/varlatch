@@ -10,9 +10,10 @@
 #       varlatchd systemd unit, then varlatch setup
 #
 # Options: --version <version> (default: the release this script came
-# with), --dir <directory> (the CLI's directory), --help. Tests also set
-# VARLATCH_INSTALL_BASE_URL (another HTTPS address for the release files)
-# and VARLATCH_INSTALL_ROOT (a directory standing in for / in --server).
+# with), --dir <directory> (the CLI's directory), --help. The release
+# files always come from github.com: the downloaded varlatch checks its own
+# signature, which only means something when the download itself is
+# trusted, so no option or variable changes where they come from.
 #
 # What this trusts: HTTPS to github.com for the release files, which are
 # checked against the release's SHA256SUMS; then, before anything is put in
@@ -147,7 +148,8 @@ main() {
     *) stop "no varlatch for $(uname -m) processors" ;;
   esac
 
-  root=${VARLATCH_INSTALL_ROOT:-}
+  # The tests run a copy of this script with a directory here instead of /.
+  root=''
   if [ "$server" = yes ]; then
     [ "$os" = linux ] || stop "a server needs Linux (with systemd)"
     [ "$(id -u)" = 0 ] || stop "a server install needs root: sudo sh install.sh --server"
@@ -162,7 +164,7 @@ main() {
   else stop "needs sha256sum, shasum or openssl to check the downloads"
   fi
 
-  base=${VARLATCH_INSTALL_BASE_URL:-https://github.com/$REPOSITORY/releases/download/v$version}
+  base=https://github.com/$REPOSITORY/releases/download/v$version
   cli=varlatch-$version-$os-$arch
   daemon=varlatchd-$version-linux-$arch
 
@@ -249,11 +251,16 @@ install_server() {
   else
     say "varlatch and varlatchd $version are already installed."
   fi
-  # Setup asks its questions on the terminal, even when this script was
-  # started with its input redirected.
   if [ -n "$root" ]; then
     say "Next: varlatch setup"
-  elif ( : </dev/tty ) 2>/dev/null; then
+    return
+  fi
+  # exec replaces this shell, so its EXIT trap would not run: the private
+  # directory goes first. Setup asks its questions on the terminal, even
+  # when this script was started with its input redirected.
+  rm -rf "$tmp"
+  trap - EXIT
+  if ( : </dev/tty ) 2>/dev/null; then
     exec "$dir/varlatch" setup "$@" </dev/tty
   else
     exec "$dir/varlatch" setup "$@"

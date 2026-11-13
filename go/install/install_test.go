@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -111,13 +112,17 @@ func sentinels(t *testing.T, src []byte) (binDir, bashEnv string) {
 type result struct {
 	code     int
 	out, log string
+	files    string // what the run left in its working directory
 }
 
-// runFile runs a script file as the installer is run: <shell> install.sh.
-func runFile(shell, file, binDir, bashEnv, home string) result {
+// runFile runs a script file as the installer is run: <shell> install.sh,
+// in work, a fresh empty directory that is also HOME; anything the run
+// leaves there is reported in result.files.
+func runFile(shell, file, binDir, bashEnv, work string) result {
 	logFile := file + ".log"
 	cmd := exec.Command(shell, file)
-	cmd.Env = []string{"PATH=" + binDir, "HOME=" + home, "SENTINEL_LOG=" + logFile}
+	cmd.Dir = work
+	cmd.Env = []string{"PATH=" + binDir, "HOME=" + work, "SENTINEL_LOG=" + logFile}
 	if bashEnv != "" {
 		cmd.Env = append(cmd.Env, "BASH_ENV="+bashEnv)
 	}
@@ -131,22 +136,119 @@ func runFile(shell, file, binDir, bashEnv, home string) result {
 	norm := func(b []byte) string {
 		return strings.ReplaceAll(strings.ReplaceAll(string(b), logFile, "LOG"), file, "SCRIPT")
 	}
-	return result{code, norm(out), norm(log)}
+	var files []string
+	entries, _ := os.ReadDir(work)
+	for _, e := range entries {
+		files = append(files, e.Name())
+	}
+	return result{code, norm(out), norm(log), strings.Join(files, ",")}
+}
+
+// groupBounds checks the shape that makes the guarantee hold: the shebang,
+// comments and blank lines, then a line holding only "{", then the script,
+// then a line holding only "}" and after it nothing but comments and blank
+// lines. Code outside the group, such as a silent builtin or redirection,
+// would run from a cut-off copy without calling anything a sentinel can
+// see. It returns the byte offset of the closing brace.
+func groupBounds(src []byte) (int, error) {
+	lines := strings.SplitAfter(string(src), "\n")
+	isNothing := func(l string) bool {
+		t := strings.TrimSpace(l)
+		return t == "" || strings.HasPrefix(t, "#")
+	}
+	open := -1
+	for i, l := range lines {
+		if strings.TrimRight(l, "\n") == "{" {
+			open = i
+			break
+		}
+		if !isNothing(l) {
+			return 0, fmt.Errorf("line %d runs before the group opens: %q", i+1, strings.TrimSpace(l))
+		}
+	}
+	if open < 0 {
+		return 0, errors.New("no line holding only { opens the group")
+	}
+	closeLine := -1
+	for i := len(lines) - 1; i > open; i-- {
+		if strings.TrimRight(lines[i], "\n") == "}" {
+			closeLine = i
+			break
+		}
+		if !isNothing(lines[i]) {
+			return 0, fmt.Errorf("line %d runs after the group closes: %q", i+1, strings.TrimSpace(lines[i]))
+		}
+	}
+	if closeLine < 0 {
+		return 0, errors.New("no line holding only } closes the group")
+	}
+	offset := 0
+	for _, l := range lines[:closeLine] {
+		offset += len(l)
+	}
+	return offset, nil
+}
+
+// The structure check rejects code outside the group, including what a
+// dynamic run cannot see (a silent builtin or redirection).
+func TestGroupBoundsRejectsCodeOutside(t *testing.T) {
+	src := string(script(t))
+	if _, err := groupBounds([]byte(src)); err != nil {
+		t.Fatal(err)
+	}
+	opening := "\n{\nset -eu\n"
+	for name, bad := range map[string]string{
+		"silent redirection before": strings.Replace(src, opening, "\n: > partial-ran\n{\nset -eu\n", 1),
+		"assignment before":         strings.Replace(src, opening, "\nx=1\n{\nset -eu\n", 1),
+		"builtin before":            strings.Replace(src, opening, "\ncd /\n{\nset -eu\n", 1),
+		"command after":             src + "true\n",
+		"redirection after":         src + "exec 3>file\n",
+		"no group":                  strings.Replace(src, "\n{\n", "\n", 1),
+	} {
+		if bad == src {
+			t.Fatalf("%s: the edit did not apply", name)
+		}
+		if _, err := groupBounds([]byte(bad)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// The sentinels are live: an external command reaches its executable under
+// every shell, and under bash a bare word reaches its function or alias.
+// dash reads no startup file when it runs a script, so it gets no function
+// or alias sentinels, and builtins such as ':' cannot be replaced in any
+// shell; the structure check above is what covers those.
+func TestSentinelsLoad(t *testing.T) {
+	binDir, bashEnv := sentinels(t, []byte("say uname"))
+	for name, shell := range shells(t) {
+		f := filepath.Join(t.TempDir(), "probe.sh")
+		if err := os.WriteFile(f, []byte("uname\nsay\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := runFile(shell, f, binDir, bashEnv, t.TempDir())
+		if name == "bash" {
+			// bash looks up an alias before a function before a command.
+			for _, word := range []string{"uname", "say"} {
+				if !strings.Contains(got.log, "ALIAS "+word) && !strings.Contains(got.log, "FUNCTION "+word) {
+					t.Errorf("bash: no function or alias sentinel ran for %s: %+v", word, got)
+				}
+			}
+			continue
+		}
+		if !strings.Contains(got.log, "COMMAND uname") {
+			t.Errorf("%s: the command sentinel did not run: %+v", name, got)
+		}
+	}
 }
 
 // G8: every prefix of install.sh, under every shell, runs nothing or runs
 // the whole script.
 func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 	src := script(t)
-	closing := bytes.LastIndex(src, []byte("\n}\n"))
-	if closing < 0 {
-		t.Fatal("install.sh does not end its group with a closing brace line")
-	}
-	closing++ // the '}' itself
-	for _, line := range strings.Split(string(src[closing+1:]), "\n") {
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			t.Fatalf("code after the closing brace: %q", line)
-		}
+	closing, err := groupBounds(src)
+	if err != nil {
+		t.Fatal(err)
 	}
 	binDir, bashEnv := sentinels(t, src)
 	for name, shell := range shells(t) {
@@ -162,7 +264,7 @@ func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 			// complete run would never stop where the script does and would
 			// differ from run to run. The sentinels exist for cut-off
 			// prefixes, which always get all of them.
-			want := runFile(shell, full, binDir, "", dir)
+			want := runFile(shell, full, binDir, "", t.TempDir())
 			if !strings.Contains(want.out, "varlatch install:") {
 				t.Fatalf("the whole script did not run as expected: %+v", want)
 			}
@@ -179,8 +281,14 @@ func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 							t.Error(err)
 							return
 						}
+						work := filepath.Join(dir, fmt.Sprintf("w%d", n))
+						if err := os.Mkdir(work, 0o755); err != nil {
+							t.Error(err)
+							return
+						}
 						if n > closing {
-							got := runFile(shell, f, binDir, "", dir)
+							got := runFile(shell, f, binDir, "", work)
+							_ = os.RemoveAll(work)
 							_ = os.Remove(f)
 							_ = os.Remove(f + ".log")
 							if got.code != want.code || got.out != want.out || got.log != want.log {
@@ -190,12 +298,15 @@ func TestEveryPrefixRunsNothingOrEverything(t *testing.T) {
 							}
 							continue
 						}
-						got := runFile(shell, f, binDir, bashEnv, dir)
+						got := runFile(shell, f, binDir, bashEnv, work)
 						_ = os.Remove(f)
 						_ = os.Remove(f + ".log")
+						_ = os.RemoveAll(work)
 						// The script's own messages start a line; a shell's
 						// syntax error may quote the script's text inside one.
-						ran := got.log != ""
+						// A file left in the working directory means something
+						// ran, sentinel or not.
+						ran := got.log != "" || got.files != ""
 						for _, line := range strings.Split(got.out, "\n") {
 							for _, m := range scriptMsgs {
 								ran = ran || strings.HasPrefix(line, m)
@@ -331,10 +442,29 @@ type run struct {
 	out       string
 	home, dir string
 	stubLog   string
+	tmpdir    string // TMPDIR of the run: must be empty afterwards
 }
 
-// install runs install.sh (stamped with version unless stamped is false)
-// against the release, with the given arguments and extra environment.
+// The production script has no way to change where files come from or
+// where a server's files go; the tests run a copy with these lines edited.
+const (
+	baseLine = "base=https://github.com/$REPOSITORY/releases/download/v$version"
+	rootLine = "root=''"
+)
+
+// edit replaces exactly one occurrence of old in src, or fails the test.
+func edit(t *testing.T, src []byte, old, new string) []byte {
+	t.Helper()
+	if bytes.Count(src, []byte(old)) != 1 {
+		t.Fatalf("install.sh no longer has exactly one %q", old)
+	}
+	return bytes.Replace(src, []byte(old), []byte(new), 1)
+}
+
+// install runs a copy of install.sh (stamped with version unless stamped is
+// false; downloading from the test server, or from baseURL if one is given
+// in env as "BASE_URL=..."; with "ROOT=..." in env, a directory standing in
+// for / in --server) with the given arguments and extra environment.
 func install(t *testing.T, r *release, stamped bool, args []string, env ...string) run {
 	t.Helper()
 	if runtime.GOOS != "linux" {
@@ -347,20 +477,56 @@ func install(t *testing.T, r *release, stamped bool, args []string, env ...strin
 	home := t.TempDir()
 	src := script(t)
 	if stamped {
-		src = bytes.Replace(src, []byte("'@VARLATCH_VERSION@'"), []byte("'"+version+"'"), 1)
+		src = edit(t, src, "'@VARLATCH_VERSION@'", "'"+version+"'")
 	}
+	base := srv.URL
+	var extra []string
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "BASE_URL="):
+			base = strings.TrimPrefix(e, "BASE_URL=")
+		case strings.HasPrefix(e, "ROOT="):
+			src = edit(t, src, rootLine, "root='"+strings.TrimPrefix(e, "ROOT=")+"'")
+		default:
+			extra = append(extra, e)
+		}
+	}
+	src = edit(t, src, baseLine, "base='"+base+"'")
 	file := filepath.Join(t.TempDir(), "install.sh")
 	if err := os.WriteFile(file, src, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stubLog := filepath.Join(home, "stub.log")
+	tmpdir := t.TempDir()
 	cmd := exec.Command("sh", append([]string{file}, args...)...)
 	cmd.Env = append([]string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + t.TempDir(),
-		"VARLATCH_INSTALL_BASE_URL=" + srv.URL, "CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
-	}, env...)
+		"PATH=" + os.Getenv("PATH"), "HOME=" + home, "TMPDIR=" + tmpdir,
+		"CURL_CA_BUNDLE=" + ca, "STUB_LOG=" + stubLog,
+	}, extra...)
 	out, _ := cmd.CombinedOutput()
-	return run{cmd.ProcessState.ExitCode(), string(out), home, filepath.Join(home, ".local", "bin"), stubLog}
+	return run{cmd.ProcessState.ExitCode(), string(out), home, filepath.Join(home, ".local", "bin"), stubLog, tmpdir}
+}
+
+// emptyTmp checks a run left nothing in its TMPDIR.
+func emptyTmp(t *testing.T, res run) {
+	t.Helper()
+	if entries, _ := os.ReadDir(res.tmpdir); len(entries) != 0 {
+		t.Fatalf("the run left %d entries in TMPDIR", len(entries))
+	}
+}
+
+// The production script reads nothing from the environment that changes
+// where release files come from or go.
+func TestNoOverridesInTheScript(t *testing.T) {
+	src := string(script(t))
+	for _, line := range []string{baseLine, rootLine} {
+		if strings.Count(src, line) != 1 {
+			t.Fatalf("expected exactly one %q", line)
+		}
+	}
+	if regexp.MustCompile(`VARLATCH_[A-Z_]*(BASE|URL|ROOT|MIRROR)`).MatchString(src) {
+		t.Fatal("install.sh reads a variable that could change where files come from or go")
+	}
 }
 
 func installed(t *testing.T, path string) []byte {
@@ -397,6 +563,7 @@ func TestInstallCLI(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("left %d files in %s", len(entries), res.dir)
 	}
+	emptyTmp(t, res)
 }
 
 func TestInstallCLIRerun(t *testing.T) {
@@ -456,6 +623,7 @@ func TestInstallRefuses(t *testing.T) {
 			if installed(t, filepath.Join(res.dir, "varlatch")) != nil {
 				t.Fatal("something was installed")
 			}
+			emptyTmp(t, res)
 			if tc.noDownload && r.hits.Load() != 0 {
 				t.Fatalf("%d requests before refusing", r.hits.Load())
 			}
@@ -493,21 +661,22 @@ func TestInstallRefusesHTTP(t *testing.T) {
 	r := newRelease()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { r.hits.Add(1) }))
 	defer srv.Close()
-	res := install(t, newRelease(), true, nil, "VARLATCH_INSTALL_BASE_URL="+srv.URL)
+	res := install(t, newRelease(), true, nil, "BASE_URL="+srv.URL)
 	if res.code == 0 || !strings.Contains(res.out, "could not download") || r.hits.Load() != 0 {
 		t.Fatalf("exit %d, %d requests: %s", res.code, r.hits.Load(), res.out)
 	}
 }
 
 // As root, a server install puts both binaries and the unit in place
-// (under VARLATCH_INSTALL_ROOT here), and a rerun changes nothing.
+// (under a test directory standing in for / here), and a rerun changes
+// nothing.
 func TestInstallServerAsRoot(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root (run the tests in a container as root to cover it)")
 	}
 	r := newRelease()
 	root := t.TempDir()
-	res := install(t, r, true, []string{"--server"}, "VARLATCH_INSTALL_ROOT="+root)
+	res := install(t, r, true, []string{"--server"}, "ROOT="+root)
 	if res.code != 0 || !strings.Contains(res.out, "Next: varlatch setup") {
 		t.Fatalf("exit %d: %s", res.code, res.out)
 	}
@@ -523,8 +692,38 @@ func TestInstallServerAsRoot(t *testing.T) {
 	if !bytes.Contains(log, []byte("=varlatchd-"+version+"-linux-")) || !bytes.Contains(log, []byte("=varlatchd.service")) {
 		t.Fatalf("the server files were not verified:\n%s", log)
 	}
-	again := install(t, r, true, []string{"--server"}, "VARLATCH_INSTALL_ROOT="+root)
+	again := install(t, r, true, []string{"--server"}, "ROOT="+root)
 	if again.code != 0 || !strings.Contains(again.out, "already installed") {
 		t.Fatalf("rerun: %s", again.out)
 	}
+}
+
+// The production server path, unedited but for the download address: as
+// root it writes /usr/local/bin and /etc/systemd/system, runs systemctl and
+// execs varlatch setup, so it runs only in a disposable container
+// (VARLATCH_TEST_DISPOSABLE_ROOT=1). exec skips the EXIT trap; the staging
+// directory must be gone anyway.
+func TestInstallServerProductionPath(t *testing.T) {
+	if os.Geteuid() != 0 || os.Getenv("VARLATCH_TEST_DISPOSABLE_ROOT") != "1" {
+		t.Skip("needs root in a disposable container: VARLATCH_TEST_DISPOSABLE_ROOT=1")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "systemctl"), []byte("#!/bin/sh\necho \"systemctl $*\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRelease()
+	res := install(t, r, true, []string{"--server", "--", "--non-interactive"}, "PATH="+bin+":"+os.Getenv("PATH"))
+	if res.code != 0 || !strings.Contains(res.out, "systemctl daemon-reload") || !strings.Contains(res.out, "setup ran") {
+		t.Fatalf("exit %d: %s", res.code, res.out)
+	}
+	log, _ := os.ReadFile(res.stubLog)
+	if !bytes.Contains(log, []byte("setup --non-interactive")) {
+		t.Fatalf("setup was not started with the flags after --:\n%s", log)
+	}
+	for _, p := range []string{"/usr/local/bin/varlatch", "/usr/local/bin/varlatchd", "/etc/systemd/system/varlatchd.service"} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	emptyTmp(t, res)
 }
