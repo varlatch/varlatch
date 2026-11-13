@@ -50,13 +50,14 @@ const PEOPLE = [
 ];
 
 let root: ReactTestRenderer;
-async function mount(element: React.ReactElement) {
+async function mount(element: React.ReactElement, options: { createNodeMock?: (el: React.ReactElement) => unknown } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   await act(async () => {
     root = create(
       <QueryClientProvider client={client}>
         <MemoryRouter>{element}</MemoryRouter>
       </QueryClientProvider>,
+      options,
     );
   });
   await settle();
@@ -172,7 +173,9 @@ describe("the Settings danger zone", () => {
       void submit();
     });
     await settle();
-    expect(all("delete-org")[0]!.props.disabled).toBe(true);
+    // Busy, but never disabled: a disabled button would lose keyboard focus.
+    expect(all("delete-org")[0]!.props["aria-busy"]).toBe(true);
+    expect(all("delete-org")[0]!.props.disabled).toBe(false);
     await act(async () => {
       void submit();
     });
@@ -182,6 +185,34 @@ describe("the Settings danger zone", () => {
     await settle();
     expect(fake.confirm).toHaveBeenCalledTimes(1);
     expect(all("delete-org")[0]!.props.disabled).toBe(false);
+    expect(all("delete-org")[0]!.props["aria-busy"]).toBeUndefined();
+  });
+
+  it("keeps the button enabled while the confirmation is open, and gives it focus back after Cancel", async () => {
+    fake.api.meta = async () => ({ apiMajor: 1, capabilities: ["organizations.delete", "projects.delete", "audit.storage-export"] });
+    fake.api.getAuditExport = vi.fn(async () => ({ enabled: true, export: null }));
+    const button = { focus: vi.fn() };
+    const form = { querySelector: vi.fn((selector: string) => (selector === "button[type=submit]" ? button : null)) };
+    let disabledWhenOpen: unknown = "not asked";
+    fake.confirm.mockImplementation(async () => {
+      // The dialog captures the focused element when it opens: this button,
+      // which was never disabled, so it kept focus.
+      disabledWhenOpen = all("delete-org")[0]!.props.disabled;
+      return false;
+    });
+    await mount(<OrganizationDeletionCard org="acme" slug="acme" id="org_1" />, { createNodeMock: (el) => (el.type === "form" ? form : null) });
+    await act(async () => root.root.findByType("form").props.onSubmit({ preventDefault: () => {} }));
+    await settle();
+    expect(disabledWhenOpen).toBe(false);
+    expect(button.focus).toHaveBeenCalledTimes(1);
+    expect(fake.api.scheduleOrganizationDeletion).not.toHaveBeenCalled();
+    // Confirmed: scheduling takes over, and focus is left to what follows.
+    button.focus.mockClear();
+    fake.confirm.mockResolvedValue(true);
+    await act(async () => root.root.findByType("form").props.onSubmit({ preventDefault: () => {} }));
+    await settle();
+    expect(fake.api.scheduleOrganizationDeletion).toHaveBeenCalled();
+    expect(button.focus).not.toHaveBeenCalled();
   });
 
   it("a member's deletion card never asks for the audit export", async () => {

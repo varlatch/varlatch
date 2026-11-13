@@ -2,7 +2,7 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import type { AuditExportStatus, OrganizationDeletion } from "@varlatch/protocol";
 import { useSession } from "../../lib/session";
 import { formatDateTime, timeUntil, useNow } from "../../lib/time";
@@ -115,8 +115,12 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
   const meta = useMeta();
   const auditExportSupported = useCapability("audit.storage-export");
   // One confirmation at a time: the export's state is read before it opens.
+  // The ref guards against a second submit; the button is never disabled
+  // for it, since a focused button that becomes disabled loses focus, and
+  // the confirmation would then hand focus back to nothing on Cancel.
   const asking = useRef(false);
-  const [askingNow, setAskingNow] = useState(false);
+  const [readingState, setReadingState] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
   const [days, setDays] = useState("7");
   const afterDays = /^\d+$/.test(days) && Number(days) >= 1 && Number(days) <= 30 ? Number(days) : null;
   const done = async (title: string, description?: string) => {
@@ -144,7 +148,8 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
   const askSchedule = async () => {
     if (afterDays === null || asking.current) return;
     asking.current = true;
-    setAskingNow(true);
+    setReadingState(true);
+    let ok = false;
     try {
       // Before the server's capabilities are known, whether it has audit
       // export is not: the disclosure says the state could not be read.
@@ -154,7 +159,8 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
           : auditExportSupported
             ? await readLiveAuditExport(() => qc.fetchQuery({ queryKey: auditExportKey(org), queryFn: () => api.getAuditExport(org), staleTime: 0, retry: false }))
             : false;
-      const ok = await confirm({
+      setReadingState(false);
+      ok = await confirm({
         title: `Delete organization ${slug}?`,
         description: `It freezes now and is deleted no earlier than ${afterDays} ${afterDays === 1 ? "day" : "days"} from now.`,
         consequences: organizationDeletionConsequences(admins > 1, auditExport).map((text) => ({ text })),
@@ -165,7 +171,9 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
       if (ok) schedule.mutate(afterDays);
     } finally {
       asking.current = false;
-      setAskingNow(false);
+      setReadingState(false);
+      // Cancelled or dismissed: keyboard focus goes back where it was.
+      if (!ok) form.current?.querySelector<HTMLButtonElement>("button[type=submit]")?.focus();
     }
   };
   const askApprove = async (d: OrganizationDeletion) => {
@@ -240,6 +248,7 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
             )}
             {admin ? (
               <form
+                ref={form}
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -258,7 +267,15 @@ export function OrganizationDeletionCard({ org, slug, id }: { org: string; slug:
                     data-testid="org-deletion-days"
                   />
                 </label>
-                <Button type="submit" variant="danger" disabled={afterDays === null || askingNow} loading={schedule.isPending || askingNow} data-testid="delete-org">
+                <Button
+                  type="submit"
+                  variant="danger"
+                  disabled={afterDays === null}
+                  loading={schedule.isPending}
+                  aria-busy={readingState || undefined}
+                  icon={readingState ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : undefined}
+                  data-testid="delete-org"
+                >
                   Delete organization…
                 </Button>
               </form>
