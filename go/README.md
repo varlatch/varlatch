@@ -64,6 +64,14 @@ go test ./...
 CGO_ENABLED=1 go test -race ./...
 ```
 
+## The rest of step 1 (before step 2)
+
+ADR-0059's Order step 1 also covers the OpenAPI document: derived from
+`packages/protocol`, generating the Go server interfaces and the
+TypeScript types, and checked against the TypeScript server. It lands in
+its own pull request after this branch reaches `main`, and step 2 (the
+conformance harness) does not start before it.
+
 ## Before the first Go release
 
 - When varlatchd itself is written: configuration errors that a retry
