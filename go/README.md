@@ -17,6 +17,10 @@ amendment 2 allows, and nothing here ships.
   fixtures the TypeScript server's own code sealed (opened by the Go tests)
   and fixtures Go sealed (opened by that code in CI, `tsfixtures.mjs`).
   Regenerate the TypeScript fixtures from the next release before step 3.
+- `lib/release/`: the embedded release verifier (Decision 8): a release's
+  SHA256SUMS must be signed by the release workflow for its tag (Sigstore,
+  pinned identity and issuer; cosign's earlier bundle format and the newer
+  Sigstore bundle both read), and every asset must match it.
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
