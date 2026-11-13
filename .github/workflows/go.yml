@@ -1,18 +1,45 @@
 name: Go
 
-# The Go rewrite's groundwork (ADR-0059 amendment 2) lives on the rewrite/go
-# branch until the next TypeScript release is tagged. Its pull requests run
-# these checks instead of ci.yml (whose jobs skip any pull request into
-# rewrite/go), and only on GitHub-hosted runners: never on the self-hosted
-# varlatch-ci runner the TypeScript release uses, and with no fallback to it.
-# When hosted minutes are out these jobs wait or fail; the checks then run
-# locally, outside the release's test runs.
+# The Go rewrite (ADR-0059). Its groundwork lived on the rewrite/go branch,
+# and ADR-0059 amendment 2 routed CI by branch: pull requests into rewrite/go
+# ran these checks instead of ci.yml. Since the branch merged into main
+# (Order, step 1), CI is routed by path: these checks run on pull requests
+# into main (and into rewrite/go while it exists) and on pushes to them,
+# whenever a change touches go/, this workflow, or the TypeScript crypto
+# code the cross-language envelope step loads. ci.yml classifies Go-only
+# changes too (scripts/ci-changes.sh): they run its repository-wide checks
+# and no TypeScript tests. No ruleset requires these jobs, so a pull request
+# the path filter skips is never left waiting for them. They run on
+# GitHub-hosted runners only, never on the self-hosted varlatch-ci runner the
+# TypeScript release uses, and with no fallback to it. When hosted minutes
+# are out these jobs wait or fail; the checks then run locally, outside the
+# release's test runs.
 on:
   pull_request:
-    branches: [rewrite/go]
+    branches: [main, rewrite/go]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "go/**"
+      - ".github/workflows/go.yml"
+      # Loaded by go/lib/envelope/testdata/tsfixtures.mjs.
+      - "services/varlatchd/src/crypto/**"
+      - "services/varlatchd/src/auth/jwt.ts"
+      - "services/varlatchd/src/config.ts"
+      - "packages/contract/src/canonical.ts"
+      # The license map, which checks go/ too.
+      - "scripts/check-licenses.mjs"
   push:
-    branches: [rewrite/go]
+    branches: [main, rewrite/go]
+    # The same paths as pull_request's.
+    paths:
+      - "go/**"
+      - ".github/workflows/go.yml"
+      - "services/varlatchd/src/crypto/**"
+      - "services/varlatchd/src/auth/jwt.ts"
+      - "services/varlatchd/src/config.ts"
+      - "packages/contract/src/canonical.ts"
+      - "scripts/check-licenses.mjs"
+  workflow_dispatch:
 
 permissions:
   contents: read
