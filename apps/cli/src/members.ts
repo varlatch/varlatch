@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { ExposureReport, MemberRemoval, MemberReview, OrgIdentity } from "@varlatch/sdk";
+import { UNRECOGNIZED_TIME, printable, safe, safeTime } from "./safeText.js";
 
 /**
  * `varlatch member` (capability members.lifecycle, ADR-0052): list, remove,
@@ -48,14 +49,14 @@ export function resolveMember(identities: OrgIdentity[], arg: string): OrgIdenti
   if (byId) {
     if (isMember(byId)) return byId;
     const what = byId.kind !== "human" ? `a ${byId.kind} identity` : byId.removedAt ? "a former member" : "not a member";
-    throw new MemberError(`${arg} (${byId.name}) is ${what}, not a member of this organization. Nothing was changed.`);
+    throw new MemberError(safe`${arg} (${byId.name}) is ${what}, not a member of this organization. Nothing was changed.`);
   }
   const members = identities.filter(isMember);
   const named = members.filter((i) => i.name === arg);
   if (named.length === 1) return named[0]!;
   if (named.length > 1) {
     throw new MemberError(
-      `Several members are named ${arg}; name one by its identity ID: ${named.map((i) => i.id).join(", ")}. Nothing was changed.`,
+      safe`Several members are named ${arg}; name one by its identity ID: ${named.map((i) => i.id).join(", ")}. Nothing was changed.`,
     );
   }
   throw new MemberError(`${arg} is not a member of this organization (varlatch member list shows who is). Nothing was changed.`);
@@ -71,12 +72,12 @@ export function resolvePerson(identities: OrgIdentity[], arg: string): OrgIdenti
   const byId = identities.find((i) => i.id === arg);
   if (byId) {
     if (people.includes(byId)) return byId;
-    throw new MemberError(`${arg} (${byId.name}) is ${byId.kind !== "human" ? `a ${byId.kind} identity` : "not a member"}, never a member of this organization.`);
+    throw new MemberError(safe`${arg} (${byId.name}) is ${byId.kind !== "human" ? `a ${byId.kind} identity` : "not a member"}, never a member of this organization.`);
   }
   const named = people.filter((i) => i.name === arg);
   if (named.length === 1) return named[0]!;
   if (named.length > 1) {
-    throw new MemberError(`Several people are named ${arg}; name one by its identity ID: ${named.map((i) => i.id).join(", ")}.`);
+    throw new MemberError(safe`Several people are named ${arg}; name one by its identity ID: ${named.map((i) => i.id).join(", ")}.`);
   }
   throw new MemberError(`${arg} is not a current or former member of this organization (varlatch member list shows who is).`);
 }
@@ -90,7 +91,7 @@ const WAY_WORDS: Record<string, string> = {
 
 /** A version's state, in words. */
 function stateWords(v: ExposureReport["received"][number]): string {
-  const served = v.servedAs === "current" ? "still served (current)" : v.servedAs === "retiring" ? `still served (retiring until ${v.retiringUntil})` : null;
+  const served = v.servedAs === "current" ? "still served (current)" : v.servedAs === "retiring" ? `still served (retiring until ${safeTime(v.retiringUntil) ?? UNRECOGNIZED_TIME})` : null;
   const notServed = {
     replaced: "no longer served (replaced)",
     "value-deleted": "no longer served (value deleted)",
@@ -98,7 +99,7 @@ function stateWords(v: ExposureReport["received"][number]): string {
     unknown: "unknown here",
   }[v.notServedBecause ?? "unknown"];
   const base = served ?? notServed;
-  return v.confirmation ? `revoked at the provider, confirmed ${v.confirmation.confirmedAt}; ${base}` : base;
+  return v.confirmation ? `revoked at the provider, confirmed ${safeTime(v.confirmation.confirmedAt) ?? UNRECOGNIZED_TIME}; ${base}` : base;
 }
 
 /**
@@ -112,11 +113,11 @@ export function exposureLines(
 ): string[] {
   const m = report.member;
   const lines = [
-    `Exposure report for ${m.name} (${m.removedAt ? `former member, removed ${m.removedAt}` : `${m.role ?? "no role"}`}).`,
+    `Exposure report for ${m.name} (${m.removedAt ? `former member, removed ${safeTime(m.removedAt)}` : `${m.role ?? "no role"}`}).`,
   ];
   if (!report.coverage.complete) {
     lines.push(
-      `Older history is still being indexed: events from ${report.coverage.from ?? "?"} to ${report.coverage.to ?? "?"} are not covered yet.`,
+      `Older history is still being indexed: events from ${safeTime(report.coverage.from) ?? "?"} to ${safeTime(report.coverage.to) ?? "?"} are not covered yet.`,
     );
   }
   lines.push("", "Received (observed in the audit log; a delivery is not proof that a copy was kept):");
@@ -125,7 +126,7 @@ export function exposureLines(
     lines.push(`  ${v.itemName}  ${v.versionId}  in ${envName(v.owningEnvironmentId)}: ${stateWords(v)}`);
     for (const r of v.receipts) {
       const through = r.environmentId !== v.owningEnvironmentId ? ` through ${envName(r.environmentId)}` : "";
-      lines.push(`    ${WAY_WORDS[r.way] ?? r.way}${through}, ${r.firstAt === r.lastAt ? r.firstAt : `${r.firstAt} to ${r.lastAt}`}`);
+      lines.push(`    ${WAY_WORDS[r.way] ?? r.way}${through}, ${r.firstAt === r.lastAt ? safeTime(r.firstAt) : `${safeTime(r.firstAt)} to ${safeTime(r.lastAt)}`}`);
     }
     if (v.rotationHint && v.served) lines.push(`    to rotate: ${v.rotationHint}`);
   }
@@ -134,7 +135,7 @@ export function exposureLines(
   }
   const authority = report.authorityAtRemoval;
   if (authority) {
-    lines.push("", `Could reach when removed (${authority.removedAt}):`);
+    lines.push("", `Could reach when removed (${safeTime(authority.removedAt)}):`);
     if (authority.environments.length === 0) lines.push("  nothing");
     for (const e of authority.environments) {
       const condition = e.conditionalOn.length === 0 ? "unconditional" : `conditional on Tailnet Requirement ${e.conditionalOn.join(", ")}`;
@@ -152,7 +153,8 @@ export function exposureLines(
   );
   const review = reviewLines(report.indirect);
   lines.push("", review.length === 0 ? "Indirect paths: none." : "Indirect paths (what they set up; not evidence that they held a value):", ...review);
-  return lines;
+  // Every line holds names, IDs and text from the server: escaped (issue #119).
+  return lines.map(printable);
 }
 
 /** `word` as one shell word, quoted only when it needs to be, for a command a human copies. */
@@ -223,5 +225,6 @@ export function removalLines(removal: MemberRemoval, name: string, organization:
   } else {
     lines.push("", "To review (the removal changed none of it; it may keep working without them):", ...review);
   }
-  return lines;
+  // Every line holds names, IDs and counts from the server: escaped (issue #119).
+  return lines.map(printable);
 }

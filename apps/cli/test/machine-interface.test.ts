@@ -60,7 +60,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(body));
     };
-    const error = (status: number, code: string) => json(status, { error: { code, message: code.toLowerCase(), requestId: "req_1" } });
+    const error = (status: number, code: string) => json(status, { error: { code, message: code.toLowerCase(), requestId: "req_0b6c2f1e-3d4a-4c5b-9e8f-7a6b5c4d3e2f" } });
     const auth = req.headers.authorization ?? "";
     if (auth === "Bearer vlt_bad") return error(401, "UNAUTHENTICATED");
     if (auth === "Bearer vlt_denied") return error(403, "PERMISSION_DENIED");
@@ -290,7 +290,7 @@ describe("exit statuses", () => {
   ])("%s: %i", async (_name, token, code) => {
     const r = await cli(["values", "list"], { VARLATCH_TOKEN: token });
     expect(r.code).toBe(code);
-    expect(r.stderr).toMatch(/^Error [A-Z_]+: .* \(request req_1\)/);
+    expect(r.stderr).toMatch(/^Error [A-Z_]+: .* \(request req_0b6c2f1e-3d4a-4c5b-9e8f-7a6b5c4d3e2f\)/);
   });
 
   async function closedPort(): Promise<number> {

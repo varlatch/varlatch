@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { LocalState, ResolvedContext, StoredCredential } from "@varlatch/context";
+import { printable, safeTime } from "./safeText.js";
 
 /**
  * Session disclosure (ADR-0032). The status document is a versioned contract
@@ -120,7 +121,7 @@ export function expiryWarning(
   now: number = Date.now(),
 ): string | null {
   const state = expiryState(credential, now);
-  const expiresAt = credential?.expiresAt;
+  const expiresAt = safeTime(credential?.expiresAt);
   if (state === "expired") {
     return `varlatch: credential for ${server} expired ${expiresAt} — run \`varlatch login --server ${server}\``;
   }
@@ -144,8 +145,10 @@ export function envTokenExpiryWarning(
   const at = Date.parse(expiresAt);
   if (Number.isNaN(at)) return null;
   const remedy = "issue a new one (`varlatch credential issue`) and replace VARLATCH_TOKEN";
-  if (at <= now) return `varlatch: credential for ${server} (VARLATCH_TOKEN) expired ${expiresAt}; ${remedy}`;
-  return `varlatch: credential for ${server} (VARLATCH_TOKEN) expires ${expiresAt}; ${remedy} before then`;
+  // The header's text is the server's: only a timestamp is shown (issue #119).
+  const shown = safeTime(expiresAt);
+  if (at <= now) return `varlatch: credential for ${server} (VARLATCH_TOKEN) expired ${shown}; ${remedy}`;
+  return `varlatch: credential for ${server} (VARLATCH_TOKEN) expires ${shown}; ${remedy} before then`;
 }
 
 export function formatStatusHuman(doc: StatusDocument): string {
@@ -155,7 +158,7 @@ export function formatStatusHuman(doc: StatusDocument): string {
   }
   for (const s of doc.servers) {
     const bits = [
-      s.expired === true ? "EXPIRED" : s.expiresAt ? `expires ${s.expiresAt}` : "no expiry recorded",
+      s.expired === true ? "EXPIRED" : s.expiresAt ? `expires ${safeTime(s.expiresAt)}` : "no expiry recorded",
       ...(s.name ? [s.name] : []),
       ...(s.probe ? [`probe: ${s.probe.state}${s.probe.detail ? ` (${s.probe.detail})` : ""}`] : []),
     ];
@@ -169,5 +172,6 @@ export function formatStatusHuman(doc: StatusDocument): string {
       `Environment   ${doc.repo.environment} (${doc.repo.environmentSource}${doc.repo.tier ? `, tier ${doc.repo.tier}` : ""})`,
     );
   }
-  return lines.join("\n");
+  // Credential names, probe details and the cached tier came from servers: escaped (issue #119).
+  return lines.map(printable).join("\n");
 }

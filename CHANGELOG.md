@@ -220,6 +220,20 @@ fixes.
   sign-in, and a refused request never asks for an approval. Each refusal
   is still recorded once. See [When it
   decides](docs/reference/security-controls.md#when-it-decides).
+- **The CLI prints only checked text from the server.** A server that
+  misbehaves can no longer use the CLI's output to show a credential or a
+  value, add fake lines, or send escape sequences to your terminal. Times,
+  versions and request ids print only when they have the expected form,
+  and as a fixed phrase such as "an unrecognized time" otherwise; an error
+  code prints only when Varlatch defines it. An error message from the
+  server is still shown, with control characters made visible and with
+  every credential and value the CLI knows of replaced by `[redacted]`:
+  the request's credential, every stored one, values it sent, and anything
+  in a Varlatch token format. Names of organizations, projects,
+  environments, identities and other things the server returns show their
+  control characters as visible escapes such as `\u001b`. JSON output,
+  NDJSON audit exports, what `varlatch run` gives its command and the
+  format of `varlatch env list` are unchanged.
 - Dependency update for published advisories: `hono` 4.13.16
   (GHSA-4m76-xfj5-7975 and GHSA-h7mg-cq63-vhpq: `mount()`, and the
   RegExpRouter for some route sets and for paths with an encoded line

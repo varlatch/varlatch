@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { OUTBOUND_HOST_NOTE, OUTBOUND_REFUSAL_LABELS } from "@varlatch/protocol";
 import { VarlatchApiError, type CredentialReview, type RefusedDestination, type RefusedDestinations, type ReviewedCredential, type VarlatchClient } from "@varlatch/sdk";
+import { printable, safeTime, safeVersion } from "./safeText.js";
 
 /**
  * `varlatch security report` (ADR-0054 Decision 8): visibility only, never a
@@ -41,7 +42,7 @@ export async function fetchSecurityReport(api: SecurityReportApi, organization: 
   const meta = await api.meta();
   if (!meta.capabilities.includes(CREDENTIAL_REVIEW_CAPABILITY)) {
     throw new CredentialReviewUnsupportedError(
-      `varlatch security report: this server (${meta.serverVersion}) has no credential review ` +
+      `varlatch security report: this server (${safeVersion(meta.serverVersion) ?? "an older release"}) has no credential review ` +
         `(it lacks the ${CREDENTIAL_REVIEW_CAPABILITY} capability); upgrade the server. ` +
         "varlatch credential list <identity-id> shows one identity's credentials with their last use.",
     );
@@ -79,7 +80,7 @@ function identityWords(identity: ReviewedCredential["identity"]): string {
 function credentialLine(c: ReviewedCredential, now: number): string {
   const facts = [
     `last used ${c.lastUsedAt ? ago(c.lastUsedAt, now) : "never"}`,
-    c.expiresAt ? `expires ${c.expiresAt}` : "no expiry",
+    c.expiresAt ? `expires ${safeTime(c.expiresAt)}` : "no expiry",
     `created ${ago(c.createdAt, now)}`,
     ...(c.issuedBy ? [`issued by ${c.issuedBy.name}`] : []),
   ];
@@ -143,7 +144,8 @@ export function credentialReviewLines(organization: string, review: CredentialRe
       : "Reporting only: nothing is revoked or retired automatically. To revoke one: " +
           "varlatch credential revoke <identity-id> <credential-id>",
   );
-  return lines;
+  // Every line holds names, IDs and counts from the server: escaped (issue #119).
+  return lines.map(printable);
 }
 
 const KIND_WORDS: Record<RefusedDestination["kind"], string> = { webhook: "webhook", coolify: "Coolify", convex: "Convex", "oidc-issuer": "OIDC issuer" };
@@ -175,10 +177,11 @@ export function refusedDestinationLines(organization: string, refused: RefusedPa
   const checked = refused.destinations.checked as number | undefined;
   const unresolved = (refused.destinations.unresolved as number | undefined) ?? 0;
   if (items.length === 0) {
-    if (unresolved > 0) return ["", `Refused destinations for ${organization}: none of those checked.`, `  ${unresolvedLine(unresolved, checked)}`];
+    if (unresolved > 0) return ["", `Refused destinations for ${organization}: none of those checked.`, `  ${unresolvedLine(unresolved, checked)}`].map(printable);
     if (checked === 0) return ["", `Refused destinations for ${organization}: none. The organization has no webhooks, Coolify or Convex connections, or OIDC issuers.`];
     return ["", `Refused destinations for ${organization}: none. This installation connects to every destination the organization configured.`];
   }
+  // Names, hosts and counts from the server: escaped (issue #119).
   return [
     "",
     `Refused destinations for ${organization} (${items.length})`,
@@ -186,5 +189,5 @@ export function refusedDestinationLines(organization: string, refused: RefusedPa
     ...(unresolved > 0 ? [`  ${unresolvedLine(unresolved, checked)}`] : []),
     "",
     OUTBOUND_HOST_NOTE,
-  ];
+  ].map(printable);
 }

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import type { IncidentFreeze, IncidentFreezeLift, IncidentFreezeState, ResumingTarget } from "@varlatch/sdk";
+import { UNRECOGNIZED_TIME, safe, safeTime } from "./safeText.js";
 
 /**
  * `varlatch org freeze` and `varlatch org unfreeze` (ADR-0055 Decision 11):
@@ -38,35 +39,35 @@ export const FREEZE_EFFECTS = [
 
 export function frozenLines(freeze: IncidentFreeze, slug: string): string[] {
   return [
-    `${slug} is frozen for an incident since ${freeze.frozenAt} [${freeze.id}].`,
+    safe`${slug} is frozen for an incident since ${safeTime(freeze.frozenAt)} [${freeze.id}].`,
     ...FREEZE_EFFECTS.map((l) => `  ${l}`),
     `Lift it with your approval: varlatch org unfreeze ${slug}`,
   ];
 }
 
 function targetLine(t: ResumingTarget): string {
-  return `  ${t.projectSlug}/${t.environmentName} -> ${t.platform} ${t.destination} [${t.id}]`;
+  return safe`  ${t.projectSlug}/${t.environmentName} -> ${t.platform} ${t.destination} [${t.id}]`;
 }
 
 /** What the lift will do, printed before asking for the approval. */
 export function liftConfirmationLines(state: IncidentFreezeState, slug: string): string[] {
   const freeze = state.freeze!;
   return [
-    `${slug} is frozen since ${freeze.frozenAt} by ${freeze.frozenBy.name ?? freeze.frozenBy.id}: ${freeze.reason}`,
+    safe`${slug} is frozen since ${safeTime(freeze.frozenAt)} by ${freeze.frozenBy.name ?? freeze.frozenBy.id}: ${freeze.reason}`,
     "Lifting undoes nothing done during the freeze: revoked credentials and Grants stay revoked.",
     ...(state.resumingTargets === null
       ? ["Sync Targets that were not paused or revoked resume pushing (listing them needs config.sync.manage)."]
       : state.resumingTargets.length === 0
         ? ["No Sync Target resumes pushing."]
-        : [`Sync Targets that resume pushing (${state.resumingTargets.length}):`, ...state.resumingTargets.map(targetLine)]),
+        : [safe`Sync Targets that resume pushing (${state.resumingTargets.length}):`, ...state.resumingTargets.map(targetLine)]),
   ];
 }
 
 export function liftedLines(result: IncidentFreezeLift, slug: string): string[] {
   return [
-    `Freeze of ${slug} lifted at ${result.freeze.liftedAt} [${result.freeze.id}].`,
+    safe`Freeze of ${slug} lifted at ${safeTime(result.freeze.liftedAt) ?? UNRECOGNIZED_TIME} [${result.freeze.id}].`,
     ...(result.resumingTargets === null || result.resumingTargets.length === 0
       ? []
-      : [`Sync Targets resuming (${result.resumingTargets.length}):`, ...result.resumingTargets.map(targetLine)]),
+      : [safe`Sync Targets resuming (${result.resumingTargets.length}):`, ...result.resumingTargets.map(targetLine)]),
   ];
 }

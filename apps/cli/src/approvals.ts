@@ -2,6 +2,7 @@
 import { VarlatchApiError, type Approval, type VarlatchClient } from "@varlatch/sdk";
 import { EXIT } from "./exitCodes.js";
 import { shellWord } from "./members.js";
+import { printable, safeTime } from "./safeText.js";
 
 /**
  * Step-up approvals in the CLI (ADR-0054 Decision 3). When an operation
@@ -90,8 +91,9 @@ export function approvalLines(approval: Approval): string[] {
         "(this server has no public URL, so the CLI cannot print its address).",
     );
   }
-  lines.push(`It expires at ${approval.expiresAt}. Only you can approve it.`);
-  return lines;
+  lines.push(`It expires at ${safeTime(approval.expiresAt)}. Only you can approve it.`);
+  // The title, fields, address and id come from the server: escaped (issue #119).
+  return lines.map(printable);
 }
 
 /** The command line to run again after approving, with `--approval <id>` added. */
@@ -106,8 +108,8 @@ export function assistedStopLines(approval: Approval, rerun: string): string[] {
     ...approvalLines(approval),
     "Coding agent: stop here. Show the address above to the person and ask them to approve it themselves; " +
       "do not open or approve it for them. Nothing was changed yet.",
-    `After they approved, run the same command again (before ${approval.expiresAt}):`,
-    `  ${rerun}`,
+    `After they approved, run the same command again (before ${safeTime(approval.expiresAt)}):`,
+    `  ${printable(rerun)}`,
   ];
 }
 
@@ -260,7 +262,7 @@ export async function waitInterruptibly(
     return approved;
   } catch (err) {
     if (!interrupted) throw err;
-    io.err(`Stopped waiting. Cancelling approval ${approval.id}; nothing was changed.`);
+    io.err(`Stopped waiting. Cancelling approval ${printable(approval.id)}; nothing was changed.`);
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       api.cancelApproval(approval.id).catch(() => undefined),

@@ -13,6 +13,7 @@ import type { SecretEntry } from "@varlatch/matcher";
 import type { StrictRetrieval } from "@varlatch/protocol";
 import { RUN_CONTEXT, omitProblem } from "./inject.js";
 import { deliveredSecrets } from "./redact.js";
+import { printable, safeVersion } from "./safeText.js";
 
 /**
  * `varlatch run --strict`: resolve the exact environment the child would
@@ -404,7 +405,8 @@ export function encodeRunContext(context: RunContext): string | null {
 export function formatViolations(violations: Violation[]): string[] {
   return [
     `varlatch: strict startup found ${violations.length} violation(s); the command was not started:`,
-    ...violations.map((v) => `  ${v.name}: ${v.kind}: ${v.reason}`),
+    // Names and reasons from the server: escaped (issue #119).
+    ...violations.map((v) => printable(`  ${v.name}: ${v.kind}: ${v.reason}`)),
   ];
 }
 
@@ -453,7 +455,7 @@ export async function runStrict(api: StrictClient, opts: StrictRunOptions): Prom
   const meta = await api.meta();
   if (!meta.capabilities.includes("retrieval.strict")) {
     opts.log(
-      `varlatch: --strict needs strict retrieval, which this server (${meta.serverVersion}) does not offer; it needs Varlatch 0.11.0 or later. Strict startup never falls back to a default run.`,
+      `varlatch: --strict needs strict retrieval, which this server (${safeVersion(meta.serverVersion) ?? "an older release"}) does not offer; it needs Varlatch 0.11.0 or later. Strict startup never falls back to a default run.`,
     );
     return STRICT_EXIT;
   }

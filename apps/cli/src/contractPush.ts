@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ITEM_TYPE_SINCE_SEMANTICS, type ItemType } from "@varlatch/contract";
+import { printable } from "./safeText.js";
 
 /**
  * The semantics version a push will get (ADR-0038 Decision 3): the pinned
@@ -35,7 +36,7 @@ export function pushVersionProblem(items: readonly ItemLike[], facts: PushVersio
   if (needed.version === 1) return null;
   const newest = Math.max(...facts.serverVersions);
   if (newest < needed.version) {
-    return `${needed.items.join(", ")} needs Contract Semantics version ${needed.version}, which this server does not evaluate (it supports ${facts.serverVersions.join(", ")}); upgrade it to Varlatch 0.13.0 or later`;
+    return `${needed.items.join(", ")} needs Contract Semantics version ${needed.version}, which this server does not evaluate (it supports ${printable(facts.serverVersions.join(", "))}); upgrade it to Varlatch 0.13.0 or later`;
   }
   const version = facts.pinned ?? facts.activeVersion ?? newest;
   if (version >= needed.version) return null;

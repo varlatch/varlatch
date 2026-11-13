@@ -3,6 +3,7 @@ import type { ConfigurationContract } from "@varlatch/contract";
 import { formsOf, MIN_LENGTH, type SecretEntry } from "@varlatch/matcher";
 import type { EffectiveConfiguration } from "@varlatch/protocol";
 import { VarlatchApiError } from "@varlatch/sdk";
+import { printable } from "./safeText.js";
 
 /**
  * `varlatch run` in assisted mode (ADR-0043 Decision 4, amending ADR-0038
@@ -150,13 +151,14 @@ export function unmaskableRefusal(items: string[], how: RemedyContext): string[]
 export function assistedGate(plan: AssistedPlan, log: (line: string) => void, how: RemedyContext): boolean {
   if (plan.unusedAllowances.length > 0) {
     log(
-      `varlatch: --allow-unmasked names ${plan.unusedAllowances.join(", ")}, which ${plan.unusedAllowances.length === 1 ? "is" : "are"} ` +
+      `varlatch: --allow-unmasked names ${printable(plan.unusedAllowances.join(", "))}, which ${plan.unusedAllowances.length === 1 ? "is" : "are"} ` +
         `not a Secret shorter than ${MIN_LENGTH} bytes in this run; ignored`,
     );
   }
   if (plan.refused.length > 0) {
     const runOptions = [...(how.runOptions ?? []), ...plan.allowed.map((name) => `--allow-unmasked ${name}`)];
-    for (const line of unmaskableRefusal(plan.refused, { ...how, runOptions })) log(line);
+    // One line each, naming items from the server: escaped (issue #119).
+    for (const line of unmaskableRefusal(plan.refused, { ...how, runOptions })) log(printable(line));
     return false;
   }
   return true;

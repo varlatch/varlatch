@@ -14,8 +14,11 @@ describe("revokeStoredCredential", () => {
 
   it("reports why revocation did not happen instead of throwing", async () => {
     expect(await revokeStoredCredential({ token: "x" }, async () => {})).toMatch(/no credential id/);
-    const apiError = new VarlatchApiError(401, { code: "UNAUTHENTICATED", message: "nope", requestId: "r" } as never);
-    expect(await revokeStoredCredential(cred, async () => { throw apiError; })).toBe("UNAUTHENTICATED");
+    const apiError = new VarlatchApiError(401, { code: "AUTHENTICATION_REQUIRED", message: "nope", requestId: "r" } as never);
+    expect(await revokeStoredCredential(cred, async () => { throw apiError; })).toBe("AUTHENTICATION_REQUIRED");
+    // A code the protocol does not define is never repeated: a server could put anything there (#119).
+    const echoing = new VarlatchApiError(401, { code: "vlt_cli_echoed\u001b[31m", message: "nope", requestId: "r" } as never);
+    expect(await revokeStoredCredential(cred, async () => { throw echoing; })).toBe("UNRECOGNIZED_ERROR");
     expect(await revokeStoredCredential(cred, async () => { throw new Error("ECONNREFUSED"); })).toBe("ECONNREFUSED");
   });
 });

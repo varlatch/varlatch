@@ -85,7 +85,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
       res.end(JSON.stringify(payload));
     };
     const error = (status: number, code: string, message: string, details?: Record<string, unknown>) =>
-      json(status, { error: { code, message, requestId: "req_1", ...(details ? { details } : {}) } });
+      json(status, { error: { code, message, requestId: "req_0b6c2f1e-3d4a-4c5b-9e8f-7a6b5c4d3e2f", ...(details ? { details } : {}) } });
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.21.0", capabilities });
     if (verificationRequired && url.startsWith("/v1/organizations/acme")) {
       return error(403, "PASSKEY_VERIFICATION_REQUIRED", "This Organization requires a sign-in with a trusted passkey that verifies you.", {
@@ -310,7 +310,7 @@ describe("varlatch security set", () => {
     const r = await cli(["security", "controls"]);
     expect(r.code).toBe(EXIT.denied);
     expect(r.stdout).toBe("");
-    expect(r.stderr).toContain("Error PASSKEY_VERIFICATION_REQUIRED: This Organization requires a sign-in with a trusted passkey that verifies you. (request req_1)");
+    expect(r.stderr).toContain("Error PASSKEY_VERIFICATION_REQUIRED: This Organization requires a sign-in with a trusted passkey that verifies you. (request req_0b6c2f1e-3d4a-4c5b-9e8f-7a6b5c4d3e2f)");
     expect(r.stderr).toContain("  varlatch login --server <url>\n");
     expect(r.stderr).toContain("approve the sign-in in the browser with a trusted passkey that asks for your PIN, fingerprint or face");
     expect(r.stderr).toContain("admin bootstrap or admin recover --cli-credential) is always refused here");
