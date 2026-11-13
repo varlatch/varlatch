@@ -438,30 +438,6 @@ const systemResolver: Resolver = async (name) =>
 let resolverOverride: Resolver | null = null;
 
 /**
- * How long one name resolution of the policy may take (the configuration
- * check, a socket's lookup). A lookup that takes longer fails as
- * unresolved (ETIMEOUT), so nothing waits on DNS without a bound.
- * Adjustable in tests.
- */
-export const OUTBOUND_RESOLVE = { timeoutMs: 5_000 };
-
-/** `resolver`'s answer for `name`, or ETIMEOUT after OUTBOUND_RESOLVE.timeoutMs. */
-async function resolveBounded(resolver: Resolver, name: string): Promise<{ address: string; family: 4 | 6 }[]> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(Object.assign(new Error(`DNS lookup of ${name} timed out`), { code: "ETIMEOUT", hostname: name })),
-      OUTBOUND_RESOLVE.timeoutMs,
-    );
-  });
-  try {
-    return await Promise.race([resolver(name), timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
  * The one resolver injection point, for tests only: policies made without a
  * resolver of their own use it instead of the system resolver.
  */
@@ -588,7 +564,7 @@ export class OutboundPolicy {
   }
 
   private resolve(name: string): Promise<{ address: string; family: 4 | 6 }[]> {
-    return resolveBounded(this.resolver ?? resolverOverride ?? systemResolver, name);
+    return (this.resolver ?? resolverOverride ?? systemResolver)(name);
   }
 
   /**

@@ -291,9 +291,8 @@ export async function lockScope(
  * credential, changes nothing outside Varlatch and spends nothing: it is
  * not a protected external effect, and runs before the operation's write
  * transaction (and before an effect's transaction: sync.ts
- * checkCredentialInput), as today. Each lookup is bounded
- * (net/outbound.ts OUTBOUND_RESOLVE), so nothing waits on DNS without a
- * bound, and no transaction waits on DNS at all.
+ * checkCredentialInput), as today, and waits on DNS exactly as today. No
+ * transaction, and no lock, waits on DNS at all.
  */
 export async function withExternalEffect<T>(
   db: Querier,

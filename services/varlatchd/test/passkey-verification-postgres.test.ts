@@ -7,7 +7,7 @@ import type { AppCtx } from "../src/domain/ctx.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import { getOrganization } from "../src/domain/orgs.js";
 import { EXTERNAL_EFFECT_LIMITS } from "../src/domain/externaleffect.js";
-import { OUTBOUND_RESOLVE, setOutboundResolverForTests } from "../src/net/outbound.js";
+import { setOutboundResolverForTests } from "../src/net/outbound.js";
 import { TEST_PUBLIC_ADDRESS } from "./helpers/outbound-resolver.js";
 import { requireOrganizationAccess, withRequester } from "../src/domain/requestaccess.js";
 import { inSnapshot } from "../src/domain/retrieval.js";
@@ -255,15 +255,15 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
     expect(platform.calls).toBe(calls);
   }, 30_000);
 
-  it("never holds the Organization on DNS: a stalled lookup of the base identity runs before the effect's lock, bounded, and a control change does not wait for it", async () => {
-    const saved = OUTBOUND_RESOLVE.timeoutMs;
-    OUTBOUND_RESOLVE.timeoutMs = 1_500;
+  it("never holds the Organization on DNS: a stalled lookup of the base identity runs before the effect's lock, and a control change does not wait for it", async () => {
     let lookups = 0;
-    // The base identity's name never resolves; everything else as usual.
+    let answer: (addresses: { address: string; family: 4 | 6 }[]) => void = () => undefined;
+    // The base identity's name stalls until the test answers it; everything
+    // else as usual. Lookups have no bound of their own (as on main).
     setOutboundResolverForTests(async (name) => {
       if (name === "coolify.example.com") {
         lookups++;
-        return new Promise(() => undefined);
+        return new Promise((resolve) => { answer = resolve; });
       }
       return name === "localhost" ? [{ address: "127.0.0.1", family: 4 }] : [{ address: TEST_PUBLIC_ADDRESS, family: 4 }];
     });
@@ -278,13 +278,13 @@ describe.skipIf(!url)("passkey-verification on real PostgreSQL", () => {
       expect(change.status).toBe(200);
       expect(Date.now() - changing).toBeLessThan(1_000);
       expect(checkedAt).toBe(0);
-      // The lookup gives up at its bound; the check then takes the lock and
-      // decides under the new mode: refused, before any platform call.
+      // The lookup answers; the check then takes the lock and decides under
+      // the new mode: refused, before any platform call.
+      answer([{ address: TEST_PUBLIC_ADDRESS, family: 4 }]);
       const refused = await checking;
       expect(refused.body.error.code).toBe("PASSKEY_VERIFICATION_REQUIRED");
       expect(platform.calls).toBe(0);
     } finally {
-      OUTBOUND_RESOLVE.timeoutMs = saved;
       setOutboundResolverForTests(async (name) =>
         name === "localhost" ? [{ address: "127.0.0.1", family: 4 }, { address: "::1", family: 6 }] : [{ address: TEST_PUBLIC_ADDRESS, family: 4 }],
       );

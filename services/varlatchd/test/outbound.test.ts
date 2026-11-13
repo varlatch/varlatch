@@ -13,7 +13,6 @@ import {
   classifyAddress,
   decide,
   destinationOf,
-  OUTBOUND_RESOLVE,
   OutboundPolicy,
   OutboundRefusedError,
   parseOutboundAllow,
@@ -147,23 +146,6 @@ describe("address classes (Decision 2)", () => {
     }
     expect(at("https://Coolify.Example.COM./x").host).toBe("coolify.example.com");
     expect(at("https://bücher.example/").host).toBe("xn--bcher-kva.example");
-  });
-});
-
-describe("name resolution", () => {
-  it("is bounded: a lookup that never answers is unresolved after OUTBOUND_RESOLVE.timeoutMs, and nothing waits longer", async () => {
-    const saved = OUTBOUND_RESOLVE.timeoutMs;
-    OUTBOUND_RESOLVE.timeoutMs = 100;
-    try {
-      const policy = new OutboundPolicy([], { resolve: () => new Promise(() => undefined), log: () => {} });
-      const began = Date.now();
-      const checked = await policy.check("https://stalled.example/");
-      expect(checked).toMatchObject({ outcome: "unresolved", error: "ETIMEOUT" });
-      expect(Date.now() - began).toBeLessThan(2_000);
-      expect(await policy.refusalFor("https://stalled.example/", "webhook")).toBeNull();
-    } finally {
-      OUTBOUND_RESOLVE.timeoutMs = saved;
-    }
   });
 });
 
