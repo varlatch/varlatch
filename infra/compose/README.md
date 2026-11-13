@@ -255,9 +255,9 @@ custody, the Docker Compose version) are listed but never block.
 is older than the release, the upgrade leaves the release's CLI as
 `varlatch-cli-<version>.cjs` here: use it from then on.
 
-### Outbound destinations after upgrading to 0.21.1
+### Outbound destinations after upgrading to 0.22.0
 
-From 0.21.1, varlatchd no longer connects to private, loopback or
+From 0.22.0, varlatchd no longer connects to private, loopback or
 link-local addresses on an Organization's behalf. A webhook receiver, a
 Coolify or Convex instance, or an OIDC issuer on your LAN, a Docker network
 or a tailnet needs an entry in `VARLATCH_OUTBOUND_ALLOW`, with the port when
@@ -280,7 +280,7 @@ varlatchd (adjust the network and image to yours):
 ```sh
 docker run --rm --network <compose-project>_default \
   -e VARLATCH_DATABASE_URL=postgres://varlatchd_runtime:<password>@postgres:5432/varlatch \
-  ghcr.io/varlatch/varlatchd:0.21.1 admin outbound check
+  ghcr.io/varlatch/varlatchd:0.22.0 admin outbound check
 ```
 
 OIDC issuers whose discovery document or JWKS answers with a redirect stop

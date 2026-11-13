@@ -5,10 +5,49 @@ release may change the `/v1` API, the CLI, configuration, or the database
 schema, and its entry says what to do. Only the latest release receives
 fixes.
 
-## Unreleased
+## 0.22.0 (2026-11-13)
+
+### Sign-in
+
+- **Signing out of the dashboard ends its access at once.** The dashboard
+  uses a short-lived access token (up to 15 minutes) that it gets from
+  your browser session. Signing out ended the session, but a token taken
+  from it kept working until it expired. Now, when a browser session ends,
+  every dashboard token taken from it stops working immediately. This
+  covers signing out, ending one or all of your other sessions, a session
+  that expired, and the end of every session when the installation moves
+  to another address. Each token ended this way is recorded in the audit
+  log as a revoked credential, with the reason `session-ended`, or
+  `public-url-changed` when the installation moves to another address. A
+  token is also never issued for longer than the session it comes from has
+  left.
+- **`varlatch login` keeps working after you sign out of the browser.** The
+  CLI sign-in that the browser hands over is its own credential, for 12
+  hours by default, as before: signing out of the browser does not end
+  it. End it with `varlatch logout`, or under your account's Active
+  sessions in the dashboard. Machine credentials and CLI sign-ins approved
+  with a code are not affected either.
 
 ### Security
 
+- **Outbound requests now refuse private and internal addresses unless the
+  host allows them.** Audit webhooks, Coolify and Convex Connections (their
+  checks, destination listings, delivery and redeploys), GitHub requests,
+  and OIDC discovery and JWKS fetches go through one outbound policy.
+  Public addresses over https are allowed as before. Private addresses
+  (LAN, Docker networks, tailnet), loopback, link-local and cloud metadata
+  addresses need the host operator's new `VARLATCH_OUTBOUND_ALLOW` setting;
+  some reserved addresses can never be used. Every address a name resolves
+  to must be allowed, redirects are never followed, and proxies from the
+  environment are not used. Saving a refused webhook, Connection or OIDC
+  binding fails with a message that names the kind of address, never the
+  address itself. Each refusal is recorded as the audit event
+  `outbound.refused`. See [Outbound policy](docs/reference/outbound-policy.md).
+- **OIDC issuer fetches are bounded.** varlatchd fetches an issuer's
+  discovery document and keys once at a time per issuer, waits before
+  retrying an issuer that failed (30 seconds, doubling up to 10 minutes),
+  and refreshes for an unknown key at most once a minute. Tokens that fail
+  verification never cause a fetch.
 - **Audit export to object storage.** An organization can keep a copy of its
   whole audit log in an S3-compatible bucket it controls (AWS S3, Backblaze
   B2 or another provider that honours conditional writes), with Object Lock
@@ -323,11 +362,6 @@ fixes.
   organization's default lifetime, and names the maximum when a `--ttl` is
   refused under `credential-lifetime`.
 
-### Dashboard
-
-- Cancelling the confirmation of an organization's deletion returns
-  keyboard focus to the "Delete organization" button.
-
 ### Self-hosting
 
 - `VARLATCH_AUDIT_EXPORT=off` turns audit export off on an installation
@@ -359,6 +393,32 @@ fixes.
   installation, and `varlatch run`. The short-lived credential moved under
   "Sign in without a browser". The dashboard's project onboarding shows
   the install line too, and its `varlatch init` line now names the server.
+- **`varlatch admin outbound check`** (and `varlatchd admin outbound check`
+  in the container) lists every configured webhook, Coolify and Convex
+  Connection and OIDC issuer with the policy's verdict, and suggests the
+  `VARLATCH_OUTBOUND_ALLOW` value that would allow the refused ones.
+  `--allow` tests a value without a restart. It makes DNS lookups only.
+- **`varlatch doctor`** shows the allow list and the number of refused
+  destinations as the advisory check "Outbound destinations".
+- **Installation, Outbound** in the dashboard, for Installation Admins:
+  the allow list as varlatchd read it, with the same warnings as doctor,
+  every refused destination by Organization (kind, name, host and reason),
+  and the line to add to `.env`. It is read-only: the allow list is set on
+  the host. API: `GET /v1/installation/outbound` (capability
+  `installation.outbound`).
+- **Each Organization's Security page** lists the webhooks, Connections and
+  OIDC issuers this installation refuses, with the reason and the first
+  refusal recorded in the last 30 days, says how many destinations could
+  not be checked because their names did not resolve, and says that
+  private destinations are allowed by the host operator, not in Varlatch.
+  `varlatch security report` shows the same list. Both need
+  `organization.manage`. API:
+  `GET /v1/organizations/{org}/security/refused-destinations` (capability
+  `security.refused-destinations`). A webhook, Sync Target or Connection
+  whose destination is refused now says so with the policy's wording,
+  instead of showing a failure; a Connection says so even when no
+  integration uses it or all are paused. Both pages check when asked,
+  with DNS lookups only, and reuse a check for up to 30 seconds.
 
 ### Documentation
 
@@ -402,100 +462,36 @@ fixes.
 
 ### Upgrading
 
-- Migration 52 adds the audit export tables and lets approvals cover
-  audit export changes. Nothing changes until an admin creates an export.
-- `varlatch init` with no server to write (no `--server`, no
-  `VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
-  It used to write a `varlatch.toml` without a server, which every later
-  command rejected. Pass `--server`, or sign in first.
-- Migration 44 adds the freeze history. Restoring a backup taken before a
-  freeze brings the organization back unfrozen: freeze it again after the
-  restore.
-- Migration 45 lets approvals cover Tailnet Requirement changes. Nothing
-  changes until an admin enforces `requirement-protection`.
-- Migration 49 adds a counter to each organization that a security control
-  change bumps (the organization's security epoch). Nothing reads it but
-  the server's own transactions.
+Database schema: migrations 43 to 52, forward only, one transaction each.
 
-## Unreleased (0.21.1)
+- 43 adds a database trigger that revokes a browser session's dashboard
+  tokens when the session ends. Nothing to do.
+- 44 adds the freeze history. Restoring a backup taken before a freeze
+  brings the organization back unfrozen: freeze it again after the restore.
+- 45 lets approvals cover Tailnet Requirement changes. Nothing changes
+  until an admin enforces `requirement-protection`.
+- 46, 47, 48 and 51 let approvals cover the admin-step-up operations for
+  machine identities, Grants, roles, groups and teams, people, and deletion
+  and export. Nothing changes until an admin enforces `admin-step-up`.
+- 49 adds a counter to each organization that a security control change
+  bumps (the organization's security epoch). Nothing reads it but the
+  server's own transactions.
+- 50 lets approvals cover the integration operations and stages GitHub App
+  registrations (see Security). Registrations in progress at the upgrade
+  get an id.
+- 52 adds the audit export tables and lets approvals cover audit export
+  changes. Nothing changes until an admin creates an export. Every
+  varlatchd process runs an audit export loop; with no export it only
+  looks, once a minute, for one. `VARLATCH_AUDIT_EXPORT=off` stops the
+  audit export loop host-wide. It defaults to on, and with no export
+  configured it sends nothing.
 
-### Sign-in
-
-- **Signing out of the dashboard ends its access at once.** The dashboard
-  uses a short-lived access token (up to 15 minutes) that it gets from
-  your browser session. Signing out ended the session, but a token taken
-  from it kept working until it expired. Now, when a browser session ends,
-  every dashboard token taken from it stops working immediately. This
-  covers signing out, ending one or all of your other sessions, a session
-  that expired, and the end of every session when the installation moves
-  to another address. Each token ended this way is recorded in the audit
-  log as a revoked credential, with the reason `session-ended`, or
-  `public-url-changed` when the installation moves to another address. A
-  token is also never issued for longer than the session it comes from has
-  left.
-- **`varlatch login` keeps working after you sign out of the browser.** The
-  CLI sign-in that the browser hands over is its own credential, for 12
-  hours by default, as before: signing out of the browser does not end
-  it. End it with `varlatch logout`, or under your account's Active
-  sessions in the dashboard. Machine credentials and CLI sign-ins approved
-  with a code are not affected either.
-
-### Security
-
-- **Outbound requests now refuse private and internal addresses unless the
-  host allows them.** Audit webhooks, Coolify and Convex Connections (their
-  checks, destination listings, delivery and redeploys), GitHub requests,
-  and OIDC discovery and JWKS fetches go through one outbound policy.
-  Public addresses over https are allowed as before. Private addresses
-  (LAN, Docker networks, tailnet), loopback, link-local and cloud metadata
-  addresses need the host operator's new `VARLATCH_OUTBOUND_ALLOW` setting;
-  some reserved addresses can never be used. Every address a name resolves
-  to must be allowed, redirects are never followed, and proxies from the
-  environment are not used. Saving a refused webhook, Connection or OIDC
-  binding fails with a message that names the kind of address, never the
-  address itself. Each refusal is recorded as the audit event
-  `outbound.refused`. See [Outbound policy](docs/reference/outbound-policy.md).
-- **OIDC issuer fetches are bounded.** varlatchd fetches an issuer's
-  discovery document and keys once at a time per issuer, waits before
-  retrying an issuer that failed (30 seconds, doubling up to 10 minutes),
-  and refreshes for an unknown key at most once a minute. Tokens that fail
-  verification never cause a fetch.
-
-### Self-hosting
-
-- **`varlatch admin outbound check`** (and `varlatchd admin outbound check`
-  in the container) lists every configured webhook, Coolify and Convex
-  Connection and OIDC issuer with the policy's verdict, and suggests the
-  `VARLATCH_OUTBOUND_ALLOW` value that would allow the refused ones.
-  `--allow` tests a value without a restart. It makes DNS lookups only.
-- **`varlatch doctor`** shows the allow list and the number of refused
-  destinations as the advisory check "Outbound destinations".
-- **Installation, Outbound** in the dashboard, for Installation Admins:
-  the allow list as varlatchd read it, with the same warnings as doctor,
-  every refused destination by Organization (kind, name, host and reason),
-  and the line to add to `.env`. It is read-only: the allow list is set on
-  the host. API: `GET /v1/installation/outbound` (capability
-  `installation.outbound`).
-- **Each Organization's Security page** lists the webhooks, Connections and
-  OIDC issuers this installation refuses, with the reason and the first
-  refusal recorded in the last 30 days, says how many destinations could
-  not be checked because their names did not resolve, and says that
-  private destinations are allowed by the host operator, not in Varlatch. `varlatch security report`
-  shows the same list. Both need `organization.manage`. API:
-  `GET /v1/organizations/{org}/security/refused-destinations` (capability
-  `security.refused-destinations`). A webhook, Sync Target or Connection
-  whose destination is refused now says so with the policy's wording,
-  instead of showing a failure; a Connection says so even when no
-  integration uses it or all are paused. Both pages check when asked,
-  with DNS lookups only, and reuse a check for up to 30 seconds.
-
-### Upgrading
-
-- Migration 43 adds a database trigger that revokes a browser session's
-  dashboard tokens when the session ends. Nothing to do.
-
-Outbound destinations: varlatchd no longer connects to private, loopback
-or link-local addresses on an Organization's behalf:
+Every security control stays off, on existing and new installations, and
+`enforce` is now offered for all four: a control that is off adds no
+access restriction. What changes regardless is listed under Sign-in,
+Security and Self-hosting above. One change can stop something that works
+today, the outbound policy: varlatchd no longer connects to private,
+loopback or link-local addresses on an Organization's behalf.
 
 - A webhook receiver, Coolify, Convex or OIDC issuer on a private network
   needs an entry in `VARLATCH_OUTBOUND_ALLOW` in `.env`, then
@@ -512,10 +508,23 @@ or link-local addresses on an Organization's behalf:
   the new release and shows the result; it does not block the upgrade.
   Installations deployed by hand can run the new image's check against
   their database first: see
-  [Outbound destinations after upgrading to 0.21.1](infra/compose/README.md#outbound-destinations-after-upgrading-to-0211).
+  [Outbound destinations after upgrading to 0.22.0](infra/compose/README.md#outbound-destinations-after-upgrading-to-0220).
 - Nothing is lost while a destination is refused: webhooks keep their
   position, and Sync Targets keep waiting without being disabled. Once the
   destination is allowed and varlatchd restarts, everything is delivered.
+
+`varlatch init` with no server to write (no `--server`, no
+`VARLATCH_SERVER`, no default server) now exits 64 and writes nothing.
+It used to write a `varlatch.toml` without a server, which every later
+command rejected. Pass `--server`, or sign in first.
+
+The new server features (`varlatch audit-export`, `org freeze`, `security
+set ... enforce`, the refused destinations and `admin outbound check`)
+need this release on the server: upgrade the server before the CLIs that
+use them.
+
+Backups: archives of 0.21.0 and earlier still restore into this release.
+From 0.20.0 or earlier, read the 0.21.0 notes below as well.
 
 ## 0.21.0 (2026-11-11)
 
