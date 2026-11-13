@@ -513,7 +513,13 @@ func (s *server) timedBackup(ctx, work context.Context, phaseEnd time.Time, b Ba
 		start.WaitUs = max(1, time.Since(t).Microseconds())
 	}
 	defer s.slot.release()
-	// The slot and the phase's end can come at the same instant.
+	// The slot can come at the same instant as the stop or the phase's end,
+	// and select picks among ready cases at random; a run already stopped
+	// takes the free slot above too. Either way the backup does not start.
+	if ctx.Err() != nil {
+		s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped before it could start"})
+		return
+	}
 	if !time.Now().Before(phaseEnd) {
 		s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "its phase ended while it waited for a running backup"})
 		return

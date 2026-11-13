@@ -217,10 +217,15 @@ type slotRig struct {
 	most    atomic.Int32
 }
 
-func newSlotRig(t *testing.T, snap map[int]struct {
+// slotSnap is one fake snapshot: it runs d, or until hold is closed if
+// hold is set, and defers a size trigger first if defers.
+type slotSnap struct {
 	d      time.Duration
 	defers bool
-}) *slotRig {
+	hold   chan struct{}
+}
+
+func newSlotRig(t *testing.T, snap map[int]slotSnap) *slotRig {
 	t.Helper()
 	out := t.TempDir()
 	ev, err := newEventLog(filepath.Join(out, FileEvents))
@@ -244,7 +249,11 @@ func newSlotRig(t *testing.T, snap map[int]struct {
 		if b.defers {
 			r.s.onCheckpoint(storage.CheckpointResult{Mode: "TRUNCATE", Trigger: storage.TriggerSize, Start: time.Now(), Deferred: true}, nil)
 		}
-		time.Sleep(b.d)
+		if b.hold != nil {
+			<-b.hold
+		} else {
+			time.Sleep(b.d)
+		}
 		return storage.SnapshotStats{Pages: 1, Steps: 1, Duration: b.d}, nil
 	}
 	return r
@@ -278,7 +287,7 @@ func (r *slotRig) events(t *testing.T) []Event {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m := r.most.Load(); m != 1 {
+	if m := r.most.Load(); m > 1 {
 		t.Errorf("%d snapshots ran at once", m)
 	}
 	var spans [][2]int64
@@ -313,10 +322,7 @@ func TestBackupSlot(t *testing.T) {
 	// Its snapshot defers a size trigger, which the attempt must not take
 	// credit for: the watcher retries, and attempt 2 holds one off.
 	t.Run("timed waits", func(t *testing.T) {
-		type snap = struct {
-			d      time.Duration
-			defers bool
-		}
+		type snap = slotSnap
 		r := newSlotRig(t, map[int]snap{1: {d: 300 * time.Millisecond}, 2: {d: 50 * time.Millisecond, defers: true}, 3: {d: 50 * time.Millisecond, defers: true}})
 		ctx, cancel := context.WithCancel(context.Background())
 		var wg sync.WaitGroup
@@ -358,10 +364,7 @@ func TestBackupSlot(t *testing.T) {
 	// A crossing while a timed backup holds the slot is skipped and logged;
 	// the next crossing starts the attempt.
 	t.Run("crossing skipped", func(t *testing.T) {
-		type snap = struct {
-			d      time.Duration
-			defers bool
-		}
+		type snap = slotSnap
 		r := newSlotRig(t, map[int]snap{1: {d: 400 * time.Millisecond}, 2: {d: 50 * time.Millisecond, defers: true}})
 		ctx, cancel := context.WithCancel(context.Background())
 		var wg sync.WaitGroup
@@ -398,6 +401,33 @@ func TestBackupSlot(t *testing.T) {
 		}
 	})
 
+	// A run already stopped takes the free slot at once, and the backup
+	// still does not start: it logs backup_missed and frees the slot.
+	t.Run("stopped before it starts", func(t *testing.T) {
+		r := newSlotRig(t, map[int]slotSnap{})
+		ctx, cancel := context.WithCancel(bg)
+		cancel()
+		r.s.timedBackup(ctx, bg, far, Backup{Phase: "p10"})
+		var missed []Event
+		for _, e := range r.events(t) {
+			switch e.Ev {
+			case EvBackupMissed:
+				missed = append(missed, e)
+			case EvBackupStart, EvBackupWait:
+				t.Errorf("unexpected %+v", e)
+			}
+		}
+		if len(missed) != 1 || missed[0].Note != "the run stopped before it could start" {
+			t.Errorf("missed: %+v", missed)
+		}
+		if r.most.Load() != 0 {
+			t.Error("a snapshot ran")
+		}
+		if !r.s.slot.tryAcquire() {
+			t.Error("the slot is still taken")
+		}
+	})
+
 	// A timed backup queued behind a running one waits only until its
 	// phase ends or the run stops; then it logs backup_missed and never
 	// starts. The running one finishes.
@@ -409,11 +439,10 @@ func TestBackupSlot(t *testing.T) {
 		{"shutdown while queued", "the run stopped while it waited for a running backup", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			type snap = struct {
-				d      time.Duration
-				defers bool
-			}
-			r := newSlotRig(t, map[int]snap{1: {d: 600 * time.Millisecond}})
+			// Backup 1 holds the slot until the test releases it, so the
+			// queued backup can only give up, however the scheduler runs.
+			release := make(chan struct{})
+			r := newSlotRig(t, map[int]slotSnap{1: {hold: release}})
 			var wg sync.WaitGroup
 			wg.Add(1)
 			go func() { defer wg.Done(); r.s.timedBackup(bg, bg, far, Backup{Phase: "p10"}) }() // backup 1
@@ -428,12 +457,13 @@ func TestBackupSlot(t *testing.T) {
 				phaseEnd = t0.Add(100 * time.Millisecond)
 			}
 			r.s.timedBackup(ctx, bg, phaseEnd, Backup{Phase: "p30"})
-			if d := time.Since(t0); d < 100*time.Millisecond || d > 450*time.Millisecond {
-				t.Errorf("the queued backup gave up after %s, want 100 ms (backup 1 runs 600 ms)", d)
+			if d := time.Since(t0); d < 100*time.Millisecond {
+				t.Errorf("the queued backup gave up after %s, before its deadline of 100 ms", d)
 			}
 			if r.running.Load() != 1 {
 				t.Error("backup 1 is no longer running")
 			}
+			close(release)
 			wg.Wait()
 
 			var waited, missed []Event

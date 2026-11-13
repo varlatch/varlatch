@@ -87,8 +87,9 @@ func (s *server) walBackups(ctx, work context.Context, end time.Time, b Backup) 
 			s.ev.emit(Event{Ev: EvWALCrossing, Phase: b.Phase, Bytes: size, Note: "a backup was running"})
 			continue
 		}
-		// An attempt starts inside its phase or not at all.
-		if !time.Now().Before(end) {
+		// An attempt starts inside its phase, before the stop, or not at
+		// all: the ticker and the stop can be ready together.
+		if ctx.Err() != nil || !time.Now().Before(end) {
 			s.slot.release()
 			return
 		}
