@@ -311,6 +311,43 @@ beforeEach(() => {
   };
 });
 
+describe("the audit export section (ADR-0056)", () => {
+  const withAuditExport = () => {
+    fake.api.meta = async () => ({ apiMajor: 1, capabilities: [...CAPABILITIES, "audit.storage-export"] });
+    fake.api.getAuditExport = gated("getAuditExport", "organization.manage", async () => ({ enabled: true, export: null }));
+  };
+
+  it("with no export, an admin sees only that it is not set up, and the way to set it up", async () => {
+    withAuditExport();
+    await mount();
+    expect(fake.refused).toEqual([]);
+    expect(text(one("audit-export-none"))).toContain("Not set up. The audit log stays in this installation only.");
+    expect(one("audit-export-create").props.disabled).toBe(false);
+    expect(byTestId("audit-export-live")).toHaveLength(0);
+    expect(byTestId("security-member-note")).toHaveLength(0);
+  });
+
+  it("a member sees nothing new: no section, no request, the same note", async () => {
+    fake.actions = MEMBER;
+    await mount();
+    const before = text(one("security-member-note"));
+    root.unmount();
+    withAuditExport();
+    await mount();
+    expect(byTestId("security-audit-export")).toHaveLength(0);
+    expect(fake.api.getAuditExport).not.toHaveBeenCalled();
+    expect(fake.refused).toEqual([]);
+    expect(text(one("security-member-note"))).toBe(before);
+  });
+
+  it("is not asked of a server without the capability", async () => {
+    fake.api.getAuditExport = vi.fn();
+    await mount();
+    expect(byTestId("security-audit-export")).toHaveLength(0);
+    expect(fake.api.getAuditExport).not.toHaveBeenCalled();
+  });
+});
+
 describe("the Security page for an admin", () => {
   it("shows every section from the API", async () => {
     await mount();

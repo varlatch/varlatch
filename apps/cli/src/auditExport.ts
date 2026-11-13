@@ -208,6 +208,7 @@ export function statusLines(organization: string, status: AuditExportStatus): st
     lines.push(`  pending       ${e.lag.pending} event${e.lag.pending === 1 ? "" : "s"}${e.lag.oldestPendingAt ? `, the oldest from ${e.lag.oldestPendingAt}` : ""}`);
   }
   lines.push(`  last written  ${e.lastSuccessAt ?? "never"}${e.lastAttemptAt && e.lastAttemptAt !== e.lastSuccessAt ? `; last attempt ${e.lastAttemptAt}` : ""}`);
+  lines.push(`  heartbeat     ${e.lastHeartbeatAt ? `last for ${e.lastHeartbeatAt}` : "none yet"} (one an hour; none in the bucket for two hours means the copy stopped)`);
   if (e.lastError) lines.push(`  last error    ${e.lastError}${e.failingSince ? ` (failing since ${e.failingSince})` : ""}`);
   if (e.stoppedReason === "object_conflict") {
     lines.push("  STOPPED       an object with the planned name exists with other content; nothing was overwritten. Change the destination or remove the export.");

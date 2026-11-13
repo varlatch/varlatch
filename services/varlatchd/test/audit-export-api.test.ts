@@ -255,7 +255,99 @@ describe("the routes", () => {
   });
 });
 
+describe("approvals bind the exact request", () => {
+  it("a change that tightens one field and loosens another needs the approval", async () => {
+    expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody({ retention: { mode: "governance", days: 30 } }))).status).toBe(201);
+    // Stronger mode, fewer days: the shorter retention makes the whole change need it.
+    const mixed = await call("PATCH", `${ORG}/audit-export`, admin.cli, { expectedVersion: 1, retention: { mode: "compliance", days: 10 } });
+    expect(mixed.status, mixed.text).toBe(403);
+    expect(mixed.body.error.code).toBe("STEP_UP_REQUIRED");
+    expect(mixed.body.error.details.approval.summary.changes).toEqual([{ field: "retention", from: "governance, 30 days", to: "compliance, 10 days", loosens: true }]);
+    // A destination change with a tightened retention too.
+    const moved = await call("PATCH", `${ORG}/audit-export`, admin.cli, { expectedVersion: 1, destination: { bucket: "audit-bucket-2" }, retention: { mode: "compliance", days: 400 } });
+    expect(moved.body.error.code).toBe("STEP_UP_REQUIRED");
+    expect((await rows("SELECT version FROM audit_exports WHERE state = 'active'"))[0].version).toBe(1);
+  });
+
+  it("an approval for one PATCH body is refused for another body, for a new key and for removal", async () => {
+    expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody({ retention: { mode: "governance", days: 30 } }))).status).toBe(201);
+    const asked = await call("PATCH", `${ORG}/audit-export`, admin.cli, { expectedVersion: 1, retention: null });
+    const approvalId = asked.body.error.details.approval.id as string;
+    await approve(approvalId);
+    const header = { "Varlatch-Approval": approvalId };
+    for (const [method, path, body] of [
+      ["PATCH", `${ORG}/audit-export`, { expectedVersion: 1, retention: { mode: "governance", days: 10 } }],
+      ["PATCH", `${ORG}/audit-export`, { expectedVersion: 1, destination: { bucket: "audit-bucket-2" } }],
+      ["PUT", `${ORG}/audit-export/credential`, { expectedVersion: 1, credential: createBody().credential }],
+      ["DELETE", `${ORG}/audit-export?expectedVersion=1`, undefined],
+    ] as const) {
+      const res = await call(method, path, admin.cli, body, header);
+      expect(res.body.error, `${method} ${path}: ${res.text}`).toMatchObject({ code: "APPROVAL_INVALID", details: { reason: "mismatch" } });
+    }
+    // Unused, it still completes exactly the request it was given for.
+    expect(await rows("SELECT consumed_at FROM approval_intents WHERE id = $1", [approvalId])).toEqual([{ consumed_at: null }]);
+    const done = await call("PATCH", `${ORG}/audit-export`, admin.cli, { expectedVersion: 1, retention: null }, header);
+    expect(done.status, done.text).toBe(200);
+    expect(done.body.export.retention).toBeNull();
+  });
+});
+
 describe("refusals", () => {
+  it("a person outside the organization gets not-found on every route, sending nothing", async () => {
+    expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody())).status).toBe(201);
+    expect((await call("POST", "/v1/organizations", admin.cli, { name: "Beta", slug: "beta" })).status).toBe(201);
+    const betaId = (await rows("SELECT id FROM organizations WHERE slug = 'beta'"))[0].id as string;
+    const grant = await issueInviteGrant(ctx, { organizationId: betaId, role: "admin", name: "Mallory" }, admin.id);
+    const mallory = (await consumeSetupGrant(ctx, grant.token, {})).identityId;
+    const token = (await issueCredential(ctx.db, { identityId: mallory, kind: "cli", name: "mallory" })).token;
+    const requestsBefore = store.requests;
+    for (const [method, path, body] of [
+      ["GET", `${ORG}/audit-export`, undefined],
+      ["POST", `${ORG}/audit-export`, createBody()],
+      ["POST", `${ORG}/audit-export/check`, { destination: createBody().destination, credential: createBody().credential }],
+      ["PATCH", `${ORG}/audit-export`, { expectedVersion: 1, retention: null }],
+      ["PUT", `${ORG}/audit-export/credential`, { expectedVersion: 1, credential: createBody().credential }],
+      ["DELETE", `${ORG}/audit-export?expectedVersion=1`, undefined],
+    ] as const) {
+      const res = await call(method, path, token, body);
+      expect(res.status, `${method} ${path}: ${res.text}`).toBe(404);
+      expect(res.body.error.code).toBe("RESOURCE_NOT_FOUND");
+    }
+    expect(await intents()).toBe(0);
+    expect(store.requests).toBe(requestsBefore);
+  });
+
+  it("an endpoint the outbound policy refuses is answered after not-found and passkey-verification, and recorded once", async () => {
+    const privateEndpoint = { ...createBody().destination, endpoint: "https://10.1.2.3" };
+    const refusals = async () => (await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'outbound.refused'"))[0].n as number;
+    // No export, no key: the check's not-found comes first, and nothing is recorded.
+    const missing = await call("POST", `${ORG}/audit-export/check`, admin.cli, { destination: privateEndpoint });
+    expect(missing.status, missing.text).toBe(404);
+    expect(await refusals()).toBe(0);
+    // With a key: the check answers the refusal and records it once.
+    const refusedCheck = await call("POST", `${ORG}/audit-export/check`, admin.cli, { destination: privateEndpoint, credential: createBody().credential });
+    expect(refusedCheck.body).toMatchObject({ ok: false, conditionalCreation: null });
+    expect(await refusals()).toBe(1);
+    // Creating answers 422 and records it once: the transaction rolled back, the record stays.
+    const refusedCreate = await call("POST", `${ORG}/audit-export`, admin.cli, createBody({ destination: privateEndpoint }));
+    expect(refusedCreate.body.error).toMatchObject({ code: "VALIDATION_FAILED", details: { outbound: expect.any(String) } });
+    expect(await refusals()).toBe(2);
+    // A sign-in passkey-verification refuses gets that refusal, and nothing is recorded for the endpoint.
+    await ctx.db.query(
+      `INSERT INTO security_controls (organization_id, control, mode, config, version, changed_by, changed_at)
+       VALUES ($1, 'passkey-verification', 'enforce', NULL, 1, $2, now())`,
+      [orgId, admin.id],
+    );
+    for (const [path, body] of [
+      [`${ORG}/audit-export`, createBody({ destination: privateEndpoint })],
+      [`${ORG}/audit-export/check`, { destination: privateEndpoint, credential: createBody().credential }],
+    ] as const) {
+      expect((await call("POST", path, admin.cli, body)).body.error.code, path).toBe("PASSKEY_VERIFICATION_REQUIRED");
+    }
+    expect(await refusals()).toBe(2);
+    expect(store.requests).toBe(0);
+  });
+
   it("machine credentials are refused on every write, even holding organization.manage, without an intent", async () => {
     expect((await call("POST", `${ORG}/audit-export`, admin.cli, createBody())).status).toBe(201);
     const machine = await call("POST", `${ORG}/identities`, admin.cli, { name: "deployer", kind: "service" });

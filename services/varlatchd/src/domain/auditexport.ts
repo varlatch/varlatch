@@ -22,7 +22,7 @@ import {
 import { newId } from "../db/ids.js";
 import { lockedQuery } from "../db/locks.js";
 import type { Querier } from "../db/migrate.js";
-import { withTx } from "../db/tx.js";
+import { withSnapshot, withTx } from "../db/tx.js";
 import { outboundOf, outboundRefusalOf, type OutboundRefusedError } from "../net/outbound.js";
 import { ApprovalNeeded, type ApprovalBinding, type ApprovalChange, type ProtectedGate, type Requester, type UsedApproval } from "./approvals.js";
 import type { AppCtx } from "./ctx.js";
@@ -155,6 +155,8 @@ export interface AuditExportView {
   version: number;
   lastAttemptAt: string | null;
   lastSuccessAt: string | null;
+  /** The hour of the last heartbeat object delivered (Decision 2): a bucket without a newer one for two hours means the copy stopped. */
+  lastHeartbeatAt: string | null;
   lastError: string | null;
   failingSince: string | null;
   keyCanRead: boolean | null;
@@ -268,6 +270,7 @@ export function viewOf(row: ExportRow): AuditExportView {
     version: row.version,
     lastAttemptAt: iso(row.last_attempt_at),
     lastSuccessAt: iso(row.last_success_at),
+    lastHeartbeatAt: iso(row.last_heartbeat_hour),
     lastError: row.last_error,
     failingSince: iso(row.failing_since),
     keyCanRead: row.key_can_read,
@@ -533,6 +536,8 @@ export interface AuditExportTestHooks {
   afterUpload?: (plan: PlanRow) => void | Promise<void>;
   /** Called before a commit transaction. */
   beforeCommit?: (plan: PlanRow) => void | Promise<void>;
+  /** Called in a creation's transaction after its probe passed, before it writes. */
+  afterCreateProbe?: () => void | Promise<void>;
   /** Called in the commit transaction once it holds the export row FOR UPDATE: what races it waits or skips. */
   whileCommitLocked?: (exportId: string) => void | Promise<void>;
   /** Treat this endpoint as a verified Object Lock provider (MinIO in the test suite, Decision 7). */
@@ -701,15 +706,23 @@ async function probe(
 }
 
 /**
- * The outbound policy's configuration-time check (ADR-0057 Decision 6),
- * before any transaction: a refused endpoint is recorded and answered in
- * the policy's words; nothing is sent.
+ * The outbound policy's configuration-time check (ADR-0057 Decision 6):
+ * the endpoint's name resolved and classified before any transaction, so
+ * no lock waits on DNS. It records and answers nothing: the operation does
+ * that with refuseEndpoint, once its not-found and its passkey-verification
+ * checkpoint have passed.
  */
-async function endpointRefusal(ctx: AppCtx, organizationId: string, endpoint: string, exportId: string | null, actorIdentityId: string): Promise<OutboundRefusedError | null> {
-  const policy = outboundOf(ctx);
-  const refusal = await policy.refusalFor(endpoint, "audit_export");
-  if (!refusal) return null;
-  await policy.recordRefusal(ctx.db, {
+async function endpointCheck(ctx: AppCtx, endpoint: string): Promise<OutboundRefusedError | null> {
+  return outboundOf(ctx).refusalFor(endpoint, "audit_export");
+}
+
+/**
+ * A refused endpoint, after the checkpoint: recorded in the policy's words
+ * (outbound.refused) in the effect's transaction, which writes it again
+ * after a rollback, so it is recorded once whatever the operation answers.
+ */
+async function recordEndpointRefusal(ctx: AppCtx, tx: Querier, organizationId: string, refusal: OutboundRefusedError, exportId: string | null, actorIdentityId: string): Promise<void> {
+  await outboundOf(ctx).recordRefusal(tx, {
     organizationId,
     purpose: "audit_export",
     phase: "configuration",
@@ -717,8 +730,17 @@ async function endpointRefusal(ctx: AppCtx, organizationId: string, endpoint: st
     resource: exportId ? { exportId } : {},
     actorIdentityId,
   });
-  return refusal;
 }
+
+const endpointRefused = (refusal: OutboundRefusedError) => new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
+
+/** The second of two concurrent creations finds the first's live export: the same answer as when it was there before. */
+const exportExists = () =>
+  new DomainError("VALIDATION_FAILED", "This Organization already has an audit export; change or remove it instead", { reason: "export-exists" });
+const isLiveIndexConflict = (err: unknown) => {
+  const e = err as { code?: unknown; constraint?: unknown; message?: unknown } | null;
+  return e?.code === "23505" && (e.constraint === "audit_exports_live_idx" || /audit_exports_live_idx/.test(String(e.message ?? "")));
+};
 
 const probeFailed = (result: ProbeResult) =>
   new DomainError("VALIDATION_FAILED", result.message ?? "The destination check failed", { check: result });
@@ -786,19 +808,24 @@ export interface AuditExportStatusView extends AuditExportView {
  */
 export async function auditExportStatus(ctx: AppCtx, organizationId: string): Promise<{ enabled: boolean; export: AuditExportStatusView | null }> {
   const enabled = ctx.auditExport !== false;
-  const view = await getAuditExport(ctx, organizationId);
-  if (!view) return { enabled, export: null };
-  const live = view.state === "active" || view.state === "draining";
-  const plan = live ? await readPlan(ctx.db, view.id) : null;
-  return {
-    enabled,
-    export: {
-      ...view,
-      lag: live ? await auditExportLag(ctx, view.id) : null,
-      objectLock: view.retention === null ? "not-set" : view.lockVerified ? "verified" : "accepted",
-      unsupportedPlanFormat: plan && !UPLOADABLE_FORMATS.has(plan.format_version) ? plan.format_version : null,
-    },
-  };
+  // One snapshot: the export, its pending plan and its lag agree, whatever
+  // commits meanwhile (a removal between the reads, say).
+  return withSnapshot(ctx.db, async (db) => {
+    const sctx = { ...ctx, db };
+    const view = await getAuditExport(sctx, organizationId);
+    if (!view) return { enabled, export: null };
+    const live = view.state === "active" || view.state === "draining";
+    const plan = live ? await readPlan(db, view.id) : null;
+    return {
+      enabled,
+      export: {
+        ...view,
+        lag: live ? await auditExportLag(sctx, view.id) : null,
+        objectLock: view.retention === null ? "not-set" : view.lockVerified ? "verified" : "accepted",
+        unsupportedPlanFormat: plan && !UPLOADABLE_FORMATS.has(plan.format_version) ? plan.format_version : null,
+      },
+    };
+  });
 }
 
 async function lockExport(db: Querier, exportId: string): Promise<ExportRow | null> {
@@ -852,70 +879,79 @@ export async function createAuditExport(
   const actor = requester.identityId;
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const refusal = await endpointRefusal(ctx, org.id, destination.endpoint, null, actor);
-  if (refusal) throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
+  const refusal = await endpointCheck(ctx, destination.endpoint);
 
   const id = newId("auditExport");
   const streamId = newId("auditExportStream");
   const envelope = encryptAuditExportCredential(orgKekOf(ctx, org), org.id, id, JSON.stringify(credential));
-  return withExternalEffect(ctx.db, { organizationId: org.id, people: [actor] }, async (tx) => {
-    if (await liveExport(tx, org.id)) {
-      throw new DomainError("VALIDATION_FAILED", "This Organization already has an audit export; change or remove it instead", { reason: "export-exists" });
-    }
-    await requireOrganizationAccess(tx, org.id);
-    await options.authorizeIn?.(tx);
-    await assertOrganizationAccessChecked(tx, org.id, "the audit export probe", { underLock: true });
-    const now = await dbNow(tx);
-    const checked = await probe(ctx, org.id, destination, credential, retention, now);
-    if (!checked.ok) throw probeFailed(checked);
+  try {
+    return await withExternalEffect(ctx.db, { organizationId: org.id, people: [actor] }, async (tx) => {
+      await requireOrganizationAccess(tx, org.id);
+      await options.authorizeIn?.(tx);
+      if (await liveExport(tx, org.id)) throw exportExists();
+      if (refusal) {
+        await recordEndpointRefusal(ctx, tx, org.id, refusal, null, actor);
+        throw endpointRefused(refusal);
+      }
+      await assertOrganizationAccessChecked(tx, org.id, "the audit export probe", { underLock: true });
+      const now = await dbNow(tx);
+      const checked = await probe(ctx, org.id, destination, credential, retention, now);
+      if (!checked.ok) throw probeFailed(checked);
+      await testHooks.afterCreateProbe?.();
 
-    // Audit, then the row whose cursor may name the creation event (as a
-    // webhook's does), then the stream's manifest plan.
-    const [createdEventId] = await recordAuditEvents(tx, [
-      {
-        eventType: "audit_export.created",
-        decision: "info",
-        actorIdentityId: actor,
-        organizationId: org.id,
-        action: "organization.manage",
-        requestId: options.requestId ?? null,
-        resource: { exportId: id },
-        metadata: {
-          host: new URL(destination.endpoint).host,
-          bucket: destination.bucket,
-          prefix: destination.prefix,
-          retentionMode: retention?.mode ?? null,
-          retentionDays: retention?.days ?? null,
-          from: input.from,
+      // Audit, then the row whose cursor may name the creation event (as a
+      // webhook's does), then the stream's manifest plan.
+      const [createdEventId] = await recordAuditEvents(tx, [
+        {
+          eventType: "audit_export.created",
+          decision: "info",
+          actorIdentityId: actor,
+          organizationId: org.id,
+          action: "organization.manage",
+          requestId: options.requestId ?? null,
+          resource: { exportId: id },
+          metadata: {
+            host: new URL(destination.endpoint).host,
+            bucket: destination.bucket,
+            prefix: destination.prefix,
+            retentionMode: retention?.mode ?? null,
+            retentionDays: retention?.days ?? null,
+            from: input.from,
+          },
         },
-      },
-      streamStartedEvent(org.id, id, streamId, null, "created", undefined, actor, options.requestId ?? null),
-    ]);
-    const res = await tx.query(
-      `INSERT INTO audit_exports (id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope,
-         retention_mode, retention_days, stream_id, stream_started_at, cursor_order, state, created_by,
-         conditional_checked_at, lock_verified, key_can_read, retention_readable)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,clock_timestamp(),
-         CASE WHEN $12 THEN (SELECT event_order FROM audit_events WHERE id = $13) ELSE 0 END,
-         'active',$14,clock_timestamp(),$15,$16,$17)
-       RETURNING ${EXPORT_COLUMNS}`,
-      [
-        id, org.id, destination.endpoint, destination.region, destination.bucket, destination.prefix, destination.pathStyle,
-        JSON.stringify(envelope), retention?.mode ?? null, retention?.days ?? null, streamId,
-        input.from === "now", createdEventId, actor,
-        retention ? checked.objectLock === "verified" : null, checked.keyCanRead, checked.retentionReadable,
-      ],
-    );
-    const row = res.rows[0] as ExportRow;
-    await insertPlan(
-      tx,
-      { exportId: id, version: row.version, streamId, generation: str(row.generation) },
-      manifestPlan({ prefix: destination.prefix, organizationId: org.id, streamId, startOrder: str(row.cursor_order), previousStreamId: null, reason: "created", possibleOverlap: null, plannedAt: now }),
-      retention,
-      now,
-    );
-    return viewOf(row);
-  });
+        streamStartedEvent(org.id, id, streamId, null, "created", undefined, actor, options.requestId ?? null),
+      ]);
+      const res = await tx.query(
+        `INSERT INTO audit_exports (id, organization_id, endpoint, region, bucket, prefix, path_style, credential_envelope,
+           retention_mode, retention_days, stream_id, stream_started_at, cursor_order, state, created_by,
+           conditional_checked_at, lock_verified, key_can_read, retention_readable)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,clock_timestamp(),
+           CASE WHEN $12 THEN (SELECT event_order FROM audit_events WHERE id = $13) ELSE 0 END,
+           'active',$14,clock_timestamp(),$15,$16,$17)
+         RETURNING ${EXPORT_COLUMNS}`,
+        [
+          id, org.id, destination.endpoint, destination.region, destination.bucket, destination.prefix, destination.pathStyle,
+          JSON.stringify(envelope), retention?.mode ?? null, retention?.days ?? null, streamId,
+          input.from === "now", createdEventId, actor,
+          retention ? checked.objectLock === "verified" : null, checked.keyCanRead, checked.retentionReadable,
+        ],
+      );
+      const row = res.rows[0] as ExportRow;
+      await insertPlan(
+        tx,
+        { exportId: id, version: row.version, streamId, generation: str(row.generation) },
+        manifestPlan({ prefix: destination.prefix, organizationId: org.id, streamId, startOrder: str(row.cursor_order), previousStreamId: null, reason: "created", possibleOverlap: null, plannedAt: now }),
+        retention,
+        now,
+      );
+      return viewOf(row);
+    });
+  } catch (err) {
+    // Two creations at once both found none and both probed; the second's
+    // insert meets the first's row in the one-live-export index.
+    if (isLiveIndexConflict(err)) throw exportExists();
+    throw err;
+  }
 }
 
 function streamStartedEvent(
@@ -970,8 +1006,7 @@ export async function checkAuditExport(
   const supplied = input.credential ? validateCredential(input.credential) : null;
   await refuseIfFrozen(ctx.db, org.id);
   await refuseIfIncidentFrozen(ctx.db, org.id);
-  const refusal = await endpointRefusal(ctx, org.id, destination.endpoint, null, requester.identityId);
-  if (refusal) return probeRefused(refusal.message);
+  const refusal = await endpointCheck(ctx, destination.endpoint);
   return withExternalEffect(ctx.db, { organizationId: org.id, people: [requester.identityId] }, async (tx) => {
     let credential = supplied;
     if (!credential) {
@@ -993,6 +1028,11 @@ export async function checkAuditExport(
     } else {
       await requireOrganizationAccess(tx, org.id);
       await options.authorizeIn?.(tx);
+    }
+    // After its not-found and the checkpoint: a refused endpoint is the check's answer, recorded once.
+    if (refusal) {
+      await recordEndpointRefusal(ctx, tx, org.id, refusal, null, requester.identityId);
+      return probeRefused(refusal.message);
     }
     await assertOrganizationAccessChecked(tx, org.id, "the audit export probe", { underLock: true });
     return probe(ctx, org.id, destination, credential, retention, await dbNow(tx));
@@ -1114,10 +1154,8 @@ export async function changeAuditExport(
   });
   const planned = nextOf(seen);
   const willProbe = classifyChange({ destination: destinationOf(seen), retention: retentionOf(seen) }, planned).destinationChanged;
-  if (willProbe) {
-    const refusal = await endpointRefusal(ctx, org.id, planned.destination.endpoint, exportId, actor);
-    if (refusal) throw new DomainError("VALIDATION_FAILED", refusal.message, { outbound: refusal.reason });
-  }
+  // The name is resolved here, before any lock; a refusal is answered after the checkpoint.
+  const refusal = willProbe ? await endpointCheck(ctx, planned.destination.endpoint) : null;
 
   const run = async (tx: Querier): Promise<ChangeOutcome> => {
     const row = await preflight(tx, org, exportId, options.authorizeIn);
@@ -1127,6 +1165,11 @@ export async function changeAuditExport(
     const classified = classifyChange(current, next);
     if (classified.changes.length === 0) return { export: viewOf(row), changed: false, loosened: false };
     if (classified.destinationChanged !== willProbe) throw new DomainError("STATE_CHANGED", "The audit export changed meanwhile; read it again");
+    // A refusal that does not depend on the approval: before one is asked for (amendment A).
+    if (refusal) {
+      await recordEndpointRefusal(ctx, tx, org.id, refusal, exportId, actor);
+      throw endpointRefused(refusal);
+    }
     const binding: ApprovalBinding | null = classified.loosened
       ? {
           operation: "audit_export.change",
@@ -1149,8 +1192,8 @@ export async function changeAuditExport(
       if (!probed.ok) throw probeFailed(probed);
       now = await dbNow(tx);
     }
-    // Step 2 (the effect took the actor already; reuse), then consumption's 4, 6, 7.
-    if (!classified.destinationChanged) await lockPeople(tx, [{ id: actor, mode: binding ? "update" : "key share" }]);
+    // Step 2 was taken with the scope (effectRequester: FOR UPDATE when the
+    // request carries an approval it may consume); then consumption's 4, 6, 7.
     const approval: UsedApproval | null = binding ? await gate.require(tx, binding) : null;
     if (binding) await options.authorizeIn?.(tx);
     const locked = await lockForChange(tx, exportId, input.expectedVersion);
@@ -1219,7 +1262,9 @@ export async function changeAuditExport(
 
   if (willProbe) return withExternalEffect(ctx.db, { organizationId: org.id, people: [effectRequester(gate)] }, run);
   return withTx(ctx.db, async (tx) => {
-    await lockLiveScope(tx, { organizationId: org.id, people: [], accessCheck: "deferred" });
+    // Steps 1 and 2 before the recheck in preflight (amendment E): the
+    // actor in the strongest mode this request may need.
+    await lockLiveScope(tx, { organizationId: org.id, people: [effectRequester(gate)], accessCheck: "deferred" });
     return run(tx);
   });
 }
@@ -1230,6 +1275,12 @@ export async function changeAuditExport(
  * next lease holder uploads the plan with the new key (Decision 3). No
  * probe: ADR-0056 checks the destination at creation and on a destination
  * change; `checkAuditExport` with the new key checks it first.
+ *
+ * Both read flags are cleared: they described the old key. The worker's
+ * next "already exists" answer determines content read again (its HEAD,
+ * Decision 4). Retention read is only ever probed, never read by the
+ * worker, so it stays undetermined until the next destination change; the
+ * Security page and the docs say so.
  */
 export async function replaceAuditExportCredential(
   ctx: AppCtx,
@@ -1245,7 +1296,8 @@ export async function replaceAuditExportCredential(
   const actor = gate.requester.identityId;
   const envelope = encryptAuditExportCredential(orgKekOf(ctx, org), org.id, exportId, JSON.stringify(credential));
   return withTx(ctx.db, async (tx) => {
-    await lockLiveScope(tx, { organizationId: org.id, people: [], accessCheck: "deferred" });
+    // Steps 1 and 2 before the recheck in preflight (amendment E).
+    await lockLiveScope(tx, { organizationId: org.id, people: [effectRequester(gate)], accessCheck: "deferred" });
     const row = await preflight(tx, org, exportId, options.authorizeIn);
     if (row.version !== input.expectedVersion) throw versionConflict(row.version, input.expectedVersion);
     const binding: ApprovalBinding = {
@@ -1259,7 +1311,6 @@ export async function replaceAuditExportCredential(
       summary: { title: `Replace the key of the audit export of ${org.name}`, changes: [{ field: "credential", from: null, to: null, loosens: true }] },
     };
     if (gate.approvalId === null) throw new ApprovalNeeded(binding);
-    await lockPeople(tx, [{ id: actor, mode: "update" }]);
     const approval = await gate.require(tx, binding);
     await options.authorizeIn?.(tx);
     await lockForChange(tx, exportId, input.expectedVersion);
@@ -1301,7 +1352,8 @@ export async function removeAuditExport(
   requirePerson(gate.requester);
   const actor = gate.requester.identityId;
   return withTx(ctx.db, async (tx) => {
-    await lockLiveScope(tx, { organizationId: org.id, people: [], accessCheck: "deferred" });
+    // Steps 1 and 2 before the recheck in preflight (amendment E).
+    await lockLiveScope(tx, { organizationId: org.id, people: [effectRequester(gate)], accessCheck: "deferred" });
     const row = await preflight(tx, org, exportId, options.authorizeIn);
     if (row.version !== input.expectedVersion) throw versionConflict(row.version, input.expectedVersion);
     const binding: ApprovalBinding = {
@@ -1317,7 +1369,6 @@ export async function removeAuditExport(
       },
     };
     if (gate.approvalId === null) throw new ApprovalNeeded(binding);
-    await lockPeople(tx, [{ id: actor, mode: "update" }]);
     const approval = await gate.require(tx, binding);
     await options.authorizeIn?.(tx);
     await lockForChange(tx, exportId, input.expectedVersion);

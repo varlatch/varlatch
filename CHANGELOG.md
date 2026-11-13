@@ -13,7 +13,7 @@ fixes.
   its whole audit log in an S3-compatible bucket it controls (AWS S3,
   Backblaze B2 or another provider that honours conditional writes), with
   Object Lock retention nobody on the Varlatch side can shorten: `varlatch
-  audit-export create`, or the API. Every event of the organization is
+  audit-export create`, the Security page, or the API. Every event of the organization is
   copied once, in order, as gzipped NDJSON batches, with an hourly
   heartbeat object that shows at the bucket when the copy stops. Before
   saving, Varlatch writes a test object and checks that the bucket refuses
@@ -25,8 +25,14 @@ fixes.
   can never make them. The key is never shown, logged or audited. Changes
   are refused while the organization is frozen or being deleted; delivery
   continues. When an organization is deleted, its export delivers the final
-  events for up to 30 days, then its key is cleared. Nothing changes for an
-  organization until an admin creates an export.
+  events for up to 30 days, then its key is cleared; the deletion
+  confirmation, in the dashboard and in `varlatch org delete`, says so when
+  an export exists. The Security page and `varlatch security status` show
+  the export to admins: whether it is delivering, its destination,
+  retention and Object Lock, the last write and heartbeat, what is pending,
+  the last error, and a short checklist. Nothing changes for an
+  organization until an admin creates an export: its Security page only
+  says it is not set up.
 - **Incident freeze: stop all access to an organization at once.** During
   an incident an admin can freeze an organization from its Security page
   (`varlatch org freeze <slug> --reason <text> --confirm <slug>`). Every
@@ -235,7 +241,8 @@ fixes.
 - `GET`, `POST`, `PATCH` and `DELETE /v1/organizations/{org}/audit-export`,
   `PUT /v1/organizations/{org}/audit-export/credential` and `POST
   /v1/organizations/{org}/audit-export/check` (capability
-  `audit.storage-export`; all need `organization.manage`). `PATCH`, `PUT`
+  `audit.storage-export`; all need `organization.manage`). An export's
+  status includes `lastHeartbeatAt`. `PATCH`, `PUT`
   and `DELETE` can answer `403 STEP_UP_REQUIRED` with the approval
   operations `audit_export.change` and `audit_export.remove`, which the
   `Approval.operation` enum gains. Writes from a machine credential are
@@ -249,7 +256,8 @@ fixes.
   `security.enforce.admin-step-up` in this release: all four). Each item
   of `GET /v1/organizations/{org}/security/controls` gains its own
   `availableModes`. `varlatch security status --json` gains
-  `enforceable`.
+  `enforceable`, and `auditExport` as its last key (null unless the caller
+  may manage the organization and the server has audit export).
 - `PATCH` and `DELETE /v1/organizations/{org}/requirements/{id}`, and
   every route of an admin-step-up operation, can answer
   `403 STEP_UP_REQUIRED`: repeat the request with the
@@ -316,7 +324,8 @@ fixes.
 ### Self-hosting
 
 - `VARLATCH_AUDIT_EXPORT=off` turns audit export off on an installation
-  (it is on by default, like `VARLATCH_SYNC`): nothing is delivered and no
+  (it is on by default, like `VARLATCH_SYNC`, and the Compose files pass it
+  to varlatchd): nothing is delivered and no
   export can be created; organizations see that the host operator stopped
   it, and can still remove theirs. A destination on a private network
   needs the outbound allow list (`VARLATCH_OUTBOUND_ALLOW`), as webhooks
