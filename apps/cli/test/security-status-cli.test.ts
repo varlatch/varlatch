@@ -32,6 +32,7 @@ let capabilities: string[] = [];
 let refused: Set<string>;
 let held: string[] = [];
 let requests: string[] = [];
+let auditExport: unknown = { enabled: true, export: null };
 
 const control = (name: SecurityControl["control"], over: Partial<SecurityControl> = {}): SecurityControl => ({
   control: name,
@@ -170,6 +171,7 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
   if (url === "/v1/organizations/acme/security/approval-keys") return json(200, KEYS);
   if (url === "/v1/organizations/acme/security/credential-review") return json(200, review());
   if (url === "/v1/organizations/acme/requirements") return json(200, { items: REQUIREMENTS, nextCursor: null });
+  if (url === "/v1/organizations/acme/audit-export") return json(200, auditExport);
   if (url === "/v1/organizations/acme/incident-freeze") {
     return json(200, {
       freeze: { id: "ofz_1", frozenAt: "2026-11-11T10:00:00.000Z", frozenBy: { id: "idn_ada", name: "Ada" }, reason: "A CI token leaked", liftedAt: null, liftedBy: null, liftMethod: null },
@@ -208,6 +210,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   requests = [];
+  auditExport = { enabled: true, export: null };
   refused = new Set();
   capabilities = ["security.controls", "security.report", "security.approval-keys", "security.credential-review"];
 });
@@ -238,6 +241,59 @@ function cli(args: string[], cwd = repo): Promise<Result> {
     child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
   });
 }
+
+describe("varlatch security status: the audit export (ADR-0056)", () => {
+  const LIVE = {
+    id: "aex_1", organizationId: "org_acme",
+    destination: { endpoint: "https://s3.eu-central-1.amazonaws.com", region: "eu-central-1", bucket: "acme-audit", prefix: "", pathStyle: false },
+    retention: { mode: "compliance", days: 400 }, state: "active", streamId: "aes_1", cursor: "42", version: 3,
+    lastAttemptAt: "2026-11-13T10:00:00.000Z", lastSuccessAt: "2026-11-13T10:00:00.000Z", lastHeartbeatAt: "2026-11-13T10:00:00.000Z",
+    lastError: null, failingSince: null, keyCanRead: false, retentionReadable: false, stoppedReason: null,
+    conditionalCheckedAt: "2026-11-13T09:00:00.000Z", lockVerified: true, drainDeadline: null, createdBy: "idn_ada",
+    createdAt: "2026-11-13T09:00:00.000Z", removedAt: null, lag: { pending: 0, oldestPendingAt: null }, objectLock: "verified", unsupportedPlanFormat: null,
+  };
+
+  it("an admin sees that it is not set up, and nothing else changes", async () => {
+    const plain = (await cli(["security", "status"])).stdout;
+    capabilities = [...capabilities, "audit.storage-export"];
+    requests = [];
+    const r = await cli(["security", "status"]);
+    expect(r.code, why(r)).toBe(0);
+    expect(requests).toContain("GET /v1/organizations/acme/audit-export");
+    expect(r.stdout).toContain("Audit export\n  Not set up. The audit log stays in this installation only.\n");
+    // Exactly one section more, before the checklist.
+    const section = r.stdout.slice(r.stdout.indexOf("\nAudit export\n"), r.stdout.indexOf("\nChecklist\n"));
+    // The fake server dates its expiring credential from now: compare without times.
+    const timeless = (t: string) => t.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, "<time>");
+    expect(timeless(r.stdout.replace(section, ""))).toBe(timeless(plain));
+  });
+
+  it("shows a live export, its heartbeat and the checklist; JSON carries it last", async () => {
+    capabilities = [...capabilities, "audit.storage-export"];
+    auditExport = { enabled: true, export: LIVE };
+    const r = await cli(["security", "status"]);
+    expect(r.stdout).toContain("  Audit export of acme: active\n");
+    expect(r.stdout).toContain("  heartbeat     last for 2026-11-13T10:00:00.000Z");
+    expect(r.stdout).toContain("compliance, 400 days; Object Lock verified");
+    expect(r.stdout).toContain("someone watching the heartbeat");
+    const doc = JSON.parse((await cli(["security", "status", "--json"])).stdout);
+    expect(Object.keys(doc).at(-1)).toBe("auditExport");
+    expect(doc.auditExport).toEqual({ enabled: true, export: LIVE });
+    auditExport = { enabled: true, export: null };
+  });
+
+  it("is not asked for, and not named, when the caller may not manage the organization", async () => {
+    capabilities = [...capabilities, "audit.storage-export", "organizations.permissions"];
+    held = ["organization.read"];
+    requests = [];
+    const r = await cli(["security", "status", "--json"]);
+    expect(r.code, why(r)).toBe(0);
+    expect(requests).not.toContain("GET /v1/organizations/acme/audit-export");
+    const doc = JSON.parse(r.stdout);
+    expect(doc.auditExport).toBeNull();
+    expect(JSON.stringify(doc.unavailable)).not.toContain("audit");
+  });
+});
 
 describe("varlatch security status", () => {
   it("shows an open incident freeze first (ADR-0055)", async () => {
@@ -292,8 +348,10 @@ describe("varlatch security status", () => {
     expect(r.code, why(r)).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(Object.keys(doc)).toEqual([
-      "version", "organization", "enforceAvailable", "enforceable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable", "incidentFreeze",
+      "version", "organization", "enforceAvailable", "enforceable", "controls", "approvalKeys", "credentialReview", "requirements", "checklist", "unavailable", "incidentFreeze", "auditExport",
     ]);
+    // A server without audit export: null, and nothing asked.
+    expect(doc.auditExport).toBeNull();
     expect(doc).toMatchObject({ version: expect.any(Number), organization: "acme", enforceAvailable: false, enforceable: [], unavailable: [] });
     expect(doc.controls.availableModes).toEqual(["off", "report"]);
     expect(doc.controls.window).toEqual({ days: 30, since: "2026-10-11T23:00:00.000Z", generatedAt: "2026-11-10T23:00:00.000Z" });
@@ -465,6 +523,7 @@ describe("status format", () => {
       checklist: CHECKLIST,
       unavailable: [],
       incidentFreeze: null,
+      auditExport: null,
     };
     expect(securityStatusLines(status, Date.now())).toContain(
       "  Modes: off, report, and enforce for requirement-protection. Enforce for the others: coming in a later release.",

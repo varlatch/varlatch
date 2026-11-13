@@ -209,6 +209,7 @@ export function statusLines(organization: string, status: AuditExportStatus): st
     lines.push(`  pending       ${printable(String(e.lag.pending))} event${e.lag.pending === 1 ? "" : "s"}${e.lag.oldestPendingAt ? `, the oldest from ${safeTime(e.lag.oldestPendingAt)}` : ""}`);
   }
   lines.push(`  last written  ${safeTime(e.lastSuccessAt) ?? "never"}${e.lastAttemptAt && e.lastAttemptAt !== e.lastSuccessAt ? `; last attempt ${safeTime(e.lastAttemptAt)}` : ""}`);
+  lines.push(`  heartbeat     ${e.lastHeartbeatAt ? `last for ${safeTime(e.lastHeartbeatAt)}` : "none yet"} (one an hour; none in the bucket for two hours means the copy stopped)`);
   // The provider's error, as the server reports it: escaped, known secrets masked (issue #119).
   if (e.lastError) lines.push(`  last error    ${serverMessage(e.lastError)}${e.failingSince ? ` (failing since ${safeTime(e.failingSince)})` : ""}`);
   if (e.stoppedReason === "object_conflict") {

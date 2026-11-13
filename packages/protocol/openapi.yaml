@@ -7115,7 +7115,7 @@ components:
     AuditExport:
       type: object
       description: An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key.
-      required: [id, organizationId, destination, retention, state, streamId, cursor, version, lastAttemptAt, lastSuccessAt, lastError,
+      required: [id, organizationId, destination, retention, state, streamId, cursor, version, lastAttemptAt, lastSuccessAt, lastHeartbeatAt, lastError,
         failingSince, keyCanRead, retentionReadable, stoppedReason, conditionalCheckedAt, lockVerified, drainDeadline, createdBy, createdAt,
         removedAt, lag, objectLock, unsupportedPlanFormat]
       properties:
@@ -7135,6 +7135,10 @@ components:
         version: { type: integer }
         lastAttemptAt: { type: [string, "null"], format: date-time }
         lastSuccessAt: { type: [string, "null"], format: date-time }
+        lastHeartbeatAt:
+          type: [string, "null"]
+          format: date-time
+          description: The hour of the last heartbeat object delivered. No newer heartbeat in the bucket for two hours means the copy stopped.
         lastError: { type: [string, "null"], description: "Fixed wording only (the storage error table or the outbound policy)." }
         failingSince: { type: [string, "null"], format: date-time }
         keyCanRead: { type: [boolean, "null"] }

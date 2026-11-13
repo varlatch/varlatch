@@ -919,14 +919,18 @@ async function orgDeletion(sub: "delete" | "deletion", args: string[], assisted:
   );
   console.log(tombstoneExportLine(organizationId));
   for (const line of deletionLimits("organization")) console.log(line);
+  // ADR-0056 Decision 10: an audit export's key outlives the deletion, for its final events.
+  if (meta.capabilities.includes("audit.storage-export")) {
+    const status = await api.getAuditExport(slug).catch(() => null);
+    const state = status?.export?.state;
+    if (state === "active" || state === "draining") {
+      console.log(
+        "The audit export's key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.",
+      );
+    }
+  }
 }
 
-/**
- * ADR-0055: the incident freeze. Freezing names the slug again with
- * --confirm (in assisted mode too: the agent prints the person's command);
- * unfreezing asks for the person's approval with a trusted passkey and
- * waits for it.
- */
 /**
  * ADR-0056: `varlatch audit-export create|show|change|remove|check`. The
  * secret access key comes from standard input, a file or a hidden prompt,
@@ -1075,6 +1079,12 @@ async function auditExportCommand(args: string[], assisted: AssistedMode): Promi
   }
 }
 
+/**
+ * ADR-0055: the incident freeze. Freezing names the slug again with
+ * --confirm (in assisted mode too: the agent prints the person's command);
+ * unfreezing asks for the person's approval with a trusted passkey and
+ * waits for it.
+ */
 async function orgFreeze(sub: "freeze" | "unfreeze", args: string[], assisted: AssistedMode): Promise<void> {
   const parsed = strictOptions(
     `org ${sub}`,

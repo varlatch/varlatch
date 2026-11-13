@@ -1,9 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { abandonExpiredDrains, commitPlan, exportOnce, recordRestore, restartStream, setAuditExportTestHooks, type PlanRow, type WorkerBinding } from "../src/domain/auditexport.js";
+import {
+  abandonExpiredDrains,
+  commitPlan,
+  createAuditExport,
+  exportOnce,
+  recordRestore,
+  restartStream,
+  setAuditExportTestHooks,
+  type PlanRow,
+  type WorkerBinding,
+} from "../src/domain/auditexport.js";
+import { createOrganization } from "../src/domain/orgs.js";
+import { OutboundPolicy } from "../src/net/outbound.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 
 /**
@@ -155,6 +168,59 @@ describe.skipIf(!url)("audit export races on real PostgreSQL", () => {
       else expect({ committed, swept }, outcome).toEqual({ committed: "lost", swept: [id] });
       expect(await rows("SELECT event_type FROM audit_events WHERE event_type LIKE 'audit_export.%' AND resource->>'exportId' = $1", [id]))
         .toEqual([{ event_type: "audit_export.abandoned" }]);
+    }
+  });
+
+  it("two creations at once: both probe, one export is created, the other answers export-exists, not an error", async () => {
+    // A store that honours If-None-Match and refuses reads (a write-only key).
+    const seen = new Set<string>();
+    const server: Server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        const key = (req.url ?? "").split("?")[0]!;
+        if (req.method === "PUT" && !seen.has(key)) {
+          seen.add(key);
+          res.writeHead(200, { ETag: '"0"' });
+          res.end();
+          return;
+        }
+        res.writeHead(req.method === "PUT" ? 412 : 403, { "content-type": "application/xml" });
+        res.end(req.method === "HEAD" ? undefined : `<?xml version="1.0"?><Error><Code>${req.method === "PUT" ? "PreconditionFailed" : "AccessDenied"}</Code></Error>`);
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    try {
+      const endpoint = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+      const cctx: AppCtx = { ...ctx, outbound: new OutboundPolicy("127.0.0.1/32:*") };
+      const org = await createOrganization(cctx, { slug: "duo", name: "Duo" }, identityId);
+      const credentialId = (await rows("SELECT id FROM credentials WHERE identity_id = $1 LIMIT 1", [identityId]))[0]?.id ?? "crd_none";
+      const requester = { identityId, identityKind: "human", credentialId, credentialKind: "cli" } as const;
+      // Both pass their probe before either writes.
+      let arrived = 0;
+      let release!: () => void;
+      const together = new Promise<void>((done) => (release = done));
+      setAuditExportTestHooks({
+        afterCreateProbe: async () => {
+          if (++arrived === 2) release();
+          await together;
+        },
+      });
+      const input = {
+        destination: { endpoint, region: "us-east-1", bucket: "audit-bucket", prefix: "", pathStyle: true },
+        credential: { accessKeyId: "AKIADUO", secretAccessKey: "duo-secret-duo" },
+        retention: null,
+        from: "now" as const,
+      };
+      const outcomes = await Promise.allSettled([createAuditExport(cctx, requester, org, input), createAuditExport(cctx, requester, org, input)]);
+      expect(arrived).toBe(2);
+      expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+      const refused = outcomes.find((o) => o.status === "rejected") as PromiseRejectedResult;
+      expect(refused.reason).toMatchObject({ code: "VALIDATION_FAILED", details: { reason: "export-exists" } });
+      expect(await rows("SELECT state FROM audit_exports WHERE organization_id = $1", [org.id])).toEqual([{ state: "active" }]);
+      expect(await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'audit_export.created' AND organization_id = $1", [org.id])).toEqual([{ n: 1 }]);
+    } finally {
+      setAuditExportTestHooks(null);
+      await new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); });
     }
   });
 

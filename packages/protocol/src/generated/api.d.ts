@@ -3540,6 +3540,11 @@ export interface components {
             lastAttemptAt: string | null;
             /** Format: date-time */
             lastSuccessAt: string | null;
+            /**
+             * Format: date-time
+             * @description The hour of the last heartbeat object delivered. No newer heartbeat in the bucket for two hours means the copy stopped.
+             */
+            lastHeartbeatAt: string | null;
             /** @description Fixed wording only (the storage error table or the outbound policy). */
             lastError: string | null;
             /** Format: date-time */

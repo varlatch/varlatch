@@ -521,6 +521,13 @@ describe("step-up approvals (approvalLines)", () => {
     const s = hostile();
     expectEscaped(approvalLines(approval(s, s("title"))), s);
     expect(approvalLines(approval(plain, `Use ${STORED}`))[0]).toBe(`This needs your approval with a trusted passkey: Use ${REDACTED}`);
+    const values = {
+      id: "apr_1",
+      summary: { title: "Change", changes: [{ field: "token", from: `old ${STORED}`, to: STORED, loosens: false }] },
+      url: "https://vl.example/approve/apr_1",
+      expiresAt: LATER,
+    } as unknown as Approval;
+    expect(approvalLines(values)[1]).toBe(`  token: old ${REDACTED} -> ${REDACTED}`);
   });
 });
 

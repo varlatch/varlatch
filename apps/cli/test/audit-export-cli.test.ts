@@ -52,6 +52,7 @@ function exportOf(over: Partial<AuditExport> = {}): AuditExport {
     version: 3,
     lastAttemptAt: "2026-11-13T10:00:00.000Z",
     lastSuccessAt: "2026-11-13T10:00:00.000Z",
+    lastHeartbeatAt: "2026-11-13T10:00:00.000Z",
     lastError: null,
     failingSince: null,
     keyCanRead: false,
