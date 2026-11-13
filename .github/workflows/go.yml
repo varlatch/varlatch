@@ -128,3 +128,25 @@ jobs:
       # too. The script uses Node's standard library only.
       - name: Every file matches the license map
         run: node scripts/check-licenses.mjs
+
+  # install.ps1 under Windows PowerShell 5.1 and PowerShell 7: every prefix
+  # (G8) and the end-to-end install, which changes the runner user's PATH
+  # (restored afterwards; the runner is disposable).
+  windows:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: install.ps1 under PowerShell 5.1 and 7
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_TEST_DISPOSABLE: "1"
+        run: go test -count=1 -v -run 'PS1' ./install/
