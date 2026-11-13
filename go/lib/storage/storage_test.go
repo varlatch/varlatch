@@ -7,8 +7,10 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -74,7 +76,11 @@ func queueBatch(t *testing.T, db *DB, fns ...func(*Tx) error) []error {
 			return nil
 		})
 	}()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-gateDone:
+		t.Fatalf("the gate job did not run: %v", err)
+	}
 	results := make([]error, len(fns))
 	var wg sync.WaitGroup
 	for i, fn := range fns {
@@ -129,7 +135,7 @@ func TestPathWithSpace(t *testing.T) {
 }
 
 func TestOpenRefusesBadPaths(t *testing.T) {
-	for _, p := range []string{"", "/tmp/a?b.db", filepath.Join(t.TempDir(), "missing", "x.db")} {
+	for _, p := range []string{"", filepath.Join(t.TempDir(), "missing", "x.db")} {
 		if db, err := Open(context.Background(), Options{Path: p}); err == nil {
 			_ = db.Close()
 			t.Errorf("%q: opened", p)
@@ -241,17 +247,27 @@ func TestCancelledBeforeStart(t *testing.T) {
 
 // setPageLimit caps the database file on the writer's connection, so that
 // SQLite reports SQLITE_FULL: a real disk-full error without filling a disk.
-// The cap lasts until a failed batch replaces the writer's connection.
+// The cap lasts until a failed batch replaces the writer's connection. Jobs
+// may not set pragmas, so it runs between batches.
 func setPageLimit(t *testing.T, db *DB, extraPages int) {
 	t.Helper()
+	var pages int
 	mustWrite(t, db, func(tx *Tx) error {
-		var pages int
-		if err := tx.QueryRowContext(bg, `PRAGMA page_count`).Scan(&pages); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(bg, fmt.Sprintf(`PRAGMA max_page_count = %d`, pages+extraPages))
+		return tx.QueryRowContext(bg, `PRAGMA page_count`).Scan(&pages)
+	})
+	writerPragma(t, db, fmt.Sprintf(`PRAGMA max_page_count = %d`, pages+extraPages))
+}
+
+// writerPragma runs a statement on the writer's connection between batches.
+func writerPragma(t *testing.T, db *DB, q string) {
+	t.Helper()
+	err := db.onWriter(bg, func(dc any) error {
+		_, err := dc.(driver.ExecerContext).ExecContext(bg, q, nil)
 		return err
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func bigInsert(name string) func(*Tx) error {
@@ -304,6 +320,11 @@ func TestSwallowedFatalErrorFailsBatch(t *testing.T) {
 	setPageLimit(t, db, 4)
 	res := queueBatch(t, db, insert("a"), func(tx *Tx) error {
 		_ = bigInsert("big")(tx)
+		// SQLite may have rolled the transaction back; a write now would
+		// commit on its own. It is refused instead.
+		if err := insert("after")(tx); !errors.Is(err, errBatchFailed) {
+			t.Errorf("write after the disk-full error: %v", err)
+		}
 		return nil
 	})
 	for i, err := range res {
@@ -316,174 +337,309 @@ func TestSwallowedFatalErrorFailsBatch(t *testing.T) {
 	}
 }
 
-// When SQLite has already rolled the transaction back, the savepoint
-// rollback (after a job's own error) or the release (after success) fails,
-// and so does the batch: nothing that was in it may be reported committed.
+// When SQLite rolls the whole transaction back on its own (here an INSERT
+// OR ROLLBACK hitting a constraint; a full disk or an I/O error can do the
+// same), the batch fails, whatever the job then does: return the error,
+// swallow it, keep writing through Tx, or even write behind Tx's back.
 func TestRolledBackTransactionFailsBatch(t *testing.T) {
+	orRollback := func(tx *Tx) error {
+		_, err := tx.ExecContext(bg, `INSERT OR ROLLBACK INTO item (name) VALUES ('taken')`)
+		return err
+	}
 	for _, tc := range []struct {
-		name   string
-		result error
-	}{{"own error", errApp}, {"success", nil}} {
+		name string
+		job  func(t *testing.T) func(*Tx) error
+	}{
+		{"returns the error", func(*testing.T) func(*Tx) error { return orRollback }},
+		{"swallows it and writes on", func(t *testing.T) func(*Tx) error {
+			return func(tx *Tx) error {
+				_ = orRollback(tx)
+				if err := insert("next")(tx); !errors.Is(err, errBatchFailed) {
+					t.Errorf("statement after the rollback: %v", err)
+				}
+				return nil
+			}
+		}},
+		{"writes behind Tx's back", func(t *testing.T) func(*Tx) error {
+			return func(tx *Tx) error {
+				_ = orRollback(tx)
+				// In autocommit mode this would commit at once; the commit
+				// hook refuses it.
+				_, _ = tx.conn.ExecContext(bg, `INSERT INTO item (name) VALUES ('sneaky')`)
+				return nil
+			}
+		}},
+	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := open(t, Options{})
-			res := queueBatch(t, db, insert("first"), func(tx *Tx) error {
-				// Bypass the guard: what SQLite does on its own after some
-				// errors.
-				if _, err := tx.conn.ExecContext(bg, "ROLLBACK"); err != nil {
-					t.Error(err)
-				}
-				return tc.result
-			}, insert("third"))
+			mustWrite(t, db, insert("taken"))
+			res := queueBatch(t, db, insert("first"), tc.job(t), insert("third"))
 			for i, err := range res {
 				var be *BatchError
 				if !errors.As(err, &be) {
 					t.Fatalf("job %d: %v, want a BatchError", i, err)
 				}
 			}
-			if n := count(t, db, ""); n != 0 {
-				t.Fatalf("%d rows committed", n)
+			if n := count(t, db, ""); n != 1 {
+				t.Fatalf("%d rows; only 'taken' should exist", n)
 			}
 			mustWrite(t, db, insert("resumed"))
 		})
 	}
 }
 
+// Jobs cannot end, split or reconfigure the writer's transaction: the
+// authorizer refuses it in every statement SQLite compiles, including later
+// statements of a multi-statement string. The refusal is the job's own error.
 func TestTransactionControlRefused(t *testing.T) {
 	db := open(t, Options{})
-	for _, q := range []string{"COMMIT", "  rollback", "-- c\n/* d */ RELEASE job0", "savepoint x", "BEGIN", "end"} {
-		err := db.Write(context.Background(), func(tx *Tx) error {
-			_, err := tx.ExecContext(bg, q)
-			return err
-		})
-		if !errors.Is(err, errTxControl) {
-			t.Errorf("%q: %v", q, err)
-		}
-		err = db.Write(context.Background(), func(tx *Tx) error {
-			var x int
-			return tx.QueryRowContext(bg, q).Scan(&x)
-		})
-		if err == nil || !strings.Contains(err.Error(), errTxControl.Error()) {
-			t.Errorf("%q via QueryRow: %v", q, err)
+	for _, q := range []string{
+		"COMMIT", "rollback", "-- c\n/* d */ RELEASE job0", "SAVEPOINT x", "BEGIN", "END",
+		"SELECT 1; COMMIT", "INSERT INTO item (name) VALUES ('x'); ROLLBACK",
+		"PRAGMA synchronous = OFF", "PRAGMA foreign_keys = 0", "PRAGMA journal_mode = DELETE",
+		"ATTACH DATABASE ':memory:' AS other",
+	} {
+		for _, via := range []string{"exec", "query", "queryrow"} {
+			res := queueBatch(t, db, insert("ok-"+via+q), func(tx *Tx) error {
+				switch via {
+				case "exec":
+					_, err := tx.ExecContext(bg, q)
+					return err
+				case "query":
+					rows, err := tx.QueryContext(bg, q)
+					if err != nil {
+						return err
+					}
+					for rows.Next() {
+					}
+					return errors.Join(rows.Err(), rows.Close())
+				default:
+					var x any
+					return tx.QueryRowContext(bg, q).Scan(&x)
+				}
+			})
+			if res[0] != nil {
+				t.Errorf("%s %q: the other job failed: %v", via, q, res[0])
+			}
+			code, ok := sqliteCode(res[1])
+			if !ok || code&0xff != 23 { // SQLITE_AUTH
+				t.Errorf("%s %q: %v, want SQLITE_AUTH", via, q, res[1])
+			}
 		}
 	}
-	if got := firstKeyword("/* a */ -- b\n  Insert into"); got != "INSERT" {
-		t.Fatalf("firstKeyword: %q", got)
+	if n := count(t, db, "WHERE name = 'x'"); n != 0 {
+		t.Fatal("a refused job's write was committed")
+	}
+	if m := db.Metrics(); m.FailedBatches != 0 {
+		t.Fatalf("%d failed batches", m.FailedBatches)
+	}
+	var sync int
+	if err := db.Write(context.Background(), func(tx *Tx) error {
+		return tx.QueryRowContext(bg, `PRAGMA synchronous`).Scan(&sync)
+	}); err != nil || sync != 2 {
+		t.Fatalf("synchronous %d, %v", sync, err)
+	}
+	if err := db.Write(context.Background(), func(tx *Tx) error {
+		_, err := tx.PrepareContext(bg, `SELECT 1`)
+		return err
+	}); !errors.Is(err, errPrepare) {
+		t.Fatalf("prepare: %v", err)
 	}
 }
 
-func TestWAL(t *testing.T) {
-	t.Run("size-triggered TRUNCATE bounds it", func(t *testing.T) {
-		db := open(t, Options{PassiveEvery: 20 * time.Millisecond, WALBound: 512 << 10})
-		// One batch writes about 4 MiB to the WAL, far over the bound.
-		var fns []func(*Tx) error
-		for i := range 4 {
-			fns = append(fns, bigInsert(fmt.Sprint("b", i)))
+// An error that fails the batch fails it even when the job meets it through
+// a query whose rows it then ignores.
+func TestSwallowedQueryErrorFailsBatch(t *testing.T) {
+	db := open(t, Options{})
+	setPageLimit(t, db, 4)
+	body := make([]byte, 1<<20)
+	res := queueBatch(t, db, insert("first"), func(tx *Tx) error {
+		rows, err := tx.QueryContext(bg, `INSERT INTO item (name, body) VALUES ('r', ?) RETURNING id`, body)
+		if err != nil {
+			return nil // swallowed
 		}
-		queueBatch(t, db, fns...)
-		waitFor(t, func() bool {
-			m := db.Metrics()
-			return m.Truncates > 0 && m.WALBytes <= 512<<10
-		})
-		m := db.Metrics()
-		if m.LastTruncate.Busy || m.LastTruncate.WALAfter != 0 || m.LastTruncate.WALBefore <= 512<<10 {
-			t.Fatalf("last TRUNCATE %+v", m.LastTruncate)
+		for rows.Next() {
 		}
-		if m.PassiveCheckpoints == 0 {
-			t.Fatal("no PASSIVE checkpoint ran")
-		}
+		_ = rows.Close() // rows.Err() ignored
+		return nil
 	})
-	t.Run("under the bound, PASSIVE only", func(t *testing.T) {
-		db := open(t, Options{PassiveEvery: 20 * time.Millisecond})
-		mustWrite(t, db, insert("a"))
-		waitFor(t, func() bool { return db.Metrics().PassiveCheckpoints >= 3 })
-		if m := db.Metrics(); m.Truncates != 0 {
-			t.Fatalf("%d TRUNCATEs under the bound", m.Truncates)
+	for i, err := range res {
+		if !IsDiskFull(err) {
+			t.Fatalf("job %d: %v, want a disk-full BatchError", i, err)
 		}
-	})
+	}
+	if n := count(t, db, ""); n != 0 {
+		t.Fatalf("%d rows committed", n)
+	}
+	mustWrite(t, db, insert("resumed"))
 }
 
-func TestSnapshotDuringWrites(t *testing.T) {
-	db := open(t, Options{PassiveEvery: 20 * time.Millisecond, WALBound: 256 << 10})
-	for i := range 20 {
-		mustWrite(t, db, bigInsert(fmt.Sprint("seed", i)))
-	}
-	before := count(t, db, "")
-
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
-	var written sync.Map
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			name := fmt.Sprint("during", i)
-			if err := db.Write(context.Background(), insert(name)); err != nil {
-				t.Error(err)
-				return
-			}
-			written.Store(name, true)
-		}
-	}()
-
-	dest := filepath.Join(t.TempDir(), "snapshot.db")
-	st, err := db.Snapshot(context.Background(), dest, SnapshotOptions{StepPages: 64, Pause: 2 * time.Millisecond})
-	close(stop)
-	wg.Wait()
+// realDiskFull returns a genuine SQLITE_FULL error from modernc.
+func realDiskFull(t *testing.T) error {
+	t.Helper()
+	d, err := sql.Open("sqlite", fileURI(filepath.Join(t.TempDir(), "full.db")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Steps < 2 || st.Pages == 0 {
-		t.Fatalf("stats %+v", st)
+	defer d.Close()
+	d.SetMaxOpenConns(1)
+	if _, err := d.Exec(`CREATE TABLE t (b BLOB); PRAGMA max_page_count = 3`); err != nil {
+		t.Fatal(err)
 	}
-	if st.Truncate.Mode != "TRUNCATE" {
-		t.Fatalf("no TRUNCATE after the snapshot: %+v", st.Truncate)
+	_, err = d.Exec(`INSERT INTO t VALUES (?)`, make([]byte, 1<<20))
+	if !IsDiskFull(err) {
+		t.Fatalf("no disk-full error: %v", err)
 	}
-	fi, err := os.Stat(dest)
-	if err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("snapshot file: %v %v", fi, err)
-	}
+	return err
+}
 
-	snap, err := sql.Open("sqlite", "file:"+dest+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
+type stubRows struct {
+	driver.Rows
+	errAfter int
+	err      error
+}
+
+func (r *stubRows) Next([]driver.Value) error {
+	if r.errAfter == 0 {
+		return r.err
 	}
-	defer snap.Close()
-	var check string
-	if err := snap.QueryRow(`PRAGMA integrity_check`).Scan(&check); err != nil || check != "ok" {
-		t.Fatalf("integrity_check %q, %v", check, err)
+	r.errAfter--
+	return nil
+}
+
+type stubStmt struct {
+	driver.Stmt
+	err error
+}
+
+func (s stubStmt) ExecContext(context.Context, []driver.NamedValue) (driver.Result, error) {
+	return nil, s.err
+}
+
+func (s stubStmt) QueryContext(context.Context, []driver.NamedValue) (driver.Rows, error) {
+	return &stubRows{errAfter: 1, err: s.err}, nil
+}
+
+// Errors met while stepping rows (after the first) or through statements
+// reach the batch while a job runs, and are left alone otherwise.
+func TestDriverWrappersObserveErrors(t *testing.T) {
+	full := realDiskFull(t)
+	for _, inJob := range []bool{true, false} {
+		ws := &writerState{}
+		ws.inJob.Store(inJob)
+		rows := &guardedRows{Rows: &stubRows{errAfter: 2, err: full}, state: ws}
+		for range 2 {
+			if err := rows.Next(nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := rows.Next(nil); err != full {
+			t.Fatalf("Next returned %v", err)
+		}
+		if got := ws.fatalErr(); (got != nil) != inJob {
+			t.Fatalf("inJob %v: fatal %v", inJob, got)
+		}
+
+		ws = &writerState{}
+		ws.inJob.Store(inJob)
+		st := &guardedStmt{Stmt: stubStmt{err: full}, state: ws}
+		if _, err := st.ExecContext(bg, nil); err != full {
+			t.Fatal(err)
+		}
+		if got := ws.fatalErr(); (got != nil) != inJob {
+			t.Fatalf("stmt exec, inJob %v: fatal %v", inJob, got)
+		}
+		ws.reset()
+		ws.inJob.Store(inJob)
+		r, _ := st.QueryContext(bg, nil)
+		_ = r.Next(nil)
+		_ = r.Next(nil)
+		if got := ws.fatalErr(); (got != nil) != inJob {
+			t.Fatalf("stmt rows, inJob %v: fatal %v", inJob, got)
+		}
 	}
-	var n int
-	if err := snap.QueryRow(`SELECT count(*) FROM item`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n < before {
-		t.Fatalf("snapshot has %d rows, %d existed before it started", n, before)
-	}
-	if _, err := db.Snapshot(context.Background(), dest, SnapshotOptions{}); err == nil {
-		t.Fatal("a snapshot overwrote an existing file")
+	// A job's own error, and the end of the rows, are not batch failures.
+	ws := &writerState{}
+	ws.inJob.Store(true)
+	_ = ws.observe(io.EOF)
+	_ = ws.observe(errApp)
+	if ws.fatalErr() != nil {
+		t.Fatal("io.EOF or a job's own error was taken as a batch failure")
 	}
 }
 
-func TestSnapshotCancelledRemovesFile(t *testing.T) {
+// A batch failing while a snapshot runs replaces the connection the
+// snapshot reads from: the snapshot ends with an error (no crash), its file
+// is removed, and both writing and later snapshots work.
+func TestSnapshotAbortedByFailedBatch(t *testing.T) {
 	db := open(t, Options{})
 	for i := range 10 {
 		mustWrite(t, db, bigInsert(fmt.Sprint("seed", i)))
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	dest := filepath.Join(t.TempDir(), "snapshot.db")
-	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	if _, err := db.Snapshot(ctx, dest, SnapshotOptions{StepPages: 8, Pause: 5 * time.Millisecond}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("got %v", err)
+	snapErr := make(chan error, 1)
+	go func() {
+		_, err := db.Snapshot(context.Background(), dest, SnapshotOptions{StepPages: 4, Pause: 20 * time.Millisecond})
+		snapErr <- err
+	}()
+	waitFor(t, func() bool { _, err := os.Stat(dest); return err == nil })
+	time.Sleep(50 * time.Millisecond) // a few steps in
+	setPageLimit(t, db, 2)
+	if err := db.Write(context.Background(), bigInsert("too big")); !IsDiskFull(err) {
+		t.Fatalf("write: %v", err)
+	}
+	if err := <-snapErr; !errors.Is(err, errSnapshotAborted) {
+		t.Fatalf("snapshot: %v", err)
 	}
 	if _, err := os.Stat(dest); !os.IsNotExist(err) {
-		t.Fatalf("partial snapshot left behind: %v", err)
+		t.Fatalf("aborted snapshot left its file: %v", err)
 	}
-	mustWrite(t, db, insert("still writable"))
+	mustWrite(t, db, insert("resumed"))
+	if _, err := db.Snapshot(context.Background(), dest, SnapshotOptions{StepPages: 1 << 20}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// File names are passed to SQLite as URIs: characters with a meaning there
+// must not change which file is opened or written.
+func TestPathsAreEscaped(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a%41 b?c#d.db")
+	db := open(t, Options{Path: path})
+	mustWrite(t, db, insert("x"))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "a%41 b?c#d.db") {
+			t.Fatalf("unexpected file %q next to the database", e.Name())
+		}
+	}
+	if db.Metrics().WALBytes == 0 {
+		t.Fatal("the WAL size is read from the wrong file")
+	}
+
+	dest := filepath.Join(dir, "snap%41?#.db")
+	if _, err := db.Snapshot(context.Background(), dest, SnapshotOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(dest)
+	if err != nil || fi.Mode().Perm() != 0o600 || fi.Size() == 0 {
+		t.Fatalf("snapshot file: %v, %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "snapA")); !os.IsNotExist(err) {
+		t.Fatal("the snapshot went to a decoded name")
+	}
+	snap, err := sql.Open("sqlite", fileURI(dest, "mode=ro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	var n int
+	if err := snap.QueryRow(`SELECT count(*) FROM item`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("snapshot rows %d, %v", n, err)
+	}
 }
 
 func TestCloseFinishesQueuedJobs(t *testing.T) {

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"modernc.org/sqlite"
@@ -34,6 +33,16 @@ type backuper interface {
 	NewBackup(dstURI string) (*sqlite.Backup, error)
 }
 
+// activeBackup is a snapshot's backup object. Only the writer goroutine
+// touches it: in the snapshot's ops and in dropWriter, which ends it before
+// discarding the connection it reads from.
+type activeBackup struct {
+	b       *sqlite.Backup
+	aborted bool
+}
+
+var errSnapshotAborted = errors.New("storage: snapshot aborted: a failed write batch replaced the connection it read from")
+
 // Snapshot writes a consistent copy of the database to dest, a new file
 // (mode 0600) that must not exist yet (ADR-0059 Decision 7). It uses
 // SQLite's online backup API stepped on the writer's own connection, in
@@ -48,9 +57,6 @@ func (db *DB) Snapshot(ctx context.Context, dest string, o SnapshotOptions) (Sna
 	}
 	if o.Pause <= 0 {
 		o.Pause = 400 * time.Millisecond
-	}
-	if strings.ContainsAny(dest, "?#") {
-		return SnapshotStats{}, fmt.Errorf("storage: snapshot path %q: '?' and '#' are not allowed", dest)
 	}
 	db.mu.RLock()
 	if db.closed {
@@ -84,31 +90,48 @@ func (db *DB) Snapshot(ctx context.Context, dest string, o SnapshotOptions) (Sna
 func (db *DB) snapshot(ctx context.Context, dest string, o SnapshotOptions) (SnapshotStats, error) {
 	var st SnapshotStats
 	t0 := time.Now()
-	var b *sqlite.Backup
+	var ab *activeBackup
 	// The copy is a temporary file: no journal, and one fsync at the end
 	// instead of one per step.
 	err := db.onWriter(ctx, func(dc any) error {
-		bk, ok := dc.(backuper)
+		bk, ok := unwrapConn(dc).(backuper)
 		if !ok {
 			return fmt.Errorf("storage: driver connection %T has no backup API", dc)
 		}
-		var err error
-		b, err = bk.NewBackup("file:" + dest + "?_pragma=synchronous(OFF)&_pragma=journal_mode(OFF)")
-		return err
+		b, err := bk.NewBackup(fileURI(dest, "_pragma=synchronous(OFF)", "_pragma=journal_mode(OFF)"))
+		if err != nil {
+			return err
+		}
+		ab = &activeBackup{b: b}
+		db.backup = ab
+		return nil
 	})
 	if err != nil {
 		return st, fmt.Errorf("storage: snapshot: %w", err)
 	}
-	finish := func() error { return db.onWriter(bg, func(any) error { return b.Finish() }) }
+	finish := func() error {
+		return db.onWriter(bg, func(any) error {
+			if db.backup == ab {
+				db.backup = nil
+			}
+			if ab.aborted {
+				return errSnapshotAborted
+			}
+			return ab.b.Finish()
+		})
+	}
 
 	last := -1
 	for {
 		var more bool
 		var remaining, pages int
 		err = db.onWriter(bg, func(any) error {
+			if ab.aborted {
+				return errSnapshotAborted
+			}
 			var err error
-			more, err = b.Step(int32(o.StepPages))
-			remaining, pages = b.Remaining(), b.PageCount()
+			more, err = ab.b.Step(int32(o.StepPages))
+			remaining, pages = ab.b.Remaining(), ab.b.PageCount()
 			return err
 		})
 		st.Steps++

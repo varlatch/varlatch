@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -75,9 +74,10 @@ func sqliteCode(err error) (int, bool) {
 // jobOwnError reports whether an error a job ran into is the job's own
 // (ADR-0059 Decision 2): an error from the job's code, or an SQLite error
 // about the statement itself (a constraint, a type mismatch, bad SQL). A
-// savepoint rollback undoes it, and only that job fails. Every other SQLite
-// error (disk full, I/O, out of memory, corruption, an interrupt, a busy or
-// locked database, a rolled-back transaction) fails the whole batch.
+// savepoint rollback undoes it, and only that job fails, unless SQLite
+// rolled the whole transaction back meanwhile (see writerState). Every other
+// SQLite error (disk full, I/O, out of memory, corruption, an interrupt, a
+// busy or locked database, read-only) fails the whole batch.
 func jobOwnError(err error) bool {
 	code, ok := sqliteCode(err)
 	if !ok {
@@ -85,7 +85,8 @@ func jobOwnError(err error) bool {
 	}
 	switch code & 0xff {
 	case sqlite3.SQLITE_CONSTRAINT, sqlite3.SQLITE_ERROR, sqlite3.SQLITE_MISMATCH,
-		sqlite3.SQLITE_RANGE, sqlite3.SQLITE_TOOBIG:
+		sqlite3.SQLITE_RANGE, sqlite3.SQLITE_TOOBIG,
+		sqlite3.SQLITE_AUTH: // refused by the authorizer before it ran
 		return true
 	}
 	return false
@@ -209,6 +210,14 @@ func (db *DB) dropWriter() {
 	if db.wconn == nil {
 		return
 	}
+	// A snapshot reads from this connection: end it first (its next step
+	// reports the abort), or SQLite would step a backup whose source is gone.
+	if db.backup != nil {
+		_ = db.backup.b.Finish()
+		db.backup.aborted = true
+		db.backup = nil
+	}
+	db.ws.batchActive.Store(false)
 	_, _ = db.wconn.ExecContext(bg, "ROLLBACK")
 	_ = db.wconn.Raw(func(any) error { return driver.ErrBadConn })
 	_ = db.wconn.Close()
@@ -231,15 +240,28 @@ func (db *DB) runOp(o *op) error {
 
 func (db *DB) runBatch(batch []*job) {
 	t0 := time.Now()
+	ws := db.ws
+	ws.reset()
 	results := make([]error, len(batch))
 	ran := make([]bool, len(batch)) // started by the writer, so it gets an answer
 	var fatal *BatchError
 	fail := func(op string, err error) { fatal = &BatchError{Op: op, Err: err} }
+	// lost reports whether the batch failed in a way SQLite or a job's
+	// statements recorded (see writerState).
+	lost := func(op string) bool {
+		if err := ws.fatalErr(); err != nil {
+			fail(op, err)
+			return true
+		}
+		return false
+	}
 
 	if err := db.ensureWriter(); err != nil {
 		fail("writer", err)
 	} else if _, err := db.wconn.ExecContext(bg, "BEGIN IMMEDIATE"); err != nil {
 		fail("begin", err)
+	} else {
+		ws.batchActive.Store(true)
 	}
 	for i, j := range batch {
 		if fatal != nil {
@@ -254,12 +276,10 @@ func (db *DB) runBatch(batch []*job) {
 			fail("savepoint", err)
 			break
 		}
-		tx := &Tx{conn: db.wconn}
-		err := runJob(j.fn, tx)
-		if tx.fatal != nil {
-			// The job hit an error that fails the batch, even if it then
-			// swallowed it.
-			fail("job", tx.fatal)
+		ws.inJob.Store(true)
+		err := runJob(j.fn, &Tx{conn: db.wconn, ws: ws})
+		ws.inJob.Store(false)
+		if lost("job") {
 			break
 		}
 		if err != nil {
@@ -277,13 +297,17 @@ func (db *DB) runBatch(batch []*job) {
 			fail("release", err)
 			break
 		}
+		if lost("release") {
+			break
+		}
 	}
 	commitStart := time.Now()
-	if fatal == nil {
+	if fatal == nil && !lost("commit") {
 		if _, err := db.wconn.ExecContext(bg, "COMMIT"); err != nil {
 			fail("commit", err)
 		}
 	}
+	ws.batchActive.Store(false)
 	commit := time.Since(commitStart)
 
 	if fatal != nil {
@@ -320,100 +344,50 @@ func runJob(fn func(*Tx) error, tx *Tx) (err error) {
 }
 
 // Tx is a job's view of the write transaction. It has the method set sqlc
-// expects of its DBTX. Every statement runs under the writer's context (the
-// ctx argument is ignored, see Write), and an SQLite error that fails the
-// batch is remembered even if the job ignores it.
+// expects of its DBTX (without prepared statements). Every statement runs
+// under the writer's context (the ctx argument is ignored, see Write). Once
+// the batch has failed, every statement is refused.
 type Tx struct {
-	conn  *sql.Conn
-	fatal error
+	conn *sql.Conn
+	ws   *writerState
 }
 
-func (t *Tx) observe(err error) error {
-	if err != nil && !jobOwnError(err) && t.fatal == nil {
-		t.fatal = err
-	}
-	return err
-}
-
-// errTxControl refuses statements that would end or reshape the writer's
-// transaction from inside a job.
-var errTxControl = errors.New("storage: a job may not run transaction control statements")
-
-func (t *Tx) check(query string) error {
-	switch firstKeyword(query) {
-	case "BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE":
-		return errTxControl
+func (t *Tx) refused() error {
+	if t.ws.fatalErr() != nil {
+		return errBatchFailed
 	}
 	return nil
 }
 
 // ExecContext runs a statement in the job.
 func (t *Tx) ExecContext(_ context.Context, query string, args ...any) (sql.Result, error) {
-	if err := t.check(query); err != nil {
+	if err := t.refused(); err != nil {
 		return nil, err
 	}
-	r, err := t.conn.ExecContext(bg, query, args...)
-	return r, t.observe(err)
+	return t.conn.ExecContext(bg, query, args...)
 }
 
-// QueryContext runs a query in the job.
+// QueryContext runs a query in the job. The job must close the rows before
+// it returns.
 func (t *Tx) QueryContext(_ context.Context, query string, args ...any) (*sql.Rows, error) {
-	if err := t.check(query); err != nil {
+	if err := t.refused(); err != nil {
 		return nil, err
 	}
-	r, err := t.conn.QueryContext(bg, query, args...)
-	return r, t.observe(err)
+	return t.conn.QueryContext(bg, query, args...)
 }
 
 // QueryRowContext runs a query for one row in the job.
 func (t *Tx) QueryRowContext(_ context.Context, query string, args ...any) *sql.Row {
-	if err := t.check(query); err != nil {
-		// A *sql.Row cannot carry an error of ours. This query fails with
-		// "no such table: storage: a job may not run transaction control
-		// statements", which Scan returns to the job.
-		query = `SELECT 1 FROM "` + errTxControl.Error() + `"`
-		args = nil
+	if t.refused() != nil {
+		// A *sql.Row cannot carry an error of ours. This read fails at once
+		// with "no such table: storage: the write batch already failed...".
+		return t.conn.QueryRowContext(bg, `SELECT 1 FROM "`+errBatchFailed.Error()+`"`)
 	}
-	row := t.conn.QueryRowContext(bg, query, args...)
-	_ = t.observe(row.Err())
-	return row
+	return t.conn.QueryRowContext(bg, query, args...)
 }
 
-// PrepareContext prepares a statement on the writer's connection.
-func (t *Tx) PrepareContext(_ context.Context, query string) (*sql.Stmt, error) {
-	if err := t.check(query); err != nil {
-		return nil, err
-	}
-	s, err := t.conn.PrepareContext(bg, query)
-	return s, t.observe(err)
-}
-
-// firstKeyword returns the first SQL keyword of query, upper-cased, after
-// whitespace and comments.
-func firstKeyword(query string) string {
-	s := query
-	for {
-		s = strings.TrimLeft(s, " \t\r\n\f\v")
-		switch {
-		case strings.HasPrefix(s, "--"):
-			if i := strings.IndexByte(s, '\n'); i >= 0 {
-				s = s[i+1:]
-				continue
-			}
-			return ""
-		case strings.HasPrefix(s, "/*"):
-			if i := strings.Index(s[2:], "*/"); i >= 0 {
-				s = s[i+4:]
-				continue
-			}
-			return ""
-		}
-		end := strings.IndexFunc(s, func(r rune) bool {
-			return !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z')
-		})
-		if end < 0 {
-			end = len(s)
-		}
-		return strings.ToUpper(s[:end])
-	}
+// PrepareContext is refused: a prepared statement could outlive its job.
+// (sqlc's DBTX needs the method; generate code without prepared queries.)
+func (t *Tx) PrepareContext(context.Context, string) (*sql.Stmt, error) {
+	return nil, errPrepare
 }

@@ -26,7 +26,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -95,10 +94,12 @@ type DB struct {
 	opts Options
 
 	// The writer: one connection, owned by the writer goroutine.
-	wdb   *sql.DB
-	wconn *sql.Conn // nil after a failed batch until the next one reopens it
-	jobs  chan *job
-	ops   chan *op
+	wdb    *sql.DB
+	wconn  *sql.Conn // nil after a failed batch until the next one reopens it
+	ws     *writerState
+	backup *activeBackup // the snapshot reading from wconn; writer goroutine only
+	jobs   chan *job
+	ops    chan *op
 
 	rdb *sql.DB // read-only pool
 
@@ -128,9 +129,6 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 	if opts.Path == "" {
 		return nil, errors.New("storage: no path")
 	}
-	if strings.ContainsAny(opts.Path, "?#") {
-		return nil, fmt.Errorf("storage: path %q: '?' and '#' are not allowed", opts.Path)
-	}
 	path, err := filepath.Abs(opts.Path)
 	if err != nil {
 		return nil, err
@@ -142,6 +140,7 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 
 	db := &DB{
 		opts: opts,
+		ws:   &writerState{},
 		jobs: make(chan *job, opts.QueueSize),
 		ops:  make(chan *op, 16),
 		stop: make(chan struct{}),
@@ -153,10 +152,13 @@ func Open(ctx context.Context, opts Options) (*DB, error) {
 		}
 	}()
 
-	// The writer first: it switches the file to WAL mode.
-	if db.wdb, err = sql.Open("sqlite", db.dsn(true, false)); err != nil {
+	// The writer first: it switches the file to WAL mode. Its connections
+	// are wrapped (driver.go).
+	wc, err := newWriterConnector(db.dsn(true, false), db.ws)
+	if err != nil {
 		return nil, err
 	}
+	db.wdb = sql.OpenDB(wc)
 	db.wdb.SetMaxOpenConns(1)
 	db.wdb.SetConnMaxLifetime(0)
 	db.wdb.SetConnMaxIdleTime(0)
@@ -211,7 +213,7 @@ func (db *DB) dsn(writer, reader bool) string {
 	if reader {
 		p = append(p, "_pragma=query_only(1)")
 	}
-	return "file:" + db.opts.Path + "?" + strings.Join(p, "&")
+	return fileURI(db.opts.Path, p...)
 }
 
 type queryer interface {
