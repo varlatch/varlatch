@@ -586,6 +586,55 @@ func TestPS1EndToEnd(t *testing.T) {
 				t.Fatalf("after the rerun the user PATH holds %s %d times", dir, n)
 			}
 
+			// An older varlatch already in place is replaced, leaving only
+			// the new one; a locked one (a running varlatch) is kept as it
+			// was, and nothing staged is left beside it.
+			seed := func(t *testing.T) (string, string) {
+				t.Helper()
+				local := spaced(t)
+				dir := filepath.Join(local, "Programs", "Varlatch")
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "varlatch.exe"), []byte("older varlatch"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				return local, dir
+			}
+			only := func(t *testing.T, dir string, want []byte) {
+				t.Helper()
+				entries, _ := os.ReadDir(dir)
+				if len(entries) != 1 || entries[0].Name() != "varlatch.exe" {
+					names := []string{}
+					for _, e := range entries {
+						names = append(names, e.Name())
+					}
+					t.Fatalf("%s holds %v", dir, names)
+				}
+				if got, _ := os.ReadFile(filepath.Join(dir, "varlatch.exe")); !bytes.Equal(got, want) {
+					t.Fatalf("varlatch.exe holds %d bytes, not the expected %d", len(got), len(want))
+				}
+			}
+			t.Run("replaces an older varlatch", func(t *testing.T) {
+				local, dir := seed(t)
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code != 0 || !strings.Contains(res.out, "Installed varlatch "+version) {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				only(t, dir, stubBytes)
+				emptyDir(t, res.tmp)
+			})
+			t.Run("keeps a locked varlatch", func(t *testing.T) {
+				local, dir := seed(t)
+				lockFile(t, filepath.Join(dir, "varlatch.exe"))
+				res := install(t, host, newRelease(), true, false, nil, "LOCALAPPDATA="+local)
+				if res.code == 0 || !strings.Contains(res.out, "could not replace") {
+					t.Fatalf("exit %d\n%s", res.code, res.out)
+				}
+				only(t, dir, []byte("older varlatch"))
+				emptyDir(t, res.tmp)
+			})
+
 			// Successes other than the default.
 			for caseName, tc := range map[string]struct {
 				edit    func(*psRelease)
@@ -618,24 +667,26 @@ func TestPS1EndToEnd(t *testing.T) {
 				want       string
 				noDownload bool
 			}{
-				"changed binary":            {edit: func(r *psRelease) { r.files[exe] = append(bytes.Clone(stubBytes), 'x') }, stamped: true, want: "does not match SHA256SUMS"},
-				"not listed":                {edit: func(r *psRelease) { r.sums = sha256Line(stubBytes, "other.exe") }, stamped: true, want: "does not list " + exe},
-				"listed twice":              {edit: func(r *psRelease) { r.sums += r.sums }, stamped: true, want: "does not list " + exe},
-				"cut-off binary":            {edit: func(r *psRelease) { r.cutOff = exe }, stamped: true, want: "does not match SHA256SUMS"},
-				"cut-off binary, length":    {edit: func(r *psRelease) { r.cutLength = exe }, stamped: true, want: "varlatch install:"},
-				"cut-off SHA256SUMS":        {edit: func(r *psRelease) { r.cutOff = "SHA256SUMS" }, stamped: true, want: "varlatch install:"},
-				"cut-off bundle":            {edit: func(r *psRelease) { r.cutOff = "SHA256SUMS.sigstore.json" }, stamped: true, want: "release signature does not verify"},
-				"redirect to http":          {edit: func(r *psRelease) { r.redirectHTTP = exe }, stamped: true, want: "not HTTPS"},
-				"six redirects":             {edit: func(r *psRelease) { r.hops = 6 }, stamped: true, want: "too many redirects"},
-				"redirect without location": {edit: func(r *psRelease) { r.noLocation = exe }, stamped: true, want: "without a location"},
-				"another certificate":       {stamped: true, wrongPin: true, want: "could not download"},
-				"signature fails":           {stamped: true, env: []string{"STUB_VERIFY=fail"}, want: "release signature does not verify"},
-				"wrong version":             {stamped: true, env: []string{"STUB_REPORTS=0.49.0"}, want: "reports 'varlatch 0.49.0'"},
-				"unstamped":                 {want: "not from a release", noDownload: true},
-				"bad version":               {stamped: true, args: []string{"--version", "0.50.0/../x"}, want: "not a release version", noDownload: true},
-				"unknown option":            {stamped: true, args: []string{"--force"}, want: "unknown option", noDownload: true},
-				"other processor":           {stamped: true, env: []string{"PROCESSOR_ARCHITECTURE=x86"}, want: "no varlatch for x86", noDownload: true},
-				"not Windows":               {stamped: true, env: []string{"OS=Linux"}, want: "elsewhere use install.sh", noDownload: true},
+				"changed binary":             {edit: func(r *psRelease) { r.files[exe] = append(bytes.Clone(stubBytes), 'x') }, stamped: true, want: "does not match SHA256SUMS"},
+				"not listed":                 {edit: func(r *psRelease) { r.sums = sha256Line(stubBytes, "other.exe") }, stamped: true, want: "does not list " + exe},
+				"listed twice":               {edit: func(r *psRelease) { r.sums += r.sums }, stamped: true, want: "does not list " + exe},
+				"cut-off binary":             {edit: func(r *psRelease) { r.cutOff = exe }, stamped: true, want: "does not match SHA256SUMS"},
+				"cut-off binary, length":     {edit: func(r *psRelease) { r.cutLength = exe }, stamped: true, want: "varlatch install:"},
+				"cut-off SHA256SUMS":         {edit: func(r *psRelease) { r.cutOff = "SHA256SUMS" }, stamped: true, want: "varlatch install:"},
+				"cut-off SHA256SUMS, length": {edit: func(r *psRelease) { r.cutLength = "SHA256SUMS" }, stamped: true, want: "varlatch install:"},
+				"cut-off bundle":             {edit: func(r *psRelease) { r.cutOff = "SHA256SUMS.sigstore.json" }, stamped: true, want: "release signature does not verify"},
+				"cut-off bundle, length":     {edit: func(r *psRelease) { r.cutLength = "SHA256SUMS.sigstore.json" }, stamped: true, want: "varlatch install:"},
+				"redirect to http":           {edit: func(r *psRelease) { r.redirectHTTP = exe }, stamped: true, want: "not HTTPS"},
+				"six redirects":              {edit: func(r *psRelease) { r.hops = 6 }, stamped: true, want: "too many redirects"},
+				"redirect without location":  {edit: func(r *psRelease) { r.noLocation = exe }, stamped: true, want: "without a location"},
+				"another certificate":        {stamped: true, wrongPin: true, want: "could not download"},
+				"signature fails":            {stamped: true, env: []string{"STUB_VERIFY=fail"}, want: "release signature does not verify"},
+				"wrong version":              {stamped: true, env: []string{"STUB_REPORTS=0.49.0"}, want: "reports 'varlatch 0.49.0'"},
+				"unstamped":                  {want: "not from a release", noDownload: true},
+				"bad version":                {stamped: true, args: []string{"--version", "0.50.0/../x"}, want: "not a release version", noDownload: true},
+				"unknown option":             {stamped: true, args: []string{"--force"}, want: "unknown option", noDownload: true},
+				"other processor":            {stamped: true, env: []string{"PROCESSOR_ARCHITECTURE=x86"}, want: "no varlatch for x86", noDownload: true},
+				"not Windows":                {stamped: true, env: []string{"OS=Linux"}, want: "elsewhere use install.sh", noDownload: true},
 			} {
 				t.Run(caseName, func(t *testing.T) {
 					r := newRelease()
