@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Archive, CircleAlert, CircleCheck, CircleDashed, Fingerprint, OctagonX, PauseCircle, TriangleAlert } from "lucide-react";
 import type {
@@ -56,6 +56,29 @@ const hostOf = (endpoint: string) => {
 };
 const retentionWords = (r: AuditExportRetention | null) => (r ? `${r.mode}, ${r.days} day${r.days === 1 ? "" : "s"}` : "none");
 
+/**
+ * A destination as the server stores it (normalizeDestination): the
+ * endpoint's origin, and a prefix that is empty or ends with "/". So the
+ * dialog compares what would really change, and never warns about an
+ * approval for a change the server would find empty.
+ */
+export function normalizedDestination(d: AuditExportDestinationInput): AuditExportDestinationInput {
+  let endpoint = d.endpoint.trim();
+  try {
+    endpoint = new URL(endpoint).origin;
+  } catch {
+    // Not a URL: left as typed; the server refuses it.
+  }
+  const prefix = (d.prefix ?? "").trim();
+  return {
+    endpoint,
+    region: d.region.trim(),
+    bucket: d.bucket.trim(),
+    prefix: prefix !== "" && !prefix.endsWith("/") ? `${prefix}/` : prefix,
+    pathStyle: d.pathStyle ?? false,
+  };
+}
+
 /** Whether going from `a` to `b` weakens retention: removed, shorter, or compliance to governance. */
 export function retentionLoosens(a: AuditExportRetention | null, b: AuditExportRetention | null): boolean {
   if (a === null) return false;
@@ -99,6 +122,13 @@ export function AuditExportCard({ org, status }: { org: string; status: AuditExp
     mutationFn: (e: AuditExport) => api.checkAuditExport(org, { destination: e.destination, retention: e.retention }),
     onError: (err) => toast.error("Could not check the destination", { description: errorMessage(err) }),
   });
+  // A result describes the destination and key it was made with: gone once
+  // either changes (every change, a new key included, bumps the version).
+  const checkedFor = current ? `${current.id}|${current.version}|${current.destination.endpoint}|${current.destination.bucket}|${current.destination.prefix}` : "";
+  const resetCheck = check.reset;
+  useEffect(() => {
+    resetCheck();
+  }, [checkedFor, resetCheck]);
 
   const askRemove = async (e: AuditExport) => {
     const ok = await confirm({
@@ -201,7 +231,9 @@ function ExportStatus({
   removing: boolean;
 }) {
   const health = exportHealth(e, enabled, now);
-  const heartbeatStale = e.state === "active" && enabled && (!e.lastHeartbeatAt || now - Date.parse(e.lastHeartbeatAt) > HEARTBEAT_STALE_MS);
+  // A new export has had no time for one yet: waiting, not stale.
+  const awaitingFirst = !e.lastHeartbeatAt && now - Date.parse(e.createdAt) <= HEARTBEAT_STALE_MS;
+  const heartbeatStale = e.state === "active" && enabled && !awaitingFirst && (!e.lastHeartbeatAt || now - Date.parse(e.lastHeartbeatAt) > HEARTBEAT_STALE_MS);
   const draining = e.state === "draining";
   return (
     <>
@@ -253,7 +285,7 @@ function ExportStatus({
           </Callout>
         )}
         {e.lag?.oldestPendingAt && now - Date.parse(e.lag.oldestPendingAt) > LAG_WARNING_MS && (
-          <Callout tone="warn" icon={<TriangleAlert size={16} />} data-testid="audit-export-lag">
+          <Callout tone="warn" icon={<TriangleAlert size={16} />} role="status" data-testid="audit-export-lag">
             The oldest event not yet exported is from {formatDateTime(e.lag.oldestPendingAt)}, over an hour ago.
           </Callout>
         )}
@@ -273,13 +305,13 @@ function ExportStatus({
           {e.retention === null ? "; versioning not verified" : ""}
         </Row>
         <Row label="Heartbeat" testId="audit-export-heartbeat">
-          {e.lastHeartbeatAt ? `last at ${formatDateTime(e.lastHeartbeatAt)}` : "none yet"}
+          {e.lastHeartbeatAt ? `last at ${formatDateTime(e.lastHeartbeatAt)}` : awaitingFirst ? "waiting for the first heartbeat" : "none yet"}
           {heartbeatStale ? " (none in the last two hours)" : ""}
           <span className="block text-xs text-muted">A heartbeat object every hour: a bucket without one for two hours means the copy stopped.</span>
         </Row>
         <Row label="The key" testId="audit-export-key-flags">
-          {e.keyCanRead === null ? "read access not determined" : e.keyCanRead ? "can read objects" : "write-only"}
-          {e.retentionReadable === null ? "" : e.retentionReadable ? ", can read retention" : ", cannot read retention"}
+          {e.keyCanRead === null ? "object read not determined" : e.keyCanRead ? "can read objects" : "write-only"}
+          {e.retentionReadable === null ? ", retention read not determined" : e.retentionReadable ? ", can read retention" : ", cannot read retention"}
         </Row>
         <Row label="Stream">
           <span className="font-mono text-xs">{e.streamId}</span>, delivered up to position {e.cursor}
@@ -293,13 +325,13 @@ function ExportStatus({
 function CheckResult({ result }: { result: AuditExportCheck }) {
   if (!result.ok) {
     return (
-      <Callout tone="danger" icon={<OctagonX size={16} />} title="The destination check failed" data-testid="audit-export-check-result">
+      <Callout tone="danger" icon={<OctagonX size={16} />} title="The destination check failed" role="status" data-testid="audit-export-check-result">
         {result.message ?? "No reason given."} Nothing was saved.
       </Callout>
     );
   }
   return (
-    <Callout tone="success" icon={<CircleCheck size={16} />} title="The destination passed the check" data-testid="audit-export-check-result">
+    <Callout tone="success" icon={<CircleCheck size={16} />} title="The destination passed the check" role="status" data-testid="audit-export-check-result">
       It refuses to overwrite an existing object. {result.objectLock ? `Object Lock: ${LOCK_WORDS[result.objectLock]}.` : ""} Nothing was saved.
     </Callout>
   );
@@ -318,9 +350,9 @@ function Checklist({ e }: { e: AuditExport }) {
       {items.map((item) => (
         <li key={item.text} className="flex items-start gap-2 py-1">
           {item.done ? (
-            <CircleCheck size={15} className="mt-0.5 shrink-0 text-accent" aria-label="Done" />
+            <CircleCheck size={15} className="mt-0.5 shrink-0 text-accent" role="img" aria-label="Done" />
           ) : (
-            <CircleDashed size={15} className="mt-0.5 shrink-0 text-muted" aria-label={item.done === false ? "Not yet" : "Varlatch cannot check this"} />
+            <CircleDashed size={15} className="mt-0.5 shrink-0 text-muted" role="img" aria-label={item.done === false ? "Not yet" : "Varlatch cannot check this"} />
           )}
           <span>{item.text}</span>
         </li>
@@ -352,7 +384,9 @@ function ExportDialog({ org, current, onClose }: { org: string; current: AuditEx
   const daysOk = /^\d{1,4}$/.test(days) && Number(days) >= 1 && Number(days) <= 3650;
   const retention: AuditExportRetention | null = mode === "none" ? null : { mode, days: Number(days) };
   const destination: AuditExportDestinationInput = { endpoint: endpoint.trim(), region: region.trim(), bucket: bucket.trim(), prefix: prefix.trim(), pathStyle };
-  const destinationChanged = current !== null && (["endpoint", "region", "bucket", "prefix", "pathStyle"] as const).some((k) => destination[k] !== current.destination[k]);
+  const normalized = normalizedDestination(destination);
+  const changedFields = current === null ? [] : (["endpoint", "region", "bucket", "prefix", "pathStyle"] as const).filter((k) => normalized[k] !== current.destination[k]);
+  const destinationChanged = changedFields.length > 0;
   const loosens = current !== null && (destinationChanged || retentionLoosens(current.retention, retention));
   const unchanged = current !== null && !destinationChanged && retentionWords(current.retention) === retentionWords(retention);
   const keyOk = current !== null || (accessKeyId.trim() !== "" && secret !== "");
@@ -370,10 +404,9 @@ function ExportDialog({ org, current, onClose }: { org: string; current: AuditEx
         await api.createAuditExport(org, { destination, credential: { accessKeyId: accessKeyId.trim(), secretAccessKey: secret }, retention, from });
         return "Audit export set up";
       }
-      const fields = (["endpoint", "region", "bucket", "prefix", "pathStyle"] as const).filter((k) => destination[k] !== current.destination[k]);
       const changed = await api.changeAuditExport(org, {
         expectedVersion: current.version,
-        ...(fields.length > 0 ? { destination: Object.fromEntries(fields.map((k) => [k, destination[k]])) } : {}),
+        ...(changedFields.length > 0 ? { destination: Object.fromEntries(changedFields.map((k) => [k, normalized[k]])) } : {}),
         ...(retentionWords(current.retention) !== retentionWords(retention) ? { retention } : {}),
       });
       return changed.changed ? "Audit export changed" : "Nothing to change";

@@ -135,7 +135,8 @@ export interface SecurityStatus {
   /**
    * The audit export and the installation switch (capability
    * audit.storage-export), for whoever may manage the organization; null
-   * otherwise. Not listed in `unavailable`: a member's status reads as before.
+   * otherwise. Not listed in `unavailable`: a member's text is unchanged,
+   * and their JSON gains only this key, as null.
    */
   auditExport: AuditExportStatus | null;
   checklist: readonly ChecklistItem[];

@@ -61,7 +61,10 @@ function answer(req: http.IncomingMessage, res: http.ServerResponse): void {
     };
     if (url === "/v1/meta") return json(200, { apiMajor: 1, serverVersion: "0.20.0", capabilities });
     if (url === ORG && req.method === "GET") return json(200, { id: "org_acme", slug: "acme", name: "Acme" });
-    if (url === `${ORG}/audit-export` && req.method === "GET") return json(200, { enabled: true, export: auditExportState ? { state: auditExportState } : null });
+    if (url === `${ORG}/audit-export` && req.method === "GET") {
+      if (auditExportState === "error") return json(500, { error: { code: "INTERNAL", message: "boom", requestId: "req_1" } });
+      return json(200, { enabled: true, export: auditExportState ? { state: auditExportState } : null });
+    }
     if (url === `${ORG}/projects/api` && req.method === "DELETE") {
       return json(200, { projectId: "prj_1", slug: "api", environments: 3, values: 4, versionsErased: 9, capabilitiesRevoked: 1, targetsRevoked: 2, teamLinksRemoved: 1 });
     }
@@ -242,6 +245,14 @@ describe("varlatch org delete", () => {
       expect(r.code, r.stderr).toBe(0);
       expect(r.stdout.includes(DRAIN), String(state)).toBe(said);
     }
+    // A read that fails never leaves the disclosure out.
+    auditExportState = "error";
+    const unknown = await cli(["org", "delete", "acme", "--confirm", "acme"]);
+    expect(unknown.code, unknown.stderr).toBe(0);
+    expect(unknown.stdout).not.toContain(DRAIN);
+    expect(unknown.stdout).toContain(
+      "The audit export's state could not be read. If this organization has one, its key stays readable by this installation for up to 30 days after deletion, to deliver the final audit events. Nothing else does.",
+    );
     // Without --confirm, still no request at all.
     requests = [];
     expect((await cli(["org", "delete", "acme"])).code).toBe(EXIT.usage);
