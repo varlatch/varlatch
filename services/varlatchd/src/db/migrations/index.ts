@@ -47,6 +47,7 @@ import { sql as incidentFreeze } from "./0044_incident_freeze.js";
 import { sql as requirementProtection } from "./0045_requirement_protection.js";
 import { sql as adminStepUpIdentities } from "./0046_admin_step_up_identities.js";
 import { sql as adminStepUpAccess } from "./0047_admin_step_up_access.js";
+import { sql as adminStepUpPeople } from "./0048_admin_step_up_people.js";
 import { sql as organizationSecurityEpoch } from "./0049_organization_security_epoch.js";
 
 export interface Migration {
@@ -104,6 +105,6 @@ export const MIGRATIONS: Migration[] = [
   { id: 45, name: "requirement_protection", sql: requirementProtection },
   { id: 46, name: "admin_step_up_identities", sql: adminStepUpIdentities },
   { id: 47, name: "admin_step_up_access", sql: adminStepUpAccess },
-  // 48: taken by a change in flight.
+  { id: 48, name: "admin_step_up_people", sql: adminStepUpPeople },
   { id: 49, name: "organization_security_epoch", sql: organizationSecurityEpoch },
 ];

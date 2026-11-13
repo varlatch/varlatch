@@ -7,6 +7,7 @@ import { createPgQuerier } from "../src/db/pg.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant, issueInviteGrant } from "../src/domain/bootstrap.js";
 import type { AppCtx } from "../src/domain/ctx.js";
 import { removeMember } from "../src/domain/members.js";
+import { personGate } from "./helpers/gates.js";
 import { buildApp } from "../src/http/app.js";
 
 /**
@@ -241,7 +242,7 @@ describe.skipIf(!url)("member removal on real PostgreSQL", () => {
       const invite = await issueInviteGrant(ctx, { organizationId: orgId, role: "member", name: `Guest${round}` }, bob.id);
       const [accepted, removed] = await Promise.allSettled([
         consumeSetupGrant(ctx, invite.token, {}),
-        removeMember(ctx, orgId, bob.id, { id: admin.id, kind: "human" }),
+        removeMember(ctx, personGate(admin.id), orgId, bob.id),
       ]);
       expect(removed.status).toBe("fulfilled");
       const row = (await db.query("SELECT consumed_at, revoked_at FROM setup_grants WHERE id = $1", [invite.id])).rows[0] as {

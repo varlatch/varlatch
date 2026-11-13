@@ -3182,8 +3182,12 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const { org } = await scope(ctx, c, RECOVERY);
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const member = memberParam(c, principal);
+    // A protected operation (ADR-0054) when it removes someone else:
+    // admin-step-up at enforce asks for the requester's approval
+    // (member.remove); the header is read only then. Leaving is exempt.
     const removed = await auditMemberDenial(c, principal, org.id, member, () =>
-      removeMember(ctx, org.id, member, principal.identity),
+      withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+        removeMember(ctx, gate, org.id, member)),
     );
     return c.json(removed);
   });
@@ -3194,8 +3198,11 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await authorize(ctx, c, principal, "organization.read", { organizationId: org.id }, { hideExistence: true });
     const body = parseBody(z.object({ role: z.enum(["admin", "member"]) }).strict(), await c.req.json());
     const member = memberParam(c, principal);
+    // A protected operation (ADR-0054): admin-step-up at enforce asks for
+    // the requester's approval (member.promote, member.demote).
     const changed = await auditMemberDenial(c, principal, org.id, member, () =>
-      changeMemberRole(ctx, org.id, member, body.role, principal.identity),
+      withApproval(ctx, { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl }, (gate) =>
+        changeMemberRole(ctx, gate, org.id, member, body.role)),
     );
     return c.json(changed);
   });
@@ -3252,10 +3259,16 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       z.object({ name: z.string().min(1).max(200), role: z.enum(["admin", "member"]) }),
       await c.req.json(),
     );
-    const invite = await issueInviteGrant(
+    // A protected operation (ADR-0054) for an admin: admin-step-up at
+    // enforce asks for the requester's approval (member.invite_admin), and
+    // identity.manage is rechecked once it is consumed.
+    const invite = await withApproval(
       ctx,
-      { organizationId: org.id, role: body.role, name: body.name },
-      principal.identity.id,
+      { requester: requesterOf(c), approvalId: approvalHeaderOf(c), publicUrl: options.publicUrl },
+      (gate) =>
+        issueInviteGrant(ctx, { organizationId: org.id, role: body.role, name: body.name }, gate, {
+          authorizeIn: identityManageIn(c, principal, org.id),
+        }),
     );
     // The caller composes the browser URL: <dashboard-origin>/enroll#<token>.
     return c.json({ id: invite.id, token: invite.token, expiresAt: invite.expiresAt }, 201);

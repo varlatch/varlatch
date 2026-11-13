@@ -43,6 +43,8 @@ const FIELD_LABELS: Record<string, string> = {
   actions: "Actions",
   actionsAdded: "Actions added",
   actionsRemoved: "Actions removed",
+  // People: admin invitations, promotion and demotion (admin-step-up).
+  role: "Role",
 };
 
 /** 86400 -> "1 day", 5400 -> "90 minutes": a lifetime in seconds, in words. */
