@@ -116,8 +116,12 @@ Temporary credentials (STS) are not supported: the key must stay valid.
    compare existing objects. Do not add `deleteFiles` or
    `bypassGovernance`.
 3. **Check the key before you save the export:** run `varlatch audit-export
-   check` with it (see [Set it up](#set-it-up)), or **Check** in the
-   dashboard's setup. We have not run this minimal key against B2 ourselves.
+   check` with it and the same `--retention <mode>:<days>` (and
+   `--path-style`, if you use it) as the export will have (see
+   [Set it up](#set-it-up)), or **Check** in the dashboard's setup. Without
+   `--retention` the check writes no retention headers, so it does not prove
+   the key may set retention. We have not run this minimal key against B2
+   ourselves.
    If B2 refuses it (`AccessDenied` in the check's answer), B2's S3 API may
    want more for a key restricted to one bucket: add `listBuckets` (and
    `readBuckets` if it still refuses), create the key again, and check
@@ -234,10 +238,15 @@ the watching key's policy:
 
 On B2: `b2 key create --bucket acme-audit --name-prefix
 acme/varlatch-audit/org_0123456789abcdef/ varlatch-audit-watch listFiles`.
+We have not run this key against B2 either: if listing is refused, add
+`listBuckets` (and `readBuckets` if it is still refused), as for the
+export's key above. With B2, give the AWS CLI calls below the bucket's
+endpoint: `--endpoint-url https://s3.<region>.backblazeb2.com`.
 
 Then, every hour or so, list each stream's heartbeats newer than two hours
 ago. This reads only names, and only the heartbeats of the last two hours,
-never the batches (GNU `date`; the AWS CLI shown, any S3 client works):
+never the batches, and exits 1 when there is none (GNU `date`; the AWS CLI
+shown, any S3 client works; add `--endpoint-url` for B2):
 
 ```sh
 BUCKET=acme-audit
@@ -251,7 +260,7 @@ for STREAM in $(aws s3api list-objects-v2 --bucket "$BUCKET" --prefix "$BASE" --
             --start-after "${STREAM}heartbeat/${SINCE}.json" --query 'length(Contents || `[]`)')
   FOUND=$((FOUND + COUNT))
 done
-[ "$FOUND" -gt 0 ] || echo "No audit export heartbeat for two hours: the copy stopped" >&2
+[ "$FOUND" -gt 0 ] || { echo "No audit export heartbeat for two hours: the copy stopped" >&2; exit 1; }
 ```
 
 A new stream (after a destination change, a restore, or a restart) is a new
@@ -300,13 +309,19 @@ the copy keeps going meanwhile.
 - **A new destination** starts a new stream at the current position. The
   new bucket gets no history; the old one keeps what it received.
 - **A new key** keeps the stream and any object waiting to be written. It is
-  not checked when saved: check it first with `varlatch audit-export check`,
-  giving the export's destination options (`--endpoint`, `--region`,
-  `--bucket`, `--prefix`) and `--access-key-id <id> --secret-stdin`. What
-  the key may read is then shown as "not determined": the next time a write
-  finds its name taken, Varlatch learns whether the key can read objects;
-  whether it can read retention is only learnt at the next destination
-  change.
+  not checked when saved, so check it first with `varlatch audit-export
+  check --access-key-id <id> --secret-stdin` and everything the export
+  uses, as `varlatch audit-export show` lists it: `--endpoint`, `--region`,
+  `--bucket`, `--prefix`, `--retention <mode>:<days>`, and `--path-style`
+  when the export uses path-style addressing. With a key given, the check
+  takes nothing from the export: without `--retention` it writes no
+  retention headers, so a key that may not set retention (no
+  `s3:PutObjectRetention`, no `writeFileRetentions`) passes it and then
+  fails at the first delivery; without `--path-style` it addresses the
+  bucket the other way. What the key may read is then shown as "not
+  determined": the next time a write finds its name taken, Varlatch learns
+  whether the key can read objects; whether it can read retention is only
+  learnt at the next destination change.
 - **Removal** stops the copy and clears the key from the installation.
   What was delivered stays in the bucket.
 
@@ -324,7 +339,7 @@ in [assisted mode](assisted-mode.md) or not:
 A new destination, a new key, a shorter or removed retention, compliance to
 governance and removal always need the person's passkey approval, which an
 agent cannot give. `varlatch audit-export remove` also needs `--confirm
-<organization>` in every mode; in assisted mode the agent adds it only
+<slug>`, the organization's slug, in every mode; in assisted mode the agent adds it only
 after the person agreed, and otherwise prints the command for the person's
 own terminal. If an agent should not be able to do the first two, do not
 let it work with a credential that holds `organization.manage`.
