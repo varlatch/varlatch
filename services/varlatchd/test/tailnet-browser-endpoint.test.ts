@@ -212,9 +212,22 @@ describe("tailnet browser endpoint", () => {
     expect(preflight.status).toBe(204);
     expect(preflight.headers["access-control-allow-origin"]).toBe(ORIGIN);
     expect(preflight.headers["access-control-allow-methods"]).toBe("GET, POST");
-    expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type, Varlatch-Approval");
+    expect(preflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type");
     expect(preflight.headers["access-control-allow-credentials"]).toBeUndefined();
     expect(preflight.headers["vary"]).toContain("Origin");
+    // An export repeated with its step-up approval (ADR-0054 amendment C)
+    // asks for Varlatch-Approval; only then is it allowed.
+    const approvalPreflight = await call({
+      method: "OPTIONS",
+      path: `${ENV_PATH}/disclosures`,
+      headers: {
+        Origin: ORIGIN,
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,varlatch-approval",
+      },
+    });
+    expect(approvalPreflight.status).toBe(204);
+    expect(approvalPreflight.headers["access-control-allow-headers"]).toBe("Authorization, Content-Type, Varlatch-Approval");
     // A preflight costs no WhoIs lookup.
     expect(whoisAsked).toEqual([]);
 

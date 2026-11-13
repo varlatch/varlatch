@@ -59,12 +59,19 @@ export function tailnetBrowserGate(opts: TailnetBrowserOptions) {
       return c.json(errorBody("PERMISSION_DENIED", "This origin may not make this request here", reqId), 403);
     }
     if (preflight) {
+      // Varlatch-Approval: an export the dashboard repeats with its step-up
+      // approval (ADR-0054 amendment C). Allowed only when the preflight asks
+      // for it, so every other preflight answers exactly as before.
+      const requested = (c.req.header("Access-Control-Request-Headers") ?? "")
+        .split(",")
+        .map((h) => h.trim().toLowerCase());
+      const allowHeaders = requested.includes(APPROVAL_HEADER.toLowerCase())
+        ? `Authorization, Content-Type, ${APPROVAL_HEADER}`
+        : "Authorization, Content-Type";
       return c.body(null, 204, {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST",
-        // Varlatch-Approval: an export the dashboard repeats with its
-        // step-up approval (ADR-0054 amendment C).
-        "Access-Control-Allow-Headers": `Authorization, Content-Type, ${APPROVAL_HEADER}`,
+        "Access-Control-Allow-Headers": allowHeaders,
         "Access-Control-Max-Age": "300",
         Vary: "Origin",
       });
