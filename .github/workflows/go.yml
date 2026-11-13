@@ -71,6 +71,18 @@ jobs:
       - name: install.sh passes shellcheck
         run: shellcheck -s sh go/install/install.sh
 
+      # The varlatchd unit: systemd accepts it, its exposure score stays at
+      # or under 2.0 (1.6 when written), and the shipped sandbox lets
+      # varlatchd do what it needs and refuses the rest (unitprobe, run as
+      # the unit's ExecStart; the runner is disposable, so the script may
+      # install a unit and a system user).
+      - name: The varlatchd unit verifies and its sandbox holds
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
+
       # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
       # and Windows, each on amd64 and arm64; static, no cgo. Every package
       # builds and vets on every platform, since the CLI may use any of the

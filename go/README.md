@@ -26,6 +26,11 @@ amendment 2 allows, and nothing here ships.
   and bash runs nothing or the whole script (G8), and end-to-end runs
   against a local HTTPS server. The downloaded CLI checks the signature
   (`varlatch verify-release`) before anything is put in place.
+- `install/varlatchd.service`: the systemd unit (data in
+  `/var/lib/varlatch`, configuration in `/etc/varlatch/varlatchd.conf`, the
+  Root KEK and BEK as systemd credentials, user `varlatch`, a strict
+  sandbox). CI checks it with `systemd-analyze verify` and `security`, and
+  runs `install/unitprobe` under it (`install/test-unit.sh`).
 - `cmd/varlatch/`, `lib/` and everything else: Apache-2.0. No Apache-2.0
   package may depend on an AGPL-3.0-or-later one; `licensing_test.go`
   enforces it.
