@@ -323,6 +323,11 @@ fixes.
   organization's default lifetime, and names the maximum when a `--ttl` is
   refused under `credential-lifetime`.
 
+### Dashboard
+
+- Cancelling the confirmation of an organization's deletion returns
+  keyboard focus to the "Delete organization" button.
+
 ### Self-hosting
 
 - `VARLATCH_AUDIT_EXPORT=off` turns audit export off on an installation

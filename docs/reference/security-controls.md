@@ -50,13 +50,15 @@ At a glance:
     control's `availableModes`.
 - **Approvals that do not depend on a control.** Turning a control down
   needs an approval whatever its mode, and so does lengthening or clearing
-  the lifetimes `credential-lifetime` keeps while it is off (it keeps them
-  when turned off without `--clear-config` or by the operator's reset, or
-  saved while it was off: `security set credential-lifetime off
-  --default-ttl <s> --max-ttl <s>` is tightening and needs no approval).
-  Lifting an [incident freeze](incident-freeze.md) always needs one, and so do the changes that weaken an [audit
-  export](audit-export.md). These exist only once someone turns a control
-  on, freezes the organization or creates an export.
+  the lifetimes `credential-lifetime` keeps while it is off. It keeps them
+  when it is turned off without `--clear-config` or by the operator's
+  reset, and when they are saved while it is off: `security set
+  credential-lifetime off --default-ttl <s> --max-ttl <s>` needs no
+  approval when the lifetimes are newly set or shorter, and one when either
+  is longer. Lifting an [incident freeze](incident-freeze.md) always needs
+  one, and so do the changes that weaken an
+  [audit export](audit-export.md). These exist only once someone turns a
+  control on, freezes the organization or creates an export.
 
 ## Turning controls on
 
