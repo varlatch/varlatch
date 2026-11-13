@@ -119,15 +119,25 @@ $Dir = "$env:LOCALAPPDATA\Programs\Varlatch"
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 Copy-Item "varlatch-cli-$V.cjs" "$Dir\varlatch.cjs"
 Set-Content -Path "$Dir\varlatch.cmd" -Value '@node "%~dp0varlatch.cjs" %*' -Encoding Ascii
-$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (-not $UserPath) { $UserPath = $Dir } elseif (($UserPath -split ";") -notcontains $Dir) { $UserPath = "$UserPath;$Dir" }
-[Environment]::SetEnvironmentVariable("Path", $UserPath, "User")
+$Key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
+$UserPath = $Key.GetValue("Path", "", "DoNotExpandEnvironmentNames")
+if (($UserPath -split ";") -notcontains $Dir) {
+  $Kind = if ($Key.GetValueNames() -contains "Path") { $Key.GetValueKind("Path") } else { "ExpandString" }
+  $Key.SetValue("Path", ((@($UserPath -split ";" | Where-Object { $_ }) + $Dir) -join ";"), $Kind)
+  $R = "VARLATCH_PATH_REFRESH_" + [Guid]::NewGuid().ToString("N")
+  [Environment]::SetEnvironmentVariable($R, "1", "User")
+  [Environment]::SetEnvironmentVariable($R, [NullString]::Value, "User")
+}
+$Key.Dispose()
 $env:Path = "$env:Path;$Dir"
 varlatch --version
 ```
 
-New terminals find `varlatch` on their own; the second-to-last line makes
-this one find it too. `varlatch self-update` replaces `varlatch.cjs` in
+The `PATH` is edited in the registry as it is stored, so entries such as
+`%JAVA_HOME%\bin` keep their variables (`[Environment]::SetEnvironmentVariable`
+would write them back expanded). Setting and removing a variable of its own
+tells new terminals that the `PATH` changed; they find `varlatch` on their
+own, and the second-to-last line makes this one find it too. `varlatch self-update` replaces `varlatch.cjs` in
 place, without administrator rights, because the directory is yours.
 [Varlatch for Windows](https://github.com/varlatch/windows-tray), the tray
 app, installs the CLI the same way.

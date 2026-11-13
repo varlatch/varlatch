@@ -9,9 +9,11 @@
 // The Windows run serves a stand-in CLI on 127.0.0.1 (loopback http:, as a
 // local trial does), with LOCALAPPDATA in a temporary directory, and checks
 // what each case leaves behind: a fresh install, a rerun, the user PATH (its
-// other entries kept, the directory added once), a different copy it may not
-// replace without an answer, and a download that does not match its SHA-256.
-// It changes the runner user's PATH in the registry: run it on a CI runner.
+// other entries kept, %VARIABLE% entries unexpanded, its registry kind kept,
+// the directory added once, nothing left from the change notice), a different
+// copy it may not replace without an answer, and a download that does not
+// match its SHA-256. It changes the runner user's PATH in the registry
+// (restored, value and kind, afterwards): run it on a CI runner.
 // Node 22.18 or newer: it imports the TypeScript source directly.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -31,13 +33,13 @@ const check = (ok, what) => {
 };
 
 /** One PowerShell run, async (the stub server answers from this process); `stdin` answers Read-Host. */
-function shell(exe, appData, code, { stdin = "", interactive = false } = {}) {
+function shell(exe, appData, code, { stdin = "", interactive = false, env: extra = {} } = {}) {
   return new Promise((resolve) => {
     import("node:child_process").then(({ spawn }) => {
       const args = ["-NoProfile", ...(interactive ? [] : ["-NonInteractive"]), "-Command", code];
       // Each PowerShell with its own module path: one started from the other
       // (CI steps run under pwsh) would otherwise inherit the wrong one.
-      const env = { ...process.env, LOCALAPPDATA: appData };
+      const env = { ...process.env, ...extra, LOCALAPPDATA: appData };
       delete env.PSModulePath;
       const child = spawn(exe, args, { env });
       let out = "";
@@ -49,30 +51,59 @@ function shell(exe, appData, code, { stdin = "", interactive = false } = {}) {
   });
 }
 
-async function windowsCases(exe, origin, script, serveBody) {
+// The user PATH as the registry stores it: "<kind>|<value>", %VARIABLES%
+// unexpanded ("None|" when there is none), and written back the same way.
+const READ_PATH =
+  "$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment'); " +
+  "if ($k.GetValueNames() -contains 'Path') { '{0}|{1}' -f $k.GetValueKind('Path'), $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames') } else { 'None|' }";
+const WRITE_PATH =
+  "$k = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment'); " +
+  "if ($env:VARLATCH_PATH_KIND -eq 'None') { $k.DeleteValue('Path', $false) } else { $k.SetValue('Path', $env:VARLATCH_PATH_VALUE, $env:VARLATCH_PATH_KIND) }";
+// The user variables named like the installer's change notice.
+const REFRESH_VARS =
+  "$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment'); " +
+  "($k.GetValueNames() | Where-Object { $_ -like 'VARLATCH_INSTALL_REFRESH*' } | Sort-Object | ForEach-Object { '{0}={1}' -f $_, $k.GetValue($_) }) -join ';'";
+const rawPath = async (exe, appData) => {
+  const [kind, ...rest] = (await shell(exe, appData, READ_PATH)).out.trim().split("|");
+  return { kind, value: rest.join("|") };
+};
+const writePath = (exe, appData, { kind, value }) =>
+  shell(exe, appData, WRITE_PATH, { env: { VARLATCH_PATH_KIND: kind, VARLATCH_PATH_VALUE: value } });
+
+async function windowsCases(exe, origin, script, serveBody, kind) {
   const appData = join(work, `LocalAppData-${exe}`);
   mkdirSync(appData);
   const dir = join(appData, "Programs", "Varlatch");
   const target = join(dir, "varlatch.cjs");
   const shim = join(dir, "varlatch.cmd");
-  const userPath = async () => (await shell(exe, appData, "[Environment]::GetEnvironmentVariable('Path', 'User')")).out.trim();
+  const userPath = async () => (await rawPath(exe, appData)).value;
   // As a person runs it: irm <address>/install.ps1 | iex.
   const iex = `Get-Content -Raw '${script}' | Invoke-Expression`;
   const run = (opts) => shell(exe, appData, iex, opts);
   const named = (what) => `${exe}: ${what}`;
   serveBody(CLI);
 
-  const seeded = `${await userPath()};C:\\varlatch-test\\keep-me`;
-  await shell(exe, appData, `[Environment]::SetEnvironmentVariable('Path', '${seeded.replace(/'/g, "''")}', 'User')`);
+  // A %VARIABLE% entry (which must stay unexpanded) and a plain one, stored
+  // as the given kind; and a user variable named like the change notice.
+  const varEntry = "%VARLATCH_TEST_UNSET_VARIABLE%\\bin";
+  const before = await userPath();
+  await writePath(exe, appData, { kind, value: [before, "C:\\varlatch-test\\keep-me", varEntry].filter(Boolean).join(";") });
+  await shell(exe, appData, "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').SetValue('VARLATCH_INSTALL_REFRESH', 'the user''s own')");
 
   const first = await run();
   console.log(first.out);
   check(first.status === 0, named("a fresh install succeeds"));
   check(existsSync(target) && readFileSync(target).equals(CLI), named("the checked file is installed"));
   check(readFileSync(shim, "utf8").trim() === '@node "%~dp0varlatch.cjs" %*', named("the varlatch.cmd shim is written"));
-  const afterFirst = (await userPath()).split(";");
+  const raw = await rawPath(exe, appData);
+  const afterFirst = raw.value.split(";");
   check(afterFirst.filter((e) => e.toLowerCase() === dir.toLowerCase()).length === 1, named("the user PATH gains the directory once"));
   check(afterFirst.includes("C:\\varlatch-test\\keep-me"), named("the user PATH keeps its other entries"));
+  check(afterFirst.includes(varEntry), named("the user PATH keeps a %VARIABLE% entry unexpanded"));
+  check(raw.kind === kind, named(`the user PATH stays ${kind} (it is ${raw.kind})`));
+  const refresh = (await shell(exe, appData, REFRESH_VARS)).out.trim();
+  check(refresh === "VARLATCH_INSTALL_REFRESH=the user's own", named(`the change notice leaves no variable and keeps the user's (${refresh})`));
+  await shell(exe, appData, "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').DeleteValue('VARLATCH_INSTALL_REFRESH', $false)");
   check(first.out.includes(`Next: varlatch login --server ${origin}`), named("it names the next step"));
 
   const second = await run();
@@ -135,13 +166,17 @@ if (mode === "shellcheck") {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const script = join(work, "install.ps1");
   writeFileSync(script, installPs1({ file: CLI, sha256: sha(CLI), version: VERSION, origin, loopbackHttp: true }));
-  const before = await shell("pwsh", join(work, "unused"), "[Environment]::GetEnvironmentVariable('Path', 'User')");
-  const userPathBefore = before.out.trim();
+  const userPathBefore = await rawPath("pwsh", join(work, "unused"));
+  if (!["ExpandString", "String", "None"].includes(userPathBefore.kind)) throw new Error(`reading the user PATH: ${userPathBefore.kind}`);
+  if ((await shell("pwsh", join(work, "unused"), REFRESH_VARS)).out.trim() !== "") throw new Error("this machine already has VARLATCH_INSTALL_REFRESH variables");
   try {
-    // Windows PowerShell 5.1 and PowerShell 7: the script must work in both.
-    for (const exe of ["powershell", "pwsh"]) await windowsCases(exe, origin, script, (b) => (body = b));
+    // Windows PowerShell 5.1 and PowerShell 7: the script must work in both;
+    // the user PATH stored as REG_EXPAND_SZ (the usual kind) and as REG_SZ.
+    await windowsCases("powershell", origin, script, (b) => (body = b), "ExpandString");
+    await windowsCases("pwsh", origin, script, (b) => (body = b), "String");
   } finally {
-    await shell("pwsh", join(work, "unused"), `[Environment]::SetEnvironmentVariable('Path', '${userPathBefore.replace(/'/g, "''")}', 'User')`);
+    await writePath("pwsh", join(work, "unused"), userPathBefore);
+    await shell("pwsh", join(work, "unused"), "[Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment').DeleteValue('VARLATCH_INSTALL_REFRESH', $false)");
     server.close();
   }
 } else {
