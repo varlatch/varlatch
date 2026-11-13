@@ -389,6 +389,8 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     const change = (gate: ProtectedGate) => changeAuditExport(ctx, gate, org, view.id, { destination: { bucket: OTHER, prefix: newPrefix }, expectedVersion: 1 });
     const approvalId = await askApproval(change);
     await approve(approvalId);
+    // What the old destination's probe found does not carry over: both read flags come from the new probe.
+    await ctx.db.query("UPDATE audit_exports SET key_can_read = false, retention_readable = false WHERE id = $1", [view.id]);
     let landed = "";
     setAuditExportTestHooks({
       beforeCommit: async (plan) => {
@@ -399,7 +401,7 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     });
     expect(await exportOnce(ctx, view.id)).toMatchObject({ outcome: "lost" });
     const moved = await exportRow(view.id);
-    expect(moved).toMatchObject({ bucket: OTHER, prefix: newPrefix, version: 2 });
+    expect(moved).toMatchObject({ bucket: OTHER, prefix: newPrefix, version: 2, key_can_read: true, retention_readable: true });
     expect(String(moved.cursor_order)).toBe(cursor);
     expect(moved.stream_id).not.toBe(view.streamId);
     // The old object stays in the old stream.
@@ -889,6 +891,19 @@ describe.skipIf(!docker)("audit export against MinIO with Object Lock", { timeou
     expect(await pendingPlan(view.id)).toBeUndefined();
     expect(await events("audit_export.abandoned")).toHaveLength(1);
     expect(await events("audit_export.completed")).toEqual([]);
+  });
+
+  it("the deletion loop and two workers reaching one expired drain at once abandon it once", async () => {
+    const view = await drainingExport();
+    await expireDrain(view.id);
+    const outcomes = await Promise.all([
+      abandonExpiredDrains(ctx.db).then((ids) => (ids.includes(view.id) ? "abandoned" : "none")),
+      exportOnce(ctx, view.id).then((r) => r.outcome),
+      exportOnce(ctx, view.id).then((r) => r.outcome),
+    ]);
+    expect(outcomes.filter((o) => o === "abandoned")).toHaveLength(1);
+    expect(await events("audit_export.abandoned")).toHaveLength(1);
+    expect(await exportRow(view.id)).toMatchObject({ state: "abandoned", credential_envelope: null });
   });
 
   it("a drain whose deadline passes during an upload: the request is aborted and the object never lands", async () => {

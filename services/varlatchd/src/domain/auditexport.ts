@@ -1121,7 +1121,9 @@ export async function changeAuditExport(
          stopped_reason = CASE WHEN $9 <> stream_id THEN NULL ELSE stopped_reason END,
          conditional_checked_at = CASE WHEN $10 THEN clock_timestamp() ELSE conditional_checked_at END,
          lock_verified = CASE WHEN $10 THEN $11::boolean WHEN $8::int IS NULL THEN NULL ELSE lock_verified END,
-         key_can_read = CASE WHEN $10 THEN COALESCE($12::boolean, key_can_read) ELSE key_can_read END,
+         -- A new destination: both read flags are what its probe found, null
+         -- where it could not tell, never the old destination's.
+         key_can_read = CASE WHEN $10 THEN $12::boolean ELSE key_can_read END,
          retention_readable = CASE WHEN $10 THEN $13::boolean ELSE retention_readable END,
          generation = generation + 1, lease_expires_at = NULL, version = version + 1, updated_at = now()
        WHERE id = $1 RETURNING ${EXPORT_COLUMNS}`,

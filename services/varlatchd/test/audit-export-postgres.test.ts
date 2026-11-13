@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createPgQuerier } from "../src/db/pg.js";
 import { runMigrations } from "../src/db/migrate.js";
 import type { AppCtx } from "../src/domain/ctx.js";
-import { abandonExpiredDrains, commitPlan, recordRestore, restartStream, type PlanRow, type WorkerBinding } from "../src/domain/auditexport.js";
+import { abandonExpiredDrains, commitPlan, exportOnce, recordRestore, restartStream, type PlanRow, type WorkerBinding } from "../src/domain/auditexport.js";
 import { consumeSetupGrant, ensureInstallation, issueBootstrapGrant } from "../src/domain/bootstrap.js";
 
 /**
@@ -94,6 +94,25 @@ describe.skipIf(!url)("audit export races on real PostgreSQL", () => {
       expect(row.cursor).toBe(committed ? "5" : "0");
       expect(row.stream_id === "aes_old").toBe(committed);
       await db.query("UPDATE audit_exports SET state = 'removed', removed_at = now(), credential_envelope = NULL WHERE id = $1", [id]);
+    }
+  });
+
+  it("the deletion loop and two workers racing on one expired drain abandon it once", async () => {
+    for (let i = 0; i < 5; i++) {
+      const id = `aex_d${i}`;
+      await db.query(`INSERT INTO organizations (id, slug, name, wrapped_org_kek) VALUES ($1, $2, 'D', '{}')`, [`org_d${i}`, `d${i}`]);
+      orgId = `org_d${i}`;
+      await exportWithExpiredPlan(id, "draining");
+      const outcomes = await Promise.all([
+        abandonExpiredDrains(db).then((ids) => (ids.includes(id) ? "abandoned" : "none")),
+        exportOnce(ctx, id).then((r) => r.outcome),
+        exportOnce(ctx, id).then((r) => r.outcome),
+        abandonExpiredDrains(db).then((ids) => (ids.includes(id) ? "abandoned" : "none")),
+      ]);
+      expect(outcomes.filter((o) => o === "abandoned"), `round ${i}: ${outcomes.join(", ")}`).toHaveLength(1);
+      expect(await rows("SELECT state, credential_envelope FROM audit_exports WHERE id = $1", [id])).toEqual([{ state: "abandoned", credential_envelope: null }]);
+      expect(await rows("SELECT count(*)::int AS n FROM audit_export_plans WHERE export_id = $1", [id])).toEqual([{ n: 0 }]);
+      expect(await rows("SELECT count(*)::int AS n FROM audit_events WHERE event_type = 'audit_export.abandoned' AND resource->>'exportId' = $1", [id])).toEqual([{ n: 1 }]);
     }
   });
 
