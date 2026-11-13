@@ -82,7 +82,7 @@ func (db *DB) Snapshot(ctx context.Context, dest string, o SnapshotOptions) (Sna
 		_ = os.Remove(dest)
 		return st, err
 	}
-	st.Truncate, _ = db.checkpointLocked(bg, "TRUNCATE")
+	st.Truncate, _ = db.checkpointLocked(bg, "TRUNCATE", TriggerSnapshot)
 	db.m.snapshot(st.Duration)
 	return st, nil
 }

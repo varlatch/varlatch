@@ -789,3 +789,102 @@ func killHelper(dir string) {
 	}
 	select {}
 }
+
+// checkpointLog collects what Options.OnCheckpoint reports.
+type checkpointLog struct {
+	mu sync.Mutex
+	rs []CheckpointResult
+}
+
+func (l *checkpointLog) add(r CheckpointResult, err error) {
+	if err != nil {
+		panic(err)
+	}
+	l.mu.Lock()
+	l.rs = append(l.rs, r)
+	l.mu.Unlock()
+}
+
+func (l *checkpointLog) find(match func(CheckpointResult) bool) (CheckpointResult, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, r := range l.rs {
+		if match(r) {
+			return r, true
+		}
+	}
+	return CheckpointResult{}, false
+}
+
+func (l *checkpointLog) wait(t *testing.T, what string, match func(CheckpointResult) bool) CheckpointResult {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if r, ok := l.find(match); ok {
+			return r
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no checkpoint event: %s", what)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// completed checks a TRUNCATE that reset the WAL: not busy, every frame
+// copied, nothing left.
+func completed(t *testing.T, r CheckpointResult) {
+	t.Helper()
+	if r.Mode != "TRUNCATE" || r.Deferred || r.Busy || r.LogFrames != r.Checkpointed || r.WALAfter != 0 || r.Start.IsZero() || r.Duration <= 0 {
+		t.Fatalf("not a completed TRUNCATE: %+v", r)
+	}
+}
+
+// Every checkpoint is reported with why it ran: the periodic PASSIVE, the
+// size trigger, the size trigger deferred by a snapshot, the TRUNCATE a
+// snapshot runs when it ends, and the one at Close.
+func TestOnCheckpointReportsEveryTrigger(t *testing.T) {
+	var log checkpointLog
+	db := open(t, Options{WALBound: 256 << 10, PassiveEvery: 20 * time.Millisecond, OnCheckpoint: log.add})
+
+	log.wait(t, "interval PASSIVE", func(r CheckpointResult) bool {
+		return r.Trigger == TriggerInterval && r.Mode == "PASSIVE" && !r.Start.IsZero()
+	})
+
+	// One transaction larger than the bound: the next tick truncates.
+	for i := range 3 {
+		mustWrite(t, db, bigInsert(fmt.Sprint("size-", i)))
+	}
+	size := log.wait(t, "size TRUNCATE", func(r CheckpointResult) bool { return r.Trigger == TriggerSize && !r.Deferred })
+	completed(t, size)
+	if size.WALBefore <= 256<<10 {
+		t.Fatalf("size trigger below the bound: %+v", size)
+	}
+
+	// A slow snapshot holds TRUNCATE off: a write past the bound while it
+	// runs is reported as deferred, and the snapshot truncates at its end.
+	done := make(chan error, 1)
+	go func() {
+		_, err := db.Snapshot(bg, filepath.Join(t.TempDir(), "snap.db"), SnapshotOptions{StepPages: 4, Pause: 10 * time.Millisecond})
+		done <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	mustWrite(t, db, bigInsert("during-snapshot"))
+	deferred := log.wait(t, "deferred size trigger", func(r CheckpointResult) bool { return r.Deferred })
+	if deferred.Trigger != TriggerSize || deferred.Mode != "TRUNCATE" || deferred.WALBefore <= 256<<10 {
+		t.Fatalf("deferred event: %+v", deferred)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	completed(t, log.wait(t, "snapshot TRUNCATE", func(r CheckpointResult) bool { return r.Trigger == TriggerSnapshot }))
+	if db.Metrics().TruncatesDelayed == 0 {
+		t.Fatal("metrics missed the deferred trigger")
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if r := log.wait(t, "close TRUNCATE", func(r CheckpointResult) bool { return r.Trigger == TriggerClose }); r.Mode != "TRUNCATE" || r.Busy {
+		t.Fatalf("close checkpoint: %+v", r)
+	}
+}
