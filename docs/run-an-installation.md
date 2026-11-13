@@ -22,7 +22,7 @@ release, check them, install the CLI root-owned, and unpack the bundle
 where the installation will live:
 
 ```sh
-V=0.21.0  # the release to run
+V=0.22.0  # the release to run
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-cli-$V.cjs
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/varlatch-compose-$V.tar.gz
 curl -fLO https://github.com/varlatch/varlatch/releases/download/v$V/SHA256SUMS
