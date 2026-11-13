@@ -73,6 +73,15 @@ import {
 } from "../domain/identities.js";
 import { credentialReview } from "../domain/credentialReview.js";
 import { createWebhook, listWebhooks, revokeWebhook, updateWebhook, type WebhookRow } from "../domain/webhooks.js";
+import {
+  auditExportStatus,
+  changeAuditExport,
+  checkAuditExport,
+  createAuditExport,
+  liveAuditExportId,
+  removeAuditExport,
+  replaceAuditExportCredential,
+} from "../domain/auditexport.js";
 import { invitationStatus, listInvitations, revokeInvitation, type InvitationRow } from "../domain/invitations.js";
 import { changeMemberRole, previewMemberReview, removeMember } from "../domain/members.js";
 import { approveDeletion, cancelDeletion, getDeletion, scheduleDeletion } from "../domain/orgdeletion.js";
@@ -4175,6 +4184,166 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     await approvalGate(c, (gate) =>
       revokeWebhook(ctx, gate, org.id, c.req.param("webhook"), { authorizeIn: actionIn(c, principal, org.id, "organization.manage") }));
     return c.body(null, 204);
+  });
+
+  // ---- Audit export to object storage (ADR-0056; capability
+  // audit.storage-export). One export per Organization. Reading needs
+  // organization.manage (it names the destination and its failures), as the
+  // Security page's other admin reads do, and is allowed while frozen
+  // (inspection). Every write needs organization.manage and a person's
+  // credential: machine credentials are always refused. Creating and the
+  // check need no approval; a destination change, a new key, a shorter or
+  // removed retention, compliance to governance, and removal always need
+  // the requester's step-up approval (audit_export.change,
+  // audit_export.remove), whatever the Security Controls' modes, as a
+  // loosening Security Control change does. Writes are refused while the
+  // Organization is frozen or being deleted; delivery continues.
+  const auditExportDestination = z.object({
+    endpoint: z.string().min(1).max(2048),
+    region: z.string().min(1).max(64),
+    bucket: z.string().min(3).max(63),
+    prefix: z.string().max(256).default(""),
+    pathStyle: z.boolean().default(false),
+  }).strict();
+  const auditExportCredential = z.object({
+    accessKeyId: z.string().min(1).max(128),
+    secretAccessKey: z.string().min(1).max(256),
+  }).strict();
+  const auditExportRetention = z.object({
+    mode: z.enum(["compliance", "governance"]),
+    days: z.number().int().min(1).max(3650),
+  }).strict();
+  /** A write's person: a browser or cli credential of a human, never a machine (ADR-0056 Decision 9). */
+  const auditExportPerson = (principal: Principal) => {
+    if (principal.identity.kind !== "human" || (principal.credentialKind !== "browser" && principal.credentialKind !== "cli")) {
+      throw new DomainError("PERMISSION_DENIED", "Only a person can change the audit export; machine credentials never can", { reason: "machine-credential" });
+    }
+  };
+  /**
+   * organization.manage rechecked inside the operation's transaction. These
+   * operations run whatever the Security Controls' modes, so a denial is
+   * audited after the rollback only when a control is on (ADR-0054
+   * follow-up (f), support.ts authorizeInControlledTransaction).
+   */
+  const auditExportRecheck = (c: Context, principal: Principal, organizationId: string) => async (db: Querier) => {
+    await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId }, { hideExistence: true });
+  };
+  /** The live export's id, or a placeholder no row has: the operation answers its not-found after the freeze and deletion refusals. */
+  const auditExportTarget = async (orgId: string) => (await liveAuditExportId(ctx, orgId)) ?? "aex_none";
+
+  app.get("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c, INSPECTION);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    c.header("Cache-Control", "no-store");
+    return c.json(await auditExportStatus(ctx, org.id));
+  });
+
+  app.post("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        destination: auditExportDestination,
+        credential: auditExportCredential,
+        retention: auditExportRetention.nullable().default(null),
+        from: z.enum(["beginning", "now"]).default("beginning"),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    await createAuditExport(ctx, requesterOf(c), org, body, {
+      authorizeIn: auditExportRecheck(c, principal, org.id),
+      requestId: c.get("requestId"),
+    });
+    c.header("Cache-Control", "no-store");
+    return c.json((await auditExportStatus(ctx, org.id)).export, 201);
+  });
+
+  app.post("/v1/organizations/:org/audit-export/check", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        destination: auditExportDestination,
+        credential: auditExportCredential.optional(),
+        retention: auditExportRetention.nullable().default(null),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    c.header("Cache-Control", "no-store");
+    return c.json(await checkAuditExport(ctx, requesterOf(c), org, body, { authorizeIn: auditExportRecheck(c, principal, org.id) }));
+  });
+
+  app.patch("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({
+        expectedVersion: z.number().int().min(1),
+        // Only the fields named change: no defaults here, unlike creation.
+        destination: z.object({
+          endpoint: z.string().min(1).max(2048).optional(),
+          region: z.string().min(1).max(64).optional(),
+          bucket: z.string().min(3).max(63).optional(),
+          prefix: z.string().max(256).optional(),
+          pathStyle: z.boolean().optional(),
+        }).strict().optional(),
+        retention: auditExportRetention.nullable().optional(),
+      }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    const exportId = await auditExportTarget(org.id);
+    const result = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      changeAuditExport(ctx, gate, org, exportId, body, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json({ export: (await auditExportStatus(ctx, org.id)).export, changed: result.changed, loosened: result.loosened });
+  });
+
+  app.put("/v1/organizations/:org/audit-export/credential", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const body = parseBody(
+      z.object({ expectedVersion: z.number().int().min(1), credential: auditExportCredential }).strict(),
+      await c.req.json().catch(() => undefined),
+    );
+    const exportId = await auditExportTarget(org.id);
+    await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      replaceAuditExportCredential(ctx, gate, org, exportId, body, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json((await auditExportStatus(ctx, org.id)).export);
+  });
+
+  app.delete("/v1/organizations/:org/audit-export", async (c) => {
+    const principal = c.get("principal");
+    const { org } = await scope(ctx, c);
+    await authorize(ctx, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+    auditExportPerson(principal);
+    const raw = c.req.query("expectedVersion");
+    if (raw === undefined || !/^[1-9]\d{0,9}$/.test(raw)) {
+      throw new DomainError("VALIDATION_FAILED", "expectedVersion: the export's current version, a whole number from 1, as a query parameter");
+    }
+    const exportId = await auditExportTarget(org.id);
+    const removed = await withApproval(ctx, { requester: requesterOf(c), approvalId: approvalOf(c), publicUrl: options.publicUrl }, (gate) =>
+      removeAuditExport(ctx, gate, org, exportId, { expectedVersion: Number(raw) }, {
+        authorizeIn: auditExportRecheck(c, principal, org.id),
+        requestId: c.get("requestId"),
+      }));
+    c.header("Cache-Control", "no-store");
+    return c.json({ ...removed, lag: null, objectLock: removed.retention === null ? "not-set" : removed.lockVerified ? "verified" : "accepted", unsupportedPlanFormat: null });
   });
 
   // ---- Sync Targets (ADR-0031): opt-in integrations pushing an

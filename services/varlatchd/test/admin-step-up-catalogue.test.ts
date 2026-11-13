@@ -130,6 +130,10 @@ const OTHER_PROTECTED: Record<string, string> = {
   [`DELETE ${ORG}/requirements/:requirement`]: "requirement-protection: requirement.revoke",
   [`PATCH ${ORG}/security/controls/:control`]: "security_control.change, when it loosens (step 3)",
   [`POST ${ORG}/incident-freeze/:freeze/lift`]: "organization.unfreeze (ADR-0055)",
+  // ADR-0056 Decision 9: always asked, whatever the controls' modes.
+  [`PATCH ${ORG}/audit-export`]: "audit_export.change, when it moves the destination or loosens retention (ADR-0056)",
+  [`PUT ${ORG}/audit-export/credential`]: "audit_export.change (ADR-0056)",
+  [`DELETE ${ORG}/audit-export`]: "audit_export.remove (ADR-0056)",
 };
 
 /**
@@ -166,6 +170,8 @@ const UNPROTECTED_WRITES: Record<string, string> = {
   [`POST ${ORG}/members/:member/exposure/confirmations`]: "an operator's record that an exposed version was revoked (ADR-0052)",
   [`DELETE ${ORG}/invitations/:invitation`]: "revoking an invitation only restricts; on the catalogue's unprotected list",
   [`POST ${ORG}/requirements`]: "creating a Tailnet Requirement only restricts (Decision 5)",
+  [`POST ${ORG}/audit-export`]: "creating an audit export only adds protection (ADR-0056 Decision 9)",
+  [`POST ${ORG}/audit-export/check`]: "the audit export's probe saves nothing; the stored key only goes to its own destination (ADR-0056 Decision 6)",
   [`POST ${ORG}/platform-connections/check`]: "the credential checks: exempt, with their full behaviour (catalogue, Codex 2026-11-11)",
   [`POST ${ORG}/platform-connections/destinations`]: "the credential checks: exempt, with their full behaviour (catalogue, Codex 2026-11-11)",
   [`POST ${ORG}/github-app/registrations`]: "starting a registration (amendment D): only the attachment is protected",

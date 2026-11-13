@@ -673,6 +673,60 @@ export interface paths {
         patch: operations["changeSecurityControl"];
         trace?: never;
     };
+    "/organizations/{org}/audit-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Organization's audit export to object storage (capability audit.storage-export, ADR-0056): the live one, else the most recent, else null, with its status (lag, last write and error, failing since, the destination's checks, Object Lock "verified" or "accepted"), and whether the host operator left audit export on (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no export can be created). Never the key. Needs organization.manage. Allowed while the Organization is frozen for an incident. */
+        get: operations["getAuditExport"];
+        put?: never;
+        /** Create the Organization's audit export (ADR-0056 Decisions 1, 6 and 9): every audit event of the Organization, in order, copied to an S3-compatible bucket with conditional writes and optional Object Lock retention. Before saving, a probe writes a test object under the prefix, checks that a second write of its name is refused (If-None-Match), and reads it and its retention back where the key may; a failing probe is VALIDATION_FAILED with fixed wording and saves nothing. The endpoint is checked against the outbound policy first. from "beginning" (the default) backfills the whole log; "now" starts at the creation event. At most one live export per Organization. Needs no approval: creating only adds protection. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Refused with PERMISSION_DENIED (details.reason audit-export-off) when the host operator turned audit export off. Records audit_export.created and audit_export.stream_started. */
+        post: operations["createAuditExport"];
+        /** Remove the live export (ADR-0056 Decision 9): always needs the requester's step-up approval (operation audit_export.remove). In one transaction the export becomes removed, its pending object is dropped and its key is cleared; what was delivered stays at the destination. expectedVersion (query) must be the export's current version. Allowed when the host operator turned audit export off. RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.removed. */
+        delete: operations["removeAuditExport"];
+        options?: never;
+        head?: never;
+        /** Change the live export's destination or retention (ADR-0056 Decision 9). The change is compared field by field: a destination change, a shorter or removed retention, or compliance to governance needs the requester's step-up approval (operation audit_export.change), always, whatever the Security Controls' modes; without the Varlatch-Approval header the answer is STEP_UP_REQUIRED, and the client repeats the identical request with it once the person approved. Setting, lengthening or strengthening retention needs none. A destination change must pass the probe (checked only after the approval is found, so an unapproved request sends nothing) and starts a new stream at the current position. expectedVersion must be the export's current version (VERSION_CONFLICT otherwise). RESOURCE_NOT_FOUND when the Organization has no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.changed (metadata.loosened). */
+        patch: operations["changeAuditExport"];
+        trace?: never;
+    };
+    "/organizations/{org}/audit-export/credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the live export's key (ADR-0056 Decision 8): always needs the requester's step-up approval (operation audit_export.change; the approver's summary never names the key). The stream and any pending object are kept and delivered with the new key. Not probed: run the check with the new key first. The key is never returned. RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. Records audit_export.credential_replaced. */
+        put: operations["replaceAuditExportCredential"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/organizations/{org}/audit-export/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run the destination probe without saving anything (ADR-0056 Decision 6), as connection checks do: with the key given, or without one with the live export's stored key, which is only sent to that export's own destination. A probe that does not pass answers 200 with ok false and fixed wording; an endpoint the outbound policy refuses too. Records nothing (an outbound refusal is recorded by the policy). Needs organization.manage and a person's credential (browser or cli): a machine credential is refused with PERMISSION_DENIED (details.reason machine-credential). Refused while the Organization is frozen for an incident or being deleted; delivery continues meanwhile. */
+        post: operations["checkAuditExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/organizations/{org}/identities/{identity}/credentials/{credential}": {
         parameters: {
             query?: never;
@@ -3388,6 +3442,148 @@ export interface components {
             /** @description The change weakened the control and used an approval. */
             loosened: boolean;
         };
+        /** @description Where an audit export writes (ADR-0056 Decision 1). The endpoint is a scheme, host and optional port. */
+        AuditExportDestination: {
+            /** @example https://s3.eu-central-1.amazonaws.com */
+            endpoint: string;
+            region: string;
+            bucket: string;
+            /** @description Empty, or ending with /. Objects go under <prefix>varlatch-audit/<organization>/<stream>/. */
+            prefix: string;
+            pathStyle: boolean;
+        };
+        AuditExportDestinationInput: {
+            /** @description https; plain http only to a destination the host operator's outbound allow list names. */
+            endpoint: string;
+            region: string;
+            bucket: string;
+            /** @default  */
+            prefix: string;
+            /** @default false */
+            pathStyle: boolean;
+        };
+        /** @description An S3 access key. Write-only; never returned, logged or audited. */
+        AuditExportCredentialInput: {
+            accessKeyId: string;
+            secretAccessKey: string;
+        };
+        /** @description Object Lock retention for every object written, from when it was planned (ADR-0056 Decision 7). */
+        AuditExportRetention: {
+            /** @enum {string} */
+            mode: "compliance" | "governance";
+            days: number;
+        };
+        AuditExportCreateInput: {
+            destination: components["schemas"]["AuditExportDestinationInput"];
+            credential: components["schemas"]["AuditExportCredentialInput"];
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+            /**
+             * @default beginning
+             * @enum {string}
+             */
+            from: "beginning" | "now";
+        };
+        AuditExportChangeInput: {
+            expectedVersion: number;
+            /** @description Only the fields given change. */
+            destination?: {
+                endpoint?: string;
+                region?: string;
+                bucket?: string;
+                prefix?: string;
+                pathStyle?: boolean;
+            };
+            /** @description Absent keeps the retention; null removes it. */
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+        };
+        AuditExportCredentialChange: {
+            expectedVersion: number;
+            credential: components["schemas"]["AuditExportCredentialInput"];
+        };
+        AuditExportCheckInput: {
+            destination: components["schemas"]["AuditExportDestinationInput"];
+            credential?: components["schemas"]["AuditExportCredentialInput"];
+            retention?: components["schemas"]["AuditExportRetention"] | null;
+        };
+        /** @description What the destination probe found (ADR-0056 Decision 6). message is fixed wording, never the store's own text. */
+        AuditExportCheck: {
+            ok: boolean;
+            message: string | null;
+            /** @description A second write of the same name was refused (If-None-Match). */
+            conditionalCreation: boolean | null;
+            /**
+             * @description verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
+             * @enum {string|null}
+             */
+            objectLock: "verified" | "accepted" | "not-set" | null;
+            /** @description The key read the test object (HEAD); null when undetermined. */
+            keyCanRead: boolean | null;
+            /** @description The key read the test object's retention; null when undetermined or no retention was asked. */
+            retentionReadable: boolean | null;
+        };
+        /** @description An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key. */
+        AuditExport: {
+            id: string;
+            organizationId: string;
+            destination: components["schemas"]["AuditExportDestination"];
+            retention: components["schemas"]["AuditExportRetention"] | null;
+            /**
+             * @description draining after the Organization's deletion, until the final events are delivered (completed) or the 30-day deadline passes (abandoned).
+             * @enum {string}
+             */
+            state: "active" | "draining" | "removed" | "completed" | "abandoned";
+            streamId: string;
+            /** @description The audit position delivered up to (installation-wide positions, as a decimal string). */
+            cursor: string;
+            version: number;
+            /** Format: date-time */
+            lastAttemptAt: string | null;
+            /** Format: date-time */
+            lastSuccessAt: string | null;
+            /** @description Fixed wording only (the storage error table or the outbound policy). */
+            lastError: string | null;
+            /** Format: date-time */
+            failingSince: string | null;
+            keyCanRead: boolean | null;
+            retentionReadable: boolean | null;
+            /**
+             * @description The export stopped until a person acts.
+             * @enum {string|null}
+             */
+            stoppedReason: "object_conflict" | "unsupported_format" | null;
+            /** Format: date-time */
+            conditionalCheckedAt: string | null;
+            lockVerified: boolean | null;
+            /** Format: date-time */
+            drainDeadline: string | null;
+            createdBy: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            removedAt: string | null;
+            /** @description Events of the Organization not yet exported and the oldest's time; null once the export ended. */
+            lag: {
+                pending: number;
+                /** Format: date-time */
+                oldestPendingAt: string | null;
+            } | null;
+            /** @enum {string} */
+            objectLock: "verified" | "accepted" | "not-set";
+            /** @description A pending object's format this release cannot upload (varlatchd admin audit-export discard-plan). */
+            unsupportedPlanFormat: number | null;
+        };
+        AuditExportStatus: {
+            /** @description False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off). */
+            enabled: boolean;
+            export: components["schemas"]["AuditExport"] | null;
+        };
+        AuditExportChange: {
+            export: components["schemas"]["AuditExport"];
+            /** @description False when the request matched the current state; nothing was recorded. */
+            changed: boolean;
+            /** @description The change needed and used an approval. */
+            loosened: boolean;
+        };
         ApprovalChange: {
             /** @description What changes, such as mode or maxTtlSeconds. */
             field: string;
@@ -5462,6 +5658,180 @@ export interface operations {
                 };
             };
             403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    getAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export and the installation switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportStatus"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    createAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCreateInput"];
+            };
+        };
+        responses: {
+            /** @description The export created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    removeAuditExport: {
+        parameters: {
+            query: {
+                expectedVersion: number;
+            };
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The export, removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    changeAuditExport: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportChangeInput"];
+            };
+        };
+        responses: {
+            /** @description The export after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportChange"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    replaceAuditExportCredential: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The id of an approved step-up approval for exactly this request (ADR-0054 Decision 3). Consumed with the operation, in its transaction: a failed operation leaves it usable until it expires, a successful one uses it up. APPROVAL_INVALID with details.reason when it does not fit (not found, pending, expired, used, closed, approved for another operation, target, body, version or requester, or, for an approval the dashboard asked for, its sign-in session has ended: signed out or expired). A CLI approval is bound to the CLI credential that asked; a dashboard approval to the browser session that asked, through any live bearer of that session. */
+                "Varlatch-Approval"?: components["parameters"]["approvalHeader"];
+            };
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCredentialChange"];
+            };
+        };
+        responses: {
+            /** @description The export with its new key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExport"];
+                };
+            };
+            403: components["responses"]["StepUpRequired"];
+            default: components["responses"]["Error"];
+        };
+    };
+    checkAuditExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Organization slug or ID */
+                org: components["parameters"]["org"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuditExportCheckInput"];
+            };
+        };
+        responses: {
+            /** @description What the probe found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditExportCheck"];
+                };
+            };
             default: components["responses"]["Error"];
         };
     };

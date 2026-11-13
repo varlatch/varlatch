@@ -1529,6 +1529,194 @@ paths:
         "403": { $ref: "#/components/responses/StepUpRequired" }
         default: { $ref: "#/components/responses/Error" }
 
+  /organizations/{org}/audit-export:
+    get:
+      tags: [organizations]
+      operationId: getAuditExport
+      summary: >
+        The Organization's audit export to object storage (capability
+        audit.storage-export, ADR-0056): the live one, else the most recent,
+        else null, with its status (lag, last write and error, failing since,
+        the destination's checks, Object Lock "verified" or "accepted"), and
+        whether the host operator left audit export on
+        (VARLATCH_AUDIT_EXPORT; enabled false: nothing is delivered and no
+        export can be created). Never the key. Needs organization.manage.
+        Allowed while the Organization is frozen for an incident.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      responses:
+        "200":
+          description: The export and the installation switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportStatus" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      tags: [organizations]
+      operationId: createAuditExport
+      summary: >
+        Create the Organization's audit export (ADR-0056 Decisions 1, 6 and
+        9): every audit event of the Organization, in order, copied to an
+        S3-compatible bucket with conditional writes and optional Object Lock
+        retention. Before saving, a probe writes a test object under the
+        prefix, checks that a second write of its name is refused
+        (If-None-Match), and reads it and its retention back where the key
+        may; a failing probe is VALIDATION_FAILED with fixed wording and
+        saves nothing. The endpoint is checked against the outbound policy
+        first. from "beginning" (the default) backfills the whole log; "now"
+        starts at the creation event. At most one live export per
+        Organization. Needs no approval: creating only adds protection.
+        Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Refused with PERMISSION_DENIED (details.reason audit-export-off)
+        when the host operator turned audit export off. Records
+        audit_export.created and audit_export.stream_started.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCreateInput" }
+      responses:
+        "201":
+          description: The export created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      tags: [organizations]
+      operationId: changeAuditExport
+      summary: >
+        Change the live export's destination or retention (ADR-0056 Decision
+        9). The change is compared field by field: a destination change, a
+        shorter or removed retention, or compliance to governance needs the
+        requester's step-up approval (operation audit_export.change), always,
+        whatever the Security Controls' modes; without the Varlatch-Approval
+        header the answer is STEP_UP_REQUIRED, and the client repeats the
+        identical request with it once the person approved. Setting,
+        lengthening or strengthening retention needs none. A destination
+        change must pass the probe (checked only after the approval is found,
+        so an unapproved request sends nothing) and starts a new stream at
+        the current position. expectedVersion must be the export's current
+        version (VERSION_CONFLICT otherwise). RESOURCE_NOT_FOUND when the
+        Organization has no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile. Records
+        audit_export.changed (metadata.loosened).
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/approvalHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportChangeInput" }
+      responses:
+        "200":
+          description: The export after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportChange" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      tags: [organizations]
+      operationId: removeAuditExport
+      summary: >
+        Remove the live export (ADR-0056 Decision 9): always needs the
+        requester's step-up approval (operation audit_export.remove). In one
+        transaction the export becomes removed, its pending object is
+        dropped and its key is cleared; what was delivered stays at the
+        destination. expectedVersion (query) must be the export's current
+        version. Allowed when the host operator turned audit export off.
+        RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Records audit_export.removed.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - name: expectedVersion
+          in: query
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - $ref: "#/components/parameters/approvalHeader"
+      responses:
+        "200":
+          description: The export, removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-export/credential:
+    put:
+      tags: [organizations]
+      operationId: replaceAuditExportCredential
+      summary: >
+        Replace the live export's key (ADR-0056 Decision 8): always needs the
+        requester's step-up approval (operation audit_export.change; the
+        approver's summary never names the key). The stream and any pending
+        object are kept and delivered with the new key. Not probed: run the
+        check with the new key first. The key is never returned.
+        RESOURCE_NOT_FOUND when there is no live export. Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+        Records audit_export.credential_replaced.
+      parameters:
+        - $ref: "#/components/parameters/org"
+        - $ref: "#/components/parameters/approvalHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCredentialChange" }
+      responses:
+        "200":
+          description: The export with its new key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExport" }
+        "403": { $ref: "#/components/responses/StepUpRequired" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /organizations/{org}/audit-export/check:
+    post:
+      tags: [organizations]
+      operationId: checkAuditExport
+      summary: >
+        Run the destination probe without saving anything (ADR-0056 Decision
+        6), as connection checks do: with the key given, or without one with
+        the live export's stored key, which is only sent to that export's own
+        destination. A probe that does not pass answers 200 with ok false
+        and fixed wording; an endpoint the outbound policy refuses too.
+        Records nothing (an outbound refusal is recorded by the policy).
+        Needs organization.manage and a person's credential (browser or cli): a
+        machine credential is refused with PERMISSION_DENIED (details.reason
+        machine-credential). Refused while the Organization is frozen for an
+        incident or being deleted; delivery continues meanwhile.
+      parameters:
+        - $ref: "#/components/parameters/org"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuditExportCheckInput" }
+      responses:
+        "200":
+          description: What the probe found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditExportCheck" }
+        default: { $ref: "#/components/responses/Error" }
+
   /organizations/{org}/identities/{identity}/credentials/{credential}:
     delete:
       tags: [identities]
@@ -6813,6 +7001,183 @@ components:
         loosened:
           type: boolean
           description: The change weakened the control and used an approval.
+
+    AuditExportDestination:
+      type: object
+      description: Where an audit export writes (ADR-0056 Decision 1). The endpoint is a scheme, host and optional port.
+      required: [endpoint, region, bucket, prefix, pathStyle]
+      properties:
+        endpoint: { type: string, examples: ["https://s3.eu-central-1.amazonaws.com"] }
+        region: { type: string }
+        bucket: { type: string }
+        prefix: { type: string, description: "Empty, or ending with /. Objects go under <prefix>varlatch-audit/<organization>/<stream>/." }
+        pathStyle: { type: boolean }
+
+    AuditExportDestinationInput:
+      type: object
+      additionalProperties: false
+      required: [endpoint, region, bucket]
+      properties:
+        endpoint: { type: string, maxLength: 2048, description: "https; plain http only to a destination the host operator's outbound allow list names." }
+        region: { type: string, maxLength: 64 }
+        bucket: { type: string, minLength: 3, maxLength: 63 }
+        prefix: { type: string, maxLength: 256, default: "" }
+        pathStyle: { type: boolean, default: false }
+
+    AuditExportCredentialInput:
+      type: object
+      description: An S3 access key. Write-only; never returned, logged or audited.
+      additionalProperties: false
+      required: [accessKeyId, secretAccessKey]
+      properties:
+        accessKeyId: { type: string, maxLength: 128 }
+        secretAccessKey: { type: string, maxLength: 256, writeOnly: true }
+
+    AuditExportRetention:
+      type: object
+      description: Object Lock retention for every object written, from when it was planned (ADR-0056 Decision 7).
+      additionalProperties: false
+      required: [mode, days]
+      properties:
+        mode: { type: string, enum: [compliance, governance] }
+        days: { type: integer, minimum: 1, maximum: 3650 }
+
+    AuditExportCreateInput:
+      type: object
+      additionalProperties: false
+      required: [destination, credential]
+      properties:
+        destination: { $ref: "#/components/schemas/AuditExportDestinationInput" }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+        from: { type: string, enum: [beginning, now], default: beginning }
+
+    AuditExportChangeInput:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        destination:
+          type: object
+          description: Only the fields given change.
+          additionalProperties: false
+          properties:
+            endpoint: { type: string, maxLength: 2048 }
+            region: { type: string, maxLength: 64 }
+            bucket: { type: string, minLength: 3, maxLength: 63 }
+            prefix: { type: string, maxLength: 256 }
+            pathStyle: { type: boolean }
+        retention:
+          description: Absent keeps the retention; null removes it.
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+
+    AuditExportCredentialChange:
+      type: object
+      additionalProperties: false
+      required: [expectedVersion, credential]
+      properties:
+        expectedVersion: { type: integer, minimum: 1 }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+
+    AuditExportCheckInput:
+      type: object
+      additionalProperties: false
+      required: [destination]
+      properties:
+        destination: { $ref: "#/components/schemas/AuditExportDestinationInput" }
+        credential: { $ref: "#/components/schemas/AuditExportCredentialInput" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+
+    AuditExportCheck:
+      type: object
+      description: What the destination probe found (ADR-0056 Decision 6). message is fixed wording, never the store's own text.
+      required: [ok, message, conditionalCreation, objectLock, keyCanRead, retentionReadable]
+      properties:
+        ok: { type: boolean }
+        message: { type: [string, "null"] }
+        conditionalCreation: { type: [boolean, "null"], description: "A second write of the same name was refused (If-None-Match)." }
+        objectLock:
+          type: [string, "null"]
+          enum: [verified, accepted, not-set, null]
+          description: verified (a verified provider, or the retention read back at least as strong as asked); accepted (headers accepted, not verified for this provider); not-set (no retention asked).
+        keyCanRead: { type: [boolean, "null"], description: "The key read the test object (HEAD); null when undetermined." }
+        retentionReadable: { type: [boolean, "null"], description: "The key read the test object's retention; null when undetermined or no retention was asked." }
+
+    AuditExport:
+      type: object
+      description: An Organization's audit export and its status (ADR-0056 Decisions 1 and 11). Never the key.
+      required: [id, organizationId, destination, retention, state, streamId, cursor, version, lastAttemptAt, lastSuccessAt, lastError,
+        failingSince, keyCanRead, retentionReadable, stoppedReason, conditionalCheckedAt, lockVerified, drainDeadline, createdBy, createdAt,
+        removedAt, lag, objectLock, unsupportedPlanFormat]
+      properties:
+        id: { type: string }
+        organizationId: { type: string }
+        destination: { $ref: "#/components/schemas/AuditExportDestination" }
+        retention:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExportRetention"
+            - type: "null"
+        state:
+          type: string
+          enum: [active, draining, removed, completed, abandoned]
+          description: draining after the Organization's deletion, until the final events are delivered (completed) or the 30-day deadline passes (abandoned).
+        streamId: { type: string }
+        cursor: { type: string, description: "The audit position delivered up to (installation-wide positions, as a decimal string)." }
+        version: { type: integer }
+        lastAttemptAt: { type: [string, "null"], format: date-time }
+        lastSuccessAt: { type: [string, "null"], format: date-time }
+        lastError: { type: [string, "null"], description: "Fixed wording only (the storage error table or the outbound policy)." }
+        failingSince: { type: [string, "null"], format: date-time }
+        keyCanRead: { type: [boolean, "null"] }
+        retentionReadable: { type: [boolean, "null"] }
+        stoppedReason:
+          type: [string, "null"]
+          enum: [object_conflict, unsupported_format, null]
+          description: The export stopped until a person acts.
+        conditionalCheckedAt: { type: [string, "null"], format: date-time }
+        lockVerified: { type: [boolean, "null"] }
+        drainDeadline: { type: [string, "null"], format: date-time }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        removedAt: { type: [string, "null"], format: date-time }
+        lag:
+          description: Events of the Organization not yet exported and the oldest's time; null once the export ended.
+          oneOf:
+            - type: object
+              required: [pending, oldestPendingAt]
+              properties:
+                pending: { type: integer }
+                oldestPendingAt: { type: [string, "null"], format: date-time }
+            - type: "null"
+        objectLock: { type: string, enum: [verified, accepted, not-set] }
+        unsupportedPlanFormat: { type: [integer, "null"], description: "A pending object's format this release cannot upload (varlatchd admin audit-export discard-plan)." }
+
+    AuditExportStatus:
+      type: object
+      required: [enabled, export]
+      properties:
+        enabled: { type: boolean, description: "False when the host operator turned audit export off (VARLATCH_AUDIT_EXPORT=off)." }
+        export:
+          oneOf:
+            - $ref: "#/components/schemas/AuditExport"
+            - type: "null"
+
+    AuditExportChange:
+      type: object
+      required: [export, changed, loosened]
+      properties:
+        export: { $ref: "#/components/schemas/AuditExport" }
+        changed: { type: boolean, description: "False when the request matched the current state; nothing was recorded." }
+        loosened: { type: boolean, description: "The change needed and used an approval." }
 
     ApprovalChange:
       type: object

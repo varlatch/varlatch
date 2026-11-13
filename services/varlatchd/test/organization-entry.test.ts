@@ -219,6 +219,13 @@ const DURING_FREEZE: Record<string, FreezeException | null> = {
   "GET /v1/organizations/:org/webhooks": "inspection",
   "PATCH /v1/organizations/:org/webhooks/:webhook": null,
   "DELETE /v1/organizations/:org/webhooks/:webhook": null,
+  // The audit export (ADR-0056 Decision 9): changes refused while frozen; delivery continues.
+  "GET /v1/organizations/:org/audit-export": "inspection",
+  "POST /v1/organizations/:org/audit-export": null,
+  "PATCH /v1/organizations/:org/audit-export": null,
+  "DELETE /v1/organizations/:org/audit-export": null,
+  "PUT /v1/organizations/:org/audit-export/credential": null,
+  "POST /v1/organizations/:org/audit-export/check": null,
   "GET /v1/organizations/:org/platform-connections": "inspection",
   "POST /v1/organizations/:org/platform-connections": null,
   "POST /v1/organizations/:org/platform-connections/check": null,

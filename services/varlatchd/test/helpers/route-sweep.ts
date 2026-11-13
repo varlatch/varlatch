@@ -181,6 +181,8 @@ export async function buildFixtures(rootKek: Buffer): Promise<{ data: Blob; f: F
 /** Query strings that make a route read more (values, not only metadata). */
 export const QUERIES: Record<string, string> = {
   "GET /v1/organizations/:org/projects/:project/environments/:environment/effective-configuration": "?include=values",
+  // The fixtures have no audit export: a removal reaches its not-found (ADR-0056).
+  "DELETE /v1/organizations/:org/audit-export": "?expectedVersion=1",
 };
 
 /** A body each write route accepts with the fixtures (the rest get {}). */
@@ -222,6 +224,9 @@ export function bodyOf(route: string, f: Fixtures): unknown {
     [`POST ${R}/webhooks`]: { url: "https://hooks.example.com/second" },
     [`PATCH ${R}/webhooks/:webhook`]: { expectedVersion: 1, eventTypes: null },
     [`PATCH ${R}/security/controls/:control`]: { mode: "report", expectedVersion: 0 },
+    // The fixtures have no audit export: a change and a new key reach their not-found (ADR-0056).
+    [`PATCH ${R}/audit-export`]: { expectedVersion: 1, retention: null },
+    [`PUT ${R}/audit-export/credential`]: { expectedVersion: 1, credential: { accessKeyId: "AKIASWEEP", secretAccessKey: "sweep-secret-sweep" } },
     // An App Connection: GitHub is asked for the installation, and refused.
     [`POST ${R}/platform-connections`]: { credentialKind: "github-app", installationId: 4244, name: "Actions" },
   };
