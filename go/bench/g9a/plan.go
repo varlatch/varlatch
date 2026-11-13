@@ -18,7 +18,8 @@ import (
 // it.
 type Plan struct {
 	Phases []Phase `json:"phases"`
-	// Backups start at an offset into a named phase.
+	// Backups start at an offset into a named phase, or from the WAL's
+	// size (WALTriggered).
 	Backups []Backup `json:"backups"`
 	// ConvergeEverySeconds is the period of the simulated converge run,
 	// counted from the start of the run.
@@ -48,10 +49,37 @@ type Phase struct {
 	Warmup  bool    `json:"warmup,omitempty"`
 }
 
-// Backup starts a paced snapshot AtSeconds into Phase.
+// Backup starts a paced snapshot AtSeconds into Phase, or, when
+// WALTriggered is set, from the WAL's size during Phase (AtSeconds is then
+// 0).
 type Backup struct {
-	Phase     string  `json:"phase"`
-	AtSeconds float64 `json:"atSeconds"`
+	Phase        string     `json:"phase"`
+	AtSeconds    float64    `json:"atSeconds"`
+	WALTriggered WALTrigger `json:"walTriggered,omitzero"`
+}
+
+// WALTrigger starts a backup when the WAL file's size crosses Fraction of
+// the bound from below, and again at each later crossing (the WAL resets
+// after a TRUNCATE) until one backup has held a size-triggered TRUNCATE
+// off, up to MaxAttempts in the phase (ADR-0059 amendment 4). A backup
+// that started this way is judged like any other.
+type WALTrigger struct {
+	Fraction    float64 `json:"fraction"`
+	MaxAttempts int     `json:"maxAttempts"`
+}
+
+// G9a's WAL-triggered backup: at 95 % of the bound, up to five attempts.
+const (
+	DefaultWALFraction = 0.95
+	DefaultWALAttempts = 5
+)
+
+// Set says the backup starts from the WAL's size.
+func (w WALTrigger) Set() bool { return w != WALTrigger{} }
+
+// Threshold is the WAL size in bytes that starts a backup.
+func (w WALTrigger) Threshold(bound int64) int64 {
+	return int64(math.Ceil(w.Fraction * float64(bound)))
 }
 
 // Thresholds are G9a's pass criteria that are numbers.
@@ -71,8 +99,9 @@ type Thresholds struct {
 
 // DefaultPlan is ADR-0059's G9a load profile: a minute of warm-up at 10/s,
 // then 10/s for 15 minutes with a backup in it, 30/s for 5 minutes, and
-// 50/s for 15 minutes with a backup starting in its middle; a converge run
-// a minute for 20 targets; the shipped WAL bound.
+// 50/s for 15 minutes with a backup started from the WAL's size (at 95 % of
+// the bound, up to five attempts); a converge run a minute for 20 targets;
+// the shipped WAL bound.
 func DefaultPlan() Plan {
 	return Plan{
 		Phases: []Phase{
@@ -81,7 +110,10 @@ func DefaultPlan() Plan {
 			{Name: "p30", Rate: 30, Seconds: 300},
 			{Name: "p50", Rate: 50, Seconds: 900},
 		},
-		Backups:              []Backup{{Phase: "p10", AtSeconds: 420}, {Phase: "p50", AtSeconds: 450}},
+		Backups: []Backup{
+			{Phase: "p10", AtSeconds: 420},
+			{Phase: "p50", WALTriggered: WALTrigger{Fraction: DefaultWALFraction, MaxAttempts: DefaultWALAttempts}},
+		},
 		ConvergeEverySeconds: 60,
 		Targets:              20,
 		WALBound:             64 << 20,
@@ -98,7 +130,9 @@ func DefaultPlan() Plan {
 }
 
 // Scaled returns the plan with every duration and offset multiplied by f
-// (for smoke runs; f < 1). Rates, thresholds and the bound are unchanged.
+// (for smoke runs; f < 1). Rates, thresholds and the bound are unchanged,
+// and so is a WAL-triggered backup (its fraction is of the bound, and its
+// offset is 0).
 // The converge period keeps at least 10 s (a run takes a few seconds and
 // must not overlap the next) and the idle probe at least 5 s.
 func (p Plan) Scaled(f float64) Plan {
@@ -139,10 +173,25 @@ func (p Plan) Validate() error {
 	if judged == 0 {
 		return errors.New("plan: every phase is a warm-up")
 	}
+	walPhases := map[string]bool{}
 	for _, b := range p.Backups {
 		ph, ok := names[b.Phase]
 		if !ok {
 			return fmt.Errorf("plan: backup in unknown phase %q", b.Phase)
+		}
+		if w := b.WALTriggered; w.Set() {
+			switch {
+			case !(w.Fraction > 0 && w.Fraction <= 1):
+				return fmt.Errorf("plan: WAL-triggered backup in phase %q: fraction %g is outside (0, 1]", b.Phase, w.Fraction)
+			case w.MaxAttempts < 1:
+				return fmt.Errorf("plan: WAL-triggered backup in phase %q: maxAttempts %d, at least 1 needed", b.Phase, w.MaxAttempts)
+			case b.AtSeconds != 0:
+				return fmt.Errorf("plan: WAL-triggered backup in phase %q starts from the WAL's size: atSeconds must be 0", b.Phase)
+			case walPhases[b.Phase]:
+				return fmt.Errorf("plan: two WAL-triggered backups in phase %q", b.Phase)
+			}
+			walPhases[b.Phase] = true
+			continue
 		}
 		if b.AtSeconds < 0 || b.AtSeconds >= ph.Seconds {
 			return fmt.Errorf("plan: backup at %gs is outside phase %q (%gs)", b.AtSeconds, b.Phase, ph.Seconds)
@@ -172,14 +221,17 @@ func (p Plan) Validate() error {
 var gatePlan = DefaultPlan
 
 // NotGate lists how p differs from G9a's profile; empty means a run of it
-// can count for the gate. The fsync probe's pacing may differ.
+// can count for the gate. The fsync probe's pacing may differ, and so may a
+// WAL-triggered backup's fraction: ADR-0059 lets a run raise it when no
+// attempt held a TRUNCATE off, with the fraction recorded in its plan (the
+// report names it). Its number of attempts may not.
 func (p Plan) NotGate() []string {
 	g := gatePlan()
 	var d []string
 	if !slices.Equal(p.Phases, g.Phases) {
 		d = append(d, "phases")
 	}
-	if !slices.Equal(p.Backups, g.Backups) || p.BackupStepPages != g.BackupStepPages || p.BackupPauseMs != g.BackupPauseMs {
+	if !slices.Equal(anyFraction(p.Backups), anyFraction(g.Backups)) || p.BackupStepPages != g.BackupStepPages || p.BackupPauseMs != g.BackupPauseMs {
 		d = append(d, "backups")
 	}
 	if p.ConvergeEverySeconds != g.ConvergeEverySeconds || p.Targets != g.Targets {
@@ -192,6 +244,17 @@ func (p Plan) NotGate() []string {
 		d = append(d, "thresholds")
 	}
 	return d
+}
+
+// anyFraction is bs with every WAL-triggered fraction set alike.
+func anyFraction(bs []Backup) []Backup {
+	out := slices.Clone(bs)
+	for i := range out {
+		if out[i].WALTriggered.Set() {
+			out[i].WALTriggered.Fraction = 1
+		}
+	}
+	return out
 }
 
 // Converges is how many converge runs the plan schedules during the load
@@ -225,7 +288,9 @@ func (p Plan) Duration() time.Duration {
 	return seconds(s)
 }
 
-// BackupOffsets are the backups' offsets from the start of the run.
+// BackupOffsets are the backups' offsets from the start of the run; for a
+// WAL-triggered backup, the start of its phase, from which it watches the
+// WAL.
 func (p Plan) BackupOffsets() []time.Duration {
 	var out []time.Duration
 	for _, b := range p.Backups {
@@ -233,6 +298,16 @@ func (p Plan) BackupOffsets() []time.Duration {
 		out = append(out, start+seconds(b.AtSeconds))
 	}
 	return out
+}
+
+// PhaseSeconds is a phase's duration (0 for an unknown phase).
+func (p Plan) PhaseSeconds(name string) float64 {
+	for _, ph := range p.Phases {
+		if ph.Name == name {
+			return ph.Seconds
+		}
+	}
+	return 0
 }
 
 func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }

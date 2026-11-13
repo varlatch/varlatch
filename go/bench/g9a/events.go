@@ -36,10 +36,29 @@ type Event struct {
 	Final      bool          `json:"final,omitempty"`
 	RSSBytes   int64         `json:"rssBytes,omitempty"`
 	CgroupNote string        `json:"cgroupNote,omitempty"`
+	// The cgroup's cpu.stat, read with each memory and WAL sample.
+	CPU *CPUStat `json:"cpuStat,omitempty"`
 
 	// fsync
 	Kind string `json:"kind,omitempty"`
 	Idle bool   `json:"idle,omitempty"`
+
+	// backup_start, backup_end, wal_backup, wal_crossing. Backup numbers a
+	// backup's start and end (from 1). For a WAL-triggered backup, Phase and
+	// Attempt (from 1) say which, and WALBefore on backup_start, as Bytes on
+	// wal_backup and wal_crossing, is the WAL size that started it.
+	// wal_backup closes an attempt: HeldOff says a size-triggered TRUNCATE
+	// was deferred while it ran. wal_crossing is a crossing that started no
+	// attempt (Note says why). backup_wait is a timed backup that found
+	// another running and waits for it; WaitUs on its backup_start is how
+	// long it waited. backup_missed is a timed backup that never started
+	// (Note says why: its phase ended or the run stopped first).
+	Backup  int    `json:"backup,omitempty"`
+	Phase   string `json:"phase,omitempty"`
+	Attempt int    `json:"attempt,omitempty"`
+	HeldOff bool   `json:"heldOff,omitempty"`
+	Note    string `json:"note,omitempty"`
+	WaitUs  int64  `json:"waitUs,omitempty"`
 
 	// backup_end, converge_end
 	Pages    int    `json:"pages,omitempty"`
@@ -66,6 +85,10 @@ const (
 	EvFsync         = "fsync"
 	EvBackupStart   = "backup_start"
 	EvBackupEnd     = "backup_end"
+	EvWALBackup     = "wal_backup"
+	EvWALCrossing   = "wal_crossing"
+	EvBackupWait    = "backup_wait"
+	EvBackupMissed  = "backup_missed"
 	EvConvergeStart = "converge_start"
 	EvConvergeEnd   = "converge_end"
 	EvError         = "error"

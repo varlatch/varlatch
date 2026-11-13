@@ -79,6 +79,15 @@ type server struct {
 	cg   Cgroup
 
 	requests, errs atomic.Int64
+	// backups numbers the backups; slot lets one run at a time (both the
+	// timed and the WAL-triggered ones take it before they start); deferred
+	// counts the size triggers a snapshot held off.
+	backups  atomic.Int64
+	slot     backupSlot
+	deferred atomic.Int64
+	// walSize and snapshot are the database's, replaced in tests.
+	walSize  func() int64
+	snapshot func(ctx context.Context, dest string) (storage.SnapshotStats, error)
 
 	startOnce sync.Once
 	started   atomic.Int64 // run start, µs
@@ -122,7 +131,7 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	if err != nil {
 		return err
 	}
-	s := &server{opts: opts, ev: ev, stop: make(chan struct{}), cg: ownCgroup()}
+	s := &server{opts: opts, ev: ev, stop: make(chan struct{}), cg: ownCgroup(), slot: newBackupSlot()}
 	defer func() { _ = ev.close() }()
 
 	s.db, err = storage.Open(ctx, storage.Options{
@@ -132,6 +141,11 @@ func Serve(ctx context.Context, opts ServeOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+	s.walSize = func() int64 { return s.db.Metrics().WALBytes }
+	s.snapshot = func(ctx context.Context, dest string) (storage.SnapshotStats, error) {
+		p := opts.Plan
+		return s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
 	}
 	dbClosed := false
 	defer func() {
@@ -269,6 +283,9 @@ func (s *server) waitStarted() <-chan struct{} {
 }
 
 func (s *server) onCheckpoint(r storage.CheckpointResult, err error) {
+	if r.Deferred && r.Trigger == storage.TriggerSize {
+		s.deferred.Add(1)
+	}
 	e := Event{
 		Ev: EvCheckpoint, Mode: r.Mode, Trigger: r.Trigger, StartUs: us(r.Start), DurUs: r.Duration.Microseconds(),
 		Busy: r.Busy, Deferred: r.Deferred, LogFrames: r.LogFrames, Checkpointed: r.Checkpointed,
@@ -324,8 +341,9 @@ func (s *server) handleStart(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]int64{"startUs": s.started.Load()})
 }
 
-// runBackground starts the plan's work, counted from t0: the WAL and memory
-// samplers, the fsync probe under load, converge runs and backups. The
+// runBackground starts the plan's work, counted from t0: the WAL, memory
+// and CPU samplers, the fsync probe under load, converge runs and backups
+// (at their offsets, or from the WAL's size). The
 // samplers end at /run/stop. Converge runs are scheduled only inside the
 // load, and a converge run or backup in progress at /run/stop finishes
 // (cancelled only if it is still running two minutes later), so stopping
@@ -340,8 +358,15 @@ func (s *server) runBackground(t0 time.Time) {
 		time.AfterFunc(2*time.Minute, cancelWork)
 	}()
 
+	// cpu.stat goes with every WAL sample as well as with memory: a
+	// TRUNCATE window lasts about two seconds, and one-second samples place
+	// its throttling more closely than the five-second memory samples.
 	s.every(ctx, t0, time.Second, func() {
-		s.ev.emit(Event{Ev: EvWAL, Bytes: s.db.Metrics().WALBytes})
+		e := Event{Ev: EvWAL, Bytes: s.walSize()}
+		if c, err := s.cg.cpuStat(); err == nil {
+			e.CPU = &c
+		}
+		s.ev.emit(e)
 	})
 	s.every(ctx, t0, 5*time.Second, func() { s.ev.emit(s.memorySample(false)) })
 	s.bg.Add(1)
@@ -375,16 +400,26 @@ func (s *server) runBackground(t0 time.Time) {
 			s.ev.emit(e)
 		}()
 	})
-	for i, off := range p.BackupOffsets() {
+	offsets := p.BackupOffsets()
+	for i, b := range p.Backups {
 		s.bg.Add(1)
 		go func() {
 			defer s.bg.Done()
+			phaseStart, _ := p.PhaseStart(b.Phase)
+			phaseEnd := t0.Add(phaseStart + seconds(p.PhaseSeconds(b.Phase)))
 			select {
-			case <-time.After(time.Until(t0.Add(off))):
+			case <-time.After(time.Until(t0.Add(offsets[i]))):
 			case <-ctx.Done():
+				if !b.WALTriggered.Set() {
+					s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped before its time"})
+				}
 				return
 			}
-			s.backup(work, i)
+			if b.WALTriggered.Set() {
+				s.walBackups(ctx, work, phaseEnd, b)
+				return
+			}
+			s.timedBackup(ctx, work, phaseEnd, b)
 		}()
 	}
 }
@@ -394,6 +429,11 @@ func (s *server) runBackground(t0 time.Time) {
 func (s *server) memorySample(final bool) Event {
 	e := Event{Ev: EvMemory, Final: final, RSSBytes: rssBytes()}
 	var errs []string
+	if c, err := s.cg.cpuStat(); err == nil {
+		e.CPU = &c
+	} else {
+		errs = append(errs, err.Error())
+	}
 	if anon, err := s.cg.anonBytes(); err == nil {
 		e.AnonBytes = anon
 	} else {
@@ -429,23 +469,89 @@ func (s *server) every(ctx context.Context, first time.Time, period time.Duratio
 	}()
 }
 
-// backup takes a paced snapshot, as the backup job will, and removes it.
-func (s *server) backup(ctx context.Context, n int) {
+// backupSlot lets one backup run at a time: the storage engine would
+// serialize two snapshots anyway, and the report credits each deferred
+// size trigger to the one backup running at the time.
+type backupSlot chan struct{}
+
+func newBackupSlot() backupSlot { return make(backupSlot, 1) }
+
+// tryAcquire takes the slot if it is free.
+func (b backupSlot) tryAcquire() bool {
+	select {
+	case b <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b backupSlot) release() { <-b }
+
+// timedBackup runs b, now due. If another backup holds the slot, it logs
+// backup_wait and waits for it, with the wait on its backup_start, but only
+// until its phase ends (phaseEnd) or the run stops (ctx): a backup labelled
+// with a phase starts inside it. If it cannot, it logs backup_missed with
+// the reason, and the report counts it as a planned backup that did not
+// run. The snapshot runs under work, so one that started finishes.
+func (s *server) timedBackup(ctx, work context.Context, phaseEnd time.Time, b Backup) {
+	start := Event{Phase: b.Phase}
+	if !s.slot.tryAcquire() {
+		t := time.Now()
+		s.ev.emit(Event{Ev: EvBackupWait, Phase: b.Phase, Note: "a backup was running: waiting for it"})
+		end := time.NewTimer(time.Until(phaseEnd))
+		defer end.Stop()
+		select {
+		case s.slot <- struct{}{}:
+		case <-end.C:
+			s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "its phase ended while it waited for a running backup"})
+			return
+		case <-ctx.Done():
+			s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped while it waited for a running backup"})
+			return
+		}
+		start.WaitUs = max(1, time.Since(t).Microseconds())
+	}
+	defer s.slot.release()
+	// The slot can come at the same instant as the stop or the phase's end,
+	// and select picks among ready cases at random; a run already stopped
+	// takes the free slot above too. Either way the backup does not start.
+	if ctx.Err() != nil {
+		s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "the run stopped before it could start"})
+		return
+	}
+	if !time.Now().Before(phaseEnd) {
+		s.ev.emit(Event{Ev: EvBackupMissed, Phase: b.Phase, Note: "its phase ended while it waited for a running backup"})
+		return
+	}
+	s.backup(work, start)
+}
+
+// backup takes a paced snapshot, as the backup job will, and removes it;
+// the caller holds the slot. start is its backup_start event, numbered and
+// timed here and given the WAL size unless it has one; backup returns it.
+func (s *server) backup(ctx context.Context, start Event) Event {
+	t := time.Now()
+	start.Ev, start.T, start.Backup = EvBackupStart, us(t), int(s.backups.Add(1))
+	if start.WALBefore == 0 {
+		start.WALBefore = s.walSize()
+	}
 	dir := filepath.Join(s.opts.DataDir, "backups")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		s.ev.emit(Event{Ev: EvError, Err: err.Error()})
-		return
+		return start
 	}
-	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", n))
-	s.ev.emit(Event{Ev: EvBackupStart})
-	p := s.opts.Plan
-	st, err := s.db.Snapshot(ctx, dest, storage.SnapshotOptions{StepPages: p.BackupStepPages, Pause: time.Duration(p.BackupPauseMs) * time.Millisecond})
-	e := Event{Ev: EvBackupEnd, Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
+	dest := filepath.Join(dir, fmt.Sprintf("snapshot-%d.db", start.Backup))
+	s.ev.emit(start)
+	st, err := s.snapshot(ctx, dest)
+	e := Event{Ev: EvBackupEnd, Backup: start.Backup, Phase: start.Phase, Attempt: start.Attempt,
+		Pages: st.Pages, Steps: st.Steps, Restarts: st.Restarts, DurUs: st.Duration.Microseconds()}
 	if err != nil {
 		e.Err = err.Error()
 	}
 	s.ev.emit(e)
 	_ = os.Remove(dest)
+	return start
 }
 
 func writeJSON(path string, v any) error {
