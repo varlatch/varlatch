@@ -1,0 +1,230 @@
+name: Go
+
+# The Go rewrite (ADR-0059). Its groundwork lived on the rewrite/go branch,
+# and ADR-0059 amendment 2 routed CI by branch: pull requests into rewrite/go
+# ran these checks instead of ci.yml. Since the branch merged into main
+# (Order, step 1), CI is routed by path: these checks run on pull requests
+# into main (and into rewrite/go while it exists) and on pushes to them,
+# whenever a change touches go/, this workflow, or the TypeScript crypto
+# code the cross-language envelope step loads. ci.yml classifies Go-only
+# changes too (scripts/ci-changes.sh): they run its repository-wide checks
+# and no TypeScript tests. No ruleset requires these jobs, so a pull request
+# the path filter skips is never left waiting for them. They run on
+# GitHub-hosted runners only, never on the self-hosted varlatch-ci runner the
+# TypeScript release uses, and with no fallback to it. When hosted minutes
+# are out these jobs wait or fail; the checks then run locally, outside the
+# release's test runs.
+on:
+  pull_request:
+    branches: [main, rewrite/go]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "go/**"
+      - ".github/workflows/go.yml"
+      # Loaded by go/lib/envelope/testdata/tsfixtures.mjs.
+      - "services/varlatchd/src/crypto/**"
+      - "services/varlatchd/src/auth/jwt.ts"
+      - "services/varlatchd/src/config.ts"
+      - "packages/contract/src/canonical.ts"
+      # The license map, which checks go/ too.
+      - "scripts/check-licenses.mjs"
+  push:
+    branches: [main, rewrite/go]
+    # The same paths as pull_request's.
+    paths:
+      - "go/**"
+      - ".github/workflows/go.yml"
+      - "services/varlatchd/src/crypto/**"
+      - "services/varlatchd/src/auth/jwt.ts"
+      - "services/varlatchd/src/config.ts"
+      - "packages/contract/src/canonical.ts"
+      - "scripts/check-licenses.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    # Drafts run nothing, as in ci.yml.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: Formatted
+        working-directory: go
+        run: |
+          unformatted=$(gofmt -l .)
+          [ -z "$unformatted" ] || { echo "gofmt needed:"; echo "$unformatted"; exit 1; }
+
+      - name: go.mod and go.sum are tidy
+        working-directory: go
+        run: go mod tidy -diff
+
+      - name: Vet
+        working-directory: go
+        run: go vet ./...
+
+      # Includes go/licensing_test.go: no Apache-2.0 package (the CLI, the
+      # shared libraries) may depend on an AGPL-3.0-or-later one (G12).
+      - name: Test
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./...
+
+      # The storage engine is concurrent (writer, checkpointer, snapshots);
+      # the race detector needs cgo, which only this step uses.
+      - name: Test with the race detector
+        working-directory: go
+        env:
+          CGO_ENABLED: "1"
+        # The installer tests run shells, not Go concurrency; once is enough.
+        run: go test -race $(go list ./... | grep -v '/go/install$')
+
+      # install.sh is POSIX sh; its behavior (every prefix, end to end) is in
+      # go/install's tests above.
+      - name: install.sh and the G9a runner pass shellcheck
+        run: shellcheck -s sh go/install/install.sh go/bench/g9a/run.sh
+
+      # The G9a harness end to end at 5 % of the profile's length: k6 (the
+      # pinned image), the stand-in server under G9's memory limits in a
+      # scope of its own, and the report. A smoke run checks the harness,
+      # not the gate: the bound is 512 KiB so the size trigger fires in two
+      # minutes, and backups are slowed so that they overlap it. The 50/s
+      # backup starts from the WAL's size (95 % of that bound) and must run
+      # and hold a size-triggered TRUNCATE off: slowed to 256 pages a step it
+      # lasts seconds, longer than the checkpointer's 2 s tick, while the
+      # WAL passes 512 KiB within one. A converge run alone writes more than
+      # twice that bound, so the WAL-peak criterion is the one failure
+      # allowed; the stand-in and the scaled plan are the only reasons
+      # allowed for an inconclusive verdict.
+      # The smoke checks the harness's mechanics, not latency: a hosted
+      # runner's disk stalls on fsync now and then (warm-up p95 3.5 ms on one
+      # run, 60 to 120 ms on another, before any backup or checkpoint), and
+      # G9a's latency verdict holds only on the gate's VPS. So a p95 over the
+      # threshold, for a phase or for a window with no failed request, is
+      # tolerated here; failed, dropped or busy requests are not, nor is any
+      # other failure but the smoke bound's WAL peak.
+      - name: The G9a harness runs and judges a smoke run
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          out="$RUNNER_TEMP/g9a-smoke"
+          (cd go && go build -o "$RUNNER_TEMP/g9a" ./bench/g9a/cmd/g9a)
+          "$RUNNER_TEMP/g9a" plan -scale 0.05 -wal-bound 524288 -backup-step-pages 256 > "$RUNNER_TEMP/smoke-plan.json"
+          status=0
+          G9A_BIN="$RUNNER_TEMP/g9a" \
+            G9A_SCOPE="sudo systemd-run --scope --quiet --uid=$(id -u) --gid=$(id -g) -p MemoryMax=1G -p MemorySwapMax=0" \
+            go/bench/g9a/run.sh "$out" "$RUNNER_TEMP/smoke-plan.json" || status=$?
+          [ "$status" -le 2 ] || { cat "$out/server.log" "$out/k6.log" || true; exit 1; }
+          jq -e '
+            ([.phases[] | select(.warmup | not) | .stats.n >= .expected - 1 and .stats.failed == 0] | all)
+            and .droppedIterations == 0 and .serverBusy == 0
+            and .sizeTruncates > 0
+            and .timedBackups == ([.plan.backups[] | select(.walTriggered | not)] | length)
+            and .missedBackups == 0
+            and (.walTriggeredBackups | length) > 0
+            and (.walTriggeredBackups | length) == ([.plan.backups[] | select(.walTriggered)] | length)
+            and ([.walTriggeredBackups[] | (.attempts | length) >= 1 and .heldOffByAttempt > 0] | all)
+            and .memoryMaxMiB > 0 and .memoryMaxMiB < 300
+            and .deferredTruncates > 0 and .converges == .convergesPlanned
+            and ([.fails[]
+                  | select(startswith("the WAL peaked") | not)
+                  | select(test("^phase [a-z0-9]+: p95 [0-9.]+ ms over [0-9]+ ms$") | not)
+                  | select(test("^[a-z-]+ window at [-+0-9.]+s: p95 [0-9.]+ ms, 0 failed of [0-9]+$") | not)
+                 ] == [])
+            and ([.inconclusive[] | select(startswith("the load ran against") or startswith("the plan differs from G9a") | not)] == [])
+          ' "$out/verdict.json" || { cat "$out/report.md"; exit 1; }
+
+      # The varlatchd unit: systemd accepts it, its exposure score stays at
+      # or under 2.0 (1.6 when written), and the shipped sandbox lets
+      # varlatchd do what it needs and refuses the rest (unitprobe, run as
+      # the unit's ExecStart; the runner is disposable, so the script may
+      # install a unit and a system user).
+      - name: The varlatchd unit verifies and its sandbox holds
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          (cd go && go build -o "$RUNNER_TEMP/unitprobe" ./install/unitprobe)
+          sudo VARLATCH_TEST_DISPOSABLE_ROOT=1 go/install/test-unit.sh "$RUNNER_TEMP/unitprobe"
+
+      # ADR-0059 Decision 1: varlatchd for Linux, varlatch for Linux, macOS
+      # and Windows, each on amd64 and arm64; static, no cgo. Every package
+      # builds and vets on every platform, since the CLI may use any of the
+      # shared ones.
+      - name: Both binaries build for every platform
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          build() {
+            GOOS=${2%/*} GOARCH=${2#*/} go build -trimpath -o /dev/null "./cmd/$1"
+            echo "built $1 for $2"
+          }
+          for p in linux/amd64 linux/arm64; do build varlatchd "$p"; done
+          for p in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            build varlatch "$p"
+            GOOS=${p%/*} GOARCH=${p#*/} go vet ./...
+            GOOS=${p%/*} GOARCH=${p#*/} go build ./...
+          done
+
+      # ADR-0059 Order step 3: envelopes cross between the servers in both
+      # directions. The Go tests open what TypeScript releases sealed
+      # (ts-v0.21.0.json, ts-v0.22.0.json); here the TypeScript server's own
+      # crypto code (this checkout's, loaded with Node's type stripping)
+      # opens what Go sealed, and the TypeScript fixtures too.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 26
+
+      # The Go envelopes are sealed now, by this commit's code, not taken
+      # from the committed file (which only the Go tests read).
+      - name: The TypeScript server opens what Go sealed
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          fresh="$RUNNER_TEMP/go-sealed.json"
+          (cd go && go test -count=1 -run '^TestGoFixtures$' ./lib/envelope/ -args -write-go-fixture="$fresh")
+          node go/lib/envelope/testdata/tsfixtures.mjs verify "$fresh"
+          node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/go-sealed.json
+          node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/ts-v0.21.0.json
+          node go/lib/envelope/testdata/tsfixtures.mjs verify go/lib/envelope/testdata/ts-v0.22.0.json
+
+      # ADR-0021's split, SPDX headers and LICENSE files included, for go/
+      # too. The script uses Node's standard library only.
+      - name: Every file matches the license map
+        run: node scripts/check-licenses.mjs
+
+  # install.ps1 under Windows PowerShell 5.1 and PowerShell 7: every prefix
+  # (G8) and the end-to-end install, which changes the runner user's PATH
+  # (restored afterwards; the runner is disposable).
+  windows:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: 1.27.4
+          cache: false
+
+      - name: install.ps1 under PowerShell 5.1 and 7
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          VARLATCH_TEST_DISPOSABLE: "1"
+        run: go test -count=1 -v -timeout 20m -run 'PS1' ./install/

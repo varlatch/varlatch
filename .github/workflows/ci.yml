@@ -10,7 +10,11 @@ name: CI
 # scripts/, infra/, CI itself), which tests every package. A pull request
 # that changes only documentation no check reads (*.md and docs/, but not
 # CHANGELOG.md or THIRD-PARTY-NOTICES.md) skips python-accessor, docker, and
-# e2e; the test job's checks and secret-scan still run. The slow suites
+# e2e; the test job's checks and secret-scan still run. Go files (go/ and
+# go.yml, which go.yml checks; ADR-0059) count the same way: a pull request
+# that changes only Go files and documentation runs the test job's
+# repository-wide checks (licenses, notices) and secret-scan, and no
+# package's tests. The slow suites
 # (multi-arch, contributor-setup, and the recovery and install-lifecycle steps
 # of backup-recovery) run on a pull request only when it touches what they
 # guard. A push to main (a merge) runs the fast checks with every package's
@@ -376,12 +380,13 @@ jobs:
 
   # Which tiers run. A draft pull request runs nothing. Any other pull request
   # runs the fast checks, except that one changing only documentation no check
-  # reads skips python-accessor, docker, and e2e (code=false); its test job
-  # tests the changed packages and their dependents, or every package when it
-  # changes a shared file (tests=affected or all; scripts/ci-changes.sh has
-  # the rules). Each slow suite runs only when the pull request touches what
-  # it guards; tests (*/test/) never trigger one, and a pull request that
-  # changes only documentation triggers none. A push to main runs only the
+  # reads, or only Go files (go.yml checks them), skips python-accessor,
+  # docker, and e2e (code=false); its test job tests the changed packages and
+  # their dependents, or every package when it changes a shared file
+  # (tests=affected or all; scripts/ci-changes.sh has the rules). Each slow
+  # suite runs only when the pull request touches what it guards; tests
+  # (*/test/) never trigger one, and a pull request that changes only
+  # documentation or Go files triggers none. A push to main runs only the
   # fast checks, in full. A scheduled run skips everything when main has no
   # commits since the last one; any other event runs everything, including a
   # release: release.yml calls this workflow on a tag push, which must not
@@ -454,7 +459,7 @@ jobs:
           echo "run=true" >> "$GITHUB_OUTPUT"
           echo "$selected" >> "$GITHUB_OUTPUT"
           if grep -qx code=false <<< "$selected"; then
-            echo "Documentation only: no slow suite runs."
+            echo "Documentation or Go files only: no slow suite runs."
             for t in $tiers; do echo "$t=false"; done >> "$GITHUB_OUTPUT"
             exit 0
           fi

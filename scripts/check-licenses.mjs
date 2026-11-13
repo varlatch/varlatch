@@ -3,12 +3,13 @@
 /**
  * Enforces the repository's license map (ADR-0021): the Secret Plane
  * daemon, the dashboard, and the Application Plane functions are
- * AGPL-3.0-or-later; everything else is Apache-2.0.
+ * AGPL-3.0-or-later, and so are the Go rewrite's daemon packages
+ * (go/server/, go/cmd/varlatchd/; ADR-0059); everything else is Apache-2.0.
  *
  *   - every source file carries the SPDX-License-Identifier of its directory;
  *   - every workspace package.json declares that license;
- *   - every workspace package has a LICENSE file with its full text, identical
- *     to the one in LICENSES/;
+ *   - every workspace package, and every Go license root, has a LICENSE file
+ *     with its full text, identical to the one in LICENSES/;
  *   - every release image declares Varlatch's licenses in its OCI label.
  *
  * Usage:
@@ -25,13 +26,16 @@ const fix = process.argv.includes("--fix");
 
 const AGPL = "AGPL-3.0-or-later";
 const APACHE = "Apache-2.0";
-const AGPL_DIRS = ["services/varlatchd/", "apps/web/", "convex/"];
+// go/licensing_test.go keeps the Go import graph inside the same map.
+const AGPL_DIRS = ["services/varlatchd/", "apps/web/", "convex/", "go/server/", "go/cmd/varlatchd/"];
+// The Go module has no package.json; these directories carry its LICENSE files.
+const GO_LICENSE_ROOTS = ["go/", "go/server/", "go/cmd/varlatchd/"];
 const licenseOf = path => (AGPL_DIRS.some(dir => path.startsWith(dir)) ? AGPL : APACHE);
 
 // Not hand-written: byte-exact copies of published releases, and generator
 // output.
 const EXCLUDED = [/^scripts\/fixtures\//, /(^|\/)(dist|node_modules|generated|_generated)\//];
-const SOURCE = /\.(ts|tsx|js|mjs|cjs|sh|py)$/;
+const SOURCE = /\.(ts|tsx|js|mjs|cjs|sh|py|go)$/;
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8" })
   .split("\0")
@@ -80,6 +84,16 @@ for (const path of tracked.filter(path => path.endsWith("package.json") && path 
   if (!existsSync(licenseFile) || readFileSync(licenseFile, "utf8") !== fullText[expected]) {
     if (fix) writeFileSync(licenseFile, fullText[expected]);
     else problems.push(`${dir}/LICENSE: missing or not the ${expected} text from LICENSES/`);
+  }
+}
+
+const goModule = tracked.includes("go/go.mod");
+for (const dir of goModule ? GO_LICENSE_ROOTS : []) {
+  const expected = licenseOf(dir);
+  const licenseFile = join(repoRoot, dir, "LICENSE");
+  if (!existsSync(licenseFile) || readFileSync(licenseFile, "utf8") !== fullText[expected]) {
+    if (fix) writeFileSync(licenseFile, fullText[expected]);
+    else problems.push(`${dir}LICENSE: missing or not the ${expected} text from LICENSES/`);
   }
 }
 

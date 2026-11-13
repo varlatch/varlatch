@@ -7,10 +7,12 @@ Varlatch is licensed by directory:
     services/varlatchd/   the Secret Plane daemon
     apps/web/             the dashboard
     convex/               the Application Plane functions
+    go/server/            the Go rewrite's daemon packages (ADR-0059)
+    go/cmd/varlatchd/     the Go rewrite's daemon command
 
   Apache-2.0
     everything else, including apps/cli/, packages/, infra/, scripts/,
-    and docs/
+    docs/, and the rest of go/
 
 Every source file names its license in an SPDX-License-Identifier header,
 and every package directory has a LICENSE file with the full text. Both
