@@ -9,6 +9,7 @@ import type { CredentialRow, IdentityRow } from "../auth/credentials.js";
 import type { AppCtx } from "../domain/ctx.js";
 import { DomainError } from "../domain/errors.js";
 import { getOrgRole } from "../domain/orgs.js";
+import { anyControlOn } from "../domain/securitycontrols.js";
 
 export const STATUS_BY_CODE: Record<ErrorCode, number> = {
   AUTHENTICATION_REQUIRED: 401,
@@ -335,7 +336,8 @@ export const DEFERRED_DENIAL = "deferredDenial";
  * incident-freeze refusals: exactly one `authorization.denied` per refused
  * request, the same event {@link authorize} records for an ordinary
  * denial. Only a request that consumed an approval reaches this, so with
- * every control off nothing calls it.
+ * every control off nothing calls it. An operation that rechecks whatever
+ * the controls' modes uses {@link authorizeInControlledTransaction}.
  */
 export async function authorizeInTransaction(
   ctx: AppCtx,
@@ -349,6 +351,44 @@ export async function authorizeInTransaction(
   const decision = await decide({ ...ctx, db }, c, principal, action, resource, opts);
   if (decision.allowed) return decision.evaluation;
   // The last one wins: a request is refused once, by its last recheck.
+  if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
+  throw decision.error;
+}
+
+/**
+ * Authorization rechecked inside the transaction of an operation that runs
+ * whatever the Security Controls' modes: freezing and lifting a freeze
+ * (ADR-0055) and changing a control (ADR-0054 Decision 2). Each takes the
+ * Organization row FOR UPDATE, then rechecks here (ADR-0054 follow-up (f)).
+ *
+ * A denial is kept for app.onError, as {@link authorizeInTransaction} keeps
+ * it, only when at least one control is at `report` or `enforce` in the
+ * state this decision was made on: read in the same transaction, under the
+ * Organization lock, which every control change and the operator's reset
+ * also take FOR UPDATE, so it cannot change between the decision and the
+ * read. For a control change that is the state before the change, since
+ * the recheck comes before the new state is written: turning a control on
+ * from all off (off to report) keeps nothing, turning the last one off
+ * (report to off) keeps the denial.
+ *
+ * With every control off, the denial takes main's path unchanged: it is
+ * recorded in the transaction ({@link authorize} against `db`), which the
+ * refusal rolls back. Nothing observable changes: no audit event, the same
+ * answer. The read of the controls happens only on a denial.
+ */
+export async function authorizeInControlledTransaction(
+  ctx: AppCtx,
+  db: AppCtx["db"],
+  c: Context,
+  principal: Principal,
+  action: Action,
+  resource: ResourceContext,
+  opts: AuthorizeOptions = {},
+): Promise<Evaluation> {
+  const txCtx = { ...ctx, db };
+  const decision = await decide(txCtx, c, principal, action, resource, opts);
+  if (decision.allowed) return decision.evaluation;
+  if (!(await anyControlOn(db, resource.organizationId))) return enforce(txCtx, decision);
   if (decision.denialEvent) c.set(DEFERRED_DENIAL, decision.denialEvent);
   throw decision.error;
 }

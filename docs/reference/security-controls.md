@@ -274,6 +274,14 @@ Every change is recorded in the audit log as `security_control.changed`,
 with the old and new state, whether it loosened the control, and the
 approval it used.
 
+Your authority (`organization.manage`) is checked again inside the change,
+after the organization is locked. If you lost it meanwhile, the change is
+refused and, when the approval was used, it stays unused. While at least
+one control is at `report` or `enforce` before the change, the audit log
+records one `authorization.denied` for that refusal. With every control
+off before the change (so also for `off` to `report` from all off), it
+records nothing, as before.
+
 ## Approvals
 
 An approval is your passkey, with your PIN, fingerprint or face, saying yes

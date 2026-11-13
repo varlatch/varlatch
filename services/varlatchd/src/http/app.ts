@@ -189,6 +189,7 @@ import {
   STATUS_BY_CODE,
   authorize,
   authorizeInTransaction,
+  authorizeInControlledTransaction,
   auditDeferredDenial,
   bodyHash,
   decide,
@@ -685,7 +686,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
     const reqId = (c.get("requestId") as string) ?? requestId();
     // A denial found by a protected operation's recheck inside its
     // transaction (ADR-0054 Decision 3), which the refusal rolled back:
-    // recorded now, once (support.ts authorizeInTransaction).
+    // recorded now, once (support.ts authorizeInTransaction). Freezing,
+    // lifting and a control change keep theirs only while a control is on
+    // (authorizeInControlledTransaction).
     await auditDeferredDenial(ctx, c);
     if (err instanceof OrganizationFrozenError) {
       // Final for this request: clients back off (ADR-0055 Decision 8). One
@@ -1667,8 +1670,10 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
       credentialKind: principal.credentialKind,
       reason: body.reason,
       requestId: c.get("requestId"),
+      // A denial here is audited only while a control is on (ADR-0054
+      // follow-up (f), support.ts authorizeInControlledTransaction).
       authorizeIn: async (db) => {
-        await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+        await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
       },
     });
     return c.json(freeze, 201);
@@ -1688,8 +1693,9 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         actor: principal.identity,
         credentialKind: principal.credentialKind,
         requestId: c.get("requestId"),
+        // As for freezing: a denial is audited only while a control is on.
         authorizeIn: async (db) => {
-          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+          await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
         },
       }));
     return c.json(result);
@@ -3040,9 +3046,13 @@ export function buildApp(ctx: AppCtx, options: BuildAppOptions = {}): Hono<{ Var
         expectedVersion: body.expectedVersion,
         actorIdentityId: principal.identity.id,
         requestId: c.get("requestId"),
-        // Rechecked inside the change's transaction, after the Organization lock.
+        // Rechecked inside the change's transaction, after the Organization
+        // lock and before the new state is written. A denial is audited only
+        // when a control is on in the state before this change (ADR-0054
+        // follow-up (f), support.ts authorizeInControlledTransaction): from
+        // all off, off to report audits nothing; report to off audits it.
         authorizeIn: async (db) => {
-          await authorize({ ...ctx, db }, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
+          await authorizeInControlledTransaction(ctx, db, c, principal, "organization.manage", { organizationId: org.id }, { hideExistence: true });
         },
       }));
     return c.json(result);
